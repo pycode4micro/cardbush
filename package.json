@@ -1,0 +1,36 @@
+{
+  "name": "cardbush-electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "postinstall": "node scripts/install-electron.mjs",
+    "predev": "node scripts/free-dev-port.mjs",
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"tsc -p tsconfig.node.json --watch --preserveWatchOutput\" \"wait-on http://127.0.0.1:5173 dist-electron/main.js && node scripts/run-electron-dev.mjs\"",
+    "build": "tsc -p tsconfig.node.json && vite build",
+    "gui": "npm run build && electron .",
+    "fix:electron": "node scripts/install-electron.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "*",
+    "@xterm/xterm": "^6.0.0",
+    "concurrently": "*",
+    "electron": "*",
+    "lucide-react": "*",
+    "react": "*",
+    "react-dom": "*",
+    "react-markdown": "*",
+    "react-virtuoso": "*",
+    "remark-gfm": "*",
+    "typescript": "*",
+    "vite": "*",
+    "wait-on": "*"
+  },
+  "devDependencies": {
+    "@types/node": "*",
+    "@types/react": "*",
+    "@types/react-dom": "*"
+  }
+}

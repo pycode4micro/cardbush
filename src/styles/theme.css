@@ -1,0 +1,99 @@
+:root {
+  color-scheme: light;
+  font-family:
+    "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC",
+    Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+.app,
+.cardling-desktop {
+  --app-font-family: "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", Arial, sans-serif;
+  --bg: #e1d4ba;
+  --surface: #f1e6cf;
+  --surface-strong: #f4ead5;
+  --border: #c5b392;
+  --accent: #637b61;
+  --accent-soft: #d4dbc7;
+  --text: #2a2116;
+  --text-mid: #675c49;
+  --text-soft: #94866d;
+  --shadow: rgba(83, 61, 34, 0.14);
+  --user-bubble: #ede2cb;
+  --terminal-bg: #15130f;
+  --danger: #b3261e;
+  --sidebar-width: 232px;
+  --wallpaper-accent-rgb: 99 123 97;
+  --wallpaper-accent-hex: #637b61;
+}
+
+.app {
+  width: 100vw;
+  height: 100vh;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--app-font-family);
+}
+
+.theme-bright {
+  --bg: #f5f3ef;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --border: #e5e0d8;
+  --accent: #7b9e87;
+  --accent-soft: #ebf2ed;
+  --text: #1e1c1a;
+  --text-mid: #6b6560;
+  --text-soft: #a09890;
+  --shadow: rgba(0, 0, 0, 0.06);
+  --user-bubble: #edebe7;
+}
+
+.theme-dark {
+  color-scheme: dark;
+  --bg: #1a1a1a;
+  --surface: #1c1b19;
+  --surface-strong: #2b2b2b;
+  --border: #2a2926;
+  --accent: #7b9e87;
+  --accent-soft: #1a2820;
+  --text: #edeae4;
+  --text-mid: #908b85;
+  --text-soft: #555250;
+  --shadow: rgba(0, 0, 0, 0.25);
+  --user-bubble: #2b2b2b;
+}
+
+@media (min-width: 1160px) {
+  .app {
+    --sidebar-width: 252px;
+  }
+}
+
+@media (min-width: 1320px) {
+  .app {
+    --sidebar-width: 272px;
+  }
+}

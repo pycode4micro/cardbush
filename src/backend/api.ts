@@ -1,0 +1,1750 @@
+import type {
+  ChatMessage,
+  ChatToolExecution,
+  ConversationSummary,
+  ManagedModelConfig,
+  PendingInteraction,
+  BotConfigResult,
+  BotPlatform,
+  BotPlatformOverview,
+  BotServiceLogsResult,
+  BotServiceStatus,
+  BotStatusResult,
+  WeixinLoginStartResult,
+  WeixinLoginStatus,
+  WeixinLoginStatusResult,
+  SkillDetail,
+  SkillSummary,
+  StreamStart,
+  WorkspaceContext,
+  InteractionReplyAnswer,
+  InteractionQuestion,
+  InteractionOption,
+} from '../types';
+
+export const backendBaseUrl =
+  import.meta.env.VITE_BACKEND_BASE_URL?.trim() || 'http://127.0.0.1:51717';
+export const llmEndpoint = import.meta.env.VITE_LLM_ENDPOINT?.trim() || '';
+
+export interface SessionShareLinkResult {
+  code: string;
+  sessionId: string;
+  platform: string;
+  expiresAt: string;
+}
+
+export interface SaveBotConfigRequest {
+  platform: BotPlatform;
+  config: Record<string, unknown>;
+}
+
+export interface ChatStreamRequest {
+  sessionId: string;
+  userInput: string;
+  model: string;
+  modelConfig?: ManagedModelConfig;
+  projectDir?: string;
+  projectUserPrompt?: string;
+  allowedSkills?: string[];
+  images?: Array<{ path: string }>;
+  files?: string[];
+  signal?: AbortSignal;
+  onStart?: (start: StreamStart) => void;
+  onDelta?: (delta: string) => void;
+  onToolExecution?: (execution: ChatToolExecution) => void;
+  onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+}
+
+export interface ControlStreamRequest {
+  sessionId: string;
+  model: string;
+  modelConfig?: ManagedModelConfig;
+  projectDir?: string;
+  projectUserPrompt?: string;
+  allowedSkills?: string[];
+  images?: Array<{ path: string }>;
+  files?: string[];
+  signal?: AbortSignal;
+  onStart?: (start: StreamStart) => void;
+  onDelta?: (delta: string) => void;
+  onToolExecution?: (execution: ChatToolExecution) => void;
+  onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+}
+
+export interface RegenerateTurnRequest extends ControlStreamRequest {
+  turnId: string;
+}
+
+export interface EditMessageRequest extends ControlStreamRequest {
+  messageId: string;
+  content: string;
+}
+
+export interface SendGuidanceRequest {
+  sessionId: string;
+  turnId: string;
+  guidance: string;
+  mode: 'append_context' | 'interrupt_and_continue';
+  signal?: AbortSignal;
+  onStart?: (start: StreamStart) => void;
+  onDelta?: (delta: string) => void;
+  onToolExecution?: (execution: ChatToolExecution) => void;
+  onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+}
+
+export interface ProjectContextResult {
+  projectDir: string;
+  userPrompt: string;
+}
+
+export interface MaintenanceClearResult {
+  target: string;
+  cleared: boolean;
+  counts: Record<string, number>;
+}
+
+export interface SessionMessagesResult {
+  conversation: ConversationSummary;
+  messages: ChatMessage[];
+  workspaceContext?: WorkspaceContext;
+}
+
+function url(path: string) {
+  const normalizedBase = backendBaseUrl.endsWith('/')
+    ? backendBaseUrl.slice(0, -1)
+    : backendBaseUrl;
+  return `${normalizedBase}${path}`;
+}
+
+async function headersFor(targetUrl: string, json = false) {
+  const fromDesktop = await window.cardbushDesktop?.bushHeaders(targetUrl, json);
+  return {
+    ...fromDesktop,
+    ...(json ? { 'content-type': 'application/json' } : {}),
+  };
+}
+
+async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, {
+    ...init,
+    headers: {
+      ...(await headersFor(input, init?.body != null)),
+      ...init?.headers,
+    },
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(formatHttpError(response.status, body));
+  }
+  return (await response.json()) as T;
+}
+
+export async function fetchConversations(): Promise<ConversationSummary[]> {
+  const payload = await readJson<
+    { items?: unknown[]; sessions?: unknown[] } | unknown[]
+  >(
+    url('/v1/sessions?limit=30'),
+  );
+  const items = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload.items)
+      ? payload.items
+      : payload.sessions;
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map(conversationFromPayload).filter((item) => item.id.trim());
+}
+
+export async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
+  const result = await fetchSessionMessages(sessionId);
+  return result.messages;
+}
+
+export async function fetchSessionMessages(
+  sessionId: string,
+): Promise<SessionMessagesResult> {
+  const payload = await readJson<{ messages?: unknown[] }>(
+    url(`/v1/sessions/${encodeURIComponent(sessionId)}?include_superseded=false`),
+  );
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const conversation = conversationFromPayload(payload);
+  const workspaceContext = workspaceContextFromPayload(
+    asRecord(payload).workspace_context ?? asRecord(payload).workspaceContext,
+  );
+  return {
+    conversation: {
+      ...conversation,
+      workspaceContext,
+      projectDir: conversation.projectDir ?? workspaceContext?.projectDir ?? undefined,
+    },
+    messages: messages.map(messageFromPayload).filter((item) => item.id.trim()),
+    workspaceContext,
+  };
+}
+
+export async function createConversation({
+  title = '新会话',
+  projectDir,
+  sessionId,
+  metadata,
+}: {
+  title?: string;
+  projectDir?: string;
+  sessionId?: string;
+  metadata?: Record<string, unknown>;
+} = {}): Promise<ConversationSummary> {
+  const endpoint = url('/v1/sessions');
+  const payload = await readJson<Record<string, unknown>>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({
+      title,
+      ...(sessionId?.trim() ? { session_id: sessionId.trim() } : {}),
+      ...(projectDir?.trim() ? { project_dir: projectDir.trim() } : {}),
+      ...(metadata ? { metadata } : {}),
+    }),
+  });
+  return conversationFromPayload(payload);
+}
+
+export async function updateConversation({
+  sessionId,
+  title,
+  projectDir,
+  metadata,
+}: {
+  sessionId: string;
+  title?: string;
+  projectDir?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<ConversationSummary> {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error('会话 ID 为空');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(normalized)}`),
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...(title != null ? { title } : {}),
+        ...(projectDir !== undefined ? { project_dir: projectDir } : {}),
+        ...(metadata ? { metadata } : {}),
+      }),
+    },
+  );
+  return conversationFromPayload(payload);
+}
+
+export async function deleteConversationApi(sessionId: string) {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    return false;
+  }
+  const endpoint = url(`/v1/sessions/${encodeURIComponent(normalized)}`);
+  const response = await fetch(endpoint, {
+    method: 'DELETE',
+    headers: await headersFor(endpoint, true),
+  });
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(formatHttpError(response.status, await response.text()));
+  }
+  return true;
+}
+
+export async function createSessionShareLink({
+  sessionId,
+  platform,
+  expiresSeconds = 900,
+}: {
+  sessionId: string;
+  platform?: string;
+  expiresSeconds?: number;
+}): Promise<SessionShareLinkResult> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error('会话 ID 为空');
+  }
+  const normalizedPlatform = platform?.trim().toLowerCase();
+  const endpoint = url(
+    `/v1/sessions/${encodeURIComponent(normalizedSessionId)}/share-links`,
+  );
+  const payload = await readJson<Record<string, unknown>>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({
+      expires_seconds: expiresSeconds,
+      ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
+    }),
+  });
+  const result = shareLinkFromPayload(payload);
+  if (!result.code.trim()) {
+    throw new Error('Bot 绑定码为空');
+  }
+  return result;
+}
+
+export async function fetchBots(): Promise<BotPlatformOverview[]> {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/bots'));
+  const candidates =
+    payload.bots ?? payload.items ?? payload.platforms ?? payload.data ?? [];
+  if (Array.isArray(candidates)) {
+    return candidates
+      .map(botOverviewFromPayload)
+      .filter((item): item is BotPlatformOverview => item != null);
+  }
+  const record = asRecord(candidates);
+  return Object.entries(record)
+    .map(([platform, value]) => botOverviewFromPayload({ platform, ...asRecord(value) }))
+    .filter((item): item is BotPlatformOverview => item != null);
+}
+
+export async function fetchBotConfig(
+  platform: BotPlatform,
+): Promise<BotConfigResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/bots/${encodeURIComponent(platform)}/config`),
+  );
+  return botConfigFromPayload(platform, payload);
+}
+
+export async function saveBotConfig({
+  platform,
+  config,
+}: SaveBotConfigRequest): Promise<BotConfigResult> {
+  const endpoint = url(`/v1/bots/${encodeURIComponent(platform)}/config`);
+  const payload = await readJson<Record<string, unknown>>(endpoint, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+  return botConfigFromPayload(platform, payload);
+}
+
+export async function fetchBotStatus(platform: BotPlatform): Promise<BotStatusResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/bots/${encodeURIComponent(platform)}/status`),
+  );
+  return botStatusFromPayload(platform, payload);
+}
+
+export async function startWeixinLogin(): Promise<WeixinLoginStartResult> {
+  const endpoint = url('/v1/bots/weixin/login/start');
+  const payload = await readJson<Record<string, unknown>>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  return weixinLoginStartFromPayload(payload);
+}
+
+export async function fetchWeixinLoginStatus(
+  loginId: string,
+): Promise<WeixinLoginStatusResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/bots/weixin/login/${encodeURIComponent(loginId)}/status`),
+  );
+  return weixinLoginStatusFromPayload(loginId, payload);
+}
+
+export async function deleteWeixinAccount(accountId: string): Promise<void> {
+  const endpoint = url(
+    `/v1/bots/weixin/accounts/${encodeURIComponent(accountId)}`,
+  );
+  await readJson<Record<string, unknown>>(endpoint, {
+    method: 'DELETE',
+  });
+}
+
+export async function controlBotService(
+  platform: BotPlatform,
+  action: 'start' | 'stop' | 'restart',
+): Promise<BotStatusResult> {
+  const endpoint = url(
+    `/v1/bots/${encodeURIComponent(platform)}/service/${action}`,
+  );
+  const payload = await readJson<Record<string, unknown>>(endpoint, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+  return botStatusFromPayload(platform, payload);
+}
+
+export async function fetchBotServiceLogs({
+  platform,
+  tail = 200,
+  since,
+}: {
+  platform: BotPlatform;
+  tail?: number;
+  since?: string;
+}): Promise<BotServiceLogsResult> {
+  const query = new URLSearchParams({ tail: String(tail) });
+  if (since?.trim()) {
+    query.set('since', since.trim());
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/bots/${encodeURIComponent(platform)}/service/logs?${query}`),
+  );
+  return botLogsFromPayload(platform, payload);
+}
+
+export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url('/v1/maintenance/conversation-history/clear'),
+    {
+      method: 'POST',
+    },
+  );
+  return maintenanceClearResultFromPayload(payload);
+}
+
+export async function clearLogsCache(): Promise<MaintenanceClearResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url('/v1/maintenance/logs-cache/clear'),
+    {
+      method: 'POST',
+    },
+  );
+  return maintenanceClearResultFromPayload(payload);
+}
+
+export async function fetchSkills(): Promise<SkillSummary[]> {
+  const payload = await readJson<{ skills?: unknown[]; items?: unknown[] }>(
+    url('/v1/skills'),
+  );
+  const items = Array.isArray(payload.skills) ? payload.skills : payload.items;
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map((item) => {
+    const value = asRecord(item);
+    return {
+      name: String(value.name ?? ''),
+      description: String(value.description ?? ''),
+      descriptionZh: String(value.description_zh ?? ''),
+      path: String(value.path ?? ''),
+    };
+  });
+}
+
+export async function fetchSkillDetail(skillName: string): Promise<SkillDetail> {
+  const normalized = skillName.trim();
+  if (!normalized) {
+    throw new Error('Skill 名称为空');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/skills/${encodeURIComponent(normalized)}`),
+  );
+  return skillDetailFromPayload(payload);
+}
+
+export async function fetchProjectContext(
+  projectDir: string,
+): Promise<ProjectContextResult> {
+  const normalized = projectDir.trim();
+  if (!normalized) {
+    return { projectDir: '', userPrompt: '' };
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/projects/context?project_dir=${encodeURIComponent(normalized)}`),
+  );
+  return projectContextFromPayload(payload);
+}
+
+export async function saveProjectContext({
+  projectDir,
+  userPrompt,
+}: {
+  projectDir: string;
+  userPrompt: string;
+}): Promise<ProjectContextResult> {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/projects/context'), {
+    method: 'PUT',
+    body: JSON.stringify({
+      project_dir: projectDir,
+      user_prompt: userPrompt,
+    }),
+  });
+  return projectContextFromPayload(payload);
+}
+
+export async function fetchPendingInteraction(
+  sessionId: string,
+): Promise<PendingInteraction | null> {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    return null;
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/interactions/pending?session_id=${encodeURIComponent(normalized)}`),
+  );
+  return pendingInteractionFromPayload(payload);
+}
+
+export async function replyInteraction({
+  interactionId,
+  rawText,
+  answers,
+}: {
+  interactionId: string;
+  rawText?: string;
+  answers?: InteractionReplyAnswer[];
+}) {
+  const normalized = interactionId.trim();
+  if (!normalized) {
+    throw new Error('交互 ID 为空');
+  }
+  const normalizedAnswers = answers
+    ?.map((answer) => ({
+      question_id: answer.questionId,
+      ...(answer.selectedOptionId ? { selected_option_id: answer.selectedOptionId } : {}),
+      ...(answer.selectedOptionIds && answer.selectedOptionIds.length > 0
+        ? { selected_option_ids: answer.selectedOptionIds }
+        : {}),
+      ...(answer.inputText?.trim() ? { input_text: answer.inputText.trim() } : {}),
+    }))
+    .filter(
+      (answer) =>
+        answer.question_id &&
+        (answer.selected_option_id ||
+          (answer.selected_option_ids?.length ?? 0) > 0 ||
+          answer.input_text),
+    );
+  const trimmedRawText = rawText?.trim() ?? '';
+  if ((normalizedAnswers?.length ?? 0) === 0 && !trimmedRawText) {
+    throw new Error('交互回答为空');
+  }
+  await readJson<Record<string, unknown>>(
+    url(`/v1/interactions/${encodeURIComponent(normalized)}/reply`),
+    {
+      method: 'POST',
+      body: JSON.stringify(
+        normalizedAnswers && normalizedAnswers.length > 0
+          ? { answers: normalizedAnswers }
+          : { raw_text: trimmedRawText },
+      ),
+    },
+  );
+}
+
+export async function cancelInteraction(interactionId: string) {
+  const normalized = interactionId.trim();
+  if (!normalized) {
+    return;
+  }
+  await readJson<Record<string, unknown>>(
+    url(`/v1/interactions/${encodeURIComponent(normalized)}/cancel`),
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export async function stopTurn(turnId: string) {
+  const normalized = turnId.trim();
+  if (!normalized) {
+    return false;
+  }
+  const endpoint = url(`/v1/turns/${encodeURIComponent(normalized)}/stop`);
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: await headersFor(endpoint, true),
+  });
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(formatHttpError(response.status, await response.text()));
+  }
+  return true;
+}
+
+export async function streamChat(request: ChatStreamRequest) {
+  await streamEndpoint({
+    endpoint: url('/v1/chat/stream'),
+    method: 'POST',
+    body: chatStreamBody(request),
+    request,
+  });
+}
+
+export async function regenerateTurn(request: RegenerateTurnRequest) {
+  const sessionId = request.sessionId.trim();
+  const turnId = request.turnId.trim();
+  if (!sessionId || !turnId) {
+    throw new Error('会话或 turn_id 为空');
+  }
+  await streamEndpoint({
+    endpoint: url(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/regenerate`,
+    ),
+    method: 'POST',
+    body: controlStreamBody(request),
+    request,
+  });
+}
+
+export async function editMessage(request: EditMessageRequest) {
+  const sessionId = request.sessionId.trim();
+  const messageId = request.messageId.trim();
+  const content = request.content.trim();
+  if (!sessionId || !messageId) {
+    throw new Error('会话或 message_id 为空');
+  }
+  if (!content) {
+    throw new Error('消息内容为空');
+  }
+  await streamEndpoint({
+    endpoint: url(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
+    ),
+    method: 'PATCH',
+    body: {
+      ...controlStreamBody(request),
+      content,
+      regenerate: true,
+      truncate_after: true,
+    },
+    request,
+  });
+}
+
+export async function sendGuidance(request: SendGuidanceRequest) {
+  const sessionId = request.sessionId.trim();
+  const turnId = request.turnId.trim();
+  const guidance = request.guidance.trim();
+  if (!sessionId || !turnId || !guidance) {
+    return;
+  }
+  await streamEndpoint({
+    endpoint: url(`/v1/turns/${encodeURIComponent(turnId)}/guidance`),
+    method: 'POST',
+    body: {
+      session_id: sessionId,
+      guidance,
+      mode: request.mode,
+      stream: true,
+    },
+    request,
+  });
+}
+
+async function streamEndpoint({
+  endpoint,
+  method,
+  body,
+  request,
+}: {
+  endpoint: string;
+  method: string;
+  body: Record<string, unknown>;
+  request: Pick<
+    ChatStreamRequest,
+    | 'signal'
+    | 'onStart'
+    | 'onDelta'
+    | 'onToolExecution'
+    | 'onInteractiveRequest'
+    | 'onMessages'
+  >;
+}) {
+  const response = await fetch(endpoint, {
+    method,
+    signal: request.signal,
+    headers: {
+      ...(await headersFor(endpoint, true)),
+      accept: 'text/event-stream',
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok || response.body == null) {
+    throw new Error(formatHttpError(response.status, await response.text()));
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventName = 'message';
+  let dataLines: string[] = [];
+  let emittedAny = false;
+
+  const flush = () => {
+    if (dataLines.length === 0) {
+      eventName = 'message';
+      return;
+    }
+    const rawData = dataLines.join('\n');
+    dataLines = [];
+    const currentEvent = eventName;
+    eventName = 'message';
+    handleStreamEvent(currentEvent, rawData, emittedAny, request);
+    if (currentEvent === 'token') {
+      emittedAny = true;
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (line === '') {
+        flush();
+      } else if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        const raw = line.slice(5);
+        dataLines.push(raw.startsWith(' ') ? raw.slice(1) : raw);
+      }
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    dataLines.push(buffer.trim());
+  }
+  flush();
+}
+
+function controlStreamBody(request: ControlStreamRequest) {
+  const body: Record<string, unknown> = {
+    stream: true,
+    stream_render_mode: 'strict',
+    history_limit: 20,
+    progressive_tool_disclosure: true,
+    workspace_mode: request.projectDir?.trim() ? 'project' : 'task',
+    metadata: {
+      source: 'cardbush_electron',
+      subagent_enabled: true,
+      selected_model_alias: request.model,
+    },
+  };
+  const metadata = body.metadata as Record<string, unknown>;
+  const projectDir = request.projectDir?.trim();
+  if (projectDir) {
+    body.project_dir = projectDir;
+    metadata.workspace_dir = projectDir;
+    metadata.user_project_dir = projectDir;
+    metadata.project_dir = projectDir;
+  }
+  if (request.images && request.images.length > 0) {
+    body.images = request.images;
+  }
+  if (request.files && request.files.length > 0) {
+    body.files = request.files;
+  }
+  const projectUserPrompt = request.projectUserPrompt?.trim();
+  if (projectUserPrompt) {
+    body.project_user_prompt = projectUserPrompt;
+    metadata.project_user_prompt = projectUserPrompt;
+  }
+  const allowedSkills = normalizeSkillNames(request.allowedSkills);
+  if (allowedSkills) {
+    body.allowed_skills = allowedSkills;
+    metadata.allowed_skills = allowedSkills;
+    metadata.skills = allowedSkills;
+  }
+  const config = request.modelConfig;
+  if (config) {
+    putIfNotEmpty(body, 'model', config.modelName);
+    putIfNotEmpty(body, 'provider', config.provider);
+    putIfNotEmpty(body, 'api_key', config.apiKey);
+    putIfNotEmpty(body, 'base_url', config.baseUrl);
+    putIfNotEmpty(metadata, 'selected_model', config.modelName);
+    putIfNotEmpty(metadata, 'selected_provider', config.provider);
+    putIfNotEmpty(metadata, 'selected_model_alias', request.model);
+  }
+  return body;
+}
+
+function chatStreamBody(request: ChatStreamRequest) {
+  const body: Record<string, unknown> = {
+    session_id: request.sessionId,
+    user_input: request.userInput,
+    stream: true,
+    stream_render_mode: 'strict',
+    history_limit: 20,
+    progressive_tool_disclosure: true,
+    workspace_mode: request.projectDir?.trim() ? 'project' : 'task',
+    metadata: {
+      source: 'cardbush_electron',
+      subagent_enabled: true,
+      selected_model_alias: request.model,
+    },
+  };
+  const metadata = body.metadata as Record<string, unknown>;
+  const projectDir = request.projectDir?.trim();
+  if (projectDir) {
+    body.project_dir = projectDir;
+    metadata.workspace_dir = projectDir;
+    metadata.user_project_dir = projectDir;
+    metadata.project_dir = projectDir;
+  }
+  if (request.images && request.images.length > 0) {
+    body.images = request.images;
+  }
+  if (request.files && request.files.length > 0) {
+    body.files = request.files;
+  }
+  const projectUserPrompt = request.projectUserPrompt?.trim();
+  if (projectUserPrompt) {
+    body.project_user_prompt = projectUserPrompt;
+    metadata.project_user_prompt = projectUserPrompt;
+  }
+  const allowedSkills = normalizeSkillNames(request.allowedSkills);
+  if (allowedSkills) {
+    body.allowed_skills = allowedSkills;
+    metadata.allowed_skills = allowedSkills;
+    metadata.skills = allowedSkills;
+  }
+  const config = request.modelConfig;
+  if (config) {
+    putIfNotEmpty(body, 'model', config.modelName);
+    putIfNotEmpty(body, 'provider', config.provider);
+    putIfNotEmpty(body, 'api_key', config.apiKey);
+    putIfNotEmpty(body, 'base_url', config.baseUrl);
+    putIfNotEmpty(metadata, 'selected_model', config.modelName);
+    putIfNotEmpty(metadata, 'selected_provider', config.provider);
+    putIfNotEmpty(metadata, 'selected_model_alias', request.model);
+  }
+  return body;
+}
+
+function normalizeSkillNames(values?: string[]) {
+  if (!values) {
+    return undefined;
+  }
+  const normalized = values
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, index, all) => all.indexOf(item) === index)
+    .sort();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function putIfNotEmpty(target: Record<string, unknown>, key: string, value: string) {
+  const trimmed = value.trim();
+  if (trimmed) {
+    target[key] = trimmed;
+  }
+}
+
+function handleStreamEvent(
+  eventName: string,
+  rawData: string,
+  emittedAny: boolean,
+  request: Pick<
+    ChatStreamRequest,
+    'onStart' | 'onDelta' | 'onToolExecution' | 'onInteractiveRequest' | 'onMessages'
+  >,
+) {
+  const decoded = parseJson(rawData);
+  if (decoded == null) {
+    return;
+  }
+
+  if (eventName === 'start') {
+    request.onStart?.({
+      sessionId: String(decoded.session_id ?? ''),
+      turnId: String(decoded.turn_id ?? ''),
+    });
+    return;
+  }
+
+  if (eventName === 'error') {
+    throw new Error(String(decoded.message ?? decoded.detail ?? 'BushServer stream error'));
+  }
+
+  if (eventName === 'token') {
+    const delta = String(decoded.delta ?? '');
+    if (delta) {
+      request.onDelta?.(delta);
+    }
+    return;
+  }
+
+  if (eventName === 'tool') {
+    request.onToolExecution?.(toolExecutionFromPayload(decoded));
+    return;
+  }
+
+  if (eventName === 'interactive_request') {
+    const interaction = pendingInteractionFromPayload(decoded);
+    if (interaction) {
+      request.onInteractiveRequest?.(interaction);
+    }
+    return;
+  }
+
+  if (
+    eventName === 'message' ||
+    eventName === 'assistant_message' ||
+    eventName === 'node_state'
+  ) {
+    const messages = messagesFromPayload(decoded);
+    if (messages.length > 0) {
+      request.onMessages?.(messages, false);
+    }
+    return;
+  }
+
+  if (eventName === 'done') {
+    const messages = messagesFromPayload(decoded);
+    if (messages.length > 0) {
+      request.onMessages?.(messages, true);
+      return;
+    }
+    const text = String(decoded.assistant_message ?? '');
+    if (text && !emittedAny) {
+      request.onDelta?.(text);
+    }
+    return;
+  }
+
+  const text = decoded.delta ?? decoded.text ?? decoded.content;
+  if (text != null) {
+    request.onDelta?.(String(text));
+  }
+}
+
+function conversationFromPayload(item: unknown, index = 0): ConversationSummary {
+  if (typeof item === 'string') {
+    return {
+      id: item,
+      title: item,
+      preview: '',
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  const value = asRecord(item);
+  return {
+    id: String(value.id ?? value.session_id ?? `session-${index}`),
+    title: String(value.title ?? value.name ?? '新会话'),
+    preview: String(value.preview ?? value.summary ?? value.last_message_preview ?? ''),
+    updatedAt: String(value.updated_at ?? value.updatedAt ?? new Date().toISOString()),
+    projectDir: value.project_dir == null ? undefined : String(value.project_dir),
+    metadata: asOptionalRecord(value.metadata),
+    workspaceContext: workspaceContextFromPayload(
+      value.workspace_context ?? value.workspaceContext,
+    ),
+  };
+}
+
+function shareLinkFromPayload(item: unknown): SessionShareLinkResult {
+  const value = asRecord(item);
+  return {
+    code: String(value.code ?? ''),
+    sessionId: String(value.session_id ?? value.sessionId ?? ''),
+    platform: String(value.platform ?? ''),
+    expiresAt: String(value.expires_at ?? value.expiresAt ?? ''),
+  };
+}
+
+function botOverviewFromPayload(item: unknown): BotPlatformOverview | null {
+  const value = asRecord(item);
+  const platform = normalizeBotPlatform(value.platform ?? value.id ?? value.name);
+  if (!platform) {
+    return null;
+  }
+  return {
+    platform,
+    configured: Boolean(
+      value.configured ?? value.is_configured ?? value.enabled ?? false,
+    ),
+    serviceStatus: normalizeBotServiceStatus(
+      value.service_status ??
+        value.serviceStatus ??
+        asRecord(value.service).status ??
+        value.status,
+    ),
+    accountCount: optionalNumber(
+      value.account_count ??
+        value.accountCount ??
+        (Array.isArray(value.accounts) ? value.accounts.length : undefined),
+    ),
+    displayName: optionalString(
+      value.display_name ?? value.displayName ?? value.title ?? value.label,
+    ),
+    lastError: optionalString(value.last_error ?? value.lastError ?? value.error),
+    raw: value,
+  };
+}
+
+function botConfigFromPayload(
+  platform: BotPlatform,
+  payload: Record<string, unknown>,
+): BotConfigResult {
+  const value = asRecord(payload);
+  return {
+    platform: normalizeBotPlatform(value.platform) ?? platform,
+    config: asRecord(value.config ?? value.values ?? value),
+    secrets: asRecord(value.secrets ?? value.secret_fields ?? value.secretFields),
+    raw: value,
+  };
+}
+
+function botStatusFromPayload(
+  platform: BotPlatform,
+  payload: Record<string, unknown>,
+): BotStatusResult {
+  const value = asRecord(payload);
+  return {
+    platform: normalizeBotPlatform(value.platform) ?? platform,
+    configured: Boolean(
+      value.configured ?? value.is_configured ?? value.enabled ?? false,
+    ),
+    serviceStatus: normalizeBotServiceStatus(
+      value.service_status ??
+        value.serviceStatus ??
+        asRecord(value.service).status ??
+        value.status,
+    ),
+    accountCount: optionalNumber(
+      value.account_count ??
+        value.accountCount ??
+        (Array.isArray(value.accounts) ? value.accounts.length : undefined),
+    ),
+    accounts: recordList(value.accounts),
+    lastError: optionalString(value.last_error ?? value.lastError ?? value.error),
+    raw: value,
+  };
+}
+
+function weixinLoginStartFromPayload(
+  payload: Record<string, unknown>,
+): WeixinLoginStartResult {
+  const value = asRecord(payload);
+  return {
+    loginId: String(value.login_id ?? value.loginId ?? value.id ?? ''),
+    qrcodeUrl: String(value.qrcode_url ?? value.qrcodeUrl ?? value.qr_url ?? ''),
+    expiresAt: optionalString(value.expires_at ?? value.expiresAt),
+    raw: value,
+  };
+}
+
+function weixinLoginStatusFromPayload(
+  loginId: string,
+  payload: Record<string, unknown>,
+): WeixinLoginStatusResult {
+  const value = asRecord(payload);
+  return {
+    loginId: String(value.login_id ?? value.loginId ?? loginId),
+    status: normalizeWeixinLoginStatus(value.status),
+    account: asOptionalRecord(value.account),
+    message: optionalString(value.message ?? value.error ?? value.detail),
+    raw: value,
+  };
+}
+
+function botLogsFromPayload(
+  platform: BotPlatform,
+  payload: Record<string, unknown>,
+): BotServiceLogsResult {
+  const value = asRecord(payload);
+  const lines = Array.isArray(value.lines)
+    ? value.lines.map((item) => String(item))
+    : String(value.text ?? value.logs ?? '')
+        .split(/\r?\n/)
+        .filter(Boolean);
+  return {
+    platform: normalizeBotPlatform(value.platform) ?? platform,
+    lines,
+    raw: value,
+  };
+}
+
+function maintenanceClearResultFromPayload(
+  payload: Record<string, unknown>,
+): MaintenanceClearResult {
+  const counts = asRecord(payload.counts);
+  return {
+    target: String(payload.target ?? ''),
+    cleared: Boolean(payload.cleared),
+    counts: Object.fromEntries(
+      Object.entries(counts).map(([key, value]) => {
+        const numeric = Number(value);
+        return [key, Number.isFinite(numeric) ? numeric : 0];
+      }),
+    ),
+  };
+}
+
+function projectContextFromPayload(item: unknown): ProjectContextResult {
+  const value = asRecord(item);
+  return {
+    projectDir: String(value.project_dir ?? value.projectDir ?? ''),
+    userPrompt: String(value.user_prompt ?? value.userPrompt ?? ''),
+  };
+}
+
+function workspaceContextFromPayload(item: unknown): WorkspaceContext | undefined {
+  const value = asRecord(item);
+  const mode = String(value.mode ?? '');
+  if (mode !== 'task' && mode !== 'project') {
+    return undefined;
+  }
+  return {
+    mode,
+    executionRoot: String(value.execution_root ?? value.executionRoot ?? ''),
+    projectDir:
+      value.project_dir == null && value.projectDir == null
+        ? null
+        : String(value.project_dir ?? value.projectDir),
+    taskDir: String(value.task_dir ?? value.taskDir ?? ''),
+    source: String(value.source ?? ''),
+  };
+}
+
+function pendingInteractionFromPayload(item: unknown): PendingInteraction | null {
+  const value = asRecord(item);
+  const nested = asRecord(value.interaction ?? value.pending ?? value.item);
+  const target = Object.keys(nested).length > 0 ? nested : value;
+  const id = String(
+    target.id ??
+      target.interaction_id ??
+      target.interactionId ??
+      target.request_id ??
+      target.requestId ??
+      '',
+  ).trim();
+  if (!id) {
+    return null;
+  }
+  const questions = target.questions;
+  const description = optionalString(target.description);
+  const prompt = optionalString(target.message ?? target.prompt);
+  return {
+    id,
+    type: optionalString(target.type),
+    sessionId: optionalString(target.session_id ?? target.sessionId),
+    turnId: optionalString(target.turn_id ?? target.turnId),
+    title: optionalString(target.title),
+    reason: optionalString(target.reason),
+    message: prompt ?? description,
+    description,
+    submitLabel: optionalString(target.submit_label ?? target.submitLabel),
+    cancelLabel: optionalString(target.cancel_label ?? target.cancelLabel),
+    replyMode: optionalString(target.reply_mode ?? target.replyMode),
+    toolName: optionalString(target.tool_name ?? target.toolName),
+    permissionPreview: asOptionalRecord(
+      target.permission_preview ?? target.permissionPreview,
+    ),
+    questions: Array.isArray(questions)
+      ? questions.map(interactionQuestionFromPayload).filter((question) => question.id)
+      : undefined,
+    raw: target,
+  };
+}
+
+function interactionQuestionFromPayload(item: unknown): InteractionQuestion {
+  const value = asRecord(item);
+  const rawMode = String(value.selection_mode ?? value.selectionMode ?? '').toLowerCase();
+  const selectionMode: InteractionQuestion['selectionMode'] =
+    rawMode === 'multiple' || rawMode === 'multi'
+      ? 'multiple'
+      : rawMode === 'input'
+        ? 'input'
+        : 'single';
+  return {
+    id: String(value.id ?? value.key ?? value.name ?? ''),
+    label: String(value.label ?? value.title ?? value.question ?? ''),
+    question: String(value.question ?? value.prompt ?? value.label ?? ''),
+    selectionMode,
+    needInput:
+      value.need_input === true ||
+      value.needInput === true ||
+      selectionMode === 'input',
+    required: value.required !== false,
+    options: Array.isArray(value.options)
+      ? value.options.map(interactionOptionFromPayload).filter((option) => option.id)
+      : [],
+  };
+}
+
+function interactionOptionFromPayload(item: unknown): InteractionOption {
+  const value = asRecord(item);
+  const id = String(value.id ?? value.value ?? value.key ?? value.label ?? '');
+  return {
+    id,
+    label: String(value.label ?? value.title ?? value.text ?? id),
+    description: optionalString(value.description ?? value.hint ?? value.help),
+  };
+}
+
+function messageFromPayload(item: unknown, index = 0): ChatMessage {
+  const value = asRecord(item);
+  const content = normalizeContent(value.content);
+  const turnId = optionalString(value.turn_id ?? value.turnId);
+  const role = normalizeRole(value.role);
+  const id = String(
+    value.id ??
+      value.message_id ??
+      value.messageId ??
+      fallbackMessageId({
+        role,
+        content,
+        turnId,
+        createdAt: optionalString(value.created_at ?? value.createdAt),
+        messageIndex: value.message_index ?? value.messageIndex ?? index,
+      }),
+  );
+  return {
+    id,
+    role,
+    content,
+    conversationId: optionalString(
+      value.conversation_id ?? value.session_id ?? value.conversationId ?? value.sessionId,
+    ),
+    turnId,
+    createdAt: optionalString(value.created_at ?? value.createdAt),
+    toolExecutions: toolExecutionsFromPayload(
+      value.toolExecutions ?? value.tool_executions,
+    ),
+    metadata: asOptionalRecord(value.metadata),
+  };
+}
+
+function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExecution {
+  const metadata = asRecord(payload.metadata);
+  const id =
+    nonEmpty(payload.id) ??
+    nonEmpty(payload.tool_call_id) ??
+    nonEmpty(metadata.tool_call_id) ??
+    toolFingerprint(payload);
+  const state = normalizeToolState(payload, metadata);
+  return {
+    id,
+    name: toolName(payload.name),
+    state,
+    summary: toolSummary(payload),
+    output: String(payload.output ?? ''),
+    success: typeof payload.success === 'boolean' ? payload.success : state === 'ok',
+    durationMs: numericValue(payload.duration_ms ?? payload.durationMs),
+    createdAt: new Date().toISOString(),
+    contentOffset: integerValue(payload.contentOffset ?? payload.content_offset),
+    metadata,
+  };
+}
+
+function toolExecutionsFromPayload(value: unknown): ChatToolExecution[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(asRecord)
+    .map((item) => ({
+      id:
+        nonEmpty(item.id) ??
+        nonEmpty(item.tool_call_id) ??
+        nonEmpty(asRecord(item.metadata).tool_call_id) ??
+        toolFingerprint(item),
+      name: toolName(item.name),
+      state: normalizeToolState(item, asRecord(item.metadata)),
+      summary: String(item.summary ?? ''),
+      output: String(item.output ?? ''),
+      success:
+        typeof item.success === 'boolean'
+          ? item.success
+          : normalizeToolState(item, asRecord(item.metadata)) === 'ok',
+      durationMs: numericValue(item.durationMs ?? item.duration_ms),
+      createdAt: optionalString(item.createdAt ?? item.created_at) ?? new Date().toISOString(),
+      contentOffset: integerValue(item.contentOffset ?? item.content_offset),
+      metadata: asRecord(item.metadata),
+    }))
+    .filter((item) => item.id.trim());
+}
+
+function skillDetailFromPayload(item: unknown): SkillDetail {
+  const value = asRecord(item);
+  return {
+    name: String(value.name ?? ''),
+    description: String(value.description ?? ''),
+    descriptionZh: String(value.description_zh ?? ''),
+    path: String(value.path ?? ''),
+    packageDir: String(value.package_dir ?? ''),
+    content: String(value.content ?? ''),
+    version: optionalString(value.version),
+    routingHidden: value.routing_hidden === true,
+    requires: stringList(value.requires),
+    conflictsWith: stringList(value.conflicts_with),
+    minServerVersion: optionalString(value.min_server_version),
+    timeout: numberRecord(value.timeout),
+    companionTools: stringList(value.companion_tools),
+    blockedTools: stringList(value.blocked_tools),
+    requiredReads: stringList(value.required_reads),
+    conditionalReads: stringList(value.conditional_reads),
+    resourceQuickRefs: recordList(value.resource_quick_refs),
+  };
+}
+
+function messagesFromPayload(payload: Record<string, unknown>) {
+  const list = payload.messages;
+  if (Array.isArray(list)) {
+    const parsed = list.map(messageFromPayload).filter((item) => item.id.trim());
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+  const assistantMessages = payload.assistant_messages ?? payload.assistantMessages;
+  if (Array.isArray(assistantMessages)) {
+    return assistantMessages
+      .map((item, index) =>
+        messageFromPayload(
+          mergeMessageEnvelope(payload, item, {
+            role: 'assistant',
+            message_index: index,
+          }),
+          index,
+        ),
+      )
+      .filter((item) => item.id.trim());
+  }
+  const message = payload.message;
+  if (message != null) {
+    const parsed = messageFromPayload(mergeMessageEnvelope(payload, message));
+    return parsed.id.trim() ? [parsed] : [];
+  }
+  const assistantMessage = payload.assistant_message ?? payload.assistantMessage;
+  if (assistantMessage != null) {
+    const parsed = messageFromPayload(
+      mergeMessageEnvelope(payload, assistantMessage, { role: 'assistant' }),
+    );
+    return parsed.id.trim() ? [parsed] : [];
+  }
+  const visibleOutput =
+    payload.visible_output ??
+    payload.visibleOutput ??
+    asRecord(payload.resource_summary).assistant_message ??
+    asRecord(payload.resource_summary).assistantMessage;
+  if (visibleOutput != null) {
+    const parsed = messageFromPayload(
+      mergeMessageEnvelope(payload, visibleOutput, { role: 'assistant' }),
+    );
+    return parsed.id.trim() ? [parsed] : [];
+  }
+  if (payload.role != null && payload.content != null) {
+    const parsed = messageFromPayload(payload);
+    return parsed.id.trim() ? [parsed] : [];
+  }
+  return [];
+}
+
+function mergeMessageEnvelope(
+  envelope: Record<string, unknown>,
+  item: unknown,
+  fallback: Record<string, unknown> = {},
+) {
+  const base = {
+    session_id: envelope.session_id ?? envelope.sessionId,
+    turn_id: envelope.turn_id ?? envelope.turnId,
+    created_at: envelope.created_at ?? envelope.createdAt,
+    ...fallback,
+  };
+  if (typeof item === 'string') {
+    return {
+      ...base,
+      content: item,
+    };
+  }
+  if (item && typeof item === 'object' && !Array.isArray(item)) {
+    return {
+      ...base,
+      ...asRecord(item),
+    };
+  }
+  return {
+    ...base,
+    content: item,
+  };
+}
+
+function stringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item)).filter((item) => item.trim())
+    : [];
+}
+
+function numberRecord(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const result: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+      result[key] = numeric;
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function normalizeToolState(
+  payload: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+) {
+  const rawState = nonEmpty(payload.state) ?? nonEmpty(metadata.state);
+  const state = (rawState ?? '').toLowerCase();
+  if (['ok', 'done', 'success', 'completed'].includes(state)) {
+    return 'ok';
+  }
+  if (['using', 'running', 'pending', 'started'].includes(state)) {
+    return 'using';
+  }
+  if (['fail', 'failed', 'error'].includes(state)) {
+    return 'fail';
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'success')) {
+    return payload.success === true ? 'ok' : 'fail';
+  }
+  return state || 'using';
+}
+
+function toolName(value: unknown) {
+  let text = String(value ?? '').trim();
+  if (!text) {
+    return 'tool';
+  }
+  for (const separator of [':', '.', '/']) {
+    if (text.includes(separator)) {
+      text = text.split(separator).pop() ?? text;
+    }
+  }
+  return text || 'tool';
+}
+
+function toolSummary(payload: Record<string, unknown>) {
+  const summary = payload.arguments_summary;
+  if (summary && typeof summary === 'object' && !Array.isArray(summary)) {
+    const normalized = asRecord(summary);
+    const parsed = normalized.parsed;
+    return summarizeMap(
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? asRecord(parsed)
+        : normalized,
+    );
+  }
+  if (Array.isArray(summary)) {
+    return summary.slice(0, 4).map(String).join(', ');
+  }
+  const text = String(summary ?? payload.summary ?? '').trim();
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const decoded = JSON.parse(text) as unknown;
+      if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)) {
+        return summarizeMap(asRecord(decoded));
+      }
+      if (Array.isArray(decoded)) {
+        return decoded.slice(0, 4).map(String).join(', ');
+      }
+    } catch {
+      return ellipsize(text, 110);
+    }
+  }
+  return ellipsize(text, 110);
+}
+
+function summarizeMap(value: Record<string, unknown>) {
+  const preferredKeys = [
+    'command',
+    'cmd',
+    'path',
+    'file_path',
+    'target_path',
+    'url',
+    'query',
+    'pattern',
+    'name',
+    'action',
+  ];
+  const parts: string[] = [];
+  for (const key of preferredKeys) {
+    const text = summaryValue(value[key]);
+    if (text) {
+      parts.push(`${summaryLabel(key)}: ${text}`);
+    }
+    if (parts.length >= 2) {
+      break;
+    }
+  }
+  if (parts.length === 0) {
+    for (const [key, item] of Object.entries(value).slice(0, 2)) {
+      const text = summaryValue(item);
+      if (text) {
+        parts.push(`${summaryLabel(key)}: ${text}`);
+      }
+    }
+  }
+  return ellipsize(parts.join(' · '), 110);
+}
+
+function summaryValue(value: unknown) {
+  if (value == null) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.slice(0, 3).map(String).join(', ');
+  }
+  if (typeof value === 'object') {
+    return ellipsize(JSON.stringify(value), 80);
+  }
+  return ellipsize(String(value), 80);
+}
+
+function summaryLabel(value: string) {
+  return value.replace(/_/g, ' ');
+}
+
+function toolFingerprint(payload: Record<string, unknown>) {
+  const seed = JSON.stringify({
+    name: payload.name,
+    state: payload.state,
+    summary: payload.arguments_summary ?? payload.summary,
+    output: payload.output,
+  });
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = Math.imul(31, hash) + seed.charCodeAt(index);
+    hash |= 0;
+  }
+  return `tool-${Math.abs(hash)}`;
+}
+
+function nonEmpty(value: unknown) {
+  const text = value == null ? '' : String(value).trim();
+  return text || undefined;
+}
+
+function numericValue(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function integerValue(value: unknown) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Math.trunc(numeric) : 0;
+}
+
+function ellipsize(value: string, max: number) {
+  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function recordList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter(
+        (item): item is Record<string, unknown> =>
+          item != null && typeof item === 'object',
+      )
+    : [];
+}
+
+function asOptionalRecord(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  return asRecord(value);
+}
+
+function normalizeRole(value: unknown): ChatMessage['role'] {
+  return value === 'user' ||
+    value === 'assistant' ||
+    value === 'system' ||
+    value === 'guidance' ||
+    value === 'tool'
+    ? value
+    : 'assistant';
+}
+
+function normalizeContent(value: unknown) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value == null) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(contentPartToText).filter(Boolean).join('\n');
+  }
+  if (typeof value === 'object') {
+    return contentPartToText(value);
+  }
+  return JSON.stringify(value);
+}
+
+function contentPartToText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value == null) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(contentPartToText).filter(Boolean).join('\n');
+  }
+  if (typeof value !== 'object') {
+    return String(value);
+  }
+  const item = asRecord(value);
+  const text =
+    item.text ??
+    item.content ??
+    item.value ??
+    item.visible_text ??
+    item.visibleText ??
+    item.assistant_message ??
+    item.assistantMessage;
+  if (typeof text === 'string') {
+    return text;
+  }
+  const imagePath =
+    item.path ??
+    item.file_path ??
+    item.filePath ??
+    asRecord(item.image).path ??
+    asRecord(item.image_url).url ??
+    asRecord(item.imageUrl).url ??
+    item.url;
+  if (imagePath != null) {
+    return `@${String(imagePath)}`;
+  }
+  return JSON.stringify(item);
+}
+
+function fallbackMessageId({
+  role,
+  content,
+  turnId,
+  createdAt,
+  messageIndex,
+}: {
+  role: ChatMessage['role'];
+  content: string;
+  turnId?: string;
+  createdAt?: string;
+  messageIndex: unknown;
+}) {
+  const index = Number.isFinite(Number(messageIndex)) ? Number(messageIndex) : 0;
+  const seed = `${turnId ?? ''}|${role}|${createdAt ?? ''}|${index}|${content}`;
+  return `message-${role}-${Math.abs(hashText(seed))}`;
+}
+
+function hashText(seed: string) {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = Math.imul(31, hash) + seed.charCodeAt(index);
+    hash |= 0;
+  }
+  return hash;
+}
+
+function optionalString(value: unknown) {
+  const text = value == null ? '' : String(value);
+  return text.trim() ? text : undefined;
+}
+
+function optionalNumber(value: unknown) {
+  if (value == null || value === '') {
+    return undefined;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function normalizeBotPlatform(value: unknown): BotPlatform | null {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (
+    text === 'weixin' ||
+    text === 'feishu' ||
+    text === 'telegram' ||
+    text === 'discord'
+  ) {
+    return text;
+  }
+  return null;
+}
+
+function normalizeBotServiceStatus(value: unknown): BotServiceStatus {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (
+    text === 'starting' ||
+    text === 'running' ||
+    text === 'stopping' ||
+    text === 'failed'
+  ) {
+    return text;
+  }
+  return 'stopped';
+}
+
+function normalizeWeixinLoginStatus(value: unknown): WeixinLoginStatus {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (
+    text === 'scanned' ||
+    text === 'scaned' ||
+    text === 'scaned_but_redirect'
+  ) {
+    return 'scanned';
+  }
+  if (
+    text === 'confirmed' ||
+    text === 'expired' ||
+    text === 'failed' ||
+    text === 'waiting'
+  ) {
+    return text;
+  }
+  return 'waiting';
+}
+
+function asRecord(value: unknown) {
+  return value != null && typeof value === 'object'
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function parseJson(value: string) {
+  try {
+    const decoded = JSON.parse(value);
+    return asRecord(decoded);
+  } catch {
+    return null;
+  }
+}
+
+function formatHttpError(statusCode: number, body: string) {
+  const detail = extractErrorDetail(body);
+  if (statusCode === 403) {
+    return `BushServer 拒绝访问${detail ? `: ${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`;
+  }
+  return detail ? `BushServer error ${statusCode}: ${detail}` : `BushServer error: ${statusCode}`;
+}
+
+function extractErrorDetail(body: string) {
+  const text = body.trim();
+  if (!text) {
+    return '';
+  }
+  try {
+    const decoded = JSON.parse(text) as Record<string, unknown>;
+    const detail = decoded.detail;
+    if (typeof detail === 'string') {
+      return detail;
+    }
+    if (detail != null) {
+      return JSON.stringify(detail);
+    }
+  } catch {
+    return text;
+  }
+  return text;
+}

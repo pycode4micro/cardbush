@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>cardbush</title>
+    <script>
+      (() => {
+        const isCardlingWindow =
+          new URLSearchParams(location.search).get('window') === 'cardling';
+        if (isCardlingWindow) {
+          document.documentElement.dataset.cardlingWindow = 'true';
+          document.documentElement.style.backgroundColor = 'transparent';
+          return;
+        }
+        const colors = {
+          dark: '#1a1a1a',
+          bright: '#f5f3ef',
+          parchment: '#e1d4ba',
+        };
+        let theme = 'dark';
+        try {
+          const preference = localStorage.getItem('cardbush_theme_mode');
+          const lightStyle =
+            localStorage.getItem('cardbush_light_theme_style') ||
+            (localStorage.getItem('cardbush.theme') === 'bright' ? 'bright' : 'parchment');
+          const legacy = localStorage.getItem('cardbush.theme');
+          if (preference === 'dark' || legacy === 'dark') {
+            theme = 'dark';
+          } else if (preference === 'light' || legacy === 'bright' || legacy === 'parchment') {
+            theme = lightStyle === 'bright' ? 'bright' : 'parchment';
+          } else {
+            theme = matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : lightStyle === 'bright'
+                ? 'bright'
+                : 'parchment';
+          }
+        } catch {
+          theme = 'dark';
+        }
+        document.documentElement.dataset.startTheme = theme;
+        document.documentElement.style.backgroundColor = colors[theme] || colors.dark;
+      })();
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #1a1a1a;
+      }
+
+      html[data-start-theme='bright'],
+      html[data-start-theme='bright'] body,
+      html[data-start-theme='bright'] #root {
+        background: #f5f3ef;
+      }
+
+      html[data-start-theme='parchment'],
+      html[data-start-theme='parchment'] body,
+      html[data-start-theme='parchment'] #root {
+        background: #e1d4ba;
+      }
+
+      html[data-cardling-window='true'],
+      html[data-cardling-window='true'] body,
+      html[data-cardling-window='true'] #root {
+        background: transparent !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
