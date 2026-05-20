@@ -140,6 +140,8 @@ declare global {
         callback: (payload: CardlingDesktopState) => void,
       ) => () => void;
       setCardlingExpanded: (expanded: boolean) => Promise<void>;
+      startCardlingDrag: (cursorX: number, cursorY: number) => Promise<void>;
+      endCardlingDrag: () => Promise<void>;
       moveCardlingBy: (deltaX: number, deltaY: number) => Promise<void>;
       resetCardlingPosition: () => Promise<void>;
       cardlingAction: (action: CardlingDesktopAction) => Promise<void>;

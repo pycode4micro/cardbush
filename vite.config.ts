@@ -7,6 +7,24 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+              priority: 30,
+            },
+            {
+              name: 'ui-vendor',
+              test: /node_modules[\\/](lucide-react|react-virtuoso)[\\/]/,
+              priority: 20,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     host: '127.0.0.1',

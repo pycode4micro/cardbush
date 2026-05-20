@@ -173,7 +173,10 @@ export function useCardbushChat(
         if (!cancelled) {
           setMessagesByConversation((current) => ({
             ...current,
-            [activeConversationId]: result.messages,
+            [activeConversationId]: mergeLoadedMessagesPreservingLocalState(
+              current[activeConversationId] ?? [],
+              result.messages,
+            ),
           }));
           if (result.conversation.projectDir || result.conversation.workspaceContext) {
             setConversations((current) =>
@@ -254,7 +257,10 @@ export function useCardbushChat(
       const result = await fetchSessionMessages(sessionId);
       setMessagesByConversation((current) => ({
         ...current,
-        [sessionId]: result.messages,
+        [sessionId]: mergeLoadedMessagesPreservingLocalState(
+          current[sessionId] ?? [],
+          result.messages,
+        ),
       }));
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
@@ -615,7 +621,10 @@ export function useCardbushChat(
         if (loadedMessages && loadedMessages.length > 0) {
           setMessagesByConversation((current) => ({
             ...current,
-            [sessionId]: loadedMessages,
+            [sessionId]: mergeLoadedMessagesPreservingLocalState(
+              current[sessionId] ?? [],
+              loadedMessages,
+            ),
           }));
         }
         void reloadConversations().catch(() => undefined);
@@ -667,6 +676,7 @@ export function useCardbushChat(
         role: 'assistant',
         content: '',
         toolExecutions: [],
+        loopHistory: [],
         conversationId,
         createdAt: new Date().toISOString(),
       };
@@ -1036,13 +1046,16 @@ function appendToolExecution(
       if (message.id !== assistantId) {
         return message;
       }
-      const contentOffset = message.content.length;
+      const existing = message.toolExecutions ?? [];
+      const index = existing.findIndex((item) => item.id === execution.id);
+      const contentOffset =
+        index >= 0
+          ? existing[index].contentOffset
+          : message.content.length;
       const nextExecution = {
         ...execution,
         contentOffset,
       };
-      const existing = message.toolExecutions ?? [];
-      const index = existing.findIndex((item) => item.id === execution.id);
       const nextExecutions =
         index >= 0
           ? existing.map((item, itemIndex) =>
@@ -1065,12 +1078,22 @@ function mergeMessages(
   const byId = new Map((current[sessionId] ?? []).map((item) => [item.id, item]));
   for (const message of incoming) {
     const existing = byId.get(message.id);
+    const nextToolExecutions =
+      (message.toolExecutions?.length ?? 0) > 0
+        ? message.toolExecutions
+        : existing?.toolExecutions;
+    const preservedVersions =
+      existing && shouldPreserveExistingAsLoopHistory(existing, message)
+        ? [existing]
+        : [];
+    const nextLoopHistory = mergeLoopHistoryMessages(
+      existing?.loopHistory ?? [],
+      [...preservedVersions, ...(message.loopHistory ?? [])],
+    );
     byId.set(message.id, {
       ...message,
-      toolExecutions:
-        (message.toolExecutions?.length ?? 0) > 0
-          ? message.toolExecutions
-          : existing?.toolExecutions,
+      toolExecutions: nextToolExecutions,
+      loopHistory: nextLoopHistory.length > 0 ? nextLoopHistory : undefined,
     });
   }
   return {
@@ -1108,13 +1131,23 @@ function mergeFinalStreamMessages(
   const localToolExecutions = toolSource?.toolExecutions ?? [];
 
   const mergedIncoming = incoming.map((message) => {
-    const existingMessage = existingById.get(message.id);
+    const existingMessage =
+      existingById.get(message.id) ??
+      findStreamReplacementSource(existing, message, {
+        targetTurnId,
+        temporaryIds,
+      });
     return {
       ...message,
+      createdAt: existingMessage?.createdAt ?? message.createdAt,
       toolExecutions:
         (message.toolExecutions?.length ?? 0) > 0
           ? message.toolExecutions
           : existingMessage?.toolExecutions,
+      loopHistory:
+        (message.loopHistory?.length ?? 0) > 0
+          ? message.loopHistory
+          : existingMessage?.loopHistory,
     };
   });
 
@@ -1146,6 +1179,16 @@ function mergeFinalStreamMessages(
     return Boolean(messageTurnId && incomingTurnIds.has(messageTurnId));
   };
 
+  const replacedMessages = existing.filter(shouldReplace);
+  const loopHistory = collectLoopHistoryFromReplaced(
+    replacedMessages,
+    mergedIncoming,
+    temporaryIds,
+  );
+  if (loopHistory.length > 0) {
+    attachLoopHistoryToFinalAssistant(mergedIncoming, loopHistory);
+  }
+
   const replaceIndex = existing.findIndex(shouldReplace);
   const kept = existing.filter((message) => !shouldReplace(message));
   const insertAt = replaceIndex < 0
@@ -1157,6 +1200,206 @@ function mergeFinalStreamMessages(
     ...current,
     [sessionId]: nextMessages,
   };
+}
+
+function mergeLoadedMessagesPreservingLocalState(
+  existing: ChatMessage[],
+  loaded: ChatMessage[],
+) {
+  if (existing.length === 0 || loaded.length === 0) {
+    return loaded;
+  }
+  return loaded.map((message) => {
+    const source = findLocalMessageStateSource(existing, message);
+    if (!source) {
+      return message;
+    }
+    return {
+      ...message,
+      toolExecutions:
+        (message.toolExecutions?.length ?? 0) > 0
+          ? message.toolExecutions
+          : source.toolExecutions,
+      loopHistory:
+        (message.loopHistory?.length ?? 0) > 0
+          ? message.loopHistory
+          : source.loopHistory,
+    };
+  });
+}
+
+function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessage) {
+  const byId = existing.find((item) => item.id === message.id);
+  if (byId) {
+    return byId;
+  }
+  const turnId = message.turnId?.trim() ?? '';
+  if (!turnId) {
+    return undefined;
+  }
+  return [...existing].reverse().find((item) => {
+    if (item.role !== message.role) {
+      return false;
+    }
+    if ((item.turnId?.trim() ?? '') !== turnId) {
+      return false;
+    }
+    return (item.loopHistory?.length ?? 0) > 0 || (item.toolExecutions?.length ?? 0) > 0;
+  });
+}
+
+function collectLoopHistoryFromReplaced(
+  replacedMessages: ChatMessage[],
+  finalMessages: ChatMessage[],
+  temporaryIds: Set<string>,
+) {
+  const finalIds = new Set(finalMessages.map((message) => message.id));
+  const finalAssistant = finalMessages[findLastIndex(
+    finalMessages,
+    (message) => message.role === 'assistant',
+  )];
+  return replacedMessages
+    .filter((message) => message.role === 'assistant')
+    .filter((message) => !finalIds.has(message.id))
+    .filter(hasVisibleLoopHistory)
+    .filter(
+      (message) =>
+        !isRedundantTemporaryAssistant(message, finalAssistant, temporaryIds),
+    )
+    .map(snapshotLoopHistoryMessage);
+}
+
+function attachLoopHistoryToFinalAssistant(
+  messages: ChatMessage[],
+  loopHistory: ChatMessage[],
+) {
+  const targetIndex = findLastIndex(
+    messages,
+    (message) => message.role === 'assistant',
+  );
+  if (targetIndex < 0) {
+    return;
+  }
+  const target = messages[targetIndex];
+  messages[targetIndex] = {
+    ...target,
+    loopHistory: mergeLoopHistoryMessages(target.loopHistory ?? [], loopHistory),
+  };
+}
+
+function mergeLoopHistoryMessages(
+  existing: ChatMessage[],
+  incoming: ChatMessage[],
+) {
+  const byKey = new Map<string, ChatMessage>();
+  for (const message of [...existing, ...incoming]) {
+    if (!hasVisibleLoopHistory(message)) {
+      continue;
+    }
+    byKey.set(loopHistoryMessageKey(message), snapshotLoopHistoryMessage(message));
+  }
+  return Array.from(byKey.values());
+}
+
+function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    conversationId: message.conversationId,
+    turnId: message.turnId,
+    createdAt: message.createdAt,
+    attachments: message.attachments?.map((attachment) => ({ ...attachment })),
+    toolExecutions: message.toolExecutions?.map((execution) => ({
+      ...execution,
+      metadata: { ...execution.metadata },
+    })),
+    metadata: message.metadata ? { ...message.metadata } : undefined,
+  };
+}
+
+function hasVisibleLoopHistory(message: ChatMessage) {
+  return Boolean(
+    message.content.trim() ||
+      (message.attachments?.length ?? 0) > 0 ||
+      (message.toolExecutions?.length ?? 0) > 0,
+  );
+}
+
+function shouldPreserveExistingAsLoopHistory(
+  existing: ChatMessage,
+  incoming: ChatMessage,
+) {
+  if (existing.role !== 'assistant' || incoming.role !== 'assistant') {
+    return false;
+  }
+  if (!hasVisibleLoopHistory(existing)) {
+    return false;
+  }
+  return normalizeLoopContent(existing.content) !== normalizeLoopContent(incoming.content);
+}
+
+function isRedundantTemporaryAssistant(
+  message: ChatMessage,
+  finalAssistant: ChatMessage | undefined,
+  temporaryIds: Set<string>,
+) {
+  if (!finalAssistant || !temporaryIds.has(message.id)) {
+    return false;
+  }
+  return normalizeLoopContent(message.content) === normalizeLoopContent(finalAssistant.content);
+}
+
+function normalizeLoopContent(content: string) {
+  return content.trim().replace(/\s+/g, ' ');
+}
+
+function loopHistoryMessageKey(message: ChatMessage) {
+  return [
+    message.id.trim(),
+    message.role,
+    message.turnId?.trim() ?? '',
+    message.createdAt?.trim() ?? '',
+    normalizeLoopContent(message.content),
+    message.toolExecutions
+      ?.map((execution) =>
+        [
+          execution.id,
+          execution.state,
+          normalizeLoopContent(execution.summary),
+          normalizeLoopContent(execution.output),
+        ].join(':'),
+      )
+      .join(',') ?? '',
+  ].join('|');
+}
+
+function findStreamReplacementSource(
+  existing: ChatMessage[],
+  incoming: ChatMessage,
+  {
+    targetTurnId,
+    temporaryIds,
+  }: {
+    targetTurnId: string;
+    temporaryIds: Set<string>;
+  },
+) {
+  const incomingTurnId = incoming.turnId?.trim() || targetTurnId;
+  if (!incomingTurnId) {
+    return undefined;
+  }
+  const candidates = existing.filter((message) => {
+    if (message.role !== incoming.role) {
+      return false;
+    }
+    const messageTurnId = message.turnId?.trim() ?? '';
+    return messageTurnId === incomingTurnId || temporaryIds.has(message.id);
+  });
+  return (
+    candidates.find((message) => temporaryIds.has(message.id)) ??
+    candidates.at(-1)
+  );
 }
 
 function findLastIndex<T>(values: T[], predicate: (value: T) => boolean) {

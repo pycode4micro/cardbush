@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowDown,
   ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Bot,
   CheckCircle2,
@@ -29,8 +30,11 @@ import {
   MoreHorizontal,
   Network,
   Paperclip,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Pin,
+  Play,
   Plus,
   Puzzle,
   RefreshCw,
@@ -75,12 +79,16 @@ import {
   fetchBotServiceLogs,
   fetchBotStatus,
   fetchProjectContext,
+  fetchSessionScene,
+  fetchSessionScenes,
   fetchWeixinLoginStatus,
   llmEndpoint,
   saveProjectContext,
   saveBotConfig,
+  sendSceneEvent,
   startWeixinLogin,
   type MaintenanceClearResult,
+  type SessionSceneRecord,
   type SessionShareLinkResult,
 } from './backend/api';
 import {
@@ -172,7 +180,7 @@ const sectionLabels: Record<AppSection, { zh: string; en: string }> = {
 
 const settingsLabels: Record<SettingsSection, { zh: string; en: string }> = {
   profile: { zh: '外观', en: 'Appearance' },
-  companion: { zh: '卡灵', en: 'Cardling' },
+  companion: { zh: '卡布', en: 'Kabu' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot connections' },
   cache: { zh: '缓存', en: 'Cache' },
@@ -201,7 +209,30 @@ const LazyMarkdownContent = lazy(async () => {
   ]);
 
   function MarkdownRenderer({ content }: { content: string }) {
-    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, ...props }) => (
+            <a
+              {...props}
+              href={href}
+              onClick={(event) => {
+                if (!href || href.startsWith('#')) {
+                  return;
+                }
+                event.preventDefault();
+                void window.cardbushDesktop?.openExternal?.(href);
+              }}
+            >
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    );
   }
 
   return { default: MarkdownRenderer };
@@ -211,6 +242,145 @@ type QuickLoadPayload = {
   kind: 'text' | 'file' | 'folder';
   title: string;
   value: string;
+};
+
+type CardlingScenePlacement = 'top' | 'right' | 'bottom' | 'left';
+type CardlingSceneMood = 'explain' | 'ask' | 'confirm' | 'warn' | 'celebrate';
+
+type CardlingSceneAnchor = {
+  nodeId?: string;
+  selector?: string;
+  placement: CardlingScenePlacement;
+  offset: { x: number; y: number };
+};
+
+type CardlingScene = {
+  sceneId: string;
+  title: string;
+  html: string;
+  sourceExecutionId?: string;
+  sessionId?: string;
+  turnId?: string;
+  cardling: {
+    mode: 'embedded' | 'floating';
+    speech: string;
+    mood: CardlingSceneMood;
+    anchor?: CardlingSceneAnchor;
+    position?: string | { x: number; y: number };
+  };
+  nodes: Array<{
+    nodeId: string;
+    label?: string;
+    purpose?: string;
+  }>;
+  expectedUserAction?: {
+    type?: string;
+    required?: boolean;
+  };
+  raw: Record<string, unknown>;
+};
+
+type CardlingSceneStep = {
+  id: string;
+  nodeId?: string;
+  title?: string;
+  speech: string;
+  holdMs: number;
+};
+
+type CardlingSceneFeedback = {
+  id: string;
+  nodeId: string;
+  stepId?: string;
+  nodeLabel: string;
+  text: string;
+  createdAt: string;
+};
+
+type SceneRuntimeEventType =
+  | 'scene_ready'
+  | 'scene_health'
+  | 'scene_error'
+  | 'node_click'
+  | 'node_drag_start'
+  | 'node_drag_end'
+  | 'node_reorder'
+  | 'selection_change'
+  | 'state_change'
+  | 'route_update'
+  | 'request_llm_action'
+  | 'scene_toast'
+  | 'form_submit'
+  | 'external_url'
+  | 'confirm'
+  | 'cancel';
+
+type SceneRuntimeNodeState = {
+  nodeId: string;
+  label?: string;
+  status?: string;
+  order: number;
+  values: Record<string, string>;
+};
+
+type SceneRuntimeEdgeState = {
+  from: string;
+  to: string;
+  status?: string;
+};
+
+type SceneRuntimeUserEvent = {
+  id: string;
+  type: SceneRuntimeEventType | string;
+  nodeId?: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+type SceneRuntimeState = {
+  selectedNodeId?: string;
+  nodes: SceneRuntimeNodeState[];
+  edges: SceneRuntimeEdgeState[];
+  userEvents: SceneRuntimeUserEvent[];
+  updatedAt: string;
+};
+
+type SceneHealthIssue = {
+  code: string;
+  message: string;
+  severity: 'info' | 'warning' | 'error';
+};
+
+type SceneHealthReport = {
+  ok: boolean;
+  checkedAt: string;
+  renderedNodeCount: number;
+  declaredNodeCount: number;
+  missingNodeIds: string[];
+  placeholderCount: number;
+  blank: boolean;
+  scriptErrors: string[];
+  issues: SceneHealthIssue[];
+};
+
+const sceneRuntimeEventTypes = new Set<string>([
+  'node_drag_start',
+  'node_drag_end',
+  'node_reorder',
+  'selection_change',
+  'state_change',
+  'route_update',
+  'request_llm_action',
+  'scene_toast',
+]);
+
+type SceneEventStatus = 'idle' | 'sending' | 'continuing' | 'recorded' | 'failed';
+type SceneEventDelivery = 'guidance' | 'recorded' | '';
+
+type SceneAnchorRect = {
+  nodeId: string;
+  rect: { left: number; top: number; width: number; height: number };
+  tone?: 'dark' | 'light';
 };
 
 type ProjectEntry = {
@@ -1399,9 +1569,9 @@ function CardlingCompanion({
       data-motion={settings.motion}
     >
       {open && (
-        <section className="cardling-panel" aria-label="Cardling status">
+        <section className="cardling-panel" aria-label={language === 'zh' ? '卡布状态' : 'Kabu status'}>
           <header>
-            <strong>{language === 'zh' ? '卡灵' : 'Cardling'}</strong>
+            <strong>{language === 'zh' ? '卡布' : 'Kabu'}</strong>
             <span>{labels.detail}</span>
           </header>
           <div className="cardling-status-row">
@@ -1468,7 +1638,7 @@ function CardlingCompanion({
       <button
         className="cardling-badge"
         type="button"
-        aria-label={language === 'zh' ? '卡灵状态' : 'Cardling status'}
+        aria-label={language === 'zh' ? '卡布状态' : 'Kabu status'}
         title={labels.title}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -3147,10 +3317,113 @@ function ChatPanel({
   const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
   const [projectEntries, setProjectEntries] = useState<ProjectEntry[]>([]);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
+  const [activeScene, setActiveScene] = useState<CardlingScene | null>(null);
+  const [availableScene, setAvailableScene] = useState<CardlingScene | null>(null);
+  const [activeSceneInitialAutoPlay, setActiveSceneInitialAutoPlay] = useState(false);
+  const activeSceneKeyRef = useRef('');
+  const activeSceneRevisionRef = useRef('');
+  const dismissedSceneKeysRef = useRef(new Set<string>());
+  const autoPlayedSceneKeysRef = useRef(new Set<string>());
+  const streamStatusHeight = sending && !loading && !showWelcome ? 42 : 0;
 
   const setScrollBottomVisible = useCallback((visible: boolean) => {
     showScrollBottomRef.current = visible;
     setShowScrollBottom(visible);
+  }, []);
+
+  const nextSceneInitialAutoPlay = useCallback(
+    (scene: CardlingScene, allowAutoPlay: boolean) => {
+      const key = cardlingSceneKey(scene);
+      if (
+        !allowAutoPlay ||
+        !sceneAutoPlayEnabled(scene) ||
+        autoPlayedSceneKeysRef.current.has(key)
+      ) {
+        return false;
+      }
+      autoPlayedSceneKeysRef.current.add(key);
+      return true;
+    },
+    [],
+  );
+
+  const showScene = useCallback(
+    (scene: CardlingScene, options?: { autoPlay?: boolean; fetchLatest?: boolean }) => {
+      const key = cardlingSceneKey(scene);
+      const revision = cardlingSceneRevisionKey(scene);
+      setAvailableScene((current) =>
+        current && cardlingSceneRevisionKey(current) === revision ? current : scene,
+      );
+      if (activeSceneKeyRef.current !== key) {
+        activeSceneKeyRef.current = key;
+        activeSceneRevisionRef.current = revision;
+        setActiveSceneInitialAutoPlay(
+          nextSceneInitialAutoPlay(scene, Boolean(options?.autoPlay)),
+        );
+        setActiveScene(scene);
+      } else if (activeSceneRevisionRef.current !== revision) {
+        activeSceneRevisionRef.current = revision;
+        setActiveSceneInitialAutoPlay(false);
+        setActiveScene(scene);
+      }
+      if (!options?.fetchLatest || !scene.sessionId?.trim() || !scene.sceneId.trim()) {
+        return;
+      }
+      void fetchSessionScene({
+        sessionId: scene.sessionId,
+        sceneId: scene.sceneId,
+      })
+        .then((record) => {
+          if (!record) {
+            return;
+          }
+          const storedScene = cardlingSceneFromSessionSceneRecord(
+            record,
+            scene.sessionId,
+          );
+          if (!storedScene) {
+            return;
+          }
+          const storedRevision = cardlingSceneRevisionKey(storedScene);
+          setAvailableScene((current) =>
+            current && cardlingSceneRevisionKey(current) === storedRevision
+              ? current
+              : storedScene,
+          );
+          setActiveScene((current) => {
+            if (current?.sceneId !== scene.sceneId) {
+              return current;
+            }
+            if (activeSceneRevisionRef.current === storedRevision) {
+              return current;
+            }
+            activeSceneRevisionRef.current = storedRevision;
+            return storedScene;
+          });
+          if (activeSceneKeyRef.current === key) {
+            activeSceneKeyRef.current = cardlingSceneKey(storedScene);
+          }
+        })
+        .catch(() => undefined);
+    },
+    [nextSceneInitialAutoPlay],
+  );
+
+  const openScene = useCallback((scene: CardlingScene) => {
+    dismissedSceneKeysRef.current.delete(cardlingSceneKey(scene));
+    showScene(scene, { fetchLatest: true });
+  }, [showScene]);
+
+  const closeScene = useCallback(() => {
+    setActiveScene((current) => {
+      if (current) {
+        dismissedSceneKeysRef.current.add(cardlingSceneKey(current));
+      }
+      activeSceneKeyRef.current = '';
+      activeSceneRevisionRef.current = '';
+      return null;
+    });
+    setActiveSceneInitialAutoPlay(false);
   }, []);
 
   const positionMessageAtReadingAnchor = useCallback(
@@ -3167,7 +3440,7 @@ function ChatPanel({
       }
       const scrollerRect = scroller.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
-      const desiredTop = Math.round(scroller.clientHeight * 0.22);
+      const desiredTop = Math.max(72, Math.round(scroller.clientHeight * 0.28));
       const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       const nextTop = Math.max(
         0,
@@ -3176,6 +3449,23 @@ function ChatPanel({
           scroller.scrollTop + itemRect.top - scrollerRect.top - desiredTop,
         ),
       );
+      if (
+        import.meta.env.DEV &&
+        nextTop === 0 &&
+        itemRect.top - scrollerRect.top < desiredTop - 8
+      ) {
+        console.debug('[cardbush:message-anchor]', {
+          messageId,
+          currentScrollTop: Math.round(scroller.scrollTop),
+          nextTop,
+          maxTop,
+          desiredTop,
+          itemTop: Math.round(itemRect.top - scrollerRect.top),
+          itemHeight: Math.round(itemRect.height),
+          scrollerHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+        });
+      }
       scroller.scrollTo({ top: nextTop, behavior: 'auto' });
     },
     [],
@@ -3206,50 +3496,84 @@ function ChatPanel({
   );
 
   const ensureMessageBottomVisible = useCallback(
-    (messageId: string) => {
+    (messageId: string, reason = 'stream') => {
       const scroller = listScrollerRef.current;
       if (!scroller) {
+        debugStreamFollow('missing-scroller', { messageId, reason });
         return;
       }
       const item = scroller.querySelector(
         `[data-message-id="${cssEscape(messageId)}"]`,
       );
       if (!(item instanceof HTMLElement)) {
+        debugStreamFollow('missing-message-node', { messageId, reason });
         return;
       }
       const scrollerRect = scroller.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
       const visibleBottom =
-        scrollerRect.bottom - Math.max(0, composerDockHeight) - 18;
+        scrollerRect.bottom - Math.max(0, composerDockHeight) - streamStatusHeight - 18;
       if (itemRect.bottom <= visibleBottom) {
+        debugStreamFollow('already-visible', {
+          messageId,
+          reason,
+          itemBottom: Math.round(itemRect.bottom - scrollerRect.top),
+          visibleBottom: Math.round(visibleBottom - scrollerRect.top),
+          scrollTop: Math.round(scroller.scrollTop),
+        });
         return;
       }
+      const delta = Math.ceil(itemRect.bottom - visibleBottom);
+      debugStreamFollow('scroll-message-bottom', {
+        messageId,
+        reason,
+        delta,
+        itemBottom: Math.round(itemRect.bottom - scrollerRect.top),
+        visibleBottom: Math.round(visibleBottom - scrollerRect.top),
+        scrollTop: Math.round(scroller.scrollTop),
+        scrollHeight: Math.round(scroller.scrollHeight),
+      });
       scroller.scrollBy({
-        top: Math.ceil(itemRect.bottom - visibleBottom),
+        top: delta,
         behavior: 'auto',
       });
     },
-    [composerDockHeight],
+    [composerDockHeight, streamStatusHeight],
   );
 
   const scheduleActiveAssistantFollow = useCallback(
-    (messageId: string) => {
+    (messageId: string, index: number, reason = 'stream') => {
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
-      programmaticScrollUntilRef.current = Date.now() + 500;
+      programmaticScrollUntilRef.current = Date.now() + 900;
+      debugStreamFollow('schedule', { messageId, index, reason });
       streamScrollFrameRef.current = window.requestAnimationFrame(() => {
         streamScrollFrameRef.current = null;
-        ensureMessageBottomVisible(messageId);
+        if (index >= 0) {
+          listRef.current?.scrollToIndex({
+            index,
+            align: 'end',
+            behavior: 'auto',
+          });
+        }
+        window.requestAnimationFrame(() => {
+          ensureMessageBottomVisible(messageId, reason);
+        });
       });
     },
     [ensureMessageBottomVisible],
   );
 
-  const markUserDetachedFromBottom = useCallback(() => {
+  const markUserDetachedFromBottom = useCallback((reason = 'user-scroll') => {
     userDetachedFromBottomRef.current = true;
     autoFollowStreamRef.current = false;
     pendingSubmittedUserFocusRef.current = false;
+    debugStreamFollow('user-detached', {
+      reason,
+      atBottom: atBottomRef.current,
+      sending,
+    });
     if (!atBottomRef.current) {
       setScrollBottomVisible(true);
       return;
@@ -3259,7 +3583,69 @@ function ChatPanel({
         setScrollBottomVisible(true);
       }
     });
-  }, [setScrollBottomVisible]);
+  }, [sending, setScrollBottomVisible]);
+
+  const lockStreamFollow = useCallback(
+    (reason: string) => {
+      autoFollowStreamRef.current = true;
+      userDetachedFromBottomRef.current = false;
+      pendingSubmittedUserFocusRef.current = false;
+      setScrollBottomVisible(false);
+      debugStreamFollow('lock', { reason });
+    },
+    [setScrollBottomVisible],
+  );
+
+  const maybeLockStreamFollowFromScroll = useCallback(
+    (scroller: HTMLElement, reason: string) => {
+      if (!sending) {
+        return;
+      }
+      const activeAssistant = streamingAssistantMessage(messages, activeTurnId);
+      const nearBottom = isScrollerNearBottom(scroller);
+      const activeTailVisible = activeAssistant
+        ? isMessageTailVisible(scroller, activeAssistant.message.id, {
+            composerDockHeight,
+            streamStatusHeight,
+            tolerance: 36,
+          })
+        : false;
+      debugStreamFollow('scroll-check', {
+        reason,
+        nearBottom,
+        activeTailVisible,
+        locked: autoFollowStreamRef.current,
+        detached: userDetachedFromBottomRef.current,
+        programmatic: Date.now() < programmaticScrollUntilRef.current,
+        scrollTop: Math.round(scroller.scrollTop),
+        scrollHeight: Math.round(scroller.scrollHeight),
+        clientHeight: Math.round(scroller.clientHeight),
+        activeMessageId: activeAssistant?.message.id ?? '',
+      });
+      if (nearBottom || activeTailVisible) {
+        lockStreamFollow(nearBottom ? `${reason}:bottom` : `${reason}:active-tail`);
+        return;
+      }
+      if (
+        Date.now() >= programmaticScrollUntilRef.current &&
+        (autoFollowStreamRef.current || !userDetachedFromBottomRef.current)
+      ) {
+        autoFollowStreamRef.current = false;
+        userDetachedFromBottomRef.current = true;
+        pendingSubmittedUserFocusRef.current = false;
+        setScrollBottomVisible(true);
+        debugStreamFollow('unlock', { reason });
+      }
+    },
+    [
+      activeTurnId,
+      composerDockHeight,
+      lockStreamFollow,
+      messages,
+      sending,
+      streamStatusHeight,
+    ],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -3356,6 +3742,74 @@ function ChatPanel({
   ]);
 
   useEffect(() => {
+    let cancelled = false;
+    setActiveScene(null);
+    setAvailableScene(null);
+    setActiveSceneInitialAutoPlay(false);
+    activeSceneKeyRef.current = '';
+    activeSceneRevisionRef.current = '';
+    if (!activeConversationId.trim()) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    async function loadLatestStoredScene() {
+      const records = await fetchSessionScenes(activeConversationId).catch(() => []);
+      if (cancelled || records.length === 0) {
+        return;
+      }
+      let latestRecord = latestSessionSceneRecord(records);
+      if (!latestRecord) {
+        return;
+      }
+      if (!hasSceneHtml(latestRecord.raw)) {
+        latestRecord =
+          (await fetchSessionScene({
+            sessionId: activeConversationId,
+            sceneId: latestRecord.sceneId,
+          }).catch(() => null)) ?? latestRecord;
+      }
+      if (cancelled) {
+        return;
+      }
+      const latestScene = cardlingSceneFromSessionSceneRecord(
+        latestRecord,
+        activeConversationId,
+      );
+      if (!latestScene) {
+        return;
+      }
+      setAvailableScene(latestScene);
+    }
+    void loadLatestStoredScene();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    const latestScene = latestCardlingSceneFromMessages(messages);
+    if (!latestScene) {
+      return;
+    }
+    const key = cardlingSceneKey(latestScene);
+    setAvailableScene(latestScene);
+    if (activeSceneKeyRef.current === key) {
+      showScene(latestScene);
+      return;
+    }
+    const sceneTurnId = latestScene.turnId?.trim() ?? '';
+    const currentTurnId = activeTurnId.trim();
+    if (!sending || !sceneTurnId || !currentTurnId || sceneTurnId !== currentTurnId) {
+      return;
+    }
+    if (dismissedSceneKeysRef.current.has(key)) {
+      return;
+    }
+    showScene(latestScene, { autoPlay: true });
+  }, [activeTurnId, messages, sending, showScene]);
+
+  useEffect(() => {
     if (
       loading ||
       showWelcome ||
@@ -3365,17 +3819,17 @@ function ChatPanel({
       return;
     }
     const activeAssistant =
-      messages.find(
-        (message) =>
-          message.role === 'assistant' &&
-          activeTurnId.trim() !== '' &&
-          message.turnId?.trim() === activeTurnId.trim(),
-      ) ??
-      [...messages].reverse().find((message) => message.role === 'assistant');
+      streamingAssistantMessage(messages, activeTurnId) ??
+      lastAssistantMessage(messages);
     if (!activeAssistant) {
+      debugStreamFollow('skip-no-active-assistant', { activeTurnId });
       return;
     }
-    scheduleActiveAssistantFollow(activeAssistant.id);
+    scheduleActiveAssistantFollow(
+      activeAssistant.message.id,
+      activeAssistant.index,
+      'stream-update',
+    );
   }, [
     activeTurnId,
     loading,
@@ -3430,20 +3884,40 @@ function ChatPanel({
     [draft, onDraftChange, onRemoveQueuedMessage],
   );
 
+  const forceListToAbsoluteBottom = useCallback(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) {
+      return;
+    }
+    scroller.scrollTop = scroller.scrollHeight;
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     if (messages.length === 0) {
       return;
     }
-    programmaticScrollUntilRef.current = Date.now() + 800;
+    programmaticScrollUntilRef.current = Date.now() + 1400;
     autoFollowStreamRef.current = true;
     userDetachedFromBottomRef.current = false;
     pendingSubmittedUserFocusRef.current = false;
-    listRef.current?.scrollTo({
-      top: Number.MAX_SAFE_INTEGER,
-      behavior: 'smooth',
-    });
+    atBottomRef.current = true;
     setScrollBottomVisible(false);
-  }, [messages.length, setScrollBottomVisible]);
+
+    const lastIndex = messages.length - 1;
+    listRef.current?.scrollToIndex({
+      index: lastIndex,
+      align: 'end',
+      behavior: 'auto',
+    });
+    forceListToAbsoluteBottom();
+    window.requestAnimationFrame(() => {
+      forceListToAbsoluteBottom();
+      window.requestAnimationFrame(() => {
+        forceListToAbsoluteBottom();
+        window.setTimeout(forceListToAbsoluteBottom, 40);
+      });
+    });
+  }, [forceListToAbsoluteBottom, messages.length, setScrollBottomVisible]);
 
   const handleComposerSend = useCallback(
     async (text: string) => {
@@ -3469,6 +3943,7 @@ function ChatPanel({
 
   const chatBodyStyle = {
     '--composer-dock-height': `${composerDockHeight}px`,
+    '--stream-status-height': `${streamStatusHeight}px`,
   } as CSSProperties;
 
   return (
@@ -3538,14 +4013,13 @@ function ChatPanel({
             scrollerRef={(ref) => {
               listScrollerRef.current = ref instanceof HTMLElement ? ref : null;
             }}
-            onWheelCapture={markUserDetachedFromBottom}
-            onTouchStartCapture={markUserDetachedFromBottom}
+            onWheelCapture={() => markUserDetachedFromBottom('wheel')}
+            onTouchStartCapture={() => markUserDetachedFromBottom('touch')}
             atBottomStateChange={(atBottom) => {
               atBottomRef.current = atBottom;
+              debugStreamFollow('at-bottom-change', { atBottom });
               if (atBottom) {
-                autoFollowStreamRef.current = true;
-                userDetachedFromBottomRef.current = false;
-                setScrollBottomVisible(false);
+                lockStreamFollow('virtuoso-bottom');
                 return;
               }
               if (
@@ -3557,8 +4031,17 @@ function ChatPanel({
               }
               setScrollBottomVisible(userDetachedFromBottomRef.current);
             }}
-            itemContent={(_, message) => (
-              <div data-message-id={message.id} data-message-role={message.role}>
+            onScrollCapture={(event) => {
+              if (event.currentTarget instanceof HTMLElement) {
+                maybeLockStreamFollowFromScroll(event.currentTarget, 'scroll');
+              }
+            }}
+            itemContent={(index, message) => (
+              <div
+                className={`message-list-item ${index === 0 ? 'first' : ''}`}
+                data-message-id={message.id}
+                data-message-role={message.role}
+              >
                 <MessageBubble
                   key={message.id}
                   message={message}
@@ -3569,10 +4052,17 @@ function ChatPanel({
                   onEditUserMessage={onEditUserMessage}
                   onGuideMessage={onGuideMessage}
                   onRevertChangeReport={onRevertChangeReport}
+                  onOpenScene={openScene}
                 />
               </div>
             )}
           />
+        )}
+        {sending && !loading && !showWelcome && (
+          <div className="stream-status-pill" aria-live="polite">
+            <LoaderCircle size={14} />
+            <span>{language === 'zh' ? 'LLM 正在思考' : 'LLM thinking'}</span>
+          </div>
         )}
         <button
           className={`scroll-bottom ${
@@ -3596,6 +4086,28 @@ function ChatPanel({
               onGuideQueuedMessage(queuedId, 'append_context')
             }
           />
+        )}
+        {activeScene && (
+          <CardlingSceneHost
+            scene={activeScene}
+            language={language}
+            initialAutoPlay={activeSceneInitialAutoPlay}
+            llmRunning={sending}
+            activeTurnId={activeTurnId}
+            onSendFeedbackToLlm={onSend}
+            onClose={closeScene}
+          />
+        )}
+        {!activeScene && availableScene && !loading && (
+          <button
+            className="scene-reopen-button"
+            type="button"
+            onClick={() => openScene(availableScene)}
+            title={language === 'zh' ? '继续交互场景' : 'Continue interactive scene'}
+          >
+            <Sparkles size={15} />
+            <span>{language === 'zh' ? '继续场景' : 'Scene'}</span>
+          </button>
         )}
         {!showWelcome && !loading && (
           <div className="composer-dock" ref={composerDockRef}>
@@ -3647,6 +4159,2500 @@ function ChatPanel({
 
 function MessageListFooter() {
   return <div className="message-list-footer" />;
+}
+
+function streamingAssistantMessage(messages: ChatMessage[], activeTurnId: string) {
+  const normalizedTurnId = activeTurnId.trim();
+  if (!normalizedTurnId) {
+    return null;
+  }
+  const index = messages.findIndex(
+    (message) =>
+      message.role === 'assistant' &&
+      message.turnId?.trim() === normalizedTurnId,
+  );
+  if (index < 0) {
+    return null;
+  }
+  return { message: messages[index], index };
+}
+
+function lastAssistantMessage(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === 'assistant') {
+      return { message, index };
+    }
+  }
+  return null;
+}
+
+function isScrollerNearBottom(scroller: HTMLElement) {
+  const distance =
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  return distance <= 72;
+}
+
+function isMessageTailVisible(
+  scroller: HTMLElement,
+  messageId: string,
+  options: {
+    composerDockHeight: number;
+    streamStatusHeight: number;
+    tolerance: number;
+  },
+) {
+  const item = scroller.querySelector(
+    `[data-message-id="${cssEscape(messageId)}"]`,
+  );
+  if (!(item instanceof HTMLElement)) {
+    return false;
+  }
+  const scrollerRect = scroller.getBoundingClientRect();
+  const itemRect = item.getBoundingClientRect();
+  const visibleBottom =
+    scrollerRect.bottom -
+    Math.max(0, options.composerDockHeight) -
+    Math.max(0, options.streamStatusHeight) -
+    18 +
+    options.tolerance;
+  return itemRect.bottom <= visibleBottom && itemRect.bottom >= scrollerRect.top + 36;
+}
+
+function debugStreamFollow(event: string, details: Record<string, unknown>) {
+  if (!import.meta.env.DEV) {
+    return;
+  }
+  console.debug('[cardbush:stream-follow]', event, details);
+}
+
+function CardlingSceneHost({
+  scene,
+  language,
+  initialAutoPlay,
+  llmRunning,
+  activeTurnId,
+  onSendFeedbackToLlm,
+  onClose,
+}: {
+  scene: CardlingScene;
+  language: AppLanguage;
+  initialAutoPlay: boolean;
+  llmRunning: boolean;
+  activeTurnId: string;
+  onSendFeedbackToLlm: (text: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const sceneHostRef = useRef<HTMLElement | null>(null);
+  const sceneInspectorRef = useRef<HTMLElement | null>(null);
+  const sceneNodeListRef = useRef<HTMLDivElement | null>(null);
+  const sceneFeedbackRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [anchorRect, setAnchorRect] = useState<SceneAnchorRect | null>(null);
+  const [comment, setComment] = useState('');
+  const [feedbackQueue, setFeedbackQueue] = useState<CardlingSceneFeedback[]>([]);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [eventStatus, setEventStatus] = useState<SceneEventStatus>('idle');
+  const [sceneState, setSceneState] = useState<SceneRuntimeState>(() =>
+    initialSceneRuntimeState(scene),
+  );
+  const [sceneHealth, setSceneHealth] = useState<SceneHealthReport>(() =>
+    initialSceneHealth(scene),
+  );
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [freeTalkMode, setFreeTalkMode] = useState(false);
+  const [kabuDialogOpen, setKabuDialogOpen] = useState(false);
+  const [kabuDraft, setKabuDraft] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [decisionSubmitting, setDecisionSubmitting] = useState<
+    'confirm' | 'cancel' | ''
+  >('');
+  const lastSceneHealthKeyRef = useRef('');
+  const srcDoc = useMemo(() => buildSceneSrcDoc(scene), [scene]);
+  const sceneSteps = useMemo(
+    () => buildCardlingSceneSteps(scene, language),
+    [language, scene],
+  );
+  const [selectedNodeId, setSelectedNodeId] = useState(() =>
+    initialSceneSelectedNodeId(scene, sceneSteps),
+  );
+  const [activeStepIndex, setActiveStepIndex] = useState(0);
+  const [typedSpeech, setTypedSpeech] = useState('');
+  const [playbackRunning, setPlaybackRunning] = useState(initialAutoPlay);
+  const activeStep =
+    sceneSteps[Math.min(activeStepIndex, Math.max(0, sceneSteps.length - 1))];
+  const activeStepNodeId = activeStep?.nodeId?.trim() ?? '';
+  const activeSpeech = freeTalkMode
+    ? language === 'zh'
+      ? '自由对话已开启。你可以直接测试这个 HTML 页面，点击不会切换反馈节点；点我可以聊整个场景。'
+      : 'Free chat is on. You can test this HTML page directly; clicks will not retarget feedback nodes. Click me to discuss the whole scene.'
+    : activeStep?.speech || scene.cardling.speech;
+  const displayedSpeech = typedSpeech || (playbackRunning ? '' : activeSpeech);
+  const embedded = scene.cardling.mode === 'embedded';
+  const anchoredNodeId =
+    activeStep != null
+      ? activeStepNodeId || selectedNodeId
+      : selectedNodeId ||
+        anchorRect?.nodeId ||
+        scene.cardling.anchor?.nodeId ||
+        scene.nodes[0]?.nodeId ||
+        '';
+  const currentNodeId = freeTalkMode ? '' : anchoredNodeId;
+  const cardlingAnchorRect =
+    freeTalkMode || (activeStep != null && !activeStepNodeId) ? null : anchorRect;
+  const expectedAction = scene.expectedUserAction?.type?.trim() ?? '';
+  const showDecisionActions =
+    scene.expectedUserAction?.required ||
+    expectedAction === 'confirm' ||
+    expectedAction === 'decision' ||
+    expectedAction === 'approval';
+  const activeTurnMatchesScene =
+    !activeTurnId.trim() ||
+    !scene.turnId?.trim() ||
+    activeTurnId.trim() === scene.turnId.trim();
+  const sceneLlmRunning = llmRunning && activeTurnMatchesScene;
+  const sceneWorkActive =
+    sceneLlmRunning || eventStatus === 'sending' || eventStatus === 'continuing';
+
+  useEffect(() => {
+    const host = sceneHostRef.current;
+    const inspector = sceneInspectorRef.current;
+    if (!host || !inspector) {
+      return undefined;
+    }
+    let frame = 0;
+    const report = () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        const feedback = sceneFeedbackRef.current;
+        const nodeList = sceneNodeListRef.current;
+        const actions = feedback?.querySelector('.scene-feedback-actions');
+        const hostRect = host.getBoundingClientRect();
+        const inspectorRect = inspector.getBoundingClientRect();
+        const actionsRect =
+          actions instanceof HTMLElement ? actions.getBoundingClientRect() : null;
+        const actionClipped =
+          actionsRect != null && actionsRect.bottom > inspectorRect.bottom + 1;
+        const inspectorNeedsScroll =
+          inspector.scrollHeight > inspector.clientHeight + 1;
+        const hostNeedsScroll =
+          host.scrollHeight > host.clientHeight + 1 ||
+          host.scrollWidth > host.clientWidth + 1;
+        if (!actionClipped && !inspectorNeedsScroll && !hostNeedsScroll) {
+          return;
+        }
+        console.debug('[cardbush:scene-layout]', {
+          sceneId: scene.sceneId,
+          window: {
+            width: window.innerWidth,
+            height: window.innerHeight,
+          },
+          host: {
+            width: Math.round(hostRect.width),
+            height: Math.round(hostRect.height),
+            clientWidth: host.clientWidth,
+            clientHeight: host.clientHeight,
+            scrollWidth: host.scrollWidth,
+            scrollHeight: host.scrollHeight,
+          },
+          inspector: {
+            top: Math.round(inspectorRect.top),
+            bottom: Math.round(inspectorRect.bottom),
+            clientHeight: inspector.clientHeight,
+            scrollHeight: inspector.scrollHeight,
+            scrollTop: inspector.scrollTop,
+          },
+          nodeList: nodeList
+            ? {
+                clientHeight: nodeList.clientHeight,
+                scrollHeight: nodeList.scrollHeight,
+              }
+            : null,
+          feedback: feedback
+            ? {
+                clientHeight: feedback.clientHeight,
+                scrollHeight: feedback.scrollHeight,
+              }
+            : null,
+          actionsBottom: actionsRect ? Math.round(actionsRect.bottom) : null,
+          actionClipped,
+        });
+      });
+    };
+    const observer = new ResizeObserver(report);
+    observer.observe(host);
+    observer.observe(inspector);
+    if (sceneNodeListRef.current) {
+      observer.observe(sceneNodeListRef.current);
+    }
+    if (sceneFeedbackRef.current) {
+      observer.observe(sceneFeedbackRef.current);
+    }
+    window.addEventListener('resize', report);
+    report();
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+      observer.disconnect();
+      window.removeEventListener('resize', report);
+    };
+  }, [
+    error,
+    eventStatus,
+    feedbackQueue.length,
+    scene.sceneId,
+    showDecisionActions,
+    notice,
+  ]);
+
+  const sceneNodeById = useMemo(() => {
+    return new Map(scene.nodes.map((node) => [node.nodeId, node]));
+  }, [scene.nodes]);
+  const sceneNavigationItems = useMemo(() => {
+    const addedNodeIds = new Set<string>();
+    const items = sceneSteps.map((step, index) => {
+      const node = step.nodeId ? sceneNodeById.get(step.nodeId) : undefined;
+      if (step.nodeId) {
+        addedNodeIds.add(step.nodeId);
+      }
+      return {
+        key: step.nodeId ? `node:${step.nodeId}` : `step:${step.id}`,
+        nodeId: step.nodeId ?? '',
+        stepId: step.id,
+        stepIndex: index,
+        label:
+          step.title ||
+          node?.label ||
+          (step.nodeId
+            ? step.nodeId
+            : language === 'zh'
+              ? '整体设计概述'
+              : 'Design overview'),
+        purpose:
+          step.nodeId
+            ? node?.purpose || step.speech
+            : step.speech || (language === 'zh' ? '整体说明' : 'Overview'),
+        overview: !step.nodeId,
+      };
+    });
+    for (const node of scene.nodes) {
+      if (addedNodeIds.has(node.nodeId)) {
+        continue;
+      }
+      items.push({
+        key: `node:${node.nodeId}`,
+        nodeId: node.nodeId,
+        stepId: '',
+        stepIndex: -1,
+        label: node.label || node.nodeId,
+        purpose: node.purpose || '',
+        overview: false,
+      });
+    }
+    return items;
+  }, [language, scene.nodes, sceneNodeById, sceneSteps]);
+  const currentFeedbackTargetKey =
+    freeTalkMode
+      ? 'free_chat'
+      : currentNodeId
+        ? `node:${currentNodeId}`
+        : `step:${activeStep?.id ?? 'overview'}`;
+  const currentFeedbackStepId = freeTalkMode
+    ? 'free_chat'
+    : activeStep?.id ?? 'overview';
+  const feedbackCountByTarget = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of feedbackQueue) {
+      const key = item.nodeId ? `node:${item.nodeId}` : `step:${item.stepId ?? 'overview'}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [feedbackQueue]);
+  const currentNodeLabel =
+    freeTalkMode
+      ? language === 'zh'
+        ? '自由对话'
+        : 'Free chat'
+      : sceneNodeById.get(currentNodeId)?.label ||
+        activeStep?.title ||
+        currentNodeId ||
+        (language === 'zh' ? '整体场景' : 'Overall scene');
+
+  const requestAnchorRect = useCallback(
+    (nodeId = currentNodeId, options?: { reveal?: boolean }) => {
+      const targetNodeId = nodeId.trim();
+      if (!targetNodeId) {
+        setAnchorRect(null);
+        return;
+      }
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          source: 'cardbush-scene-host',
+          type: 'set_anchor',
+          sceneId: scene.sceneId,
+          reveal: options?.reveal === true,
+          anchor: {
+            nodeId: targetNodeId,
+            selector: scene.cardling.anchor?.selector,
+          },
+        },
+        '*',
+      );
+    },
+    [currentNodeId, scene.cardling.anchor?.selector, scene.sceneId],
+  );
+
+  const syncSceneInteractionMode = useCallback(
+    (freeMode = freeTalkMode) => {
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          source: 'cardbush-scene-host',
+          type: 'set_interaction_mode',
+          sceneId: scene.sceneId,
+          mode: freeMode ? 'free_chat' : 'node',
+        },
+        '*',
+      );
+    },
+    [freeTalkMode, scene.sceneId],
+  );
+
+  useEffect(() => {
+    syncSceneInteractionMode();
+    if (freeTalkMode) {
+      setAnchorRect(null);
+    }
+  }, [freeTalkMode, syncSceneInteractionMode]);
+
+  const activateSceneStep = useCallback(
+    (index: number, play = false) => {
+      if (sceneSteps.length === 0) {
+        return;
+      }
+      const nextIndex = Math.min(Math.max(index, 0), sceneSteps.length - 1);
+      const nextStep = sceneSteps[nextIndex];
+      setActiveStepIndex(nextIndex);
+      setTypedSpeech('');
+      setPlaybackRunning(play);
+      if (nextStep?.nodeId) {
+        setSelectedNodeId(nextStep.nodeId);
+        window.requestAnimationFrame(() =>
+          requestAnchorRect(nextStep.nodeId, { reveal: true }),
+        );
+      } else {
+        setSelectedNodeId('');
+        setAnchorRect(null);
+      }
+    },
+    [requestAnchorRect, sceneSteps],
+  );
+
+  const activateSceneNode = useCallback(
+    (nodeId: string, play = false) => {
+      const stepIndex = sceneSteps.findIndex((step) => step.nodeId === nodeId);
+      if (stepIndex >= 0) {
+        activateSceneStep(stepIndex, play);
+        return;
+      }
+      const node = scene.nodes.find((candidate) => candidate.nodeId === nodeId);
+      setSelectedNodeId(nodeId);
+      setTypedSpeech(nodePurposeSpeech(node, language));
+      setPlaybackRunning(false);
+      window.requestAnimationFrame(() => requestAnchorRect(nodeId, { reveal: true }));
+    },
+    [activateSceneStep, language, requestAnchorRect, scene.nodes, sceneSteps],
+  );
+
+  const restartScenePlayback = useCallback(() => {
+    activateSceneStep(0, true);
+  }, [activateSceneStep]);
+
+  const toggleScenePlayback = useCallback(() => {
+    if (playbackRunning) {
+      setPlaybackRunning(false);
+      return;
+    }
+    if (activeStep && typedSpeech.length >= activeStep.speech.length) {
+      if (activeStepIndex >= sceneSteps.length - 1) {
+        restartScenePlayback();
+        return;
+      }
+      activateSceneStep(activeStepIndex + 1, true);
+      return;
+    }
+    setPlaybackRunning(true);
+  }, [
+    activeStep,
+    activeStepIndex,
+    activateSceneStep,
+    playbackRunning,
+    restartScenePlayback,
+    sceneSteps.length,
+    typedSpeech.length,
+  ]);
+
+  const toggleFreeTalkMode = useCallback(() => {
+    const next = !freeTalkMode;
+    setFreeTalkMode(next);
+    setKabuDialogOpen(next);
+    setTypedSpeech('');
+    setPlaybackRunning(false);
+    syncSceneInteractionMode(next);
+    if (next) {
+      setSelectedNodeId('');
+      setAnchorRect(null);
+      return;
+    }
+    const nodeId = activeStep?.nodeId?.trim() || selectedNodeId;
+    if (nodeId) {
+      window.requestAnimationFrame(() => requestAnchorRect(nodeId, { reveal: true }));
+    }
+  }, [
+    activeStep?.nodeId,
+    freeTalkMode,
+    requestAnchorRect,
+    selectedNodeId,
+    syncSceneInteractionMode,
+  ]);
+
+  useEffect(() => {
+    setAnchorRect(null);
+    setSelectedNodeId(initialSceneSelectedNodeId(scene, sceneSteps));
+    setActiveStepIndex(0);
+    setTypedSpeech('');
+    setPlaybackRunning(initialAutoPlay && sceneSteps.length > 0);
+    setComment('');
+    setFeedbackQueue([]);
+    setNotice('');
+    setError('');
+    setEventStatus('idle');
+    setSceneState(initialSceneRuntimeState(scene));
+    setSceneHealth(initialSceneHealth(scene));
+    setInspectorCollapsed(false);
+    setFreeTalkMode(false);
+    setKabuDialogOpen(false);
+    setKabuDraft('');
+    lastSceneHealthKeyRef.current = '';
+    setDecisionSubmitting('');
+  }, [initialAutoPlay, scene, sceneSteps]);
+
+  useEffect(() => {
+    if (sceneSteps.length === 0) {
+      return;
+    }
+    setActiveStepIndex((index) => Math.min(index, sceneSteps.length - 1));
+  }, [sceneSteps.length]);
+
+  useEffect(() => {
+    if (freeTalkMode) {
+      setAnchorRect(null);
+      return;
+    }
+    if (!activeStep?.nodeId) {
+      setAnchorRect(null);
+      return;
+    }
+    setSelectedNodeId(activeStep.nodeId);
+    const frame = window.requestAnimationFrame(() =>
+      requestAnchorRect(activeStep.nodeId, { reveal: true }),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeStep?.id, activeStep?.nodeId, freeTalkMode, requestAnchorRect]);
+
+  const recordSceneRuntimeEvent = useCallback(
+    (
+      type: SceneRuntimeEventType | string,
+      payload: Record<string, unknown>,
+      nodeId = '',
+    ) => {
+      setSceneState((current) =>
+        appendSceneRuntimeEvent(current, {
+          id: `scene-event-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          type,
+          nodeId: nodeId || undefined,
+          payload,
+          createdAt: new Date().toISOString(),
+        }),
+      );
+    },
+    [],
+  );
+
+  const applyBridgeRuntimeState = useCallback(
+    (value: unknown) => {
+      if (value == null) {
+        return;
+      }
+      setSceneState((current) =>
+        mergeSceneRuntimeState(
+          current,
+          normalizeSceneRuntimeState(value, scene, current),
+        ),
+      );
+    },
+    [scene],
+  );
+
+  const applyBridgeHealth = useCallback(
+    (value: unknown, trigger: string) => {
+      if (value == null) {
+        return;
+      }
+      const health = normalizeSceneHealth(value, scene);
+      setSceneHealth(health);
+      const key = sceneHealthKey(health);
+      if (key === lastSceneHealthKeyRef.current || health.ok) {
+        return;
+      }
+      lastSceneHealthKeyRef.current = key;
+      void sendSceneUserEvent(scene, {
+        event: 'scene_health',
+        values: { health },
+        metadata: {
+          kind: 'scene_health',
+          trigger,
+        },
+      }).catch(() => undefined);
+    },
+    [scene],
+  );
+
+  useEffect(() => {
+    const speech = activeStep?.speech ?? '';
+    if (!playbackRunning || !speech) {
+      return;
+    }
+    if (typedSpeech.length >= speech.length) {
+      if (activeStepIndex >= sceneSteps.length - 1) {
+        setPlaybackRunning(false);
+        return;
+      }
+      const timeout = window.setTimeout(
+        () => activateSceneStep(activeStepIndex + 1, true),
+        activeStep?.holdMs ?? 850,
+      );
+      return () => window.clearTimeout(timeout);
+    }
+    const chunkSize = speech.length > 140 ? 2 : 1;
+    const timeout = window.setTimeout(() => {
+      setTypedSpeech(speech.slice(0, Math.min(speech.length, typedSpeech.length + chunkSize)));
+    }, 22);
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeStep?.holdMs,
+    activeStep?.speech,
+    activeStepIndex,
+    activateSceneStep,
+    playbackRunning,
+    sceneSteps.length,
+    typedSpeech,
+  ]);
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.source !== iframeRef.current?.contentWindow) {
+        return;
+      }
+      const data = asRecord(event.data);
+      if (data.source !== 'cardbush-scene' || data.sceneId !== scene.sceneId) {
+        return;
+      }
+      const type = String(data.type ?? '');
+      const nodeId = String(data.nodeId ?? currentNodeId).trim();
+      if (
+        freeTalkMode &&
+        [
+          'node_click',
+          'selection_change',
+          'node_drag_start',
+          'node_drag_end',
+          'node_reorder',
+        ].includes(type)
+      ) {
+        return;
+      }
+      if (data.state != null) {
+        applyBridgeRuntimeState(data.state);
+      }
+      if (data.health != null) {
+        applyBridgeHealth(data.health, type || 'bridge');
+      }
+      if (type === 'scene_ready') {
+        if (currentNodeId) {
+          requestAnchorRect(currentNodeId, { reveal: true });
+        } else {
+          setAnchorRect(null);
+        }
+        recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+        void sendSceneUserEvent(scene, {
+          event: 'scene_ready',
+          values: {
+            state: data.state,
+            health: data.health,
+          },
+          metadata: { title: scene.title },
+        }).catch(() => undefined);
+        return;
+      }
+      if (type === 'anchor_rect') {
+        const rect = asRecord(data.rect);
+        setAnchorRect({
+          nodeId: String(data.nodeId ?? currentNodeId),
+          rect: {
+            left: Number(rect.left) || 0,
+            top: Number(rect.top) || 0,
+            width: Number(rect.width) || 0,
+            height: Number(rect.height) || 0,
+          },
+          tone: data.tone === 'light' ? 'light' : 'dark',
+        });
+        return;
+      }
+      if (type === 'anchor_missing') {
+        setAnchorRect(null);
+        return;
+      }
+      if (type === 'scene_health') {
+        recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+        return;
+      }
+      if (type === 'scene_error') {
+        const message = String(data.message ?? data.error ?? '').trim();
+        recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+        if (message) {
+          setError(
+            language === 'zh'
+              ? `场景脚本错误：${message}`
+              : `Scene script error: ${message}`,
+          );
+        }
+        void sendSceneUserEvent(scene, {
+          event: 'scene_error',
+          nodeId,
+          values: {
+            message,
+            stack: String(data.stack ?? ''),
+          },
+          metadata: { kind: 'scene_health' },
+        }).catch(() => undefined);
+        return;
+      }
+      if (type === 'node_click') {
+        if (nodeId) {
+          activateSceneNode(nodeId);
+          recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+          void sendSceneUserEvent(scene, {
+            event: 'node_click',
+            nodeId,
+            values: { state: data.state },
+            metadata: { label: data.label },
+          }).catch(() => undefined);
+        }
+        return;
+      }
+      if (sceneRuntimeEventTypes.has(type)) {
+        recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+        void sendSceneUserEvent(scene, {
+          event: type,
+          nodeId,
+          values: {
+            state: data.state,
+            order: data.order,
+            previous_order: data.previousOrder ?? data.previous_order,
+            values: data.values,
+            action: data.action,
+            route: data.route,
+          },
+          metadata: {
+            kind: 'scene_runtime_event',
+            label: data.label,
+            source: data.source,
+          },
+        })
+          .then(async (response) => {
+            if (
+              type === 'request_llm_action' &&
+              !sceneLlmRunning &&
+              !sceneEventContinuesTurn(response)
+            ) {
+              const prompt = formatSceneActionRunPrompt(scene, data, language);
+              if (prompt) {
+                await onSendFeedbackToLlm(prompt);
+              }
+            }
+          })
+          .catch((caught) => setError(sceneEventError(caught, language)));
+        if (type === 'selection_change' && nodeId) {
+          activateSceneNode(nodeId);
+        }
+        if (type === 'node_reorder') {
+          setNotice(
+            language === 'zh'
+              ? '节点顺序已同步给后端。'
+              : 'Node order synced to the backend.',
+          );
+        }
+        if (type === 'scene_toast') {
+          const message = String(data.message ?? '').trim();
+          if (message) {
+            setNotice(message);
+          }
+        }
+        return;
+      }
+      if (type === 'form_submit') {
+        recordSceneRuntimeEvent(type, asRecord(data), nodeId);
+        void sendSceneUserEvent(scene, {
+          event: 'form_submit',
+          nodeId,
+          values: asRecord(data.values),
+          metadata: { state: data.state },
+        })
+          .then(() =>
+            setNotice(
+              language === 'zh'
+                ? '表单事件已发送给后端'
+                : 'Form event sent to backend',
+            ),
+          )
+          .catch((caught) => setError(sceneEventError(caught, language)));
+        return;
+      }
+      if (type === 'external_url') {
+        const targetUrl = String(data.url ?? '').trim();
+        if (targetUrl) {
+          recordSceneRuntimeEvent(type, { url: targetUrl }, nodeId);
+          void sendSceneUserEvent(scene, {
+            event: 'external_url',
+            metadata: { url: targetUrl },
+          }).catch(() => undefined);
+          void window.cardbushDesktop?.openExternal?.(targetUrl);
+        }
+      }
+    }
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [
+    activateSceneNode,
+    applyBridgeHealth,
+    applyBridgeRuntimeState,
+    currentNodeId,
+    freeTalkMode,
+    language,
+    onSendFeedbackToLlm,
+    recordSceneRuntimeEvent,
+    requestAnchorRect,
+    scene,
+    sceneLlmRunning,
+  ]);
+
+  const addFeedbackToQueue = useCallback(() => {
+    const text = comment.trim();
+    if (!text) {
+      return;
+    }
+    setFeedbackQueue((current) => [
+      ...current,
+      {
+        id: sceneFeedbackId(),
+        nodeId: currentNodeId,
+        stepId: currentNodeId ? undefined : currentFeedbackStepId,
+        nodeLabel: currentNodeLabel,
+        text,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    setComment('');
+    setError('');
+    setEventStatus('idle');
+    setNotice(
+      language === 'zh'
+        ? sceneLlmRunning
+          ? '已加入反馈清单，不会打断 LLM 当前思考。'
+          : '已加入反馈清单，可继续选择节点补充。'
+        : sceneLlmRunning
+          ? 'Added to the feedback list without interrupting the current run.'
+          : 'Added to the feedback list. You can keep reviewing nodes.',
+    );
+  }, [
+    comment,
+    currentFeedbackStepId,
+    currentNodeId,
+    currentNodeLabel,
+    language,
+    sceneLlmRunning,
+  ]);
+
+  const removeFeedback = useCallback((id: string) => {
+    setFeedbackQueue((current) => current.filter((item) => item.id !== id));
+  }, []);
+
+  const submitImmediateComment = useCallback(async () => {
+    const text = comment.trim();
+    if (!text || submitting) {
+      return;
+    }
+    setSubmitting(true);
+    setEventStatus('sending');
+    setError('');
+    try {
+      const feedback: CardlingSceneFeedback = {
+        id: sceneFeedbackId(),
+        nodeId: currentNodeId,
+        stepId: currentNodeId ? undefined : currentFeedbackStepId,
+        nodeLabel: currentNodeLabel,
+        text,
+        createdAt: new Date().toISOString(),
+      };
+      const response = await sendSceneUserEvent(scene, {
+        event: 'comment',
+        nodeId: currentNodeId,
+        text,
+        metadata: {
+          step_id: currentNodeId ? undefined : currentFeedbackStepId,
+          target_key: currentFeedbackTargetKey,
+          target_label: currentNodeLabel,
+          target_kind: freeTalkMode ? 'free_chat' : currentNodeId ? 'node' : 'step',
+        },
+      });
+      const continued =
+        sceneEventContinuesTurn(response) || sceneEventDelivery(response) === 'guidance';
+      if (!sceneLlmRunning && !continued) {
+        await onSendFeedbackToLlm(
+          formatSceneFeedbackRunPrompt(scene, [feedback], language),
+        );
+      }
+      setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
+      setComment('');
+      setNotice(
+        language === 'zh'
+          ? continued || sceneLlmRunning
+            ? '这条反馈已交给 LLM 继续处理。'
+            : '这条反馈已发送给 LLM 处理。'
+          : continued || sceneLlmRunning
+            ? 'This feedback was handed to the running LLM task.'
+            : 'This feedback was sent to the LLM.',
+      );
+    } catch (caught) {
+      setEventStatus('failed');
+      setError(sceneEventError(caught, language));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    comment,
+    currentFeedbackStepId,
+    currentFeedbackTargetKey,
+    currentNodeId,
+    currentNodeLabel,
+    freeTalkMode,
+    language,
+    onSendFeedbackToLlm,
+    scene,
+    sceneLlmRunning,
+    submitting,
+  ]);
+
+  const submitKabuDialog = useCallback(async () => {
+    const text = kabuDraft.trim();
+    if (!text || submitting) {
+      return;
+    }
+    setSubmitting(true);
+    setEventStatus('sending');
+    setError('');
+    try {
+      const response = await sendSceneUserEvent(scene, {
+        event: 'comment',
+        nodeId: currentNodeId,
+        text,
+        metadata: {
+          kind: 'kabu_chat',
+          step_id: currentNodeId ? undefined : currentFeedbackStepId,
+          target_key: currentFeedbackTargetKey,
+          target_label: currentNodeLabel,
+          target_kind: freeTalkMode ? 'free_chat' : currentNodeId ? 'node' : 'step',
+        },
+      });
+      const continued =
+        sceneEventContinuesTurn(response) || sceneEventDelivery(response) === 'guidance';
+      if (!sceneLlmRunning && !continued) {
+        await onSendFeedbackToLlm(
+          formatSceneKabuChatPrompt(scene, {
+            text,
+            nodeId: currentNodeId,
+            nodeLabel: currentNodeLabel,
+            stepId: currentNodeId ? undefined : currentFeedbackStepId,
+            language,
+          }),
+        );
+      }
+      setKabuDraft('');
+      setKabuDialogOpen(false);
+      setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
+      setNotice(
+        language === 'zh'
+          ? continued || sceneLlmRunning
+            ? '卡布已把这句话交给正在运行的任务。'
+            : '卡布已把这句话发给 LLM 继续处理。'
+          : continued || sceneLlmRunning
+            ? 'Kabu handed this message to the running task.'
+            : 'Kabu sent this message to the LLM.',
+      );
+    } catch (caught) {
+      setEventStatus('failed');
+      setError(sceneEventError(caught, language));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    currentFeedbackStepId,
+    currentFeedbackTargetKey,
+    currentNodeId,
+    currentNodeLabel,
+    freeTalkMode,
+    kabuDraft,
+    language,
+    onSendFeedbackToLlm,
+    scene,
+    sceneLlmRunning,
+    submitting,
+  ]);
+
+  const submitFeedbackQueue = useCallback(async () => {
+    if (feedbackQueue.length === 0 || submitting) {
+      return;
+    }
+    const feedbackToSubmit = feedbackQueue;
+    setSubmitting(true);
+    setEventStatus('sending');
+    setError('');
+    try {
+      const response = await sendSceneUserEvent(scene, {
+        event: 'form_submit',
+        nodeId: currentNodeId,
+        values: {
+          kind: 'scene_feedback_batch',
+          count: feedbackToSubmit.length,
+          comments: feedbackToSubmit.map((item) => ({
+            node_id: item.nodeId,
+            step_id: item.stepId,
+            target_kind:
+              item.stepId === 'free_chat' ? 'free_chat' : item.nodeId ? 'node' : 'step',
+            node_label: item.nodeLabel,
+            text: item.text,
+            created_at: item.createdAt,
+          })),
+        },
+        metadata: {
+          kind: 'scene_feedback_batch',
+          count: feedbackToSubmit.length,
+          delivery: sceneLlmRunning ? 'guidance' : 'recorded',
+        },
+      });
+      const continued =
+        sceneEventContinuesTurn(response) || sceneEventDelivery(response) === 'guidance';
+      if (!sceneLlmRunning && !continued) {
+        await onSendFeedbackToLlm(
+          formatSceneFeedbackRunPrompt(scene, feedbackToSubmit, language),
+        );
+      }
+      setEventStatus(continued || sceneLlmRunning ? 'continuing' : 'recorded');
+      setFeedbackQueue([]);
+      setNotice(
+        language === 'zh'
+          ? continued || sceneLlmRunning
+            ? '反馈清单已提交给正在运行的任务。'
+            : '反馈清单已发送给 LLM 处理。'
+          : continued || sceneLlmRunning
+            ? 'Feedback list submitted to the running task.'
+            : 'Feedback list sent to the LLM.',
+      );
+    } catch (caught) {
+      setEventStatus('failed');
+      setError(sceneEventError(caught, language));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    currentNodeId,
+    feedbackQueue,
+    language,
+    onSendFeedbackToLlm,
+    scene,
+    sceneLlmRunning,
+    submitting,
+  ]);
+
+  const submitDecision = useCallback(
+    async (event: 'confirm' | 'cancel') => {
+      if (decisionSubmitting) {
+        return;
+      }
+      setDecisionSubmitting(event);
+      setError('');
+      try {
+        await sendSceneUserEvent(scene, {
+          event,
+          nodeId: currentNodeId,
+          metadata: { expectedAction },
+        });
+        setNotice(
+          event === 'confirm'
+            ? language === 'zh'
+              ? '确认已发送给后端'
+              : 'Confirmation sent to backend'
+            : language === 'zh'
+              ? '取消已发送给后端'
+              : 'Cancellation sent to backend',
+        );
+      } catch (caught) {
+        setError(sceneEventError(caught, language));
+      } finally {
+        setDecisionSubmitting('');
+      }
+    },
+    [currentNodeId, decisionSubmitting, expectedAction, language, scene],
+  );
+
+  return (
+    <section ref={sceneHostRef} className="scene-host" aria-label={scene.title}>
+      <header className="scene-toolbar">
+        <div className="scene-toolbar-title">
+          <Sparkles size={16} />
+          <span>
+            <strong>{scene.title}</strong>
+            <small>
+              {language === 'zh'
+                ? 'HTML 任务场景'
+                : 'HTML task scene'}
+            </small>
+          </span>
+        </div>
+        <div className={`scene-runtime-pill ${sceneWorkActive ? 'running' : 'idle'}`}>
+          {sceneWorkActive ? <LoaderCircle size={13} /> : <Bot size={13} />}
+          <span>
+            {eventStatus === 'sending'
+              ? language === 'zh'
+                ? '正在提交反馈'
+                : 'Submitting feedback'
+              : sceneWorkActive
+              ? language === 'zh'
+                ? 'LLM 正在思考'
+                : 'LLM thinking'
+              : language === 'zh'
+                ? '卡布待命'
+                : 'Kabu ready'}
+          </span>
+        </div>
+        <button
+          className={`scene-free-talk-toggle ${freeTalkMode ? 'active' : ''}`}
+          type="button"
+          onClick={toggleFreeTalkMode}
+          title={
+            freeTalkMode
+              ? language === 'zh'
+                ? '切回节点讲解'
+                : 'Return to node narration'
+              : language === 'zh'
+                ? '开启自由对话，测试页面时不切换节点'
+                : 'Enable free chat without retargeting nodes while testing the page'
+          }
+        >
+          <MessageSquare size={14} />
+          <span>
+            {freeTalkMode
+              ? language === 'zh'
+                ? '自由对话'
+                : 'Free chat'
+              : language === 'zh'
+                ? '节点讲解'
+                : 'Node mode'}
+          </span>
+        </button>
+        {sceneSteps.length > 0 && (
+          <div
+            className="scene-playback-controls"
+            aria-label={language === 'zh' ? '场景播放控制' : 'Scene playback controls'}
+          >
+            <button
+              type="button"
+              onClick={restartScenePlayback}
+              title={language === 'zh' ? '重播讲解' : 'Replay narration'}
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button
+              type="button"
+              disabled={activeStepIndex <= 0}
+              onClick={() => activateSceneStep(activeStepIndex - 1)}
+              title={language === 'zh' ? '上一个节点' : 'Previous node'}
+            >
+              <ArrowLeft size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={toggleScenePlayback}
+              title={playbackRunning
+                ? language === 'zh'
+                  ? '暂停讲解'
+                  : 'Pause narration'
+                : language === 'zh'
+                  ? '继续讲解'
+                  : 'Resume narration'}
+            >
+              {playbackRunning ? <Pause size={14} /> : <Play size={14} />}
+            </button>
+            <button
+              type="button"
+              disabled={activeStepIndex >= sceneSteps.length - 1}
+              onClick={() => activateSceneStep(activeStepIndex + 1)}
+              title={language === 'zh' ? '下一个节点' : 'Next node'}
+            >
+              <ArrowRight size={14} />
+            </button>
+            <span>{`${Math.min(activeStepIndex + 1, sceneSteps.length)}/${sceneSteps.length}`}</span>
+          </div>
+        )}
+        <button
+          className={`scene-inspector-toggle ${inspectorCollapsed ? 'collapsed' : ''}`}
+          type="button"
+          onClick={() => setInspectorCollapsed((current) => !current)}
+          title={
+            inspectorCollapsed
+              ? language === 'zh'
+                ? '展开反馈面板'
+                : 'Show feedback panel'
+              : language === 'zh'
+                ? '折叠反馈面板'
+                : 'Hide feedback panel'
+          }
+        >
+          {inspectorCollapsed ? (
+            <PanelRightOpen size={16} />
+          ) : (
+            <PanelRightClose size={16} />
+          )}
+          {feedbackQueue.length > 0 && <span>{feedbackQueue.length}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => requestAnchorRect()}
+          title={language === 'zh' ? '重新同步卡布位置' : 'Resync Kabu position'}
+        >
+          <RefreshCw size={15} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          title={language === 'zh' ? '返回对话' : 'Back to chat'}
+        >
+          <X size={16} />
+        </button>
+      </header>
+      <div className={`scene-body ${inspectorCollapsed ? 'inspector-collapsed' : ''}`}>
+        <div className="scene-viewport">
+          <iframe
+            ref={iframeRef}
+            title={scene.title}
+            sandbox="allow-forms allow-scripts"
+            srcDoc={srcDoc}
+            onLoad={() => {
+              syncSceneInteractionMode();
+              if (freeTalkMode) {
+                setAnchorRect(null);
+              } else if (currentNodeId) {
+                requestAnchorRect(currentNodeId, { reveal: true });
+              } else {
+                setAnchorRect(null);
+              }
+            }}
+          />
+          {(embedded || activeSpeech) && (
+            <div
+              className={`scene-cardling ${embedded ? 'embedded' : 'floating'} ${embedded && !cardlingAnchorRect ? 'fallback' : ''} mood-${scene.cardling.mood} tone-${cardlingAnchorRect?.tone ?? 'dark'}`}
+              style={
+                embedded
+                  ? sceneCardlingStyle(cardlingAnchorRect, scene.cardling.anchor)
+                  : sceneFloatingCardlingStyle(scene.cardling.position)
+              }
+            >
+              <button
+                className="scene-cardling-avatar scene-cardling-avatar-button"
+                type="button"
+                aria-label={language === 'zh' ? '和卡布对话' : 'Talk to Kabu'}
+                title={language === 'zh' ? '和卡布对话' : 'Talk to Kabu'}
+                onClick={() => setKabuDialogOpen((current) => !current)}
+              >
+                <span className="cardling-orbit" />
+                <span className="cardling-card">
+                  <span className="cardling-stack" />
+                  <span className="cardling-leaf" />
+                  <span className="cardling-eye left" />
+                  <span className="cardling-eye right" />
+                  <span className="cardling-wave" />
+                  <span className="cardling-cursor" />
+                  <span className="cardling-error-corner" />
+                  <span className="cardling-spark one" />
+                  <span className="cardling-spark two" />
+                </span>
+              </button>
+              {activeSpeech && (
+                <div className="scene-cardling-bubble">
+                  <span>{displayedSpeech}</span>
+                  {playbackRunning && typedSpeech.length < activeSpeech.length && (
+                    <i aria-hidden="true" />
+                  )}
+                  {sceneWorkActive && !playbackRunning && (
+                    <small>
+                      <LoaderCircle size={11} />
+                      {language === 'zh'
+                        ? eventStatus === 'sending'
+                          ? '我正在把反馈交给后端和 LLM。'
+                          : '我正在跟进任务，反馈会先收进清单。'
+                        : eventStatus === 'sending'
+                          ? 'I am sending the feedback to the backend and LLM.'
+                          : 'I am following the task. Feedback is collected first.'}
+                    </small>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          {kabuDialogOpen && (
+            <div
+              className="scene-kabu-dialog"
+              style={sceneKabuDialogStyle(cardlingAnchorRect, scene.cardling.anchor)}
+            >
+              <header>
+                <Sparkles size={14} />
+                <strong>{language === 'zh' ? '和卡布说' : 'Talk to Kabu'}</strong>
+                <button
+                  type="button"
+                  onClick={() => setKabuDialogOpen(false)}
+                  title={language === 'zh' ? '关闭' : 'Close'}
+                >
+                  <X size={13} />
+                </button>
+              </header>
+              <small>
+                {freeTalkMode
+                  ? language === 'zh'
+                    ? '自由对话：不绑定具体节点'
+                    : 'Free chat: not bound to a specific node'
+                  : currentNodeId
+                  ? `${language === 'zh' ? '当前节点' : 'Current node'}: ${currentNodeLabel}`
+                  : activeStep?.title ||
+                    (language === 'zh' ? '整体场景' : 'Overall scene')}
+              </small>
+              <textarea
+                value={kabuDraft}
+                autoFocus
+                placeholder={
+                  language === 'zh'
+                    ? freeTalkMode
+                      ? '和卡布自由聊这个页面、交互感受或测试结果...'
+                      : '告诉卡布你想调整哪里，或让它解释这个节点...'
+                    : freeTalkMode
+                      ? 'Freely talk with Kabu about this page, interactions, or test results...'
+                      : 'Tell Kabu what to adjust, or ask it to explain this node...'
+                }
+                onChange={(event) => setKabuDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                    event.preventDefault();
+                    void submitKabuDialog();
+                  }
+                }}
+              />
+              <footer>
+                <button type="button" onClick={() => setKabuDraft('')}>
+                  {language === 'zh' ? '清空' : 'Clear'}
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={submitting || !kabuDraft.trim()}
+                  onClick={() => void submitKabuDialog()}
+                >
+                  {submitting ? <LoaderCircle size={13} /> : <ArrowUp size={13} />}
+                  {language === 'zh' ? '发送' : 'Send'}
+                </button>
+              </footer>
+            </div>
+          )}
+        </div>
+        <aside
+          ref={sceneInspectorRef}
+          className={`scene-inspector ${inspectorCollapsed ? 'collapsed' : ''}`}
+        >
+          {inspectorCollapsed ? (
+            <button
+              className="scene-inspector-rail"
+              type="button"
+              onClick={() => setInspectorCollapsed(false)}
+              title={language === 'zh' ? '展开节点反馈' : 'Show node feedback'}
+            >
+              <MessageSquare size={15} />
+              {feedbackQueue.length > 0 && <span>{feedbackQueue.length}</span>}
+            </button>
+          ) : (
+            <>
+          <strong>{language === 'zh' ? '节点反馈' : 'Node feedback'}</strong>
+          <p>
+            {freeTalkMode
+              ? language === 'zh'
+                ? '自由对话模式：页面点击不会切换节点。'
+                : 'Free chat mode: page clicks will not retarget nodes.'
+              : currentNodeId
+              ? `${language === 'zh' ? '当前节点' : 'Current node'}: ${currentNodeId}`
+              : activeStep?.title
+                ? `${language === 'zh' ? '当前步骤' : 'Current step'}: ${activeStep.title}`
+              : language === 'zh'
+                ? '点击场景里的节点来定位反馈。'
+                : 'Click a node in the scene to target feedback.'}
+          </p>
+          {!sceneHealth.ok && (
+            <div className="scene-health-warning">
+              <AlertCircle size={14} />
+              <span>
+                <strong>
+                  {language === 'zh'
+                    ? '场景部分渲染异常'
+                    : 'Scene rendered with issues'}
+                </strong>
+                <small>
+                  {sceneHealth.issues[0]?.message ||
+                    (language === 'zh'
+                      ? '已把健康检查结果回传后端。'
+                      : 'Health check was sent to the backend.')}
+                  {sceneHealth.issues.length > 1
+                    ? language === 'zh'
+                      ? `，另有 ${sceneHealth.issues.length - 1} 项`
+                      : `, plus ${sceneHealth.issues.length - 1} more`
+                    : ''}
+                </small>
+              </span>
+            </div>
+          )}
+          <div className="scene-state-strip">
+            <span>
+              {language === 'zh'
+                ? `节点 ${sceneState.nodes.length}`
+                : `Nodes ${sceneState.nodes.length}`}
+            </span>
+            <span>
+              {language === 'zh'
+                ? `事件 ${sceneState.userEvents.length}`
+                : `Events ${sceneState.userEvents.length}`}
+            </span>
+          </div>
+          {sceneNavigationItems.length > 0 && (
+            <div ref={sceneNodeListRef} className="scene-node-list">
+              {sceneNavigationItems.map((item) => {
+                const isActiveNode = item.nodeId
+                  ? item.nodeId === currentNodeId
+                  : !currentNodeId && activeStep?.id === item.stepId;
+                const isPlayingNode = item.stepIndex === activeStepIndex;
+                const feedbackCount = feedbackCountByTarget.get(item.key) ?? 0;
+                return (
+                  <button
+                    key={item.key}
+                    className={`${isActiveNode ? 'active' : ''} ${isPlayingNode ? 'playing' : ''} ${item.overview ? 'overview' : ''}`.trim()}
+                    type="button"
+                    onClick={() => {
+                      if (item.stepIndex >= 0) {
+                        activateSceneStep(item.stepIndex);
+                      } else if (item.nodeId) {
+                        activateSceneNode(item.nodeId);
+                      }
+                      if (item.nodeId) {
+                        void sendSceneUserEvent(scene, {
+                          event: 'node_click',
+                          nodeId: item.nodeId,
+                          metadata: {
+                            label: item.label,
+                            source: 'inspector',
+                          },
+                        }).catch(() => undefined);
+                      } else {
+                        void sendSceneUserEvent(scene, {
+                          event: 'scene_step_select',
+                          metadata: {
+                            step_id: item.stepId,
+                            label: item.label,
+                            source: 'inspector',
+                          },
+                        }).catch(() => undefined);
+                      }
+                    }}
+                  >
+                    <span>
+                      {item.label}
+                      {feedbackCount > 0 && <em>{feedbackCount}</em>}
+                    </span>
+                    {item.purpose && <small>{item.purpose}</small>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div ref={sceneFeedbackRef} className="scene-feedback-panel">
+            <div className={`scene-feedback-status ${sceneWorkActive ? 'running' : 'idle'}`}>
+              {sceneWorkActive ? <LoaderCircle size={14} /> : <Sparkles size={14} />}
+              <span>
+                <strong>
+                  {eventStatus === 'sending'
+                    ? language === 'zh'
+                      ? '正在提交反馈'
+                      : 'Submitting feedback'
+                    : sceneWorkActive
+                    ? language === 'zh'
+                      ? 'LLM 正在处理'
+                      : 'LLM is running'
+                    : language === 'zh'
+                      ? '反馈清单'
+                      : 'Feedback list'}
+                </strong>
+                <small>
+                  {eventStatus === 'sending'
+                    ? language === 'zh'
+                      ? '正在把反馈交给后端，随后会触发 LLM 处理。'
+                      : 'Sending feedback to the backend, then the LLM will process it.'
+                    : eventStatus === 'recorded'
+                      ? language === 'zh'
+                        ? '反馈已提交。若没有运行中任务，前端已发起一轮 LLM 请求。'
+                        : 'Feedback submitted. If no task was running, a new LLM request was started.'
+                    : eventStatus === 'failed'
+                      ? language === 'zh'
+                        ? '反馈提交失败，请查看错误信息。'
+                        : 'Feedback submission failed. See the error below.'
+                    : sceneWorkActive
+                    ? language === 'zh'
+                      ? '继续添加反馈，默认不会打断当前思考。'
+                      : 'Keep adding feedback; it will not interrupt by default.'
+                    : feedbackQueue.length > 0
+                      ? language === 'zh'
+                        ? `待提交 ${feedbackQueue.length} 条反馈`
+                        : `${feedbackQueue.length} feedback item(s) pending`
+                      : language === 'zh'
+                        ? '点选页面节点后添加修改意见。'
+                        : 'Select nodes and add review notes.'}
+                </small>
+              </span>
+            </div>
+            <textarea
+              value={comment}
+              placeholder={
+                language === 'zh'
+                  ? sceneLlmRunning
+                    ? 'LLM 正在思考。这里写下反馈，先加入清单...'
+                    : '对这个位置提出修改、疑问或确认...'
+                  : sceneLlmRunning
+                    ? 'LLM is thinking. Write feedback here and collect it first...'
+                    : 'Comment, ask, or confirm this position...'
+              }
+              onChange={(event) => setComment(event.currentTarget.value)}
+            />
+            <div className="scene-feedback-actions">
+              <button
+                className="primary-button"
+                type="button"
+                disabled={!comment.trim()}
+                onClick={addFeedbackToQueue}
+              >
+                <MessageSquare size={14} />
+                {language === 'zh' ? '添加反馈' : 'Add feedback'}
+              </button>
+              <button
+                type="button"
+                disabled={submitting || !comment.trim()}
+                onClick={() => void submitImmediateComment()}
+                title={
+                  language === 'zh'
+                    ? '绕过清单，立即把当前这条反馈发给后端'
+                    : 'Bypass the list and send this note immediately'
+                }
+              >
+                {submitting ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
+                {language === 'zh' ? '立即发送' : 'Send now'}
+              </button>
+            </div>
+            {feedbackQueue.length > 0 && (
+              <div className="scene-feedback-queue">
+                <header>
+                  <strong>
+                    {language === 'zh'
+                      ? `待提交反馈 ${feedbackQueue.length}`
+                      : `Pending feedback ${feedbackQueue.length}`}
+                  </strong>
+                  <button type="button" onClick={() => setFeedbackQueue([])}>
+                    {language === 'zh' ? '清空' : 'Clear'}
+                  </button>
+                </header>
+                <div>
+                  {feedbackQueue.map((item) => (
+                    <article key={item.id}>
+                      <span>{item.nodeLabel}</span>
+                      <p>{item.text}</p>
+                      <button
+                        type="button"
+                        title={language === 'zh' ? '移除这条反馈' : 'Remove this feedback'}
+                        onClick={() => removeFeedback(item.id)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </article>
+                  ))}
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void submitFeedbackQueue()}
+                >
+                  {submitting ? <LoaderCircle size={14} /> : <Check size={14} />}
+                  {language === 'zh' ? '提交全部反馈' : 'Submit all feedback'}
+                </button>
+              </div>
+            )}
+            {showDecisionActions && (
+              <div className="scene-decision-actions">
+                <button
+                  type="button"
+                  disabled={decisionSubmitting !== ''}
+                  onClick={() => void submitDecision('cancel')}
+                >
+                  {decisionSubmitting === 'cancel' ? (
+                    <LoaderCircle size={14} />
+                  ) : (
+                    <X size={14} />
+                  )}
+                  {language === 'zh' ? '取消' : 'Cancel'}
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={decisionSubmitting !== ''}
+                  onClick={() => void submitDecision('confirm')}
+                >
+                  {decisionSubmitting === 'confirm' ? (
+                    <LoaderCircle size={14} />
+                  ) : (
+                    <Check size={14} />
+                  )}
+                  {language === 'zh' ? '确认' : 'Confirm'}
+                </button>
+              </div>
+            )}
+            {notice && <p className="scene-notice">{notice}</p>}
+            {error && <p className="scene-error">{error}</p>}
+          </div>
+            </>
+          )}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+async function sendSceneUserEvent(
+  scene: CardlingScene,
+  payload: {
+    event: string;
+    nodeId?: string;
+    text?: string;
+    values?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<Record<string, unknown>> {
+  if (!scene.sessionId?.trim()) {
+    throw new Error('Scene 暂无 session_id，无法回传后端');
+  }
+  return sendSceneEvent({
+    sessionId: scene.sessionId,
+    sceneId: scene.sceneId,
+    turnId: scene.turnId,
+    event: payload.event,
+    nodeId: payload.nodeId,
+    text: payload.text,
+    values: payload.values,
+    metadata: payload.metadata,
+  });
+}
+
+function sceneEventError(error: unknown, language: AppLanguage) {
+  const message = errorMessage(error);
+  if (/404|not found/i.test(message)) {
+    return language === 'zh'
+      ? '后端 Scene 事件接口尚未接入，暂时无法回传这条反馈。'
+      : 'The backend Scene event endpoint is not available yet.';
+  }
+  return message;
+}
+
+function sceneEventContinuesTurn(payload: Record<string, unknown>) {
+  return (
+    sceneBoolean(payload.continue_turn) === true ||
+    sceneBoolean(payload.continueTurn) === true ||
+    sceneBoolean(asRecord(payload.result).continue_turn) === true ||
+    sceneBoolean(asRecord(payload.result).continueTurn) === true
+  );
+}
+
+function sceneEventDelivery(payload: Record<string, unknown>): SceneEventDelivery {
+  const result = asRecord(payload.result);
+  const metadata = asRecord(payload.metadata);
+  const resultMetadata = asRecord(result.metadata);
+  const value = String(
+    payload.delivery ?? result.delivery ?? metadata.delivery ?? resultMetadata.delivery ?? '',
+  ).toLowerCase();
+  return value === 'guidance' || value === 'recorded' ? value : '';
+}
+
+function initialSceneRuntimeState(scene: CardlingScene): SceneRuntimeState {
+  return {
+    selectedNodeId: scene.cardling.anchor?.nodeId || scene.nodes[0]?.nodeId || '',
+    nodes: scene.nodes.map((node, index) => ({
+      nodeId: node.nodeId,
+      label: node.label,
+      status: 'idle',
+      order: index,
+      values: {},
+    })),
+    edges: parseSceneRuntimeEdges(scene.raw.edges),
+    userEvents: [],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function initialSceneHealth(scene: CardlingScene): SceneHealthReport {
+  return {
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    renderedNodeCount: 0,
+    declaredNodeCount: scene.nodes.length,
+    missingNodeIds: [],
+    placeholderCount: 0,
+    blank: false,
+    scriptErrors: [],
+    issues: [],
+  };
+}
+
+function normalizeSceneRuntimeState(
+  value: unknown,
+  scene: CardlingScene,
+  fallback: SceneRuntimeState,
+): SceneRuntimeState {
+  const record = asRecord(value);
+  const nodeRecords = Array.isArray(record.nodes) ? record.nodes.map(asRecord) : [];
+  const fallbackById = new Map(fallback.nodes.map((node) => [node.nodeId, node]));
+  const nodes: SceneRuntimeNodeState[] =
+    nodeRecords.length > 0
+      ? nodeRecords.reduce<SceneRuntimeNodeState[]>(
+          (items, node, index) => {
+            const nodeId = String(node.node_id ?? node.nodeId ?? node.id ?? '').trim();
+            if (!nodeId) {
+              return items;
+            }
+            const existing = fallbackById.get(nodeId);
+            items.push({
+              nodeId,
+              label:
+                optionalSceneString(node.label) ??
+                existing?.label ??
+                scene.nodes.find((item) => item.nodeId === nodeId)?.label,
+              status: optionalSceneString(node.status) ?? existing?.status,
+              order: sceneNumber(node.order, existing?.order ?? index),
+              values: stringRecord(node.values ?? existing?.values ?? {}),
+            });
+            return items;
+          },
+          [],
+        )
+      : fallback.nodes;
+  const edgeRecords = Array.isArray(record.edges) ? record.edges : undefined;
+  return {
+    selectedNodeId:
+      optionalSceneString(record.selected_node_id ?? record.selectedNodeId) ??
+      fallback.selectedNodeId,
+    nodes,
+    edges: edgeRecords ? parseSceneRuntimeEdges(edgeRecords) : fallback.edges,
+    userEvents: fallback.userEvents,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function mergeSceneRuntimeState(
+  current: SceneRuntimeState,
+  incoming: SceneRuntimeState,
+): SceneRuntimeState {
+  const incomingById = new Map(incoming.nodes.map((node) => [node.nodeId, node]));
+  const mergedNodes = current.nodes.map((node) => ({
+    ...node,
+    ...incomingById.get(node.nodeId),
+    values: {
+      ...node.values,
+      ...(incomingById.get(node.nodeId)?.values ?? {}),
+    },
+  }));
+  for (const node of incoming.nodes) {
+    if (!current.nodes.some((item) => item.nodeId === node.nodeId)) {
+      mergedNodes.push(node);
+    }
+  }
+  return {
+    ...current,
+    ...incoming,
+    nodes: mergedNodes.sort((left, right) => left.order - right.order),
+    userEvents: current.userEvents,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function appendSceneRuntimeEvent(
+  current: SceneRuntimeState,
+  event: SceneRuntimeUserEvent,
+): SceneRuntimeState {
+  let nodes = current.nodes;
+  const payload = asRecord(event.payload);
+  const nextNodeId = event.nodeId || optionalSceneString(payload.nodeId) || '';
+  if (event.type === 'node_reorder') {
+    const order = Array.isArray(payload.order) ? payload.order.map(String) : [];
+    if (order.length > 0) {
+      const orderMap = new Map(order.map((nodeId, index) => [nodeId, index]));
+      nodes = current.nodes
+        .map((node) => ({
+          ...node,
+          order: orderMap.get(node.nodeId) ?? node.order,
+        }))
+        .sort((left, right) => left.order - right.order);
+    }
+  }
+  if (event.type === 'state_change' && nextNodeId) {
+    const values = stringRecord(payload.values);
+    if (Object.keys(values).length > 0) {
+      nodes = nodes.map((node) =>
+        node.nodeId === nextNodeId
+          ? { ...node, values: { ...node.values, ...values } }
+          : node,
+      );
+    }
+  }
+  const selectedNodeId =
+    event.type === 'node_click' || event.type === 'selection_change'
+      ? nextNodeId || current.selectedNodeId
+      : current.selectedNodeId;
+  return {
+    ...current,
+    selectedNodeId,
+    nodes,
+    userEvents: [...current.userEvents, event].slice(-120),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeSceneHealth(value: unknown, scene: CardlingScene): SceneHealthReport {
+  const record = asRecord(value);
+  const rawIssues = Array.isArray(record.issues) ? record.issues.map(asRecord) : [];
+  const issues: SceneHealthIssue[] = rawIssues.map((issue) => ({
+    code: String(issue.code ?? 'scene_issue'),
+    message: String(issue.message ?? issue.description ?? issue.code ?? 'Scene issue'),
+    severity:
+      issue.severity === 'error' || issue.severity === 'info'
+        ? issue.severity
+        : 'warning',
+  }));
+  const missingNodeIds = Array.isArray(record.missing_node_ids)
+    ? record.missing_node_ids.map(String)
+    : Array.isArray(record.missingNodeIds)
+      ? record.missingNodeIds.map(String)
+      : [];
+  const scriptErrors = Array.isArray(record.script_errors)
+    ? record.script_errors.map(String)
+    : Array.isArray(record.scriptErrors)
+      ? record.scriptErrors.map(String)
+      : [];
+  const renderedNodeCount = sceneNumber(
+    record.rendered_node_count ?? record.renderedNodeCount,
+    sceneNumber(record.dom_node_count ?? record.domNodeCount, 0),
+  );
+  const declaredNodeCount = sceneNumber(
+    record.declared_node_count ?? record.declaredNodeCount,
+    scene.nodes.length,
+  );
+  const placeholderCount = sceneNumber(
+    record.placeholder_count ?? record.placeholderCount,
+    0,
+  );
+  const blank = sceneBoolean(record.blank) === true;
+  const derivedIssues = [...issues];
+  if (missingNodeIds.length > 0 && !derivedIssues.some((item) => item.code === 'missing_nodes')) {
+    derivedIssues.push({
+      code: 'missing_nodes',
+      message: `Missing scene nodes: ${missingNodeIds.join(', ')}`,
+      severity: 'warning',
+    });
+  }
+  if (scriptErrors.length > 0 && !derivedIssues.some((item) => item.code === 'script_error')) {
+    derivedIssues.push({
+      code: 'script_error',
+      message: scriptErrors[0] ?? 'Scene script error',
+      severity: 'error',
+    });
+  }
+  if (placeholderCount > 0 && !derivedIssues.some((item) => item.code === 'template_placeholder')) {
+    derivedIssues.push({
+      code: 'template_placeholder',
+      message: `${placeholderCount} template placeholder(s) are visible.`,
+      severity: 'warning',
+    });
+  }
+  if (blank && !derivedIssues.some((item) => item.code === 'blank_scene')) {
+    derivedIssues.push({
+      code: 'blank_scene',
+      message: 'Scene appears blank.',
+      severity: 'error',
+    });
+  }
+  const explicitOk = sceneBoolean(record.ok);
+  const ok = explicitOk ?? (derivedIssues.length === 0);
+  return {
+    ok,
+    checkedAt: String(record.checked_at ?? record.checkedAt ?? new Date().toISOString()),
+    renderedNodeCount,
+    declaredNodeCount,
+    missingNodeIds,
+    placeholderCount,
+    blank,
+    scriptErrors,
+    issues: derivedIssues,
+  };
+}
+
+function sceneHealthKey(health: SceneHealthReport) {
+  return JSON.stringify({
+    ok: health.ok,
+    missingNodeIds: health.missingNodeIds,
+    placeholderCount: health.placeholderCount,
+    blank: health.blank,
+    scriptErrors: health.scriptErrors,
+    issues: health.issues.map((item) => [item.code, item.message, item.severity]),
+  });
+}
+
+function parseSceneRuntimeEdges(value: unknown): SceneRuntimeEdgeState[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(asRecord).reduce<SceneRuntimeEdgeState[]>((items, edge) => {
+    const from = String(edge.from ?? edge.source ?? '').trim();
+    const to = String(edge.to ?? edge.target ?? '').trim();
+    if (!from || !to) {
+      return items;
+    }
+    items.push({
+      from,
+      to,
+      status: optionalSceneString(edge.status),
+    });
+    return items;
+  }, []);
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  const record = asRecord(value);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, String(item ?? '')]),
+  );
+}
+
+function optionalSceneString(value: unknown) {
+  if (value == null) {
+    return undefined;
+  }
+  const text = String(value).trim();
+  return text || undefined;
+}
+
+function sceneNumber(value: unknown, fallback: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function formatSceneFeedbackRunPrompt(
+  scene: CardlingScene,
+  feedback: CardlingSceneFeedback[],
+  language: AppLanguage,
+) {
+  const lines = feedback.map((item, index) => {
+    const target = item.nodeId
+      ? `${item.nodeLabel} (${item.nodeId})`
+      : `${item.nodeLabel} (${item.stepId ?? 'overview'})`;
+    return `${index + 1}. ${target}\n${item.text}`;
+  });
+  if (language === 'zh') {
+    return [
+      `请根据我在 Kabu Scene「${scene.title}」里提交的反馈继续处理这个 HTML 场景。`,
+      '反馈如下：',
+      ...lines,
+      '请优先理解这些反馈对应的节点/步骤，给出修改方案并在需要时继续更新场景。',
+    ].join('\n\n');
+  }
+  return [
+    `Please continue the HTML scene "${scene.title}" based on the feedback I submitted in Kabu Scene.`,
+    'Feedback:',
+    ...lines,
+    'Please map each item to its node/step, propose the update, and continue updating the scene when needed.',
+  ].join('\n\n');
+}
+
+function formatSceneActionRunPrompt(
+  scene: CardlingScene,
+  payload: Record<string, unknown>,
+  language: AppLanguage,
+) {
+  const action = String(payload.action ?? payload.intent ?? payload.text ?? '').trim();
+  const nodeId = String(payload.nodeId ?? payload.node_id ?? '').trim();
+  const context = JSON.stringify(
+    {
+      node_id: nodeId,
+      values: payload.values ?? undefined,
+      state: payload.state ?? undefined,
+    },
+    null,
+    2,
+  );
+  if (!action && !nodeId) {
+    return '';
+  }
+  if (language === 'zh') {
+    return [
+      `请继续处理 Kabu Scene「${scene.title}」里的交互请求。`,
+      action ? `用户请求：${action}` : '',
+      nodeId ? `关联节点：${nodeId}` : '',
+      `场景上下文：\n${context}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return [
+    `Please continue handling the interaction request in Kabu Scene "${scene.title}".`,
+    action ? `User request: ${action}` : '',
+    nodeId ? `Related node: ${nodeId}` : '',
+    `Scene context:\n${context}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function formatSceneKabuChatPrompt(
+  scene: CardlingScene,
+  {
+    text,
+    nodeId,
+    nodeLabel,
+    stepId,
+    language,
+  }: {
+    text: string;
+    nodeId: string;
+    nodeLabel: string;
+    stepId?: string;
+    language: AppLanguage;
+  },
+) {
+  const freeChat = !nodeId && stepId === 'free_chat';
+  const target = nodeId
+    ? `${nodeLabel} (${nodeId})`
+    : freeChat
+      ? nodeLabel
+      : `${nodeLabel} (${stepId ?? 'overview'})`;
+  if (language === 'zh') {
+    return [
+      `我正在 Kabu Scene「${scene.title}」里和卡布对话。`,
+      `当前目标：${target}`,
+      `我对卡布说：${text}`,
+      freeChat
+        ? '请把这句话作为对整个 HTML 场景的自由对话来处理，不要假定它绑定到某个节点。必要时解释、提出方案或更新场景。'
+        : '请把这句话作为对当前场景节点/步骤的直接对话来处理，必要时继续解释、提出方案或更新场景。',
+    ].join('\n\n');
+  }
+  return [
+    `I am talking to Kabu inside Kabu Scene "${scene.title}".`,
+    `Current target: ${target}`,
+    `My message to Kabu: ${text}`,
+    freeChat
+      ? 'Treat this as a free conversation about the whole HTML scene, not bound to a specific node. Explain, propose changes, or update the scene when appropriate.'
+      : 'Treat this as a direct conversation about the current scene node/step. Explain, propose changes, or update the scene when appropriate.',
+  ].join('\n\n');
+}
+
+function sceneCardlingStyle(
+  anchorRect: SceneAnchorRect | null,
+  anchor?: CardlingSceneAnchor,
+): CSSProperties {
+  if (!anchorRect) {
+    return {};
+  }
+  const placement = anchor?.placement ?? 'right';
+  const offset = anchor?.offset ?? { x: 0, y: 0 };
+  const rect = anchorRect.rect;
+  const gap = 12;
+  let left = rect.left + rect.width + gap;
+  let top = rect.top + rect.height / 2 - 34;
+  if (placement === 'left') {
+    left = rect.left - 318 - gap;
+  } else if (placement === 'top') {
+    left = rect.left + rect.width / 2 - 110;
+    top = rect.top - 92 - gap;
+  } else if (placement === 'bottom') {
+    left = rect.left + rect.width / 2 - 110;
+    top = rect.top + rect.height + gap;
+  }
+  return {
+    left: `clamp(12px, ${Math.round(left + offset.x)}px, calc(100% - 342px))`,
+    top: `clamp(12px, ${Math.round(top + offset.y)}px, calc(100% - 232px))`,
+  };
+}
+
+function sceneKabuDialogStyle(
+  anchorRect: SceneAnchorRect | null,
+  anchor?: CardlingSceneAnchor,
+): CSSProperties {
+  if (!anchorRect) {
+    return { right: 18, bottom: 18 };
+  }
+  const placement = anchor?.placement ?? 'right';
+  const rect = anchorRect.rect;
+  const gap = 14;
+  let left = rect.left + rect.width + gap;
+  let top = rect.top + rect.height + gap;
+  if (placement === 'left') {
+    left = rect.left - 312 - gap;
+    top = rect.top + rect.height + gap;
+  } else if (placement === 'top') {
+    left = rect.left + rect.width / 2 - 156;
+    top = rect.top - 216 - gap;
+  } else if (placement === 'bottom') {
+    left = rect.left + rect.width / 2 - 156;
+    top = rect.top + rect.height + gap;
+  }
+  return {
+    left: `clamp(12px, ${Math.round(left)}px, calc(100% - 324px))`,
+    top: `clamp(12px, ${Math.round(top)}px, calc(100% - 226px))`,
+  };
+}
+
+function sceneFloatingCardlingStyle(
+  position: CardlingScene['cardling']['position'],
+): CSSProperties {
+  if (typeof position === 'object' && position != null) {
+    return {
+      left: `clamp(12px, ${Math.round(Number(position.x) || 0)}px, calc(100% - 342px))`,
+      top: `clamp(12px, ${Math.round(Number(position.y) || 0)}px, calc(100% - 232px))`,
+    };
+  }
+  const value = typeof position === 'string' ? position : 'bottom-right';
+  if (value === 'top-left') {
+    return { left: 18, top: 18 };
+  }
+  if (value === 'top-right') {
+    return { right: 18, top: 18 };
+  }
+  if (value === 'bottom-left') {
+    return { left: 18, bottom: 18 };
+  }
+  return { right: 18, bottom: 18 };
+}
+
+function buildSceneSrcDoc(scene: CardlingScene) {
+  const bridge = sceneBridgeScript(scene);
+  const baseStyle = `
+<style>
+  :root { color-scheme: dark light; font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+  html, body { min-height: 100%; margin: 0; }
+  body { background: #111; color: #f3f3f3; }
+  [data-node-id] { scroll-margin: 72px; }
+  [data-cardbush-active-node="true"] { outline: 2px solid rgba(134, 231, 178, 0.9); outline-offset: 3px; }
+</style>`;
+  const html = scene.html;
+  if (/<html[\s>]/i.test(html)) {
+    const withStyle = /<\/head>/i.test(html)
+      ? html.replace(/<\/head>/i, `${baseStyle}</head>`)
+      : `${baseStyle}${html}`;
+    return /<\/body>/i.test(withStyle)
+      ? withStyle.replace(/<\/body>/i, `${bridge}</body>`)
+      : `${withStyle}${bridge}`;
+  }
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${baseStyle}</head><body>${html}${bridge}</body></html>`;
+}
+
+function sceneBridgeScript(scene: CardlingScene) {
+  const anchor = {
+    nodeId: scene.cardling.anchor?.nodeId ?? '',
+    selector: scene.cardling.anchor?.selector ?? '',
+  };
+  const declaredNodeIds = scene.nodes.map((node) => node.nodeId);
+  return `<script>
+(function () {
+  var sceneId = ${JSON.stringify(scene.sceneId)};
+  var anchor = ${JSON.stringify(anchor)};
+  var declaredNodeIds = ${JSON.stringify(declaredNodeIds)};
+  var scriptErrors = [];
+  var lastHealthKey = '';
+  var lastOrder = [];
+  var inputTimer = 0;
+  var healthTimer = 0;
+  var drag = null;
+  var interactionMode = 'node';
+  function esc(value) {
+    if (window.CSS && CSS.escape) return CSS.escape(value);
+    return String(value).replace(/["\\\\]/g, '\\\\$&');
+  }
+  function post(type, payload, options) {
+    var message = Object.assign({ source: 'cardbush-scene', sceneId: sceneId, type: type }, payload || {});
+    if (options && options.state) message.state = collectState();
+    if (options && options.health) message.health = computeHealth();
+    parent.postMessage(message, '*');
+  }
+  function nodeFor(nextAnchor) {
+    var active = nextAnchor || anchor || {};
+    if (active.nodeId) {
+      var byId = document.querySelector('[data-node-id="' + esc(active.nodeId) + '"]');
+      if (byId) return byId;
+    }
+    if (active.selector) {
+      try { return document.querySelector(active.selector); } catch (_) {}
+    }
+    return document.querySelector('[data-node-id]');
+  }
+  function nodeIdFor(node) {
+    var target = node && node.closest ? node.closest('[data-node-id]') : null;
+    return target ? target.getAttribute('data-node-id') || '' : '';
+  }
+  function allNodeElements() {
+    return Array.prototype.slice.call(document.querySelectorAll('[data-node-id]'));
+  }
+  function currentOrder() {
+    return allNodeElements().map(function (node) { return node.getAttribute('data-node-id') || ''; }).filter(Boolean);
+  }
+  function sameOrder(left, right) {
+    if (!left || !right || left.length !== right.length) return false;
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index] !== right[index]) return false;
+    }
+    return true;
+  }
+  function valuesFor(node) {
+    var values = {};
+    if (!node || !node.querySelectorAll) return values;
+    node.querySelectorAll('input, textarea, select').forEach(function (field) {
+      var key = field.name || field.id || field.getAttribute('data-key') || '';
+      if (!key) return;
+      if (field.type === 'checkbox') values[key] = field.checked ? 'true' : 'false';
+      else if (field.type === 'radio') {
+        if (field.checked) values[key] = field.value || 'on';
+      } else values[key] = String(field.value || '');
+    });
+    return values;
+  }
+  function collectState() {
+    var nodes = allNodeElements().map(function (node, index) {
+      return {
+        node_id: node.getAttribute('data-node-id') || '',
+        label: node.getAttribute('data-label') || node.getAttribute('aria-label') || (node.textContent || '').trim().slice(0, 80),
+        status: node.getAttribute('data-status') || '',
+        order: index,
+        values: valuesFor(node)
+      };
+    }).filter(function (node) { return !!node.node_id; });
+    var edges = Array.prototype.slice.call(document.querySelectorAll('[data-edge-from][data-edge-to]')).map(function (edge) {
+      return {
+        from: edge.getAttribute('data-edge-from') || '',
+        to: edge.getAttribute('data-edge-to') || '',
+        status: edge.getAttribute('data-status') || ''
+      };
+    }).filter(function (edge) { return edge.from && edge.to; });
+    return {
+      selected_node_id: anchor.nodeId || '',
+      nodes: nodes,
+      edges: edges
+    };
+  }
+  function countPlaceholders(text) {
+    var count = 0;
+    var index = text.indexOf('\${');
+    while (index >= 0) {
+      count += 1;
+      index = text.indexOf('\${', index + 2);
+    }
+    return count;
+  }
+  function computeHealth() {
+    var domIds = currentOrder();
+    var missing = declaredNodeIds.filter(function (id) { return domIds.indexOf(id) < 0; });
+    var text = (document.body && document.body.innerText ? document.body.innerText : '').trim();
+    var interactiveCount = document.querySelectorAll('svg, canvas, img, button, input, textarea, select, [data-node-id]').length;
+    var blank = text.length < 2 && interactiveCount === 0;
+    var placeholderCount = countPlaceholders(text);
+    var issues = [];
+    if (missing.length > 0) issues.push({ code: 'missing_nodes', severity: 'warning', message: 'Missing scene nodes: ' + missing.join(', ') });
+    if (scriptErrors.length > 0) issues.push({ code: 'script_error', severity: 'error', message: scriptErrors[scriptErrors.length - 1] });
+    if (placeholderCount > 0) issues.push({ code: 'template_placeholder', severity: 'warning', message: placeholderCount + ' template placeholder(s) are visible.' });
+    if (blank) issues.push({ code: 'blank_scene', severity: 'error', message: 'Scene appears blank.' });
+    return {
+      ok: issues.length === 0,
+      checked_at: new Date().toISOString(),
+      rendered_node_count: domIds.length,
+      declared_node_count: declaredNodeIds.length,
+      missing_node_ids: missing,
+      placeholder_count: placeholderCount,
+      blank: blank,
+      script_errors: scriptErrors.slice(-5),
+      issues: issues
+    };
+  }
+  function postHealthIfChanged() {
+    var health = computeHealth();
+    var key = JSON.stringify({
+      ok: health.ok,
+      missing: health.missing_node_ids,
+      placeholders: health.placeholder_count,
+      blank: health.blank,
+      errors: health.script_errors
+    });
+    if (key === lastHealthKey) return;
+    lastHealthKey = key;
+    post('scene_health', {}, { state: true, health: true });
+  }
+  function scheduleHealth() {
+    clearTimeout(healthTimer);
+    healthTimer = setTimeout(postHealthIfChanged, 180);
+  }
+  function postStateChange(nodeId, values) {
+    post('state_change', { nodeId: nodeId || anchor.nodeId || '', values: values || {} }, { state: true, health: true });
+    scheduleHealth();
+  }
+  function parseColor(value) {
+    if (!value || value === 'transparent') return null;
+    var match = String(value).match(/rgba?\\(([^)]+)\\)/i);
+    if (!match) return null;
+    var parts = match[1].split(',').map(function (part) { return Number(String(part).trim().replace('%', '')); });
+    if (parts.length < 3 || !isFinite(parts[0]) || !isFinite(parts[1]) || !isFinite(parts[2])) return null;
+    var alpha = parts.length > 3 && isFinite(parts[3]) ? parts[3] : 1;
+    if (alpha <= 0.04) return null;
+    return { r: parts[0], g: parts[1], b: parts[2], a: alpha };
+  }
+  function backgroundToneFor(node) {
+    var current = node;
+    while (current && current.nodeType === 1) {
+      var color = parseColor(getComputedStyle(current).backgroundColor);
+      if (color) {
+        var luminance = (0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b) / 255;
+        return luminance > 0.56 ? 'light' : 'dark';
+      }
+      current = current.parentElement;
+    }
+    var bodyColor = parseColor(getComputedStyle(document.body).backgroundColor) || parseColor(getComputedStyle(document.documentElement).backgroundColor);
+    if (!bodyColor) return 'dark';
+    var bodyLuminance = (0.2126 * bodyColor.r + 0.7152 * bodyColor.g + 0.0722 * bodyColor.b) / 255;
+    return bodyLuminance > 0.56 ? 'light' : 'dark';
+  }
+  function reportAnchor(nextAnchor) {
+    if (nextAnchor) anchor = Object.assign({}, anchor, nextAnchor);
+    var node = nodeFor(anchor);
+    document.querySelectorAll('[data-cardbush-active-node="true"]').forEach(function (item) {
+      item.removeAttribute('data-cardbush-active-node');
+    });
+    if (!node) {
+      post('anchor_missing', { nodeId: anchor.nodeId || '' });
+      return;
+    }
+    node.setAttribute('data-cardbush-active-node', 'true');
+    var rect = node.getBoundingClientRect();
+    post('anchor_rect', {
+      nodeId: node.getAttribute('data-node-id') || anchor.nodeId || '',
+      tone: backgroundToneFor(node),
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+    });
+  }
+  function revealAnchor(nextAnchor) {
+    if (nextAnchor) anchor = Object.assign({}, anchor, nextAnchor);
+    var node = nodeFor(anchor);
+    if (!node) {
+      reportAnchor(anchor);
+      return;
+    }
+    try {
+      node.scrollIntoView({
+        block: 'center',
+        inline: 'center',
+        behavior: 'smooth'
+      });
+    } catch (_) {
+      try { node.scrollIntoView(true); } catch (__) {}
+    }
+    reportAnchor(anchor);
+    [80, 180, 360, 620].forEach(function (delay) {
+      setTimeout(function () { reportAnchor(anchor); }, delay);
+    });
+  }
+  window.cardbushScene = {
+    emit: function (type, payload) {
+      var nextPayload = Object.assign({}, payload || {});
+      if (!nextPayload.nodeId) nextPayload.nodeId = nodeIdFor(document.activeElement) || anchor.nodeId || '';
+      post(String(type || 'state_change'), nextPayload, { state: true, health: true });
+    },
+    setState: function (nextState) {
+      post('state_change', { state: nextState || {} }, { state: true, health: true });
+    },
+    requestLLM: function (payload) {
+      post('request_llm_action', payload || {}, { state: true, health: true });
+    },
+    toast: function (message) {
+      post('scene_toast', { message: String(message || '') });
+    },
+    getState: collectState,
+    checkHealth: function () {
+      var health = computeHealth();
+      post('scene_health', {}, { state: true, health: true });
+      return health;
+    }
+  };
+  window.onerror = function (message, source, lineno, colno, error) {
+    var text = String(message || 'Script error');
+    scriptErrors.push(text);
+    post('scene_error', { message: text, source: source || '', line: lineno || 0, column: colno || 0, stack: error && error.stack ? String(error.stack) : '' }, { state: true, health: true });
+    scheduleHealth();
+  };
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason && event.reason.message ? event.reason.message : event.reason;
+    var text = String(reason || 'Unhandled promise rejection');
+    scriptErrors.push(text);
+    post('scene_error', { message: text }, { state: true, health: true });
+    scheduleHealth();
+  });
+  document.addEventListener('click', function (event) {
+    var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+    if (link && /^https?:/i.test(link.href)) {
+      event.preventDefault();
+      post('external_url', { url: link.href });
+      return;
+    }
+    if (interactionMode === 'free_chat') return;
+    var nodeId = nodeIdFor(event.target);
+    if (nodeId) {
+      anchor.nodeId = nodeId;
+      reportAnchor(anchor);
+      var label = event.target && event.target.textContent ? event.target.textContent.trim().slice(0, 160) : '';
+      post('node_click', { nodeId: nodeId, label: label }, { state: true, health: true });
+      post('selection_change', { nodeId: nodeId, label: label }, { state: true, health: false });
+    }
+  }, true);
+  document.addEventListener('pointerdown', function (event) {
+    if (interactionMode === 'free_chat') return;
+    var nodeId = nodeIdFor(event.target);
+    if (!nodeId) return;
+    drag = {
+      nodeId: nodeId,
+      startX: event.clientX,
+      startY: event.clientY,
+      started: false,
+      order: currentOrder()
+    };
+  }, true);
+  document.addEventListener('pointermove', function (event) {
+    if (!drag || drag.started) return;
+    var distance = Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY);
+    if (distance <= 8) return;
+    drag.started = true;
+    post('node_drag_start', { nodeId: drag.nodeId, order: drag.order }, { state: true, health: false });
+  }, true);
+  document.addEventListener('pointerup', function () {
+    if (!drag) return;
+    var current = currentOrder();
+    if (drag.started) {
+      post('node_drag_end', { nodeId: drag.nodeId, order: current }, { state: true, health: true });
+      if (!sameOrder(drag.order, current)) {
+        post('node_reorder', { nodeId: drag.nodeId, previousOrder: drag.order, order: current }, { state: true, health: true });
+      }
+    }
+    drag = null;
+  }, true);
+  document.addEventListener('change', function (event) {
+    var node = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
+    if (!node) return;
+    postStateChange(node.getAttribute('data-node-id') || '', valuesFor(node));
+  }, true);
+  document.addEventListener('input', function (event) {
+    var node = event.target && event.target.closest ? event.target.closest('[data-node-id]') : null;
+    if (!node) return;
+    clearTimeout(inputTimer);
+    inputTimer = setTimeout(function () {
+      postStateChange(node.getAttribute('data-node-id') || '', valuesFor(node));
+    }, 280);
+  }, true);
+  document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+    var values = {};
+    new FormData(form).forEach(function (value, key) {
+      values[key] = String(value);
+    });
+    post('form_submit', { nodeId: nodeIdFor(form) || anchor.nodeId || '', values: values }, { state: true, health: true });
+  }, true);
+  window.addEventListener('hashchange', function () {
+    post('route_update', { route: location.hash || location.pathname || '' }, { state: true, health: true });
+  });
+  window.addEventListener('popstate', function () {
+    post('route_update', { route: location.hash || location.pathname || '' }, { state: true, health: true });
+  });
+  if (window.MutationObserver) {
+    new MutationObserver(function () {
+      var current = currentOrder();
+      if (lastOrder.length > 0 && !sameOrder(lastOrder, current)) {
+        post('node_reorder', { previousOrder: lastOrder, order: current }, { state: true, health: true });
+      }
+      lastOrder = current;
+      scheduleHealth();
+    }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-node-id', 'data-status'] });
+  }
+  window.addEventListener('message', function (event) {
+    var data = event.data || {};
+    if (data.source !== 'cardbush-scene-host' || data.sceneId !== sceneId) return;
+    if (data.type === 'set_interaction_mode') {
+      interactionMode = data.mode === 'free_chat' ? 'free_chat' : 'node';
+      if (interactionMode === 'free_chat') {
+        drag = null;
+        document.querySelectorAll('[data-cardbush-active-node="true"]').forEach(function (item) {
+          item.removeAttribute('data-cardbush-active-node');
+        });
+      }
+      return;
+    }
+    if (data.type === 'set_anchor') {
+      if (data.reveal) revealAnchor(data.anchor || {});
+      else reportAnchor(data.anchor || {});
+    }
+  });
+  window.addEventListener('resize', function () { reportAnchor(anchor); });
+  window.addEventListener('scroll', function () { reportAnchor(anchor); }, true);
+  setTimeout(function () {
+    lastOrder = currentOrder();
+    reportAnchor(anchor);
+    post('scene_ready', {}, { state: true, health: true });
+    postHealthIfChanged();
+  }, 30);
+})();
+</script>`;
 }
 
 function quickSideItems({
@@ -4635,7 +7641,6 @@ function BotShareMenu({
   const [selectedTarget, setSelectedTarget] = useState<BotShareTarget | null>(null);
   const [creatingTarget, setCreatingTarget] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
 
@@ -4718,16 +7723,6 @@ function BotShareMenu({
     }
   }, [command, language]);
 
-  useEffect(() => {
-    if (!link || !autoRefresh) {
-      return undefined;
-    }
-    const timer = window.setInterval(() => {
-      void refreshSession(true);
-    }, 8000);
-    return () => window.clearInterval(timer);
-  }, [autoRefresh, link, refreshSession]);
-
   return (
     <div className="bot-share-menu" role="dialog" aria-label={language === 'zh' ? 'Bot 绑定' : 'Bot link'}>
       <header>
@@ -4787,8 +7782,8 @@ function BotShareMenu({
         <div className="bot-share-detail">
           <p>
             {language === 'zh'
-              ? '在 Bot 对话里发送下面命令，即可接管当前会话。'
-              : 'Send this command in the Bot chat to take over the current session.'}
+              ? '在 Bot 对话里发送下面命令，即可接管当前会话；回到 CardBush 后点“刷新 Bot 内容”拉回新历史。'
+              : 'Send this command in the Bot chat to take over the current session; use Refresh Bot content to pull updates back.'}
           </p>
           <button className="bot-link-command" type="button" onClick={() => void copyCommand()}>
             <code>{command}</code>
@@ -4802,18 +7797,10 @@ function BotShareMenu({
               {language === 'zh' ? '平台' : 'Platform'}: {activeTarget.title[language]}
             </span>
           </div>
-          <label className="bot-share-check">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(event) => setAutoRefresh(event.currentTarget.checked)}
-            />
-            <span>{language === 'zh' ? '每 8 秒自动刷新历史' : 'Auto refresh history every 8s'}</span>
-          </label>
           <div className="bot-share-actions">
             <button className="secondary-button" type="button" onClick={() => void refreshSession(false)}>
               {refreshing ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-              <span>{language === 'zh' ? '刷新历史' : 'Refresh'}</span>
+              <span>{language === 'zh' ? '刷新 Bot 内容' : 'Refresh Bot content'}</span>
             </button>
             <button className="secondary-button" type="button" onClick={() => setLink(null)}>
               <Bot size={14} />
@@ -4864,6 +7851,8 @@ function TopBar({
   onRevealSidebar: () => void;
 }) {
   const [botMenuOpen, setBotMenuOpen] = useState(false);
+  const [botHistoryRefreshing, setBotHistoryRefreshing] = useState(false);
+  const [botHistoryRefreshFailed, setBotHistoryRefreshFailed] = useState(false);
   const botShareRef = useRef<HTMLDivElement>(null);
   const botShareEnabled = Boolean(
     activeConversationId?.trim() &&
@@ -4896,6 +7885,21 @@ function TopBar({
   useEffect(() => {
     setBotMenuOpen(false);
   }, [activeConversationId]);
+
+  const refreshBotHistory = useCallback(async () => {
+    if (!activeConversationId?.trim() || !onRefreshActiveSession) {
+      return;
+    }
+    setBotHistoryRefreshing(true);
+    setBotHistoryRefreshFailed(false);
+    try {
+      await onRefreshActiveSession({ silent: true });
+    } catch {
+      setBotHistoryRefreshFailed(true);
+    } finally {
+      setBotHistoryRefreshing(false);
+    }
+  }, [activeConversationId, onRefreshActiveSession]);
 
   return (
     <div className="topbar">
@@ -4937,6 +7941,23 @@ function TopBar({
           )}
       </div>
       <button
+        className={`topbar-square ${botHistoryRefreshFailed ? 'failed' : ''}`}
+        type="button"
+        disabled={!activeConversationId?.trim() || !onRefreshActiveSession || botHistoryRefreshing}
+        onClick={() => void refreshBotHistory()}
+        title={
+          botHistoryRefreshFailed
+            ? language === 'zh'
+              ? '刷新 Bot 内容失败'
+              : 'Failed to refresh Bot content'
+            : language === 'zh'
+              ? '刷新 Bot 内容'
+              : 'Refresh Bot content'
+        }
+      >
+        {botHistoryRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
+      </button>
+      <button
         className={`topbar-square ${activeConsole === 'git' ? 'active' : ''}`}
         type="button"
         onClick={onToggleGit}
@@ -4967,6 +7988,7 @@ function MessageBubble({
   onEditUserMessage,
   onGuideMessage,
   onRevertChangeReport,
+  onOpenScene,
 }: {
   message: ChatMessage;
   language: AppLanguage;
@@ -4983,6 +8005,7 @@ function MessageBubble({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const { imagePaths, text } = splitMessageImages(message.content);
   const toolExecutions = message.toolExecutions ?? [];
@@ -5129,14 +8152,20 @@ function MessageBubble({
         language,
       })
     : '';
+  const loopHistory =
+    message.role === 'assistant'
+      ? (message.loopHistory ?? []).filter(hasVisibleLoopHistoryMessage)
+      : [];
 
   return (
     <>
       <div className="message-row assistant">
         <div className="assistant-bubble">
           {showAssistantProgress && (
-            <div className="assistant-run-header">
-              <span>{assistantProgressText}</span>
+            <div
+              className={`assistant-run-header ${isActiveAssistantTurn ? 'running' : ''}`}
+            >
+              <span className="assistant-run-label">{assistantProgressText}</span>
               <div />
             </div>
           )}
@@ -5148,6 +8177,7 @@ function MessageBubble({
               language={language}
               message={message}
               onRevertChangeReport={onRevertChangeReport}
+              onOpenScene={onOpenScene}
             />
           ) : text ? (
             <MarkdownContent content={text} />
@@ -5155,6 +8185,14 @@ function MessageBubble({
             <p className="assistant-thinking">
               {language === 'zh' ? '正在思考' : 'Thinking'}
             </p>
+          )}
+          {loopHistory.length > 0 && (
+            <AssistantLoopHistoryBlock
+              history={loopHistory}
+              language={language}
+              onRevertChangeReport={onRevertChangeReport}
+              onOpenScene={onOpenScene}
+            />
           )}
         </div>
         <div className="message-actions">
@@ -5206,6 +8244,7 @@ function AssistantMessageContent({
   language,
   message,
   onRevertChangeReport,
+  onOpenScene,
 }: {
   content: string;
   executions: ChatToolExecution[];
@@ -5215,6 +8254,7 @@ function AssistantMessageContent({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const sortedExecutions = [...executions].sort(
     (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
@@ -5223,7 +8263,7 @@ function AssistantMessageContent({
     .map((item) => item.contentOffset)
     .filter((offset) => offset > 0);
   const firstOffset = offsets.length > 0 ? Math.min(...offsets) : 0;
-  const clampedOffset = Math.max(0, Math.min(content.length, firstOffset));
+  const clampedOffset = safeAssistantToolSplitOffset(content, firstOffset);
   const before = content.slice(0, clampedOffset).trimEnd();
   const after = content.slice(clampedOffset).trimStart();
   const running = sortedExecutions.some(isToolRunning);
@@ -5236,6 +8276,7 @@ function AssistantMessageContent({
         language={language}
         message={message}
         onRevertChangeReport={onRevertChangeReport}
+        onOpenScene={onOpenScene}
       />
       {after && <MarkdownContent content={after} />}
       {!after && running && (
@@ -5247,11 +8288,217 @@ function AssistantMessageContent({
   );
 }
 
+function safeAssistantToolSplitOffset(content: string, rawOffset: number) {
+  const offset = Math.max(0, Math.min(content.length, rawOffset));
+  if (offset <= 0 || offset >= content.length || isMarkdownBoundary(content, offset)) {
+    return offset;
+  }
+  const fencedRange = fencedMarkdownRangeAt(content, offset);
+  if (fencedRange) {
+    return nearestOffset(offset, fencedRange.start, fencedRange.end);
+  }
+  const lineStart = content.lastIndexOf('\n', offset - 1) + 1;
+  const nextLineBreak = content.indexOf('\n', offset);
+  const lineEnd = nextLineBreak >= 0 ? nextLineBreak : content.length;
+  if (offset <= lineStart || offset >= lineEnd) {
+    return offset;
+  }
+  const line = content.slice(lineStart, lineEnd);
+  if (markdownBlockLine(line)) {
+    return lineEnd;
+  }
+  return nearestOffset(offset, lineStart, lineEnd);
+}
+
+function isMarkdownBoundary(content: string, offset: number) {
+  return (
+    offset <= 0 ||
+    offset >= content.length ||
+    content[offset - 1] === '\n' ||
+    content[offset] === '\n'
+  );
+}
+
+function markdownBlockLine(line: string) {
+  return /^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+|```|~~~)/.test(line);
+}
+
+function fencedMarkdownRangeAt(content: string, offset: number) {
+  const fencePattern = /(^|\n)(```|~~~)[^\n]*(?:\n|$)/g;
+  let open: { start: number; marker: string } | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = fencePattern.exec(content)) != null) {
+    const start = match.index + (match[1] ? match[1].length : 0);
+    const marker = match[2];
+    if (!open) {
+      open = { start, marker };
+      continue;
+    }
+    if (open.marker !== marker) {
+      continue;
+    }
+    const end = fencePattern.lastIndex;
+    if (offset > open.start && offset < end) {
+      return { start: open.start, end };
+    }
+    open = null;
+  }
+  if (open && offset > open.start) {
+    return { start: open.start, end: content.length };
+  }
+  return null;
+}
+
+function nearestOffset(offset: number, before: number, after: number) {
+  return offset - before <= after - offset ? before : after;
+}
+
+function AssistantLoopHistoryBlock({
+  history,
+  language,
+  onRevertChangeReport,
+  onOpenScene,
+}: {
+  history: ChatMessage[];
+  language: AppLanguage;
+  onRevertChangeReport: (
+    report: ConversationChangeReport,
+    message: ChatMessage,
+  ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
+  const visibleHistory = history.filter(hasVisibleLoopHistoryMessage);
+  const toolCount = visibleHistory.reduce(
+    (total, item) => total + (item.toolExecutions?.length ?? 0),
+    0,
+  );
+  const summary =
+    language === 'zh'
+      ? `历史执行 ${visibleHistory.length} 条${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}`
+      : `Loop history ${visibleHistory.length}${toolCount > 0 ? ` · ${toolCount} tools` : ''}`;
+  const toggleExpanded = useCallback(() => {
+    preserveScrollPositionForToggle(blockRef.current, () => {
+      setExpanded((value) => !value);
+    });
+  }, []);
+
+  if (visibleHistory.length === 0) {
+    return null;
+  }
+
+  return (
+    <div
+      ref={blockRef}
+      className={`assistant-loop-history ${expanded ? 'expanded' : ''}`}
+    >
+      <button
+        className="assistant-loop-history-summary"
+        type="button"
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+      >
+        <Clock3 size={15} />
+        <span>{summary}</span>
+        <em>{expanded ? (language === 'zh' ? '收起' : 'Hide') : language === 'zh' ? '展开' : 'Show'}</em>
+        <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
+      </button>
+      {expanded && (
+        <div className="assistant-loop-history-details">
+          {visibleHistory.map((historyMessage, index) => (
+            <AssistantLoopHistoryItem
+              // eslint-disable-next-line react/no-array-index-key
+              key={`${historyMessage.id}-${index}`}
+              index={index}
+              message={historyMessage}
+              language={language}
+              onRevertChangeReport={onRevertChangeReport}
+              onOpenScene={onOpenScene}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AssistantLoopHistoryItem({
+  index,
+  message,
+  language,
+  onRevertChangeReport,
+  onOpenScene,
+}: {
+  index: number;
+  message: ChatMessage;
+  language: AppLanguage;
+  onRevertChangeReport: (
+    report: ConversationChangeReport,
+    message: ChatMessage,
+  ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
+}) {
+  const { imagePaths, text } = splitMessageImages(message.content);
+  const executions = message.toolExecutions ?? [];
+  const title =
+    language === 'zh'
+      ? `第 ${index + 1} 段执行`
+      : `Step ${index + 1}`;
+  const timestamp = formatLoopHistoryTimestamp(message.createdAt, language);
+
+  return (
+    <section className="assistant-loop-history-item">
+      <header>
+        <strong>{title}</strong>
+        {timestamp && <span>{timestamp}</span>}
+      </header>
+      <MessageImageStrip paths={imagePaths} />
+      {executions.length > 0 ? (
+        <AssistantMessageContent
+          content={text}
+          executions={executions}
+          language={language}
+          message={message}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      ) : text ? (
+        <MarkdownContent content={text} />
+      ) : null}
+    </section>
+  );
+}
+
+function hasVisibleLoopHistoryMessage(message: ChatMessage) {
+  return Boolean(
+    message.content.trim() ||
+      (message.attachments?.length ?? 0) > 0 ||
+      (message.toolExecutions?.length ?? 0) > 0,
+  );
+}
+
+function formatLoopHistoryTimestamp(value: string | undefined, language: AppLanguage) {
+  if (!value) {
+    return '';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(date);
+}
+
 function ToolExecutionBlock({
   executions,
   language,
   message,
   onRevertChangeReport,
+  onOpenScene,
 }: {
   executions: ChatToolExecution[];
   language: AppLanguage;
@@ -5260,11 +8507,18 @@ function ToolExecutionBlock({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
   const running = executions.some(isToolRunning);
   const failedCount = executions.filter(isToolFailed).length;
   const changeReport = toolChangeReportFromExecutions(executions);
+  const toggleExpanded = useCallback(() => {
+    preserveScrollPositionForToggle(blockRef.current, () => {
+      setExpanded((value) => !value);
+    });
+  }, []);
 
   if (changeReport) {
     const messageChangeReport: ConversationChangeReport = {
@@ -5296,11 +8550,14 @@ function ToolExecutionBlock({
         : `Ran ${executions.length} tools`;
 
   return (
-    <div className="tool-execution-block">
+    <div
+      ref={blockRef}
+      className={`tool-execution-block ${expanded ? 'expanded' : ''}`}
+    >
       <button
         className="tool-execution-summary"
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={toggleExpanded}
       >
         <Terminal size={15} />
         <span>{summary}</span>
@@ -5313,6 +8570,9 @@ function ToolExecutionBlock({
               // eslint-disable-next-line react/no-array-index-key
               key={`${execution.id}-${index}`}
               execution={execution}
+              message={message}
+              language={language}
+              onOpenScene={onOpenScene}
             />
           ))}
         </div>
@@ -5335,7 +8595,13 @@ function ToolChangeBlock({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const blockRef = useRef<HTMLDivElement>(null);
   const hasDetails = report.files.some((file) => file.lines.length > 0);
+  const toggleExpanded = useCallback(() => {
+    preserveScrollPositionForToggle(blockRef.current, () => {
+      setExpanded((value) => !value);
+    });
+  }, []);
   const title =
     running && !hasDetails
       ? language === 'zh'
@@ -5346,13 +8612,16 @@ function ToolChangeBlock({
         : `${report.fileCount} file${report.fileCount === 1 ? '' : 's'} changed`;
 
   return (
-    <div className="tool-change-block">
+    <div
+      ref={blockRef}
+      className={`tool-change-block ${expanded ? 'expanded' : ''}`}
+    >
       <div className="tool-change-header-row">
         <button
           className="tool-change-header"
           type="button"
           disabled={!hasDetails}
-          onClick={() => setExpanded((value) => !value)}
+          onClick={toggleExpanded}
         >
           <Code2 size={15} />
           <span>
@@ -5445,8 +8714,46 @@ function DiffLineView({ line }: { line: DiffLine }) {
   );
 }
 
-function ToolExecutionDetail({ execution }: { execution: ChatToolExecution }) {
+function preserveScrollPositionForToggle(
+  element: HTMLElement | null,
+  update: () => void,
+) {
+  if (!element) {
+    update();
+    return;
+  }
+  const scroller = element.closest('.message-list') as HTMLElement | null;
+  const beforeTop = element.getBoundingClientRect().top;
+  update();
+  if (!scroller) {
+    return;
+  }
+  const restore = () => {
+    const nextTop = element.getBoundingClientRect().top;
+    const delta = nextTop - beforeTop;
+    if (Math.abs(delta) > 0.5) {
+      scroller.scrollTop += delta;
+    }
+  };
+  window.requestAnimationFrame(() => {
+    restore();
+    window.requestAnimationFrame(restore);
+  });
+}
+
+function ToolExecutionDetail({
+  execution,
+  message,
+  language,
+  onOpenScene,
+}: {
+  execution: ChatToolExecution;
+  message: ChatMessage;
+  language: AppLanguage;
+  onOpenScene: (scene: CardlingScene) => void;
+}) {
   const [outputExpanded, setOutputExpanded] = useState(false);
+  const scene = cardlingSceneFromToolExecution(execution, message);
   const status = isToolRunning(execution)
     ? '运行中'
     : isToolFailed(execution)
@@ -5467,6 +8774,16 @@ function ToolExecutionDetail({ execution }: { execution: ChatToolExecution }) {
         </span>
       </header>
       {summary && <code>$ {summary}</code>}
+      {scene && (
+        <button
+          className="tool-scene-open"
+          type="button"
+          onClick={() => onOpenScene(scene)}
+        >
+          <Sparkles size={14} />
+          <span>{language === 'zh' ? '打开交互场景' : 'Open interactive scene'}</span>
+        </button>
+      )}
       {output && (
         <>
           <pre className={`tool-execution-output ${outputExpanded ? 'expanded' : ''}`}>
@@ -5924,6 +9241,432 @@ function asRecord(value: unknown) {
     : {};
 }
 
+function cardlingSceneFromToolExecution(
+  execution: ChatToolExecution,
+  message: ChatMessage,
+): CardlingScene | null {
+  const metadata = execution.metadata;
+  const kind = String(metadata.kind ?? metadata.type ?? '').trim();
+  const name = execution.name.trim();
+  if (
+    kind !== 'cardling_scene' &&
+    name !== 'present_cardling_scene' &&
+    name !== 'cardling_scene'
+  ) {
+    return null;
+  }
+  const rawScene = asRecord(metadata.scene ?? metadata.cardling_scene ?? metadata);
+  return cardlingSceneFromRawScene(rawScene, {
+    metadata,
+    executionId: execution.id,
+    summary: execution.summary,
+    sessionId: message.conversationId,
+    turnId: message.turnId,
+  });
+}
+
+function cardlingSceneFromSessionSceneRecord(
+  record: SessionSceneRecord,
+  fallbackSessionId?: string,
+): CardlingScene | null {
+  const raw = asRecord(record.raw);
+  const rawScene = scenePayloadFromRecord(raw);
+  const metadata = asRecord(
+    raw.metadata ?? rawScene.metadata ?? asRecord(rawScene).metadata,
+  );
+  return cardlingSceneFromRawScene(rawScene, {
+    metadata,
+    executionId: sceneString(
+      raw.source_execution_id ??
+        raw.sourceExecutionId ??
+        raw.tool_call_id ??
+        raw.toolCallId,
+    ),
+    summary: sceneString(raw.title ?? rawScene.title),
+    sessionId:
+      record.sessionId ??
+      sceneString(raw.session_id ?? raw.sessionId) ??
+      fallbackSessionId,
+    turnId: record.turnId ?? sceneString(raw.turn_id ?? raw.turnId),
+  });
+}
+
+function cardlingSceneFromRawScene(
+  rawScene: Record<string, unknown>,
+  {
+    metadata,
+    executionId,
+    summary,
+    sessionId,
+    turnId,
+  }: {
+    metadata: Record<string, unknown>;
+    executionId?: string;
+    summary?: string;
+    sessionId?: string;
+    turnId?: string;
+  },
+): CardlingScene | null {
+  const html = String(rawScene.html ?? rawScene.content ?? '');
+  if (!html.trim()) {
+    return null;
+  }
+  const rawCardling = asRecord(rawScene.cardling ?? metadata.cardling);
+  const rawAnchor = asRecord(rawCardling.anchor ?? rawScene.anchor);
+  const modeText = String(rawCardling.mode ?? rawScene.mode ?? 'embedded').trim();
+  const moodText = String(rawCardling.mood ?? rawScene.mood ?? 'explain').trim();
+  const placementText = String(rawAnchor.placement ?? 'right').trim();
+  const sceneId =
+    sceneString(
+      rawScene.scene_id ??
+        rawScene.sceneId ??
+        metadata.scene_id ??
+        metadata.sceneId,
+    ) || (executionId ? `scene-${executionId}` : '');
+  if (!sceneId) {
+    return null;
+  }
+  return {
+    sceneId,
+    title:
+      sceneString(rawScene.title ?? metadata.title ?? summary) ||
+      'Kabu Scene',
+    html,
+    sourceExecutionId: executionId,
+    sessionId,
+    turnId,
+    cardling: {
+      mode: modeText === 'floating' ? 'floating' : 'embedded',
+      speech: sceneString(rawCardling.speech ?? rawCardling.text ?? rawScene.speech) || '',
+      mood: isCardlingSceneMood(moodText) ? moodText : 'explain',
+      anchor: {
+        nodeId: sceneString(
+          rawAnchor.node_id ?? rawAnchor.nodeId ?? rawCardling.node_id,
+        ),
+        selector: sceneString(rawAnchor.selector ?? rawCardling.selector),
+        placement: isCardlingScenePlacement(placementText)
+          ? placementText
+          : 'right',
+        offset: {
+          x: metadataInt(asRecord(rawAnchor.offset).x ?? rawAnchor.offset_x),
+          y: metadataInt(asRecord(rawAnchor.offset).y ?? rawAnchor.offset_y),
+        },
+      },
+      position:
+        rawCardling.position != null
+          ? (rawCardling.position as string | { x: number; y: number })
+          : undefined,
+    },
+    nodes: parseCardlingSceneNodes(rawScene.nodes),
+    expectedUserAction: parseCardlingExpectedAction(
+      rawScene.expected_user_action ?? rawScene.expectedUserAction,
+    ),
+    raw: rawScene,
+  };
+}
+
+function scenePayloadFromRecord(payload: Record<string, unknown>) {
+  const data = asRecord(payload.data);
+  const item = asRecord(payload.item);
+  const scene = asRecord(payload.scene);
+  const metadata = asRecord(payload.metadata);
+  const candidates = [
+    scene,
+    asRecord(payload.cardling_scene),
+    asRecord(metadata.scene),
+    asRecord(metadata.cardling_scene),
+    item,
+    data,
+    payload,
+  ];
+  return (
+    candidates.find(
+      (candidate) =>
+        candidate.html != null ||
+        candidate.content != null ||
+        candidate.scene_id != null ||
+        candidate.sceneId != null,
+    ) ?? payload
+  );
+}
+
+function hasSceneHtml(payload: Record<string, unknown>) {
+  const rawScene = scenePayloadFromRecord(payload);
+  return String(rawScene.html ?? rawScene.content ?? '').trim().length > 0;
+}
+
+function latestSessionSceneRecord(records: SessionSceneRecord[]) {
+  if (records.length === 0) {
+    return null;
+  }
+  return [...records].sort(
+    (a, b) => sceneRecordTimestamp(a) - sceneRecordTimestamp(b),
+  )[records.length - 1];
+}
+
+function sceneRecordTimestamp(record: SessionSceneRecord) {
+  const raw = asRecord(record.raw);
+  const value =
+    record.updatedAt ??
+    record.createdAt ??
+    sceneString(raw.updated_at ?? raw.updatedAt ?? raw.created_at ?? raw.createdAt);
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function parseCardlingSceneNodes(value: unknown): CardlingScene['nodes'] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const nodes: CardlingScene['nodes'] = [];
+  for (const item of value) {
+    const node = asRecord(item);
+    const nodeId = sceneString(node.node_id ?? node.nodeId ?? node.id);
+    if (!nodeId) {
+      continue;
+    }
+    nodes.push({
+      nodeId,
+      label: sceneString(node.label),
+      purpose: sceneString(node.purpose),
+    });
+  }
+  return nodes;
+}
+
+function parseCardlingExpectedAction(value: unknown): CardlingScene['expectedUserAction'] {
+  const action = asRecord(value);
+  return {
+    type: sceneString(action.type),
+    required: Boolean(action.required),
+  };
+}
+
+function initialSceneSelectedNodeId(
+  scene: CardlingScene,
+  steps: CardlingSceneStep[],
+) {
+  if (steps.length > 0) {
+    return steps[0]?.nodeId ?? '';
+  }
+  return scene.cardling.anchor?.nodeId ?? scene.nodes[0]?.nodeId ?? '';
+}
+
+function sceneFeedbackId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `scene-feedback-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function buildCardlingSceneSteps(
+  scene: CardlingScene,
+  language: AppLanguage,
+): CardlingSceneStep[] {
+  const explicitSteps = parseCardlingPresentationSteps(scene, language);
+  if (explicitSteps.length > 0) {
+    return explicitSteps;
+  }
+  const fallbackSpeech = scene.cardling.speech.trim();
+  if (scene.nodes.length === 0) {
+    return [
+      {
+        id: 'scene-intro',
+        title: scene.title,
+        speech:
+          fallbackSpeech ||
+          (language === 'zh'
+            ? '我已打开这个交互场景，可以直接在页面节点上给我反馈。'
+            : 'I opened this interactive scene. You can comment on nodes directly.'),
+        holdMs: 900,
+      },
+    ];
+  }
+  const anchorNodeId = scene.cardling.anchor?.nodeId ?? scene.nodes[0]?.nodeId;
+  return scene.nodes.map((node, index) => {
+    const title = node.label || node.nodeId;
+    const shouldUseSceneSpeech =
+      Boolean(fallbackSpeech) && (node.nodeId === anchorNodeId || index === 0);
+    return {
+      id: `node-${node.nodeId}`,
+      nodeId: node.nodeId,
+      title,
+      speech: shouldUseSceneSpeech
+        ? fallbackSpeech
+        : nodePurposeSpeech(node, language),
+      holdMs: 720,
+    };
+  });
+}
+
+function parseCardlingPresentationSteps(
+  scene: CardlingScene,
+  language: AppLanguage,
+): CardlingSceneStep[] {
+  const rawCardling = asRecord(scene.raw.cardling);
+  const presentation = asRecord(
+    scene.raw.presentation ??
+      scene.raw.timeline ??
+      scene.raw.playback ??
+      rawCardling.presentation ??
+      rawCardling.timeline,
+  );
+  const rawSteps = Array.isArray(presentation.steps)
+    ? presentation.steps
+    : Array.isArray(scene.raw.steps)
+      ? scene.raw.steps
+      : [];
+  const steps: CardlingSceneStep[] = [];
+  rawSteps.forEach((item, index) => {
+    const step = asRecord(item);
+    const nodeId = sceneString(
+      step.node_id ??
+        step.nodeId ??
+        step.target_node_id ??
+        step.targetNodeId ??
+        step.anchor_node_id ??
+        step.anchorNodeId,
+    );
+    const node = nodeId
+      ? scene.nodes.find((candidate) => candidate.nodeId === nodeId)
+      : undefined;
+    const title =
+      sceneString(step.title ?? step.label ?? step.name) ||
+      node?.label ||
+      nodeId ||
+      `Step ${index + 1}`;
+    const speech =
+      sceneString(
+        step.speech ??
+          step.text ??
+          step.message ??
+          step.narration ??
+          step.description,
+      ) ||
+      nodePurposeSpeech(node, language) ||
+      scene.cardling.speech;
+    if (!speech && !nodeId) {
+      return;
+    }
+    const holdMs =
+      metadataInt(step.hold_ms ?? step.holdMs ?? step.duration_ms ?? step.durationMs) ||
+      820;
+    steps.push({
+      id: sceneString(step.id) || `step-${index + 1}`,
+      nodeId,
+      title,
+      speech,
+      holdMs: Math.min(Math.max(holdMs, 320), 3000),
+    });
+  });
+  return steps;
+}
+
+function nodePurposeSpeech(
+  node: CardlingScene['nodes'][number] | undefined,
+  language: AppLanguage,
+) {
+  if (!node) {
+    return '';
+  }
+  const label = node.label || node.nodeId;
+  if (node.purpose) {
+    return language === 'zh'
+      ? `${label}：${node.purpose}`
+      : `${label}: ${node.purpose}`;
+  }
+  return language === 'zh'
+    ? `${label}：这里可以作为当前任务场景的反馈节点。`
+    : `${label}: This is a feedback node in the current task scene.`;
+}
+
+function latestCardlingSceneFromMessages(messages: ChatMessage[]) {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = messages[messageIndex];
+    const executions = message.toolExecutions ?? [];
+    for (let index = executions.length - 1; index >= 0; index -= 1) {
+      const scene = cardlingSceneFromToolExecution(executions[index], message);
+      if (scene) {
+        return scene;
+      }
+    }
+  }
+  return null;
+}
+
+function cardlingSceneKey(scene: CardlingScene) {
+  return `${scene.sceneId}:${scene.sourceExecutionId ?? ''}:${scene.turnId ?? ''}`;
+}
+
+function cardlingSceneRevisionKey(scene: CardlingScene) {
+  return JSON.stringify({
+    key: cardlingSceneKey(scene),
+    title: scene.title,
+    html: scene.html,
+    cardling: scene.cardling,
+    nodes: scene.nodes,
+    expectedUserAction: scene.expectedUserAction,
+  });
+}
+
+function sceneAutoPlayEnabled(scene: CardlingScene) {
+  const rawCardling = asRecord(scene.raw.cardling);
+  const presentation = asRecord(
+    scene.raw.presentation ??
+      scene.raw.timeline ??
+      scene.raw.playback ??
+      rawCardling.presentation ??
+      rawCardling.timeline,
+  );
+  const autoPlay = sceneBoolean(
+    presentation.auto_play ??
+      presentation.autoPlay ??
+      scene.raw.auto_play ??
+      scene.raw.autoPlay ??
+      rawCardling.auto_play ??
+      rawCardling.autoPlay,
+  );
+  return autoPlay ?? true;
+}
+
+function sceneBoolean(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+function sceneString(value: unknown) {
+  const text = value == null ? '' : String(value);
+  return text.trim() ? text : undefined;
+}
+
+function isCardlingScenePlacement(value: string): value is CardlingScenePlacement {
+  return value === 'top' || value === 'right' || value === 'bottom' || value === 'left';
+}
+
+function isCardlingSceneMood(value: string): value is CardlingSceneMood {
+  return (
+    value === 'explain' ||
+    value === 'ask' ||
+    value === 'confirm' ||
+    value === 'warn' ||
+    value === 'celebrate'
+  );
+}
+
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -6005,6 +9748,28 @@ function GuidanceDialog({
   const [guidance, setGuidance] = useState('');
   const [mode, setMode] = useState<GuidanceMode>('append_context');
   const [submitting, setSubmitting] = useState(false);
+  const modeOptions: Array<{
+    value: GuidanceMode;
+    title: string;
+    description: string;
+  }> = [
+    {
+      value: 'append_context',
+      title: language === 'zh' ? '补充给当前回合' : 'Add to current turn',
+      description:
+        language === 'zh'
+          ? '不打断正在运行的任务，把这段话作为即时引导注入。'
+          : 'Keep the task running and inject this as immediate guidance.',
+    },
+    {
+      value: 'interrupt_and_continue',
+      title: language === 'zh' ? '中断后继续' : 'Interrupt and continue',
+      description:
+        language === 'zh'
+          ? '让当前回合停在这里，再按你的新引导继续处理。'
+          : 'Pause the current turn here, then continue with this guidance.',
+    },
+  ];
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -6048,20 +9813,31 @@ function GuidanceDialog({
           }
           rows={4}
         />
-        <label>
+        <div className="guidance-mode-field">
           <span>{language === 'zh' ? '处理方式' : 'Mode'}</span>
-          <select
-            value={mode}
-            onChange={(event) => setMode(event.currentTarget.value as GuidanceMode)}
+          <div
+            className="guidance-mode-options"
+            role="radiogroup"
+            aria-label={language === 'zh' ? '处理方式' : 'Guidance mode'}
           >
-            <option value="append_context">
-              {language === 'zh' ? '插入当前回合' : 'Append to current turn'}
-            </option>
-            <option value="interrupt_and_continue">
-              {language === 'zh' ? '中断并继续' : 'Interrupt and continue'}
-            </option>
-          </select>
-        </label>
+            {modeOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={mode === option.value ? 'active' : ''}
+                aria-pressed={mode === option.value}
+                disabled={submitting}
+                onClick={() => setMode(option.value)}
+              >
+                <span>
+                  <strong>{option.title}</strong>
+                  <small>{option.description}</small>
+                </span>
+                {mode === option.value && <Check size={15} />}
+              </button>
+            ))}
+          </div>
+        </div>
         <footer>
           <button type="button" onClick={onCancel} disabled={submitting}>
             {language === 'zh' ? '取消' : 'Cancel'}
@@ -6671,9 +10447,37 @@ function Composer({
   const [mentionSearchBusy, setMentionSearchBusy] = useState(false);
   const hasContent = draft.trim().length > 0 || imageAttachments.length > 0;
 
+  const resizeComposerTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+    const computed = window.getComputedStyle(textarea);
+    const lineHeight = Number.parseFloat(computed.lineHeight) || 20;
+    const minHeight = Math.ceil(lineHeight * 2);
+    const maxHeight = Math.min(
+      Math.ceil(window.innerHeight * 0.32),
+      Math.ceil(lineHeight * 10),
+    );
+    textarea.style.height = 'auto';
+    const nextHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, []);
+
   useEffect(() => {
     setHideForScreenshot(hideCardbushForScreenshot);
   }, [hideCardbushForScreenshot]);
+
+  useEffect(() => {
+    resizeComposerTextarea();
+  }, [compact, draft, imageAttachments.length, resizeComposerTextarea]);
+
+  useEffect(() => {
+    const handleResize = () => resizeComposerTextarea();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [resizeComposerTextarea]);
 
   async function submit() {
     if (sending && !hasContent) {
@@ -7398,7 +11202,7 @@ function Composer({
                 ? 'Ask cardbush anything. Type @ to reference project files'
                 : 'Message cardbush...'
           }
-          rows={1}
+          rows={2}
         />
         {queueLabel && (
           <div className="composer-queue-note" title={queueTitle}>
@@ -7436,7 +11240,7 @@ function Composer({
             />
             <ToolChip
               icon={<Image size={15} />}
-              label={language === 'zh' ? '截图 Alt+A' : 'Screenshot'}
+              label={language === 'zh' ? '截图 Alt+Q' : 'Screenshot'}
               active={activeMenu === 'screenshot'}
               menuTrigger
               onClick={() => toggleMenu('screenshot')}
@@ -8131,7 +11935,7 @@ function ComposerPopover({
                     ? '开始截图'
                     : 'Start screenshot'}
               </strong>
-              <small>Alt+A</small>
+              <small>Alt+Q</small>
             </span>
           </button>
           <label className="toggle-row">
@@ -9066,7 +12870,7 @@ function SettingsView({
   const resetCompanionPosition = useCallback(() => {
     window.localStorage.removeItem('cardbush_cardling_position');
     void window.cardbushDesktop?.resetCardlingPosition?.();
-    notify(language === 'zh' ? '卡灵位置已重置' : 'Cardling position reset');
+    notify(language === 'zh' ? '卡布位置已重置' : 'Kabu position reset');
   }, [language, notify]);
 
   const content = (() => {
@@ -9453,11 +13257,11 @@ function CompanionSettingsPanel({
   return (
     <div className="settings-stack">
       <SettingsCard
-        title={language === 'zh' ? '卡灵状态助手' : 'Cardling companion'}
+        title={language === 'zh' ? '卡布状态助手' : 'Kabu companion'}
         subtitle={
           language === 'zh'
-            ? '配置卡灵在桌面上的显示、动效和停靠行为。'
-            : 'Configure Cardling display, motion, and dock behavior.'
+            ? '配置卡布在桌面上的显示、动效和停靠行为。'
+            : 'Configure Kabu display, motion, and dock behavior.'
         }
       >
         <div
@@ -9485,7 +13289,7 @@ function CompanionSettingsPanel({
             </span>
           </div>
           <div>
-            <strong>{language === 'zh' ? 'Cardling / 卡灵' : 'Cardling'}</strong>
+            <strong>{language === 'zh' ? 'Kabu / 卡布' : 'Kabu'}</strong>
             <span>
               {language === 'zh'
                 ? '轻量、可拖拽、跟随对话状态。'
@@ -9494,11 +13298,11 @@ function CompanionSettingsPanel({
           </div>
         </div>
         <SettingsSwitch
-          title={language === 'zh' ? '显示卡灵' : 'Show Cardling'}
+          title={language === 'zh' ? '显示卡布' : 'Show Kabu'}
           subtitle={
             language === 'zh'
-              ? '关闭后隐藏聊天界面的卡灵入口，但保留现有偏好。'
-              : 'Hides Cardling in chat while keeping current preferences.'
+              ? '关闭后隐藏聊天界面的卡布入口，但保留现有偏好。'
+              : 'Hides Kabu in chat while keeping current preferences.'
           }
           checked={settings.companionEnabled}
           onChange={(checked) =>
@@ -9549,8 +13353,8 @@ function CompanionSettingsPanel({
         title={language === 'zh' ? '动效与位置' : 'Motion and position'}
         subtitle={
           language === 'zh'
-            ? '控制卡灵的循环动画、反馈强度和停靠位置。'
-            : 'Control Cardling loops, feedback intensity, and dock position.'
+            ? '控制卡布的循环动画、反馈强度和停靠位置。'
+            : 'Control Kabu loops, feedback intensity, and dock position.'
         }
       >
         <SettingsRadio
@@ -9579,7 +13383,7 @@ function CompanionSettingsPanel({
         <div className="settings-actions">
           <button className="secondary-button" type="button" onClick={onResetCompanionPosition}>
             <RotateCcw size={14} />
-            {language === 'zh' ? '重置卡灵位置' : 'Reset Cardling position'}
+            {language === 'zh' ? '重置卡布位置' : 'Reset Kabu position'}
           </button>
         </div>
       </SettingsCard>
@@ -9587,8 +13391,8 @@ function CompanionSettingsPanel({
         title={language === 'zh' ? '状态事件表' : 'Status event map'}
         subtitle={
           language === 'zh'
-            ? '卡灵只反映产品状态，不替代主流程操作。'
-            : 'Cardling reflects product state without replacing primary workflows.'
+            ? '卡布只反映产品状态，不替代主流程操作。'
+            : 'Kabu reflects product state without replacing primary workflows.'
         }
       >
         <div className="companion-event-table">
@@ -10227,6 +14031,8 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
   >({});
   const [loginStart, setLoginStart] = useState<WeixinLoginStartResult | null>(null);
   const [loginStatus, setLoginStatus] = useState<WeixinLoginStatusResult | null>(null);
+  const [qrImageSrc, setQrImageSrc] = useState('');
+  const [qrImageFailed, setQrImageFailed] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -10240,6 +14046,17 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
   const selectedConfig = configByPlatform[selectedPlatform];
   const selectedDraft = configDraftByPlatform[selectedPlatform] ?? '';
   const selectedLogs = logsByPlatform[selectedPlatform] ?? [];
+  const selectedEnabled =
+    selectedStatus?.enabled ?? selectedOverview?.enabled ?? false;
+  const selectedConfigured =
+    selectedStatus?.configured ?? selectedOverview?.configured ?? false;
+  const selectedMissingFields =
+    selectedStatus?.missingRequiredFields ??
+    selectedOverview?.missingRequiredFields ??
+    [];
+  const selectedServiceStatus =
+    selectedStatus?.serviceStatus ?? selectedOverview?.serviceStatus ?? 'stopped';
+  const selectedLastError = botServiceDetailText(selectedStatus, selectedOverview, language);
 
   const notify = useCallback((message: string) => {
     setNotice(message);
@@ -10323,43 +14140,82 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
     }
   }, [language, notify, refreshStatus, selectedDraft, selectedPlatform]);
 
+  const loadLogs = useCallback(
+    async (platform: BotPlatform, options?: { silent?: boolean }) => {
+      if (!options?.silent) {
+        setBusyKey(`logs:${platform}`);
+        setError('');
+      }
+      try {
+        const logs = await fetchBotServiceLogs({ platform, tail: 200 });
+        setLogsByPlatform((current) => ({ ...current, [platform]: logs.lines }));
+      } catch (caught) {
+        if (!options?.silent) {
+          setError(botPanelError(caught, language));
+        }
+      } finally {
+        if (!options?.silent) {
+          setBusyKey('');
+        }
+      }
+    },
+    [language],
+  );
+
   const runServiceAction = useCallback(
     async (platform: BotPlatform, action: 'start' | 'stop' | 'restart') => {
+      const status = statusByPlatform[platform];
+      const overview = overviewByPlatform.get(platform);
+      const platformEnabled = status?.enabled ?? overview?.enabled ?? false;
+      const platformConfigured = status?.configured ?? overview?.configured ?? false;
+      const missingFields =
+        status?.missingRequiredFields ?? overview?.missingRequiredFields ?? [];
+      if ((action === 'start' || action === 'restart') && !platformEnabled) {
+        setError(
+          language === 'zh'
+            ? `${botPlatformLabels[platform][language]} Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。`
+            : `${botPlatformLabels[platform][language]} bot is disabled. Load its config, set enabled to true, save it, then start the service.`,
+        );
+        return;
+      }
+      if ((action === 'start' || action === 'restart') && !platformConfigured) {
+        setError(botMissingConfigurationText(platform, missingFields, language));
+        return;
+      }
       setBusyKey(`service:${platform}:${action}`);
       setError('');
       try {
         const status = await controlBotService(platform, action);
         setStatusByPlatform((current) => ({ ...current, [platform]: status }));
-        notify(language === 'zh' ? '服务命令已发送' : 'Service command sent');
+        if (status.serviceStatus === 'failed') {
+          setError(botServiceDetailText(status, overviewByPlatform.get(platform), language));
+          void loadLogs(platform, { silent: true }).catch(() => undefined);
+        } else {
+          notify(
+            action === 'stop'
+              ? language === 'zh'
+                ? '停止请求已发送，服务状态已刷新'
+                : 'Stop request sent and service status refreshed'
+              : language === 'zh'
+                ? '服务命令已发送'
+                : 'Service command sent',
+          );
+        }
       } catch (caught) {
         setError(botPanelError(caught, language));
       } finally {
         setBusyKey('');
       }
     },
-    [language, notify],
-  );
-
-  const loadLogs = useCallback(
-    async (platform: BotPlatform) => {
-      setBusyKey(`logs:${platform}`);
-      setError('');
-      try {
-        const logs = await fetchBotServiceLogs({ platform, tail: 200 });
-        setLogsByPlatform((current) => ({ ...current, [platform]: logs.lines }));
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language],
+    [language, loadLogs, notify, overviewByPlatform, statusByPlatform],
   );
 
   const beginWeixinLogin = useCallback(async () => {
     setBusyKey('weixin:login');
     setLoginStart(null);
     setLoginStatus(null);
+    setQrImageSrc('');
+    setQrImageFailed(false);
     setError('');
     try {
       const started = await startWeixinLogin();
@@ -10400,6 +14256,45 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
   useEffect(() => {
     void refreshStatus(selectedPlatform);
   }, [refreshStatus, selectedPlatform]);
+
+  useEffect(() => {
+    setQrImageFailed(false);
+    setQrImageSrc('');
+    const source = loginStart?.qrcodeUrl.trim() ?? '';
+    if (!source) {
+      return undefined;
+    }
+    let cancelled = false;
+    async function renderQr() {
+      if (isDirectImageSource(source)) {
+        setQrImageSrc(source);
+        return;
+      }
+      try {
+        const qrcode = await import('qrcode');
+        const image = await qrcode.toDataURL(source, {
+          errorCorrectionLevel: 'M',
+          margin: 2,
+          width: 512,
+          color: {
+            dark: '#111111',
+            light: '#ffffff',
+          },
+        });
+        if (!cancelled) {
+          setQrImageSrc(image);
+        }
+      } catch {
+        if (!cancelled) {
+          setQrImageFailed(true);
+        }
+      }
+    }
+    void renderQr();
+    return () => {
+      cancelled = true;
+    };
+  }, [loginStart?.qrcodeUrl]);
 
   useEffect(() => {
     if (!loginStart?.loginId) {
@@ -10458,6 +14353,7 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
             const status = statusByPlatform[platform];
             const serviceStatus =
               status?.serviceStatus ?? overview?.serviceStatus ?? 'stopped';
+            const enabled = status?.enabled ?? overview?.enabled ?? false;
             const configured = status?.configured ?? overview?.configured ?? false;
             const accountCount = status?.accountCount ?? overview?.accountCount;
             return (
@@ -10473,7 +14369,11 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
                 <span>
                   <strong>{botPlatformLabels[platform][language]}</strong>
                   <small>
-                    {configured
+                    {!enabled
+                      ? language === 'zh'
+                        ? '未启用'
+                        : 'Disabled'
+                      : configured
                       ? language === 'zh'
                         ? '已配置'
                         : 'Configured'
@@ -10528,34 +14428,42 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
         }
       >
         <div className="bot-service-row">
-          <span className={`bot-status-dot ${botStatusTone(
-            selectedStatus?.serviceStatus ?? selectedOverview?.serviceStatus ?? 'stopped',
-          )}`} />
+          <span className={`bot-status-dot ${botStatusTone(selectedServiceStatus)}`} />
           <div>
             <strong>
-              {botServiceStatusText(
-                selectedStatus?.serviceStatus ??
-                  selectedOverview?.serviceStatus ??
-                  'stopped',
-                language,
-              )}
+              {botServiceStatusText(selectedServiceStatus, language)}
             </strong>
             <small>
-              {selectedStatus?.lastError ||
-                selectedOverview?.lastError ||
+              {selectedLastError ||
                 (language === 'zh'
                   ? '暂无错误信息'
                   : 'No error reported')}
             </small>
           </div>
         </div>
+        {(!selectedEnabled || !selectedConfigured) && (
+          <p className="bot-settings-warning">
+            {!selectedEnabled
+              ? language === 'zh'
+                ? '当前平台未启用，BushServer 会拒绝启动请求。请先在配置中将 enabled 设置为 true 并保存。'
+                : 'This platform is disabled, so BushServer will reject start requests. Set enabled to true and save it first.'
+              : botMissingConfigurationText(
+                  selectedPlatform,
+                  selectedMissingFields,
+                  language,
+                )}
+          </p>
+        )}
         <div className="settings-actions">
           {(['start', 'stop', 'restart'] as const).map((action) => (
             <button
               className="secondary-button"
               key={action}
               type="button"
-              disabled={busyKey === `service:${selectedPlatform}:${action}`}
+              disabled={
+                busyKey === `service:${selectedPlatform}:${action}` ||
+                ((!selectedEnabled || !selectedConfigured) && action !== 'stop')
+              }
               onClick={() => void runServiceAction(selectedPlatform, action)}
             >
               {busyKey === `service:${selectedPlatform}:${action}` ? (
@@ -10591,7 +14499,27 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
           </div>
           {loginStart?.qrcodeUrl && (
             <div className="weixin-login-box">
-              <img src={loginStart.qrcodeUrl} alt="WeChat login QR code" />
+              <div
+                className={`weixin-qr-frame ${
+                  qrImageSrc && !qrImageFailed ? '' : 'failed'
+                }`}
+              >
+                {qrImageSrc && (
+                  <img
+                    src={qrImageSrc}
+                    alt="WeChat login QR code"
+                    onLoad={() => setQrImageFailed(false)}
+                    onError={() => setQrImageFailed(true)}
+                  />
+                )}
+                {(!qrImageSrc || qrImageFailed) && (
+                  <span>
+                    {language === 'zh'
+                      ? '正在生成二维码；如果长时间不显示，请复制链接在浏览器打开，或重新开始扫码。'
+                      : 'Generating QR code. If it does not appear, copy the link or start again.'}
+                  </span>
+                )}
+              </div>
               <button
                 className="settings-copyline"
                 type="button"
@@ -10762,7 +14690,91 @@ function botPanelError(caught: unknown, language: AppLanguage) {
       ? 'Bot API 尚未由 BushServer 提供，等待后端接入后即可使用。'
       : 'Bot API is not available from BushServer yet.';
   }
+  if (/bot is disabled/i.test(message)) {
+    return language === 'zh'
+      ? 'Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。'
+      : 'Bot is disabled. Load its config, set enabled to true, save it, then start the service.';
+  }
+  if (/weixin bot has no logged-in account/i.test(message)) {
+    return language === 'zh'
+      ? '微信 Bot 还没有已登录账号。请先完成微信扫码确认，再启动服务。'
+      : 'The WeChat bot has no logged-in account. Complete QR login before starting the service.';
+  }
   return message;
+}
+
+function botServiceDetailText(
+  status: BotStatusResult | undefined,
+  overview: BotPlatformOverview | undefined,
+  language: AppLanguage,
+) {
+  const explicitError = status?.lastError ?? overview?.lastError ?? '';
+  if (explicitError) {
+    return explicitError;
+  }
+  if (status?.serviceStatus === 'failed') {
+    if (status.returnCode != null) {
+      return language === 'zh'
+        ? `服务进程已退出，退出码 ${status.returnCode}。停止请求已送达，但进程此前/当前以失败状态结束；可查看下方日志或重新启动。`
+        : `The service process exited with code ${status.returnCode}. The stop request was accepted, but the process ended in a failed state. Check logs or restart.`;
+    }
+    return language === 'zh'
+      ? '服务处于失败状态，但后端没有返回错误详情；可加载日志查看原因。'
+      : 'The service is failed, but BushServer returned no error detail. Load logs to inspect it.';
+  }
+  if (status?.serviceStatus === 'stopped' && status.stoppedAt) {
+    return language === 'zh'
+      ? `已停止于 ${formatBotStatusTime(status.stoppedAt)}`
+      : `Stopped at ${formatBotStatusTime(status.stoppedAt)}`;
+  }
+  if (status?.serviceStatus === 'running' && status.pid != null) {
+    return language === 'zh'
+      ? `运行中，PID ${status.pid}`
+      : `Running, PID ${status.pid}`;
+  }
+  return language === 'zh' ? '暂无错误信息' : 'No error reported';
+}
+
+function formatBotStatusTime(value: string) {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return value;
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(timestamp);
+}
+
+function isDirectImageSource(value: string) {
+  const source = value.trim();
+  return (
+    /^data:image\//i.test(source) ||
+    /^(blob:|file:)/i.test(source) ||
+    /\.(png|jpe?g|gif|webp|svg)([?#].*)?$/i.test(source)
+  );
+}
+
+function botMissingConfigurationText(
+  platform: BotPlatform,
+  missingFields: string[],
+  language: AppLanguage,
+) {
+  if (platform === 'weixin' && missingFields.includes('weixin_account')) {
+    return language === 'zh'
+      ? '微信 Bot 还没有已登录账号。请先在“微信扫码登录”里扫码并确认，成功连接后再启动服务。'
+      : 'The WeChat bot has no logged-in account. Scan and confirm the QR login first, then start the service.';
+  }
+  if (missingFields.length > 0) {
+    const fields = missingFields.join(', ');
+    return language === 'zh'
+      ? `当前平台缺少必填配置：${fields}。请加载配置、补齐并保存后再启动服务。`
+      : `This platform is missing required config: ${fields}. Load, complete, and save the config before starting.`;
+  }
+  return language === 'zh'
+    ? '当前平台配置尚未完成。请加载配置、补齐并保存后再启动服务。'
+    : 'This platform is not fully configured. Load, complete, and save the config before starting.';
 }
 
 function botStatusTone(status: BotServiceStatus) {

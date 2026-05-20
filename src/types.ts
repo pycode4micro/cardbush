@@ -164,6 +164,7 @@ export interface ChatMessage {
   createdAt?: string;
   attachments?: ChatAttachment[];
   toolExecutions?: ChatToolExecution[];
+  loopHistory?: ChatMessage[];
   metadata?: Record<string, unknown>;
 }
 
@@ -215,28 +216,40 @@ export interface InteractionReplyAnswer {
 
 export interface BotPlatformOverview {
   platform: BotPlatform;
+  enabled: boolean;
   configured: boolean;
   serviceStatus: BotServiceStatus;
   accountCount?: number;
   displayName?: string;
   lastError?: string;
+  missingRequiredFields: string[];
   raw: Record<string, unknown>;
 }
 
 export interface BotConfigResult {
   platform: BotPlatform;
+  enabled: boolean;
+  configured: boolean;
   config: Record<string, unknown>;
   secrets: Record<string, unknown>;
+  missingRequiredFields: string[];
   raw: Record<string, unknown>;
 }
 
 export interface BotStatusResult {
   platform: BotPlatform;
+  enabled: boolean;
   configured: boolean;
   serviceStatus: BotServiceStatus;
+  pid?: number;
+  returnCode?: number;
+  startedAt?: string;
+  stoppedAt?: string;
+  logPath?: string;
   accountCount?: number;
   accounts?: Array<Record<string, unknown>>;
   lastError?: string;
+  missingRequiredFields: string[];
   raw: Record<string, unknown>;
 }
 

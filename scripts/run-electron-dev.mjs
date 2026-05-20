@@ -2,12 +2,10 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
-const electronBin = path.join(
-  projectRoot,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'electron.cmd' : 'electron',
-);
+const electronBin =
+  process.platform === 'win32'
+    ? path.join(projectRoot, 'node_modules', 'electron', 'dist', 'electron.exe')
+    : path.join(projectRoot, 'node_modules', '.bin', 'electron');
 
 const child = spawn(electronBin, ['.'], {
   cwd: projectRoot,

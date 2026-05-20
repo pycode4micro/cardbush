@@ -106,6 +106,26 @@ export interface MaintenanceClearResult {
   counts: Record<string, number>;
 }
 
+export interface SceneEventRequest {
+  sessionId: string;
+  sceneId: string;
+  turnId?: string;
+  event: string;
+  nodeId?: string;
+  text?: string;
+  values?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SessionSceneRecord {
+  sceneId: string;
+  sessionId?: string;
+  turnId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  raw: Record<string, unknown>;
+}
+
 export interface SessionMessagesResult {
   conversation: ConversationSummary;
   messages: ChatMessage[];
@@ -117,6 +137,13 @@ function url(path: string) {
     ? backendBaseUrl.slice(0, -1)
     : backendBaseUrl;
   return `${normalizedBase}${path}`;
+}
+
+function backendUrlFor(path: string) {
+  const normalizedBase = backendBaseUrl.endsWith('/')
+    ? backendBaseUrl
+    : `${backendBaseUrl}/`;
+  return new URL(path, normalizedBase).toString();
 }
 
 async function headersFor(targetUrl: string, json = false) {
@@ -410,6 +437,73 @@ export async function clearLogsCache(): Promise<MaintenanceClearResult> {
     },
   );
   return maintenanceClearResultFromPayload(payload);
+}
+
+export async function sendSceneEvent({
+  sessionId,
+  sceneId,
+  turnId,
+  event,
+  nodeId,
+  text,
+  values,
+  metadata,
+}: SceneEventRequest): Promise<Record<string, unknown>> {
+  const normalizedSessionId = sessionId.trim();
+  const normalizedSceneId = sceneId.trim();
+  if (!normalizedSessionId || !normalizedSceneId) {
+    throw new Error('Scene 缺少 session_id 或 scene_id');
+  }
+  return readJson<Record<string, unknown>>(
+    url(
+      `/v1/sessions/${encodeURIComponent(normalizedSessionId)}/scenes/${encodeURIComponent(normalizedSceneId)}/events`,
+    ),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        event,
+        ...(turnId?.trim() ? { turn_id: turnId.trim() } : {}),
+        ...(nodeId?.trim() ? { node_id: nodeId.trim() } : {}),
+        ...(text?.trim() ? { text: text.trim() } : {}),
+        ...(values ? { values } : {}),
+        ...(metadata ? { metadata } : {}),
+      }),
+    },
+  );
+}
+
+export async function fetchSessionScenes(
+  sessionId: string,
+): Promise<SessionSceneRecord[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    return [];
+  }
+  const payload = await readJson<unknown>(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/scenes`),
+  );
+  const records = sceneRecordsFromPayload(payload, normalizedSessionId);
+  return records.filter((item) => item.sceneId.trim());
+}
+
+export async function fetchSessionScene({
+  sessionId,
+  sceneId,
+}: {
+  sessionId: string;
+  sceneId: string;
+}): Promise<SessionSceneRecord | null> {
+  const normalizedSessionId = sessionId.trim();
+  const normalizedSceneId = sceneId.trim();
+  if (!normalizedSessionId || !normalizedSceneId) {
+    return null;
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(
+      `/v1/sessions/${encodeURIComponent(normalizedSessionId)}/scenes/${encodeURIComponent(normalizedSceneId)}`,
+    ),
+  );
+  return sceneRecordFromPayload(payload, normalizedSessionId);
 }
 
 export async function fetchSkills(): Promise<SkillSummary[]> {
@@ -959,9 +1053,8 @@ function botOverviewFromPayload(item: unknown): BotPlatformOverview | null {
   }
   return {
     platform,
-    configured: Boolean(
-      value.configured ?? value.is_configured ?? value.enabled ?? false,
-    ),
+    enabled: Boolean(value.enabled ?? value.is_enabled ?? value.configured ?? false),
+    configured: Boolean(value.configured ?? value.is_configured ?? false),
     serviceStatus: normalizeBotServiceStatus(
       value.service_status ??
         value.serviceStatus ??
@@ -977,6 +1070,9 @@ function botOverviewFromPayload(item: unknown): BotPlatformOverview | null {
       value.display_name ?? value.displayName ?? value.title ?? value.label,
     ),
     lastError: optionalString(value.last_error ?? value.lastError ?? value.error),
+    missingRequiredFields: stringList(
+      value.missing_required_fields ?? value.missingRequiredFields,
+    ),
     raw: value,
   };
 }
@@ -988,8 +1084,13 @@ function botConfigFromPayload(
   const value = asRecord(payload);
   return {
     platform: normalizeBotPlatform(value.platform) ?? platform,
+    enabled: Boolean(value.enabled ?? value.is_enabled ?? false),
+    configured: Boolean(value.configured ?? value.is_configured ?? false),
     config: asRecord(value.config ?? value.values ?? value),
     secrets: asRecord(value.secrets ?? value.secret_fields ?? value.secretFields),
+    missingRequiredFields: stringList(
+      value.missing_required_fields ?? value.missingRequiredFields,
+    ),
     raw: value,
   };
 }
@@ -1001,9 +1102,8 @@ function botStatusFromPayload(
   const value = asRecord(payload);
   return {
     platform: normalizeBotPlatform(value.platform) ?? platform,
-    configured: Boolean(
-      value.configured ?? value.is_configured ?? value.enabled ?? false,
-    ),
+    enabled: Boolean(value.enabled ?? value.is_enabled ?? value.configured ?? false),
+    configured: Boolean(value.configured ?? value.is_configured ?? false),
     serviceStatus: normalizeBotServiceStatus(
       value.service_status ??
         value.serviceStatus ??
@@ -1015,8 +1115,16 @@ function botStatusFromPayload(
         value.accountCount ??
         (Array.isArray(value.accounts) ? value.accounts.length : undefined),
     ),
+    pid: optionalNumber(value.pid),
+    returnCode: optionalNumber(value.returncode ?? value.returnCode),
+    startedAt: optionalString(value.started_at ?? value.startedAt),
+    stoppedAt: optionalString(value.stopped_at ?? value.stoppedAt),
+    logPath: optionalString(value.log_path ?? value.logPath),
     accounts: recordList(value.accounts),
     lastError: optionalString(value.last_error ?? value.lastError ?? value.error),
+    missingRequiredFields: stringList(
+      value.missing_required_fields ?? value.missingRequiredFields,
+    ),
     raw: value,
   };
 }
@@ -1025,9 +1133,23 @@ function weixinLoginStartFromPayload(
   payload: Record<string, unknown>,
 ): WeixinLoginStartResult {
   const value = asRecord(payload);
+  const qrcodeSource =
+    value.qrcode_url ??
+    value.qrcodeUrl ??
+    value.qr_url ??
+    value.qrUrl ??
+    value.qr_code_url ??
+    value.qrCodeUrl ??
+    value.qrcode_img_content ??
+    value.qrcodeImgContent ??
+    value.qrcode_image ??
+    value.qrcodeImage ??
+    value.qrcode ??
+    value.qr_code ??
+    value.qrCode;
   return {
     loginId: String(value.login_id ?? value.loginId ?? value.id ?? ''),
-    qrcodeUrl: String(value.qrcode_url ?? value.qrcodeUrl ?? value.qr_url ?? ''),
+    qrcodeUrl: normalizeImageSource(qrcodeSource),
     expiresAt: optionalString(value.expires_at ?? value.expiresAt),
     raw: value,
   };
@@ -1077,6 +1199,60 @@ function maintenanceClearResultFromPayload(
         return [key, Number.isFinite(numeric) ? numeric : 0];
       }),
     ),
+  };
+}
+
+function sceneRecordsFromPayload(
+  payload: unknown,
+  fallbackSessionId: string,
+): SessionSceneRecord[] {
+  const value = asRecord(payload);
+  const candidates = Array.isArray(payload)
+    ? payload
+    : Array.isArray(value.items)
+      ? value.items
+      : Array.isArray(value.scenes)
+        ? value.scenes
+        : Array.isArray(value.data)
+          ? value.data
+          : [];
+  return candidates
+    .map((item) => sceneRecordFromPayload(item, fallbackSessionId))
+    .filter((item): item is SessionSceneRecord => item != null);
+}
+
+function sceneRecordFromPayload(
+  payload: unknown,
+  fallbackSessionId: string,
+): SessionSceneRecord | null {
+  const value = asRecord(payload);
+  const nested = asRecord(value.scene ?? value.item ?? value.data);
+  const target = Object.keys(nested).length > 0 ? nested : value;
+  const sceneId = String(
+    target.scene_id ??
+      target.sceneId ??
+      value.scene_id ??
+      value.sceneId ??
+      '',
+  );
+  if (!sceneId.trim()) {
+    return null;
+  }
+  return {
+    sceneId,
+    sessionId: optionalString(
+      target.session_id ?? target.sessionId ?? value.session_id ?? value.sessionId,
+    ) ?? fallbackSessionId,
+    turnId: optionalString(
+      target.turn_id ?? target.turnId ?? value.turn_id ?? value.turnId,
+    ),
+    createdAt: optionalString(
+      target.created_at ?? target.createdAt ?? value.created_at ?? value.createdAt,
+    ),
+    updatedAt: optionalString(
+      target.updated_at ?? target.updatedAt ?? value.updated_at ?? value.updatedAt,
+    ),
+    raw: value,
   };
 }
 
@@ -1371,7 +1547,7 @@ function mergeMessageEnvelope(
 
 function stringList(value: unknown) {
   return Array.isArray(value)
-    ? value.map((item) => String(item)).filter((item) => item.trim())
+    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
     : [];
 }
 
@@ -1645,6 +1821,45 @@ function hashText(seed: string) {
     hash |= 0;
   }
   return hash;
+}
+
+function normalizeImageSource(value: unknown) {
+  const text = optionalString(value)?.trim() ?? '';
+  if (!text) {
+    return '';
+  }
+  if (/^data:image\//i.test(text)) {
+    return text;
+  }
+  if (/^<svg[\s>]/i.test(text)) {
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
+  }
+  if (/^(https?:|file:|blob:|data:)/i.test(text) || text.startsWith('//')) {
+    return text;
+  }
+  if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) {
+    try {
+      return backendUrlFor(text);
+    } catch {
+      return text;
+    }
+  }
+  const compact = text.replace(/\s+/g, '');
+  if (
+    compact.length >= 80 &&
+    compact.length % 4 === 0 &&
+    /^[A-Za-z0-9+/]+={0,2}$/.test(compact)
+  ) {
+    const mime = compact.startsWith('/9j/')
+      ? 'image/jpeg'
+      : compact.startsWith('R0lGOD')
+        ? 'image/gif'
+        : compact.startsWith('PHN2Zy')
+          ? 'image/svg+xml'
+          : 'image/png';
+    return `data:${mime};base64,${compact}`;
+  }
+  return text;
 }
 
 function optionalString(value: unknown) {

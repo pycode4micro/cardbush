@@ -166,6 +166,10 @@ const desktopApi = {
   },
   setCardlingExpanded: (expanded: boolean) =>
     ipcRenderer.invoke('cardling:set-expanded', expanded) as Promise<void>,
+  startCardlingDrag: (cursorX: number, cursorY: number) =>
+    ipcRenderer.invoke('cardling:drag-start', cursorX, cursorY) as Promise<void>,
+  endCardlingDrag: () =>
+    ipcRenderer.invoke('cardling:drag-end') as Promise<void>,
   moveCardlingBy: (deltaX: number, deltaY: number) =>
     ipcRenderer.invoke('cardling:move-by', deltaX, deltaY) as Promise<void>,
   resetCardlingPosition: () =>
