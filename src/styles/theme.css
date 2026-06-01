@@ -1,4 +1,6 @@
 :root {
+  --cardbush-window-bg: #1a1a1a;
+  --cardbush-custom-background-image: none;
   color-scheme: light;
   font-family:
     "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC",
@@ -13,8 +15,66 @@
 }
 
 body {
+  position: relative;
   margin: 0;
   overflow: hidden;
+  background: var(--cardbush-window-bg);
+}
+
+html,
+#root {
+  background: var(--cardbush-window-bg);
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-start-custom-background="true"] #root {
+  background: transparent;
+}
+
+html[data-start-custom-background="true"] body::before,
+html[data-start-custom-background="true"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+html[data-start-custom-background="true"] body::before {
+  background-image: var(--cardbush-custom-background-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  transform: translateZ(0);
+  contain: strict;
+}
+
+html[data-start-custom-background="true"] body::after {
+  background:
+    linear-gradient(90deg, rgba(26, 26, 26, 0.34), rgba(26, 26, 26, 0.16) 42%, rgba(26, 26, 26, 0.32)),
+    linear-gradient(180deg, rgba(26, 26, 26, 0.2), transparent 30%, rgba(26, 26, 26, 0.24));
+}
+
+html[data-start-theme="bright"][data-start-custom-background="true"] body::after,
+html[data-start-theme="parchment"][data-start-custom-background="true"] body::after {
+  background:
+    linear-gradient(90deg, rgba(245, 243, 239, 0.28), rgba(245, 243, 239, 0.12) 42%, rgba(245, 243, 239, 0.24)),
+    linear-gradient(180deg, rgba(245, 243, 239, 0.18), transparent 30%, rgba(245, 243, 239, 0.22));
+}
+
+html[data-cardling-window="true"],
+html[data-cardling-window="true"] body,
+html[data-cardling-window="true"] #root {
+  background: transparent !important;
+}
+
+html[data-cardling-window="true"] body::before,
+html[data-cardling-window="true"] body::after {
+  content: none !important;
 }
 
 button,
@@ -50,8 +110,11 @@ button {
 }
 
 .app {
+  position: relative;
+  isolation: isolate;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
   color: var(--text);
   background: var(--bg);
   font-family: var(--app-font-family);

@@ -21,6 +21,50 @@
           bright: '#f5f3ef',
           parchment: '#e1d4ba',
         };
+        const cssString = (value) => String(value).replace(/["\\]/g, '\\$&');
+        const stripWrappingQuotes = (value) =>
+          String(value || '').replace(/^["']+|["']+$/g, '').trim();
+        const localResourceUrl = (value) => {
+          const normalized = stripWrappingQuotes(value);
+          if (!normalized) {
+            return '';
+          }
+          if (/^file:\/\//i.test(normalized)) {
+            try {
+              const parsed = new URL(normalized);
+              const hostPrefix = parsed.hostname ? `/${parsed.hostname}` : '';
+              return localResourceUrl(`${hostPrefix}${decodeURIComponent(parsed.pathname)}`);
+            } catch {
+              return normalized;
+            }
+          }
+          const pathValue = normalized.replaceAll('\\', '/').replace(/^\/+/, '');
+          const encodedPath = pathValue
+            .split('/')
+            .map((segment, index) =>
+              index === 0 && /^[a-z]:$/i.test(segment)
+                ? segment
+                : encodeURIComponent(segment),
+            )
+            .join('/');
+          const localScheme =
+            window.cardbushDesktop || navigator.userAgent.includes('Electron/')
+              ? 'cardbush-file'
+              : 'file';
+          return `${localScheme}:///${encodedPath}`;
+        };
+        const backgroundResourceUrl = (value) => {
+          const normalized = stripWrappingQuotes(value).replaceAll('\\', '/');
+          const isElectron =
+            window.cardbushDesktop || navigator.userAgent.includes('Electron/');
+          if (isElectron && /\/backgrounds\//i.test(normalized)) {
+            const fileName = normalized.split('/').filter(Boolean).pop() || '';
+            if (fileName) {
+              return `cardbush-file://backgrounds/${encodeURIComponent(fileName)}`;
+            }
+          }
+          return localResourceUrl(value);
+        };
         let theme = 'dark';
         try {
           const preference = localStorage.getItem('cardbush_theme_mode');
@@ -43,7 +87,22 @@
           theme = 'dark';
         }
         document.documentElement.dataset.startTheme = theme;
-        document.documentElement.style.backgroundColor = colors[theme] || colors.dark;
+        const background = colors[theme] || colors.dark;
+        document.documentElement.style.setProperty('--cardbush-window-bg', background);
+        document.documentElement.style.backgroundColor = background;
+        try {
+          const backgroundPath = localStorage.getItem('cardbush_background_image_path') || '';
+          const backgroundUrl = backgroundResourceUrl(backgroundPath);
+          if (backgroundUrl) {
+            document.documentElement.dataset.startCustomBackground = 'true';
+            document.documentElement.style.setProperty(
+              '--cardbush-custom-background-image',
+              `url("${cssString(backgroundUrl)}")`,
+            );
+          }
+        } catch {
+          delete document.documentElement.dataset.startCustomBackground;
+        }
       })();
     </script>
     <style>
@@ -54,25 +113,67 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #1a1a1a;
+        background: var(--cardbush-window-bg, #1a1a1a);
       }
 
       html[data-start-theme='bright'],
       html[data-start-theme='bright'] body,
       html[data-start-theme='bright'] #root {
-        background: #f5f3ef;
+        --cardbush-window-bg: #f5f3ef;
       }
 
       html[data-start-theme='parchment'],
       html[data-start-theme='parchment'] body,
       html[data-start-theme='parchment'] #root {
-        background: #e1d4ba;
+        --cardbush-window-bg: #e1d4ba;
+      }
+
+      html[data-start-custom-background='true'] #root {
+        position: relative;
+        z-index: 1;
+        background: transparent;
+      }
+
+      html[data-start-custom-background='true'] body::before,
+      html[data-start-custom-background='true'] body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      html[data-start-custom-background='true'] body::before {
+        z-index: 0;
+        background-image: var(--cardbush-custom-background-image);
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+        transform: translateZ(0);
+      }
+
+      html[data-start-custom-background='true'] body::after {
+        z-index: 0;
+        background:
+          linear-gradient(90deg, rgba(26, 26, 26, 0.34), rgba(26, 26, 26, 0.16) 42%, rgba(26, 26, 26, 0.32)),
+          linear-gradient(180deg, rgba(26, 26, 26, 0.2), transparent 30%, rgba(26, 26, 26, 0.24));
+      }
+
+      html[data-start-theme='bright'][data-start-custom-background='true'] body::after,
+      html[data-start-theme='parchment'][data-start-custom-background='true'] body::after {
+        background:
+          linear-gradient(90deg, rgba(245, 243, 239, 0.28), rgba(245, 243, 239, 0.12) 42%, rgba(245, 243, 239, 0.24)),
+          linear-gradient(180deg, rgba(245, 243, 239, 0.18), transparent 30%, rgba(245, 243, 239, 0.22));
       }
 
       html[data-cardling-window='true'],
       html[data-cardling-window='true'] body,
       html[data-cardling-window='true'] #root {
         background: transparent !important;
+      }
+
+      html[data-cardling-window='true'] body::before,
+      html[data-cardling-window='true'] body::after {
+        content: none !important;
       }
     </style>
   </head>

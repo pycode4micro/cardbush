@@ -1,12 +1,12 @@
 import {
   app,
   BrowserWindow,
-  desktopCapturer,
+  clipboard,
   Menu,
-  nativeTheme,
+  net,
+  protocol,
   Tray,
   dialog,
-  globalShortcut,
   ipcMain,
   nativeImage,
   screen,
@@ -15,14 +15,27 @@ import {
   type OpenDialogOptions,
 } from 'electron';
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
+const localFileProtocol = 'cardbush-file';
+const musicFileExtensions = new Set([
+  '.mp3',
+  '.m4a',
+  '.aac',
+  '.wav',
+  '.ogg',
+  '.oga',
+  '.opus',
+  '.flac',
+  '.webm',
+]);
 const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png'];
-const cardlingExpandedSize = { width: 324, height: 360 };
+const cardlingExpandedSize = { width: 380, height: 468 };
 const cardlingCollapsedHitSize = { width: 104, height: 104 };
 const ignoredProjectSearchDirs = new Set([
   '.git',
@@ -51,12 +64,27 @@ const ignoredProjectSearchDirs = new Set([
 const projectFileSearchMaxDepth = 3;
 const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
+const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: localFileProtocol,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let cardlingWindow: BrowserWindow | null = null;
 const externalBrowserWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
 let isQuitting = false;
+let quitFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 let startupRevealFallback: ReturnType<typeof setTimeout> | null = null;
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
@@ -95,9 +123,29 @@ type CardlingDesktopState = {
   activeChangeCount: number;
   activeChangeFileCount: number;
   error: string | null;
+  miniChat?: {
+    title?: string;
+    lastUser?: string;
+    lastAssistant?: string;
+  };
 };
 
-type CardlingDesktopAction = 'settings' | 'changes' | 'revertChanges';
+type AppThemeMode = CardlingDesktopState['theme'];
+
+const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
+  dark: '#1a1a1a',
+  bright: '#f5f3ef',
+  parchment: '#e1d4ba',
+};
+
+let lastMainWindowTheme: AppThemeMode = 'dark';
+
+type CardlingDesktopAction =
+  | 'settings'
+  | 'changes'
+  | 'revertChanges'
+  | 'openMain'
+  | { type?: string; text?: string };
 
 type ProjectFileSearchResult = {
   name: string;
@@ -106,12 +154,32 @@ type ProjectFileSearchResult = {
   kind: 'file' | 'folder';
 };
 
+function appLogsDir() {
+  return path.join(app.isPackaged ? app.getPath('userData') : process.cwd(), 'logs');
+}
+
+function appendDebugLog(scope: string, payload: unknown) {
+  const safeScope = logScopePattern.test(scope) ? scope : 'renderer';
+  const logsDir = appLogsDir();
+  fs.mkdirSync(logsDir, { recursive: true });
+  const filePath = path.join(logsDir, `${safeScope}.log`);
+  const entry = {
+    at: new Date().toISOString(),
+    payload,
+  };
+  fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
+  return filePath;
+}
+
 function createWindow() {
+  if (mainWindow != null && !mainWindow.isDestroyed()) {
+    return;
+  }
   if (startupRevealFallback != null) {
     clearTimeout(startupRevealFallback);
     startupRevealFallback = null;
   }
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 960,
@@ -119,39 +187,75 @@ function createWindow() {
     frame: false,
     title: 'cardbush',
     icon: loadCardbushIcon(256),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1A1A1A' : '#F5F3EF',
+    backgroundColor: backgroundForMainWindowTheme(lastMainWindowTheme),
+    backgroundMaterial: 'none',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: false,
     },
   });
+  mainWindow = window;
+  applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
-  installMainWindowNavigationGuard(mainWindow);
+  installMainWindowNavigationGuard(window);
+
+  const refreshWindowBackdrop = () => applyMainWindowVisualMaterial(window, lastMainWindowTheme);
+  window.on('minimize', refreshWindowBackdrop);
+  window.on('restore', refreshWindowBackdrop);
+  window.on('show', refreshWindowBackdrop);
+  window.on('focus', refreshWindowBackdrop);
 
   startupRevealFallback = setTimeout(() => {
-    if (mainWindow != null && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      mainWindow.show();
+    if (!window.isDestroyed() && !window.isVisible()) {
+      applyMainWindowVisualMaterial(window, lastMainWindowTheme);
+      window.show();
     }
   }, 5000);
 
-  mainWindow.once('closed', () => {
+  window.once('closed', () => {
     if (startupRevealFallback != null) {
       clearTimeout(startupRevealFallback);
       startupRevealFallback = null;
     }
-  });
-
-  mainWindow.on('close', (event) => {
-    if (!isQuitting) {
-      event.preventDefault();
-      mainWindow?.hide();
+    if (mainWindow === window) {
+      mainWindow = null;
     }
   });
 
-  loadRenderer(mainWindow, 'main');
+  window.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      if (!window.isDestroyed()) {
+        window.hide();
+      }
+    }
+  });
+
+  loadRenderer(window, 'main');
+}
+
+function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMode) {
+  if (target.isDestroyed()) {
+    return;
+  }
+  lastMainWindowTheme = theme;
+  target.setBackgroundColor(backgroundForMainWindowTheme(theme));
+  if (process.platform !== 'win32') {
+    return;
+  }
+  try {
+    target.setBackgroundMaterial('none');
+  } catch {
+    // Older Windows builds ignore this; the CSS theme background still applies.
+  }
+}
+
+function backgroundForMainWindowTheme(theme: AppThemeMode) {
+  return mainWindowThemeBackgrounds[theme] ?? mainWindowThemeBackgrounds.dark;
 }
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
@@ -380,7 +484,9 @@ function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopSt
     enabled: payload.enabled !== false,
     language: payload.language === 'en' ? 'en' : 'zh',
     theme:
-      payload.theme === 'bright' || payload.theme === 'parchment' || payload.theme === 'dark'
+      payload.theme === 'bright' ||
+      payload.theme === 'parchment' ||
+      payload.theme === 'dark'
         ? payload.theme
         : 'dark',
     settings: {
@@ -401,7 +507,20 @@ function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopSt
     activeChangeCount: Math.max(0, Math.round(Number(payload.activeChangeCount) || 0)),
     activeChangeFileCount: Math.max(0, Math.round(Number(payload.activeChangeFileCount) || 0)),
     error: typeof payload.error === 'string' && payload.error.trim() ? payload.error : null,
+    miniChat: {
+      title: clippedCardlingText(payload.miniChat?.title, 80),
+      lastUser: clippedCardlingText(payload.miniChat?.lastUser, 160),
+      lastAssistant: clippedCardlingText(payload.miniChat?.lastAssistant, 360),
+    },
   };
+}
+
+function clippedCardlingText(value: unknown, maxLength: number) {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
 function normalizeCardlingStatus(value: string): CardlingDesktopState['status'] {
@@ -650,14 +769,36 @@ function createTray() {
       { type: 'separator' },
       {
         label: '退出',
-        click: () => {
-          isQuitting = true;
-          app.quit();
-        },
+        click: () => requestAppQuit(),
       },
     ]),
   );
   tray.on('double-click', () => showMainWindow());
+}
+
+function requestAppQuit() {
+  if (isQuitting && quitFallbackTimer != null) {
+    return;
+  }
+  isQuitting = true;
+  if (startupRevealFallback != null) {
+    clearTimeout(startupRevealFallback);
+    startupRevealFallback = null;
+  }
+  if (tray != null) {
+    tray.destroy();
+    tray = null;
+  }
+  stopCardlingDrag(false);
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.close();
+    }
+  }
+  quitFallbackTimer = setTimeout(() => {
+    app.exit(0);
+  }, 1200);
+  app.quit();
 }
 
 function loadCardbushIcon(size: number) {
@@ -676,11 +817,16 @@ function loadCardbushIcon(size: number) {
 }
 
 function showMainWindow() {
-  if (mainWindow == null) {
+  if (mainWindow == null || mainWindow.isDestroyed()) {
     createWindow();
     return;
   }
-  mainWindow.show();
+  applyMainWindowVisualMaterial(mainWindow, lastMainWindowTheme);
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  } else {
+    mainWindow.show();
+  }
   mainWindow.focus();
 }
 
@@ -702,6 +848,13 @@ ipcMain.handle('window:close-to-tray', () => {
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
+ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error('debug log is only available to the main window');
+  }
+  return appendDebugLog(scope, payload);
+});
+
 ipcMain.handle('app:renderer-ready', (event) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
@@ -711,11 +864,24 @@ ipcMain.handle('app:renderer-ready', (event) => {
     clearTimeout(startupRevealFallback);
     startupRevealFallback = null;
   }
+  applyMainWindowVisualMaterial(sourceWindow, lastMainWindowTheme);
   sourceWindow.show();
 });
 
 ipcMain.handle('appearance:wallpaper-accent', () => {
   return readWallpaperAccent();
+});
+
+ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
+    return;
+  }
+  const normalizedTheme: AppThemeMode =
+    theme === 'bright' || theme === 'parchment' || theme === 'dark'
+      ? theme
+      : 'dark';
+  applyMainWindowVisualMaterial(sourceWindow, normalizedTheme);
 });
 
 ipcMain.handle('bush:headers', (_, targetUrl: string, json = false) => {
@@ -752,6 +918,34 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string) => {
+  const endpoint = modelListEndpoint(baseUrl);
+  const token = String(apiKey ?? '').trim();
+  if (!token) {
+    throw new Error('Missing API key');
+  }
+  const response = await net.fetch(endpoint, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${token}`,
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `GET /models failed (${response.status} ${response.statusText || 'HTTP error'}): ${text.slice(0, 240)}`,
+    );
+  }
+  const payload = parseJsonRecord(text);
+  const models = modelIdsFromPayload(payload);
+  return {
+    endpoint,
+    models,
+    rawCount: Array.isArray(payload.data) ? payload.data.length : models.length,
+  };
+});
+
 ipcMain.handle('dialog:pick-attachments', async () => {
   const options: OpenDialogOptions = {
     title: 'Select attachments',
@@ -761,6 +955,32 @@ ipcMain.handle('dialog:pick-attachments', async () => {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? [] : result.filePaths;
+});
+
+ipcMain.handle('dialog:pick-music-files', async () => {
+  const options: OpenDialogOptions = {
+    title: 'Choose music',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Audio', extensions: Array.from(musicFileExtensions, (item) => item.slice(1)) },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? [] : result.filePaths.filter(isMusicPath);
+});
+
+ipcMain.handle('dialog:pick-music-directory', async () => {
+  const options: OpenDialogOptions = {
+    title: 'Choose music folder',
+    properties: ['openDirectory'],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
@@ -787,6 +1007,29 @@ ipcMain.handle('dialog:pick-font', async () => {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+
+ipcMain.handle('dialog:pick-background-image', async () => {
+  const options: OpenDialogOptions = {
+    title: 'Choose background image',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'ico'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+
+ipcMain.handle('dialog:cache-background-image', async (_, targetPath: string) => {
+  return cacheBackgroundImage(String(targetPath ?? ''));
+});
+
+ipcMain.handle('music:scan-directory', async (_, rootPath: string) => {
+  return scanMusicDirectory(String(rootPath ?? ''));
 });
 
 ipcMain.handle('project:list-root', (_, rootPath: string) => {
@@ -864,13 +1107,12 @@ ipcMain.handle('terminal:run', (_, command: string, cwd?: string) => {
   return runTerminalCommand(command, cwd);
 });
 
-ipcMain.handle('screenshot:capture', (_, options?: { hideWindow?: boolean }) => {
-  return capturePrimaryDisplay(options?.hideWindow ?? false);
-});
-
-ipcMain.handle('screenshot:save-edited', (_, dataUrl: string, name?: string) => {
-  return saveScreenshotDataUrl(dataUrl, name);
-});
+ipcMain.handle(
+  'image:save-data-url',
+  (_, dataUrl: string, name?: string, options?: { copyToClipboard?: boolean }) => {
+    return saveImageDataUrl(dataUrl, name, options);
+  },
+);
 
 ipcMain.handle('cardling:update-state', (event, payload: CardlingDesktopState) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
@@ -956,22 +1198,45 @@ ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
   if (sourceWindow !== cardlingWindow || mainWindow == null || mainWindow.isDestroyed()) {
     return;
   }
+  if (typeof action === 'object' && action?.type === 'miniChatSend') {
+    mainWindow.webContents.send('cardling:action', {
+      type: 'miniChatSend',
+      text: typeof action.text === 'string' ? action.text : '',
+    });
+    return;
+  }
+  if (action === 'openMain') {
+    showMainWindow();
+    return;
+  }
   showMainWindow();
   mainWindow.webContents.send('cardling:action', action);
 });
 
-ipcMain.handle('shell:open-path', (_, targetPath: string) => {
-  return shell.openPath(targetPath);
+ipcMain.handle('shell:open-path', (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow) {
+    return 'Open path is only available from the main CardBush window.';
+  }
+  const normalizedPath = normalizeShellPath(targetPath);
+  if (!normalizedPath) {
+    return 'Invalid path.';
+  }
+  return shell.openPath(normalizedPath);
 });
 
-ipcMain.handle('shell:open-external', (_, targetUrl: string) => {
+ipcMain.handle('shell:open-external', (event, targetUrl: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow) {
+    return;
+  }
   return openInAppBrowser(targetUrl);
 });
 
 app.whenReady().then(() => {
+  registerLocalFileProtocol();
   createWindow();
   createTray();
-  registerGlobalShortcuts();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -982,12 +1247,40 @@ app.whenReady().then(() => {
   });
 });
 
+function registerLocalFileProtocol() {
+  if (protocol.isProtocolHandled(localFileProtocol)) {
+    return;
+  }
+  protocol.handle(localFileProtocol, async (request) => {
+    try {
+      const targetPath = localPathFromProtocolUrl(request.url);
+      const normalizedPath = normalizeShellPath(targetPath);
+      const stats = await fs.promises.stat(normalizedPath);
+      if (!stats.isFile()) {
+        return new Response('Not found', { status: 404 });
+      }
+      const bytes = await fs.promises.readFile(normalizedPath);
+      return new Response(new Uint8Array(bytes), {
+        headers: {
+          'content-type': contentTypeForPath(normalizedPath),
+          'cache-control': 'public, max-age=31536000, immutable',
+        },
+      });
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+  });
+}
+
 app.on('before-quit', () => {
   isQuitting = true;
 });
 
 app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
+  if (quitFallbackTimer != null) {
+    clearTimeout(quitFallbackTimer);
+    quitFallbackTimer = null;
+  }
   for (const session of terminalSessions.values()) {
     session.process.kill();
   }
@@ -1006,6 +1299,275 @@ function safeUrl(value: string) {
   } catch {
     return null;
   }
+}
+
+function modelListEndpoint(baseUrl: string) {
+  const trimmed = String(baseUrl ?? '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    throw new Error('Missing base_url');
+  }
+  const parsed = safeUrl(trimmed);
+  if (parsed == null || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
+    throw new Error('base_url must be an http(s) URL');
+  }
+  const normalizedPath = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = normalizedPath.endsWith('/models')
+    ? normalizedPath
+    : `${normalizedPath || ''}/models`;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function parseJsonRecord(text: string) {
+  try {
+    const value = JSON.parse(text);
+    return value != null && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function modelIdsFromPayload(payload: Record<string, unknown>) {
+  const candidates = [
+    payload.data,
+    payload.models,
+    payload.items,
+  ];
+  const ids = candidates.flatMap(modelIdsFromUnknown);
+  return Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean))).sort(
+    (left, right) => left.localeCompare(right),
+  );
+}
+
+function modelIdsFromUnknown(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item;
+      }
+      if (item == null || typeof item !== 'object' || Array.isArray(item)) {
+        return '';
+      }
+      const record = item as Record<string, unknown>;
+      return String(record.id ?? record.name ?? record.model ?? '').trim();
+    })
+    .filter(Boolean);
+}
+
+function normalizeShellPath(value: string) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (/^file:/i.test(trimmed)) {
+    try {
+      const fileUrl = new URL(trimmed);
+      const decodedPath = decodeURIComponent(fileUrl.pathname);
+      if (fileUrl.hostname) {
+        return `\\\\${fileUrl.hostname}${decodedPath.replace(/\//g, '\\')}`;
+      }
+      return decodedPath.replace(/^\/([a-zA-Z]:)/, '$1').replace(/\//g, '\\');
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+function localPathFromProtocolUrl(value: string) {
+  const parsed = new URL(value);
+  if (parsed.hostname.toLowerCase() === 'backgrounds') {
+    return path.join(
+      app.getPath('userData'),
+      'backgrounds',
+      path.basename(decodeURIComponent(parsed.pathname)),
+    );
+  }
+  const pathname = decodeURIComponent(parsed.pathname);
+  if (parsed.hostname) {
+    const uncPath = `//${parsed.hostname}${pathname}`;
+    return process.platform === 'win32' ? uncPath.replace(/\//g, '\\') : uncPath;
+  }
+  return process.platform === 'win32'
+    ? pathname.replace(/^\/([a-zA-Z]:)/, '$1').replace(/\//g, '\\')
+    : pathname;
+}
+
+function imageMimeTypeForPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.png') {
+    return 'image/png';
+  }
+  if (extension === '.jpg' || extension === '.jpeg') {
+    return 'image/jpeg';
+  }
+  if (extension === '.webp') {
+    return 'image/webp';
+  }
+  if (extension === '.gif') {
+    return 'image/gif';
+  }
+  if (extension === '.bmp') {
+    return 'image/bmp';
+  }
+  if (extension === '.ico') {
+    return 'image/x-icon';
+  }
+  return '';
+}
+
+function audioMimeTypeForPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.mp3') {
+    return 'audio/mpeg';
+  }
+  if (extension === '.m4a' || extension === '.mp4') {
+    return 'audio/mp4';
+  }
+  if (extension === '.aac') {
+    return 'audio/aac';
+  }
+  if (extension === '.wav') {
+    return 'audio/wav';
+  }
+  if (extension === '.ogg' || extension === '.oga' || extension === '.opus') {
+    return 'audio/ogg';
+  }
+  if (extension === '.flac') {
+    return 'audio/flac';
+  }
+  if (extension === '.webm') {
+    return 'audio/webm';
+  }
+  return '';
+}
+
+function contentTypeForPath(filePath: string) {
+  const imageMimeType = imageMimeTypeForPath(filePath);
+  if (imageMimeType) {
+    return imageMimeType;
+  }
+  const audioMimeType = audioMimeTypeForPath(filePath);
+  if (audioMimeType) {
+    return audioMimeType;
+  }
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.ttf') {
+    return 'font/ttf';
+  }
+  if (extension === '.otf') {
+    return 'font/otf';
+  }
+  if (extension === '.woff') {
+    return 'font/woff';
+  }
+  if (extension === '.woff2') {
+    return 'font/woff2';
+  }
+  if (extension === '.svg') {
+    return 'image/svg+xml';
+  }
+  return 'application/octet-stream';
+}
+
+function isMusicPath(filePath: string) {
+  return musicFileExtensions.has(path.extname(filePath).toLowerCase());
+}
+
+async function scanMusicDirectory(rootPath: string) {
+  const normalizedRoot = normalizeShellPath(rootPath);
+  if (!normalizedRoot) {
+    return [];
+  }
+  const stats = await fs.promises.stat(normalizedRoot);
+  if (!stats.isDirectory()) {
+    return [];
+  }
+  const results: string[] = [];
+  const stack = [normalizedRoot];
+  while (stack.length > 0 && results.length < 3000) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    let entries: fs.Dirent[];
+    try {
+      entries = await fs.promises.readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const nextPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(nextPath);
+        continue;
+      }
+      if (entry.isFile() && isMusicPath(nextPath)) {
+        results.push(nextPath);
+        if (results.length >= 3000) {
+          break;
+        }
+      }
+    }
+  }
+  return results.sort((left, right) => path.basename(left).localeCompare(path.basename(right)));
+}
+
+async function cacheBackgroundImage(sourcePath: string) {
+  const normalized = normalizeShellPath(sourcePath);
+  const mimeType = imageMimeTypeForPath(normalized);
+  if (!normalized || !mimeType) {
+    throw new Error('Unsupported background image path');
+  }
+  const stats = await fs.promises.stat(normalized);
+  if (!stats.isFile()) {
+    throw new Error('Background image path is not a file');
+  }
+  const cacheDir = path.join(app.getPath('userData'), 'backgrounds');
+  const relative = path.relative(cacheDir, normalized);
+  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+    return normalized;
+  }
+  await fs.promises.mkdir(cacheDir, { recursive: true });
+  const extension = path.extname(normalized).toLowerCase() || extensionForMimeType(mimeType);
+  const hash = createHash('sha256')
+    .update(await fs.promises.readFile(normalized))
+    .digest('hex')
+    .slice(0, 24);
+  const targetPath = path.join(cacheDir, `background-${hash}${extension}`);
+  if (fs.existsSync(targetPath)) {
+    return targetPath;
+  }
+  await fs.promises.copyFile(normalized, targetPath);
+  return targetPath;
+}
+
+function extensionForMimeType(mimeType: string) {
+  if (mimeType === 'image/jpeg') {
+    return '.jpg';
+  }
+  if (mimeType === 'image/png') {
+    return '.png';
+  }
+  if (mimeType === 'image/webp') {
+    return '.webp';
+  }
+  if (mimeType === 'image/gif') {
+    return '.gif';
+  }
+  if (mimeType === 'image/bmp') {
+    return '.bmp';
+  }
+  if (mimeType === 'image/x-icon') {
+    return '.ico';
+  }
+  return '.img';
 }
 
 function isWebProtocol(value: URL) {
@@ -1902,89 +2464,32 @@ function runTerminalCommand(command: string, cwd?: string) {
   });
 }
 
-async function capturePrimaryDisplay(hideWindow: boolean) {
-  const wasVisible = mainWindow?.isVisible() ?? false;
-  if (hideWindow && mainWindow) {
-    mainWindow.hide();
-    await delay(180);
-  }
-  try {
-    const display = screen.getPrimaryDisplay();
-    const scaleFactor = display.scaleFactor || 1;
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: {
-        width: Math.round(display.size.width * scaleFactor),
-        height: Math.round(display.size.height * scaleFactor),
-      },
-    });
-    const source = sources.find((item) => item.display_id === String(display.id)) ?? sources[0];
-    if (!source) {
-      throw new Error('No screen source is available');
-    }
-    const image = source.thumbnail;
-    const screenshotsDir = path.join(app.getPath('pictures'), 'cardbush-screenshots');
-    fs.mkdirSync(screenshotsDir, { recursive: true });
-    const fileName = `cardbush-screenshot-${timestampForFile()}.png`;
-    const filePath = path.join(screenshotsDir, fileName);
-    fs.writeFileSync(filePath, image.toPNG());
-    return {
-      path: filePath,
-      name: fileName,
-      width: image.getSize().width,
-      height: image.getSize().height,
-      dataUrl: image.toDataURL(),
-      windows: await captureWindowThumbnails(screenshotsDir),
-    };
-  } finally {
-    if (hideWindow && wasVisible) {
-      showMainWindow();
-    }
-  }
-}
-
-async function captureWindowThumbnails(screenshotsDir: string) {
-  const sources = await desktopCapturer.getSources({
-    types: ['window'],
-    thumbnailSize: { width: 960, height: 640 },
-  });
-  return sources
-    .filter((source) => !source.thumbnail.isEmpty())
-    .slice(0, 12)
-    .map((source, index) => {
-      const image = source.thumbnail;
-      const safeName = sanitizeFilePart(source.name || `window-${index + 1}`);
-      const fileName = `cardbush-window-${timestampForFile()}-${index + 1}-${safeName}.png`;
-      const filePath = path.join(screenshotsDir, fileName);
-      fs.writeFileSync(filePath, image.toPNG());
-      return {
-        id: source.id,
-        name: source.name || `Window ${index + 1}`,
-        path: filePath,
-        width: image.getSize().width,
-        height: image.getSize().height,
-        dataUrl: image.toDataURL(),
-      };
-    });
-}
-
-function saveScreenshotDataUrl(dataUrl: string, name?: string) {
+function saveImageDataUrl(
+  dataUrl: string,
+  name?: string,
+  options?: { copyToClipboard?: boolean },
+) {
   const match = dataUrl.match(/^data:image\/(png|jpe?g|webp|gif|bmp);base64,(.+)$/i);
   if (!match) {
     throw new Error('Invalid image data URL');
   }
   const extension = imageExtension(match[1]);
-  const screenshotsDir = path.join(app.getPath('pictures'), 'cardbush-screenshots');
-  fs.mkdirSync(screenshotsDir, { recursive: true });
-  const fileName = `${sanitizeFilePart(name || 'cardbush-screenshot-edited')}-${timestampForFile()}.${extension}`;
-  const filePath = path.join(screenshotsDir, fileName);
+  const imagesDir = path.join(app.getPath('pictures'), 'cardbush-images');
+  fs.mkdirSync(imagesDir, { recursive: true });
+  const fileName = `${sanitizeFilePart(name || 'cardbush-image')}-${timestampForFile()}.${extension}`;
+  const filePath = path.join(imagesDir, fileName);
   fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'));
   const image = nativeImage.createFromPath(filePath);
+  const copiedToClipboard = options?.copyToClipboard === true && !image.isEmpty();
+  if (copiedToClipboard) {
+    clipboard.writeImage(image);
+  }
   return {
     path: filePath,
     name: fileName,
     width: image.getSize().width,
     height: image.getSize().height,
+    copiedToClipboard,
   };
 }
 
@@ -2005,13 +2510,7 @@ function sanitizeFilePart(value: string) {
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
     .slice(0, 48)
-    .replace(/^-|-$/g, '') || 'screenshot';
-}
-
-function registerGlobalShortcuts() {
-  globalShortcut.register('Alt+Q', () => {
-    mainWindow?.webContents.send('screenshot:trigger');
-  });
+    .replace(/^-|-$/g, '') || 'image';
 }
 
 function timestampForFile() {
@@ -2020,12 +2519,6 @@ function timestampForFile() {
     .replace(/[:.]/g, '-')
     .replace('T', '_')
     .replace('Z', '');
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }
 
 function resolveCwd(cwd?: string) {

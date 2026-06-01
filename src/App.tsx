@@ -22,12 +22,12 @@ import {
   FolderOpen,
   Cpu,
   GitBranch,
-  Image,
   LoaderCircle,
   Menu,
   MessageSquare,
   Monitor,
   MoreHorizontal,
+  Music2,
   Network,
   Paperclip,
   PanelRightClose,
@@ -41,9 +41,12 @@ import {
   RotateCcw,
   Search,
   Settings,
+  ShieldCheck,
   Smartphone,
   Sparkles,
   Terminal,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Upload,
   X,
@@ -55,7 +58,11 @@ import {
   type CSSProperties,
   type ErrorInfo,
   type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type UIEvent,
+  type WheelEvent,
   lazy,
   Suspense,
   useCallback,
@@ -66,41 +73,108 @@ import {
 } from 'react';
 
 import {
-  automationTasks,
-} from './data/mock';
-import {
-  backendBaseUrl,
-  clearConversationHistory,
-  clearLogsCache,
-  controlBotService,
-  deleteWeixinAccount,
-  fetchBotConfig,
-  fetchBots,
-  fetchBotServiceLogs,
-  fetchBotStatus,
+  backendBearerTokenStorageKey,
+  backendLocalRequestKeyStorageKey,
+  dispatchSubagent,
   fetchProjectContext,
   fetchSessionScene,
   fetchSessionScenes,
-  fetchWeixinLoginStatus,
-  llmEndpoint,
   saveProjectContext,
-  saveBotConfig,
   sendSceneEvent,
-  startWeixinLogin,
-  type MaintenanceClearResult,
   type SessionSceneRecord,
   type SessionShareLinkResult,
+  type SubagentDispatchResult,
 } from './backend/api';
 import {
+  normalizeChatMessagesForDisplay,
   useCardbushChat,
   type QueuedChatMessage,
 } from './hooks/useCardbushChat';
+import { BotPlatformIcon } from './components/BotPlatformIcon';
+import { SidebarResizer } from './components/SidebarResizer';
+import {
+  MessageListFooter,
+  absoluteBottomScrollTop,
+  isMessageTailVisible,
+  isScrollerNearVisualBottom,
+  lastAssistantMessage,
+  manualScrollDetachHoldMs,
+  scrollBottomLockTolerance,
+  scrollBottomWheelFreezeMs,
+  scrollBottomWheelLockTolerance,
+  streamingAssistantMessage,
+  visualBottomScrollTop,
+  type ScrollBottomMetrics,
+} from './features/chatScroll';
+import {
+  COPY_FEEDBACK_EVENT,
+  copyText,
+  readAssistantFeedback,
+  recordAssistantFeedback,
+  type AssistantFeedbackRating,
+} from './features/messageFeedback';
+import {
+  isImagePath,
+  splitMessageImages,
+  stripWrappingQuotes,
+} from './features/messageImages';
+import {
+  displayToolName,
+  isToolRunning,
+  isToolRunningInContext,
+  runningToolLabel,
+} from './features/toolExecutionState';
+import {
+  changeReportsFromMessages,
+  looksLikeFileChangeExecution,
+  serializeToolChangeReport,
+  toolChangeReportFromExecutions,
+  type ConversationChangeReport,
+  type ToolChangeReport,
+} from './features/toolChangeReports';
+import { ToolChangeBlock, ToolFileChangeView } from './features/ToolChangeBlock';
+import { preserveScrollPositionForToggle } from './features/preserveScrollPosition';
+import {
+  PlanVerificationPanel,
+  normalizeAssertionResults,
+  planVerificationInfoFromExecution,
+  type VerificationAssertionItem,
+} from './features/PlanVerificationPanel';
+import {
+  SubagentAuditSignalsPanel,
+  subagentAuditSignalsFromExecution,
+} from './features/SubagentAuditSignalsPanel';
+import {
+  ToolActionEnvelopeInfo,
+  toolActionEnvelopeFromExecution,
+  type ToolActionEnvelope,
+} from './features/ToolActionEnvelopeInfo';
+import {
+  PlanningAssessmentNotice,
+  planningAssessmentFromExecution,
+} from './features/PlanningAssessmentNotice';
+import {
+  RuntimeProfileBadge,
+  WorkerProfileBadge,
+  runtimeProfileInfoFromExecution,
+} from './features/ToolProfileBadges';
+import {
+  ToolHookDecisionNotice,
+  toolHookDecisionFromExecution,
+} from './features/ToolHookDecisionNotice';
+import {
+  SubagentChildTools,
+  subagentChildToolExecutions,
+} from './features/SubagentChildTools';
+import { LocalMusicPanel } from './features/LocalMusicPanel';
+import { GameCodingPanel } from './features/GameCodingPanel';
+import { SettingsView } from './features/SettingsView';
+import { SubagentsPanel } from './features/SubagentsPanel';
 import type {
   AppLanguage,
   AppLanguageMode,
   AppSection,
   AppSettingsState,
-  AutomationTask,
   CardlingDesktopAction,
   CardlingDesktopState,
   ChatMessage,
@@ -110,16 +184,11 @@ import type {
   CompanionSize,
   CompanionStatus,
   ConversationSummary,
-  BotConfigResult,
   BotPlatform,
-  BotPlatformOverview,
-  BotServiceStatus,
-  BotStatusResult,
-  WeixinLoginStartResult,
-  WeixinLoginStatus,
-  WeixinLoginStatusResult,
   LightThemeStyle,
   ManagedModelConfig,
+  ReferencePlanMode,
+  RuntimeProfileSummary,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -175,31 +244,8 @@ const sectionLabels: Record<AppSection, { zh: string; en: string }> = {
   chat: { zh: '对话', en: 'Chat' },
   search: { zh: '搜索', en: 'Search' },
   skills: { zh: '技能', en: 'Skills' },
-  automation: { zh: '自动化', en: 'Automation' },
-};
-
-const settingsLabels: Record<SettingsSection, { zh: string; en: string }> = {
-  profile: { zh: '外观', en: 'Appearance' },
-  companion: { zh: '卡布', en: 'Kabu' },
-  proxy: { zh: '代理设置', en: 'Proxy' },
-  bots: { zh: 'Bot 连接', en: 'Bot connections' },
-  cache: { zh: '缓存', en: 'Cache' },
-  models: { zh: '模型管理', en: 'Models' },
-  diagnostics: { zh: '连接诊断', en: 'Diagnostics' },
-  mobile: { zh: '手机连接', en: 'Mobile' },
-  about: { zh: '关于', en: 'About' },
-};
-
-const settingsIcons: Record<SettingsSection, typeof Settings> = {
-  profile: Settings,
-  companion: Sparkles,
-  proxy: Monitor,
-  bots: Network,
-  cache: Archive,
-  models: Cpu,
-  diagnostics: Clipboard,
-  mobile: Monitor,
-  about: Circle,
+  subagents: { zh: '子 Agent', en: 'Subagents' },
+  gamecoding: { zh: 'Game Coding', en: 'Game Coding' },
 };
 
 const LazyMarkdownContent = lazy(async () => {
@@ -230,13 +276,20 @@ const LazyMarkdownContent = lazy(async () => {
           ),
         }}
       >
-        {content}
+        {normalizeMarkdownContentForDisplay(content)}
       </ReactMarkdown>
     );
   }
 
   return { default: MarkdownRenderer };
 });
+
+function normalizeMarkdownContentForDisplay(content: string) {
+  return content.replace(
+    /^```(powershell|pwsh|bash|sh|shell|cmd)([^\s`\r\n][^\r\n]*\s+[^\r\n]*)$/gim,
+    '```$1\n$2',
+  );
+}
 
 type QuickLoadPayload = {
   kind: 'text' | 'file' | 'folder';
@@ -314,6 +367,12 @@ type SceneRuntimeEventType =
   | 'external_url'
   | 'confirm'
   | 'cancel';
+
+type SceneOpenTarget = {
+  kind: 'url' | 'path';
+  target: string;
+  label?: string;
+};
 
 type SceneRuntimeNodeState = {
   nodeId: string;
@@ -420,8 +479,8 @@ type WallpaperAccent = {
 type BotShareTarget = {
   title: { zh: string; en: string };
   subtitle: { zh: string; en: string };
-  platform?: string;
-  icon: React.ReactNode;
+  platform?: BotPlatform;
+  icon: ReactNode;
 };
 
 type SessionShareLinkRequest = {
@@ -439,41 +498,12 @@ type CardlingPosition = {
   bottom: number;
 };
 
-type ScreenshotCaptureResult = {
-  path: string;
-  name: string;
-  width: number;
-  height: number;
-  dataUrl?: string;
-  windows?: ScreenshotWindowSource[];
-};
-
-type ScreenshotWindowSource = {
-  id: string;
-  name: string;
-  path: string;
-  width: number;
-  height: number;
-  dataUrl?: string;
-};
-
-type ScreenshotSelection = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-type ScreenshotStroke = Array<{ x: number; y: number }>;
-
 type ComposerImageAttachment = {
   id: string;
   path: string;
   name: string;
   previewUrl: string;
 };
-
-const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 
 type ImagePreview = {
   src: string;
@@ -485,8 +515,8 @@ type ComposerMenu =
   | 'project'
   | 'tokens'
   | 'git'
-  | 'screenshot'
   | 'skills'
+  | 'runtime'
   | 'models'
   | null;
 
@@ -518,23 +548,26 @@ type QuickSideItem = {
   title: string;
   subtitle: string;
   payload?: QuickLoadPayload;
+  jumpTarget?: QuickJumpTarget;
 };
+
+type QuickJumpTarget =
+  | { kind: 'conversation'; conversationId: string }
+  | { kind: 'message'; messageId: string }
+  | { kind: 'path'; path: string };
 
 const defaultSidebarWidth = 272;
 const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
-const customProviderValue = '__custom_provider__';
-const suggestedProviders = [
-  'openai',
-  'anthropic',
-  'gemini',
-  'deepseek',
-  'moonshot',
-  'qwen',
-];
-const liteLlmProvidersDocsUrl = 'https://docs.litellm.ai/docs/providers';
-const volcengineArkUrl = 'https://www.volcengine.cn/product/ark';
-const miniMaxUrl = 'https://platform.minimaxi.com';
+
+function scrollDebug(label: string, data: Record<string, unknown>) {
+  void window.cardbushDesktop
+    ?.writeDebugLog?.('scroll', {
+      label,
+      ...data,
+    })
+    .catch(() => undefined);
+}
 
 const defaultAppSettings: AppSettingsState = {
   proxy: {
@@ -543,8 +576,12 @@ const defaultAppSettings: AppSettingsState = {
     httpsProxy: '',
     noProxy: '127.0.0.1,localhost,::1',
   },
+  backendAuth: {
+    bearerToken: '',
+    localRequestKey: '',
+  },
   managedModelConfigs: [],
-  hideCardbushForScreenshot: false,
+  backgroundImagePath: '',
   companionEnabled: true,
   companion: {
     size: 'normal',
@@ -571,42 +608,33 @@ const botShareTargets: BotShareTarget[] = [
       zh: '微信 / 飞书 / Discord / Telegram',
       en: 'WeChat / Feishu / Discord / Telegram',
     },
-    icon: <Bot size={16} />,
+    icon: <BotPlatformIcon platform="any" />,
   },
   {
     title: { zh: '微信', en: 'WeChat' },
     subtitle: { zh: '仅微信可使用此绑定码', en: 'Limit this code to WeChat' },
     platform: 'weixin',
-    icon: <MessageSquare size={16} />,
+    icon: <BotPlatformIcon platform="weixin" />,
   },
   {
     title: { zh: '飞书', en: 'Feishu' },
     subtitle: { zh: '仅飞书可使用此绑定码', en: 'Limit this code to Feishu' },
     platform: 'feishu',
-    icon: <MessageSquare size={16} />,
+    icon: <BotPlatformIcon platform="feishu" />,
   },
   {
     title: { zh: 'Discord', en: 'Discord' },
     subtitle: { zh: '仅 Discord 可使用此绑定码', en: 'Limit this code to Discord' },
     platform: 'discord',
-    icon: <Code2 size={16} />,
+    icon: <BotPlatformIcon platform="discord" />,
   },
   {
     title: { zh: 'Telegram', en: 'Telegram' },
     subtitle: { zh: '仅 Telegram 可使用此绑定码', en: 'Limit this code to Telegram' },
     platform: 'telegram',
-    icon: <ArrowUp size={16} />,
+    icon: <BotPlatformIcon platform="telegram" />,
   },
 ];
-
-const botPlatforms: BotPlatform[] = ['weixin', 'feishu', 'telegram', 'discord'];
-
-const botPlatformLabels: Record<BotPlatform, { zh: string; en: string }> = {
-  weixin: { zh: '微信', en: 'WeChat' },
-  feishu: { zh: '飞书', en: 'Feishu' },
-  telegram: { zh: 'Telegram', en: 'Telegram' },
-  discord: { zh: 'Discord', en: 'Discord' },
-};
 
 type ProjectAction =
   | 'pin'
@@ -616,6 +644,43 @@ type ProjectAction =
   | 'rename'
   | 'archive'
   | 'remove';
+
+const sidebarMenuCloseEvent = 'cardbush-sidebar-menu-close';
+
+type SidebarContextMenuItem = {
+  key: string;
+  icon: ReactNode;
+  label: string;
+  danger?: boolean;
+  disabled?: boolean;
+  children?: SidebarContextMenuItem[];
+  onClick?: () => void;
+};
+
+type SidebarContextMenuState = {
+  id: string;
+  x: number;
+  y: number;
+  items: SidebarContextMenuItem[];
+};
+
+type ConversationMenuOptions = {
+  changeCount: number;
+  onOpenChanges?: () => void;
+  onRename: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+};
+
+function sidebarContextMenuPosition(clientX: number, clientY: number, itemCount: number) {
+  const menuWidth = 210;
+  const menuHeight = Math.min(340, Math.max(1, itemCount) * 34 + 12);
+  const padding = 8;
+  return {
+    x: Math.max(padding, Math.min(clientX, window.innerWidth - menuWidth - padding)),
+    y: Math.max(padding, Math.min(clientY, window.innerHeight - menuHeight - padding)),
+  };
+}
 
 function basename(value: string) {
   const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '');
@@ -663,6 +728,7 @@ function CardbushApp() {
   );
   const [section, setSection] = useState<AppSection>('chat');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [musicPanelOpen, setMusicPanelOpen] = useState(false);
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
@@ -671,7 +737,7 @@ function CardbushApp() {
     useState<SettingsSection>('profile');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
-  const [draft, setDraft] = useState('');
+  const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
   const [projectContexts, setProjectContexts] = useState<Record<string, string>>(
     readProjectContexts,
   );
@@ -680,6 +746,37 @@ function CardbushApp() {
   );
   const theme = resolveTheme(themePreference, lightThemeStyle, systemDark);
   const language = resolveAppLanguage(languageMode, systemLanguage);
+  const customBackgroundImagePath = appSettings.backgroundImagePath.trim();
+  const customBackgroundSource = customBackgroundImagePath
+    ? backgroundImageUrl(customBackgroundImagePath)
+    : '';
+
+  const applyThemeBackground = useCallback(() => {
+    applyDocumentBackdrop(theme, customBackgroundSource);
+  }, [customBackgroundSource, theme]);
+
+  useEffect(() => {
+    applyThemeBackground();
+    void window.cardbushDesktop?.setWindowTheme?.(theme).catch(() => undefined);
+  }, [applyThemeBackground, theme]);
+
+  useEffect(() => {
+    const refreshBackground = () => applyThemeBackground();
+    const refreshVisibleBackground = () => {
+      if (document.visibilityState === 'visible') {
+        applyThemeBackground();
+      }
+    };
+    window.addEventListener('focus', refreshBackground);
+    window.addEventListener('pageshow', refreshBackground);
+    document.addEventListener('visibilitychange', refreshVisibleBackground);
+    return () => {
+      window.removeEventListener('focus', refreshBackground);
+      window.removeEventListener('pageshow', refreshBackground);
+      document.removeEventListener('visibilitychange', refreshVisibleBackground);
+    };
+  }, [applyThemeBackground]);
+
   const availableModels = useMemo(
     () => effectiveModels(appSettings.managedModelConfigs),
     [appSettings.managedModelConfigs],
@@ -688,12 +785,19 @@ function CardbushApp() {
     projectContexts,
     disabledSkillNames,
   });
-  const enabledSkills = useMemo(
-    () => chat.skills.filter((skill) => !disabledSkillNames.has(skill.name)),
-    [chat.skills, disabledSkillNames],
-  );
   const activeProjectDir =
     conversationWorkspaceRoot(chat.activeConversation) || undefined;
+  const activeDraftKey = chat.activeConversationId.trim() || '__new__';
+  const activeDraft = draftsByConversation[activeDraftKey] ?? '';
+  const setActiveDraft = useCallback(
+    (value: string) => {
+      setDraftsByConversation((current) => ({
+        ...current,
+        [activeDraftKey]: value,
+      }));
+    },
+    [activeDraftKey],
+  );
   const [changeReviewConversationId, setChangeReviewConversationId] = useState('');
   const [revertingChangeId, setRevertingChangeId] = useState('');
   const [changeReviewNotice, setChangeReviewNotice] = useState('');
@@ -716,10 +820,11 @@ function CardbushApp() {
   const changeReviewReports = changeReviewConversationId
     ? changeReportsByConversation[changeReviewConversationId] ?? []
     : [];
-  const activeToolRunning = chat.activeMessages.some((message) =>
-    message.role === 'assistant' &&
-    (message.toolExecutions ?? []).some(isToolRunning),
-  );
+  const activeToolRunning = chat.sending &&
+    chat.activeMessages.some((message) =>
+      message.role === 'assistant' &&
+      (message.toolExecutions ?? []).some(isToolRunning),
+    );
   const activeChangeReports =
     changeReportsByConversation[chat.activeConversationId] ?? [];
   const activeChangeCount = activeChangeReports.length;
@@ -735,6 +840,19 @@ function CardbushApp() {
     queuedMessageCount: chat.queuedMessageCount,
     recentlyCompleted: companionMoment === 'complete',
   });
+  const companionMiniChat = useMemo(() => {
+    const latestUser = [...chat.activeMessages]
+      .reverse()
+      .find((message) => message.role === 'user' && message.content.trim());
+    const latestAssistant = [...chat.activeMessages]
+      .reverse()
+      .find((message) => message.role === 'assistant' && message.content.trim());
+    return {
+      title: compactCompanionText(chat.activeConversation?.title ?? '', 72),
+      lastUser: compactCompanionText(latestUser?.content ?? '', 140),
+      lastAssistant: compactCompanionText(latestAssistant?.content ?? '', 300),
+    };
+  }, [chat.activeConversation?.title, chat.activeMessages]);
   const desktopCardlingAvailable = Boolean(window.cardbushDesktop?.setCardlingState);
 
   useEffect(() => {
@@ -764,6 +882,7 @@ function CardbushApp() {
       activeChangeCount,
       activeChangeFileCount,
       error: chat.error,
+      miniChat: companionMiniChat,
     };
     void window.cardbushDesktop?.setCardlingState?.(payload);
   }, [
@@ -775,6 +894,7 @@ function CardbushApp() {
     chat.pendingInteraction,
     chat.queuedMessageCount,
     chat.sending,
+    companionMiniChat,
     companionStatus,
     desktopCardlingAvailable,
     language,
@@ -858,6 +978,31 @@ function CardbushApp() {
     ? ({ fontFamily: `"${appSettings.font.family}", var(--app-font-family)` } as CSSProperties)
     : undefined;
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!customBackgroundImagePath || !window.cardbushDesktop?.cacheBackgroundImage) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    void window.cardbushDesktop
+      .cacheBackgroundImage(customBackgroundImagePath)
+      .then((cachedPath) => {
+        if (cancelled || !cachedPath || cachedPath === customBackgroundImagePath) {
+          return;
+        }
+        updateAppSettings((current) =>
+          current.backgroundImagePath.trim() === customBackgroundImagePath
+            ? { ...current, backgroundImagePath: cachedPath }
+            : current,
+        );
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [customBackgroundImagePath, updateAppSettings]);
+
   const mergedAppStyle = wallpaperAccent
     ? ({
         '--wallpaper-accent-rgb': `${wallpaperAccent.r} ${wallpaperAccent.g} ${wallpaperAccent.b}`,
@@ -873,27 +1018,32 @@ function CardbushApp() {
   const appStyle = mergedAppStyle;
 
   useEffect(() => {
+    if (customBackgroundImagePath) {
+      setWallpaperAccent(null);
+      return undefined;
+    }
     let cancelled = false;
+    let refreshTimer = 0;
     async function refreshWallpaperAccent() {
       const accent = await window.cardbushDesktop?.wallpaperAccent?.().catch(() => null);
       if (!cancelled && accent) {
         setWallpaperAccent(accent);
       }
     }
-    void refreshWallpaperAccent();
-    const refreshOnFocus = () => {
-      void refreshWallpaperAccent();
+    const scheduleRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        void refreshWallpaperAccent();
+      }, 350);
     };
-    window.addEventListener('focus', refreshOnFocus);
-    document.addEventListener('visibilitychange', refreshOnFocus);
-    const interval = window.setInterval(refreshOnFocus, 5 * 60 * 1000);
+    scheduleRefresh();
+    const interval = window.setInterval(scheduleRefresh, 10 * 60 * 1000);
     return () => {
       cancelled = true;
-      window.removeEventListener('focus', refreshOnFocus);
-      document.removeEventListener('visibilitychange', refreshOnFocus);
+      window.clearTimeout(refreshTimer);
       window.clearInterval(interval);
     };
-  }, []);
+  }, [customBackgroundImagePath]);
 
   const createConversation = useCallback(
     (projectDir?: string) => {
@@ -1203,6 +1353,13 @@ function CardbushApp() {
 
   useEffect(() => {
     return window.cardbushDesktop?.onCardlingAction?.((action: CardlingDesktopAction) => {
+      if (typeof action === 'object' && action?.type === 'miniChatSend') {
+        const text = action.text.trim();
+        if (text) {
+          void chat.sendMessage(text);
+        }
+        return;
+      }
       if (action === 'settings') {
         openSettings('companion');
         return;
@@ -1219,6 +1376,7 @@ function CardbushApp() {
   }, [
     activeChangeReports,
     chat.activeConversationId,
+    chat.sendMessage,
     openSettings,
     revertConversationReports,
   ]);
@@ -1292,11 +1450,23 @@ function CardbushApp() {
   }, []);
 
   return (
-    <div className={`app theme-${theme}`} lang={language} style={appStyle}>
+    <div
+      className={`app theme-${theme}${customBackgroundImagePath ? ' has-custom-background' : ''}`}
+      lang={language}
+      style={appStyle}
+    >
       <WindowFrame
+        musicOpen={musicPanelOpen}
+        onToggleMusic={() => setMusicPanelOpen((open) => !open)}
         onOpenBotSettings={() => openSettings('bots')}
         onOpenCacheSettings={() => openSettings('cache')}
       />
+      {musicPanelOpen && (
+        <LocalMusicPanel
+          language={language}
+          onClose={() => setMusicPanelOpen(false)}
+        />
+      )}
       {settingsOpen ? (
         <SettingsView
           themePreference={themePreference}
@@ -1305,6 +1475,7 @@ function CardbushApp() {
           languageMode={languageMode}
           systemLanguage={systemLanguage}
           settings={appSettings}
+          backgroundImageSource={customBackgroundSource}
           selectedModel={chat.selectedModel}
           availableModels={availableModels}
           initialSection={settingsInitialSection}
@@ -1365,7 +1536,8 @@ function CardbushApp() {
                 activeProjectDir={activeProjectDir}
                 projectContext={projectContexts[projectContextKey(activeProjectDir)] ?? ''}
                 messages={chat.activeMessages}
-                skills={enabledSkills}
+                skills={chat.skills}
+                disabledSkillNames={disabledSkillNames}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
                 activeTurnId={chat.activeTurnId}
@@ -1374,13 +1546,20 @@ function CardbushApp() {
                 queuedMessages={chat.queuedMessages}
                 pendingInteraction={chat.pendingInteraction}
                 error={chat.error}
+                notice={chat.notice}
                 selectedModel={chat.selectedModel}
                 availableModels={availableModels}
-                hideCardbushForScreenshot={appSettings.hideCardbushForScreenshot}
+                selectedRuntimeProfile={chat.selectedRuntimeProfile}
+                runtimeProfiles={chat.runtimeProfiles}
+                referencePlanMode={chat.referencePlanMode}
                 onModelChange={chat.setSelectedModel}
+                onRuntimeProfileChange={chat.setSelectedRuntimeProfile}
+                onReferencePlanModeChange={chat.setReferencePlanMode}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={() => createConversation(activeProjectDir)}
+                onOpenConversation={chat.openConversation}
                 onSaveProjectContext={saveActiveProjectContext}
+                onToggleSkill={toggleSkillEnabled}
                 onCreateSessionShareLink={chat.createSessionShareLink}
                 onRefreshActiveSession={chat.refreshActiveSession}
                 onSend={chat.sendMessage}
@@ -1399,8 +1578,9 @@ function CardbushApp() {
                 onCancelInteraction={chat.cancelPendingInteraction}
                 onCancel={chat.cancelSending}
                 onClearError={chat.clearError}
-                draft={draft}
-                onDraftChange={setDraft}
+                onClearNotice={chat.clearNotice}
+                draft={activeDraft}
+                onDraftChange={setActiveDraft}
               />
             ) : (
               <FeaturePanel
@@ -1772,6 +1952,23 @@ function companionStatusFromState({
   return 'idle';
 }
 
+function compactCompanionText(value: string, maxLength: number) {
+  const normalized = value
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\|/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
 function companionLabels(status: CompanionStatus, language: AppLanguage) {
   const labels: Record<CompanionStatus, { zh: [string, string]; en: [string, string] }> = {
     idle: {
@@ -1847,7 +2044,11 @@ function CopyToastHost({ language }: { language: AppLanguage }) {
 
 function readInitialThemePreference(): ThemePreference {
   const stored = window.localStorage.getItem('cardbush_theme_mode');
-  if (stored === 'system' || stored === 'light' || stored === 'dark') {
+  if (
+    stored === 'system' ||
+    stored === 'light' ||
+    stored === 'dark'
+  ) {
     return stored;
   }
   const legacy = window.localStorage.getItem('cardbush.theme');
@@ -2083,6 +2284,60 @@ function resolveTheme(
   return prefersDark ? 'dark' : lightStyle;
 }
 
+function themeBackgroundColor(theme: ThemeMode) {
+  if (theme === 'bright') {
+    return '#f5f3ef';
+  }
+  if (theme === 'parchment') {
+    return '#e1d4ba';
+  }
+  return '#1a1a1a';
+}
+
+function applyDocumentBackdrop(theme: ThemeMode, backgroundSource: string) {
+  const background = themeBackgroundColor(theme);
+  const root = document.getElementById('root');
+  const hasCustomBackground = Boolean(backgroundSource.trim());
+  const documentStyle = document.documentElement.style;
+  if (document.documentElement.dataset.startTheme !== theme) {
+    document.documentElement.dataset.startTheme = theme;
+  }
+  if (documentStyle.getPropertyValue('--cardbush-window-bg') !== background) {
+    documentStyle.setProperty('--cardbush-window-bg', background);
+  }
+  if (document.documentElement.style.backgroundColor !== background) {
+    document.documentElement.style.backgroundColor = background;
+  }
+  if (document.body.style.backgroundColor !== background) {
+    document.body.style.backgroundColor = background;
+  }
+  if (hasCustomBackground) {
+    const imageValue = cssImageUrl(backgroundSource);
+    if (document.documentElement.dataset.startCustomBackground !== 'true') {
+      document.documentElement.dataset.startCustomBackground = 'true';
+    }
+    if (
+      documentStyle.getPropertyValue('--cardbush-custom-background-image') !==
+      imageValue
+    ) {
+      documentStyle.setProperty('--cardbush-custom-background-image', imageValue);
+    }
+    if (root?.style.background !== 'transparent') {
+      root?.style.setProperty('background', 'transparent');
+    }
+    return;
+  }
+  if (document.documentElement.dataset.startCustomBackground) {
+    delete document.documentElement.dataset.startCustomBackground;
+  }
+  if (documentStyle.getPropertyValue('--cardbush-custom-background-image')) {
+    documentStyle.removeProperty('--cardbush-custom-background-image');
+  }
+  if (root?.style.background !== background) {
+    root?.style.setProperty('background', background);
+  }
+}
+
 function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) {
   return mode === 'system' ? systemLanguage : mode;
 }
@@ -2100,9 +2355,12 @@ function readInitialAppSettings(): AppSettingsState {
         window.localStorage.getItem('cardbush_proxy_no_proxy') ??
         '127.0.0.1,localhost,::1',
     },
+    backendAuth: {
+      bearerToken: window.localStorage.getItem(backendBearerTokenStorageKey) ?? '',
+      localRequestKey: window.localStorage.getItem(backendLocalRequestKeyStorageKey) ?? '',
+    },
     managedModelConfigs: readManagedModelConfigs(),
-    hideCardbushForScreenshot:
-      window.localStorage.getItem('cardbush_hide_for_screenshot') === 'true',
+    backgroundImagePath: window.localStorage.getItem('cardbush_background_image_path') ?? '',
     companionEnabled:
       window.localStorage.getItem('cardbush_cardling_enabled') !== 'false',
     companion: readCompanionSettings(),
@@ -2170,10 +2428,14 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
       noProxy:
         settings.proxy.noProxy.trim() || defaultAppSettings.proxy.noProxy,
     },
+    backendAuth: {
+      bearerToken: settings.backendAuth.bearerToken.trim(),
+      localRequestKey: settings.backendAuth.localRequestKey.trim(),
+    },
     managedModelConfigs: normalizeManagedModelConfigs(
       settings.managedModelConfigs,
     ),
-    hideCardbushForScreenshot: settings.hideCardbushForScreenshot,
+    backgroundImagePath: settings.backgroundImagePath.trim(),
     companionEnabled: settings.companionEnabled !== false,
     companion: normalizeCompanionSettings(settings.companion),
     font: {
@@ -2198,13 +2460,18 @@ function persistAppSettings(settings: AppSettingsState) {
   window.localStorage.setItem('cardbush_proxy_https', settings.proxy.httpsProxy);
   window.localStorage.setItem('cardbush_proxy_no_proxy', settings.proxy.noProxy);
   window.localStorage.setItem(
+    backendBearerTokenStorageKey,
+    settings.backendAuth.bearerToken,
+  );
+  window.localStorage.setItem(
+    backendLocalRequestKeyStorageKey,
+    settings.backendAuth.localRequestKey,
+  );
+  window.localStorage.setItem(
     'cardbush_managed_model_configs',
     JSON.stringify(settings.managedModelConfigs),
   );
-  window.localStorage.setItem(
-    'cardbush_hide_for_screenshot',
-    String(settings.hideCardbushForScreenshot),
-  );
+  window.localStorage.setItem('cardbush_background_image_path', settings.backgroundImagePath);
   window.localStorage.setItem(
     'cardbush_cardling_enabled',
     String(settings.companionEnabled),
@@ -2299,16 +2566,56 @@ function cssEscape(value: string) {
   return value.replace(/["\\]/g, '\\$&');
 }
 
+function cssImageUrl(value: string) {
+  return `url("${cssEscape(value)}")`;
+}
+
+function backgroundImageUrl(value: string) {
+  const cachedName = cachedBackgroundFileName(value);
+  if (cachedName && window.cardbushDesktop) {
+    return `cardbush-file://backgrounds/${encodeURIComponent(cachedName)}`;
+  }
+  return fileUrl(value);
+}
+
+function cachedBackgroundFileName(value: string) {
+  const normalized = stripWrappingQuotes(value.trim()).replaceAll('\\', '/');
+  if (!/\/backgrounds\//i.test(normalized)) {
+    return '';
+  }
+  const fileName = normalized.split('/').filter(Boolean).pop() ?? '';
+  return isImagePath(fileName) ? fileName : '';
+}
+
 function fileUrl(value: string) {
   const normalized = stripWrappingQuotes(value.trim());
   if (/^file:\/\//i.test(normalized)) {
-    return normalized;
+    if (!window.cardbushDesktop) {
+      return normalized;
+    }
+    try {
+      const parsed = new URL(normalized);
+      const hostPrefix = parsed.hostname ? `/${parsed.hostname}` : '';
+      return encodedLocalResourceUrl(`${hostPrefix}${decodeURIComponent(parsed.pathname)}`);
+    } catch {
+      return normalized;
+    }
   }
-  return `file:///${normalized.replaceAll('\\', '/').replace(/^\/+/, '')}`;
+  return encodedLocalResourceUrl(normalized);
 }
 
-function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(stripWrappingQuotes(value.trim()));
+function encodedLocalResourceUrl(value: string) {
+  const pathValue = value.replaceAll('\\', '/').replace(/^\/+/, '');
+  const encodedPath = pathValue
+    .split('/')
+    .map((segment, index) =>
+      index === 0 && /^[a-z]:$/i.test(segment)
+        ? segment
+        : encodeURIComponent(segment),
+    )
+    .join('/');
+  const scheme = window.cardbushDesktop ? 'cardbush-file' : 'file';
+  return `${scheme}:///${encodedPath}`;
 }
 
 function imageAttachmentFromPath(pathValue: string): ComposerImageAttachment {
@@ -2330,9 +2637,13 @@ function readFileAsDataUrl(file: File) {
 }
 
 function WindowFrame({
+  musicOpen,
+  onToggleMusic,
   onOpenBotSettings,
   onOpenCacheSettings,
 }: {
+  musicOpen: boolean;
+  onToggleMusic: () => void;
   onOpenBotSettings: () => void;
   onOpenCacheSettings: () => void;
 }) {
@@ -2362,6 +2673,15 @@ function WindowFrame({
         <span>cardbush</span>
       </div>
       <div className="window-separator">|</div>
+      <button
+        className={`music-chip no-drag ${musicOpen ? 'active' : ''}`}
+        type="button"
+        title="Local Music"
+        onClick={onToggleMusic}
+      >
+        <Music2 size={14} />
+        <span>Music</span>
+      </button>
       <button className="bot-chip no-drag" type="button" onClick={onOpenBotSettings}>
         BOT
       </button>
@@ -2419,68 +2739,6 @@ function WindowButton({
   );
 }
 
-function SidebarResizer({
-  language,
-  onWidthChange,
-}: {
-  language: AppLanguage;
-  onWidthChange: (value: number) => void;
-}) {
-  const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
-
-  const beginResize = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      dragStateRef.current = {
-        startX: event.clientX,
-        startWidth: readCurrentSidebarWidth(),
-      };
-      document.body.classList.add('sidebar-resizing');
-
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        const state = dragStateRef.current;
-        if (!state) {
-          return;
-        }
-        onWidthChange(state.startWidth + moveEvent.clientX - state.startX);
-      };
-      const handlePointerUp = () => {
-        dragStateRef.current = null;
-        document.body.classList.remove('sidebar-resizing');
-        window.removeEventListener('pointermove', handlePointerMove);
-        window.removeEventListener('pointerup', handlePointerUp);
-      };
-      window.addEventListener('pointermove', handlePointerMove);
-      window.addEventListener('pointerup', handlePointerUp);
-    },
-    [onWidthChange],
-  );
-
-  return (
-    <div
-      className="sidebar-resizer"
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={language === 'zh' ? '调整侧边栏宽度' : 'Resize sidebar'}
-      title={language === 'zh' ? '拖动调整侧边栏宽度' : 'Drag to resize sidebar'}
-      onPointerDown={beginResize}
-    />
-  );
-}
-
-function readCurrentSidebarWidth() {
-  const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
-  const raw = getComputedStyle(scope)
-    .getPropertyValue('--sidebar-width')
-    .trim();
-  const fromRoot = Number.parseFloat(raw);
-  if (Number.isFinite(fromRoot)) {
-    return fromRoot;
-  }
-  const sidebar = document.querySelector<HTMLElement>('.sidebar, .settings-sidebar');
-  return sidebar?.getBoundingClientRect().width ?? defaultSidebarWidth;
-}
-
 function ChatSidebar({
   language,
   section,
@@ -2521,6 +2779,7 @@ function ChatSidebar({
     () => new Set(),
   );
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
     () => new Set(['projects', 'conversations']),
   );
@@ -2578,8 +2837,28 @@ function ChatSidebar({
     );
   }, [activeConversationId, visibleConversations, visibleProjects]);
 
+  const closeMenus = useCallback(() => {
+    setOpenMenu(null);
+    setContextMenu(null);
+  }, []);
+
+  const toggleInlineMenu = useCallback((id: string) => {
+    setContextMenu(null);
+    setOpenMenu((current) => (current === id ? null : id));
+  }, []);
+
   useEffect(() => {
-    if (!openMenu) {
+    function closeFromMenuSelection() {
+      closeMenus();
+    }
+    window.addEventListener(sidebarMenuCloseEvent, closeFromMenuSelection);
+    return () => {
+      window.removeEventListener(sidebarMenuCloseEvent, closeFromMenuSelection);
+    };
+  }, [closeMenus]);
+
+  useEffect(() => {
+    if (!openMenu && !contextMenu) {
       return undefined;
     }
     function closeOnOutsidePointer(event: PointerEvent) {
@@ -2589,18 +2868,43 @@ function ChatSidebar({
       }
       if (
         target.closest('.sidebar-menu') ||
+        target.closest('.sidebar-context-menu') ||
+        target.closest('[data-sidebar-menu-trigger="true"]') ||
         target.closest('.row-more') ||
         target.closest('.conversation-more')
       ) {
         return;
       }
-      setOpenMenu(null);
+      closeMenus();
     }
     document.addEventListener('pointerdown', closeOnOutsidePointer, true);
     return () => {
       document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
     };
-  }, [openMenu]);
+  }, [closeMenus, contextMenu, openMenu]);
+
+  function openContextMenu(
+    event: ReactMouseEvent,
+    id: string,
+    items: SidebarContextMenuItem[],
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const position = sidebarContextMenuPosition(event.clientX, event.clientY, items.length);
+    setOpenMenu(null);
+    setContextMenu({ id, items, ...position });
+  }
+
+  function runContextMenuItem(item: SidebarContextMenuItem) {
+    if (item.disabled) {
+      return;
+    }
+    if (item.children?.length) {
+      return;
+    }
+    closeMenus();
+    item.onClick?.();
+  }
 
   function toggleConversationArchive(conversationId: string) {
     setArchivedConversationIds((current) => {
@@ -2638,6 +2942,110 @@ function ChatSidebar({
     });
   }
 
+  function projectMenuItems(project: ProjectItem): SidebarContextMenuItem[] {
+    return [
+      {
+        key: 'pin',
+        icon: <Pin size={15} />,
+        label: project.pinned
+          ? language === 'zh'
+            ? '取消置顶'
+            : 'Unpin'
+          : language === 'zh'
+            ? '置顶项目'
+            : 'Pin project',
+        onClick: () => onProjectAction('pin', project),
+      },
+      {
+        key: 'open',
+        icon: <FolderOpen size={15} />,
+        label: language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer',
+        onClick: () => onProjectAction('open', project),
+      },
+      {
+        key: 'refresh',
+        icon: <RefreshCw size={15} />,
+        label: language === 'zh' ? '刷新 Git 状态' : 'Refresh Git status',
+        onClick: () => onProjectAction('refreshGit', project),
+      },
+      {
+        key: 'new-chat',
+        icon: <Edit3 size={15} />,
+        label: language === 'zh' ? '新建项目会话' : 'New project chat',
+        onClick: () => onProjectAction('newChat', project),
+      },
+      {
+        key: 'rename',
+        icon: <Edit3 size={15} />,
+        label: language === 'zh' ? '重命名项目' : 'Rename project',
+        onClick: () => onProjectAction('rename', project),
+      },
+      {
+        key: 'archive',
+        icon: <Archive size={15} />,
+        label: language === 'zh' ? '归档项目' : 'Archive project',
+        onClick: () => onProjectAction('archive', project),
+      },
+      {
+        key: 'remove',
+        icon: <X size={15} />,
+        label: language === 'zh' ? '移除' : 'Remove',
+        danger: true,
+        onClick: () => onProjectAction('remove', project),
+      },
+    ];
+  }
+
+  function conversationMenuItems(
+    conversation: ConversationSummary,
+    options: ConversationMenuOptions,
+  ): SidebarContextMenuItem[] {
+    const items: SidebarContextMenuItem[] = [
+      {
+        key: 'open',
+        icon: <MessageSquare size={15} />,
+        label: language === 'zh' ? '打开对话' : 'Open chat',
+        onClick: () => onConversationChange(conversation.id),
+      },
+    ];
+    if (options.changeCount > 0) {
+      items.push({
+        key: 'diff',
+        icon: <Code2 size={15} />,
+        label: language === 'zh' ? '查看 Diff' : 'View diff',
+        onClick: options.onOpenChanges,
+      });
+    }
+    items.push(
+      {
+        key: 'rename',
+        icon: <Edit3 size={15} />,
+        label: language === 'zh' ? '重命名对话' : 'Rename chat',
+        onClick: options.onRename,
+      },
+      {
+        key: 'copy-id',
+        icon: <Clipboard size={15} />,
+        label: language === 'zh' ? '复制会话 ID' : 'Copy session ID',
+        onClick: () => void copyText(conversation.id),
+      },
+      {
+        key: 'archive',
+        icon: <Archive size={15} />,
+        label: language === 'zh' ? '归档对话' : 'Archive chat',
+        onClick: options.onArchive,
+      },
+      {
+        key: 'delete',
+        icon: <Trash2 size={15} />,
+        label: language === 'zh' ? '删除对话' : 'Delete chat',
+        danger: true,
+        onClick: options.onDelete,
+      },
+    );
+    return items;
+  }
+
   return (
     <aside className="sidebar">
       <div className="sidebar-collapse">
@@ -2652,10 +3060,85 @@ function ChatSidebar({
         </button>
       </div>
       <nav className="sidebar-nav">
-        <NavRow icon={<Edit3 size={17} />} label={language === 'zh' ? '新会话' : 'New chat'} onClick={onCreateConversation} />
-        <NavRow active={section === 'search'} icon={<Search size={17} />} label={t('search')} onClick={() => onSectionChange('search')} />
-        <NavRow active={section === 'skills'} icon={<Puzzle size={17} />} label={t('skills')} onClick={() => onSectionChange('skills')} />
-        <NavRow active={section === 'automation'} icon={<Clock3 size={17} />} label={t('automation')} onClick={() => onSectionChange('automation')} />
+        <NavRow
+          icon={<Edit3 size={17} />}
+          label={language === 'zh' ? '新会话' : 'New chat'}
+          onClick={onCreateConversation}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:new-chat', [
+              {
+                key: 'new-chat',
+                icon: <Edit3 size={15} />,
+                label: language === 'zh' ? '新建普通对话' : 'New chat',
+                onClick: onCreateConversation,
+              },
+            ])
+          }
+        />
+        <NavRow
+          active={section === 'search'}
+          icon={<Search size={17} />}
+          label={t('search')}
+          onClick={() => onSectionChange('search')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:search', [
+              {
+                key: 'open',
+                icon: <Search size={15} />,
+                label: language === 'zh' ? '打开搜索' : 'Open search',
+                onClick: () => onSectionChange('search'),
+              },
+            ])
+          }
+        />
+        <NavRow
+          active={section === 'skills'}
+          icon={<Puzzle size={17} />}
+          label={t('skills')}
+          onClick={() => onSectionChange('skills')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:skills', [
+              {
+                key: 'open',
+                icon: <Puzzle size={15} />,
+                label: language === 'zh' ? '打开技能' : 'Open skills',
+                onClick: () => onSectionChange('skills'),
+              },
+            ])
+          }
+        />
+        <NavRow
+          active={section === 'subagents'}
+          icon={<Network size={17} />}
+          label={t('subagents')}
+          onClick={() => onSectionChange('subagents')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:subagents', [
+              {
+                key: 'open',
+                icon: <Network size={15} />,
+                label: language === 'zh' ? '打开子 Agent' : 'Open subagents',
+                onClick: () => onSectionChange('subagents'),
+              },
+            ])
+          }
+        />
+        <NavRow
+          active={section === 'gamecoding'}
+          icon={<Sparkles size={17} />}
+          label={t('gamecoding')}
+          onClick={() => onSectionChange('gamecoding')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:gamecoding', [
+              {
+                key: 'open',
+                icon: <Sparkles size={15} />,
+                label: language === 'zh' ? '打开 Game Coding' : 'Open Game Coding',
+                onClick: () => onSectionChange('gamecoding'),
+              },
+            ])
+          }
+        />
       </nav>
 
       <div className="sidebar-scroll">
@@ -2665,6 +3148,28 @@ function ChatSidebar({
           expanded={expandedSections.has('projects')}
           onToggle={() => toggleSection('projects')}
           onAction={onAddProject}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'section:projects', [
+              {
+                key: 'toggle',
+                icon: <ChevronDown size={15} />,
+                label: expandedSections.has('projects')
+                  ? language === 'zh'
+                    ? '收起项目'
+                    : 'Collapse projects'
+                  : language === 'zh'
+                    ? '展开项目'
+                    : 'Expand projects',
+                onClick: () => toggleSection('projects'),
+              },
+              {
+                key: 'add-project',
+                icon: <FolderOpen size={15} />,
+                label: language === 'zh' ? '添加项目' : 'Add project',
+                onClick: onAddProject,
+              },
+            ])
+          }
         />
         {expandedSections.has('projects') && visibleProjects.map((project) => (
           <ProjectBlock
@@ -2681,10 +3186,11 @@ function ChatSidebar({
             language={language}
             expanded={expandedProjectIds.has(project.id)}
             onToggleExpanded={() => toggleProject(project.id)}
+            onContextMenu={(event) =>
+              openContextMenu(event, `project:${project.id}`, projectMenuItems(project))
+            }
             onMenuToggle={() =>
-              setOpenMenu((current) =>
-                current === `project:${project.id}` ? null : `project:${project.id}`,
-              )
+              toggleInlineMenu(`project:${project.id}`)
             }
             onProjectAction={(action) => {
               setOpenMenu(null);
@@ -2692,15 +3198,18 @@ function ChatSidebar({
             }}
             onConversationChange={onConversationChange}
             onConversationMenuToggle={(conversationId) =>
-              setOpenMenu((current) =>
-                current === `conversation:${conversationId}`
-                  ? null
-                  : `conversation:${conversationId}`,
-              )
+              toggleInlineMenu(`conversation:${conversationId}`)
             }
             onConversationArchive={toggleConversationArchive}
             onDeleteConversation={onDeleteConversation}
             onRenameConversation={onRenameConversation}
+            onConversationContextMenu={(event, conversation, options) =>
+              openContextMenu(
+                event,
+                `conversation:${conversation.id}`,
+                conversationMenuItems(conversation, options),
+              )
+            }
             changeReportsByConversation={changeReportsByConversation}
             onOpenConversationChanges={onOpenConversationChanges}
             openMenu={openMenu}
@@ -2714,11 +3223,35 @@ function ChatSidebar({
             expanded={expandedSections.has('conversations')}
             onToggle={() => toggleSection('conversations')}
             onAction={() =>
-              setOpenMenu((current) =>
-                current === 'section:conversations'
-                  ? null
-                  : 'section:conversations',
-              )
+              toggleInlineMenu('section:conversations')
+            }
+            onContextMenu={(event) =>
+              openContextMenu(event, 'section:conversations', [
+                {
+                  key: 'toggle',
+                  icon: <ChevronDown size={15} />,
+                  label: expandedSections.has('conversations')
+                    ? language === 'zh'
+                      ? '收起对话'
+                      : 'Collapse conversations'
+                    : language === 'zh'
+                      ? '展开对话'
+                      : 'Expand conversations',
+                  onClick: () => toggleSection('conversations'),
+                },
+                {
+                  key: 'new-chat',
+                  icon: <Edit3 size={15} />,
+                  label: language === 'zh' ? '新建普通对话' : 'New chat',
+                  onClick: onCreateConversation,
+                },
+                {
+                  key: 'restore',
+                  icon: <Archive size={15} />,
+                  label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
+                  onClick: () => setArchivedConversationIds(new Set()),
+                },
+              ])
             }
           />
           {openMenu === 'section:conversations' && (
@@ -2745,11 +3278,7 @@ function ChatSidebar({
               menuOpen={openMenu === `conversation:${conversation.id}`}
               language={language}
               onMenuToggle={() =>
-                setOpenMenu((current) =>
-                  current === `conversation:${conversation.id}`
-                    ? null
-                    : `conversation:${conversation.id}`,
-                )
+                toggleInlineMenu(`conversation:${conversation.id}`)
               }
               onArchive={() => toggleConversationArchive(conversation.id)}
               onDelete={() => onDeleteConversation(conversation.id)}
@@ -2764,15 +3293,42 @@ function ChatSidebar({
                   onRenameConversation(conversation.id, nextTitle);
                 }
               }}
+              onContextMenu={(event, options) =>
+                openContextMenu(
+                  event,
+                  `conversation:${conversation.id}`,
+                  conversationMenuItems(conversation, options),
+                )
+              }
               onClick={() => onConversationChange(conversation.id)}
             />
           ))}
       </div>
 
-      <button className="settings-dock" type="button" onClick={onOpenSettings}>
+      <button
+        className="settings-dock"
+        type="button"
+        onClick={onOpenSettings}
+        onContextMenu={(event) =>
+          openContextMenu(event, 'settings', [
+            {
+              key: 'open-settings',
+              icon: <Settings size={15} />,
+              label: language === 'zh' ? '打开设置' : 'Open settings',
+              onClick: onOpenSettings,
+            },
+          ])
+        }
+      >
         <Settings size={17} />
         <span>{language === 'zh' ? '设置' : 'Settings'}</span>
       </button>
+      {contextMenu && (
+        <SidebarContextMenu
+          menu={contextMenu}
+          onSelect={runContextMenuItem}
+        />
+      )}
     </aside>
   );
 }
@@ -2782,14 +3338,21 @@ function NavRow({
   icon,
   label,
   onClick,
+  onContextMenu,
 }: {
   active?: boolean;
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
+  onContextMenu?: (event: ReactMouseEvent) => void;
 }) {
   return (
-    <button className={`nav-row ${active ? 'active' : ''}`} type="button" onClick={onClick}>
+    <button
+      className={`nav-row ${active ? 'active' : ''}`}
+      type="button"
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
       {icon}
       <span>{label}</span>
     </button>
@@ -2802,15 +3365,17 @@ function SectionHeader({
   expanded = true,
   onToggle,
   onAction,
+  onContextMenu,
 }: {
   title: string;
   action: React.ReactNode;
   expanded?: boolean;
   onToggle?: () => void;
   onAction?: () => void;
+  onContextMenu?: (event: ReactMouseEvent) => void;
 }) {
   return (
-    <div className="section-header">
+    <div className="section-header" onContextMenu={onContextMenu}>
       <button
         className="section-title"
         type="button"
@@ -2822,6 +3387,7 @@ function SectionHeader({
       </button>
       <button
         className="section-action"
+        data-sidebar-menu-trigger="true"
         type="button"
         onClick={onAction}
         disabled={!onAction}
@@ -2841,6 +3407,7 @@ function ProjectBlock({
   menuOpen,
   openMenu,
   onToggleExpanded,
+  onContextMenu,
   onMenuToggle,
   onProjectAction,
   onConversationChange,
@@ -2848,6 +3415,7 @@ function ProjectBlock({
   onConversationArchive,
   onDeleteConversation,
   onRenameConversation,
+  onConversationContextMenu,
   changeReportsByConversation,
   onOpenConversationChanges,
 }: {
@@ -2859,6 +3427,7 @@ function ProjectBlock({
   menuOpen: boolean;
   openMenu: string | null;
   onToggleExpanded: () => void;
+  onContextMenu: (event: ReactMouseEvent) => void;
   onMenuToggle: () => void;
   onProjectAction: (action: ProjectAction) => void;
   onConversationChange: (id: string) => void;
@@ -2866,6 +3435,11 @@ function ProjectBlock({
   onConversationArchive: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
+  onConversationContextMenu: (
+    event: ReactMouseEvent,
+    conversation: ConversationSummary,
+    options: ConversationMenuOptions,
+  ) => void;
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
   onOpenConversationChanges: (conversationId: string) => void;
 }) {
@@ -2876,6 +3450,7 @@ function ProjectBlock({
         role="button"
         tabIndex={0}
         onClick={onToggleExpanded}
+        onContextMenu={onContextMenu}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -2886,19 +3461,39 @@ function ProjectBlock({
         <Folder size={17} />
         <div className="project-title">
           <span>{project.title}</span>
-          <small>
-            {project.branch
-              ? `${project.branch} · ${project.changedCount ?? 0}`
-              : project.rootPath}
-          </small>
+          {project.branch && (
+            <small>{`${project.branch} · ${project.changedCount ?? 0}`}</small>
+          )}
         </div>
         <button
+          className="row-new-chat"
+          data-sidebar-menu-trigger="true"
+          type="button"
+          aria-label={language === 'zh' ? '新建项目会话' : 'New project chat'}
+          title={language === 'zh' ? '新建项目会话' : 'New project chat'}
+          onClick={(event) => {
+            event.stopPropagation();
+            onProjectAction('newChat');
+          }}
+          onContextMenu={(event) => {
+            event.stopPropagation();
+            onContextMenu(event);
+          }}
+        >
+          <Plus size={14} />
+        </button>
+        <button
           className="row-more"
+          data-sidebar-menu-trigger="true"
           type="button"
           aria-label="project options"
           onClick={(event) => {
             event.stopPropagation();
             onMenuToggle();
+          }}
+          onContextMenu={(event) => {
+            event.stopPropagation();
+            onContextMenu(event);
           }}
         >
           <MoreHorizontal size={15} />
@@ -2957,6 +3552,9 @@ function ProjectBlock({
               onRenameConversation(conversation.id, nextTitle);
             }
           }}
+          onContextMenu={(event, options) =>
+            onConversationContextMenu(event, conversation, options)
+          }
           onClick={() => onConversationChange(conversation.id)}
         />
       ))}
@@ -2976,6 +3574,7 @@ function ConversationRow({
   changeReports,
   onOpenChanges,
   onRename,
+  onContextMenu,
   onClick,
 }: {
   conversation: ConversationSummary;
@@ -2989,15 +3588,24 @@ function ConversationRow({
   changeReports?: ConversationChangeReport[];
   onOpenChanges?: () => void;
   onRename: () => void;
+  onContextMenu?: (event: ReactMouseEvent, options: ConversationMenuOptions) => void;
   onClick: () => void;
 }) {
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
+  const menuOptions: ConversationMenuOptions = {
+    changeCount,
+    onOpenChanges,
+    onRename,
+    onArchive,
+    onDelete,
+  };
   return (
     <div
       className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onClick}
+      onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
@@ -3023,11 +3631,16 @@ function ConversationRow({
       )}
       <button
         className="conversation-more"
+        data-sidebar-menu-trigger="true"
         type="button"
         aria-label="conversation options"
         onClick={(event) => {
           event.stopPropagation();
           onMenuToggle();
+        }}
+        onContextMenu={(event) => {
+          event.stopPropagation();
+          onContextMenu?.(event, menuOptions);
         }}
       >
         <MoreHorizontal size={15} />
@@ -3067,6 +3680,40 @@ function SidebarMenu({ children }: { children: React.ReactNode }) {
   return <div className="sidebar-menu">{children}</div>;
 }
 
+function SidebarContextMenu({
+  menu,
+  onSelect,
+}: {
+  menu: SidebarContextMenuState;
+  onSelect: (item: SidebarContextMenuItem) => void;
+}) {
+  return (
+    <div
+      className="sidebar-context-menu"
+      role="menu"
+      style={{ left: menu.x, top: menu.y }}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {menu.items.map((item) => (
+        <button
+          key={item.key}
+          className={`sidebar-menu-button ${item.danger ? 'danger' : ''}`}
+          type="button"
+          role="menuitem"
+          disabled={item.disabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSelect(item);
+          }}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SidebarMenuButton({
   icon,
   danger,
@@ -3084,6 +3731,7 @@ function SidebarMenuButton({
       type="button"
       onClick={(event) => {
         event.stopPropagation();
+        window.dispatchEvent(new CustomEvent(sidebarMenuCloseEvent));
         onClick();
       }}
     >
@@ -3214,6 +3862,7 @@ function ChatPanel({
   projectContext,
   messages,
   skills,
+  disabledSkillNames,
   loading,
   sending,
   activeTurnId,
@@ -3222,13 +3871,20 @@ function ChatPanel({
   queuedMessages,
   pendingInteraction,
   error,
+  notice,
   selectedModel,
   availableModels,
-  hideCardbushForScreenshot,
+  selectedRuntimeProfile,
+  runtimeProfiles,
+  referencePlanMode,
   onModelChange,
+  onRuntimeProfileChange,
+  onReferencePlanModeChange,
   onConfigureModels,
   onCreateConversation,
+  onOpenConversation,
   onSaveProjectContext,
+  onToggleSkill,
   onCreateSessionShareLink,
   onRefreshActiveSession,
   onSend,
@@ -3242,6 +3898,7 @@ function ChatPanel({
   onCancelInteraction,
   onCancel,
   onClearError,
+  onClearNotice,
   draft,
   onDraftChange,
 }: {
@@ -3255,6 +3912,7 @@ function ChatPanel({
   projectContext: string;
   messages: ChatMessage[];
   skills: SkillSummary[];
+  disabledSkillNames: Set<string>;
   loading: boolean;
   sending: boolean;
   activeTurnId: string;
@@ -3263,13 +3921,20 @@ function ChatPanel({
   queuedMessages: QueuedChatMessage[];
   pendingInteraction: PendingInteraction | null;
   error: string | null;
+  notice: string | null;
   selectedModel: string;
   availableModels: string[];
-  hideCardbushForScreenshot: boolean;
+  selectedRuntimeProfile: string;
+  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanMode: ReferencePlanMode;
   onModelChange: (value: string) => void;
+  onRuntimeProfileChange: (value: string) => void;
+  onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
+  onOpenConversation: (conversationId: string) => void;
   onSaveProjectContext: (value: string) => Promise<string>;
+  onToggleSkill: (skillName: string, enabled: boolean) => void;
   onCreateSessionShareLink: (
     request: SessionShareLinkRequest,
   ) => Promise<SessionShareLinkResult>;
@@ -3295,19 +3960,54 @@ function ChatPanel({
   onCancelInteraction: () => Promise<void>;
   onCancel: () => Promise<void>;
   onClearError: () => void;
+  onClearNotice: () => void;
   draft: string;
   onDraftChange: (value: string) => void;
 }) {
-  const showWelcome = !loading && messages.length === 0;
+  const renderMessages = useMemo(
+    () => normalizeChatMessagesForDisplay(messages),
+    [messages],
+  );
+  const showWelcome = !loading && renderMessages.length === 0;
   const listRef = useRef<VirtuosoHandle>(null);
   const listScrollerRef = useRef<HTMLElement | null>(null);
+  const chatBodyRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
+  const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
   const atBottomRef = useRef(true);
   const autoFollowStreamRef = useRef(true);
   const userDetachedFromBottomRef = useRef(false);
   const showScrollBottomRef = useRef(false);
   const pendingSubmittedUserFocusRef = useRef(false);
   const programmaticScrollUntilRef = useRef(0);
+  const manualScrollDetachUntilRef = useRef(0);
+  const lastScrollTopRef = useRef(0);
+  const lastWheelEventAtRef = useRef(0);
+  const handledWheelEventsRef = useRef<WeakSet<globalThis.WheelEvent>>(new WeakSet());
+  const scrollbarDragActiveRef = useRef(false);
+  const scrollbarDragUntilRef = useRef(0);
+  const listScrollerWheelCleanupRef = useRef<(() => void) | null>(null);
+  const scrollBottomWheelCleanupRef = useRef<(() => void) | null>(null);
+  const lastWheelLockRef = useRef<{
+    at: number;
+    source: string;
+    scrollTop: number;
+  } | null>(null);
+  const latestConversationScrollRef = useRef<{
+    conversationId: string;
+    latestMessageId: string;
+  }>({
+    conversationId: '',
+    latestMessageId: '',
+  });
+
+  useEffect(() => {
+    if (!notice) {
+      return undefined;
+    }
+    const timer = window.setTimeout(onClearNotice, 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice, onClearNotice]);
   const messageSnapshotRef = useRef<{ conversationId: string; ids: string[] }>({
     conversationId: '',
     ids: [],
@@ -3324,12 +4024,114 @@ function ChatPanel({
   const activeSceneRevisionRef = useRef('');
   const dismissedSceneKeysRef = useRef(new Set<string>());
   const autoPlayedSceneKeysRef = useRef(new Set<string>());
-  const streamStatusHeight = sending && !loading && !showWelcome ? 42 : 0;
+  const streamStatusHeight = 0;
+  const virtuosoComponents = useMemo(() => ({ Footer: MessageListFooter }), []);
 
   const setScrollBottomVisible = useCallback((visible: boolean) => {
     showScrollBottomRef.current = visible;
     setShowScrollBottom(visible);
   }, []);
+
+  const readBottomMetrics = useCallback((scroller: HTMLElement): ScrollBottomMetrics => {
+    const absoluteBottomDistance = absoluteBottomScrollTop(scroller) - scroller.scrollTop;
+    const visualBottomDistance =
+      visualBottomScrollTop(scroller, composerDockHeight, streamStatusHeight) -
+      scroller.scrollTop;
+    const visualNearBottom =
+      visualBottomDistance <= scrollBottomLockTolerance ||
+      absoluteBottomDistance <= scrollBottomLockTolerance;
+    const visualAtBottom =
+      visualBottomDistance <= scrollBottomWheelLockTolerance ||
+      absoluteBottomDistance <= scrollBottomWheelLockTolerance;
+    return {
+      visualNearBottom,
+      visualAtBottom,
+      visualBottomDistance,
+      absoluteBottomDistance,
+      absoluteAtBottom:
+        absoluteBottomDistance <= scrollBottomWheelLockTolerance,
+    };
+  }, [composerDockHeight, streamStatusHeight]);
+
+  const isLatestMessageTailVisible = useCallback(
+    (scroller: HTMLElement, tolerance = 36) => {
+      const latestMessage = renderMessages[renderMessages.length - 1];
+      if (!latestMessage) {
+        return true;
+      }
+      return isMessageTailVisible(scroller, latestMessage.id, {
+        composerDockHeight,
+        streamStatusHeight,
+        tolerance,
+      });
+    },
+    [composerDockHeight, renderMessages, streamStatusHeight],
+  );
+
+  const shouldShowScrollBottomForMetrics = useCallback(
+    (scroller: HTMLElement, metrics: ScrollBottomMetrics) => {
+      if (metrics.visualNearBottom || metrics.absoluteAtBottom) {
+        return false;
+      }
+      return !isLatestMessageTailVisible(scroller);
+    },
+    [isLatestMessageTailVisible],
+  );
+
+  const shouldShowScrollBottomForScroller = useCallback(
+    (scroller: HTMLElement | null) => {
+      if (!scroller) {
+        return false;
+      }
+      return shouldShowScrollBottomForMetrics(scroller, readBottomMetrics(scroller));
+    },
+    [readBottomMetrics, shouldShowScrollBottomForMetrics],
+  );
+
+  const nativeWheelEvent = useCallback(
+    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) =>
+      'nativeEvent' in event ? event.nativeEvent : event,
+    [],
+  );
+
+  const wheelAlreadyHandled = useCallback(
+    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) =>
+      handledWheelEventsRef.current.has(nativeWheelEvent(event)),
+    [nativeWheelEvent],
+  );
+
+  const markWheelHandled = useCallback(
+    (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) => {
+      handledWheelEventsRef.current.add(nativeWheelEvent(event));
+    },
+    [nativeWheelEvent],
+  );
+
+  const wheelTargetIsListSurface = useCallback((target: EventTarget | null) => {
+    if (!(target instanceof Node)) {
+      return false;
+    }
+    return Boolean(
+      listScrollerRef.current?.contains(target) ||
+        scrollBottomButtonRef.current?.contains(target),
+    );
+  }, []);
+
+  const isPointerOnVerticalScrollbar = useCallback(
+    (scroller: HTMLElement, event: ReactPointerEvent<HTMLElement>) => {
+      const rect = scroller.getBoundingClientRect();
+      const nativeScrollbarWidth = Math.max(0, scroller.offsetWidth - scroller.clientWidth);
+      const scrollbarHitWidth = Math.max(18, nativeScrollbarWidth + 8);
+      return (
+        scroller.scrollHeight > scroller.clientHeight + 1 &&
+        event.clientX >= rect.right - scrollbarHitWidth &&
+        event.clientX <= rect.right + 2 &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      );
+    },
+    [],
+  );
 
   const nextSceneInitialAutoPlay = useCallback(
     (scene: CardlingScene, allowAutoPlay: boolean) => {
@@ -3475,6 +4277,7 @@ function ChatPanel({
     (index: number, messageId: string) => {
       pendingSubmittedUserFocusRef.current = false;
       programmaticScrollUntilRef.current = Date.now() + 1200;
+      manualScrollDetachUntilRef.current = 0;
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
       setScrollBottomVisible(false);
@@ -3499,14 +4302,12 @@ function ChatPanel({
     (messageId: string, reason = 'stream') => {
       const scroller = listScrollerRef.current;
       if (!scroller) {
-        debugStreamFollow('missing-scroller', { messageId, reason });
         return;
       }
       const item = scroller.querySelector(
         `[data-message-id="${cssEscape(messageId)}"]`,
       );
       if (!(item instanceof HTMLElement)) {
-        debugStreamFollow('missing-message-node', { messageId, reason });
         return;
       }
       const scrollerRect = scroller.getBoundingClientRect();
@@ -3514,25 +4315,9 @@ function ChatPanel({
       const visibleBottom =
         scrollerRect.bottom - Math.max(0, composerDockHeight) - streamStatusHeight - 18;
       if (itemRect.bottom <= visibleBottom) {
-        debugStreamFollow('already-visible', {
-          messageId,
-          reason,
-          itemBottom: Math.round(itemRect.bottom - scrollerRect.top),
-          visibleBottom: Math.round(visibleBottom - scrollerRect.top),
-          scrollTop: Math.round(scroller.scrollTop),
-        });
         return;
       }
       const delta = Math.ceil(itemRect.bottom - visibleBottom);
-      debugStreamFollow('scroll-message-bottom', {
-        messageId,
-        reason,
-        delta,
-        itemBottom: Math.round(itemRect.bottom - scrollerRect.top),
-        visibleBottom: Math.round(visibleBottom - scrollerRect.top),
-        scrollTop: Math.round(scroller.scrollTop),
-        scrollHeight: Math.round(scroller.scrollHeight),
-      });
       scroller.scrollBy({
         top: delta,
         behavior: 'auto',
@@ -3541,16 +4326,41 @@ function ChatPanel({
     [composerDockHeight, streamStatusHeight],
   );
 
+  const cancelScheduledStreamFollow = useCallback(() => {
+    if (streamScrollFrameRef.current == null) {
+      return;
+    }
+    window.cancelAnimationFrame(streamScrollFrameRef.current);
+    streamScrollFrameRef.current = null;
+  }, []);
+
   const scheduleActiveAssistantFollow = useCallback(
     (messageId: string, index: number, reason = 'stream') => {
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
       programmaticScrollUntilRef.current = Date.now() + 900;
-      debugStreamFollow('schedule', { messageId, index, reason });
       streamScrollFrameRef.current = window.requestAnimationFrame(() => {
         streamScrollFrameRef.current = null;
-        if (index >= 0) {
+        if (
+          !autoFollowStreamRef.current ||
+          userDetachedFromBottomRef.current ||
+          Date.now() < manualScrollDetachUntilRef.current
+        ) {
+          return;
+        }
+        const scroller = listScrollerRef.current;
+        const item = scroller?.querySelector(
+          `[data-message-id="${cssEscape(messageId)}"]`,
+        );
+        const nearBottom = scroller
+          ? isScrollerNearVisualBottom(
+              scroller,
+              composerDockHeight,
+              streamStatusHeight,
+            )
+          : false;
+        if (index >= 0 && !nearBottom && !(item instanceof HTMLElement)) {
           listRef.current?.scrollToIndex({
             index,
             align: 'end',
@@ -3558,51 +4368,448 @@ function ChatPanel({
           });
         }
         window.requestAnimationFrame(() => {
+          if (
+            !autoFollowStreamRef.current ||
+            userDetachedFromBottomRef.current ||
+            Date.now() < manualScrollDetachUntilRef.current
+          ) {
+            return;
+          }
           ensureMessageBottomVisible(messageId, reason);
         });
       });
     },
-    [ensureMessageBottomVisible],
+    [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight],
+  );
+
+  const restoreWheelLockedScrollTop = useCallback(
+    (
+      scroller: HTMLElement,
+      lockedScrollTop: number,
+    ) => {
+      if (Math.abs(scroller.scrollTop - lockedScrollTop) >= 0.5) {
+        scroller.scrollTop = lockedScrollTop;
+      }
+      window.requestAnimationFrame(() => {
+        const currentScrollTop = scroller.scrollTop;
+        if (Math.abs(currentScrollTop - lockedScrollTop) < 0.5) {
+          return;
+        }
+        scroller.scrollTop = lockedScrollTop;
+      });
+    },
+    [],
+  );
+
+  const resolveWheelLockedScrollTop = useCallback(
+    (
+      source: string,
+      scroller: HTMLElement,
+      metrics: { visualNearBottom: boolean },
+    ) => {
+      const now = Date.now();
+      const previous = lastWheelLockRef.current;
+      const reusePrevious =
+        previous &&
+        now - previous.at < scrollBottomWheelFreezeMs &&
+        metrics.visualNearBottom &&
+        Math.abs(scroller.scrollTop - previous.scrollTop) <=
+          scrollBottomLockTolerance * 2;
+      const scrollTop = reusePrevious ? previous.scrollTop : scroller.scrollTop;
+      const anchor = {
+        at: now,
+        source,
+        scrollTop,
+      };
+      lastWheelLockRef.current = anchor;
+      return scrollTop;
+    },
+    [],
+  );
+
+  const lockWheelDownAtBottom = useCallback(
+    (source: 'list' | 'scroll-bottom-hotzone', event: WheelEvent<HTMLElement>) => {
+      const scroller = listScrollerRef.current;
+      if (!scroller || event.deltaY <= 0) {
+        return false;
+      }
+      const metrics = readBottomMetrics(scroller);
+      if (!metrics.visualAtBottom) {
+        return false;
+      }
+      if (metrics.absoluteAtBottom) {
+        return false;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      manualScrollDetachUntilRef.current = 0;
+      autoFollowStreamRef.current = true;
+      userDetachedFromBottomRef.current = false;
+      setScrollBottomVisible(false);
+      const lockedScrollTop = resolveWheelLockedScrollTop(source, scroller, metrics);
+      scrollDebug('wheel-bottom-lock', {
+        source,
+        scrollTop: Math.round(scroller.scrollTop),
+        lockedScrollTop: Math.round(lockedScrollTop),
+        visualBottomDistance: Math.round(metrics.visualBottomDistance),
+        absoluteBottomDistance: Math.round(metrics.absoluteBottomDistance),
+        visualAtBottom: metrics.visualAtBottom,
+      });
+      restoreWheelLockedScrollTop(scroller, lockedScrollTop);
+      return true;
+    },
+    [
+      readBottomMetrics,
+      resolveWheelLockedScrollTop,
+      restoreWheelLockedScrollTop,
+      setScrollBottomVisible,
+    ],
+  );
+
+  const lockNativeWheelDownAtBottom = useCallback(
+    (
+      source: 'native-chat-body' | 'native-list' | 'native-scroll-bottom-hotzone',
+      event: globalThis.WheelEvent,
+    ) => {
+      const scroller = listScrollerRef.current;
+      if (!scroller || event.deltaY <= 0) {
+        return false;
+      }
+      const metrics = readBottomMetrics(scroller);
+      if (!metrics.visualAtBottom) {
+        return false;
+      }
+      if (metrics.absoluteAtBottom) {
+        return false;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      manualScrollDetachUntilRef.current = 0;
+      autoFollowStreamRef.current = true;
+      userDetachedFromBottomRef.current = false;
+      setScrollBottomVisible(false);
+      const lockedScrollTop = resolveWheelLockedScrollTop(source, scroller, metrics);
+      scrollDebug('native-wheel-bottom-lock', {
+        source,
+        scrollTop: Math.round(scroller.scrollTop),
+        lockedScrollTop: Math.round(lockedScrollTop),
+        visualBottomDistance: Math.round(metrics.visualBottomDistance),
+        absoluteBottomDistance: Math.round(metrics.absoluteBottomDistance),
+        visualAtBottom: metrics.visualAtBottom,
+      });
+      restoreWheelLockedScrollTop(scroller, lockedScrollTop);
+      return true;
+    },
+    [
+      readBottomMetrics,
+      resolveWheelLockedScrollTop,
+      restoreWheelLockedScrollTop,
+      setScrollBottomVisible,
+    ],
+  );
+
+  const releaseWheelBottomFreeze = useCallback(
+    (
+      source: string,
+      event: WheelEvent<HTMLElement> | globalThis.WheelEvent,
+    ) => {
+      if (event.deltaY >= 0) {
+        return false;
+      }
+      const previous = lastWheelLockRef.current;
+      if (!previous) {
+        return false;
+      }
+      lastWheelLockRef.current = null;
+      programmaticScrollUntilRef.current = 0;
+      manualScrollDetachUntilRef.current = Date.now() + manualScrollDetachHoldMs;
+      autoFollowStreamRef.current = false;
+      userDetachedFromBottomRef.current = true;
+      pendingSubmittedUserFocusRef.current = false;
+      cancelScheduledStreamFollow();
+      setScrollBottomVisible(shouldShowScrollBottomForScroller(listScrollerRef.current));
+      return true;
+    },
+    [
+      cancelScheduledStreamFollow,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForScroller,
+    ],
   );
 
   const markUserDetachedFromBottom = useCallback((reason = 'user-scroll') => {
+    lastWheelLockRef.current = null;
+    programmaticScrollUntilRef.current = 0;
+    manualScrollDetachUntilRef.current = Date.now() + manualScrollDetachHoldMs;
+    cancelScheduledStreamFollow();
+    scrollDebug('detach', {
+      reason,
+      sending,
+      atBottom: atBottomRef.current,
+      scrollTop: Math.round(listScrollerRef.current?.scrollTop ?? 0),
+    });
     userDetachedFromBottomRef.current = true;
     autoFollowStreamRef.current = false;
     pendingSubmittedUserFocusRef.current = false;
-    debugStreamFollow('user-detached', {
-      reason,
-      atBottom: atBottomRef.current,
-      sending,
-    });
+    const shouldShow = shouldShowScrollBottomForScroller(listScrollerRef.current);
     if (!atBottomRef.current) {
-      setScrollBottomVisible(true);
+      setScrollBottomVisible(shouldShow);
       return;
     }
     window.requestAnimationFrame(() => {
       if (userDetachedFromBottomRef.current && !atBottomRef.current) {
-        setScrollBottomVisible(true);
+        setScrollBottomVisible(
+          shouldShowScrollBottomForScroller(listScrollerRef.current),
+        );
       }
     });
-  }, [sending, setScrollBottomVisible]);
+  }, [
+    cancelScheduledStreamFollow,
+    sending,
+    setScrollBottomVisible,
+    shouldShowScrollBottomForScroller,
+  ]);
+
+  const handleListWheelCapture = useCallback(
+    (event: WheelEvent<HTMLElement>) => {
+      if (event.defaultPrevented || wheelAlreadyHandled(event)) {
+        return;
+      }
+      lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY < 0) {
+        if (releaseWheelBottomFreeze('react-list', event)) {
+          markWheelHandled(event);
+        }
+        markUserDetachedFromBottom('wheel-up');
+        markWheelHandled(event);
+        return;
+      }
+      if (lockWheelDownAtBottom('list', event)) {
+        markWheelHandled(event);
+        return;
+      }
+    },
+    [
+      lockWheelDownAtBottom,
+      markUserDetachedFromBottom,
+      markWheelHandled,
+      releaseWheelBottomFreeze,
+      wheelAlreadyHandled,
+    ],
+  );
+
+  const handleScrollBottomWheelCapture = useCallback(
+    (event: WheelEvent<HTMLElement>) => {
+      if (event.defaultPrevented || wheelAlreadyHandled(event)) {
+        return;
+      }
+      lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY < 0) {
+        if (releaseWheelBottomFreeze('react-scroll-bottom-hotzone', event)) {
+          markWheelHandled(event);
+        }
+        markUserDetachedFromBottom('wheel-up-hotzone');
+        markWheelHandled(event);
+        return;
+      }
+      if (lockWheelDownAtBottom('scroll-bottom-hotzone', event)) {
+        markWheelHandled(event);
+        return;
+      }
+    },
+    [
+      lockWheelDownAtBottom,
+      markUserDetachedFromBottom,
+      markWheelHandled,
+      releaseWheelBottomFreeze,
+      wheelAlreadyHandled,
+    ],
+  );
+
+  const handleChatBodyWheelCapture = useCallback(
+    (event: WheelEvent<HTMLElement>) => {
+      if (
+        event.defaultPrevented ||
+        wheelAlreadyHandled(event) ||
+        wheelTargetIsListSurface(event.target)
+      ) {
+        return;
+      }
+      lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY < 0) {
+        if (releaseWheelBottomFreeze('react-chat-body', event)) {
+          markWheelHandled(event);
+        }
+        markUserDetachedFromBottom('wheel-up-body');
+        markWheelHandled(event);
+      }
+    },
+    [
+      markUserDetachedFromBottom,
+      markWheelHandled,
+      releaseWheelBottomFreeze,
+      wheelAlreadyHandled,
+      wheelTargetIsListSurface,
+    ],
+  );
+
+  useEffect(() => {
+    const chatBody = chatBodyRef.current;
+    if (!chatBody) {
+      return undefined;
+    }
+    const handleNativeWheel = (event: globalThis.WheelEvent) => {
+      if (
+        event.defaultPrevented ||
+        wheelAlreadyHandled(event) ||
+        wheelTargetIsListSurface(event.target)
+      ) {
+        return;
+      }
+      lastWheelEventAtRef.current = Date.now();
+      if (releaseWheelBottomFreeze('native-chat-body', event)) {
+        markWheelHandled(event);
+        return;
+      }
+      if (lockNativeWheelDownAtBottom('native-chat-body', event)) {
+        markWheelHandled(event);
+        return;
+      }
+    };
+    chatBody.addEventListener('wheel', handleNativeWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () => {
+      chatBody.removeEventListener('wheel', handleNativeWheel, {
+        capture: true,
+      });
+    };
+  }, [
+    lockNativeWheelDownAtBottom,
+    markWheelHandled,
+    releaseWheelBottomFreeze,
+    wheelAlreadyHandled,
+    wheelTargetIsListSurface,
+  ]);
 
   const lockStreamFollow = useCallback(
-    (reason: string) => {
+    (_reason: string) => {
+      scrollDebug('lock-follow', {
+        reason: _reason,
+        sending,
+        scrollTop: Math.round(listScrollerRef.current?.scrollTop ?? 0),
+      });
+      manualScrollDetachUntilRef.current = 0;
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
       pendingSubmittedUserFocusRef.current = false;
-      setScrollBottomVisible(false);
-      debugStreamFollow('lock', { reason });
+      if (showScrollBottomRef.current) {
+        setScrollBottomVisible(false);
+      }
     },
-    [setScrollBottomVisible],
+    [sending, setScrollBottomVisible],
   );
+
+  const finishScrollbarDrag = useCallback(
+    (reason: string) => {
+      if (!scrollbarDragActiveRef.current) {
+        return;
+      }
+      scrollbarDragActiveRef.current = false;
+      const scroller = listScrollerRef.current;
+      if (!scroller) {
+        scrollbarDragUntilRef.current = Date.now() + 220;
+        cancelScheduledStreamFollow();
+        return;
+      }
+      const metrics = readBottomMetrics(scroller);
+      scrollDebug('scrollbar-release', {
+        reason,
+        sending,
+        scrollTop: Math.round(scroller.scrollTop),
+        visualBottomDistance: Math.round(metrics.visualBottomDistance),
+        visualNearBottom: metrics.visualNearBottom,
+      });
+      if (metrics.visualNearBottom) {
+        scrollbarDragUntilRef.current = 0;
+        lockStreamFollow(`${reason}:bottom`);
+        return;
+      }
+      const shouldShow = shouldShowScrollBottomForMetrics(scroller, metrics);
+      if (!shouldShow) {
+        scrollbarDragUntilRef.current = 0;
+        lockStreamFollow(`${reason}:tail-visible`);
+        return;
+      }
+      scrollbarDragUntilRef.current = Date.now() + 220;
+      autoFollowStreamRef.current = false;
+      userDetachedFromBottomRef.current = true;
+      pendingSubmittedUserFocusRef.current = false;
+      cancelScheduledStreamFollow();
+      setScrollBottomVisible(true);
+    },
+    [
+      cancelScheduledStreamFollow,
+      lockStreamFollow,
+      readBottomMetrics,
+      sending,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForMetrics,
+    ],
+  );
+
+  useEffect(() => {
+    const handlePointerEnd = () => finishScrollbarDrag('scrollbar-pointer-end');
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+    return () => {
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [finishScrollbarDrag]);
 
   const maybeLockStreamFollowFromScroll = useCallback(
     (scroller: HTMLElement, reason: string) => {
       if (!sending) {
         return;
       }
-      const activeAssistant = streamingAssistantMessage(messages, activeTurnId);
-      const nearBottom = isScrollerNearBottom(scroller);
+      const now = Date.now();
+      const activeAssistant = streamingAssistantMessage(renderMessages, activeTurnId);
+      const metrics = readBottomMetrics(scroller);
+      const shouldShow = shouldShowScrollBottomForMetrics(scroller, metrics);
+      if (
+        userDetachedFromBottomRef.current &&
+        now < manualScrollDetachUntilRef.current
+      ) {
+        if (!shouldShow) {
+          lockStreamFollow(`${reason}:tail-visible-during-detach-hold`);
+          return;
+        }
+        autoFollowStreamRef.current = false;
+        pendingSubmittedUserFocusRef.current = false;
+        setScrollBottomVisible(true);
+        return;
+      }
+      if (metrics.visualAtBottom) {
+        lockStreamFollow(`${reason}:bottom`);
+        return;
+      }
+      if (userDetachedFromBottomRef.current) {
+        if (!shouldShow) {
+          lockStreamFollow(`${reason}:tail-visible`);
+          return;
+        }
+        autoFollowStreamRef.current = false;
+        pendingSubmittedUserFocusRef.current = false;
+        setScrollBottomVisible(true);
+        return;
+      }
+      if (metrics.visualNearBottom) {
+        lockStreamFollow(`${reason}:near-bottom`);
+        return;
+      }
       const activeTailVisible = activeAssistant
         ? isMessageTailVisible(scroller, activeAssistant.message.id, {
             composerDockHeight,
@@ -3610,40 +4817,189 @@ function ChatPanel({
             tolerance: 36,
           })
         : false;
-      debugStreamFollow('scroll-check', {
-        reason,
-        nearBottom,
-        activeTailVisible,
-        locked: autoFollowStreamRef.current,
-        detached: userDetachedFromBottomRef.current,
-        programmatic: Date.now() < programmaticScrollUntilRef.current,
-        scrollTop: Math.round(scroller.scrollTop),
-        scrollHeight: Math.round(scroller.scrollHeight),
-        clientHeight: Math.round(scroller.clientHeight),
-        activeMessageId: activeAssistant?.message.id ?? '',
-      });
-      if (nearBottom || activeTailVisible) {
-        lockStreamFollow(nearBottom ? `${reason}:bottom` : `${reason}:active-tail`);
+      if (activeTailVisible) {
+        lockStreamFollow(`${reason}:active-tail`);
         return;
       }
       if (
-        Date.now() >= programmaticScrollUntilRef.current &&
+        now >= programmaticScrollUntilRef.current &&
         (autoFollowStreamRef.current || !userDetachedFromBottomRef.current)
       ) {
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
-        setScrollBottomVisible(true);
-        debugStreamFollow('unlock', { reason });
+        setScrollBottomVisible(shouldShow);
       }
     },
     [
       activeTurnId,
       composerDockHeight,
       lockStreamFollow,
-      messages,
+      readBottomMetrics,
+      renderMessages,
       sending,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForMetrics,
       streamStatusHeight,
+    ],
+  );
+
+  const handleListPointerDownCapture = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (
+        event.button !== 0 ||
+        !(event.currentTarget instanceof HTMLElement) ||
+        !isPointerOnVerticalScrollbar(event.currentTarget, event)
+      ) {
+        return;
+      }
+      const scroller = event.currentTarget;
+      const metrics = readBottomMetrics(scroller);
+      scrollbarDragActiveRef.current = true;
+      scrollbarDragUntilRef.current = Date.now() + 4000;
+      lastWheelLockRef.current = null;
+      autoFollowStreamRef.current = false;
+      userDetachedFromBottomRef.current = true;
+      pendingSubmittedUserFocusRef.current = false;
+      cancelScheduledStreamFollow();
+      setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
+      scrollDebug('scrollbar-pointer-down', {
+        sending,
+        scrollTop: Math.round(scroller.scrollTop),
+        visualBottomDistance: Math.round(metrics.visualBottomDistance),
+        visualNearBottom: metrics.visualNearBottom,
+      });
+    },
+    [
+      cancelScheduledStreamFollow,
+      isPointerOnVerticalScrollbar,
+      readBottomMetrics,
+      sending,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForMetrics,
+    ],
+  );
+
+  const handleListScrollCapture = useCallback(
+    (event: UIEvent<HTMLElement>) => {
+      if (!(event.currentTarget instanceof HTMLElement)) {
+        return;
+      }
+      const scroller = event.currentTarget;
+      if (scroller.dataset.cardbushPreserveScroll === '1') {
+        lastScrollTopRef.current = scroller.scrollTop;
+        return;
+      }
+      const previousScrollTop = lastScrollTopRef.current;
+      const scrollDelta = scroller.scrollTop - previousScrollTop;
+      lastScrollTopRef.current = scroller.scrollTop;
+      const metrics = readBottomMetrics(scroller);
+      const now = Date.now();
+      const recentLock = lastWheelLockRef.current;
+      const recentWheel = now - lastWheelEventAtRef.current <= 250;
+      const scrollbarDragging =
+        scrollbarDragActiveRef.current || now < scrollbarDragUntilRef.current;
+      const likelyUserScrollWithoutWheel =
+        sending &&
+        scrollDelta > 0.5 &&
+        now >= programmaticScrollUntilRef.current &&
+        now - lastWheelEventAtRef.current > 120;
+      if (scrollbarDragging) {
+        lastWheelLockRef.current = null;
+        autoFollowStreamRef.current = false;
+        userDetachedFromBottomRef.current = true;
+        pendingSubmittedUserFocusRef.current = false;
+        cancelScheduledStreamFollow();
+        setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
+        scrollDebug('scrollbar-scroll', {
+          sending,
+          delta: Math.round(scrollDelta),
+          scrollTop: Math.round(scroller.scrollTop),
+          visualBottomDistance: Math.round(metrics.visualBottomDistance),
+          visualNearBottom: metrics.visualNearBottom,
+        });
+        return;
+      }
+      if (likelyUserScrollWithoutWheel && metrics.visualAtBottom) {
+        lockStreamFollow('scroll:bottom-without-wheel');
+        return;
+      }
+      if (
+        sending &&
+        scrollDelta < -0.5 &&
+        (recentWheel || now >= programmaticScrollUntilRef.current)
+      ) {
+        lastWheelLockRef.current = null;
+        programmaticScrollUntilRef.current = 0;
+        manualScrollDetachUntilRef.current =
+          Date.now() + manualScrollDetachHoldMs;
+        autoFollowStreamRef.current = false;
+        userDetachedFromBottomRef.current = true;
+        pendingSubmittedUserFocusRef.current = false;
+        cancelScheduledStreamFollow();
+        if (!shouldShowScrollBottomForMetrics(scroller, metrics)) {
+          lockStreamFollow('scroll:tail-visible-after-up');
+          return;
+        }
+        setScrollBottomVisible(true);
+        return;
+      }
+      if (
+        recentLock &&
+        now - recentLock.at < scrollBottomWheelFreezeMs &&
+        scroller.scrollTop < recentLock.scrollTop - 0.5 &&
+        metrics.visualNearBottom
+      ) {
+        lastWheelLockRef.current = null;
+        autoFollowStreamRef.current = false;
+        userDetachedFromBottomRef.current = true;
+        pendingSubmittedUserFocusRef.current = false;
+        cancelScheduledStreamFollow();
+        if (!shouldShowScrollBottomForMetrics(scroller, metrics)) {
+          lockStreamFollow('scroll:wheel-lock-tail-visible');
+          return;
+        }
+        setScrollBottomVisible(true);
+        return;
+      }
+      if (
+        recentLock &&
+        now - recentLock.at < scrollBottomWheelFreezeMs &&
+        Math.abs(scroller.scrollTop - recentLock.scrollTop) >= 0.5 &&
+        metrics.visualNearBottom
+      ) {
+        scroller.scrollTop = recentLock.scrollTop;
+        return;
+      }
+      if (!sending) {
+        if (now < programmaticScrollUntilRef.current) {
+          if (metrics.visualNearBottom) {
+            setScrollBottomVisible(false);
+          }
+          return;
+        }
+        if (!shouldShowScrollBottomForMetrics(scroller, metrics)) {
+          autoFollowStreamRef.current = true;
+          userDetachedFromBottomRef.current = false;
+          setScrollBottomVisible(false);
+        } else {
+          autoFollowStreamRef.current = false;
+          userDetachedFromBottomRef.current = true;
+          pendingSubmittedUserFocusRef.current = false;
+          setScrollBottomVisible(true);
+        }
+        return;
+      }
+      maybeLockStreamFollowFromScroll(scroller, 'scroll');
+    },
+    [
+      maybeLockStreamFollowFromScroll,
+      cancelScheduledStreamFollow,
+      lockStreamFollow,
+      readBottomMetrics,
+      sending,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForMetrics,
     ],
   );
 
@@ -3691,25 +5047,30 @@ function ChatPanel({
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
+      listScrollerWheelCleanupRef.current?.();
+      listScrollerWheelCleanupRef.current = null;
+      scrollBottomWheelCleanupRef.current?.();
+      scrollBottomWheelCleanupRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     const previous = messageSnapshotRef.current;
-    const ids = messages.map((message) => message.id);
-    if (previous.conversationId !== activeConversationId) {
+    const ids = renderMessages.map((message) => message.id);
+      if (previous.conversationId !== activeConversationId) {
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
+      manualScrollDetachUntilRef.current = 0;
       atBottomRef.current = true;
       setScrollBottomVisible(false);
       messageSnapshotRef.current = { conversationId: activeConversationId, ids };
       if (
-        messages.length > 0 &&
+        renderMessages.length > 0 &&
         (pendingSubmittedUserFocusRef.current || sending)
       ) {
-        for (let index = messages.length - 1; index >= 0; index -= 1) {
-          if (messages[index]?.role === 'user') {
-            focusSubmittedUserMessage(index, messages[index].id);
+        for (let index = renderMessages.length - 1; index >= 0; index -= 1) {
+          if (renderMessages[index]?.role === 'user') {
+            focusSubmittedUserMessage(index, renderMessages[index].id);
             break;
           }
         }
@@ -3717,26 +5078,26 @@ function ChatPanel({
       return;
     }
     const previousIds = new Set(previous.ids);
-    const submittedUserIndex = messages.findIndex(
+    const submittedUserIndex = renderMessages.findIndex(
       (message) => message.role === 'user' && !previousIds.has(message.id),
     );
     if (
       submittedUserIndex >= 0 &&
       (pendingSubmittedUserFocusRef.current ||
         (sending &&
-          messages.length > previous.ids.length &&
+          renderMessages.length > previous.ids.length &&
           !userDetachedFromBottomRef.current))
     ) {
       focusSubmittedUserMessage(
         submittedUserIndex,
-        messages[submittedUserIndex].id,
+        renderMessages[submittedUserIndex].id,
       );
     }
     messageSnapshotRef.current = { conversationId: activeConversationId, ids };
   }, [
     activeConversationId,
     focusSubmittedUserMessage,
-    messages,
+    renderMessages,
     sending,
     setScrollBottomVisible,
   ]);
@@ -3788,7 +5149,7 @@ function ChatPanel({
   }, [activeConversationId]);
 
   useEffect(() => {
-    const latestScene = latestCardlingSceneFromMessages(messages);
+    const latestScene = latestCardlingSceneFromMessages(renderMessages);
     if (!latestScene) {
       return;
     }
@@ -3807,7 +5168,7 @@ function ChatPanel({
       return;
     }
     showScene(latestScene, { autoPlay: true });
-  }, [activeTurnId, messages, sending, showScene]);
+  }, [activeTurnId, renderMessages, sending, showScene]);
 
   useEffect(() => {
     if (
@@ -3819,10 +5180,9 @@ function ChatPanel({
       return;
     }
     const activeAssistant =
-      streamingAssistantMessage(messages, activeTurnId) ??
-      lastAssistantMessage(messages);
+      streamingAssistantMessage(renderMessages, activeTurnId) ??
+      lastAssistantMessage(renderMessages);
     if (!activeAssistant) {
-      debugStreamFollow('skip-no-active-assistant', { activeTurnId });
       return;
     }
     scheduleActiveAssistantFollow(
@@ -3833,7 +5193,7 @@ function ChatPanel({
   }, [
     activeTurnId,
     loading,
-    messages,
+    renderMessages,
     scheduleActiveAssistantFollow,
     sending,
     showWelcome,
@@ -3844,7 +5204,7 @@ function ChatPanel({
       quickSideItems({
         conversations,
         activeConversationId,
-        messages,
+        messages: renderMessages,
         projectEntries,
         activeProjectDir,
         language,
@@ -3854,10 +5214,13 @@ function ChatPanel({
       activeProjectDir,
       conversations,
       language,
-      messages,
+      renderMessages,
       projectEntries,
     ],
   );
+  const activeAssistantForRender =
+    streamingAssistantMessage(renderMessages, activeTurnId) ??
+    (sending ? lastAssistantMessage(renderMessages) : null);
 
   const applyQuickLoad = useCallback(
     (payload: QuickLoadPayload) => {
@@ -3873,6 +5236,57 @@ function ChatPanel({
     [draft, onDraftChange],
   );
 
+  const jumpToMessage = useCallback(
+    (messageId: string) => {
+      const index = renderMessages.findIndex((message) => message.id === messageId);
+      if (index < 0) {
+        return;
+      }
+      programmaticScrollUntilRef.current = Date.now() + 1000;
+      manualScrollDetachUntilRef.current = 0;
+      autoFollowStreamRef.current = false;
+      userDetachedFromBottomRef.current = true;
+      pendingSubmittedUserFocusRef.current = false;
+      lastWheelLockRef.current = null;
+      setScrollBottomVisible(false);
+      listRef.current?.scrollToIndex({
+        index,
+        align: 'center',
+        behavior: 'auto',
+      });
+      window.requestAnimationFrame(() => {
+        positionMessageAtReadingAnchor(messageId);
+        window.requestAnimationFrame(() => {
+          positionMessageAtReadingAnchor(messageId);
+          setScrollBottomVisible(
+            shouldShowScrollBottomForScroller(listScrollerRef.current),
+          );
+        });
+      });
+    },
+    [
+      positionMessageAtReadingAnchor,
+      renderMessages,
+      setScrollBottomVisible,
+      shouldShowScrollBottomForScroller,
+    ],
+  );
+
+  const jumpQuickTarget = useCallback(
+    (target: QuickJumpTarget) => {
+      if (target.kind === 'conversation') {
+        onOpenConversation(target.conversationId);
+        return;
+      }
+      if (target.kind === 'message') {
+        jumpToMessage(target.messageId);
+        return;
+      }
+      void window.cardbushDesktop?.openPath?.(target.path).catch(() => undefined);
+    },
+    [jumpToMessage, onOpenConversation],
+  );
+
   const editQueuedMessage = useCallback(
     (item: QueuedChatMessage) => {
       onRemoveQueuedMessage(item.id);
@@ -3884,40 +5298,166 @@ function ChatPanel({
     [draft, onDraftChange, onRemoveQueuedMessage],
   );
 
-  const forceListToAbsoluteBottom = useCallback(() => {
+  const forceListToVisualBottom = useCallback(() => {
     const scroller = listScrollerRef.current;
     if (!scroller) {
       return;
     }
-    scroller.scrollTop = scroller.scrollHeight;
-  }, []);
+    scroller.scrollTop = visualBottomScrollTop(
+      scroller,
+      composerDockHeight,
+      streamStatusHeight,
+    );
+  }, [composerDockHeight, streamStatusHeight]);
 
   const scrollToBottom = useCallback(() => {
     if (messages.length === 0) {
       return;
     }
     programmaticScrollUntilRef.current = Date.now() + 1400;
+    manualScrollDetachUntilRef.current = 0;
     autoFollowStreamRef.current = true;
     userDetachedFromBottomRef.current = false;
     pendingSubmittedUserFocusRef.current = false;
     atBottomRef.current = true;
     setScrollBottomVisible(false);
-
-    const lastIndex = messages.length - 1;
-    listRef.current?.scrollToIndex({
-      index: lastIndex,
-      align: 'end',
-      behavior: 'auto',
-    });
-    forceListToAbsoluteBottom();
+    lastWheelLockRef.current = null;
+    forceListToVisualBottom();
     window.requestAnimationFrame(() => {
-      forceListToAbsoluteBottom();
-      window.requestAnimationFrame(() => {
-        forceListToAbsoluteBottom();
-        window.setTimeout(forceListToAbsoluteBottom, 40);
-      });
+      forceListToVisualBottom();
     });
-  }, [forceListToAbsoluteBottom, messages.length, setScrollBottomVisible]);
+  }, [forceListToVisualBottom, messages.length, setScrollBottomVisible]);
+
+  const jumpToLatestMessage = useCallback(
+    (_reason: string) => {
+      programmaticScrollUntilRef.current = Date.now() + 1400;
+      manualScrollDetachUntilRef.current = 0;
+      autoFollowStreamRef.current = true;
+      userDetachedFromBottomRef.current = false;
+      pendingSubmittedUserFocusRef.current = false;
+      atBottomRef.current = true;
+      lastWheelLockRef.current = null;
+      setScrollBottomVisible(false);
+      listRef.current?.scrollToIndex({
+        index: 'LAST',
+        align: 'end',
+        behavior: 'auto',
+      });
+      window.requestAnimationFrame(() => {
+        forceListToVisualBottom();
+        window.requestAnimationFrame(() => {
+          forceListToVisualBottom();
+        });
+      });
+    },
+    [forceListToVisualBottom, setScrollBottomVisible],
+  );
+
+  useEffect(() => {
+    if (loading || showWelcome || messages.length === 0) {
+      return;
+    }
+    const conversationKey = activeConversationId.trim() || '__new__';
+    const latestMessageId = messages[messages.length - 1]?.id ?? '';
+    if (!latestMessageId) {
+      return;
+    }
+    const previous = latestConversationScrollRef.current;
+    if (previous.conversationId === conversationKey) {
+      return;
+    }
+    latestConversationScrollRef.current = {
+      conversationId: conversationKey,
+      latestMessageId,
+    };
+    jumpToLatestMessage('session-enter');
+  }, [
+    activeConversationId,
+    jumpToLatestMessage,
+    loading,
+    messages,
+    showWelcome,
+  ]);
+
+  const setListScrollerRef = useCallback(
+    (ref: HTMLElement | Window | null) => {
+      listScrollerWheelCleanupRef.current?.();
+      listScrollerWheelCleanupRef.current = null;
+      const nextScroller = ref instanceof HTMLElement ? ref : null;
+      listScrollerRef.current = nextScroller;
+      if (!nextScroller) {
+        return;
+      }
+      lastScrollTopRef.current = nextScroller.scrollTop;
+      const handleNativeWheel = (event: globalThis.WheelEvent) => {
+        if (event.defaultPrevented || wheelAlreadyHandled(event)) {
+          return;
+        }
+        lastWheelEventAtRef.current = Date.now();
+        if (releaseWheelBottomFreeze('native-list', event)) {
+          markWheelHandled(event);
+          return;
+        }
+        if (lockNativeWheelDownAtBottom('native-list', event)) {
+          markWheelHandled(event);
+        }
+      };
+      nextScroller.addEventListener('wheel', handleNativeWheel, {
+        capture: true,
+        passive: false,
+      });
+      listScrollerWheelCleanupRef.current = () => {
+        nextScroller.removeEventListener('wheel', handleNativeWheel, {
+          capture: true,
+        });
+      };
+    },
+    [
+      lockNativeWheelDownAtBottom,
+      markWheelHandled,
+      releaseWheelBottomFreeze,
+      wheelAlreadyHandled,
+    ],
+  );
+
+  const setScrollBottomRef = useCallback(
+    (ref: HTMLButtonElement | null) => {
+      scrollBottomWheelCleanupRef.current?.();
+      scrollBottomWheelCleanupRef.current = null;
+      scrollBottomButtonRef.current = ref;
+      if (!ref) {
+        return;
+      }
+      const handleNativeWheel = (event: globalThis.WheelEvent) => {
+        if (event.defaultPrevented || wheelAlreadyHandled(event)) {
+          return;
+        }
+        lastWheelEventAtRef.current = Date.now();
+        if (releaseWheelBottomFreeze('native-scroll-bottom-hotzone', event)) {
+          markWheelHandled(event);
+          return;
+        }
+        if (lockNativeWheelDownAtBottom('native-scroll-bottom-hotzone', event)) {
+          markWheelHandled(event);
+        }
+      };
+      ref.addEventListener('wheel', handleNativeWheel, {
+        capture: true,
+        passive: false,
+      });
+      scrollBottomWheelCleanupRef.current = () => {
+        ref.removeEventListener('wheel', handleNativeWheel, {
+          capture: true,
+        });
+      };
+    },
+    [
+      lockNativeWheelDownAtBottom,
+      markWheelHandled,
+      releaseWheelBottomFreeze,
+      wheelAlreadyHandled,
+    ],
+  );
 
   const handleComposerSend = useCallback(
     async (text: string) => {
@@ -3969,6 +5509,15 @@ function ChatPanel({
         onToggleTerminal={() => toggleConsole('terminal')}
         onRevealSidebar={onRevealSidebar}
       />
+      {notice && (
+        <div className="notice-banner" role="status" aria-live="polite">
+          <CheckCircle2 size={16} />
+          <span>{notice}</span>
+          <button type="button" onClick={onClearNotice}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
       {error && (
         <div className="error-banner">
           <AlertCircle size={16} />
@@ -3978,11 +5527,17 @@ function ChatPanel({
           </button>
         </div>
       )}
-      <div className="chat-body" style={chatBodyStyle}>
+      <div
+        className="chat-body"
+        ref={chatBodyRef}
+        style={chatBodyStyle}
+        onWheelCapture={handleChatBodyWheelCapture}
+      >
         {loading ? (
           <BackendLoading />
         ) : showWelcome ? (
           <WelcomeComposer
+            key={activeConversationId || 'new-session'}
             language={language}
             draft={draft}
             onDraftChange={onDraftChange}
@@ -3991,51 +5546,77 @@ function ChatPanel({
             queuedMessagePreview={queuedMessagePreview}
             selectedModel={selectedModel}
             availableModels={availableModels}
-            hideCardbushForScreenshot={hideCardbushForScreenshot}
+            selectedRuntimeProfile={selectedRuntimeProfile}
+            runtimeProfiles={runtimeProfiles}
+            referencePlanMode={referencePlanMode}
             onModelChange={onModelChange}
+            onRuntimeProfileChange={onRuntimeProfileChange}
+            onReferencePlanModeChange={onReferencePlanModeChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
             activeProjectDir={activeProjectDir}
             projectContext={projectContext}
             skills={skills}
+            disabledSkillNames={disabledSkillNames}
+            onToggleSkill={onToggleSkill}
             onSaveProjectContext={onSaveProjectContext}
             onSend={handleComposerSend}
             onCancel={onCancel}
           />
         ) : (
           <Virtuoso
+            key={activeConversationId.trim() || 'new-session'}
             ref={listRef}
             className="message-list"
             style={{ height: '100%' }}
-            data={messages}
-            components={{ Footer: MessageListFooter }}
+            data={renderMessages}
+            components={virtuosoComponents}
+            computeItemKey={(_index, message) => message.id}
             followOutput={false}
-            scrollerRef={(ref) => {
-              listScrollerRef.current = ref instanceof HTMLElement ? ref : null;
-            }}
-            onWheelCapture={() => markUserDetachedFromBottom('wheel')}
+            initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+            scrollerRef={setListScrollerRef}
+            onWheelCapture={handleListWheelCapture}
+            onPointerDownCapture={handleListPointerDownCapture}
             onTouchStartCapture={() => markUserDetachedFromBottom('touch')}
             atBottomStateChange={(atBottom) => {
+              const now = Date.now();
+              const scrollbarDragging =
+                scrollbarDragActiveRef.current || now < scrollbarDragUntilRef.current;
+              const scroller = listScrollerRef.current;
+              const metrics = scroller ? readBottomMetrics(scroller) : null;
+              const shouldShow = scroller && metrics
+                ? shouldShowScrollBottomForMetrics(scroller, metrics)
+                : false;
+              const effectiveAtBottom =
+                atBottom || Boolean(metrics?.visualNearBottom);
               atBottomRef.current = atBottom;
-              debugStreamFollow('at-bottom-change', { atBottom });
-              if (atBottom) {
+              if (scrollbarDragging) {
+                setScrollBottomVisible(shouldShow);
+                return;
+              }
+              if (effectiveAtBottom) {
+                if (
+                  userDetachedFromBottomRef.current &&
+                  shouldShow &&
+                  (now < manualScrollDetachUntilRef.current ||
+                    !metrics?.absoluteAtBottom)
+                ) {
+                  setScrollBottomVisible(true);
+                  return;
+                }
                 lockStreamFollow('virtuoso-bottom');
                 return;
               }
               if (
                 autoFollowStreamRef.current ||
-                Date.now() < programmaticScrollUntilRef.current
+                now < programmaticScrollUntilRef.current
               ) {
                 setScrollBottomVisible(false);
                 return;
               }
-              setScrollBottomVisible(userDetachedFromBottomRef.current);
+              setScrollBottomVisible(userDetachedFromBottomRef.current && shouldShow);
             }}
-            onScrollCapture={(event) => {
-              if (event.currentTarget instanceof HTMLElement) {
-                maybeLockStreamFollowFromScroll(event.currentTarget, 'scroll');
-              }
-            }}
+            onScrollCapture={handleListScrollCapture}
             itemContent={(index, message) => (
               <div
                 className={`message-list-item ${index === 0 ? 'first' : ''}`}
@@ -4048,6 +5629,9 @@ function ChatPanel({
                   language={language}
                   sending={sending}
                   activeTurnId={activeTurnId}
+                  activeAssistantMessageId={
+                    activeAssistantForRender?.message.id ?? ''
+                  }
                   onRegenerate={onRegenerate}
                   onEditUserMessage={onEditUserMessage}
                   onGuideMessage={onGuideMessage}
@@ -4058,18 +5642,14 @@ function ChatPanel({
             )}
           />
         )}
-        {sending && !loading && !showWelcome && (
-          <div className="stream-status-pill" aria-live="polite">
-            <LoaderCircle size={14} />
-            <span>{language === 'zh' ? 'LLM 正在思考' : 'LLM thinking'}</span>
-          </div>
-        )}
         <button
+          ref={setScrollBottomRef}
           className={`scroll-bottom ${
             loading || showWelcome || !showScrollBottom ? 'hidden' : ''
           }`}
           type="button"
           aria-label="scroll bottom"
+          onWheelCapture={handleScrollBottomWheelCapture}
           onClick={scrollToBottom}
         >
           <ArrowDown size={22} />
@@ -4080,6 +5660,7 @@ function ChatPanel({
             items={quickItems}
             queuedMessages={queuedMessages}
             onLoad={applyQuickLoad}
+            onJump={jumpQuickTarget}
             onEditQueuedMessage={editQueuedMessage}
             onDeleteQueuedMessage={onRemoveQueuedMessage}
             onGuideQueuedMessage={(queuedId) =>
@@ -4112,6 +5693,7 @@ function ChatPanel({
         {!showWelcome && !loading && (
           <div className="composer-dock" ref={composerDockRef}>
             <Composer
+              key={activeConversationId || 'active-session'}
               language={language}
               draft={draft}
               onDraftChange={onDraftChange}
@@ -4120,12 +5702,18 @@ function ChatPanel({
               queuedMessagePreview={queuedMessagePreview}
               selectedModel={selectedModel}
               availableModels={availableModels}
-              hideCardbushForScreenshot={hideCardbushForScreenshot}
-            onModelChange={onModelChange}
+              selectedRuntimeProfile={selectedRuntimeProfile}
+              runtimeProfiles={runtimeProfiles}
+              referencePlanMode={referencePlanMode}
+              onModelChange={onModelChange}
+              onRuntimeProfileChange={onRuntimeProfileChange}
+              onReferencePlanModeChange={onReferencePlanModeChange}
               onSend={handleComposerSend}
               onCancel={onCancel}
               messages={messages}
               skills={skills}
+              disabledSkillNames={disabledSkillNames}
+              onToggleSkill={onToggleSkill}
               activeProjectDir={activeProjectDir}
               projectContext={projectContext}
               onQuickLoad={applyQuickLoad}
@@ -4155,75 +5743,6 @@ function ChatPanel({
       )}
     </div>
   );
-}
-
-function MessageListFooter() {
-  return <div className="message-list-footer" />;
-}
-
-function streamingAssistantMessage(messages: ChatMessage[], activeTurnId: string) {
-  const normalizedTurnId = activeTurnId.trim();
-  if (!normalizedTurnId) {
-    return null;
-  }
-  const index = messages.findIndex(
-    (message) =>
-      message.role === 'assistant' &&
-      message.turnId?.trim() === normalizedTurnId,
-  );
-  if (index < 0) {
-    return null;
-  }
-  return { message: messages[index], index };
-}
-
-function lastAssistantMessage(messages: ChatMessage[]) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === 'assistant') {
-      return { message, index };
-    }
-  }
-  return null;
-}
-
-function isScrollerNearBottom(scroller: HTMLElement) {
-  const distance =
-    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-  return distance <= 72;
-}
-
-function isMessageTailVisible(
-  scroller: HTMLElement,
-  messageId: string,
-  options: {
-    composerDockHeight: number;
-    streamStatusHeight: number;
-    tolerance: number;
-  },
-) {
-  const item = scroller.querySelector(
-    `[data-message-id="${cssEscape(messageId)}"]`,
-  );
-  if (!(item instanceof HTMLElement)) {
-    return false;
-  }
-  const scrollerRect = scroller.getBoundingClientRect();
-  const itemRect = item.getBoundingClientRect();
-  const visibleBottom =
-    scrollerRect.bottom -
-    Math.max(0, options.composerDockHeight) -
-    Math.max(0, options.streamStatusHeight) -
-    18 +
-    options.tolerance;
-  return itemRect.bottom <= visibleBottom && itemRect.bottom >= scrollerRect.top + 36;
-}
-
-function debugStreamFollow(event: string, details: Record<string, unknown>) {
-  if (!import.meta.env.DEV) {
-    return;
-  }
-  console.debug('[cardbush:stream-follow]', event, details);
 }
 
 function CardlingSceneHost({
@@ -4722,6 +6241,58 @@ function CardlingSceneHost({
     [scene],
   );
 
+  const openSceneTarget = useCallback(
+    async (payload: Record<string, unknown>) => {
+      const target = sceneOpenTargetFromPayload(payload);
+      if (!target) {
+        setError(
+          language === 'zh'
+            ? '这个打开动作缺少可识别的链接或本地路径。'
+            : 'This open action does not include a recognizable link or local path.',
+        );
+        return;
+      }
+      setError('');
+      setNotice(
+        language === 'zh'
+          ? target.kind === 'url'
+            ? '正在打开链接...'
+            : '正在打开本地文件...'
+          : target.kind === 'url'
+            ? 'Opening link...'
+            : 'Opening local file...',
+      );
+      try {
+        if (target.kind === 'url') {
+          await window.cardbushDesktop?.openExternal?.(target.target);
+          setNotice(
+            language === 'zh'
+              ? '链接已在 CardBush 浏览器中打开。'
+              : 'The link was opened in the CardBush browser.',
+          );
+          return;
+        }
+        const result = await window.cardbushDesktop?.openPath?.(target.target);
+        if (result && result.trim()) {
+          throw new Error(result);
+        }
+        setNotice(
+          language === 'zh'
+            ? '已交给系统打开本地文件。'
+            : 'The local file was handed to the system.',
+        );
+      } catch (caught) {
+        setNotice('');
+        setError(
+          language === 'zh'
+            ? `打开失败：${errorMessage(caught)}`
+            : `Open failed: ${errorMessage(caught)}`,
+        );
+      }
+    },
+    [language],
+  );
+
   useEffect(() => {
     const speech = activeStep?.speech ?? '';
     if (!playbackRunning || !speech) {
@@ -4924,14 +6495,20 @@ function CardlingSceneHost({
         return;
       }
       if (type === 'external_url') {
-        const targetUrl = String(data.url ?? '').trim();
-        if (targetUrl) {
-          recordSceneRuntimeEvent(type, { url: targetUrl }, nodeId);
+        const target = sceneOpenTargetFromPayload(data);
+        if (target) {
+          recordSceneRuntimeEvent(type, { ...data, target: target.target }, nodeId);
           void sendSceneUserEvent(scene, {
             event: 'external_url',
-            metadata: { url: targetUrl },
+            nodeId,
+            metadata: {
+              url: target.kind === 'url' ? target.target : undefined,
+              path: target.kind === 'path' ? target.target : undefined,
+              kind: target.kind,
+              label: target.label,
+            },
           }).catch(() => undefined);
-          void window.cardbushDesktop?.openExternal?.(targetUrl);
+          void openSceneTarget(data);
         }
       }
     }
@@ -4945,6 +6522,7 @@ function CardlingSceneHost({
     freeTalkMode,
     language,
     onSendFeedbackToLlm,
+    openSceneTarget,
     recordSceneRuntimeEvent,
     requestAnchorRect,
     scene,
@@ -5786,6 +7364,81 @@ async function sendSceneUserEvent(
   });
 }
 
+function sceneOpenTargetFromPayload(payload: Record<string, unknown>): SceneOpenTarget | null {
+  const rawTarget =
+    sceneString(
+      payload.target ??
+        payload.path ??
+        payload.file_path ??
+        payload.filePath ??
+        payload.url ??
+        payload.href,
+    ) ||
+    sceneString(asRecord(payload.metadata).target) ||
+    sceneString(asRecord(payload.metadata).path) ||
+    sceneString(asRecord(payload.metadata).url) ||
+    '';
+  const target = rawTarget.trim();
+  if (!target || target === '#' || /^javascript:/i.test(target)) {
+    return null;
+  }
+  const requestedKind = (sceneString(payload.kind) ?? '').toLowerCase();
+  const kind =
+    requestedKind === 'path' || requestedKind === 'file'
+      ? 'path'
+      : requestedKind === 'url' || requestedKind === 'link'
+        ? 'url'
+        : sceneTargetLooksLikePath(target)
+          ? 'path'
+          : 'url';
+  const normalizedTarget =
+    kind === 'path' ? normalizeSceneOpenPath(target) : normalizeSceneOpenUrl(target);
+  if (!normalizedTarget) {
+    return null;
+  }
+  return {
+    kind,
+    target: normalizedTarget,
+    label: sceneString(payload.label),
+  };
+}
+
+function sceneTargetLooksLikePath(value: string) {
+  return (
+    /^file:/i.test(value) ||
+    /^[a-zA-Z]:[\\/]/.test(value) ||
+    /^\\\\/.test(value)
+  );
+}
+
+function normalizeSceneOpenPath(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+  if (/^file:/i.test(trimmed)) {
+    try {
+      const fileUrl = new URL(trimmed);
+      const decodedPath = decodeURIComponent(fileUrl.pathname);
+      if (fileUrl.hostname) {
+        return `\\\\${fileUrl.hostname}${decodedPath.replace(/\//g, '\\')}`;
+      }
+      return decodedPath.replace(/^\/([a-zA-Z]:)/, '$1').replace(/\//g, '\\');
+    } catch {
+      return trimmed;
+    }
+  }
+  return trimmed;
+}
+
+function normalizeSceneOpenUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed || /^javascript:/i.test(trimmed)) {
+    return '';
+  }
+  return trimmed;
+}
+
 function sceneEventError(error: unknown, language: AppLanguage) {
   const message = errorMessage(error);
   if (/404|not found/i.test(message)) {
@@ -6322,6 +7975,67 @@ function sceneBridgeScript(scene: CardlingScene) {
     if (options && options.health) message.health = computeHealth();
     parent.postMessage(message, '*');
   }
+  function readOpenTarget(target) {
+    var selector = [
+      'a[href]',
+      'button',
+      '[role="button"]',
+      '[data-cardbush-open]',
+      '[data-open]',
+      '[data-open-path]',
+      '[data-file-path]',
+      '[data-file]',
+      '[data-path]',
+      '[data-url]',
+      '[data-href]',
+      '[data-cardbush-url]',
+      '[data-cardbush-path]'
+    ].join(',');
+    var element = target && target.closest ? target.closest(selector) : null;
+    if (!element) return null;
+    var names = [
+      'data-cardbush-open',
+      'data-open',
+      'data-open-path',
+      'data-file-path',
+      'data-file',
+      'data-path',
+      'data-url',
+      'data-href',
+      'data-cardbush-url',
+      'data-cardbush-path'
+    ];
+    var raw = '';
+    var attr = '';
+    for (var index = 0; index < names.length; index += 1) {
+      raw = element.getAttribute(names[index]) || '';
+      if (raw.trim()) {
+        attr = names[index];
+        break;
+      }
+    }
+    if (!raw && element.tagName && element.tagName.toLowerCase() === 'a') {
+      raw = element.getAttribute('href') || element.href || '';
+      attr = 'href';
+    }
+    raw = String(raw || '').trim();
+    if (!raw || raw === '#' || /^javascript:/i.test(raw)) return null;
+    if (attr === 'href' && !/^[a-z][a-z0-9+.-]*:/i.test(raw) && !/^[a-zA-Z]:[\\\\/]/.test(raw) && !/^\\\\\\\\/.test(raw)) {
+      return null;
+    }
+    var kind = /url|href/i.test(attr) || /^https?:/i.test(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw) ? 'url' : 'path';
+    if (/^file:/i.test(raw) || /^[a-zA-Z]:[\\\\/]/.test(raw) || /^\\\\\\\\/.test(raw)) {
+      kind = 'path';
+    }
+    return {
+      target: raw,
+      url: kind === 'url' ? raw : '',
+      path: kind === 'path' ? raw : '',
+      kind: kind,
+      nodeId: nodeIdFor(element),
+      label: (element.textContent || '').trim().slice(0, 160)
+    };
+  }
   function nodeFor(nextAnchor) {
     var active = nextAnchor || anchor || {};
     if (active.nodeId) {
@@ -6519,6 +8233,10 @@ function sceneBridgeScript(scene: CardlingScene) {
     toast: function (message) {
       post('scene_toast', { message: String(message || '') });
     },
+    open: function (target, options) {
+      var payload = Object.assign({}, options || {}, { target: String(target || '') });
+      post('external_url', payload);
+    },
     getState: collectState,
     checkHealth: function () {
       var health = computeHealth();
@@ -6540,10 +8258,10 @@ function sceneBridgeScript(scene: CardlingScene) {
     scheduleHealth();
   });
   document.addEventListener('click', function (event) {
-    var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
-    if (link && /^https?:/i.test(link.href)) {
+    var openTarget = readOpenTarget(event.target);
+    if (openTarget) {
       event.preventDefault();
-      post('external_url', { url: link.href });
+      post('external_url', openTarget);
       return;
     }
     if (interactionMode === 'free_chat') return;
@@ -6691,6 +8409,10 @@ function quickSideItems({
               : `From "${title}":\n${preview}`
             : title,
         },
+        jumpTarget: {
+          kind: 'conversation',
+          conversationId: conversation.id,
+        },
       };
     });
   }
@@ -6711,6 +8433,7 @@ function quickSideItems({
         title,
         subtitle: content,
         payload: { kind: 'text', title, value: content },
+        jumpTarget: { kind: 'message', messageId: message.id },
       };
     });
   }
@@ -6759,6 +8482,7 @@ function quickSideItems({
       title: entry.name,
       value: entry.path,
     },
+    jumpTarget: { kind: 'path', path: entry.path },
   }));
 }
 
@@ -6819,6 +8543,7 @@ function QuickSideDock({
   items,
   queuedMessages,
   onLoad,
+  onJump,
   onEditQueuedMessage,
   onDeleteQueuedMessage,
   onGuideQueuedMessage,
@@ -6827,6 +8552,7 @@ function QuickSideDock({
   items: QuickSideItem[];
   queuedMessages: QueuedChatMessage[];
   onLoad: (payload: QuickLoadPayload) => void;
+  onJump: (target: QuickJumpTarget) => void;
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onDeleteQueuedMessage: (queuedId: string) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
@@ -6870,8 +8596,8 @@ function QuickSideDock({
             <strong>{language === 'zh' ? '快速上下文' : 'Quick context'}</strong>
             <span>
               {language === 'zh'
-                ? '拖到输入框加载'
-                : 'Drag into the composer'}
+                ? '拖拽加载，箭头跳转'
+                : 'Drag to load, arrow to jump'}
             </span>
           </div>
         </header>
@@ -6915,8 +8641,13 @@ function QuickSideDock({
             <QuickSideListItem
               key={item.id}
               item={item}
+              language={language}
               onLoad={(payload) => {
                 onLoad(payload);
+                setVisible(false);
+              }}
+              onJump={(target) => {
+                onJump(target);
                 setVisible(false);
               }}
             />
@@ -6980,16 +8711,20 @@ function QueuedSideItem({
 
 function QuickSideListItem({
   item,
+  language,
   onLoad,
+  onJump,
 }: {
   item: QuickSideItem;
+  language: AppLanguage;
   onLoad: (payload: QuickLoadPayload) => void;
+  onJump: (target: QuickJumpTarget) => void;
 }) {
   const enabled = item.payload != null;
+  const canJump = item.jumpTarget != null;
   return (
-    <button
+    <article
       className={`quick-side-item ${enabled ? 'enabled' : ''}`}
-      type="button"
       draggable={enabled}
       onDragStart={(event) => {
         if (!item.payload) {
@@ -7002,14 +8737,37 @@ function QuickSideListItem({
         );
         event.dataTransfer.setData('text/plain', quickPayloadText(item.payload));
       }}
-      onClick={() => item.payload && onLoad(item.payload)}
     >
-      {item.icon}
-      <span>
-        <strong>{item.title}</strong>
-        <small>{item.subtitle}</small>
-      </span>
-    </button>
+      <button
+        className="quick-side-item-main"
+        type="button"
+        disabled={!enabled}
+        onClick={() => item.payload && onLoad(item.payload)}
+      >
+        {item.icon}
+        <span>
+          <strong>{item.title}</strong>
+          <small>{item.subtitle}</small>
+        </span>
+      </button>
+      {canJump && (
+        <button
+          className="quick-side-jump"
+          type="button"
+          draggable={false}
+          title={language === 'zh' ? '跳转' : 'Jump'}
+          aria-label={language === 'zh' ? '跳转' : 'Jump'}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (item.jumpTarget) {
+              onJump(item.jumpTarget);
+            }
+          }}
+        >
+          <ArrowRight size={14} />
+        </button>
+      )}
+    </article>
   );
 }
 
@@ -7482,11 +9240,17 @@ function WelcomeComposer({
   queuedMessagePreview,
   selectedModel,
   availableModels,
-  hideCardbushForScreenshot,
+  selectedRuntimeProfile,
+  runtimeProfiles,
+  referencePlanMode,
   activeProjectDir,
   projectContext,
   skills = [],
+  disabledSkillNames,
+  onToggleSkill,
   onModelChange,
+  onRuntimeProfileChange,
+  onReferencePlanModeChange,
   onConfigureModels,
   onCreateConversation,
   onSaveProjectContext,
@@ -7501,11 +9265,17 @@ function WelcomeComposer({
   queuedMessagePreview: string;
   selectedModel: string;
   availableModels: string[];
-  hideCardbushForScreenshot: boolean;
+  selectedRuntimeProfile: string;
+  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanMode: ReferencePlanMode;
   activeProjectDir?: string;
   projectContext: string;
   skills?: SkillSummary[];
+  disabledSkillNames: Set<string>;
+  onToggleSkill: (skillName: string, enabled: boolean) => void;
   onModelChange: (value: string) => void;
+  onRuntimeProfileChange: (value: string) => void;
+  onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onSaveProjectContext: (value: string) => Promise<string>;
@@ -7525,13 +9295,19 @@ function WelcomeComposer({
         queuedMessagePreview={queuedMessagePreview}
         selectedModel={selectedModel}
         availableModels={availableModels}
-        hideCardbushForScreenshot={hideCardbushForScreenshot}
+        selectedRuntimeProfile={selectedRuntimeProfile}
+        runtimeProfiles={runtimeProfiles}
+        referencePlanMode={referencePlanMode}
         onModelChange={onModelChange}
+        onRuntimeProfileChange={onRuntimeProfileChange}
+        onReferencePlanModeChange={onReferencePlanModeChange}
         onConfigureModels={onConfigureModels}
         onCreateConversation={onCreateConversation}
         activeProjectDir={activeProjectDir}
         projectContext={projectContext}
         skills={skills}
+        disabledSkillNames={disabledSkillNames}
+        onToggleSkill={onToggleSkill}
         onSaveProjectContext={onSaveProjectContext}
         onSend={onSend}
         onCancel={onCancel}
@@ -7599,27 +9375,6 @@ function formatBotExpiry(value: string, language: AppLanguage) {
     minute: '2-digit',
     second: '2-digit',
   }).format(timestamp);
-}
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    window.dispatchEvent(new CustomEvent(COPY_FEEDBACK_EVENT));
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = value;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.focus();
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) {
-    throw new Error('Copy failed');
-  }
-  window.dispatchEvent(new CustomEvent(COPY_FEEDBACK_EVENT));
 }
 
 function BotShareMenu({
@@ -7727,7 +9482,7 @@ function BotShareMenu({
     <div className="bot-share-menu" role="dialog" aria-label={language === 'zh' ? 'Bot 绑定' : 'Bot link'}>
       <header>
         <span className="bot-share-icon">
-          <Bot size={16} />
+          {link ? activeTarget.icon : <BotPlatformIcon platform="any" />}
         </span>
         <div>
           <strong>
@@ -7911,10 +9666,11 @@ function TopBar({
       <h1>{title}</h1>
       <div className="bot-share-wrap" ref={botShareRef}>
         <button
-          className="topbar-pill"
+          className="topbar-native-menu"
           type="button"
           disabled={!botShareEnabled}
           aria-expanded={botMenuOpen}
+          aria-label={botShareLabel}
           title={
             botShareEnabled
               ? botShareLabel
@@ -7924,8 +9680,10 @@ function TopBar({
           }
           onClick={() => setBotMenuOpen((current) => !current)}
         >
-          <Bot size={14} />
-          <span>{botShareLabel}</span>
+          <span className="native-bot-share-icon">
+            <BotPlatformIcon platform="any" />
+          </span>
+          <ChevronDown className="native-chevron-icon" size={14} />
         </button>
         {botMenuOpen &&
           activeConversationId &&
@@ -7941,7 +9699,7 @@ function TopBar({
           )}
       </div>
       <button
-        className={`topbar-square ${botHistoryRefreshFailed ? 'failed' : ''}`}
+        className={`topbar-square native-refresh-square ${botHistoryRefreshFailed ? 'failed' : ''}`}
         type="button"
         disabled={!activeConversationId?.trim() || !onRefreshActiveSession || botHistoryRefreshing}
         onClick={() => void refreshBotHistory()}
@@ -7984,6 +9742,7 @@ function MessageBubble({
   language,
   sending,
   activeTurnId,
+  activeAssistantMessageId,
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
@@ -7994,6 +9753,7 @@ function MessageBubble({
   language: AppLanguage;
   sending: boolean;
   activeTurnId: string;
+  activeAssistantMessageId: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
   onGuideMessage: (
@@ -8008,20 +9768,28 @@ function MessageBubble({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const { imagePaths, text } = splitMessageImages(message.content);
-  const toolExecutions = message.toolExecutions ?? [];
+  const allToolExecutions = message.toolExecutions ?? [];
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(text);
   const [submittingEdit, setSubmittingEdit] = useState(false);
   const [guidanceOpen, setGuidanceOpen] = useState(false);
+  const [assistantFeedback, setAssistantFeedback] =
+    useState<AssistantFeedbackRating | null>(() => readAssistantFeedback(message.id));
+  const [feedbackPulse, setFeedbackPulse] =
+    useState<AssistantFeedbackRating | null>(null);
+  const feedbackPulseFrameRef = useRef<number | null>(null);
+  const feedbackPulseTimerRef = useRef<number | null>(null);
   const activeMessageTurn = message.turnId?.trim() ?? '';
+  const activeTurn = activeTurnId.trim();
+  const activeAssistantId = activeAssistantMessageId.trim();
   const isActiveAssistantTurn =
     message.role === 'assistant' &&
     sending &&
-    activeTurnId.trim() !== '' &&
-    activeTurnId.trim() === activeMessageTurn;
+    activeAssistantId === message.id &&
+    (!activeTurn || !activeMessageTurn || activeTurn === activeMessageTurn);
   const [progressNow, setProgressNow] = useState(() => Date.now());
   const canGuide =
-    sending && activeTurnId.trim() !== '' && activeTurnId.trim() === activeMessageTurn;
+    isActiveAssistantTurn;
 
   useEffect(() => {
     if (!isActiveAssistantTurn) {
@@ -8036,8 +9804,21 @@ function MessageBubble({
     setEditing(false);
     setSubmittingEdit(false);
     setGuidanceOpen(false);
+    setAssistantFeedback(readAssistantFeedback(message.id));
+    setFeedbackPulse(null);
     setEditText(splitMessageImages(message.content).text);
   }, [message.id, message.content]);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackPulseFrameRef.current != null) {
+        window.cancelAnimationFrame(feedbackPulseFrameRef.current);
+      }
+      if (feedbackPulseTimerRef.current != null) {
+        window.clearTimeout(feedbackPulseTimerRef.current);
+      }
+    };
+  }, []);
 
   if (message.role === 'system' || message.role === 'guidance' || message.role === 'tool') {
     return null;
@@ -8067,6 +9848,31 @@ function MessageBubble({
     } finally {
       setSubmittingEdit(false);
     }
+  }
+
+  function toggleAssistantFeedback(rating: AssistantFeedbackRating) {
+    const nextRating = assistantFeedback === rating ? null : rating;
+    playAssistantFeedbackPulse(rating);
+    setAssistantFeedback(nextRating);
+    recordAssistantFeedback(message, nextRating);
+  }
+
+  function playAssistantFeedbackPulse(rating: AssistantFeedbackRating) {
+    if (feedbackPulseFrameRef.current != null) {
+      window.cancelAnimationFrame(feedbackPulseFrameRef.current);
+    }
+    if (feedbackPulseTimerRef.current != null) {
+      window.clearTimeout(feedbackPulseTimerRef.current);
+    }
+    setFeedbackPulse(null);
+    feedbackPulseFrameRef.current = window.requestAnimationFrame(() => {
+      setFeedbackPulse(rating);
+      feedbackPulseTimerRef.current = window.setTimeout(() => {
+        setFeedbackPulse(null);
+        feedbackPulseTimerRef.current = null;
+      }, 520);
+      feedbackPulseFrameRef.current = null;
+    });
   }
 
   if (message.role === 'user') {
@@ -8141,22 +9947,57 @@ function MessageBubble({
     );
   }
 
-  const showAssistantProgress =
-    message.role === 'assistant' && (isActiveAssistantTurn || toolExecutions.length > 0);
-  const assistantProgressText = showAssistantProgress
-    ? assistantProgressLabel({
-        executions: toolExecutions,
-        isActive: isActiveAssistantTurn,
-        messageCreatedAt: message.createdAt,
-        now: progressNow,
-        language,
-      })
-    : '';
   const loopHistory =
     message.role === 'assistant'
       ? (message.loopHistory ?? []).filter(hasVisibleLoopHistoryMessage)
       : [];
-
+  const visibleLoopHistory = isActiveAssistantTurn ? [] : loopHistory;
+  const activeTranscriptMessages = isActiveAssistantTurn
+    ? activeAssistantTranscriptMessages(loopHistory, message)
+    : [];
+  const renderActiveTranscript = activeTranscriptMessages.length > 1;
+  const suppressFinalTopLevelTools =
+    message.role === 'assistant' &&
+    !isActiveAssistantTurn &&
+    isFinalAssistantDisplayMessage(message);
+  const toolExecutions =
+    message.role === 'assistant'
+      ? suppressFinalTopLevelTools
+        ? []
+        : visibleTopLevelToolExecutions(
+            allToolExecutions,
+            loopHistory,
+            isActiveAssistantTurn,
+          )
+      : allToolExecutions;
+  const assistantProgressExecutions = suppressFinalTopLevelTools
+    ? allToolExecutions
+    : toolExecutions;
+  const showAssistantProgress =
+    message.role === 'assistant' &&
+    (isActiveAssistantTurn ||
+      toolExecutions.length > 0 ||
+      hasAssistantProgressSource(message, assistantProgressExecutions));
+  const assistantProgressText = showAssistantProgress
+    ? assistantProgressLabel({
+        executions: assistantProgressExecutions,
+        isActive: isActiveAssistantTurn,
+        message,
+        now: progressNow,
+        language,
+      })
+    : '';
+  const hasAssistantBody = Boolean(
+    text.trim() ||
+      imagePaths.length > 0 ||
+      toolExecutions.length > 0 ||
+      renderActiveTranscript ||
+      visibleLoopHistory.length > 0 ||
+      agentHookSummaryFromMessage(message),
+  );
+  if (!showAssistantProgress && !hasAssistantBody) {
+    return null;
+  }
   return (
     <>
       <div className="message-row assistant">
@@ -8169,26 +10010,40 @@ function MessageBubble({
               <div />
             </div>
           )}
-          <MessageImageStrip paths={imagePaths} />
-          {toolExecutions.length > 0 ? (
+          <AgentHookSummaryBadge message={message} language={language} />
+          {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
+          {renderActiveTranscript ? (
+            <AssistantActiveTranscript
+              messages={activeTranscriptMessages}
+              language={language}
+              active={isActiveAssistantTurn}
+              onRevertChangeReport={onRevertChangeReport}
+              onOpenScene={onOpenScene}
+            />
+          ) : toolExecutions.length > 0 ? (
             <AssistantMessageContent
               content={text}
               executions={toolExecutions}
               language={language}
               message={message}
+              active={isActiveAssistantTurn}
+              showThinkingPlaceholder={isActiveAssistantTurn}
               onRevertChangeReport={onRevertChangeReport}
               onOpenScene={onOpenScene}
             />
           ) : text ? (
-            <MarkdownContent content={text} />
-          ) : (
-            <p className="assistant-thinking">
-              {language === 'zh' ? '正在思考' : 'Thinking'}
-            </p>
-          )}
-          {loopHistory.length > 0 && (
+            <>
+              <MarkdownContent content={text} />
+              {isActiveAssistantTurn && (
+                <AssistantThinkingProcessLine language={language} />
+              )}
+            </>
+          ) : isActiveAssistantTurn ? (
+            <AssistantThinkingProcessLine language={language} />
+          ) : null}
+          {visibleLoopHistory.length > 0 && (
             <AssistantLoopHistoryBlock
-              history={loopHistory}
+              history={visibleLoopHistory}
               language={language}
               onRevertChangeReport={onRevertChangeReport}
               onOpenScene={onOpenScene}
@@ -8202,6 +10057,28 @@ function MessageBubble({
             onClick={() => void copyText(message.content).catch(() => undefined)}
           >
             <Clipboard size={14} />
+          </button>
+          <button
+            className={`feedback-up ${assistantFeedback === 'up' ? 'active' : ''} ${
+              feedbackPulse === 'up' ? 'feedback-pop' : ''
+            }`}
+            type="button"
+            aria-pressed={assistantFeedback === 'up'}
+            title={language === 'zh' ? '有帮助，记录给 LEM' : 'Helpful, record for LEM'}
+            onClick={() => toggleAssistantFeedback('up')}
+          >
+            <ThumbsUp size={14} />
+          </button>
+          <button
+            className={`feedback-down ${assistantFeedback === 'down' ? 'active' : ''} ${
+              feedbackPulse === 'down' ? 'feedback-pop' : ''
+            }`}
+            type="button"
+            aria-pressed={assistantFeedback === 'down'}
+            title={language === 'zh' ? '不理想，记录给 LEM' : 'Needs improvement, record for LEM'}
+            onClick={() => toggleAssistantFeedback('down')}
+          >
+            <ThumbsDown size={14} />
           </button>
           {activeMessageTurn && (
             <button
@@ -8238,11 +10115,83 @@ function MessageBubble({
   );
 }
 
+function AssistantActiveTranscript({
+  messages,
+  language,
+  active,
+  onRevertChangeReport,
+  onOpenScene,
+}: {
+  messages: ChatMessage[];
+  language: AppLanguage;
+  active: boolean;
+  onRevertChangeReport: (
+    report: ConversationChangeReport,
+    message: ChatMessage,
+  ) => Promise<void>;
+  onOpenScene: (scene: CardlingScene) => void;
+}) {
+  const visibleMessages = messages.filter(hasVisibleLoopHistoryMessage);
+  if (visibleMessages.length === 0) {
+    return null;
+  }
+  const hasRunningTool = visibleMessages.some((message) =>
+    (message.toolExecutions ?? []).some((execution) => isToolRunningInContext(execution, active)),
+  );
+  const showThinkingPlaceholder = active && !hasRunningTool;
+  return (
+    <div className="assistant-active-transcript">
+      {visibleMessages.map((segment, index) => {
+        const { imagePaths, text } = splitMessageImages(segment.content);
+        const executions = segment.toolExecutions ?? [];
+        const isLastSegment = index === visibleMessages.length - 1;
+        return (
+          <section
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${segment.id}-${index}`}
+            className="assistant-active-transcript-segment"
+          >
+            <MessageImageStrip paths={imagePaths} />
+            {executions.length > 0 ? (
+              <AssistantMessageContent
+                content={text}
+                executions={executions}
+                language={language}
+                message={segment}
+                active
+                showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
+                onRevertChangeReport={onRevertChangeReport}
+                onOpenScene={onOpenScene}
+              />
+            ) : text ? (
+              <>
+                <MarkdownContent content={text} />
+                {showThinkingPlaceholder && isLastSegment && (
+                  <AssistantThinkingProcessLine language={language} />
+                )}
+              </>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function activeAssistantTranscriptMessages(
+  loopHistory: ChatMessage[],
+  currentMessage: ChatMessage,
+) {
+  return [...loopHistory, currentMessage].filter(hasVisibleLoopHistoryMessage);
+}
+
 function AssistantMessageContent({
   content,
   executions,
   language,
   message,
+  active,
+  showThinkingPlaceholder = false,
   onRevertChangeReport,
   onOpenScene,
 }: {
@@ -8250,52 +10199,300 @@ function AssistantMessageContent({
   executions: ChatToolExecution[];
   language: AppLanguage;
   message: ChatMessage;
+  active: boolean;
+  showThinkingPlaceholder?: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const sortedExecutions = [...executions].sort(
-    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
-  );
-  const offsets = sortedExecutions
-    .map((item) => item.contentOffset)
-    .filter((offset) => offset > 0);
-  const firstOffset = offsets.length > 0 ? Math.min(...offsets) : 0;
-  const clampedOffset = safeAssistantToolSplitOffset(content, firstOffset);
-  const before = content.slice(0, clampedOffset).trimEnd();
-  const after = content.slice(clampedOffset).trimStart();
-  const running = sortedExecutions.some(isToolRunning);
+  const sortedExecutions = [...executions].sort(compareToolExecutionOrder);
+  const groups = groupExecutionsByContentOffset(content, sortedExecutions);
+  const blocks: ReactNode[] = [];
+  let cursor = 0;
+
+  groups.forEach((group, index) => {
+    const segment = content.slice(cursor, group.offset);
+    if (segment.trim()) {
+      blocks.push(
+        // eslint-disable-next-line react/no-array-index-key
+        <MarkdownContent key={`text-${index}`} content={segment.trim()} />,
+      );
+    }
+    blocks.push(
+      <ToolExecutionBlock
+        // eslint-disable-next-line react/no-array-index-key
+        key={`tools-${group.offset}-${index}`}
+        executions={group.executions}
+        language={language}
+        message={message}
+        active={active}
+        onRevertChangeReport={onRevertChangeReport}
+        onOpenScene={onOpenScene}
+      />,
+    );
+    cursor = group.offset;
+  });
+
+  const tail = content.slice(cursor);
+  if (tail.trim()) {
+    blocks.push(<MarkdownContent key="text-tail" content={tail.trim()} />);
+  }
+  if (
+    showThinkingPlaceholder &&
+    !sortedExecutions.some((execution) => isToolRunningInContext(execution, active))
+  ) {
+    blocks.push(
+      <AssistantThinkingProcessLine
+        key="thinking-placeholder"
+        language={language}
+      />,
+    );
+  }
 
   return (
     <div className="assistant-message-content">
-      {before && <MarkdownContent content={before} />}
-      <ToolExecutionBlock
-        executions={sortedExecutions}
-        language={language}
-        message={message}
-        onRevertChangeReport={onRevertChangeReport}
-        onOpenScene={onOpenScene}
-      />
-      {after && <MarkdownContent content={after} />}
-      {!after && running && (
-        <p className="assistant-thinking assistant-thinking-inline">
-          {language === 'zh' ? '正在思考' : 'Thinking'}
-        </p>
-      )}
+      {blocks}
     </div>
   );
 }
 
+function AssistantThinkingProcessLine({ language }: { language: AppLanguage }) {
+  return (
+    <div className="assistant-thinking-process">
+      <LoaderCircle size={14} />
+      <span>{language === 'zh' ? '正在思考' : 'Thinking'}</span>
+    </div>
+  );
+}
+
+function AgentHookSummaryBadge({
+  message,
+  language,
+}: {
+  message: ChatMessage;
+  language: AppLanguage;
+}) {
+  const summary = agentHookSummaryFromMessage(message);
+  if (!summary) {
+    return null;
+  }
+  const tone =
+    summary.verificationStatus === 'attempted_failed' ||
+    summary.verificationStatus === 'failed'
+      ? 'danger'
+      : summary.verificationRequired && summary.verificationStatus !== 'satisfied'
+        ? 'warning'
+        : 'ok';
+  const statusLabel = hookVerificationStatusLabel(
+    summary.verificationStatus,
+    summary.verificationRequired,
+    language,
+  );
+  return (
+    <div className={`agent-hook-summary ${tone}`}>
+      {tone === 'ok' ? <CheckCircle2 size={14} /> : <ShieldCheck size={14} />}
+      <span>
+        <strong>{language === 'zh' ? 'Profile Hook' : 'Profile hook'}</strong>
+        <em>{statusLabel}</em>
+        {summary.changedFiles.length > 0 && (
+          <small>
+            {language === 'zh'
+              ? `${summary.changedFiles.length} 个文件需要/已完成验证`
+              : `${summary.changedFiles.length} changed file${summary.changedFiles.length > 1 ? 's' : ''}`}
+          </small>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function groupExecutionsByContentOffset(
+  content: string,
+  executions: ChatToolExecution[],
+) {
+  const groups: Array<{ offset: number; executions: ChatToolExecution[] }> = [];
+  const annotated = executions
+    .map((execution, index) => {
+      const rawOffset =
+        hasExplicitToolContentOffset(execution)
+          ? execution.contentOffset
+          : inferToolContentOffset(content, execution);
+      return {
+        execution,
+        index,
+        offset: safeAssistantToolSplitOffset(content, rawOffset),
+      };
+    })
+    .sort(
+      (left, right) =>
+        left.offset - right.offset ||
+        compareToolExecutionOrder(left.execution, right.execution) ||
+        left.index - right.index,
+    );
+  for (const item of annotated) {
+    const { execution, offset } = item;
+    const previous = groups.at(-1);
+    if (previous && previous.offset === offset) {
+      previous.executions.push(execution);
+      continue;
+    }
+    groups.push({
+      offset,
+      executions: [execution],
+    });
+  }
+  return groups;
+}
+
+function visibleTopLevelToolExecutions(
+  executions: ChatToolExecution[],
+  loopHistory: ChatMessage[],
+  active: boolean,
+) {
+  if (active || loopHistory.length === 0) {
+    return executions;
+  }
+  const loopToolIds = new Set(
+    loopHistory.flatMap((message) =>
+      (message.toolExecutions ?? []).map((execution) => execution.id),
+    ),
+  );
+  return executions.filter((execution) => {
+    if (looksLikeFileChangeExecution(execution)) {
+      return true;
+    }
+    if (loopToolIds.has(execution.id)) {
+      return false;
+    }
+    return !isToolRunning(execution);
+  });
+}
+
+function isFinalAssistantDisplayMessage(message: ChatMessage) {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+  const status = String(message.status ?? message.metadata?.status ?? '')
+    .trim()
+    .toLowerCase();
+  const transcriptKind = String(
+    message.metadata?.transcript_kind ?? message.metadata?.transcriptKind ?? '',
+  )
+    .trim()
+    .toLowerCase();
+  if (status === 'superseded' || transcriptKind === 'assistant_loop') {
+    return false;
+  }
+  return status === 'complete' || transcriptKind === 'assistant_final' || (!status && !transcriptKind);
+}
+
+function hasAssistantProgressSource(
+  message: ChatMessage,
+  executions: ChatToolExecution[],
+) {
+  if (executions.length > 0) {
+    return true;
+  }
+  const metadata = message.metadata ?? {};
+  return [
+    metadata.cardbush_turn_started_at,
+    metadata.turn_started_at,
+    metadata.started_at,
+    metadata.cardbush_turn_completed_at,
+    metadata.completed_at,
+    metadata.done_at,
+    metadata.finished_at,
+  ].some((value) => typeof value === 'string' && value.trim());
+}
+
+function compareToolExecutionOrder(
+  left: ChatToolExecution,
+  right: ChatToolExecution,
+) {
+  const sequenceDelta = compareOptionalNumber(left.sequence, right.sequence);
+  if (sequenceDelta !== 0) {
+    return sequenceDelta;
+  }
+  const loopDelta = compareOptionalNumber(left.loopIndex, right.loopIndex);
+  if (loopDelta !== 0) {
+    return loopDelta;
+  }
+  const dateDelta = compareOptionalNumber(
+    dateTimestamp(left.createdAt),
+    dateTimestamp(right.createdAt),
+  );
+  if (dateDelta !== 0) {
+    return dateDelta;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function compareOptionalNumber(left: number | undefined, right: number | undefined) {
+  if (left == null || right == null) {
+    return 0;
+  }
+  return left - right;
+}
+
+function dateTimestamp(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function inferToolContentOffset(content: string, execution: ChatToolExecution) {
+  const metadata = execution.metadata;
+  const candidates = [
+    metadata.content_offset,
+    metadata.contentOffset,
+    metadata.assistant_content_offset,
+    metadata.assistantContentOffset,
+    metadata.text_offset,
+    metadata.textOffset,
+  ];
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value >= 0) {
+      return Math.trunc(value);
+    }
+  }
+  return content.length;
+}
+
+function hasExplicitToolContentOffset(execution: ChatToolExecution) {
+  if (execution.contentOffsetExplicit) {
+    return true;
+  }
+  const metadata = execution.metadata;
+  return [
+    metadata.content_offset,
+    metadata.contentOffset,
+    metadata.assistant_content_offset,
+    metadata.assistantContentOffset,
+    metadata.text_offset,
+    metadata.textOffset,
+  ].some((value) => value != null && value !== '' && Number.isFinite(Number(value)));
+}
+
 function safeAssistantToolSplitOffset(content: string, rawOffset: number) {
   const offset = Math.max(0, Math.min(content.length, rawOffset));
-  if (offset <= 0 || offset >= content.length || isMarkdownBoundary(content, offset)) {
+  if (offset <= 0 || offset >= content.length) {
     return offset;
   }
   const fencedRange = fencedMarkdownRangeAt(content, offset);
   if (fencedRange) {
     return nearestOffset(offset, fencedRange.start, fencedRange.end);
+  }
+  const tableRange = markdownTableRangeAt(content, offset);
+  if (tableRange) {
+    return nearestOffset(offset, tableRange.start, tableRange.end);
+  }
+  if (isMarkdownBoundary(content, offset)) {
+    return offset;
   }
   const lineStart = content.lastIndexOf('\n', offset - 1) + 1;
   const nextLineBreak = content.indexOf('\n', offset);
@@ -8347,6 +10544,65 @@ function fencedMarkdownRangeAt(content: string, offset: number) {
     return { start: open.start, end: content.length };
   }
   return null;
+}
+
+function markdownTableRangeAt(content: string, offset: number) {
+  const lines = markdownLinesWithRanges(content);
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index];
+    const separator = lines[index + 1];
+    if (!markdownTableRowLine(header.text) || !markdownTableSeparatorLine(separator.text)) {
+      continue;
+    }
+    let endIndex = index + 2;
+    while (endIndex < lines.length && markdownTableRowLine(lines[endIndex].text)) {
+      endIndex += 1;
+    }
+    const start = header.start;
+    const end = lines[endIndex - 1].end;
+    if (offset > start && offset < end) {
+      return { start, end };
+    }
+  }
+  return null;
+}
+
+function markdownLinesWithRanges(content: string) {
+  const lines: Array<{ text: string; start: number; end: number }> = [];
+  const pattern = /.*(?:\r?\n|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(content)) != null) {
+    const raw = match[0];
+    if (!raw && pattern.lastIndex >= content.length) {
+      break;
+    }
+    const start = match.index;
+    const end = start + raw.length;
+    lines.push({
+      text: raw.replace(/\r?\n$/, ''),
+      start,
+      end,
+    });
+    if (pattern.lastIndex >= content.length) {
+      break;
+    }
+  }
+  return lines;
+}
+
+function markdownTableRowLine(line: string) {
+  const trimmed = line.trim();
+  return trimmed.includes('|') && /^\|?.+\|.+\|?$/.test(trimmed);
+}
+
+function markdownTableSeparatorLine(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed.includes('|')) {
+    return false;
+  }
+  const normalized = trimmed.replace(/^\|/, '').replace(/\|$/, '');
+  const columns = normalized.split('|').map((column) => column.trim());
+  return columns.length >= 2 && columns.every((column) => /^:?-{3,}:?$/.test(column));
 }
 
 function nearestOffset(offset: number, before: number, after: number) {
@@ -8445,7 +10701,7 @@ function AssistantLoopHistoryItem({
     language === 'zh'
       ? `第 ${index + 1} 段执行`
       : `Step ${index + 1}`;
-  const timestamp = formatLoopHistoryTimestamp(message.createdAt, language);
+  const timestamp = formatLoopHistoryTimestamp(message, language);
 
   return (
     <section className="assistant-loop-history-item">
@@ -8460,6 +10716,7 @@ function AssistantLoopHistoryItem({
           executions={executions}
           language={language}
           message={message}
+          active={false}
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />
@@ -8478,14 +10735,12 @@ function hasVisibleLoopHistoryMessage(message: ChatMessage) {
   );
 }
 
-function formatLoopHistoryTimestamp(value: string | undefined, language: AppLanguage) {
-  if (!value) {
+function formatLoopHistoryTimestamp(message: ChatMessage, language: AppLanguage) {
+  const value = loopHistoryTimestamp(message);
+  if (value == null) {
     return '';
   }
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
   return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
     hour: '2-digit',
     minute: '2-digit',
@@ -8493,16 +10748,37 @@ function formatLoopHistoryTimestamp(value: string | undefined, language: AppLang
   }).format(date);
 }
 
+function loopHistoryTimestamp(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  const executionTimestamps = (message.toolExecutions ?? []).flatMap((execution) => [
+    execution.createdAt,
+    toolExecutionFinishedAt(execution),
+  ]);
+  return latestTimestamp([
+    metadata.cardbush_turn_completed_at,
+    metadata.completed_at,
+    metadata.done_at,
+    metadata.finished_at,
+    ...executionTimestamps,
+    metadata.cardbush_turn_started_at,
+    metadata.turn_started_at,
+    metadata.started_at,
+    message.createdAt,
+  ]);
+}
+
 function ToolExecutionBlock({
   executions,
   language,
   message,
+  active,
   onRevertChangeReport,
   onOpenScene,
 }: {
   executions: ChatToolExecution[];
   language: AppLanguage;
   message: ChatMessage;
+  active: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -8511,8 +10787,11 @@ function ToolExecutionBlock({
 }) {
   const [expanded, setExpanded] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
-  const running = executions.some(isToolRunning);
-  const failedCount = executions.filter(isToolFailed).length;
+  const running = executions.some((execution) => isToolRunningInContext(execution, active));
+  const failedCount = executions.filter((execution) =>
+    isToolFailedInContext(execution, active),
+  ).length;
+  const tone = running ? 'neutral' : toolExecutionToneInContext(executions, active);
   const changeReport = toolChangeReportFromExecutions(executions);
   const toggleExpanded = useCallback(() => {
     preserveScrollPositionForToggle(blockRef.current, () => {
@@ -8532,7 +10811,7 @@ function ToolExecutionBlock({
       <ToolChangeBlock
         report={messageChangeReport}
         running={running}
-        failed={failedCount > 0}
+        tone={tone}
         language={language}
         onRevert={() => onRevertChangeReport(messageChangeReport, message)}
       />
@@ -8552,7 +10831,7 @@ function ToolExecutionBlock({
   return (
     <div
       ref={blockRef}
-      className={`tool-execution-block ${expanded ? 'expanded' : ''}`}
+      className={`tool-execution-block ${expanded ? 'expanded' : ''} ${running ? 'running' : ''} ${tone}`}
     >
       <button
         className="tool-execution-summary"
@@ -8572,6 +10851,7 @@ function ToolExecutionBlock({
               execution={execution}
               message={message}
               language={language}
+              active={active}
               onOpenScene={onOpenScene}
             />
           ))}
@@ -8581,163 +10861,211 @@ function ToolExecutionBlock({
   );
 }
 
-function ToolChangeBlock({
-  report,
-  running,
-  language,
-  onRevert,
-}: {
-  report: ToolChangeReport;
-  running: boolean;
-  failed: boolean;
-  language: AppLanguage;
-  onRevert?: () => Promise<void>;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [reverting, setReverting] = useState(false);
-  const blockRef = useRef<HTMLDivElement>(null);
-  const hasDetails = report.files.some((file) => file.lines.length > 0);
-  const toggleExpanded = useCallback(() => {
-    preserveScrollPositionForToggle(blockRef.current, () => {
-      setExpanded((value) => !value);
-    });
-  }, []);
-  const title =
-    running && !hasDetails
-      ? language === 'zh'
-        ? '正在修改文件'
-        : 'Changing files'
-      : language === 'zh'
-        ? `${report.fileCount} 个文件已更改`
-        : `${report.fileCount} file${report.fileCount === 1 ? '' : 's'} changed`;
-
-  return (
-    <div
-      ref={blockRef}
-      className={`tool-change-block ${expanded ? 'expanded' : ''}`}
-    >
-      <div className="tool-change-header-row">
-        <button
-          className="tool-change-header"
-          type="button"
-          disabled={!hasDetails}
-          onClick={toggleExpanded}
-        >
-          <Code2 size={15} />
-          <span>
-            <strong>{title}</strong>
-            {report.additions > 0 && (
-              <b className="diff-count add">+{report.additions}</b>
-            )}
-            {report.deletions > 0 && (
-              <b className="diff-count del">-{report.deletions}</b>
-            )}
-          </span>
-          <em>{expanded ? (language === 'zh' ? '收起' : 'Hide') : language === 'zh' ? '查看改动' : 'View diff'}</em>
-          <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
-        </button>
-        {onRevert && hasDetails && (
-          <button
-            className="tool-change-revert"
-            type="button"
-            disabled={reverting}
-            title={language === 'zh' ? '撤回这组修改' : 'Revert this change set'}
-            onClick={async () => {
-              setReverting(true);
-              try {
-                await onRevert();
-              } finally {
-                setReverting(false);
-              }
-            }}
-          >
-            {reverting ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
-            <span>{language === 'zh' ? '撤回' : 'Revert'}</span>
-          </button>
-        )}
-      </div>
-      {expanded && (
-        <div className="tool-change-files">
-          {report.files.map((file, index) => (
-            <ToolFileChangeView
-              // eslint-disable-next-line react/no-array-index-key
-              key={`${file.path}-${index}`}
-              file={file}
-              language={language}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ToolFileChangeView({
-  file,
-  language,
-}: {
-  file: ToolFileChange;
-  language: AppLanguage;
-}) {
-  return (
-    <section className="tool-file-change">
-      <header>
-        <strong title={file.path}>{file.path}</strong>
-        <span>
-          {file.additions > 0 && <b className="diff-count add">+{file.additions}</b>}
-          {file.deletions > 0 && <b className="diff-count del">-{file.deletions}</b>}
-        </span>
-      </header>
-      {file.lines.length === 0 ? (
-        <p>{language === 'zh' ? '没有可展开的 diff 内容' : 'No diff details available'}</p>
-      ) : (
-        <div className="diff-lines">
-          {file.lines.map((line, index) => (
-            <DiffLineView
-              // eslint-disable-next-line react/no-array-index-key
-              key={index}
-              line={line}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function DiffLineView({ line }: { line: DiffLine }) {
-  return (
-    <div className={`diff-line ${line.kind}`}>
-      <span className="diff-marker" />
-      <code>{line.text || ' '}</code>
-    </div>
-  );
-}
-
-function preserveScrollPositionForToggle(
-  element: HTMLElement | null,
-  update: () => void,
-) {
-  if (!element) {
-    update();
-    return;
+function isSubagentDispatchRejectionExecution(execution: ChatToolExecution) {
+  const metadata = execution.metadata;
+  const hasSubagentMarker =
+    execution.name.trim().toLowerCase().includes('subagent') ||
+    String(metadata.kind ?? metadata.type ?? '').trim() === 'subagent_tool' ||
+    metadata.subagent_task_id != null ||
+    metadata.subagentTaskId != null ||
+    metadata.subagent_name != null ||
+    metadata.subagentName != null;
+  if (!hasSubagentMarker) {
+    return false;
   }
-  const scroller = element.closest('.message-list') as HTMLElement | null;
-  const beforeTop = element.getBoundingClientRect().top;
-  update();
-  if (!scroller) {
-    return;
+  const outputPayload = parseToolOutputJson(execution.output);
+  const candidates = [
+    execution.metadata,
+    asRecord(execution.metadata.result),
+    asRecord(execution.metadata.payload),
+    outputPayload,
+  ];
+  return candidates.some(isSubagentDispatchRejectionPayload);
+}
+
+function isSubagentDispatchRejectionPayload(payload: Record<string, unknown>) {
+  if (Object.keys(payload).length === 0) {
+    return false;
   }
-  const restore = () => {
-    const nextTop = element.getBoundingClientRect().top;
-    const delta = nextTop - beforeTop;
-    if (Math.abs(delta) > 0.5) {
-      scroller.scrollTop += delta;
+  const status = String(payload.status ?? '').trim().toLowerCase();
+  return (
+    payload.accepted === false ||
+    status === 'rejected' ||
+    Boolean(payload.error_code ?? payload.errorCode)
+  );
+}
+
+function parseToolOutputJson(value: string) {
+  const text = value.trim();
+  if (!text.startsWith('{')) {
+    return {};
+  }
+  try {
+    return asRecord(JSON.parse(text));
+  } catch {
+    return {};
+  }
+}
+
+function summarizeRecord(value: Record<string, unknown>) {
+  const entries = Object.entries(value).filter(([, raw]) => raw != null && raw !== '');
+  if (entries.length === 0) {
+    return '-';
+  }
+  return entries
+    .slice(0, 6)
+    .map(([key, raw]) => `${key}: ${String(raw)}`)
+    .join(' · ');
+}
+
+function summarizeWorkerContractDefaults(value: Record<string, unknown>) {
+  const entries = Object.entries(value).filter(([, raw]) => raw != null && raw !== '');
+  if (entries.length === 0) {
+    return '';
+  }
+  return entries
+    .slice(0, 6)
+    .map(([key, raw]) => {
+      if (Array.isArray(raw)) {
+        return `${key}: ${raw.join(', ')}`;
+      }
+      if (raw && typeof raw === 'object') {
+        return `${key}: ${summarizeRecord(asRecord(raw))}`;
+      }
+      return `${key}: ${String(raw)}`;
+    })
+    .join(' · ');
+}
+
+function summarizeWriteScope(scope: string[]) {
+  if (scope.length === 0) {
+    return '';
+  }
+  const visible = scope.slice(0, 4).join(', ');
+  return scope.length > 4 ? `${visible} +${scope.length - 4}` : visible;
+}
+
+function summarizeIoManifest(manifest: Record<string, unknown>) {
+  const keys = ['reads', 'writes', 'exports', 'consumes'];
+  const parts = keys
+    .map((key) => {
+      const value = summarizeLooseValue(manifest[key]);
+      return value ? `${key}: ${value}` : '';
+    })
+    .filter(Boolean);
+  if (parts.length > 0) {
+    return parts.join(' · ');
+  }
+  return summarizeRecord(manifest);
+}
+
+function summarizeAssertionResults(items: VerificationAssertionItem[]) {
+  const visible = items
+    .slice(0, 4)
+    .map((item) =>
+      [item.label, item.status ? `(${item.status})` : '', item.summary]
+        .filter(Boolean)
+        .join(' '),
+    )
+    .join(' · ');
+  return items.length > 4 ? `${visible} +${items.length - 4}` : visible;
+}
+
+function stringArrayLoose(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(summarizeLooseValue)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function summarizeLooseValue(value: unknown): string {
+  if (value == null || value === '') {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(summarizeLooseValue).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = asRecord(value);
+    const title = nonEmptyString(
+      record.label ?? record.name ?? record.id ?? record.path ?? record.summary,
+    );
+    if (title) {
+      return title;
     }
-  };
-  window.requestAnimationFrame(() => {
-    restore();
-    window.requestAnimationFrame(restore);
+    return summarizeRecord(record);
+  }
+  return String(value).trim();
+}
+
+function summarizeSubagentWriteLease(
+  lease: NonNullable<SubagentDispatchResult['writeLease']>,
+) {
+  const conflictText = lease.conflicts.length > 0
+    ? `conflicts: ${lease.conflicts.slice(0, 2).map(summarizeWriteLeaseConflict).join(' | ')}`
+    : '';
+  return [
+    lease.status ? `lease: ${lease.status}` : 'lease',
+    lease.policy ? `policy: ${lease.policy}` : '',
+    lease.scope.length > 0 ? `scope: ${summarizeWriteScope(lease.scope)}` : '',
+    conflictText,
+    lease.reason ? `reason: ${lease.reason}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function summarizeWriteLeaseRecord(value: Record<string, unknown>) {
+  const scope = stringArray(value.scope);
+  const conflicts = Array.isArray(value.conflicts)
+    ? value.conflicts.map(asRecord)
+    : [];
+  return [
+    nonEmptyString(value.status) ? `status: ${String(value.status)}` : '',
+    nonEmptyString(value.policy) ? `policy: ${String(value.policy)}` : '',
+    scope.length > 0 ? `scope: ${summarizeWriteScope(scope)}` : '',
+    conflicts.length > 0
+      ? `conflicts: ${conflicts.slice(0, 2).map(summarizeWriteLeaseConflict).join(' | ')}`
+      : '',
+    nonEmptyString(value.reason) ? `reason: ${String(value.reason)}` : '',
+  ].filter(Boolean).join(' · ');
+}
+
+function summarizeWriteLeaseConflict(value: Record<string, unknown>) {
+  const scope = stringArray(value.scope ?? value.write_scope ?? value.writeScope);
+  return [
+    nonEmptyString(value.task_id ?? value.taskId)
+      ? `task: ${String(value.task_id ?? value.taskId)}`
+      : '',
+    scope.length > 0 ? summarizeWriteScope(scope) : '',
+    nonEmptyString(value.reason) ? String(value.reason) : '',
+  ].filter(Boolean).join(' ');
+}
+
+function nonEmptyString(value: unknown) {
+  const text = value == null ? '' : String(value).trim();
+  return text || undefined;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : [];
+}
+
+function firstDefined(values: unknown[]) {
+  return values.find((value) => {
+    if (value == null || value === '') {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      return value.length > 0;
+    }
+    if (typeof value === 'object') {
+      return Object.keys(asRecord(value)).length > 0;
+    }
+    return true;
   });
 }
 
@@ -8745,35 +11073,80 @@ function ToolExecutionDetail({
   execution,
   message,
   language,
+  active,
   onOpenScene,
 }: {
   execution: ChatToolExecution;
   message: ChatMessage;
   language: AppLanguage;
+  active: boolean;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const [outputExpanded, setOutputExpanded] = useState(false);
   const scene = cardlingSceneFromToolExecution(execution, message);
-  const status = isToolRunning(execution)
-    ? '运行中'
-    : isToolFailed(execution)
-      ? '失败'
-      : '完成';
   const duration = formatDuration(execution.durationMs);
   const summary = execution.summary.trim();
-  const output = execution.output.trim();
+  const actionEnvelope = toolActionEnvelopeFromExecution(execution);
+  const output = toolDisplayOutput(execution, actionEnvelope).trim();
+  const childExecutions = subagentChildToolExecutions(execution);
+  const runtimeInfo = runtimeProfileInfoFromExecution(execution);
+  const hookDecision = toolHookDecisionFromExecution(execution);
+  const planningAssessment = planningAssessmentFromExecution(execution);
+  const verificationInfo = planVerificationInfoFromExecution(execution);
+  const auditSignals = subagentAuditSignalsFromExecution(execution);
+  const workerInfo = workerProfileInfoFromExecution(execution);
+  const dispatchPlan = planDispatchInfoFromExecution(execution);
+  const failed = isToolFailedInContext(execution, active);
   const shouldCollapseOutput = toolOutputNeedsCollapse(output);
   const visibleOutput =
     shouldCollapseOutput && !outputExpanded ? compactToolOutput(output) : output;
+  const status = verificationInfo?.failed
+    ? language === 'zh'
+      ? '节点验证未通过'
+      : 'Verification failed'
+    : isToolRunningInContext(execution, active)
+      ? language === 'zh'
+        ? '运行中'
+        : 'Running'
+      : failed
+        ? language === 'zh'
+          ? '失败'
+          : 'Failed'
+        : language === 'zh'
+          ? '完成'
+          : 'Done';
   return (
     <section className="tool-execution-detail">
       <header>
         <strong>{displayToolName(execution.name)}</strong>
-        <span className={isToolFailed(execution) ? 'failed' : ''}>
+        <span className={verificationInfo?.failed ? 'warning' : failed ? 'failed' : ''}>
           {duration ? `${status} · ${duration}` : status}
         </span>
       </header>
       {summary && <code>$ {summary}</code>}
+      <RuntimeProfileBadge info={runtimeInfo} />
+      <WorkerProfileBadge info={workerInfo} />
+      {actionEnvelope && (
+        <ToolActionEnvelopeInfo envelope={actionEnvelope} language={language} />
+      )}
+      {planningAssessment && (
+        <PlanningAssessmentNotice language={language} />
+      )}
+      {dispatchPlan && (
+        <PlanDispatchAdvisorPanel
+          plan={dispatchPlan}
+          language={language}
+          sessionId={message.conversationId ?? ''}
+          turnId={message.turnId}
+        />
+      )}
+      {hookDecision && <ToolHookDecisionNotice decision={hookDecision} />}
+      {verificationInfo && (
+        <PlanVerificationPanel info={verificationInfo} language={language} />
+      )}
+      {auditSignals && (
+        <SubagentAuditSignalsPanel signals={auditSignals} language={language} />
+      )}
       {scene && (
         <button
           className="tool-scene-open"
@@ -8784,6 +11157,11 @@ function ToolExecutionDetail({
           <span>{language === 'zh' ? '打开交互场景' : 'Open interactive scene'}</span>
         </button>
       )}
+      <SubagentChildTools
+        executions={childExecutions}
+        language={language}
+        isFailed={(child) => isToolFailedInContext(child, active)}
+      />
       {output && (
         <>
           <pre className={`tool-execution-output ${outputExpanded ? 'expanded' : ''}`}>
@@ -8804,6 +11182,912 @@ function ToolExecutionDetail({
   );
 }
 
+type WorkerDispatchRecommendation = {
+  agentName: string;
+  runtimeProfile: string;
+  resolvedRuntimeProfile: string;
+  expectedHookSet: string;
+  workerContractPolicy: string;
+  workerContractDefaults: Record<string, unknown>;
+  dispatchDecision: string;
+  dispatchReady?: boolean;
+  requiresUserApproval?: boolean;
+  parentAutoDispatchExpected?: boolean;
+  parentAutoDispatchPolicy: string;
+  whyNotParentDirect: string;
+  whyNotParallelTools: string;
+  whyNotSubagent: string;
+  writeScopeConfidence: string;
+  dispatchGroupId: string;
+  dispatchGroupNodeIds: string[];
+  executionChannel: string;
+  writeScope: string[];
+  writeLease: Record<string, unknown>;
+  ioManifest: Record<string, unknown>;
+  successAssertions: string[];
+  assertionResults: VerificationAssertionItem[];
+  verificationLevel: string;
+  lane: string;
+  planNodeId: string;
+  exitCondition: string;
+  task: string;
+  raw: Record<string, unknown>;
+};
+
+type PlanDispatchInfo = {
+  advisor: Record<string, unknown>;
+  candidates: WorkerDispatchRecommendation[];
+};
+
+function PlanDispatchAdvisorPanel({
+  plan,
+  language,
+  sessionId,
+  turnId,
+}: {
+  plan: PlanDispatchInfo;
+  language: AppLanguage;
+  sessionId: string;
+  turnId?: string;
+}) {
+  const advisorText = summarizeDispatchAdvisor(plan.advisor, language);
+  const groups = groupWorkerDispatchCandidates(plan.candidates);
+  return (
+    <section className="dispatch-advisor-panel">
+      {advisorText && (
+        <div className="dispatch-advisor-summary">
+          <Network size={13} />
+          <span>{advisorText}</span>
+        </div>
+      )}
+      {groups.map((group) => (
+        <div className="dispatch-candidate-group" key={group.id}>
+          {group.label && (
+            <div className="dispatch-candidate-group-label">{group.label}</div>
+          )}
+          {group.items.map((dispatch, index) => (
+            <WorkerDispatchRecommendationCard
+              key={`${dispatch.dispatchGroupId || 'candidate'}-${dispatch.planNodeId || index}-${dispatch.agentName}-${index}`}
+              dispatch={dispatch}
+              language={language}
+              sessionId={sessionId}
+              turnId={turnId}
+            />
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function WorkerDispatchRecommendationCard({
+  dispatch,
+  language,
+  sessionId,
+  turnId,
+}: {
+  dispatch: WorkerDispatchRecommendation;
+  language: AppLanguage;
+  sessionId: string;
+  turnId?: string;
+}) {
+  const [dispatching, setDispatching] = useState(false);
+  const [result, setResult] = useState<SubagentDispatchResult | null>(null);
+  const [error, setError] = useState('');
+  const autoDispatchExpected =
+    dispatch.parentAutoDispatchExpected === true &&
+    dispatch.requiresUserApproval === false;
+  const activeWriteScope =
+    result?.writeScope && result.writeScope.length > 0
+      ? result.writeScope
+      : dispatch.writeScope;
+  const rows = [
+    [language === 'zh' ? 'Agent' : 'Agent', dispatch.agentName],
+    [language === 'zh' ? '决策' : 'Decision', dispatch.dispatchDecision],
+    [
+      language === 'zh' ? '就绪' : 'Ready',
+      dispatch.dispatchReady == null
+        ? ''
+        : dispatch.dispatchReady
+          ? language === 'zh'
+            ? '是'
+            : 'Yes'
+          : language === 'zh'
+            ? '否'
+            : 'No',
+    ],
+    [
+      language === 'zh' ? '审批' : 'Approval',
+      dispatch.requiresUserApproval == null
+        ? ''
+        : dispatch.requiresUserApproval
+          ? language === 'zh'
+            ? '需要用户确认'
+            : 'User approval required'
+          : language === 'zh'
+            ? '不需要'
+            : 'Not required',
+    ],
+    [
+      language === 'zh' ? '自动派发' : 'Auto dispatch',
+      dispatch.parentAutoDispatchExpected == null
+        ? ''
+        : dispatch.parentAutoDispatchExpected
+          ? language === 'zh'
+            ? '父 Agent 可自动执行'
+            : 'Parent agent can dispatch'
+          : language === 'zh'
+            ? '不预期'
+            : 'Not expected',
+    ],
+    [
+      language === 'zh' ? '自动策略' : 'Auto policy',
+      dispatch.parentAutoDispatchPolicy,
+    ],
+    [language === 'zh' ? '通道' : 'Channel', dispatch.executionChannel],
+    [language === 'zh' ? 'Profile' : 'Profile', dispatch.runtimeProfile],
+    [
+      language === 'zh' ? '解析 Profile' : 'Resolved',
+      result?.resolvedRuntimeProfile ?? dispatch.resolvedRuntimeProfile,
+    ],
+    [
+      language === 'zh' ? 'Hook set' : 'Hook set',
+      result?.resolvedHookSet ?? dispatch.expectedHookSet,
+    ],
+    [
+      language === 'zh' ? '契约策略' : 'Contract',
+      dispatch.workerContractPolicy,
+    ],
+    [
+      language === 'zh' ? '默认推断' : 'Defaults',
+      summarizeWorkerContractDefaults(dispatch.workerContractDefaults),
+    ],
+    [language === 'zh' ? '组' : 'Group', dispatch.dispatchGroupId],
+    [
+      language === 'zh' ? '组节点' : 'Group nodes',
+      dispatch.dispatchGroupNodeIds.join(', '),
+    ],
+    [language === 'zh' ? '写入范围' : 'Write scope', summarizeWriteScope(activeWriteScope)],
+    [language === 'zh' ? '范围置信' : 'Scope confidence', dispatch.writeScopeConfidence],
+    [language === 'zh' ? 'Lane' : 'Lane', dispatch.lane],
+    [language === 'zh' ? 'Plan node' : 'Plan node', dispatch.planNodeId],
+    [language === 'zh' ? '退出条件' : 'Exit', dispatch.exitCondition],
+    [
+      language === 'zh' ? '非父级原因' : 'Not parent',
+      dispatch.whyNotParentDirect,
+    ],
+    [
+      language === 'zh' ? '非工具并发' : 'Not tools',
+      dispatch.whyNotParallelTools,
+    ],
+    [
+      language === 'zh' ? '非子 Agent' : 'Not subagent',
+      dispatch.whyNotSubagent,
+    ],
+  ].filter(([, value]) => value);
+  const hasExecutionEvidence =
+    Object.keys(dispatch.ioManifest).length > 0 ||
+    dispatch.successAssertions.length > 0 ||
+    dispatch.assertionResults.length > 0 ||
+    Boolean(dispatch.verificationLevel);
+  const prompt = workerDispatchPrompt(dispatch);
+  const canDispatch = Boolean(sessionId.trim() && dispatch.agentName.trim() && prompt.trim());
+  const accepted = result?.accepted && result.status !== 'rejected';
+  const statusTone =
+    result?.accepted && result.status !== 'rejected'
+      ? 'accepted'
+      : result || error
+        ? 'rejected'
+        : '';
+  const resolvedStatus = [
+    result?.resolvedRuntimeProfile || dispatch.resolvedRuntimeProfile
+      ? `profile: ${result?.resolvedRuntimeProfile ?? dispatch.resolvedRuntimeProfile}`
+      : '',
+    result?.resolvedHookSet || dispatch.expectedHookSet
+      ? `hooks: ${result?.resolvedHookSet ?? dispatch.expectedHookSet}`
+      : '',
+  ].filter(Boolean).join(' · ');
+  const writeLeaseStatus = result?.writeLease
+    ? summarizeSubagentWriteLease(result.writeLease)
+    : '';
+  const runDispatch = useCallback(async () => {
+    if (!canDispatch || dispatching) {
+      return;
+    }
+    setDispatching(true);
+    setError('');
+    try {
+      const nextResult = await dispatchSubagent({
+        sessionId,
+        turnId,
+        agentName: dispatch.agentName,
+        prompt,
+        runtimeProfile: dispatch.runtimeProfile,
+        lane: dispatch.lane,
+        planNodeId: dispatch.planNodeId,
+        exitCondition: dispatch.exitCondition,
+        writeScope: dispatch.writeScope,
+        waitSeconds: 0,
+      });
+      setResult(nextResult);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setDispatching(false);
+    }
+  }, [canDispatch, dispatch, dispatching, prompt, sessionId, turnId]);
+
+  return (
+    <section className={`worker-dispatch-card ${statusTone}`}>
+      <header>
+        <Network size={14} />
+        <strong>
+          {autoDispatchExpected
+            ? language === 'zh'
+              ? '父 Agent 可自动派发'
+              : 'Parent auto-dispatch ready'
+            : language === 'zh'
+              ? '建议派发子 Agent'
+              : 'Recommended worker dispatch'}
+        </strong>
+        <button
+          className={autoDispatchExpected ? 'manual' : 'primary'}
+          type="button"
+          disabled={!canDispatch || dispatching}
+          onClick={() => void runDispatch()}
+        >
+          {dispatching ? (
+            <LoaderCircle size={13} />
+          ) : accepted ? (
+            <RefreshCw size={13} />
+          ) : (
+            <Play size={13} />
+          )}
+          <span>
+            {dispatching
+              ? language === 'zh'
+                ? '派发中'
+                : 'Dispatching'
+              : accepted
+                ? language === 'zh'
+                  ? result?.reason === 'already_running'
+                    ? '已复用'
+                    : autoDispatchExpected
+                      ? '调试复用'
+                      : '复用检查'
+                  : result?.reason === 'already_running'
+                    ? 'Reused'
+                    : autoDispatchExpected
+                      ? 'Debug reuse'
+                      : 'Check reuse'
+                : language === 'zh'
+                  ? autoDispatchExpected
+                    ? '手动派发'
+                    : '派发'
+                  : autoDispatchExpected
+                    ? 'Manual dispatch'
+                    : 'Dispatch'}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void copyText(JSON.stringify(dispatch.raw, null, 2)).catch(() => undefined)
+          }
+        >
+          <Clipboard size={13} />
+          <span>{language === 'zh' ? '复制参数' : 'Copy'}</span>
+        </button>
+      </header>
+      {autoDispatchExpected && (
+        <p className="worker-dispatch-status auto">
+          {language === 'zh'
+            ? '无需用户审批；正常情况下父 Agent 会根据 plan 证据自行派发。这个按钮仅作为手动/调试兜底。'
+            : 'No user approval is required; the parent agent should dispatch from plan evidence. This button is only a manual/debug fallback.'}
+        </p>
+      )}
+      {dispatch.task && <p>{dispatch.task}</p>}
+      {!canDispatch && (
+        <p className="worker-dispatch-status rejected">
+          {language === 'zh'
+            ? '缺少 session、agent 或 prompt，暂不能派发。'
+            : 'Missing session, agent, or prompt; cannot dispatch yet.'}
+        </p>
+      )}
+      {(result || error) && (
+        <p className={`worker-dispatch-status ${statusTone || 'rejected'}`}>
+          {workerDispatchResultText(result, error, language)}
+        </p>
+      )}
+      {resolvedStatus && (
+        <p className="worker-dispatch-status accepted">{resolvedStatus}</p>
+      )}
+      {writeLeaseStatus && (
+        <p className={`worker-dispatch-status ${accepted ? 'accepted' : 'rejected'}`}>
+          {writeLeaseStatus}
+        </p>
+      )}
+      {result?.supervisor && (!result.accepted || result.status === 'rejected') && (
+        <p className="worker-dispatch-status rejected">
+          {[
+            result.supervisor.counts
+              ? `${language === 'zh' ? '运行数' : 'Counts'}: ${summarizeRecord(result.supervisor.counts as unknown as Record<string, unknown>)}`
+              : '',
+            result.supervisor.limits
+              ? `${language === 'zh' ? '限制' : 'Limits'}: ${summarizeRecord(result.supervisor.limits as unknown as Record<string, unknown>)}`
+              : '',
+          ].filter(Boolean).join(' · ')}
+        </p>
+      )}
+      {rows.length > 0 && (
+        <dl>
+          {rows.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {hasExecutionEvidence && (
+        <details className="worker-dispatch-evidence">
+          <summary>
+            {language === 'zh' ? '输入输出与验收' : 'IO and verification'}
+          </summary>
+          <dl>
+            {dispatch.verificationLevel && (
+              <div>
+                <dt>{language === 'zh' ? '验证级别' : 'Verification'}</dt>
+                <dd>{dispatch.verificationLevel}</dd>
+              </div>
+            )}
+            {Object.keys(dispatch.ioManifest).length > 0 && (
+              <div>
+                <dt>{language === 'zh' ? 'IO' : 'IO'}</dt>
+                <dd>{summarizeIoManifest(dispatch.ioManifest)}</dd>
+              </div>
+            )}
+            {dispatch.successAssertions.length > 0 && (
+              <div>
+                <dt>{language === 'zh' ? '验收条件' : 'Assertions'}</dt>
+                <dd>{dispatch.successAssertions.join(' · ')}</dd>
+              </div>
+            )}
+            {dispatch.assertionResults.length > 0 && (
+              <div>
+                <dt>{language === 'zh' ? '验收结果' : 'Results'}</dt>
+                <dd>{summarizeAssertionResults(dispatch.assertionResults)}</dd>
+              </div>
+            )}
+          </dl>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function workerDispatchPrompt(dispatch: WorkerDispatchRecommendation) {
+  return String(
+    dispatch.raw.prompt ??
+      dispatch.raw.task ??
+      dispatch.raw.instruction ??
+      dispatch.raw.user_input ??
+      dispatch.raw.userInput ??
+      dispatch.task,
+  ).trim();
+}
+
+function workerDispatchResultText(
+  result: SubagentDispatchResult | null,
+  error: string,
+  language: AppLanguage,
+) {
+  if (error) {
+    return error;
+  }
+  if (!result) {
+    return '';
+  }
+  if (!result.accepted || result.status === 'rejected') {
+    if (result.reason === 'write_lease_conflict') {
+      return result.message || (language === 'zh' ? '写租约冲突，未派发' : 'Write lease conflict');
+    }
+    return result.message || result.reason || (language === 'zh' ? '派发被拒绝' : 'Dispatch rejected');
+  }
+  const task = result.taskId ? ` · ${result.taskId}` : '';
+  if (result.reason === 'already_running') {
+    return language === 'zh'
+      ? `已有运行中的子 Agent，已复用${task}`
+      : `Already running; reused${task}`;
+  }
+  return language === 'zh'
+    ? `子 Agent 已派发${task}`
+    : `Subagent dispatched${task}`;
+}
+
+function planDispatchInfoFromExecution(
+  execution: ChatToolExecution,
+): PlanDispatchInfo | null {
+  if (!/(^|_)plan$/i.test(execution.name) && execution.name !== 'plan') {
+    return null;
+  }
+  const outputPayload = parseToolOutputJson(execution.output);
+  const payloads = [
+    execution.metadata,
+    asRecord(execution.metadata.plan),
+    asRecord(execution.metadata.result),
+    asRecord(asRecord(execution.metadata.result).plan),
+    outputPayload,
+    asRecord(outputPayload.plan),
+    asRecord(outputPayload.result),
+    asRecord(asRecord(outputPayload.result).plan),
+  ];
+  const advisor = firstRecord(
+    payloads.flatMap((payload) => [
+      asRecord(payload.dispatch_advisor),
+      asRecord(payload.dispatchAdvisor),
+    ]),
+  );
+  const candidateItems = payloads.flatMap((payload) =>
+    arrayRecords(payload.dispatch_candidates ?? payload.dispatchCandidates),
+  );
+  const candidates = candidateItems
+    .map(normalizeWorkerDispatchRecord)
+    .filter((item): item is WorkerDispatchRecommendation => item != null);
+  if (candidates.length === 0) {
+    const legacy = [
+      execution.metadata.recommended_worker_dispatch,
+      execution.metadata.recommendedWorkerDispatch,
+      asRecord(execution.metadata.result).recommended_worker_dispatch,
+      asRecord(execution.metadata.result).recommendedWorkerDispatch,
+      outputPayload.recommended_worker_dispatch,
+      outputPayload.recommendedWorkerDispatch,
+      asRecord(outputPayload.result).recommended_worker_dispatch,
+      asRecord(outputPayload.result).recommendedWorkerDispatch,
+    ].map(asRecord);
+    for (const candidate of legacy) {
+      const normalized = normalizeWorkerDispatchRecord(candidate);
+      if (normalized) {
+        candidates.push(normalized);
+        break;
+      }
+    }
+  }
+  if (Object.keys(advisor).length === 0 && candidates.length === 0) {
+    return null;
+  }
+  return { advisor, candidates };
+}
+
+function firstRecord(values: Record<string, unknown>[]) {
+  return values.find((value) => Object.keys(value).length > 0) ?? {};
+}
+
+function arrayRecords(value: unknown) {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+function groupWorkerDispatchCandidates(candidates: WorkerDispatchRecommendation[]) {
+  const groups = new Map<string, WorkerDispatchRecommendation[]>();
+  candidates.forEach((candidate, index) => {
+    const groupKey = candidate.dispatchGroupId ||
+      (candidate.dispatchGroupNodeIds.length > 1
+        ? candidate.dispatchGroupNodeIds.join('|')
+        : `single-${candidate.planNodeId || candidate.agentName || index}`);
+    groups.set(groupKey, [...(groups.get(groupKey) ?? []), candidate]);
+  });
+  return Array.from(groups.entries()).map(([id, items]) => {
+    const first = items[0];
+    const groupNodes = first?.dispatchGroupNodeIds ?? [];
+    const showLabel =
+      Boolean(first?.dispatchGroupId) ||
+      groupNodes.length > 1 ||
+      items.length > 1 ||
+      first?.executionChannel === 'parallel_writer';
+    const labelParts = [
+      first?.executionChannel === 'parallel_writer' ? 'parallel_writer' : '',
+      first?.dispatchGroupId ? `group: ${first.dispatchGroupId}` : '',
+      groupNodes.length > 0 ? `nodes: ${groupNodes.join(', ')}` : '',
+      items.length > 1 ? `candidates: ${items.length}` : '',
+    ].filter(Boolean);
+    return {
+      id,
+      label: showLabel ? labelParts.join(' · ') : '',
+      items,
+    };
+  });
+}
+
+function summarizeDispatchAdvisor(
+  advisor: Record<string, unknown>,
+  language: AppLanguage,
+) {
+  if (Object.keys(advisor).length === 0) {
+    return '';
+  }
+  const currentNode = asRecord(advisor.current_node ?? advisor.currentNode);
+  const currentNodeText =
+    summarizeAdvisorValue(advisor.current_node ?? advisor.currentNode) ||
+    summarizeAdvisorValue(
+      currentNode.id ?? currentNode.node_id ?? currentNode.title ?? currentNode.name,
+    );
+  const recommendedExecution = nonEmptyString(
+    advisor.recommended_execution ??
+      advisor.recommendedExecution ??
+      currentNode.recommended_execution ??
+      currentNode.recommendedExecution,
+  );
+  const decision = nonEmptyString(
+    advisor.dispatch_decision ??
+      advisor.dispatchDecision ??
+      currentNode.dispatch_decision ??
+      currentNode.dispatchDecision,
+  );
+  const requiresApproval = optionalBoolean(
+    advisor.requires_user_approval ??
+      advisor.requiresUserApproval ??
+      currentNode.requires_user_approval ??
+      currentNode.requiresUserApproval,
+  );
+  const autoPolicy = nonEmptyString(
+    advisor.parent_auto_dispatch_policy ??
+      advisor.parentAutoDispatchPolicy ??
+      currentNode.parent_auto_dispatch_policy ??
+      currentNode.parentAutoDispatchPolicy,
+  );
+  const parts = [
+    currentNodeText
+      ? `${language === 'zh' ? '当前节点' : 'Node'}: ${currentNodeText}`
+      : '',
+    recommendedExecution
+      ? `${language === 'zh' ? '推荐' : 'Recommended'}: ${recommendedExecution}`
+      : '',
+    decision ? `${language === 'zh' ? '决策' : 'Decision'}: ${decision}` : '',
+    requiresApproval === false
+      ? language === 'zh'
+        ? '无需用户审批'
+        : 'No user approval'
+      : '',
+    autoPolicy
+      ? `${language === 'zh' ? '自动策略' : 'Auto policy'}: ${autoPolicy}`
+      : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function summarizeAdvisorValue(value: unknown) {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value).trim();
+  }
+  const record = asRecord(value);
+  if (Object.keys(record).length === 0) {
+    return '';
+  }
+  const label = nonEmptyString(record.label ?? record.title ?? record.name);
+  const id = nonEmptyString(record.id ?? record.node_id ?? record.nodeId);
+  return [id, label && label !== id ? label : ''].filter(Boolean).join(' · ');
+}
+
+function normalizeWorkerDispatchRecord(
+  value: Record<string, unknown>,
+): WorkerDispatchRecommendation | null {
+  if (Object.keys(value).length === 0) {
+    return null;
+  }
+  const agentName = nonEmptyString(
+    value.agent_name ?? value.agentName ?? value.name ?? value.agent,
+  ) ?? '';
+  const runtimeProfile = nonEmptyString(
+    value.runtime_profile ??
+      value.runtimeProfile ??
+      value.agent_profile ??
+      value.agentProfile,
+  ) ?? '';
+  const lane = nonEmptyString(value.lane ?? value.profile_lane ?? value.profileLane) ?? '';
+  const resolvedRuntimeProfile = nonEmptyString(
+    value.resolved_runtime_profile ?? value.resolvedRuntimeProfile,
+  ) ?? '';
+  const expectedHookSet = nonEmptyString(
+    value.expected_hook_set ??
+      value.expectedHookSet ??
+      value.resolved_hook_set ??
+      value.resolvedHookSet,
+  ) ?? '';
+  const workerContractPolicy = nonEmptyString(
+    value.worker_contract_policy ?? value.workerContractPolicy,
+  ) ?? '';
+  const workerContractDefaults = asRecord(
+    value.worker_contract_defaults ?? value.workerContractDefaults,
+  );
+  const dispatchDecision = nonEmptyString(
+    value.dispatch_decision ?? value.dispatchDecision,
+  ) ?? '';
+  const dispatchReady = optionalBoolean(value.dispatch_ready ?? value.dispatchReady);
+  const requiresUserApproval = optionalBoolean(
+    value.requires_user_approval ?? value.requiresUserApproval,
+  );
+  const parentAutoDispatchExpected = optionalBoolean(
+    value.parent_auto_dispatch_expected ?? value.parentAutoDispatchExpected,
+  );
+  const parentAutoDispatchPolicy = nonEmptyString(
+    value.parent_auto_dispatch_policy ?? value.parentAutoDispatchPolicy,
+  ) ?? '';
+  const whyNotParentDirect = nonEmptyString(
+    value.why_not_parent_direct ?? value.whyNotParentDirect,
+  ) ?? '';
+  const whyNotParallelTools = nonEmptyString(
+    value.why_not_parallel_tools ?? value.whyNotParallelTools,
+  ) ?? '';
+  const whyNotSubagent = nonEmptyString(
+    value.why_not_subagent ?? value.whyNotSubagent,
+  ) ?? '';
+  const writeScopeConfidence = nonEmptyString(
+    value.write_scope_confidence ?? value.writeScopeConfidence,
+  ) ?? '';
+  const dispatchGroupId = nonEmptyString(
+    value.dispatch_group_id ?? value.dispatchGroupId,
+  ) ?? '';
+  const dispatchGroupNodeIds = stringArray(
+    value.dispatch_group_node_ids ?? value.dispatchGroupNodeIds,
+  );
+  const executionChannel = nonEmptyString(
+    value.execution_channel ?? value.executionChannel,
+  ) ?? '';
+  const writeScope = stringArray(
+    value.write_scope ??
+      value.writeScope ??
+      value.subagent_write_scope ??
+      value.subagentWriteScope,
+  );
+  const writeLease = asRecord(
+    value.write_lease ??
+      value.writeLease ??
+      value.subagent_write_lease ??
+      value.subagentWriteLease,
+  );
+  const ioManifest = asRecord(value.io_manifest ?? value.ioManifest);
+  const successAssertions = stringArrayLoose(
+    value.success_assertions ?? value.successAssertions,
+  );
+  const assertionResults = normalizeAssertionResults(
+    value.assertion_results ?? value.assertionResults,
+  );
+  const verificationLevel = nonEmptyString(
+    value.verification_level ?? value.verificationLevel,
+  ) ?? '';
+  const planNodeId = nonEmptyString(
+    value.plan_node_id ?? value.planNodeId ?? value.node_id ?? value.nodeId,
+  ) ?? '';
+  const exitCondition = nonEmptyString(
+    value.exit_condition ?? value.exitCondition,
+  ) ?? '';
+  const task = nonEmptyString(
+    value.task ?? value.prompt ?? value.instruction ?? value.title ?? value.summary,
+  ) ?? '';
+  if (!agentName && !runtimeProfile && !lane && !planNodeId && !exitCondition) {
+    return null;
+  }
+  return {
+    agentName,
+    runtimeProfile,
+    resolvedRuntimeProfile,
+    expectedHookSet,
+    workerContractPolicy,
+    workerContractDefaults,
+    dispatchDecision,
+    dispatchReady,
+    requiresUserApproval,
+    parentAutoDispatchExpected,
+    parentAutoDispatchPolicy,
+    whyNotParentDirect,
+    whyNotParallelTools,
+    whyNotSubagent,
+    writeScopeConfidence,
+    dispatchGroupId,
+    dispatchGroupNodeIds,
+    executionChannel,
+    writeScope,
+    writeLease,
+    ioManifest,
+    successAssertions,
+    assertionResults,
+    verificationLevel,
+    lane,
+    planNodeId,
+    exitCondition,
+    task,
+    raw: value,
+  };
+}
+
+function optionalBoolean(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === 'yes') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === 'no') {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+function workerProfileInfoFromExecution(execution: ChatToolExecution) {
+  const metadata = execution.metadata;
+  const outputPayload = parseToolOutputJson(execution.output);
+  const candidate = normalizeWorkerDispatchRecord({
+    agent_name:
+      metadata.agent_name ??
+      metadata.agentName ??
+      metadata.subagent_name ??
+      metadata.subagentName ??
+      outputPayload.agent_name ??
+      outputPayload.agentName,
+    runtime_profile:
+      metadata.runtime_profile ??
+      metadata.runtimeProfile ??
+      metadata.subagent_runtime_profile ??
+      metadata.subagentRuntimeProfile ??
+      outputPayload.runtime_profile ??
+      outputPayload.runtimeProfile,
+    lane:
+      metadata.lane ??
+      metadata.subagent_lane ??
+      metadata.subagentLane ??
+      outputPayload.lane,
+    plan_node_id:
+      metadata.plan_node_id ??
+      metadata.planNodeId ??
+      metadata.subagent_plan_node_id ??
+      metadata.subagentPlanNodeId ??
+      outputPayload.plan_node_id ??
+      outputPayload.planNodeId,
+    exit_condition:
+      metadata.exit_condition ??
+      metadata.exitCondition ??
+      outputPayload.exit_condition ??
+      outputPayload.exitCondition,
+    resolved_runtime_profile:
+      metadata.resolved_runtime_profile ??
+      metadata.resolvedRuntimeProfile ??
+      metadata.subagent_resolved_runtime_profile ??
+      metadata.subagentResolvedRuntimeProfile ??
+      outputPayload.resolved_runtime_profile ??
+      outputPayload.resolvedRuntimeProfile,
+    expected_hook_set:
+      metadata.expected_hook_set ??
+      metadata.expectedHookSet ??
+      metadata.resolved_hook_set ??
+      metadata.resolvedHookSet ??
+      metadata.subagent_resolved_hook_set ??
+      metadata.subagentResolvedHookSet ??
+      outputPayload.expected_hook_set ??
+      outputPayload.expectedHookSet ??
+      outputPayload.resolved_hook_set ??
+      outputPayload.resolvedHookSet,
+    worker_contract_policy:
+      metadata.worker_contract_policy ??
+      metadata.workerContractPolicy ??
+      outputPayload.worker_contract_policy ??
+      outputPayload.workerContractPolicy,
+    worker_contract_defaults:
+      metadata.worker_contract_defaults ??
+      metadata.workerContractDefaults ??
+      outputPayload.worker_contract_defaults ??
+      outputPayload.workerContractDefaults,
+    dispatch_decision:
+      metadata.dispatch_decision ??
+      metadata.dispatchDecision ??
+      outputPayload.dispatch_decision ??
+      outputPayload.dispatchDecision,
+    dispatch_ready:
+      metadata.dispatch_ready ??
+      metadata.dispatchReady ??
+      outputPayload.dispatch_ready ??
+      outputPayload.dispatchReady,
+    write_scope_confidence:
+      metadata.write_scope_confidence ??
+      metadata.writeScopeConfidence ??
+      outputPayload.write_scope_confidence ??
+      outputPayload.writeScopeConfidence,
+    execution_channel:
+      metadata.execution_channel ??
+      metadata.executionChannel ??
+      outputPayload.execution_channel ??
+      outputPayload.executionChannel,
+    write_scope:
+      metadata.write_scope ??
+      metadata.writeScope ??
+      metadata.subagent_write_scope ??
+      metadata.subagentWriteScope ??
+      outputPayload.write_scope ??
+      outputPayload.writeScope,
+    write_lease:
+      metadata.write_lease ??
+      metadata.writeLease ??
+      metadata.subagent_write_lease ??
+      metadata.subagentWriteLease ??
+      outputPayload.write_lease ??
+      outputPayload.writeLease,
+  });
+  if (!candidate) {
+    return '';
+  }
+  const parts = [
+    candidate.agentName ? `agent: ${candidate.agentName}` : '',
+    candidate.dispatchDecision ? `decision: ${candidate.dispatchDecision}` : '',
+    candidate.dispatchReady != null ? `ready: ${candidate.dispatchReady ? 'yes' : 'no'}` : '',
+    candidate.executionChannel ? `channel: ${candidate.executionChannel}` : '',
+    candidate.runtimeProfile ? `profile: ${candidate.runtimeProfile}` : '',
+    candidate.resolvedRuntimeProfile ? `resolved: ${candidate.resolvedRuntimeProfile}` : '',
+    candidate.expectedHookSet ? `hooks: ${candidate.expectedHookSet}` : '',
+    candidate.workerContractPolicy ? `policy: ${candidate.workerContractPolicy}` : '',
+    Object.keys(candidate.workerContractDefaults).length > 0
+      ? `defaults: ${summarizeWorkerContractDefaults(candidate.workerContractDefaults)}`
+      : '',
+    candidate.writeScope.length > 0 ? `scope: ${summarizeWriteScope(candidate.writeScope)}` : '',
+    candidate.writeScopeConfidence ? `scope confidence: ${candidate.writeScopeConfidence}` : '',
+    Object.keys(candidate.writeLease).length > 0
+      ? `lease: ${summarizeWriteLeaseRecord(candidate.writeLease)}`
+      : '',
+    candidate.lane ? `lane: ${candidate.lane}` : '',
+    candidate.planNodeId ? `node: ${candidate.planNodeId}` : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function agentHookSummaryFromMessage(message: ChatMessage) {
+  const metadata = asRecord(message.metadata);
+  const summary = asRecord(
+    metadata.agent_hook_summary ??
+      metadata.agentHookSummary ??
+      metadata.hook_summary ??
+      metadata.hookSummary,
+  );
+  if (Object.keys(summary).length === 0) {
+    return null;
+  }
+  const changedFilesRaw = summary.changed_files ?? summary.changedFiles;
+  const changedFiles = Array.isArray(changedFilesRaw)
+    ? changedFilesRaw.map(String).filter(Boolean)
+    : [];
+  return {
+    changedFiles,
+    verificationRequired: Boolean(
+      summary.verification_required ?? summary.verificationRequired,
+    ),
+    verificationStatus: String(
+      summary.verification_status ?? summary.verificationStatus ?? '',
+    ).trim(),
+    verificationEvidence: summary.verification_evidence ?? summary.verificationEvidence,
+  };
+}
+
+function hookVerificationStatusLabel(
+  status: string,
+  required: boolean,
+  language: AppLanguage,
+) {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === 'satisfied' || normalized === 'verified') {
+    return language === 'zh' ? '验证已满足' : 'verified';
+  }
+  if (normalized === 'attempted_failed' || normalized === 'failed') {
+    return language === 'zh' ? '验证失败' : 'verification failed';
+  }
+  if (normalized === 'attempted' || normalized === 'attempted_unknown') {
+    return language === 'zh' ? '已尝试验证' : 'verification attempted';
+  }
+  if (required) {
+    return language === 'zh' ? '需要验证' : 'verification required';
+  }
+  return language === 'zh' ? '无强制验证' : 'no verification required';
+}
+
 function toolOutputNeedsCollapse(output: string) {
   if (!output.trim()) {
     return false;
@@ -8820,53 +12104,31 @@ function compactToolOutput(output: string) {
   return `${preview.slice(0, 320).trimEnd()}...`;
 }
 
-type DiffLineKind = 'addition' | 'deletion' | 'context' | 'hunk';
-
-type DiffLine = {
-  kind: DiffLineKind;
-  text: string;
-};
-
-type ToolFileChange = {
-  path: string;
-  additions: number;
-  deletions: number;
-  diff: string;
-  lines: DiffLine[];
-};
-
-type ToolChangeReport = {
-  files: ToolFileChange[];
-  additions: number;
-  deletions: number;
-  fileCount: number;
-};
-
-type ConversationChangeReport = ToolChangeReport & {
-  id: string;
-  messageId: string;
-  turnId?: string;
-  createdAt?: string;
-};
-
-type SerializedToolFileChange = {
-  path: string;
-  diff: string;
-  lines: string[];
-};
-
-type ParsedToolFileChange = {
-  files: ToolFileChange[];
-  fallbackAdditions: number;
-  fallbackDeletions: number;
-};
-
-function isToolRunning(execution: ChatToolExecution) {
-  const normalized = execution.state.trim().toLowerCase();
-  return ['using', 'running', 'pending', 'started'].includes(normalized);
+function toolDisplayOutput(
+  execution: ChatToolExecution,
+  envelope: ToolActionEnvelope | null,
+) {
+  if (!envelope || envelope.result == null || envelope.result === '') {
+    return execution.output;
+  }
+  if (typeof envelope.result === 'string') {
+    return envelope.result;
+  }
+  try {
+    return JSON.stringify(envelope.result, null, 2);
+  } catch {
+    return String(envelope.result);
+  }
 }
 
 function isToolFailed(execution: ChatToolExecution) {
+  if (isSubagentDispatchRejectionExecution(execution)) {
+    return false;
+  }
+  const verificationInfo = planVerificationInfoFromExecution(execution);
+  if (verificationInfo?.failed) {
+    return false;
+  }
   const normalized = execution.state.trim().toLowerCase();
   return (
     ['fail', 'failed', 'error'].includes(normalized) ||
@@ -8874,84 +12136,60 @@ function isToolFailed(execution: ChatToolExecution) {
   );
 }
 
-function runningToolLabel(executions: ChatToolExecution[], language: AppLanguage) {
-  const running =
-    executions.find((item) => isToolRunning(item)) ?? executions[executions.length - 1];
-  const summary = running?.summary.trim();
-  const toolNameText = displayToolName(running?.name ?? '');
-  if (!summary) {
-    return language === 'zh' ? `正在运行 ${toolNameText}` : `Running ${toolNameText}`;
+function isToolFailedInContext(execution: ChatToolExecution, active: boolean) {
+  if (!active && isToolRunning(execution)) {
+    return false;
   }
-  return language === 'zh'
-    ? `正在运行 ${toolNameText} ${summary}`
-    : `Running ${toolNameText} ${summary}`;
+  return isToolFailed(execution);
 }
 
-function toolChangeReportFromExecutions(
+type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
+
+function toolExecutionTone(executions: ChatToolExecution[]): ToolExecutionTone {
+  const settled = executions.filter((execution) => !isToolRunning(execution));
+  if (settled.length === 0) {
+    return 'neutral';
+  }
+  const failedCount = settled.filter(isToolFailed).length;
+  if (failedCount > 1 && failedCount / settled.length > 0.5) {
+    return 'danger';
+  }
+  const latestSettled = [...settled].sort(compareToolExecutionOrder).at(-1);
+  if (latestSettled && isToolFailed(latestSettled)) {
+    return 'warning';
+  }
+  return 'neutral';
+}
+
+function toolExecutionToneInContext(
   executions: ChatToolExecution[],
-): ToolChangeReport | null {
-  const relevant = executions.filter(looksLikeFileChangeExecution);
-  if (relevant.length === 0) {
-    return null;
+  active: boolean,
+): ToolExecutionTone {
+  if (active) {
+    return toolExecutionTone(executions);
   }
-  const allFiles: ToolFileChange[] = [];
-  let fallbackAdditions = 0;
-  let fallbackDeletions = 0;
-  for (const execution of relevant) {
-    const parsed = parseToolFileChange(execution);
-    allFiles.push(...parsed.files);
-    fallbackAdditions += parsed.fallbackAdditions;
-    fallbackDeletions += parsed.fallbackDeletions;
+  const failedCount = executions.filter((execution) =>
+    isToolFailedInContext(execution, active),
+  ).length;
+  if (failedCount > 1 && failedCount / executions.length > 0.5) {
+    return 'danger';
   }
-  const files = mergeToolFileChanges(allFiles);
-  const parsedAdditions = files.reduce((sum, file) => sum + file.additions, 0);
-  const parsedDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
-  if (files.length === 0 && fallbackAdditions === 0 && fallbackDeletions === 0) {
-    const running = relevant.some(isToolRunning);
-    if (!running) {
-      return null;
-    }
+  const latest = [...executions].sort(compareToolExecutionOrder).at(-1);
+  if (latest && isToolFailedInContext(latest, active)) {
+    return 'warning';
   }
-  return {
-    files,
-    additions: parsedAdditions > 0 ? parsedAdditions : fallbackAdditions,
-    deletions: parsedDeletions > 0 ? parsedDeletions : fallbackDeletions,
-    fileCount: files.length === 0 ? 1 : files.length,
-  };
-}
-
-function changeReportsFromMessages(messages: ChatMessage[]): ConversationChangeReport[] {
-  return messages.flatMap((message, index) => {
-    const report = toolChangeReportFromExecutions(message.toolExecutions ?? []);
-    if (!report) {
-      return [];
-    }
-    return [
-      {
-        ...report,
-        id: `${message.id || index}:${message.turnId ?? ''}`,
-        messageId: message.id,
-        turnId: message.turnId,
-        createdAt: message.createdAt,
-      },
-    ];
-  });
-}
-
-function serializeToolChangeReport(report: ToolChangeReport): SerializedToolFileChange[] {
-  return report.files
-    .map((file) => ({
-      path: file.path,
-      diff: file.diff || file.lines.map((line) => line.text).join('\n'),
-      lines: file.lines.map((line) => line.text),
-    }))
-    .filter((file) => file.path.trim() && (file.diff.trim() || file.lines.length > 0));
+  return 'neutral';
 }
 
 function conversationProjectDir(conversation?: ConversationSummary | null) {
+  if (conversation?.workspaceContext?.mode === 'task') {
+    return '';
+  }
   return (
     conversation?.projectDir?.trim() ||
-    conversation?.workspaceContext?.projectDir?.trim() ||
+    (conversation?.workspaceContext?.mode === 'project'
+      ? conversation.workspaceContext.projectDir?.trim() || ''
+      : '') ||
     ''
   );
 }
@@ -8966,268 +12204,6 @@ function conversationWorkspaceRoot(conversation?: ConversationSummary | null) {
 
 function changeRootForConversation(conversation?: ConversationSummary | null) {
   return conversationWorkspaceRoot(conversation);
-}
-
-function looksLikeFileChangeExecution(execution: ChatToolExecution) {
-  if (String(execution.metadata.kind ?? '').trim() === 'file_change') {
-    return true;
-  }
-  const name = execution.name.toLowerCase();
-  const text = `${execution.summary}\n${execution.output}`.toLowerCase();
-  return (
-    name.includes('edit_file') ||
-    name.includes('write_file') ||
-    name.includes('apply_patch') ||
-    name.includes('replace_file') ||
-    text.includes('*** update file:') ||
-    text.includes('*** add file:') ||
-    text.includes('*** delete file:') ||
-    text.includes('diff --git ') ||
-    text.includes('\n+++ ') ||
-    text.includes('files changed') ||
-    text.includes('个文件已更改')
-  );
-}
-
-function parseToolFileChange(execution: ChatToolExecution): ParsedToolFileChange {
-  const metadataParsed = parseToolFileChangeMetadata(execution);
-  if (metadataParsed) {
-    return metadataParsed;
-  }
-  const text = `${execution.summary}\n${execution.output}`
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n');
-  const fallback = parseFallbackChangeCounts(text);
-  const files: ToolFileChange[] = [];
-  const holder: { current: MutableToolFileChange | null } = { current: null };
-
-  function flush() {
-    if (holder.current?.hasContent()) {
-      files.push(holder.current.freeze());
-    }
-    holder.current = null;
-  }
-
-  function startFile(rawPath: string) {
-    const path = cleanDiffPath(rawPath);
-    if (!path || path === '/dev/null') {
-      return;
-    }
-    if (holder.current?.path === path) {
-      return;
-    }
-    flush();
-    holder.current = new MutableToolFileChange(path);
-  }
-
-  function ensureFile() {
-    holder.current ??= new MutableToolFileChange(displayToolName(execution.name));
-    return holder.current;
-  }
-
-  const diffHeader = /^diff --git\s+a\/(.*?)\s+b\/(.*?)$/;
-  const patchHeader = /^\*\*\* (?:Update|Add|Delete) File:\s+(.+)$/;
-  const oldHeader = /^---\s+(.+)$/;
-  const newHeader = /^\+\+\+\s+(.+)$/;
-
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trimEnd();
-    const diffMatch = diffHeader.exec(line);
-    if (diffMatch) {
-      startFile(diffMatch[2] || diffMatch[1] || '');
-      continue;
-    }
-    const patchMatch = patchHeader.exec(line);
-    if (patchMatch) {
-      startFile(patchMatch[1] ?? '');
-      continue;
-    }
-    const oldMatch = oldHeader.exec(line);
-    if (oldMatch) {
-      if (!holder.current) {
-        startFile(oldMatch[1] ?? '');
-      }
-      continue;
-    }
-    const newMatch = newHeader.exec(line);
-    if (newMatch) {
-      const path = cleanDiffPath(newMatch[1] ?? '');
-      if (path && path !== '/dev/null') {
-        if (!holder.current || holder.current.path === '/dev/null') {
-          startFile(path);
-        } else {
-          holder.current.path = path;
-        }
-      }
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      const file = ensureFile();
-      file.diffLines.push(line);
-      file.lines.push({ kind: 'hunk', text: line });
-      continue;
-    }
-    if (line.startsWith('+')) {
-      const file = ensureFile();
-      file.additions += 1;
-      file.diffLines.push(line);
-      file.lines.push({ kind: 'addition', text: line });
-      continue;
-    }
-    if (line.startsWith('-')) {
-      const file = ensureFile();
-      file.deletions += 1;
-      file.diffLines.push(line);
-      file.lines.push({ kind: 'deletion', text: line });
-      continue;
-    }
-    if (rawLine.startsWith(' ') && holder.current) {
-      holder.current.diffLines.push(rawLine.trimEnd());
-      holder.current.lines.push({ kind: 'context', text: rawLine.trimEnd() });
-    }
-  }
-  flush();
-  return {
-    files,
-    fallbackAdditions: fallback.additions,
-    fallbackDeletions: fallback.deletions,
-  };
-}
-
-function parseToolFileChangeMetadata(
-  execution: ChatToolExecution,
-): ParsedToolFileChange | null {
-  const metadata = execution.metadata;
-  if (String(metadata.kind ?? '').trim() !== 'file_change') {
-    return null;
-  }
-  const filesRaw = Array.isArray(metadata.files) ? metadata.files : [];
-  const files: ToolFileChange[] = [];
-  for (const rawFile of filesRaw) {
-    const fileMap = asRecord(rawFile);
-    const path = cleanDiffPath(String(fileMap.path ?? ''));
-    if (!path) {
-      continue;
-    }
-    let additions = metadataInt(fileMap.additions);
-    let deletions = metadataInt(fileMap.deletions);
-    const lines = diffLinesFromText(String(fileMap.diff ?? ''));
-    if (additions === 0 && deletions === 0 && lines.length > 0) {
-      additions = lines.filter((line) => line.kind === 'addition').length;
-      deletions = lines.filter((line) => line.kind === 'deletion').length;
-    }
-    files.push({
-      path,
-      additions,
-      deletions,
-      diff: normalizeDiffText(String(fileMap.diff ?? '')),
-      lines,
-    });
-  }
-  return {
-    files,
-    fallbackAdditions: metadataInt(metadata.additions),
-    fallbackDeletions: metadataInt(metadata.deletions),
-  };
-}
-
-function diffLinesFromText(diff: string): DiffLine[] {
-  const lines: DiffLine[] = [];
-  for (const rawLine of diff.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')) {
-    const line = rawLine.trimEnd();
-    if (!line || line.startsWith('+++') || line.startsWith('---')) {
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      lines.push({ kind: 'hunk', text: line });
-    } else if (line.startsWith('+')) {
-      lines.push({ kind: 'addition', text: line });
-    } else if (line.startsWith('-')) {
-      lines.push({ kind: 'deletion', text: line });
-    } else if (line.startsWith(' ')) {
-      lines.push({ kind: 'context', text: line });
-    }
-  }
-  return lines;
-}
-
-function normalizeDiffText(diff: string) {
-  return diff.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd();
-}
-
-class MutableToolFileChange {
-  path: string;
-  additions = 0;
-  deletions = 0;
-  diffLines: string[] = [];
-  lines: DiffLine[] = [];
-
-  constructor(path: string) {
-    this.path = path;
-  }
-
-  hasContent() {
-    return this.additions > 0 || this.deletions > 0 || this.lines.length > 0;
-  }
-
-  freeze(): ToolFileChange {
-    return {
-      path: this.path,
-      additions: this.additions,
-      deletions: this.deletions,
-      diff: normalizeDiffText(this.diffLines.join('\n')),
-      lines: [...this.lines],
-    };
-  }
-}
-
-function mergeToolFileChanges(files: ToolFileChange[]) {
-  const byPath = new Map<string, MutableToolFileChange>();
-  for (const file of files) {
-    let target = byPath.get(file.path);
-    if (!target) {
-      target = new MutableToolFileChange(file.path);
-      byPath.set(file.path, target);
-    }
-    target.additions += file.additions;
-    target.deletions += file.deletions;
-    if (file.diff.trim()) {
-      target.diffLines.push(file.diff.trimEnd());
-    }
-    target.lines.push(...file.lines);
-  }
-  return [...byPath.values()].map((item) => item.freeze());
-}
-
-function parseFallbackChangeCounts(text: string) {
-  const compact = /\+(\d+)\s+-([0-9]+)/.exec(text);
-  if (compact) {
-    return {
-      additions: Number.parseInt(compact[1] ?? '', 10) || 0,
-      deletions: Number.parseInt(compact[2] ?? '', 10) || 0,
-    };
-  }
-  const insertions = /(\d+)\s+insertions?\(\+\)/.exec(text);
-  const deletions = /(\d+)\s+deletions?\(-\)/.exec(text);
-  return {
-    additions: Number.parseInt(insertions?.[1] ?? '', 10) || 0,
-    deletions: Number.parseInt(deletions?.[1] ?? '', 10) || 0,
-  };
-}
-
-function cleanDiffPath(raw: string) {
-  let pathValue = raw.trim();
-  const tabIndex = pathValue.indexOf('\t');
-  if (tabIndex >= 0) {
-    pathValue = pathValue.slice(0, tabIndex);
-  }
-  if (pathValue.startsWith('"') && pathValue.endsWith('"') && pathValue.length > 1) {
-    pathValue = pathValue.slice(1, -1);
-  }
-  if (pathValue.startsWith('a/') || pathValue.startsWith('b/')) {
-    pathValue = pathValue.slice(2);
-  }
-  return pathValue.trim();
 }
 
 function metadataInt(value: unknown) {
@@ -9671,20 +12647,22 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function displayToolName(value: string) {
-  let text = value.trim();
+function displayableRuntimeLastError(value: unknown) {
+  const text = String(value ?? '').trim();
   if (!text) {
-    return 'Tool';
+    return '';
   }
-  for (const separator of [':', '.', '/']) {
-    if (text.includes(separator)) {
-      text = text.split(separator).pop() ?? text;
-    }
-  }
-  if (text === 'shell_command' || text === 'terminal_exec') {
-    return 'Shell';
+  if (
+    /Client error '404 Not Found'/i.test(text) &&
+    /\/v1\/turns\/[^/\s]+\/stop/i.test(text)
+  ) {
+    return '';
   }
   return text;
+}
+
+function optionalDisplayText(value: unknown) {
+  return String(value ?? '').trim();
 }
 
 function formatDuration(durationMs: number) {
@@ -9700,27 +12678,86 @@ function formatDuration(durationMs: number) {
 function assistantProgressLabel({
   executions,
   isActive,
-  messageCreatedAt,
+  message,
   now,
   language,
 }: {
   executions: ChatToolExecution[];
   isActive: boolean;
-  messageCreatedAt?: string;
+  message: ChatMessage;
   now: number;
   language: AppLanguage;
 }) {
-  const parsedCreatedAt = Date.parse(messageCreatedAt || new Date(now).toISOString());
-  const elapsedMs = isActive
-    ? Number.isFinite(parsedCreatedAt)
-      ? Math.max(0, now - parsedCreatedAt)
-      : 0
-    : executions.reduce((total, execution) => total + Math.max(0, execution.durationMs), 0);
+  const elapsedMs = assistantTurnElapsedMs(message, executions, isActive, now);
   const duration = formatCompactDuration(elapsedMs);
   if (language === 'zh') {
     return duration ? `已处理 ${duration}` : '已处理';
   }
   return duration ? `Processed ${duration}` : 'Processed';
+}
+
+function assistantTurnElapsedMs(
+  message: ChatMessage,
+  executions: ChatToolExecution[],
+  isActive: boolean,
+  now: number,
+) {
+  const metadata = message.metadata ?? {};
+  const startedAt = earliestTimestamp([
+    metadata.cardbush_turn_started_at,
+    metadata.turn_started_at,
+    metadata.started_at,
+    message.createdAt,
+    ...executions.map((execution) => execution.createdAt),
+  ]);
+  if (isActive) {
+    return startedAt == null ? 0 : Math.max(0, now - startedAt);
+  }
+  const completedAt = latestTimestamp([
+    metadata.cardbush_turn_completed_at,
+    metadata.completed_at,
+    metadata.done_at,
+    metadata.finished_at,
+    message.createdAt,
+    ...executions.map((execution) => toolExecutionFinishedAt(execution)),
+  ]);
+  if (startedAt != null && completedAt != null && completedAt >= startedAt) {
+    return completedAt - startedAt;
+  }
+  return executions.reduce((total, execution) => total + Math.max(0, execution.durationMs), 0);
+}
+
+function toolExecutionFinishedAt(execution: ChatToolExecution) {
+  const startedAt = parseTimestamp(execution.createdAt);
+  if (startedAt == null) {
+    return undefined;
+  }
+  return startedAt + Math.max(0, execution.durationMs);
+}
+
+function earliestTimestamp(values: unknown[]) {
+  const timestamps = values
+    .map(parseTimestamp)
+    .filter((value): value is number => value != null);
+  return timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+}
+
+function latestTimestamp(values: unknown[]) {
+  const timestamps = values
+    .map(parseTimestamp)
+    .filter((value): value is number => value != null);
+  return timestamps.length > 0 ? Math.max(...timestamps) : undefined;
+}
+
+function parseTimestamp(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function formatCompactDuration(durationMs: number) {
@@ -10325,55 +13362,6 @@ function ImagePreviewDialog({
   );
 }
 
-function splitMessageImages(content: string) {
-  const imagePaths: string[] = [];
-  const textLines: string[] = [];
-  for (const line of content.split(/\r?\n/)) {
-    const pathValue = imagePathFromMessageLine(line);
-    if (pathValue) {
-      imagePaths.push(pathValue);
-    } else {
-      textLines.push(line);
-    }
-  }
-  return {
-    imagePaths,
-    text: textLines.join('\n').trim(),
-  };
-}
-
-function imagePathFromMessageLine(value: string) {
-  const trimmed = value.trim();
-  const pathValue = stripWrappingQuotes(
-    trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed,
-  );
-  if (!isAbsoluteLocalPath(pathValue) && !/^file:\/\//i.test(pathValue)) {
-    return '';
-  }
-  return isImagePath(pathValue) ? pathValue : '';
-}
-
-function stripWrappingQuotes(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.length < 2) {
-    return trimmed;
-  }
-  const first = trimmed[0];
-  const last = trimmed[trimmed.length - 1];
-  if (
-    (first === '"' && last === '"') ||
-    (first === "'" && last === "'") ||
-    (first === '`' && last === '`')
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-function isAbsoluteLocalPath(value: string) {
-  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
-}
-
 function MarkdownContent({ content }: { content: string }) {
   return (
     <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
@@ -10392,12 +13380,17 @@ function Composer({
   queuedMessagePreview = '',
   selectedModel,
   availableModels,
-  hideCardbushForScreenshot,
+  selectedRuntimeProfile,
+  runtimeProfiles,
+  referencePlanMode,
   onModelChange,
+  onRuntimeProfileChange,
+  onReferencePlanModeChange,
   onSend,
   onCancel,
   messages = [],
   skills = [],
+  disabledSkillNames,
   activeProjectDir,
   projectContext = '',
   onQuickLoad,
@@ -10405,6 +13398,7 @@ function Composer({
   onConfigureModels,
   onCreateConversation,
   onOpenTerminalConsole,
+  onToggleSkill,
 }: {
   compact?: boolean;
   language: AppLanguage;
@@ -10415,12 +13409,17 @@ function Composer({
   queuedMessagePreview?: string;
   selectedModel: string;
   availableModels: string[];
-  hideCardbushForScreenshot: boolean;
+  selectedRuntimeProfile: string;
+  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanMode: ReferencePlanMode;
   onModelChange: (value: string) => void;
+  onRuntimeProfileChange: (value: string) => void;
+  onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
   messages?: ChatMessage[];
   skills?: SkillSummary[];
+  disabledSkillNames: Set<string>;
   activeProjectDir?: string;
   projectContext?: string;
   onQuickLoad?: (payload: QuickLoadPayload) => void;
@@ -10428,21 +13427,16 @@ function Composer({
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onOpenTerminalConsole?: () => void;
+  onToggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
-  const [hideForScreenshot, setHideForScreenshot] = useState(
-    hideCardbushForScreenshot,
-  );
-  const [screenshotBusy, setScreenshotBusy] = useState(false);
-  const [screenshotError, setScreenshotError] = useState('');
-  const [editingScreenshot, setEditingScreenshot] =
-    useState<ScreenshotCaptureResult | null>(null);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
+  const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [mentionFileResults, setMentionFileResults] = useState<ProjectFileSearchResult[]>([]);
   const [mentionSearchBusy, setMentionSearchBusy] = useState(false);
   const hasContent = draft.trim().length > 0 || imageAttachments.length > 0;
@@ -10466,10 +13460,6 @@ function Composer({
   }, []);
 
   useEffect(() => {
-    setHideForScreenshot(hideCardbushForScreenshot);
-  }, [hideCardbushForScreenshot]);
-
-  useEffect(() => {
     resizeComposerTextarea();
   }, [compact, draft, imageAttachments.length, resizeComposerTextarea]);
 
@@ -10478,6 +13468,34 @@ function Composer({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [resizeComposerTextarea]);
+
+  const updatePopoverMaxHeight = useCallback(() => {
+    const host = composerStackRef.current;
+    if (!host) {
+      return;
+    }
+    const rect = host.getBoundingClientRect();
+    const topInset = 52;
+    const gap = 12;
+    const availableAbove = Math.max(120, Math.floor(rect.top - topInset - gap));
+    setPopoverMaxHeight(Math.min(520, availableAbove));
+  }, []);
+
+  useEffect(() => {
+    if (!activeMenu && !commandState) {
+      return undefined;
+    }
+    updatePopoverMaxHeight();
+    const handleResize = () => updatePopoverMaxHeight();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [
+    activeMenu,
+    commandState,
+    draft,
+    imageAttachments.length,
+    updatePopoverMaxHeight,
+  ]);
 
   async function submit() {
     if (sending && !hasContent) {
@@ -10504,48 +13522,6 @@ function Composer({
     setActiveMenu(null);
     setCommandState(null);
   }
-
-  const captureScreenshot = useCallback(async (options?: { forceHideWindow?: boolean }) => {
-    if (screenshotBusy) {
-      return;
-    }
-    if (!window.cardbushDesktop?.captureScreenshot) {
-      setScreenshotError(
-        language === 'zh'
-          ? '当前环境没有 Electron 截图接口'
-          : 'Screenshot API is not available in this runtime',
-      );
-      return;
-    }
-    setScreenshotBusy(true);
-    setScreenshotError('');
-    setActiveMenu(null);
-    setCommandState(null);
-    try {
-      const screenshot = await window.cardbushDesktop.captureScreenshot({
-        hideWindow: options?.forceHideWindow ?? hideForScreenshot,
-      });
-      setEditingScreenshot(screenshot);
-    } catch (error) {
-      setScreenshotError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setScreenshotBusy(false);
-    }
-  }, [draft, hideForScreenshot, language, onDraftChange, screenshotBusy]);
-
-  useEffect(() => {
-    return window.cardbushDesktop?.onScreenshotShortcut?.(() => {
-      void captureScreenshot({ forceHideWindow: true });
-    });
-  }, [captureScreenshot]);
-
-  useEffect(() => {
-    document.body.classList.toggle(
-      'screenshot-tool-active',
-      screenshotBusy || editingScreenshot != null,
-    );
-    return () => document.body.classList.remove('screenshot-tool-active');
-  }, [editingScreenshot, screenshotBusy]);
 
   useEffect(() => {
     if (!activeMenu) {
@@ -10664,10 +13640,6 @@ function Composer({
     }
   }
 
-  function insertScreenshotPath(path: string) {
-    setImageAttachments((current) => [...current, imageAttachmentFromPath(path)]);
-  }
-
   async function pasteImages(event: React.ClipboardEvent<HTMLDivElement>) {
     const files = [...event.clipboardData.files].filter((file) =>
       file.type.startsWith('image/'),
@@ -10676,19 +13648,14 @@ function Composer({
       return;
     }
     event.preventDefault();
-    if (!window.cardbushDesktop?.saveScreenshotDataUrl) {
-      setScreenshotError(
-        language === 'zh'
-          ? '当前环境无法保存剪贴板图片'
-          : 'Cannot save clipboard images in this runtime',
-      );
+    if (!window.cardbushDesktop?.saveImageDataUrl) {
       return;
     }
     try {
       const saved = await Promise.all(
         files.map(async (file) => {
           const dataUrl = await readFileAsDataUrl(file);
-          const result = await window.cardbushDesktop!.saveScreenshotDataUrl(
+          const result = await window.cardbushDesktop!.saveImageDataUrl(
             dataUrl,
             file.name || 'cardbush-paste',
           );
@@ -10701,14 +13668,18 @@ function Composer({
         }),
       );
       setImageAttachments((current) => [...current, ...saved]);
-      setScreenshotError('');
     } catch (caught) {
-      setScreenshotError(caught instanceof Error ? caught.message : String(caught));
+      console.warn(caught);
     }
   }
 
   function selectModel(model: string) {
     onModelChange(model);
+    setActiveMenu(null);
+  }
+
+  function selectRuntimeProfile(profileId: string) {
+    onRuntimeProfileChange(profileId);
     setActiveMenu(null);
   }
 
@@ -10859,7 +13830,7 @@ function Composer({
             language === 'zh'
               ? '查看子代理配置和可用场景'
               : 'Review subagent profiles and use cases',
-          icon: <Bot size={16} />,
+          icon: <Network size={16} />,
           value:
             language === 'zh'
               ? '请帮我查看当前项目适合使用哪些子代理，并说明它们各自的使用场景。'
@@ -10872,7 +13843,7 @@ function Composer({
             language === 'zh'
               ? 'CLI 同款：管理子代理配置'
               : 'CLI parity: manage subagent profiles',
-          icon: <Bot size={16} />,
+          icon: <Network size={16} />,
           value:
             language === 'zh'
               ? '请帮我梳理当前可用的子代理配置，并给出推荐的启用策略。'
@@ -10885,7 +13856,7 @@ function Composer({
             language === 'zh'
               ? 'CLI 同款：切换子代理；GUI 暂以对话方式确认'
               : 'CLI parity: toggle subagents; confirm through chat in the GUI',
-          icon: <Bot size={16} />,
+          icon: <Network size={16} />,
           value: '/subagent ',
         },
         {
@@ -10897,16 +13868,6 @@ function Composer({
               : 'Open Git branch list',
           icon: <GitBranch size={16} />,
           run: () => setActiveMenu('git'),
-        },
-        {
-          id: '/screenshot',
-          title: '/screenshot',
-          subtitle:
-            language === 'zh'
-              ? '启动截图并作为图片附件'
-              : 'Capture a screenshot and attach it',
-          icon: <Image size={16} />,
-          run: () => void captureScreenshot(),
         },
         {
           id: '/attach',
@@ -10932,7 +13893,6 @@ function Composer({
     },
     [
       availableModels,
-      captureScreenshot,
       language,
       onConfigureModels,
       onCreateConversation,
@@ -11028,6 +13988,18 @@ function Composer({
   const modelLabel =
     selectedModel.trim() ||
     (language === 'zh' ? '待配置' : 'Configure');
+  const runtimeProfileLabel = runtimeProfileDisplayName(
+    selectedRuntimeProfile,
+    runtimeProfiles,
+    language,
+  );
+  const referencePlanEnabled = referencePlanMode === 'auto';
+  const referencePlanLabel =
+    language === 'zh' ? '复杂任务计划书' : 'Reference plan';
+  const referencePlanDescription =
+    language === 'zh'
+      ? '开启后，复杂任务会让模型判断是否先生成 PLAN.md；可能增加一点耗时。'
+      : 'When enabled, complex tasks let the model decide whether to generate PLAN.md first; this may take a little longer.';
   const queueLabel =
     queuedMessageCount > 0
       ? language === 'zh'
@@ -11039,7 +14011,15 @@ function Composer({
     : queueLabel;
 
   return (
-    <div className={`composer-stack ${compact ? 'compact' : ''}`} ref={composerStackRef}>
+    <div
+      className={`composer-stack ${compact ? 'compact' : ''}`}
+      ref={composerStackRef}
+      style={
+        {
+          '--composer-popover-max-height': `${popoverMaxHeight}px`,
+        } as CSSProperties
+      }
+    >
       {commandState && (
         <ComposerCommandPalette
           language={language}
@@ -11051,40 +14031,26 @@ function Composer({
           onSelect={(item) => applyCommand(item)}
         />
       )}
-      {screenshotBusy && !editingScreenshot && (
-        <ScreenshotCaptureBackdrop language={language} />
-      )}
       {activeMenu && (
         <ComposerPopover
           menu={activeMenu}
           language={language}
           messages={messages}
           skills={skills}
-            selectedModel={selectedModel}
-            availableModels={availableModels}
-            activeProjectDir={activeProjectDir}
+          disabledSkillNames={disabledSkillNames}
+          selectedModel={selectedModel}
+          availableModels={availableModels}
+          selectedRuntimeProfile={selectedRuntimeProfile}
+          runtimeProfiles={runtimeProfiles}
+          activeProjectDir={activeProjectDir}
           projectContext={projectContext}
-          hideForScreenshot={hideForScreenshot}
-          onHideForScreenshotChange={setHideForScreenshot}
-          screenshotBusy={screenshotBusy}
-          screenshotError={screenshotError}
           onLoad={loadPayload}
-          onCaptureScreenshot={captureScreenshot}
+          onToggleSkill={onToggleSkill}
           onSaveProjectContext={onSaveProjectContext}
           onSelectModel={selectModel}
+          onSelectRuntimeProfile={selectRuntimeProfile}
           onConfigureModels={onConfigureModels}
           onClose={() => setActiveMenu(null)}
-        />
-      )}
-      {editingScreenshot && (
-        <ScreenshotEditorDialog
-          language={language}
-          screenshot={editingScreenshot}
-          onCancel={() => setEditingScreenshot(null)}
-          onComplete={(savedPath) => {
-            insertScreenshotPath(savedPath);
-            setEditingScreenshot(null);
-          }}
         />
       )}
       {previewImage && (
@@ -11239,25 +14205,52 @@ function Composer({
               onClick={() => void pickAttachments()}
             />
             <ToolChip
-              icon={<Image size={15} />}
-              label={language === 'zh' ? '截图 Alt+Q' : 'Screenshot'}
-              active={activeMenu === 'screenshot'}
-              menuTrigger
-              onClick={() => toggleMenu('screenshot')}
-            />
-            <ToolChip
               icon={<Puzzle size={15} />}
               label="Skills"
               active={activeMenu === 'skills'}
               menuTrigger
               onClick={() => toggleMenu('skills')}
             />
+            <button
+              className={`reference-plan-toggle ${referencePlanEnabled ? 'active' : ''}`}
+              type="button"
+              title={referencePlanDescription}
+              aria-pressed={referencePlanEnabled}
+              onClick={() => {
+                setActiveMenu(null);
+                setCommandState(null);
+                onReferencePlanModeChange(referencePlanEnabled ? 'off' : 'auto');
+              }}
+            >
+              {referencePlanEnabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+              <span>{referencePlanLabel}</span>
+            </button>
           </div>
           <div className="composer-actions">
+            <button
+              className="model-select runtime-profile-select"
+              type="button"
+              data-composer-menu-trigger="true"
+              title={
+                language === 'zh'
+                  ? `运行模式：${runtimeProfileLabel}`
+                  : `Runtime: ${runtimeProfileLabel}`
+              }
+              onClick={() => toggleMenu('runtime')}
+            >
+              <Cpu size={14} />
+              <span>{runtimeProfileLabel}</span>
+              <ChevronDown size={15} />
+            </button>
             <button
               className="model-select"
               type="button"
               data-composer-menu-trigger="true"
+              title={
+                language === 'zh'
+                  ? `模型：${modelLabel}`
+                  : `Model: ${modelLabel}`
+              }
               onClick={() => {
                 if (!hasConfiguredModels) {
                   onConfigureModels();
@@ -11266,7 +14259,7 @@ function Composer({
                 toggleMenu('models');
               }}
             >
-              {modelLabel}
+              <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
             <button
@@ -11484,385 +14477,23 @@ function detectComposerCommand(
   };
 }
 
-function ScreenshotCaptureBackdrop({ language }: { language: AppLanguage }) {
-  return (
-    <div className="screenshot-capture-backdrop">
-      <section className="screenshot-capture-card">
-        <LoaderCircle size={22} />
-        <span>
-          {language === 'zh' ? '正在启动截图工具...' : 'Opening screenshot tool...'}
-        </span>
-      </section>
-    </div>
-  );
-}
-
-function ScreenshotEditorDialog({
-  language,
-  screenshot,
-  onCancel,
-  onComplete,
-}: {
-  language: AppLanguage;
-  screenshot: ScreenshotCaptureResult;
-  onCancel: () => void;
-  onComplete: (path: string) => void;
-}) {
-  const imageRef = useRef<HTMLImageElement>(null);
-  const shellRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<
-    | { kind: 'select'; start: { x: number; y: number } }
-    | { kind: 'draw'; index: number }
-    | null
-  >(null);
-  const [active, setActive] = useState<ScreenshotCaptureResult | ScreenshotWindowSource>(
-    screenshot,
-  );
-  const [selection, setSelection] = useState<ScreenshotSelection | null>(null);
-  const [mode, setMode] = useState<'select' | 'draw'>('select');
-  const [strokes, setStrokes] = useState<ScreenshotStroke[]>([]);
-  const [overlayStyle, setOverlayStyle] = useState<CSSProperties>({});
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const sourceDataUrl = active.dataUrl || fileUrl(active.path);
-
-  useEffect(() => {
-    setActive(screenshot);
-    setSelection(null);
-    setStrokes([]);
-    setMode('select');
-    setError('');
-  }, [screenshot]);
-
-  const updateOverlayBounds = useCallback(() => {
-    const image = imageRef.current;
-    const shell = shellRef.current;
-    if (!image || !shell) {
-      return;
-    }
-    const imageRect = image.getBoundingClientRect();
-    const shellRect = shell.getBoundingClientRect();
-    setOverlayStyle({
-      left: imageRect.left - shellRect.left + shell.scrollLeft,
-      top: imageRect.top - shellRect.top + shell.scrollTop,
-      width: imageRect.width,
-      height: imageRect.height,
-    });
-  }, []);
-
-  useEffect(() => {
-    const image = imageRef.current;
-    if (!image) {
-      return undefined;
-    }
-    const observer = new ResizeObserver(updateOverlayBounds);
-    observer.observe(image);
-    updateOverlayBounds();
-    window.addEventListener('resize', updateOverlayBounds);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', updateOverlayBounds);
-    };
-  }, [active, updateOverlayBounds]);
-
-  function pointFromEvent(event: React.PointerEvent<HTMLElement>) {
-    const image = imageRef.current;
-    if (!image) {
-      return { x: 0, y: 0 };
-    }
-    const rect = image.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * active.width;
-    const y = ((event.clientY - rect.top) / rect.height) * active.height;
-    return {
-      x: Math.max(0, Math.min(active.width, x)),
-      y: Math.max(0, Math.min(active.height, y)),
-    };
-  }
-
-  function beginEdit(event: React.PointerEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const point = pointFromEvent(event);
-    if (mode === 'draw') {
-      const index = strokes.length;
-      dragRef.current = { kind: 'draw', index };
-      setStrokes((current) => [...current, [point]]);
-      event.currentTarget.setPointerCapture(event.pointerId);
-      return;
-    }
-    dragRef.current = { kind: 'select', start: point };
-    setSelection({ x: point.x, y: point.y, width: 0, height: 0 });
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function continueEdit(event: React.PointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current;
-    if (!drag) {
-      return;
-    }
-    const point = pointFromEvent(event);
-    if (drag.kind === 'draw') {
-      setStrokes((current) =>
-        current.map((stroke, index) =>
-          index === drag.index ? [...stroke, point] : stroke,
-        ),
-      );
-      return;
-    }
-    setSelection(normalizeSelection(drag.start, point));
-  }
-
-  function finishEdit(event: React.PointerEvent<HTMLDivElement>) {
-    if (!dragRef.current) {
-      return;
-    }
-    dragRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  }
-
-  async function saveEdited() {
-    setSaving(true);
-    setError('');
-    try {
-      const dataUrl = await renderEditedScreenshot(sourceDataUrl, active, selection, strokes);
-      const saved = await window.cardbushDesktop?.saveScreenshotDataUrl?.(
-        dataUrl,
-        'cardbush-screenshot-edited',
-      );
-      onComplete(saved?.path ?? active.path);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="modal-backdrop screenshot-editor-backdrop">
-      <section className="screenshot-editor">
-        <header>
-          <Image size={18} />
-          <strong>{language === 'zh' ? '编辑截图' : 'Edit screenshot'}</strong>
-          <button type="button" onClick={onCancel}>
-            <X size={16} />
-          </button>
-        </header>
-        <div className="screenshot-editor-body">
-          <aside className="screenshot-editor-tools">
-            <button
-              className={mode === 'select' ? 'active' : ''}
-              type="button"
-              onClick={() => setMode('select')}
-            >
-              <Image size={15} />
-              {language === 'zh' ? '框选裁剪' : 'Crop'}
-            </button>
-            <button
-              className={mode === 'draw' ? 'active' : ''}
-              type="button"
-              onClick={() => setMode('draw')}
-            >
-              <Edit3 size={15} />
-              {language === 'zh' ? '标注' : 'Draw'}
-            </button>
-            <button type="button" onClick={() => setSelection(null)}>
-              <RotateCcw size={15} />
-              {language === 'zh' ? '全图' : 'Full image'}
-            </button>
-            <button type="button" onClick={() => setStrokes([])}>
-              <Trash2 size={15} />
-              {language === 'zh' ? '清除标注' : 'Clear marks'}
-            </button>
-            {screenshot.windows && screenshot.windows.length > 0 && (
-              <div className="window-source-list">
-                <span>{language === 'zh' ? '识别到的窗口' : 'Detected windows'}</span>
-                {screenshot.windows.map((source) => (
-                  <button
-                    type="button"
-                    key={source.id}
-                    className={active.path === source.path ? 'active' : ''}
-                    onClick={() => {
-                      setActive(source);
-                      setSelection(null);
-                      setStrokes([]);
-                    }}
-                  >
-                    <Monitor size={14} />
-                    <span>{source.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </aside>
-          <div
-            ref={shellRef}
-            className={`screenshot-canvas-shell ${mode}`}
-            onPointerDown={beginEdit}
-            onPointerMove={continueEdit}
-            onPointerUp={finishEdit}
-            onPointerCancel={finishEdit}
-          >
-            <img
-              ref={imageRef}
-              src={sourceDataUrl}
-              alt=""
-              draggable={false}
-              onLoad={updateOverlayBounds}
-            />
-            <ScreenshotSvgOverlay
-              active={active}
-              selection={selection}
-              strokes={strokes}
-              style={overlayStyle}
-            />
-          </div>
-        </div>
-        <footer>
-          <p>
-            {language === 'zh'
-              ? '拖拽可自由框选；从左侧窗口列表可快速使用识别到的窗口截图。'
-              : 'Drag to select a crop; choose a detected window from the left.'}
-          </p>
-          {error && <span className="popover-error">{error}</span>}
-          <button type="button" onClick={onCancel}>
-            {language === 'zh' ? '取消' : 'Cancel'}
-          </button>
-          <button className="primary-button" type="button" onClick={() => void saveEdited()} disabled={saving}>
-            {saving ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
-            {language === 'zh' ? '完成并插入' : 'Save and insert'}
-          </button>
-        </footer>
-      </section>
-    </div>
-  );
-}
-
-function ScreenshotSvgOverlay({
-  active,
-  selection,
-  strokes,
-  style,
-}: {
-  active: { width: number; height: number };
-  selection: ScreenshotSelection | null;
-  strokes: ScreenshotStroke[];
-  style: CSSProperties;
-}) {
-  return (
-    <svg style={style} viewBox={`0 0 ${active.width} ${active.height}`} preserveAspectRatio="none">
-      {selection && selection.width > 2 && selection.height > 2 && (
-        <>
-          <rect className="screenshot-mask" x="0" y="0" width={active.width} height={active.height} />
-          <rect
-            className="screenshot-selection"
-            x={selection.x}
-            y={selection.y}
-            width={selection.width}
-            height={selection.height}
-          />
-        </>
-      )}
-      {strokes.map((stroke, index) => (
-        <polyline
-          // eslint-disable-next-line react/no-array-index-key
-          key={index}
-          className="screenshot-stroke"
-          points={stroke.map((point) => `${point.x},${point.y}`).join(' ')}
-        />
-      ))}
-    </svg>
-  );
-}
-
-function normalizeSelection(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-): ScreenshotSelection {
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
-  return {
-    x,
-    y,
-    width: Math.abs(end.x - start.x),
-    height: Math.abs(end.y - start.y),
-  };
-}
-
-async function renderEditedScreenshot(
-  source: string,
-  active: { width: number; height: number },
-  selection: ScreenshotSelection | null,
-  strokes: ScreenshotStroke[],
-) {
-  const image = await loadImage(source);
-  const crop =
-    selection && selection.width > 2 && selection.height > 2
-      ? selection
-      : { x: 0, y: 0, width: active.width, height: active.height };
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(crop.width));
-  canvas.height = Math.max(1, Math.round(crop.height));
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Canvas is not available');
-  }
-  context.drawImage(
-    image,
-    crop.x,
-    crop.y,
-    crop.width,
-    crop.height,
-    0,
-    0,
-    canvas.width,
-    canvas.height,
-  );
-  context.lineWidth = Math.max(2, Math.round(Math.min(canvas.width, canvas.height) / 180));
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
-  context.strokeStyle = '#ff5d5d';
-  for (const stroke of strokes) {
-    const visible = stroke
-      .map((point) => ({ x: point.x - crop.x, y: point.y - crop.y }))
-      .filter((point) => point.x >= 0 && point.y >= 0 && point.x <= crop.width && point.y <= crop.height);
-    if (visible.length < 2) {
-      continue;
-    }
-    context.beginPath();
-    context.moveTo(visible[0].x, visible[0].y);
-    for (const point of visible.slice(1)) {
-      context.lineTo(point.x, point.y);
-    }
-    context.stroke();
-  }
-  return canvas.toDataURL('image/png');
-}
-
-function loadImage(source: string) {
-  return new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new window.Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Screenshot image failed to load'));
-    image.src = source;
-  });
-}
-
 function ComposerPopover({
   menu,
   language,
   messages,
   skills,
+  disabledSkillNames,
   selectedModel,
   availableModels,
+  selectedRuntimeProfile,
+  runtimeProfiles,
   activeProjectDir,
   projectContext,
-  hideForScreenshot,
-  onHideForScreenshotChange,
-  screenshotBusy,
-  screenshotError,
   onLoad,
-  onCaptureScreenshot,
+  onToggleSkill,
   onSaveProjectContext,
   onSelectModel,
+  onSelectRuntimeProfile,
   onConfigureModels,
   onClose,
 }: {
@@ -11870,18 +14501,18 @@ function ComposerPopover({
   language: AppLanguage;
   messages: ChatMessage[];
   skills: SkillSummary[];
+  disabledSkillNames: Set<string>;
   selectedModel: string;
   availableModels: string[];
+  selectedRuntimeProfile: string;
+  runtimeProfiles: RuntimeProfileSummary[];
   activeProjectDir?: string;
   projectContext: string;
-  hideForScreenshot: boolean;
-  onHideForScreenshotChange: (value: boolean) => void;
-  screenshotBusy: boolean;
-  screenshotError: string;
   onLoad: (payload: QuickLoadPayload) => void;
-  onCaptureScreenshot: () => void;
+  onToggleSkill: (skillName: string, enabled: boolean) => void;
   onSaveProjectContext?: (value: string) => Promise<string>;
   onSelectModel: (model: string) => void;
+  onSelectRuntimeProfile: (profileId: string) => void;
   onConfigureModels: () => void;
   onClose: () => void;
 }) {
@@ -11889,15 +14520,19 @@ function ComposerPopover({
   const chars = content.length;
   const estimatedTokens = Math.ceil(chars / 4);
   const models = Array.from(new Set([selectedModel, ...availableModels].filter(Boolean)));
+  const profiles = normalizeRuntimeProfiles(runtimeProfiles, selectedRuntimeProfile);
+  const pickerMenu = menu === 'models';
 
   return (
-    <div className={`composer-popover ${menu}`}>
-      <header>
-        <strong>{composerMenuTitle(menu, language)}</strong>
-        <button type="button" onClick={onClose} aria-label="close popover">
-          <X size={15} />
-        </button>
-      </header>
+    <div className={`composer-popover ${menu} ${pickerMenu ? 'picker' : ''}`}>
+      {!pickerMenu && (
+        <header>
+          <strong>{composerMenuTitle(menu, language)}</strong>
+          <button type="button" onClick={onClose} aria-label="close popover">
+            <X size={15} />
+          </button>
+        </header>
+      )}
       {menu === 'project' && (
         <ProjectContextEditor
           language={language}
@@ -11916,92 +14551,128 @@ function ComposerPopover({
       {menu === 'git' && (
         <GitBranchMenu language={language} activeProjectDir={activeProjectDir} />
       )}
-      {menu === 'screenshot' && (
-        <div className="popover-stack">
-          <button
-            className="popover-row primary"
-            type="button"
-            onClick={onCaptureScreenshot}
-            disabled={screenshotBusy}
-          >
-            {screenshotBusy ? <LoaderCircle size={16} /> : <Image size={16} />}
-            <span>
-              <strong>
-                {screenshotBusy
-                  ? language === 'zh'
-                    ? '正在截图...'
-                    : 'Capturing...'
-                  : language === 'zh'
-                    ? '开始截图'
-                    : 'Start screenshot'}
-              </strong>
-              <small>Alt+Q</small>
-            </span>
-          </button>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={hideForScreenshot}
-              onChange={(event) => onHideForScreenshotChange(event.target.checked)}
-            />
-            <span>
-              {language === 'zh'
-                ? '截图时隐藏 cardbush'
-                : 'Hide cardbush while capturing'}
-            </span>
-          </label>
-          <p>
-            {language === 'zh'
-              ? '截图会保存到图片目录，并把文件路径插入输入框。'
-              : 'The screenshot is saved to Pictures and inserted into the composer.'}
-          </p>
-          {screenshotError && <p className="popover-error">{screenshotError}</p>}
-        </div>
-      )}
       {menu === 'skills' && (
-        <div className="popover-list">
-          {skills.map((skill) => (
-            <button
-              className="popover-row"
-              type="button"
-              key={skill.name}
-              onClick={() =>
-                onLoad({
-                  kind: 'text',
-                  title: skill.name,
-                  value: `@${skill.name}`,
-                })
-              }
-            >
-              <Puzzle size={16} />
-              <span>
-                <strong>{skill.name}</strong>
-                <small>{language === 'zh' ? skill.descriptionZh : skill.description}</small>
-              </span>
-            </button>
-          ))}
+        <div className="popover-list skill-popover-list">
+          {skills.length === 0 ? (
+            <p className="composer-popover-empty">
+              {language === 'zh' ? '暂无可用 skill' : 'No skills available'}
+            </p>
+          ) : (
+            skills.map((skill) => {
+              const enabled = !disabledSkillNames.has(skill.name);
+              return (
+                <div
+                  className={`skill-popover-row ${enabled ? '' : 'disabled'}`}
+                  key={skill.name}
+                >
+                  <button
+                    className="skill-popover-main"
+                    type="button"
+                    onClick={() =>
+                      onLoad({
+                        kind: 'text',
+                        title: skill.name,
+                        value: `@${skill.name}`,
+                      })
+                    }
+                  >
+                    <Puzzle size={16} />
+                    <span>
+                      <strong>{skill.name}</strong>
+                      <small>
+                        {language === 'zh' ? skill.descriptionZh : skill.description}
+                      </small>
+                    </span>
+                  </button>
+                  <button
+                    className={`skill-popover-toggle ${enabled ? 'on' : ''}`}
+                    type="button"
+                    title={
+                      enabled
+                        ? language === 'zh'
+                          ? '禁用这个 skill'
+                          : 'Disable this skill'
+                        : language === 'zh'
+                          ? '启用这个 skill'
+                          : 'Enable this skill'
+                    }
+                    onClick={() => onToggleSkill(skill.name, !enabled)}
+                  >
+                    {enabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+                    <span>
+                      {enabled
+                        ? language === 'zh'
+                          ? '开'
+                          : 'On'
+                        : language === 'zh'
+                          ? '关'
+                          : 'Off'}
+                    </span>
+                  </button>
+                </div>
+              );
+            })
+          )}
         </div>
       )}
       {menu === 'models' && (
-        <div className="popover-list compact">
+        <div className="model-picker-menu">
+          <div className="model-picker-section-label">
+            {language === 'zh' ? '模型' : 'Model'}
+          </div>
           {models.length === 0 ? (
-            <button className="popover-row primary" type="button" onClick={onConfigureModels}>
-              <Bot size={16} />
-              {language === 'zh' ? '待配置，前往模型设置' : 'Configure models'}
+            <button
+              className="model-picker-row primary"
+              type="button"
+              onClick={onConfigureModels}
+            >
+              <span>{language === 'zh' ? '待配置，前往模型设置' : 'Configure models'}</span>
+              <ArrowRight size={15} />
             </button>
           ) : (
             models.map((model) => (
               <button
-                className={`popover-row ${model === selectedModel ? 'active' : ''}`}
+                className={`model-picker-row ${model === selectedModel ? 'active' : ''}`}
                 type="button"
                 key={model}
                 onClick={() => onSelectModel(model)}
               >
-                <Bot size={16} />
-                {model}
+                <span>{model}</span>
+                {model === selectedModel && <Check size={16} />}
               </button>
             ))
           )}
+          <div className="model-picker-divider" />
+          <button
+            className="model-picker-row secondary"
+            type="button"
+            onClick={onConfigureModels}
+          >
+            <span>{language === 'zh' ? '管理模型' : 'Manage models'}</span>
+            <ArrowRight size={15} />
+          </button>
+        </div>
+      )}
+      {menu === 'runtime' && (
+        <div className="popover-list runtime-profile-list">
+          {profiles.map((profile) => (
+            <button
+              className={`popover-row runtime-profile-row ${
+                profile.id === selectedRuntimeProfile ? 'active' : ''
+              }`}
+              type="button"
+              key={profile.id}
+              onClick={() => onSelectRuntimeProfile(profile.id)}
+            >
+              <Cpu size={16} />
+              <span>
+                <strong>{runtimeProfileDisplayName(profile.id, profiles, language)}</strong>
+                <small>{runtimeProfileDescription(profile, language)}</small>
+                <small>{runtimeProfileMetaLine(profile, language)}</small>
+              </span>
+              {profile.id === selectedRuntimeProfile && <Check size={15} />}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -12013,11 +14684,134 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
     project: { zh: '项目上下文', en: 'Project context' },
     tokens: { zh: 'Token 用量', en: 'Token usage' },
     git: { zh: 'Git 分支', en: 'Git branches' },
-    screenshot: { zh: '截图', en: 'Screenshot' },
     skills: { zh: 'Skills', en: 'Skills' },
+    runtime: { zh: '运行模式', en: 'Runtime' },
     models: { zh: '模型', en: 'Model' },
   };
   return labels[menu][language];
+}
+
+function normalizeRuntimeProfiles(
+  profiles: RuntimeProfileSummary[],
+  selectedRuntimeProfile: string,
+) {
+  const merged = new Map<string, RuntimeProfileSummary>();
+  for (const profile of [
+    {
+      id: 'general',
+      label: 'General',
+      description: 'General purpose assistant.',
+      phases: [],
+      allowedLanes: [],
+      raw: { id: 'general' },
+    },
+    {
+      id: 'code',
+      label: 'Code',
+      description: 'Programming workflow: inspect, edit, verify, final.',
+      phases: ['inspect', 'edit', 'verify', 'final'],
+      allowedLanes: ['code'],
+      raw: { id: 'code' },
+    },
+    {
+      id: 'code-review',
+      label: 'Code Review',
+      description: 'Read-only review focused on findings and risks.',
+      phases: ['inspect', 'review', 'final'],
+      allowedLanes: ['review'],
+      raw: { id: 'code-review' },
+    },
+    {
+      id: 'research',
+      label: 'Research',
+      description: 'Evidence-first research workflow.',
+      phases: ['collect', 'compare', 'synthesize', 'final'],
+      allowedLanes: ['research'],
+      raw: { id: 'research' },
+    },
+    ...profiles,
+  ]) {
+    if (profile.id.trim()) {
+      merged.set(profile.id, profile);
+    }
+  }
+  if (selectedRuntimeProfile.trim() && !merged.has(selectedRuntimeProfile)) {
+    merged.set(selectedRuntimeProfile, {
+      id: selectedRuntimeProfile,
+      label: selectedRuntimeProfile,
+      description: '',
+      phases: [],
+      allowedLanes: [],
+      raw: { id: selectedRuntimeProfile },
+    });
+  }
+  return [...merged.values()];
+}
+
+function runtimeProfileDisplayName(
+  profileId: string,
+  profiles: RuntimeProfileSummary[],
+  language: AppLanguage,
+) {
+  const normalized = profileId.trim() || 'general';
+  if (language === 'zh') {
+    const zhLabels: Record<string, string> = {
+      general: '通用',
+      code: '编程',
+      'code-review': '审查',
+      research: '研究',
+    };
+    if (zhLabels[normalized]) {
+      return zhLabels[normalized];
+    }
+  }
+  const profile = profiles.find((item) => item.id === normalized);
+  return profile?.label?.trim() || normalized;
+}
+
+function runtimeProfileDescription(
+  profile: RuntimeProfileSummary,
+  language: AppLanguage,
+) {
+  if (language === 'zh') {
+    const zhDescriptions: Record<string, string> = {
+      general: '普通通用会话，适合问答、计划和轻量任务',
+      code: '编程模式，按 inspect / edit / verify / final 推进',
+      'code-review': '只读审查模式，优先输出问题、风险和测试缺口',
+      research: '证据优先研究模式，强调来源、对照和结论',
+    };
+    if (zhDescriptions[profile.id]) {
+      return zhDescriptions[profile.id];
+    }
+  }
+  if (profile.description.trim()) {
+    return profile.description;
+  }
+  if (profile.phases.length > 0) {
+    return profile.phases.join(' / ');
+  }
+  return profile.defaultLane || profile.id;
+}
+
+function runtimeProfileMetaLine(profile: RuntimeProfileSummary, language: AppLanguage) {
+  const segments = [
+    profile.hookSet
+      ? language === 'zh'
+        ? `Hook: ${profile.hookSet}`
+        : `Hook: ${profile.hookSet}`
+      : '',
+    profile.phases.length > 0
+      ? language === 'zh'
+        ? `流程: ${profile.phases.join(' / ')}`
+        : `Flow: ${profile.phases.join(' / ')}`
+      : '',
+    profile.verificationPolicy
+      ? language === 'zh'
+        ? '含验证策略'
+        : 'verification policy'
+      : '',
+  ].filter(Boolean);
+  return segments.join(' · ') || (language === 'zh' ? '默认运行约束' : 'Default runtime constraints');
 }
 
 function GitBranchMenu({
@@ -12351,8 +15145,11 @@ function FeaturePanel({
           onLoadDetail={onLoadSkillDetail}
         />
       )}
-      {section === 'automation' && (
-        <AutomationPanel language={language} items={automationTasks} />
+      {section === 'subagents' && (
+        <SubagentsPanel language={language} />
+      )}
+      {section === 'gamecoding' && (
+        <GameCodingPanel language={language} />
       )}
     </div>
   );
@@ -12630,2341 +15427,6 @@ function SkillDetailDialog({
   );
 }
 
-function AutomationPanel({
-  language,
-  items,
-}: {
-  language: AppLanguage;
-  items: AutomationTask[];
-}) {
-  return (
-    <div className="feature-content">
-      <div className="feature-toolbar">
-        <button className="primary-button" type="button">
-          <Edit3 size={16} />
-          {language === 'zh' ? '新建任务' : 'New task'}
-        </button>
-        <button className="filter-chip" type="button">
-          {language === 'zh' ? '仅运行中' : 'Running only'}
-        </button>
-      </div>
-      <div className="result-stack">
-        {items.map((task) => (
-          <article className="result-card automation" key={task.id}>
-            <Clock3 size={18} />
-            <div>
-              <h3>{task.title}</h3>
-              <p>{task.cadence}</p>
-            </div>
-            <span className={`status-dot ${task.enabled ? 'on' : ''}`} />
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function SettingsView({
-  themePreference,
-  lightThemeStyle,
-  language,
-  languageMode,
-  systemLanguage,
-  settings,
-  selectedModel,
-  availableModels,
-  initialSection,
-  onBack,
-  onThemePreferenceChange,
-  onLightThemeStyleChange,
-  onLanguageModeChange,
-  onSettingsChange,
-  onUseModel,
-  onSidebarWidthChange,
-  onConversationHistoryCleared,
-}: {
-  themePreference: ThemePreference;
-  lightThemeStyle: LightThemeStyle;
-  language: AppLanguage;
-  languageMode: AppLanguageMode;
-  systemLanguage: AppLanguage;
-  settings: AppSettingsState;
-  selectedModel: string;
-  availableModels: string[];
-  initialSection: SettingsSection;
-  onBack: () => void;
-  onThemePreferenceChange: (value: ThemePreference) => void;
-  onLightThemeStyleChange: (value: LightThemeStyle) => void;
-  onLanguageModeChange: (value: AppLanguageMode) => void;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onUseModel: (model: string) => void;
-  onSidebarWidthChange: (value: number) => void;
-  onConversationHistoryCleared?: () => void | Promise<void>;
-}) {
-  const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [providerSelection, setProviderSelection] = useState(
-    settings.managedModelConfigs[0]?.provider || suggestedProviders[0],
-  );
-  const [customProvider, setCustomProvider] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [modelName, setModelName] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [toast, setToast] = useState('');
-  const providerOptions = useMemo(
-    () => collectProviderOptions(settings.managedModelConfigs),
-    [settings.managedModelConfigs],
-  );
-
-  useEffect(() => {
-    setSection(initialSection);
-  }, [initialSection]);
-
-  useEffect(() => {
-    if (!providerOptions.includes(providerSelection)) {
-      setProviderSelection(providerOptions[0] ?? suggestedProviders[0]);
-    }
-  }, [providerOptions, providerSelection]);
-
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(''), 1800);
-  }, []);
-
-  const updateSettings = useCallback(
-    (updater: (current: AppSettingsState) => AppSettingsState) => {
-      onSettingsChange(updater);
-    },
-    [onSettingsChange],
-  );
-
-  const updateProxy = useCallback(
-    (patch: Partial<AppSettingsState['proxy']>) => {
-      updateSettings((current) => ({
-        ...current,
-        proxy: { ...current.proxy, ...patch },
-      }));
-    },
-    [updateSettings],
-  );
-
-  const addModelConfig = useCallback(
-    (event?: FormEvent) => {
-      event?.preventDefault();
-      const provider = normalizeProvider(
-        providerSelection === customProviderValue ? customProvider : providerSelection,
-      );
-      const nextModel = modelName.trim();
-      if (!provider) {
-        notify(language === 'zh' ? '请输入模型商名称' : 'Enter a provider name');
-        return;
-      }
-      if (!nextModel) {
-        notify(language === 'zh' ? '请输入模型名称' : 'Enter a model name');
-        return;
-      }
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: [
-          ...current.managedModelConfigs,
-          {
-            id: newModelConfigId(),
-            provider,
-            apiKey,
-            modelName: nextModel,
-            baseUrl,
-          },
-        ],
-      }));
-      setProviderSelection(provider);
-      setModelName('');
-      setBaseUrl('');
-      notify(language === 'zh' ? '模型配置已添加' : 'Model configuration added');
-    },
-    [
-      apiKey,
-      baseUrl,
-      customProvider,
-      language,
-      modelName,
-      notify,
-      providerSelection,
-      updateSettings,
-    ],
-  );
-
-  const removeModelConfig = useCallback(
-    (id: string) => {
-      updateSettings((current) => ({
-        ...current,
-        managedModelConfigs: current.managedModelConfigs.filter(
-          (item) => item.id !== id,
-        ),
-      }));
-    },
-    [updateSettings],
-  );
-
-  const resetModels = useCallback(() => {
-    updateSettings((current) => ({ ...current, managedModelConfigs: [] }));
-    onUseModel('');
-    notify(language === 'zh' ? '已清空模型配置' : 'Model configurations cleared');
-  }, [language, notify, onUseModel, updateSettings]);
-
-  const useModel = useCallback(
-    (model: string) => {
-      if (!availableModels.includes(model)) {
-        notify(
-          language === 'zh'
-            ? `切换失败：当前模型列表中不存在 ${model}`
-            : `Switch failed: ${model} is not in the model list`,
-        );
-        return;
-      }
-      onUseModel(model);
-      notify(
-        language === 'zh'
-          ? `已切换当前模型：${model}`
-          : `Current model switched: ${model}`,
-      );
-    },
-    [availableModels, language, notify, onUseModel],
-  );
-
-  const openDocs = useCallback(
-    async (name: string, url: string) => {
-      try {
-        await window.cardbushDesktop?.openExternal?.(url);
-        notify(language === 'zh' ? `已打开 ${name}` : `Opened ${name}`);
-      } catch {
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
-    },
-    [language, notify],
-  );
-
-  const importFont = useCallback(async () => {
-    const filePath = await window.cardbushDesktop?.pickFont?.();
-    if (!filePath) {
-      return;
-    }
-    const displayName = basename(filePath);
-    updateSettings((current) => ({
-      ...current,
-      font: {
-        family: `cardbush-imported-${stableModelConfigId('font', displayName, '', filePath)}`,
-        displayName,
-        filePath,
-      },
-    }));
-    notify(language === 'zh' ? '字体已导入' : 'Font imported');
-  }, [language, notify, updateSettings]);
-
-  const resetFont = useCallback(() => {
-    updateSettings((current) => ({
-      ...current,
-      font: defaultAppSettings.font,
-    }));
-  }, [updateSettings]);
-
-  const resetCompanionPosition = useCallback(() => {
-    window.localStorage.removeItem('cardbush_cardling_position');
-    void window.cardbushDesktop?.resetCardlingPosition?.();
-    notify(language === 'zh' ? '卡布位置已重置' : 'Kabu position reset');
-  }, [language, notify]);
-
-  const content = (() => {
-    if (section === 'profile') {
-      return (
-        <SettingsProfilePanel
-          themePreference={themePreference}
-          lightThemeStyle={lightThemeStyle}
-          language={language}
-          languageMode={languageMode}
-          systemLanguage={systemLanguage}
-          settings={settings}
-          onThemePreferenceChange={onThemePreferenceChange}
-          onLightThemeStyleChange={onLightThemeStyleChange}
-          onLanguageModeChange={onLanguageModeChange}
-          onSettingsChange={updateSettings}
-          onImportFont={importFont}
-          onResetFont={resetFont}
-        />
-      );
-    }
-    if (section === 'companion') {
-      return (
-        <CompanionSettingsPanel
-          language={language}
-          settings={settings}
-          onSettingsChange={updateSettings}
-          onResetCompanionPosition={resetCompanionPosition}
-        />
-      );
-    }
-    if (section === 'proxy') {
-      return (
-        <SettingsCard
-          title={language === 'zh' ? '代理设置' : 'Proxy settings'}
-          subtitle={
-            language === 'zh'
-              ? '配置 cardbush 发起网络请求时使用的代理环境。'
-              : 'Configure proxy environment values used by cardbush network requests.'
-          }
-        >
-          <SettingsSwitch
-            title={language === 'zh' ? '跟随系统代理' : 'Follow system proxy'}
-            subtitle={
-              language === 'zh'
-                ? '开启后禁用手动 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 输入。'
-                : 'Disables manual HTTP_PROXY / HTTPS_PROXY / NO_PROXY fields.'
-            }
-            checked={settings.proxy.mode === 'system'}
-            onChange={(checked) =>
-              updateProxy({ mode: checked ? 'system' : 'manual' })
-            }
-          />
-          <SettingsDivider />
-          <SettingsInput
-            label="HTTP_PROXY"
-            value={settings.proxy.httpProxy}
-            disabled={settings.proxy.mode === 'system'}
-            placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
-            onChange={(value) => updateProxy({ httpProxy: value })}
-          />
-          <SettingsInput
-            label="HTTPS_PROXY"
-            value={settings.proxy.httpsProxy}
-            disabled={settings.proxy.mode === 'system'}
-            placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
-            onChange={(value) => updateProxy({ httpsProxy: value })}
-          />
-          <SettingsInput
-            label="NO_PROXY"
-            value={settings.proxy.noProxy}
-            disabled={settings.proxy.mode === 'system'}
-            placeholder="127.0.0.1,localhost,::1,.internal"
-            onChange={(value) => updateProxy({ noProxy: value })}
-          />
-        </SettingsCard>
-      );
-    }
-    if (section === 'models') {
-      return (
-        <ModelsSettingsPanel
-          language={language}
-          settings={settings}
-          selectedModel={selectedModel}
-          providerOptions={providerOptions}
-          providerSelection={providerSelection}
-          customProvider={customProvider}
-          apiKey={apiKey}
-          modelName={modelName}
-          baseUrl={baseUrl}
-          showApiKey={showApiKey}
-          onProviderSelectionChange={setProviderSelection}
-          onCustomProviderChange={setCustomProvider}
-          onApiKeyChange={setApiKey}
-          onModelNameChange={setModelName}
-          onBaseUrlChange={setBaseUrl}
-          onShowApiKeyChange={setShowApiKey}
-          onAddModelConfig={addModelConfig}
-          onResetModels={resetModels}
-          onRemoveModelConfig={removeModelConfig}
-          onUseModel={useModel}
-          onOpenDocs={openDocs}
-        />
-      );
-    }
-    if (section === 'bots') {
-      return <BotSettingsPanel language={language} />;
-    }
-    if (section === 'cache') {
-      return (
-        <CacheMaintenancePanel
-          language={language}
-          onNotify={notify}
-          onConversationHistoryCleared={onConversationHistoryCleared}
-        />
-      );
-    }
-    if (section === 'diagnostics') {
-      return (
-        <DiagnosticsPanel
-          language={language}
-          settings={settings}
-          selectedModel={selectedModel}
-        />
-      );
-    }
-    if (section === 'mobile') {
-      return <MobileSettingsPanel language={language} />;
-    }
-    return <AboutSettingsPanel language={language} />;
-  })();
-
-  return (
-    <main className="settings-shell">
-      <aside className="settings-sidebar">
-        <button className="back-button" type="button" onClick={onBack}>
-          <ArrowLeft size={18} />
-          {language === 'zh' ? '返回应用' : 'Back to app'}
-        </button>
-        {(Object.keys(settingsLabels) as SettingsSection[]).map((id) => {
-          const Icon = settingsIcons[id];
-          return (
-            <button
-              key={id}
-              className={`settings-nav ${section === id ? 'active' : ''}`}
-              type="button"
-              onClick={() => setSection(id)}
-            >
-              <Icon size={18} />
-              {settingsLabels[id][language]}
-            </button>
-          );
-        })}
-      </aside>
-      <SidebarResizer language={language} onWidthChange={onSidebarWidthChange} />
-      <section className="settings-content">
-        <div className="settings-track">
-          <h2>{settingsLabels[section][language]}</h2>
-          <p>
-            {language === 'zh'
-              ? '配置 cardbush 的外观、网络、模型和连接能力。'
-              : 'Configure cardbush appearance, network, models, and connection features.'}
-          </p>
-          {content}
-        </div>
-      </section>
-      {toast && <div className="settings-toast">{toast}</div>}
-    </main>
-  );
-}
-
-function SettingsProfilePanel({
-  themePreference,
-  lightThemeStyle,
-  language,
-  languageMode,
-  systemLanguage,
-  settings,
-  onThemePreferenceChange,
-  onLightThemeStyleChange,
-  onLanguageModeChange,
-  onSettingsChange,
-  onImportFont,
-  onResetFont,
-}: {
-  themePreference: ThemePreference;
-  lightThemeStyle: LightThemeStyle;
-  language: AppLanguage;
-  languageMode: AppLanguageMode;
-  systemLanguage: AppLanguage;
-  settings: AppSettingsState;
-  onThemePreferenceChange: (value: ThemePreference) => void;
-  onLightThemeStyleChange: (value: LightThemeStyle) => void;
-  onLanguageModeChange: (value: AppLanguageMode) => void;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onImportFont: () => void;
-  onResetFont: () => void;
-}) {
-  const fontIsCustom = Boolean(settings.font.family && settings.font.filePath);
-
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '外观' : 'Appearance'}
-      subtitle={
-        language === 'zh'
-          ? '配置主题、语言和全局字体。'
-          : 'Configure theme, language, and global font.'
-      }
-    >
-      <SettingsGroupTitle>
-        {language === 'zh' ? '显示模式' : 'Display mode'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '跟随系统' : 'Follow system'}
-        value="system"
-        checked={themePreference === 'system'}
-        onChange={() => onThemePreferenceChange('system')}
-      />
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '浅色模式' : 'Light mode'}
-        subtitle={
-          language === 'zh'
-            ? '使用下面选择的浅色外观。'
-            : 'Uses the selected light appearance below.'
-        }
-        value="light"
-        checked={themePreference === 'light'}
-        onChange={() => onThemePreferenceChange('light')}
-      />
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '深色主题' : 'Dark theme'}
-        value="dark"
-        checked={themePreference === 'dark'}
-        onChange={() => onThemePreferenceChange('dark')}
-      />
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '应用语言' : 'App language'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="language-mode"
-        title={language === 'zh' ? '跟随系统' : 'Follow system'}
-        subtitle={
-          language === 'zh'
-            ? `当前检测：${systemLanguage === 'zh' ? '中文' : 'English'}`
-            : `Detected: ${systemLanguage === 'zh' ? 'Chinese' : 'English'}`
-        }
-        value="system"
-        checked={languageMode === 'system'}
-        onChange={() => onLanguageModeChange('system')}
-      />
-      <SettingsRadio
-        name="language-mode"
-        title="中文"
-        subtitle={language === 'zh' ? '固定使用中文界面' : 'Use Chinese UI'}
-        value="zh"
-        checked={languageMode === 'zh'}
-        onChange={() => onLanguageModeChange('zh')}
-      />
-      <SettingsRadio
-        name="language-mode"
-        title="English"
-        subtitle={
-          language === 'zh' ? '固定使用英文界面' : 'Use English UI'
-        }
-        value="en"
-        checked={languageMode === 'en'}
-        onChange={() => onLanguageModeChange('en')}
-      />
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '浅色外观' : 'Light appearance'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="light-style"
-        title={language === 'zh' ? '羊皮纸' : 'Parchment'}
-            subtitle={
-              language === 'zh'
-                ? '使用温暖的纸感浅色外观。'
-                : 'Uses the warmer parchment light appearance.'
-            }
-        value="parchment"
-        checked={lightThemeStyle === 'parchment'}
-        onChange={() => onLightThemeStyleChange('parchment')}
-      />
-      <SettingsRadio
-        name="light-style"
-        title={language === 'zh' ? '明亮' : 'Bright'}
-        subtitle={
-          language === 'zh'
-            ? '更接近系统原生的白色界面。'
-            : 'A cleaner white desktop surface.'
-        }
-        value="bright"
-        checked={lightThemeStyle === 'bright'}
-        onChange={() => onLightThemeStyleChange('bright')}
-      />
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '全局字体' : 'Global font'}
-      </SettingsGroupTitle>
-      <div className="font-preview">
-        <strong>
-          {fontIsCustom
-            ? settings.font.displayName
-            : language === 'zh'
-              ? '系统默认字体'
-              : 'System default font'}
-        </strong>
-        <span>
-          {fontIsCustom
-            ? settings.font.filePath
-            : language === 'zh'
-              ? 'Windows 使用 Microsoft YaHei UI，macOS 使用 PingFang SC。'
-              : 'Uses Microsoft YaHei UI on Windows and PingFang SC on macOS.'}
-        </span>
-        <p>
-          {language === 'zh'
-            ? '你好，cardbush  Aa 123  轻快地处理项目、对话和代码。'
-            : 'Hello, cardbush  Aa 123  Handling projects, chats, and code with ease.'}
-        </p>
-      </div>
-      <div className="settings-actions">
-        <button className="secondary-button" type="button" onClick={onImportFont}>
-          <Upload size={14} />
-          {language === 'zh' ? '导入字体配置' : 'Import font'}
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={!fontIsCustom}
-          onClick={onResetFont}
-        >
-          <RotateCcw size={14} />
-          {language === 'zh' ? '恢复默认字体' : 'Reset default font'}
-        </button>
-      </div>
-      <SettingsDivider />
-      <SettingsSwitch
-        title={language === 'zh' ? '截图时隐藏 cardbush' : 'Hide cardbush for screenshots'}
-        subtitle={
-          language === 'zh'
-            ? '截图按钮会在捕获前暂时隐藏主窗口。'
-            : 'The screenshot button temporarily hides the main window before capture.'
-        }
-        checked={settings.hideCardbushForScreenshot}
-        onChange={(checked) =>
-          onSettingsChange((current) => ({
-            ...current,
-            hideCardbushForScreenshot: checked,
-          }))
-        }
-      />
-    </SettingsCard>
-  );
-}
-
-function CompanionSettingsPanel({
-  language,
-  settings,
-  onSettingsChange,
-  onResetCompanionPosition,
-}: {
-  language: AppLanguage;
-  settings: AppSettingsState;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onResetCompanionPosition: () => void;
-}) {
-  const updateCompanion = useCallback(
-    (patch: Partial<CompanionSettings>) => {
-      onSettingsChange((current) => ({
-        ...current,
-        companion: normalizeCompanionSettings({
-          ...current.companion,
-          ...patch,
-        }),
-      }));
-    },
-    [onSettingsChange],
-  );
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? '卡布状态助手' : 'Kabu companion'}
-        subtitle={
-          language === 'zh'
-            ? '配置卡布在桌面上的显示、动效和停靠行为。'
-            : 'Configure Kabu display, motion, and dock behavior.'
-        }
-      >
-        <div
-          className="companion-preview"
-          data-motion={settings.companion.motion}
-          style={
-            {
-              '--cardling-scale': String(companionSizeScale(settings.companion.size)),
-              '--cardling-opacity': String(settings.companion.opacity),
-            } as CSSProperties
-          }
-        >
-          <div className="cardling-badge companion-preview-stage" data-status="idle">
-            <span className="cardling-orbit" />
-            <span className="cardling-card" aria-hidden="true">
-              <span className="cardling-stack" />
-              <span className="cardling-leaf" />
-              <span className="cardling-eye left" />
-              <span className="cardling-eye right" />
-              <span className="cardling-wave" />
-              <span className="cardling-cursor" />
-              <span className="cardling-error-corner" />
-              <span className="cardling-spark one" />
-              <span className="cardling-spark two" />
-            </span>
-          </div>
-          <div>
-            <strong>{language === 'zh' ? 'Kabu / 卡布' : 'Kabu'}</strong>
-            <span>
-              {language === 'zh'
-                ? '轻量、可拖拽、跟随对话状态。'
-                : 'Lightweight, draggable, and tied to chat state.'}
-            </span>
-          </div>
-        </div>
-        <SettingsSwitch
-          title={language === 'zh' ? '显示卡布' : 'Show Kabu'}
-          subtitle={
-            language === 'zh'
-              ? '关闭后隐藏聊天界面的卡布入口，但保留现有偏好。'
-              : 'Hides Kabu in chat while keeping current preferences.'
-          }
-          checked={settings.companionEnabled}
-          onChange={(checked) =>
-            onSettingsChange((current) => ({
-              ...current,
-              companionEnabled: checked,
-            }))
-          }
-        />
-        <SettingsDivider />
-        <SettingsGroupTitle>
-          {language === 'zh' ? '形态' : 'Shape'}
-        </SettingsGroupTitle>
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '小号' : 'Compact'}
-          subtitle={language === 'zh' ? '更适合小屏或窄窗口。' : 'Better for small screens or narrow windows.'}
-          value="compact"
-          checked={settings.companion.size === 'compact'}
-          onChange={() => updateCompanion({ size: 'compact' })}
-        />
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '标准' : 'Standard'}
-          value="normal"
-          checked={settings.companion.size === 'normal'}
-          onChange={() => updateCompanion({ size: 'normal' })}
-        />
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '大号' : 'Large'}
-          subtitle={language === 'zh' ? '状态更醒目，但占用更多边缘空间。' : 'More visible, with more edge space.'}
-          value="large"
-          checked={settings.companion.size === 'large'}
-          onChange={() => updateCompanion({ size: 'large' })}
-        />
-        <SettingsRange
-          label={language === 'zh' ? '透明度' : 'Opacity'}
-          value={Math.round(settings.companion.opacity * 100)}
-          min={55}
-          max={100}
-          step={5}
-          suffix="%"
-          onChange={(value) => updateCompanion({ opacity: value / 100 })}
-        />
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '动效与位置' : 'Motion and position'}
-        subtitle={
-          language === 'zh'
-            ? '控制卡布的循环动画、反馈强度和停靠位置。'
-            : 'Control Kabu loops, feedback intensity, and dock position.'
-        }
-      >
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '完整动效' : 'Full motion'}
-          subtitle={language === 'zh' ? '保留呼吸、扫描和完成反馈。' : 'Keeps breathing, scan, and completion feedback.'}
-          value="full"
-          checked={settings.companion.motion === 'full'}
-          onChange={() => updateCompanion({ motion: 'full' })}
-        />
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '轻动效' : 'Reduced motion'}
-          subtitle={language === 'zh' ? '减少工具运行和等待状态的循环动画。' : 'Reduces tool and waiting loops.'}
-          value="reduced"
-          checked={settings.companion.motion === 'reduced'}
-          onChange={() => updateCompanion({ motion: 'reduced' })}
-        />
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '关闭动效' : 'Motion off'}
-          value="off"
-          checked={settings.companion.motion === 'off'}
-          onChange={() => updateCompanion({ motion: 'off' })}
-        />
-        <div className="settings-actions">
-          <button className="secondary-button" type="button" onClick={onResetCompanionPosition}>
-            <RotateCcw size={14} />
-            {language === 'zh' ? '重置卡布位置' : 'Reset Kabu position'}
-          </button>
-        </div>
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '状态事件表' : 'Status event map'}
-        subtitle={
-          language === 'zh'
-            ? '卡布只反映产品状态，不替代主流程操作。'
-            : 'Kabu reflects product state without replacing primary workflows.'
-        }
-      >
-        <div className="companion-event-table">
-          {companionEventRows(language).map((row) => (
-            <div className="companion-event-row" key={row.status}>
-              <b>{row.status}</b>
-              <span>{row.trigger}</span>
-              <em>{row.visual}</em>
-            </div>
-          ))}
-        </div>
-      </SettingsCard>
-    </div>
-  );
-}
-
-function companionEventRows(language: AppLanguage) {
-  return [
-    {
-      status: 'idle',
-      trigger: language === 'zh' ? '没有运行中的回复或工具' : 'No active reply or tool',
-      visual: language === 'zh' ? '慢呼吸' : 'slow breathing',
-    },
-    {
-      status: 'thinking',
-      trigger: language === 'zh' ? 'AI 正在生成回复' : 'assistant is generating',
-      visual: language === 'zh' ? '眼部轻闪' : 'eye pulse',
-    },
-    {
-      status: 'tool',
-      trigger: language === 'zh' ? '工具或文件操作运行中' : 'tool or file operation running',
-      visual: language === 'zh' ? '扫描线和光标' : 'scan line and cursor',
-    },
-    {
-      status: 'waiting',
-      trigger: language === 'zh' ? '需要用户选择或输入' : 'user choice or input needed',
-      visual: language === 'zh' ? '暖色叶片' : 'warm leaf',
-    },
-    {
-      status: 'queued',
-      trigger: language === 'zh' ? '回复期间提交了排队消息' : 'message queued during a reply',
-      visual: language === 'zh' ? '叠卡和计数' : 'stacked card and count',
-    },
-    {
-      status: 'complete',
-      trigger: language === 'zh' ? '一轮回复正常结束' : 'turn completed successfully',
-      visual: language === 'zh' ? '短暂星光反馈' : 'brief sparkle feedback',
-    },
-    {
-      status: 'error',
-      trigger: language === 'zh' ? '当前流程出现错误' : 'current flow has an error',
-      visual: language === 'zh' ? '红色角标' : 'red corner signal',
-    },
-  ];
-}
-
-function ModelsSettingsPanel({
-  language,
-  settings,
-  selectedModel,
-  providerOptions,
-  providerSelection,
-  customProvider,
-  apiKey,
-  modelName,
-  baseUrl,
-  showApiKey,
-  onProviderSelectionChange,
-  onCustomProviderChange,
-  onApiKeyChange,
-  onModelNameChange,
-  onBaseUrlChange,
-  onShowApiKeyChange,
-  onAddModelConfig,
-  onResetModels,
-  onRemoveModelConfig,
-  onUseModel,
-  onOpenDocs,
-}: {
-  language: AppLanguage;
-  settings: AppSettingsState;
-  selectedModel: string;
-  providerOptions: string[];
-  providerSelection: string;
-  customProvider: string;
-  apiKey: string;
-  modelName: string;
-  baseUrl: string;
-  showApiKey: boolean;
-  onProviderSelectionChange: (value: string) => void;
-  onCustomProviderChange: (value: string) => void;
-  onApiKeyChange: (value: string) => void;
-  onModelNameChange: (value: string) => void;
-  onBaseUrlChange: (value: string) => void;
-  onShowApiKeyChange: (value: boolean) => void;
-  onAddModelConfig: (event?: FormEvent) => void;
-  onResetModels: () => void;
-  onRemoveModelConfig: (id: string) => void;
-  onUseModel: (model: string) => void;
-  onOpenDocs: (name: string, url: string) => void;
-}) {
-  const grouped = groupModelConfigs(settings.managedModelConfigs);
-  const providers = Object.keys(grouped).sort();
-
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? '模型管理' : 'Model management'}
-        subtitle={
-          language === 'zh'
-            ? '配置模型商、API Key、模型名和 base_url，发送消息时会随当前模型生效。'
-            : 'Configure provider, API key, model name, and base_url. The active model is used when sending.'
-        }
-      >
-        <div className="settings-subblock">
-          <strong>{language === 'zh' ? '集成参考' : 'Integration reference'}</strong>
-          <button
-            className="settings-link-tile"
-            type="button"
-            onClick={() =>
-              onOpenDocs(
-                language === 'zh' ? 'LiteLLM 文档' : 'LiteLLM docs',
-                liteLlmProvidersDocsUrl,
-              )
-            }
-          >
-            <ExternalLink size={16} />
-            <span>
-              <strong>LiteLLM Providers</strong>
-              <small>
-                {language === 'zh'
-                  ? '查看 provider / base_url 兼容写法'
-                  : 'Provider and base_url compatibility reference'}
-              </small>
-            </span>
-          </button>
-        </div>
-        <div className="settings-subblock">
-          <strong>
-            {language === 'zh' ? '推荐模型商' : 'Recommended providers'}
-          </strong>
-          <div className="settings-link-grid">
-            <button
-              className="settings-link-tile"
-              type="button"
-              onClick={() =>
-                onOpenDocs(
-                  language === 'zh' ? '火山方舟' : 'Volcengine Ark',
-                  volcengineArkUrl,
-                )
-              }
-            >
-              <ExternalLink size={16} />
-              <span>
-                <strong>{language === 'zh' ? '火山方舟' : 'Volcengine Ark'}</strong>
-                <small>{language === 'zh' ? '国内模型接入参考' : 'China model access reference'}</small>
-              </span>
-            </button>
-            <button
-              className="settings-link-tile"
-              type="button"
-              onClick={() => onOpenDocs('minimax', miniMaxUrl)}
-            >
-              <ExternalLink size={16} />
-              <span>
-                <strong>minimax</strong>
-                <small>{language === 'zh' ? '多模态与文本模型平台' : 'Text and multimodal model platform'}</small>
-              </span>
-            </button>
-          </div>
-        </div>
-        <SettingsDivider />
-        <form className="model-form" onSubmit={onAddModelConfig}>
-          <label>
-            <span>{language === 'zh' ? '模型商' : 'Provider'}</span>
-            <select
-              value={providerSelection}
-              onChange={(event) => onProviderSelectionChange(event.currentTarget.value)}
-            >
-              {providerOptions.map((provider) => (
-                <option key={provider} value={provider}>
-                  {provider === customProviderValue
-                    ? language === 'zh'
-                      ? '模型商名称...'
-                      : 'Provider name...'
-                    : provider}
-                </option>
-              ))}
-            </select>
-          </label>
-          {providerSelection === customProviderValue && (
-            <SettingsInput
-              label={language === 'zh' ? '模型商名称' : 'Provider name'}
-              value={customProvider}
-              placeholder="myprovider"
-              onChange={onCustomProviderChange}
-            />
-          )}
-          <label>
-            <span>api_key</span>
-            <div className="password-field">
-              <input
-                value={apiKey}
-                type={showApiKey ? 'text' : 'password'}
-                placeholder={`${language === 'zh' ? '模型商' : 'Provider'} API Key`}
-                onChange={(event) => onApiKeyChange(event.currentTarget.value)}
-              />
-              <button
-                type="button"
-                title={showApiKey ? (language === 'zh' ? '隐藏' : 'Hide') : (language === 'zh' ? '显示' : 'Show')}
-                onClick={() => onShowApiKeyChange(!showApiKey)}
-              >
-                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
-          </label>
-          <SettingsInput
-            label={language === 'zh' ? '模型名称' : 'Model name'}
-            value={modelName}
-            placeholder="gpt-4.1-mini"
-            onChange={onModelNameChange}
-          />
-          <SettingsInput
-            label="base_url"
-            value={baseUrl}
-            placeholder="https://api.openai.com/v1"
-            onChange={onBaseUrlChange}
-          />
-          <div className="settings-actions">
-            <button className="primary-button" type="submit">
-              <Plus size={14} />
-              {language === 'zh' ? '添加模型' : 'Add model'}
-            </button>
-            <button className="secondary-button" type="button" onClick={onResetModels}>
-              <RotateCcw size={14} />
-              {language === 'zh' ? '清空模型配置' : 'Clear model configs'}
-            </button>
-          </div>
-        </form>
-      </SettingsCard>
-      {providers.length === 0 ? (
-        <SettingsCard
-          title={language === 'zh' ? '模型列表' : 'Model list'}
-          subtitle={
-            language === 'zh'
-              ? '未配置模型时，输入框会显示“待配置”，点击会回到此页。'
-              : 'When no model is configured, the composer shows Configure and opens this page.'
-          }
-        >
-          <p className="settings-muted">
-            {language === 'zh' ? '暂无数据' : 'No data'}
-          </p>
-        </SettingsCard>
-      ) : (
-        providers.map((provider) => (
-          <SettingsCard
-            key={provider}
-            title={provider}
-            subtitle={
-              language === 'zh'
-                ? `${grouped[provider].length} 个模型`
-                : `${grouped[provider].length} models`
-            }
-          >
-            {grouped[provider].map((config) => (
-              <ModelConfigRow
-                key={config.id}
-                config={config}
-                language={language}
-                selected={selectedModel === config.modelName}
-                onUse={() => onUseModel(config.modelName)}
-                onDelete={() => onRemoveModelConfig(config.id)}
-              />
-            ))}
-          </SettingsCard>
-        ))
-      )}
-    </div>
-  );
-}
-
-function CacheMaintenancePanel({
-  language,
-  onNotify,
-  onConversationHistoryCleared,
-}: {
-  language: AppLanguage;
-  onNotify: (message: string) => void;
-  onConversationHistoryCleared?: () => void | Promise<void>;
-}) {
-  const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | ''>('');
-  const [result, setResult] = useState<MaintenanceClearResult | null>(null);
-  const [error, setError] = useState('');
-
-  const runClear = useCallback(
-    async (target: 'conversation' | 'logs') => {
-      if (busyTarget) {
-        return;
-      }
-      const confirmed = window.confirm(
-        target === 'conversation'
-          ? language === 'zh'
-            ? '确定清空本地对话历史吗？这会删除会话、轮次、摘要和 token usage，但不会删除项目文件或任务工作目录。'
-            : 'Clear local conversation history? This removes sessions, turns, summaries, and token usage, but not project files or task workspaces.'
-          : language === 'zh'
-            ? '确定清空本地日志缓存吗？这只会删除 chain logs 和 tool failure logs，不影响对话历史。'
-            : 'Clear local logs cache? This removes chain logs and tool failure logs without touching conversations.',
-      );
-      if (!confirmed) {
-        return;
-      }
-      setBusyTarget(target);
-      setError('');
-      try {
-        const cleared =
-          target === 'conversation'
-            ? await clearConversationHistory()
-            : await clearLogsCache();
-        setResult(cleared);
-        if (target === 'conversation') {
-          await onConversationHistoryCleared?.();
-        }
-        onNotify(
-          target === 'conversation'
-            ? language === 'zh'
-              ? '对话历史已清空'
-              : 'Conversation history cleared'
-            : language === 'zh'
-              ? '日志缓存已清空'
-              : 'Logs cache cleared',
-        );
-      } catch (caught) {
-        setError(errorMessage(caught));
-      } finally {
-        setBusyTarget('');
-      }
-    },
-    [busyTarget, language, onConversationHistoryCleared, onNotify],
-  );
-
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? '缓存维护' : 'Cache maintenance'}
-        subtitle={
-          language === 'zh'
-            ? '这些操作只清理 BushServer 本地数据库中的历史和诊断缓存，不会删除项目文件、任务工作目录或 provider 侧缓存。'
-            : 'These actions clear BushServer local database history and diagnostics cache only. Project files, task workspaces, and provider-side caches are untouched.'
-        }
-      >
-        <div className="maintenance-action-list">
-          <div className="maintenance-action-row">
-            <Archive size={18} />
-            <span>
-              <strong>
-                {language === 'zh' ? '清空对话历史' : 'Clear conversation history'}
-              </strong>
-              <small>
-                {language === 'zh'
-                  ? '清理 chat_messages、turns、turn_summaries、session_token_usage 和 chat_sessions。'
-                  : 'Clears chat messages, turns, summaries, token usage, and sessions.'}
-              </small>
-            </span>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={Boolean(busyTarget)}
-              onClick={() => void runClear('conversation')}
-            >
-              {busyTarget === 'conversation' ? (
-                <LoaderCircle size={14} />
-              ) : (
-                <Trash2 size={14} />
-              )}
-              {language === 'zh' ? '清空' : 'Clear'}
-            </button>
-          </div>
-          <div className="maintenance-action-row">
-            <Clipboard size={18} />
-            <span>
-              <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
-              <small>
-                {language === 'zh'
-                  ? '清理 chain_logs 和 tool_failure_logs，保留对话与 token usage。'
-                  : 'Clears chain logs and tool failure logs while keeping conversations and token usage.'}
-              </small>
-            </span>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={Boolean(busyTarget)}
-              onClick={() => void runClear('logs')}
-            >
-              {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-              {language === 'zh' ? '清空' : 'Clear'}
-            </button>
-          </div>
-        </div>
-        {error && <p className="bot-settings-error">{error}</p>}
-        {result && (
-          <div className="maintenance-result">
-            <strong>
-              {language === 'zh' ? '上次执行结果' : 'Last result'}
-              {result.target ? ` · ${result.target}` : ''}
-            </strong>
-            <div className="maintenance-count-grid">
-              {Object.entries(result.counts).length ? (
-                Object.entries(result.counts).map(([table, count]) => (
-                  <span key={table}>
-                    <code>{table}</code>
-                    <b>{count}</b>
-                  </span>
-                ))
-              ) : (
-                <em>{language === 'zh' ? '无计数返回' : 'No counts returned'}</em>
-              )}
-            </div>
-          </div>
-        )}
-      </SettingsCard>
-    </div>
-  );
-}
-
-function DiagnosticsPanel({
-  language,
-  settings,
-  selectedModel,
-}: {
-  language: AppLanguage;
-  settings: AppSettingsState;
-  selectedModel: string;
-}) {
-  const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<DiagnosticResult | null>(null);
-  const modelInfo = resolveEffectiveModelInfo(settings, selectedModel, language);
-  const authLabels = useMemo(() => 'X-Bush-Local-Key / Bearer token', []);
-
-  const runCheck = useCallback(async () => {
-    if (checking) {
-      return;
-    }
-    setChecking(true);
-    try {
-      const [health, auth] = await Promise.all([
-        probeEndpoint(
-          language === 'zh' ? '健康检查' : 'Health check',
-          '/healthz',
-          false,
-          language,
-        ),
-        probeEndpoint(
-          language === 'zh' ? '鉴权检查' : 'Auth check',
-          '/v1/sessions?limit=1',
-          true,
-          language,
-        ),
-      ]);
-      setResult({ health, auth });
-    } finally {
-      setChecking(false);
-    }
-  }, [checking, language]);
-
-  useEffect(() => {
-    void runCheck();
-  }, []);
-
-  const copyDiagnostics = async () => {
-    await copyText(
-      [
-        `BACKEND_BASE_URL=${backendBaseUrl}`,
-        `LLM_ENDPOINT=${llmEndpoint}`,
-        `auth_headers=${authLabels}`,
-        `model_source=${modelInfo.source}`,
-        `model=${modelInfo.model}`,
-        `provider=${modelInfo.provider}`,
-        `api_key=${modelInfo.apiKeyLabel}`,
-        `base_url=${modelInfo.baseUrl}`,
-        result ? `health=${diagnosticSummary(result.health)}` : '',
-        result ? `auth=${diagnosticSummary(result.auth)}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    );
-  };
-
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '连接诊断' : 'Connection diagnostics'}
-      subtitle={
-        language === 'zh'
-          ? '检查 BushServer 连接、鉴权状态，以及实际发送的模型参数。'
-          : 'Check BushServer connection, auth state, and the model parameters sent by cardbush.'
-      }
-    >
-      <div className="settings-subblock">
-        <strong>{language === 'zh' ? '当前请求配置' : 'Current request config'}</strong>
-        <InfoRow label={language === 'zh' ? '模式' : 'Mode'} value={modelInfo.source} />
-        <InfoRow label={language === 'zh' ? '模型名称' : 'Model name'} value={modelInfo.model} />
-        <InfoRow label={language === 'zh' ? '模型商' : 'Provider'} value={modelInfo.provider} />
-        <InfoRow label="api_key" value={modelInfo.apiKeyLabel} />
-        <InfoRow label="base_url" value={modelInfo.baseUrl} />
-        <InfoRow
-          label={language === 'zh' ? '流式端点' : 'Stream endpoint'}
-          value={llmEndpoint || `${backendBaseUrl}/v1/chat/stream`}
-        />
-      </div>
-      <SettingsDivider />
-      <div className="settings-subblock">
-        <strong>{language === 'zh' ? '服务检查' : 'Service check'}</strong>
-        <InfoRow label={language === 'zh' ? '后端地址' : 'Backend address'} value={backendBaseUrl} />
-        <InfoRow label={language === 'zh' ? '请求凭据' : 'Request credentials'} value={authLabels} />
-        {result ? (
-          <>
-            <DiagnosticRow probe={result.health} />
-            <DiagnosticRow probe={result.auth} />
-          </>
-        ) : (
-          <p className="settings-muted">
-            {checking
-              ? language === 'zh'
-                ? '正在检查...'
-                : 'Checking...'
-              : language === 'zh'
-                ? '尚未检查'
-                : 'Not checked'}
-          </p>
-        )}
-        <div className="settings-actions">
-          <button
-            className="primary-button"
-            type="button"
-            disabled={checking}
-            onClick={() => void runCheck()}
-          >
-            {checking ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {checking
-              ? language === 'zh'
-                ? '检查中'
-                : 'Checking'
-              : language === 'zh'
-                ? '运行检查'
-                : 'Run check'}
-          </button>
-          <button className="secondary-button" type="button" onClick={() => void copyDiagnostics()}>
-            <Clipboard size={14} />
-            {language === 'zh' ? '复制诊断信息' : 'Copy diagnostics'}
-          </button>
-        </div>
-      </div>
-    </SettingsCard>
-  );
-}
-
-function MobileSettingsPanel({ language }: { language: AppLanguage }) {
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '手机连接' : 'Connect to phone'}
-      subtitle={
-        language === 'zh'
-          ? '在同一局域网下，把手机接入 cardbush 服务。'
-          : 'Connect your phone to cardbush on the same local network.'
-      }
-    >
-      <div className="mobile-steps">
-        <StepText>{language === 'zh' ? '1. 让手机和当前电脑连接同一个 Wi-Fi。' : '1. Connect your phone and this computer to the same Wi-Fi.'}</StepText>
-        <StepText>{language === 'zh' ? '2. 启动后端时监听 0.0.0.0:51717。' : '2. Start the backend listening on 0.0.0.0:51717.'}</StepText>
-        <StepText>{language === 'zh' ? '3. 在手机端把服务地址配置为 http://<电脑局域网IP>:51717。' : '3. On your phone, set the service URL to http://<LAN IP>:51717.'}</StepText>
-      </div>
-      <button
-        className="settings-copyline"
-        type="button"
-        onClick={() => void copyText('BACKEND_BASE_URL=http://<LAN IP>:51717')}
-      >
-        <Smartphone size={16} />
-        <span>
-          {language === 'zh'
-            ? '示例：BACKEND_BASE_URL=http://192.168.1.8:51717'
-            : 'Example: BACKEND_BASE_URL=http://192.168.1.8:51717'}
-        </span>
-      </button>
-    </SettingsCard>
-  );
-}
-
-function AboutSettingsPanel({ language }: { language: AppLanguage }) {
-  const copyEnvironment = async () => {
-    await copyText(`BACKEND_BASE_URL=${backendBaseUrl}\nLLM_ENDPOINT=${llmEndpoint}`);
-  };
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '关于' : 'About'}
-      subtitle={
-        language === 'zh'
-          ? 'cardbush 桌面端设置信息'
-          : 'Desktop app information for cardbush.'
-      }
-    >
-      <InfoRow label={language === 'zh' ? '应用' : 'App'} value="cardbush" />
-      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value="0.1.0+1" />
-      <InfoRow label={language === 'zh' ? '后端地址' : 'Backend address'} value={backendBaseUrl} />
-      <InfoRow
-        label={language === 'zh' ? 'LLM 地址' : 'LLM address'}
-        value={
-          llmEndpoint ||
-          (language === 'zh'
-            ? '未配置（使用 BushServer）'
-            : 'Not configured (using BushServer)')
-        }
-      />
-      <div className="settings-actions">
-        <button className="secondary-button" type="button" onClick={() => void copyEnvironment()}>
-          <Clipboard size={14} />
-          {language === 'zh' ? '复制环境信息' : 'Copy environment'}
-        </button>
-      </div>
-    </SettingsCard>
-  );
-}
-
-function BotSettingsPanel({ language }: { language: AppLanguage }) {
-  const [overviews, setOverviews] = useState<BotPlatformOverview[]>([]);
-  const [selectedPlatform, setSelectedPlatform] = useState<BotPlatform>('weixin');
-  const [statusByPlatform, setStatusByPlatform] = useState<
-    Partial<Record<BotPlatform, BotStatusResult>>
-  >({});
-  const [configByPlatform, setConfigByPlatform] = useState<
-    Partial<Record<BotPlatform, BotConfigResult>>
-  >({});
-  const [configDraftByPlatform, setConfigDraftByPlatform] = useState<
-    Partial<Record<BotPlatform, string>>
-  >({});
-  const [logsByPlatform, setLogsByPlatform] = useState<
-    Partial<Record<BotPlatform, string[]>>
-  >({});
-  const [loginStart, setLoginStart] = useState<WeixinLoginStartResult | null>(null);
-  const [loginStatus, setLoginStatus] = useState<WeixinLoginStatusResult | null>(null);
-  const [qrImageSrc, setQrImageSrc] = useState('');
-  const [qrImageFailed, setQrImageFailed] = useState(false);
-  const [busyKey, setBusyKey] = useState('');
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
-
-  const overviewByPlatform = useMemo(
-    () => new Map(overviews.map((item) => [item.platform, item] as const)),
-    [overviews],
-  );
-  const selectedOverview = overviewByPlatform.get(selectedPlatform);
-  const selectedStatus = statusByPlatform[selectedPlatform];
-  const selectedConfig = configByPlatform[selectedPlatform];
-  const selectedDraft = configDraftByPlatform[selectedPlatform] ?? '';
-  const selectedLogs = logsByPlatform[selectedPlatform] ?? [];
-  const selectedEnabled =
-    selectedStatus?.enabled ?? selectedOverview?.enabled ?? false;
-  const selectedConfigured =
-    selectedStatus?.configured ?? selectedOverview?.configured ?? false;
-  const selectedMissingFields =
-    selectedStatus?.missingRequiredFields ??
-    selectedOverview?.missingRequiredFields ??
-    [];
-  const selectedServiceStatus =
-    selectedStatus?.serviceStatus ?? selectedOverview?.serviceStatus ?? 'stopped';
-  const selectedLastError = botServiceDetailText(selectedStatus, selectedOverview, language);
-
-  const notify = useCallback((message: string) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(''), 1800);
-  }, []);
-
-  const refreshBots = useCallback(async () => {
-    setBusyKey('bots:refresh');
-    setError('');
-    try {
-      setOverviews(await fetchBots());
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language]);
-
-  const refreshStatus = useCallback(
-    async (platform: BotPlatform) => {
-      setBusyKey(`status:${platform}`);
-      setError('');
-      try {
-        const status = await fetchBotStatus(platform);
-        setStatusByPlatform((current) => ({ ...current, [platform]: status }));
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language],
-  );
-
-  const loadConfig = useCallback(
-    async (platform: BotPlatform) => {
-      setBusyKey(`config:${platform}`);
-      setError('');
-      try {
-        const config = await fetchBotConfig(platform);
-        setConfigByPlatform((current) => ({ ...current, [platform]: config }));
-        setConfigDraftByPlatform((current) => ({
-          ...current,
-          [platform]: JSON.stringify(config.config, null, 2),
-        }));
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language],
-  );
-
-  const saveConfig = useCallback(async () => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(selectedDraft || '{}') as Record<string, unknown>;
-    } catch {
-      setError(language === 'zh' ? '配置 JSON 格式不正确' : 'Invalid config JSON');
-      return;
-    }
-    setBusyKey(`save:${selectedPlatform}`);
-    setError('');
-    try {
-      const saved = await saveBotConfig({
-        platform: selectedPlatform,
-        config: parsed,
-      });
-      setConfigByPlatform((current) => ({ ...current, [selectedPlatform]: saved }));
-      setConfigDraftByPlatform((current) => ({
-        ...current,
-        [selectedPlatform]: JSON.stringify(saved.config, null, 2),
-      }));
-      await refreshStatus(selectedPlatform).catch(() => undefined);
-      notify(language === 'zh' ? 'Bot 配置已保存' : 'Bot config saved');
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language, notify, refreshStatus, selectedDraft, selectedPlatform]);
-
-  const loadLogs = useCallback(
-    async (platform: BotPlatform, options?: { silent?: boolean }) => {
-      if (!options?.silent) {
-        setBusyKey(`logs:${platform}`);
-        setError('');
-      }
-      try {
-        const logs = await fetchBotServiceLogs({ platform, tail: 200 });
-        setLogsByPlatform((current) => ({ ...current, [platform]: logs.lines }));
-      } catch (caught) {
-        if (!options?.silent) {
-          setError(botPanelError(caught, language));
-        }
-      } finally {
-        if (!options?.silent) {
-          setBusyKey('');
-        }
-      }
-    },
-    [language],
-  );
-
-  const runServiceAction = useCallback(
-    async (platform: BotPlatform, action: 'start' | 'stop' | 'restart') => {
-      const status = statusByPlatform[platform];
-      const overview = overviewByPlatform.get(platform);
-      const platformEnabled = status?.enabled ?? overview?.enabled ?? false;
-      const platformConfigured = status?.configured ?? overview?.configured ?? false;
-      const missingFields =
-        status?.missingRequiredFields ?? overview?.missingRequiredFields ?? [];
-      if ((action === 'start' || action === 'restart') && !platformEnabled) {
-        setError(
-          language === 'zh'
-            ? `${botPlatformLabels[platform][language]} Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。`
-            : `${botPlatformLabels[platform][language]} bot is disabled. Load its config, set enabled to true, save it, then start the service.`,
-        );
-        return;
-      }
-      if ((action === 'start' || action === 'restart') && !platformConfigured) {
-        setError(botMissingConfigurationText(platform, missingFields, language));
-        return;
-      }
-      setBusyKey(`service:${platform}:${action}`);
-      setError('');
-      try {
-        const status = await controlBotService(platform, action);
-        setStatusByPlatform((current) => ({ ...current, [platform]: status }));
-        if (status.serviceStatus === 'failed') {
-          setError(botServiceDetailText(status, overviewByPlatform.get(platform), language));
-          void loadLogs(platform, { silent: true }).catch(() => undefined);
-        } else {
-          notify(
-            action === 'stop'
-              ? language === 'zh'
-                ? '停止请求已发送，服务状态已刷新'
-                : 'Stop request sent and service status refreshed'
-              : language === 'zh'
-                ? '服务命令已发送'
-                : 'Service command sent',
-          );
-        }
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language, loadLogs, notify, overviewByPlatform, statusByPlatform],
-  );
-
-  const beginWeixinLogin = useCallback(async () => {
-    setBusyKey('weixin:login');
-    setLoginStart(null);
-    setLoginStatus(null);
-    setQrImageSrc('');
-    setQrImageFailed(false);
-    setError('');
-    try {
-      const started = await startWeixinLogin();
-      setLoginStart(started);
-      notify(language === 'zh' ? '微信登录已开始' : 'WeChat login started');
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language, notify]);
-
-  const clearWeixinAccount = useCallback(
-    async (accountId: string) => {
-      const normalized = accountId.trim();
-      if (!normalized) {
-        return;
-      }
-      setBusyKey(`weixin:clear:${normalized}`);
-      setError('');
-      try {
-        await deleteWeixinAccount(normalized);
-        await refreshStatus('weixin');
-        notify(language === 'zh' ? '微信账号已移除' : 'WeChat account removed');
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language, notify, refreshStatus],
-  );
-
-  useEffect(() => {
-    void refreshBots();
-  }, [refreshBots]);
-
-  useEffect(() => {
-    void refreshStatus(selectedPlatform);
-  }, [refreshStatus, selectedPlatform]);
-
-  useEffect(() => {
-    setQrImageFailed(false);
-    setQrImageSrc('');
-    const source = loginStart?.qrcodeUrl.trim() ?? '';
-    if (!source) {
-      return undefined;
-    }
-    let cancelled = false;
-    async function renderQr() {
-      if (isDirectImageSource(source)) {
-        setQrImageSrc(source);
-        return;
-      }
-      try {
-        const qrcode = await import('qrcode');
-        const image = await qrcode.toDataURL(source, {
-          errorCorrectionLevel: 'M',
-          margin: 2,
-          width: 512,
-          color: {
-            dark: '#111111',
-            light: '#ffffff',
-          },
-        });
-        if (!cancelled) {
-          setQrImageSrc(image);
-        }
-      } catch {
-        if (!cancelled) {
-          setQrImageFailed(true);
-        }
-      }
-    }
-    void renderQr();
-    return () => {
-      cancelled = true;
-    };
-  }, [loginStart?.qrcodeUrl]);
-
-  useEffect(() => {
-    if (!loginStart?.loginId) {
-      return undefined;
-    }
-    const loginId = loginStart.loginId;
-    let cancelled = false;
-    async function poll() {
-      try {
-        const next = await fetchWeixinLoginStatus(loginId);
-        if (cancelled) {
-          return;
-        }
-        setLoginStatus(next);
-        if (next.status === 'confirmed') {
-          await refreshStatus('weixin').catch(() => undefined);
-          notify(language === 'zh' ? '微信账号已连接' : 'WeChat account connected');
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setError(botPanelError(caught, language));
-        }
-      }
-    }
-    void poll();
-    const timer = window.setInterval(() => {
-      if (
-        loginStatus?.status === 'confirmed' ||
-        loginStatus?.status === 'expired' ||
-        loginStatus?.status === 'failed'
-      ) {
-        window.clearInterval(timer);
-        return;
-      }
-      void poll();
-    }, 1800);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [language, loginStart, loginStatus?.status, notify, refreshStatus]);
-
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? 'Bot 连接' : 'Bot connections'}
-        subtitle={
-          language === 'zh'
-            ? 'CardBush 只负责配置入口和状态展示；运行时、密钥、登录状态和 adapter 生命周期由 BushServer 管理。'
-            : 'CardBush owns the UX; BushServer owns runtime, secrets, login state, and adapter lifecycle.'
-        }
-      >
-        <div className="bot-platform-grid">
-          {botPlatforms.map((platform) => {
-            const overview = overviewByPlatform.get(platform);
-            const status = statusByPlatform[platform];
-            const serviceStatus =
-              status?.serviceStatus ?? overview?.serviceStatus ?? 'stopped';
-            const enabled = status?.enabled ?? overview?.enabled ?? false;
-            const configured = status?.configured ?? overview?.configured ?? false;
-            const accountCount = status?.accountCount ?? overview?.accountCount;
-            return (
-              <button
-                className={`bot-platform-card ${
-                  selectedPlatform === platform ? 'active' : ''
-                }`}
-                key={platform}
-                type="button"
-                onClick={() => setSelectedPlatform(platform)}
-              >
-                <span className={`bot-status-dot ${botStatusTone(serviceStatus)}`} />
-                <span>
-                  <strong>{botPlatformLabels[platform][language]}</strong>
-                  <small>
-                    {!enabled
-                      ? language === 'zh'
-                        ? '未启用'
-                        : 'Disabled'
-                      : configured
-                      ? language === 'zh'
-                        ? '已配置'
-                        : 'Configured'
-                      : language === 'zh'
-                        ? '待配置'
-                        : 'Not configured'}
-                    {' · '}
-                    {botServiceStatusText(serviceStatus, language)}
-                    {accountCount != null ? ` · ${accountCount}` : ''}
-                  </small>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === 'bots:refresh'}
-            onClick={() => void refreshBots()}
-          >
-            {busyKey === 'bots:refresh' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {language === 'zh' ? '刷新平台' : 'Refresh platforms'}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `status:${selectedPlatform}`}
-            onClick={() => void refreshStatus(selectedPlatform)}
-          >
-            {busyKey === `status:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Monitor size={14} />
-            )}
-            {language === 'zh' ? '刷新状态' : 'Refresh status'}
-          </button>
-        </div>
-        {error && <p className="bot-settings-error">{error}</p>}
-        {notice && <p className="bot-settings-notice">{notice}</p>}
-      </SettingsCard>
-
-      <SettingsCard
-        title={`${botPlatformLabels[selectedPlatform][language]} ${
-          language === 'zh' ? '服务' : 'service'
-        }`}
-        subtitle={
-          language === 'zh'
-            ? '服务状态来自 BushServer，前端只发送启动、停止或重启请求。'
-            : 'Service status comes from BushServer; the UI only sends lifecycle commands.'
-        }
-      >
-        <div className="bot-service-row">
-          <span className={`bot-status-dot ${botStatusTone(selectedServiceStatus)}`} />
-          <div>
-            <strong>
-              {botServiceStatusText(selectedServiceStatus, language)}
-            </strong>
-            <small>
-              {selectedLastError ||
-                (language === 'zh'
-                  ? '暂无错误信息'
-                  : 'No error reported')}
-            </small>
-          </div>
-        </div>
-        {(!selectedEnabled || !selectedConfigured) && (
-          <p className="bot-settings-warning">
-            {!selectedEnabled
-              ? language === 'zh'
-                ? '当前平台未启用，BushServer 会拒绝启动请求。请先在配置中将 enabled 设置为 true 并保存。'
-                : 'This platform is disabled, so BushServer will reject start requests. Set enabled to true and save it first.'
-              : botMissingConfigurationText(
-                  selectedPlatform,
-                  selectedMissingFields,
-                  language,
-                )}
-          </p>
-        )}
-        <div className="settings-actions">
-          {(['start', 'stop', 'restart'] as const).map((action) => (
-            <button
-              className="secondary-button"
-              key={action}
-              type="button"
-              disabled={
-                busyKey === `service:${selectedPlatform}:${action}` ||
-                ((!selectedEnabled || !selectedConfigured) && action !== 'stop')
-              }
-              onClick={() => void runServiceAction(selectedPlatform, action)}
-            >
-              {busyKey === `service:${selectedPlatform}:${action}` ? (
-                <LoaderCircle size={14} />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {botServiceActionText(action, language)}
-            </button>
-          ))}
-        </div>
-      </SettingsCard>
-
-      {selectedPlatform === 'weixin' && (
-        <SettingsCard
-          title={language === 'zh' ? '微信扫码登录' : 'WeChat QR login'}
-          subtitle={
-            language === 'zh'
-              ? '扫码流程由 BushServer 管理，CardBush 只显示二维码和状态。'
-              : 'BushServer manages the QR login state machine; CardBush only displays it.'
-          }
-        >
-          <div className="settings-actions">
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busyKey === 'weixin:login'}
-              onClick={() => void beginWeixinLogin()}
-            >
-              {busyKey === 'weixin:login' ? <LoaderCircle size={14} /> : <Bot size={14} />}
-              {language === 'zh' ? '开始扫码登录' : 'Start QR login'}
-            </button>
-          </div>
-          {loginStart?.qrcodeUrl && (
-            <div className="weixin-login-box">
-              <div
-                className={`weixin-qr-frame ${
-                  qrImageSrc && !qrImageFailed ? '' : 'failed'
-                }`}
-              >
-                {qrImageSrc && (
-                  <img
-                    src={qrImageSrc}
-                    alt="WeChat login QR code"
-                    onLoad={() => setQrImageFailed(false)}
-                    onError={() => setQrImageFailed(true)}
-                  />
-                )}
-                {(!qrImageSrc || qrImageFailed) && (
-                  <span>
-                    {language === 'zh'
-                      ? '正在生成二维码；如果长时间不显示，请复制链接在浏览器打开，或重新开始扫码。'
-                      : 'Generating QR code. If it does not appear, copy the link or start again.'}
-                  </span>
-                )}
-              </div>
-              <button
-                className="settings-copyline"
-                type="button"
-                onClick={() => void copyText(loginStart.qrcodeUrl)}
-              >
-                <Clipboard size={15} />
-                <span>
-                  {language === 'zh' ? '复制二维码链接' : 'Copy QR link'}
-                </span>
-              </button>
-              <InfoRow
-                label={language === 'zh' ? '登录状态' : 'Login status'}
-                value={botLoginStatusText(loginStatus?.status ?? 'waiting', language)}
-              />
-              {loginStart.expiresAt && (
-                <InfoRow
-                  label={language === 'zh' ? '过期时间' : 'Expires'}
-                  value={formatBotExpiry(loginStart.expiresAt, language)}
-                />
-              )}
-              {loginStatus?.message && (
-                <p className="settings-muted">{loginStatus.message}</p>
-              )}
-            </div>
-          )}
-          {(selectedStatus?.accounts ?? []).length > 0 && (
-            <div className="bot-account-list">
-              {(selectedStatus?.accounts ?? []).map((account, index) => {
-                const accountId = String(
-                  account.account_id ?? account.accountId ?? account.id ?? '',
-                );
-                return (
-                  <div className="bot-account-row" key={`${accountId || index}`}>
-                    <div>
-                      <strong>{accountId || (language === 'zh' ? '未知账号' : 'Unknown account')}</strong>
-                      <small>
-                        {String(account.user_id ?? account.userId ?? '') ||
-                          (language === 'zh' ? '未返回 user_id' : 'No user_id')}
-                      </small>
-                    </div>
-                    <button
-                      className="secondary-button danger"
-                      type="button"
-                      disabled={!accountId || busyKey === `weixin:clear:${accountId}`}
-                      onClick={() => void clearWeixinAccount(accountId)}
-                    >
-                      {busyKey === `weixin:clear:${accountId}` ? (
-                        <LoaderCircle size={14} />
-                      ) : (
-                        <Trash2 size={14} />
-                      )}
-                      {language === 'zh' ? '移除' : 'Remove'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </SettingsCard>
-      )}
-
-      <SettingsCard
-        title={language === 'zh' ? '配置' : 'Configuration'}
-        subtitle={
-          language === 'zh'
-            ? '配置由 BushServer 落盘。secret 字段应只返回脱敏值；如果要修改 secret，请重新输入对应字段。'
-            : 'BushServer persists config. Secret fields should be masked on read; re-enter them when changing secrets.'
-        }
-      >
-        {!selectedConfig ? (
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `config:${selectedPlatform}`}
-            onClick={() => void loadConfig(selectedPlatform)}
-          >
-            {busyKey === `config:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Settings size={14} />
-            )}
-            {language === 'zh' ? '加载配置' : 'Load config'}
-          </button>
-        ) : (
-          <>
-            <textarea
-              className="settings-json-editor"
-              spellCheck={false}
-              value={selectedDraft}
-              onChange={(event) =>
-                setConfigDraftByPlatform((current) => ({
-                  ...current,
-                  [selectedPlatform]: event.currentTarget.value,
-                }))
-              }
-            />
-            <div className="settings-actions">
-              <button
-                className="primary-button"
-                type="button"
-                disabled={busyKey === `save:${selectedPlatform}`}
-                onClick={() => void saveConfig()}
-              >
-                {busyKey === `save:${selectedPlatform}` ? (
-                  <LoaderCircle size={14} />
-                ) : (
-                  <Check size={14} />
-                )}
-                {language === 'zh' ? '保存配置' : 'Save config'}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => void loadConfig(selectedPlatform)}
-              >
-                <RefreshCw size={14} />
-                {language === 'zh' ? '重新加载' : 'Reload'}
-              </button>
-            </div>
-          </>
-        )}
-      </SettingsCard>
-
-      <SettingsCard
-        title={language === 'zh' ? '日志' : 'Logs'}
-        subtitle={
-          language === 'zh'
-            ? '读取 BushServer 暴露的 adapter 日志 tail。'
-            : 'Read the adapter log tail exposed by BushServer.'
-        }
-      >
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `logs:${selectedPlatform}`}
-            onClick={() => void loadLogs(selectedPlatform)}
-          >
-            {busyKey === `logs:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Clipboard size={14} />
-            )}
-            {language === 'zh' ? '加载最近 200 行' : 'Load last 200 lines'}
-          </button>
-        </div>
-        <pre className="bot-log-view">
-          {selectedLogs.length > 0
-            ? selectedLogs.join('\n')
-            : language === 'zh'
-              ? '暂无日志'
-              : 'No logs loaded'}
-        </pre>
-      </SettingsCard>
-    </div>
-  );
-}
-
-function botPanelError(caught: unknown, language: AppLanguage) {
-  const message = caught instanceof Error ? caught.message : String(caught);
-  if (message.includes('Failed to fetch')) {
-    return language === 'zh'
-      ? '无法连接 BushServer。请确认后端服务已启动，或稍后重试。'
-      : 'Could not connect to BushServer. Start the backend service and try again.';
-  }
-  if (message.includes('404')) {
-    return language === 'zh'
-      ? 'Bot API 尚未由 BushServer 提供，等待后端接入后即可使用。'
-      : 'Bot API is not available from BushServer yet.';
-  }
-  if (/bot is disabled/i.test(message)) {
-    return language === 'zh'
-      ? 'Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。'
-      : 'Bot is disabled. Load its config, set enabled to true, save it, then start the service.';
-  }
-  if (/weixin bot has no logged-in account/i.test(message)) {
-    return language === 'zh'
-      ? '微信 Bot 还没有已登录账号。请先完成微信扫码确认，再启动服务。'
-      : 'The WeChat bot has no logged-in account. Complete QR login before starting the service.';
-  }
-  return message;
-}
-
-function botServiceDetailText(
-  status: BotStatusResult | undefined,
-  overview: BotPlatformOverview | undefined,
-  language: AppLanguage,
-) {
-  const explicitError = status?.lastError ?? overview?.lastError ?? '';
-  if (explicitError) {
-    return explicitError;
-  }
-  if (status?.serviceStatus === 'failed') {
-    if (status.returnCode != null) {
-      return language === 'zh'
-        ? `服务进程已退出，退出码 ${status.returnCode}。停止请求已送达，但进程此前/当前以失败状态结束；可查看下方日志或重新启动。`
-        : `The service process exited with code ${status.returnCode}. The stop request was accepted, but the process ended in a failed state. Check logs or restart.`;
-    }
-    return language === 'zh'
-      ? '服务处于失败状态，但后端没有返回错误详情；可加载日志查看原因。'
-      : 'The service is failed, but BushServer returned no error detail. Load logs to inspect it.';
-  }
-  if (status?.serviceStatus === 'stopped' && status.stoppedAt) {
-    return language === 'zh'
-      ? `已停止于 ${formatBotStatusTime(status.stoppedAt)}`
-      : `Stopped at ${formatBotStatusTime(status.stoppedAt)}`;
-  }
-  if (status?.serviceStatus === 'running' && status.pid != null) {
-    return language === 'zh'
-      ? `运行中，PID ${status.pid}`
-      : `Running, PID ${status.pid}`;
-  }
-  return language === 'zh' ? '暂无错误信息' : 'No error reported';
-}
-
-function formatBotStatusTime(value: string) {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
-}
-
-function isDirectImageSource(value: string) {
-  const source = value.trim();
-  return (
-    /^data:image\//i.test(source) ||
-    /^(blob:|file:)/i.test(source) ||
-    /\.(png|jpe?g|gif|webp|svg)([?#].*)?$/i.test(source)
-  );
-}
-
-function botMissingConfigurationText(
-  platform: BotPlatform,
-  missingFields: string[],
-  language: AppLanguage,
-) {
-  if (platform === 'weixin' && missingFields.includes('weixin_account')) {
-    return language === 'zh'
-      ? '微信 Bot 还没有已登录账号。请先在“微信扫码登录”里扫码并确认，成功连接后再启动服务。'
-      : 'The WeChat bot has no logged-in account. Scan and confirm the QR login first, then start the service.';
-  }
-  if (missingFields.length > 0) {
-    const fields = missingFields.join(', ');
-    return language === 'zh'
-      ? `当前平台缺少必填配置：${fields}。请加载配置、补齐并保存后再启动服务。`
-      : `This platform is missing required config: ${fields}. Load, complete, and save the config before starting.`;
-  }
-  return language === 'zh'
-    ? '当前平台配置尚未完成。请加载配置、补齐并保存后再启动服务。'
-    : 'This platform is not fully configured. Load, complete, and save the config before starting.';
-}
-
-function botStatusTone(status: BotServiceStatus) {
-  if (status === 'running') {
-    return 'running';
-  }
-  if (status === 'starting' || status === 'stopping') {
-    return 'pending';
-  }
-  if (status === 'failed') {
-    return 'failed';
-  }
-  return 'stopped';
-}
-
-function botServiceStatusText(status: BotServiceStatus, language: AppLanguage) {
-  const labels: Record<BotServiceStatus, { zh: string; en: string }> = {
-    stopped: { zh: '已停止', en: 'Stopped' },
-    starting: { zh: '启动中', en: 'Starting' },
-    running: { zh: '运行中', en: 'Running' },
-    stopping: { zh: '停止中', en: 'Stopping' },
-    failed: { zh: '失败', en: 'Failed' },
-  };
-  return labels[status][language];
-}
-
-function botServiceActionText(
-  action: 'start' | 'stop' | 'restart',
-  language: AppLanguage,
-) {
-  const labels = {
-    start: { zh: '启动', en: 'Start' },
-    stop: { zh: '停止', en: 'Stop' },
-    restart: { zh: '重启', en: 'Restart' },
-  } as const;
-  return labels[action][language];
-}
-
-function botLoginStatusText(status: WeixinLoginStatus, language: AppLanguage) {
-  const labels: Record<WeixinLoginStatus, { zh: string; en: string }> = {
-    waiting: { zh: '等待扫码', en: 'Waiting' },
-    scanned: { zh: '已扫码，等待确认', en: 'Scanned' },
-    confirmed: { zh: '已确认', en: 'Confirmed' },
-    expired: { zh: '已过期', en: 'Expired' },
-    failed: { zh: '失败', en: 'Failed' },
-  };
-  return labels[status][language];
-}
-
-function SettingsCard({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="settings-card">
-      <div className="settings-card-header">
-        <h3>{title}</h3>
-        {subtitle && <p>{subtitle}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function SettingsDivider() {
-  return <div className="settings-divider" />;
-}
-
-function SettingsGroupTitle({ children }: { children: React.ReactNode }) {
-  return <div className="settings-group-title">{children}</div>;
-}
-
-function SettingsRadio({
-  name,
-  title,
-  subtitle,
-  value,
-  checked,
-  onChange,
-}: {
-  name: string;
-  title: string;
-  subtitle?: string;
-  value: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className="settings-radio">
-      <input name={name} type="radio" value={value} checked={checked} onChange={onChange} />
-      <span>
-        <strong>{title}</strong>
-        {subtitle && <small>{subtitle}</small>}
-      </span>
-    </label>
-  );
-}
-
-function SettingsSwitch({
-  title,
-  subtitle,
-  checked,
-  onChange,
-}: {
-  title: string;
-  subtitle?: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className="settings-switch">
-      <span>
-        <strong>{title}</strong>
-        {subtitle && <small>{subtitle}</small>}
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
-    </label>
-  );
-}
-
-function SettingsInput({
-  label,
-  value,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  placeholder?: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="settings-field">
-      <span>{label}</span>
-      <input
-        value={value}
-        disabled={disabled}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-    </label>
-  );
-}
-
-function SettingsRange({
-  label,
-  value,
-  min,
-  max,
-  step,
-  suffix,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="settings-range">
-      <span>
-        <strong>{label}</strong>
-        <b>{value}{suffix ?? ''}</b>
-      </span>
-      <input
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-      />
-    </label>
-  );
-}
-
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="info-row">
@@ -14972,235 +15434,4 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
-}
-
-function StepText({ children }: { children: React.ReactNode }) {
-  return <p className="step-text">{children}</p>;
-}
-
-function ModelConfigRow({
-  config,
-  language,
-  selected,
-  onUse,
-  onDelete,
-}: {
-  config: ManagedModelConfig;
-  language: AppLanguage;
-  selected: boolean;
-  onUse: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <div className="model-row">
-      <div>
-        <strong>{config.modelName}</strong>
-        <span>
-          provider={config.provider || 'custom'} · api_key={maskSecret(config.apiKey, language)} · base_url={config.baseUrl || (language === 'zh' ? '未填写' : 'not filled')}
-        </span>
-      </div>
-      {selected && (
-        <span className="current-badge">
-          <CheckCircle2 size={13} />
-          {language === 'zh' ? '当前' : 'Current'}
-        </span>
-      )}
-      <button className="secondary-button" type="button" onClick={onUse}>
-        {language === 'zh' ? '设为当前' : 'Use'}
-      </button>
-      <button className="secondary-button danger" type="button" onClick={onDelete}>
-        <Trash2 size={14} />
-        {language === 'zh' ? '删除' : 'Delete'}
-      </button>
-    </div>
-  );
-}
-
-function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
-  return (
-    <div className={`diagnostic-row ${probe.ok ? 'ok' : 'fail'}`}>
-      {probe.ok ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-      <div>
-        <strong>{probe.label}</strong>
-        <span>{probe.detail}</span>
-      </div>
-      <small>{probe.elapsedMs}ms</small>
-    </div>
-  );
-}
-
-type DiagnosticResult = {
-  health: DiagnosticProbe;
-  auth: DiagnosticProbe;
-};
-
-type DiagnosticProbe = {
-  label: string;
-  ok: boolean;
-  elapsedMs: number;
-  detail: string;
-  statusCode?: number;
-};
-
-type EffectiveModelInfo = {
-  source: string;
-  model: string;
-  provider: string;
-  apiKeyLabel: string;
-  baseUrl: string;
-};
-
-function collectProviderOptions(configs: ManagedModelConfig[]) {
-  const seen = new Set<string>();
-  const result = [...suggestedProviders];
-  for (const item of configs) {
-    const provider = normalizeProvider(item.provider);
-    if (provider && !suggestedProviders.includes(provider)) {
-      result.push(provider);
-    }
-  }
-  const unique = result.filter((item) => {
-    const key = item.toLowerCase();
-    return seen.has(key) ? false : seen.add(key);
-  });
-  unique.push(customProviderValue);
-  return unique;
-}
-
-function groupModelConfigs(configs: ManagedModelConfig[]) {
-  return configs.reduce<Record<string, ManagedModelConfig[]>>((groups, item) => {
-    const provider = item.provider.trim() || 'custom';
-    groups[provider] = [...(groups[provider] ?? []), item];
-    return groups;
-  }, {});
-}
-
-function resolveEffectiveModelInfo(
-  settings: AppSettingsState,
-  selectedModel: string,
-  language: AppLanguage,
-): EffectiveModelInfo {
-  const determinedByServer =
-    language === 'zh' ? '(由 BushServer 决定)' : '(determined by BushServer)';
-  const config = settings.managedModelConfigs.find(
-    (item) => item.modelName.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
-  );
-  if (!config || !shouldUseManagedConfig(config)) {
-    return {
-      source: llmEndpoint ? 'External LLM_ENDPOINT' : language === 'zh' ? 'BushServer 默认配置' : 'BushServer default config',
-      model: selectedModel || determinedByServer,
-      provider: determinedByServer,
-      apiKeyLabel: determinedByServer,
-      baseUrl: determinedByServer,
-    };
-  }
-  return {
-    source: language === 'zh' ? '托管模型配置' : 'Managed model config',
-    model: config.modelName,
-    provider: config.provider || (language === 'zh' ? '(未填写)' : '(not filled)'),
-    apiKeyLabel: maskSecret(config.apiKey, language),
-    baseUrl: config.baseUrl || (language === 'zh' ? '(未填写)' : '(not filled)'),
-  };
-}
-
-function shouldUseManagedConfig(config: ManagedModelConfig) {
-  return (
-    config.modelName.trim() &&
-    (config.provider.trim().toLowerCase() !== 'custom' ||
-      config.apiKey.trim() ||
-      config.baseUrl.trim())
-  );
-}
-
-function maskSecret(value: string, language: AppLanguage) {
-  const raw = value.trim();
-  if (!raw) {
-    return language === 'zh' ? '(未填写)' : '(not filled)';
-  }
-  if (raw.length <= 8) {
-    return `${raw[0]}${'*'.repeat(Math.max(0, raw.length - 1))}`;
-  }
-  return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
-}
-
-async function probeEndpoint(
-  label: string,
-  path: string,
-  includeAuthHeaders: boolean,
-  language: AppLanguage,
-): Promise<DiagnosticProbe> {
-  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}${path}`;
-  const started = performance.now();
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 4000);
-  try {
-    const headers = includeAuthHeaders
-      ? await window.cardbushDesktop?.bushHeaders?.(endpoint)
-      : {};
-    const response = await fetch(endpoint, {
-      headers,
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    return {
-      label,
-      ok: response.ok,
-      statusCode: response.status,
-      elapsedMs: Math.round(performance.now() - started),
-      detail: probeDetail(response.status, text, language),
-    };
-  } catch (caught) {
-    return {
-      label,
-      ok: false,
-      elapsedMs: Math.round(performance.now() - started),
-      detail: friendlyProbeError(caught, language),
-    };
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function probeDetail(status: number, body: string, language: AppLanguage) {
-  const compact = body.trim().replace(/\s+/g, ' ');
-  if (!compact) {
-    return `HTTP ${status}`;
-  }
-  try {
-    const decoded: unknown = JSON.parse(compact);
-    if (isRecord(decoded)) {
-      if (decoded.status) {
-        return `HTTP ${status} · status=${decoded.status}`;
-      }
-      if (decoded.detail) {
-        return `HTTP ${status} · ${decoded.detail}`;
-      }
-    }
-  } catch {
-    // Keep compact text below.
-  }
-  const clipped = compact.length > 90 ? `${compact.slice(0, 87)}...` : compact;
-  if ((status === 401 || status === 403) && language === 'zh') {
-    return `HTTP ${status} · ${clipped} · 鉴权失败`;
-  }
-  return `HTTP ${status} · ${clipped}`;
-}
-
-function friendlyProbeError(caught: unknown, language: AppLanguage) {
-  const text = caught instanceof Error ? caught.message : String(caught);
-  if (/abort|timeout/i.test(text)) {
-    return language === 'zh'
-      ? '请求超时，请检查 BushServer 是否卡住或被防火墙阻止'
-      : 'Request timed out. Check whether BushServer is blocked or stuck.';
-  }
-  if (/failed to fetch|connection refused/i.test(text)) {
-    return language === 'zh'
-      ? '连接失败，BushServer 可能没有启动或端口不对'
-      : 'Connection failed. BushServer may not be running or the port is wrong.';
-  }
-  return text.replace(/^Exception:\s*/, '');
-}
-
-function diagnosticSummary(probe: DiagnosticProbe) {
-  return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
 }

@@ -1,12 +1,24 @@
 import {
   AlertCircle,
+  ArrowUp,
   Clock3,
   Code2,
+  ExternalLink,
+  MessageSquare,
   RotateCcw,
   Settings,
   Sparkles,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { flushSync } from 'react-dom';
 
 import type {
@@ -32,6 +44,11 @@ const defaultCardlingState: CardlingDesktopState = {
   activeChangeCount: 0,
   activeChangeFileCount: 0,
   error: null,
+  miniChat: {
+    title: '',
+    lastUser: '',
+    lastAssistant: '',
+  },
 };
 
 export function CardlingWindow() {
@@ -106,7 +123,8 @@ export function CardlingWindow() {
 
   const sendAction = (action: CardlingDesktopAction) => {
     void window.cardbushDesktop?.cardlingAction?.(action);
-    if (action !== 'settings') {
+    const actionType = typeof action === 'string' ? action : action.type;
+    if (actionType === 'changes' || actionType === 'revertChanges' || actionType === 'openMain') {
       void setExpanded(false);
     }
   };
@@ -288,7 +306,43 @@ function CardlingStatusPanel({
   state: CardlingDesktopState;
   onAction: (action: CardlingDesktopAction) => void;
 }) {
+  const [draft, setDraft] = useState('');
+  const [notice, setNotice] = useState('');
   const labels = companionLabels(state.status, state.language);
+  const miniTitle =
+    state.miniChat.title ||
+    (state.language === 'zh' ? '轻量对话' : 'Light chat');
+  const assistantPreview =
+    state.miniChat.lastAssistant ||
+    (state.language === 'zh'
+      ? '点一下卡布就能在这里追问，不用切回主窗口。'
+      : 'Ask Kabu here without switching back to the main window.');
+
+  const submitText = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+      onAction({ type: 'miniChatSend', text: trimmed });
+      setDraft('');
+      setNotice(
+        state.language === 'zh'
+          ? '已发送到当前会话。'
+          : 'Sent to the current session.',
+      );
+    },
+    [onAction, state.language],
+  );
+
+  const submit = useCallback(
+    (event?: FormEvent) => {
+      event?.preventDefault();
+      submitText(draft);
+    },
+    [draft, submitText],
+  );
+
   const queueText =
     state.queuedMessageCount > 0
       ? state.language === 'zh'
@@ -312,13 +366,61 @@ function CardlingStatusPanel({
       aria-label={state.language === 'zh' ? '卡布状态' : 'Kabu status'}
     >
       <header>
-        <strong>{state.language === 'zh' ? '卡布' : 'Kabu'}</strong>
-        <span>{labels.detail}</span>
+        <strong>
+          {state.language === 'zh' ? '卡布' : 'Kabu'}
+          <em>{state.language === 'zh' ? '实验' : 'Lab'}</em>
+        </strong>
+        <span>{miniTitle}</span>
       </header>
       <div className="cardling-status-row">
         <span className="cardling-status-dot" />
         <b>{labels.title}</b>
       </div>
+      <section className="cardling-mini-chat">
+        <div className="cardling-mini-answer">
+          <MessageSquare size={13} />
+          <p>{assistantPreview}</p>
+        </div>
+        {state.miniChat.lastUser && (
+          <p className="cardling-mini-user">
+            {state.language === 'zh' ? '刚才问：' : 'Asked: '}
+            {state.miniChat.lastUser}
+          </p>
+        )}
+        <form className="cardling-mini-form" onSubmit={submit}>
+          <textarea
+            value={draft}
+            rows={2}
+            placeholder={
+              state.language === 'zh'
+                ? '继续问卡布，不切回应用...'
+                : 'Ask Kabu without switching back...'
+            }
+            onChange={(event) => {
+              setDraft(event.currentTarget.value);
+              if (notice) {
+                setNotice('');
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit();
+              }
+            }}
+          />
+          <button type="submit" disabled={!draft.trim()} title={state.language === 'zh' ? '发送' : 'Send'}>
+            <ArrowUp size={14} />
+          </button>
+        </form>
+        <div className="cardling-mini-actions">
+          <button type="button" onClick={() => onAction('openMain')}>
+            <ExternalLink size={13} />
+            <span>{state.language === 'zh' ? '回主窗' : 'Open app'}</span>
+          </button>
+        </div>
+        {notice && <p className="cardling-mini-notice">{notice}</p>}
+      </section>
       <div className="cardling-panel-grid">
         <CompanionMetric
           icon={<Sparkles size={14} />}

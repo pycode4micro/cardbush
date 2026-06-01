@@ -16,9 +16,19 @@ type CardlingDesktopState = {
   activeChangeCount: number;
   activeChangeFileCount: number;
   error: string | null;
+  miniChat: {
+    title: string;
+    lastUser: string;
+    lastAssistant: string;
+  };
 };
 
-type CardlingDesktopAction = 'settings' | 'changes' | 'revertChanges';
+type CardlingDesktopAction =
+  | 'settings'
+  | 'changes'
+  | 'revertChanges'
+  | 'openMain'
+  | { type: 'miniChatSend'; text: string };
 
 const desktopApi = {
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
@@ -26,6 +36,8 @@ const desktopApi = {
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  writeDebugLog: (scope: string, payload: unknown) =>
+    ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
   wallpaperAccent: () =>
     ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{
       r: number;
@@ -34,6 +46,8 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
+  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') =>
+    ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
   bushHeaders: (targetUrl: string, json = false) =>
     ipcRenderer.invoke('bush:headers', targetUrl, json) as Promise<Record<string, string>>,
   setProxy: (proxy: {
@@ -42,10 +56,25 @@ const desktopApi = {
     httpsProxy: string;
     noProxy: string;
   }) => ipcRenderer.invoke('network:set-proxy', proxy) as Promise<void>,
+  listProviderModels: (baseUrl: string, apiKey: string) =>
+    ipcRenderer.invoke('models:list', baseUrl, apiKey) as Promise<{
+      endpoint: string;
+      models: string[];
+      rawCount: number;
+    }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
+  pickMusicFiles: () => ipcRenderer.invoke('dialog:pick-music-files') as Promise<string[]>,
+  pickMusicDirectory: () =>
+    ipcRenderer.invoke('dialog:pick-music-directory') as Promise<string | null>,
+  scanMusicDirectory: (rootPath: string) =>
+    ipcRenderer.invoke('music:scan-directory', rootPath) as Promise<string[]>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,
+  pickBackgroundImage: () =>
+    ipcRenderer.invoke('dialog:pick-background-image') as Promise<string | null>,
+  cacheBackgroundImage: (path: string) =>
+    ipcRenderer.invoke('dialog:cache-background-image', path) as Promise<string>,
   listProjectEntries: (rootPath: string) =>
     ipcRenderer.invoke('project:list-root', rootPath) as Promise<
       Array<{ name: string; path: string; kind: 'file' | 'folder' }>
@@ -127,34 +156,18 @@ const desktopApi = {
       stdout: string;
       stderr: string;
     }>,
-  captureScreenshot: (options?: { hideWindow?: boolean }) =>
-    ipcRenderer.invoke('screenshot:capture', options) as Promise<{
+  saveImageDataUrl: (
+    dataUrl: string,
+    name?: string,
+    options?: { copyToClipboard?: boolean },
+  ) =>
+    ipcRenderer.invoke('image:save-data-url', dataUrl, name, options) as Promise<{
       path: string;
       name: string;
       width: number;
       height: number;
-      dataUrl?: string;
-      windows?: Array<{
-        id: string;
-        name: string;
-        path: string;
-        width: number;
-        height: number;
-        dataUrl?: string;
-      }>;
+      copiedToClipboard?: boolean;
     }>,
-  saveScreenshotDataUrl: (dataUrl: string, name?: string) =>
-    ipcRenderer.invoke('screenshot:save-edited', dataUrl, name) as Promise<{
-      path: string;
-      name: string;
-      width: number;
-      height: number;
-    }>,
-  onScreenshotShortcut: (callback: () => void) => {
-    const listener = () => callback();
-    ipcRenderer.on('screenshot:trigger', listener);
-    return () => ipcRenderer.removeListener('screenshot:trigger', listener);
-  },
   setCardlingState: (payload: CardlingDesktopState) =>
     ipcRenderer.invoke('cardling:update-state', payload) as Promise<void>,
   onCardlingState: (callback: (payload: CardlingDesktopState) => void) => {

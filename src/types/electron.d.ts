@@ -13,6 +13,7 @@ declare global {
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
+      writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
       wallpaperAccent: () => Promise<{
         r: number;
         g: number;
@@ -20,6 +21,7 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
+      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
       bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
       setProxy: (proxy: {
         mode: 'system' | 'manual';
@@ -27,9 +29,22 @@ declare global {
         httpsProxy: string;
         noProxy: string;
       }) => Promise<void>;
+      listProviderModels: (
+        baseUrl: string,
+        apiKey: string,
+      ) => Promise<{
+        endpoint: string;
+        models: string[];
+        rawCount: number;
+      }>;
       pickAttachments: () => Promise<string[]>;
+      pickMusicFiles: () => Promise<string[]>;
+      pickMusicDirectory: () => Promise<string | null>;
+      scanMusicDirectory: (rootPath: string) => Promise<string[]>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;
+      pickBackgroundImage: () => Promise<string | null>;
+      cacheBackgroundImage: (path: string) => Promise<string>;
       listProjectEntries: (
         rootPath: string,
       ) => Promise<Array<{ name: string; path: string; kind: 'file' | 'folder' }>>;
@@ -110,31 +125,17 @@ declare global {
         stdout: string;
         stderr: string;
       }>;
-      captureScreenshot: (options?: { hideWindow?: boolean }) => Promise<{
-        path: string;
-        name: string;
-        width: number;
-        height: number;
-        dataUrl?: string;
-        windows?: Array<{
-          id: string;
-          name: string;
-          path: string;
-          width: number;
-          height: number;
-          dataUrl?: string;
-        }>;
-      }>;
-      saveScreenshotDataUrl: (
+      saveImageDataUrl: (
         dataUrl: string,
         name?: string,
+        options?: { copyToClipboard?: boolean },
       ) => Promise<{
         path: string;
         name: string;
         width: number;
         height: number;
+        copiedToClipboard?: boolean;
       }>;
-      onScreenshotShortcut: (callback: () => void) => () => void;
       setCardlingState: (payload: CardlingDesktopState) => Promise<void>;
       onCardlingState: (
         callback: (payload: CardlingDesktopState) => void,

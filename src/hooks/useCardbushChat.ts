@@ -9,6 +9,7 @@ import {
   fetchConversations,
   fetchMessages,
   fetchPendingInteraction,
+  fetchRuntimeProfiles,
   fetchSkillDetail,
   fetchSkills,
   fetchSessionMessages,
@@ -20,14 +21,17 @@ import {
   updateConversation,
 } from '../backend/api';
 import type {
+  AssistantRevision,
   ChatMessage,
   ConversationSummary,
   ManagedModelConfig,
+  RuntimeProfileSummary,
   SkillDetail,
   SkillSummary,
   ChatToolExecution,
   PendingInteraction,
   InteractionReplyAnswer,
+  ReferencePlanMode,
 } from '../types';
 
 export type QueuedChatMessage = {
@@ -53,26 +57,44 @@ export function useCardbushChat(
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [runningByConversation, setRunningByConversation] = useState<
+    Record<string, { activeTurnId: string }>
+  >({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] =
     useState<PendingInteraction | null>(null);
   const [selectedModel, setSelectedModelState] = useState(() =>
     readInitialSelectedModel(availableModels),
   );
-  const [activeTurnId, setActiveTurnId] = useState('');
-  const abortRef = useRef<AbortController | null>(null);
-  const activeTurnIdRef = useRef<string | null>(null);
-  const sendingRef = useRef(false);
+  const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfileSummary[]>(
+    defaultRuntimeProfiles,
+  );
+  const [selectedRuntimeProfile, setSelectedRuntimeProfileState] = useState(
+    readInitialRuntimeProfile,
+  );
+  const [referencePlanMode, setReferencePlanModeState] = useState<ReferencePlanMode>(
+    readInitialReferencePlanMode,
+  );
+  const controllersRef = useRef<Record<string, AbortController>>({});
+  const activeTurnIdsRef = useRef<Record<string, string>>({});
+  const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const sendMessageRef = useRef<
     (text: string, conversation?: ConversationSummary) => Promise<void>
   >(async () => undefined);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
-
-  useEffect(() => {
-    sendingRef.current = sending;
-  }, [sending]);
+  const activeConversationIdForState = activeConversationId.trim();
+  const activeQueuedMessages = queuedMessages.filter(
+    (item) => queuedMessageConversationId(item) === activeConversationIdForState,
+  );
+  const sending = Boolean(
+    activeConversationIdForState &&
+      sendingSessionsRef.current.has(activeConversationIdForState),
+  );
+  const activeTurnId = activeConversationIdForState
+    ? runningByConversation[activeConversationIdForState]?.activeTurnId ?? ''
+    : '';
 
   const enqueueMessage = useCallback((item: QueuedChatMessage) => {
     queuedMessagesRef.current = [...queuedMessagesRef.current, item];
@@ -86,8 +108,19 @@ export function useCardbushChat(
     setQueuedMessages(queuedMessagesRef.current);
   }, []);
 
-  const dequeueMessage = useCallback(() => {
-    const [next, ...rest] = queuedMessagesRef.current;
+  const dequeueMessageForConversation = useCallback((conversationId: string) => {
+    const normalized = conversationId.trim();
+    const index = queuedMessagesRef.current.findIndex(
+      (item) => queuedMessageConversationId(item) === normalized,
+    );
+    if (index < 0) {
+      return undefined;
+    }
+    const next = queuedMessagesRef.current[index];
+    const rest = [
+      ...queuedMessagesRef.current.slice(0, index),
+      ...queuedMessagesRef.current.slice(index + 1),
+    ];
     queuedMessagesRef.current = rest;
     setQueuedMessages(rest);
     return next;
@@ -98,9 +131,10 @@ export function useCardbushChat(
     async function load() {
       setLoading(true);
       try {
-        const [loadedConversations, loadedSkills] = await Promise.all([
+        const [loadedConversations, loadedSkills, loadedRuntimeProfiles] = await Promise.all([
           fetchConversations(),
           fetchSkills().catch(() => []),
+          fetchRuntimeProfiles().catch(() => defaultRuntimeProfiles),
         ]);
         if (cancelled) {
           return;
@@ -120,6 +154,7 @@ export function useCardbushChat(
           );
         });
         setSkills(loadedSkills);
+        setRuntimeProfiles(mergeRuntimeProfiles(loadedRuntimeProfiles));
         setError(null);
       } catch (caught) {
         if (!cancelled) {
@@ -127,6 +162,7 @@ export function useCardbushChat(
           setActiveConversationId('');
           setMessagesByConversation({});
           setSkills([]);
+          setRuntimeProfiles(defaultRuntimeProfiles);
           setError(errorMessage(caught));
         }
       } finally {
@@ -161,6 +197,34 @@ export function useCardbushChat(
     window.localStorage.setItem('cardbush.selected_model', model);
   }, []);
 
+  const setSelectedRuntimeProfile = useCallback(
+    (profileId: string, conversationId = activeConversationId) => {
+      const normalized = normalizeRuntimeProfileId(profileId);
+      setSelectedRuntimeProfileState(normalized);
+      window.localStorage.setItem('cardbush.runtime_profile', normalized);
+      const targetConversationId = conversationId.trim();
+      if (!targetConversationId) {
+        return;
+      }
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === targetConversationId ? { ...item, agentProfile: normalized } : item,
+        ),
+      );
+      void updateConversation({
+        sessionId: targetConversationId,
+        agentProfile: normalized,
+      }).catch((caught) => setError(errorMessage(caught)));
+    },
+    [activeConversationId],
+  );
+
+  const setReferencePlanMode = useCallback((mode: ReferencePlanMode) => {
+    const normalized = normalizeReferencePlanMode(mode);
+    setReferencePlanModeState(normalized);
+    window.localStorage.setItem('cardbush.reference_plan_mode', normalized);
+  }, []);
+
   useEffect(() => {
     if (!activeConversationId || messagesByConversation[activeConversationId]) {
       return;
@@ -184,7 +248,7 @@ export function useCardbushChat(
                 item.id === activeConversationId
                   ? {
                       ...item,
-                      projectDir: result.conversation.projectDir ?? item.projectDir,
+                      projectDir: result.conversation.projectDir,
                       workspaceContext: result.conversation.workspaceContext,
                     }
                   : item,
@@ -219,10 +283,51 @@ export function useCardbushChat(
       conversations[0],
     [activeConversationId, conversations],
   );
+  const activeRuntimeProfile =
+    activeConversation?.agentProfile?.trim() || selectedRuntimeProfile;
 
   const activeMessages = activeConversationId
     ? messagesByConversation[activeConversationId] ?? []
     : [];
+
+  const markSessionRunning = useCallback((sessionId: string, turnId = '') => {
+    const normalized = sessionId.trim();
+    if (!normalized) {
+      return;
+    }
+    sendingSessionsRef.current.add(normalized);
+    if (turnId.trim()) {
+      activeTurnIdsRef.current[normalized] = turnId.trim();
+    }
+    setRunningByConversation((current) => ({
+      ...current,
+      [normalized]: {
+        activeTurnId: turnId.trim() || current[normalized]?.activeTurnId || '',
+      },
+    }));
+  }, []);
+
+  const clearSessionRunning = useCallback((sessionId: string) => {
+    const normalized = sessionId.trim();
+    if (!normalized) {
+      return;
+    }
+    sendingSessionsRef.current.delete(normalized);
+    delete activeTurnIdsRef.current[normalized];
+    setRunningByConversation((current) => {
+      if (!(normalized in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[normalized];
+      return next;
+    });
+  }, []);
+
+  const isSessionSending = useCallback(
+    (sessionId: string) => sendingSessionsRef.current.has(sessionId.trim()),
+    [],
+  );
 
   const reloadConversations = useCallback(async () => {
     const loadedConversations = await fetchConversations();
@@ -316,10 +421,17 @@ export function useCardbushChat(
 
   const startConversation = useCallback(async (projectDir?: string) => {
     try {
-      const created = await createConversation({ projectDir });
+      const created = await createConversation({
+        projectDir,
+        agentProfile: selectedRuntimeProfile,
+      });
       const nextCreated = projectDir
-        ? { ...created, projectDir: created.projectDir ?? projectDir }
-        : created;
+        ? {
+            ...created,
+            agentProfile: created.agentProfile ?? selectedRuntimeProfile,
+            projectDir: created.projectDir ?? projectDir,
+          }
+        : { ...created, agentProfile: created.agentProfile ?? selectedRuntimeProfile };
       setConversations((current) => [nextCreated, ...current]);
       setMessagesByConversation((current) => ({
         ...current,
@@ -330,7 +442,10 @@ export function useCardbushChat(
       return nextCreated;
     } catch (caught) {
       setError(errorMessage(caught));
-      const created = localConversation(projectDir);
+      const created = {
+        ...localConversation(projectDir),
+        agentProfile: selectedRuntimeProfile,
+      };
       setConversations((current) => [created, ...current]);
       setMessagesByConversation((current) => ({
         ...current,
@@ -339,7 +454,7 @@ export function useCardbushChat(
       setActiveConversationId(created.id);
       return created;
     }
-  }, []);
+  }, [selectedRuntimeProfile]);
 
   const deleteConversation = useCallback((conversationId: string) => {
     setConversations((current) => {
@@ -380,20 +495,20 @@ export function useCardbushChat(
       if (!trimmed) {
         return;
       }
-      if (sendingRef.current) {
-        enqueueMessage({
-          id: `queued-${crypto.randomUUID()}`,
-          text: trimmed,
-          conversation: queuedConversation ?? activeConversation,
-          createdAt: new Date().toISOString(),
-        });
-        return;
-      }
       const outbound = splitStreamAttachmentMentions(trimmed);
       const conversation =
         queuedConversation ?? activeConversation ?? (await startConversation());
       const sessionId = conversation.id;
-      const projectDir = conversation.projectDir?.trim();
+      if (isSessionSending(sessionId)) {
+        enqueueMessage({
+          id: `queued-${crypto.randomUUID()}`,
+          text: trimmed,
+          conversation,
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
+      const projectDir = conversationProjectRequestDir(conversation);
       const projectUserPrompt = projectDir
         ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
         : '';
@@ -424,12 +539,16 @@ export function useCardbushChat(
       setConversations((current) =>
         upsertConversationPreview(current, conversation, trimmed),
       );
-      setSending(true);
-      sendingRef.current = true;
+      markSessionRunning(sessionId);
       setError(null);
       const controller = new AbortController();
-      abortRef.current = controller;
-      activeTurnIdRef.current = null;
+      const streamBuffer = createAssistantStreamDeltaBuffer((delta) => {
+        setMessagesByConversation((current) =>
+          appendAssistantDelta(current, sessionId, assistantId, delta),
+        );
+      });
+      controllersRef.current[sessionId] = controller;
+      let finalSnapshotPromise: Promise<void> | null = null;
 
       try {
         await streamChat({
@@ -437,17 +556,18 @@ export function useCardbushChat(
           userInput: outbound.userInput,
           model: selectedModel,
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+          agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
           projectDir,
           projectUserPrompt,
           allowedSkills: skills
             .map((skill) => skill.name)
             .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+          referencePlanMode,
           images: outbound.images,
           files: outbound.files,
           signal: controller.signal,
           onStart: (start) => {
-            activeTurnIdRef.current = start.turnId;
-            setActiveTurnId(start.turnId);
+            markSessionRunning(sessionId, start.turnId);
             setMessagesByConversation((current) =>
               assignTurnToLocalMessages(current, sessionId, start.turnId, [
                 userMessage.id,
@@ -456,14 +576,20 @@ export function useCardbushChat(
             );
           },
           onDelta: (delta) => {
+            streamBuffer.push(delta);
+          },
+          onAssistantRevision: (revision) => {
+            streamBuffer.reset(revision.content ?? '');
             setMessagesByConversation((current) =>
-              appendAssistantDelta(current, sessionId, assistantId, delta),
+              applyAssistantRevision(current, sessionId, assistantId, revision),
             );
           },
           onToolExecution: (execution) => {
-            setMessagesByConversation((current) =>
-              appendToolExecution(current, sessionId, assistantId, execution),
-            );
+            void streamBuffer.flushAllStreaming().then(() => {
+              setMessagesByConversation((current) =>
+                appendToolExecution(current, sessionId, assistantId, execution),
+              );
+            });
           },
           onInteractiveRequest: (interaction) => {
             setPendingInteraction({
@@ -473,34 +599,42 @@ export function useCardbushChat(
           },
           onMessages: (nextMessages, finalSnapshot) => {
             if (finalSnapshot) {
-              setMessagesByConversation((current) =>
-                mergeFinalStreamMessages(current, sessionId, nextMessages, {
-                  turnId: activeTurnIdRef.current ?? undefined,
-                  temporaryMessageIds: [userMessage.id, assistantId],
-                  toolSourceMessageId: assistantId,
-                }),
-              );
+              const turnId = activeTurnIdsRef.current[sessionId];
+              const finalContent = finalAssistantContentForStream(nextMessages, turnId);
+              finalSnapshotPromise = streamBuffer.flushFinalText(finalContent).then(() => {
+                setMessagesByConversation((current) =>
+                  mergeFinalStreamMessages(current, sessionId, nextMessages, {
+                    turnId,
+                    temporaryMessageIds: [userMessage.id, assistantId],
+                    toolSourceMessageId: assistantId,
+                  }),
+                );
+              });
               return;
             }
-            setMessagesByConversation((current) =>
-              mergeMessages(current, sessionId, nextMessages),
-            );
+            void streamBuffer.flushAllStreaming().then(() => {
+              setMessagesByConversation((current) =>
+                mergeMessages(current, sessionId, nextMessages),
+              );
+            });
           },
         });
+        if (finalSnapshotPromise) {
+          await finalSnapshotPromise;
+        }
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (!controller.signal.aborted) {
           setError(errorMessage(caught));
         }
       } finally {
-        if (abortRef.current === controller) {
-          abortRef.current = null;
-          activeTurnIdRef.current = null;
-          setActiveTurnId('');
+        await streamBuffer.flushAllStreaming();
+        streamBuffer.dispose();
+        if (controllersRef.current[sessionId] === controller) {
+          delete controllersRef.current[sessionId];
+          clearSessionRunning(sessionId);
         }
-        sendingRef.current = false;
-        setSending(false);
-        const nextQueued = dequeueMessage();
+        const nextQueued = dequeueMessageForConversation(sessionId);
         if (nextQueued) {
           window.setTimeout(() => {
             void sendMessageRef.current(nextQueued.text, nextQueued.conversation);
@@ -510,13 +644,18 @@ export function useCardbushChat(
     },
     [
       activeConversation,
-      dequeueMessage,
+      clearSessionRunning,
+      dequeueMessageForConversation,
       enqueueMessage,
+      isSessionSending,
+      markSessionRunning,
       reloadConversations,
       managedModelConfigs,
       requestContext.disabledSkillNames,
       requestContext.projectContexts,
+      referencePlanMode,
       selectedModel,
+      selectedRuntimeProfile,
       skills,
       startConversation,
     ],
@@ -532,17 +671,22 @@ export function useCardbushChat(
       initialMessages,
       rollbackMessages,
       tempAssistant,
+      startedMessageIds,
+      temporaryMessageIds,
       stream,
     }: {
       conversation: ConversationSummary;
       initialMessages: ChatMessage[];
       rollbackMessages: ChatMessage[];
       tempAssistant: ChatMessage;
+      startedMessageIds?: string[];
+      temporaryMessageIds?: string[];
       stream: (
         controller: AbortController,
         handlers: {
           onStart: (start: { sessionId: string; turnId: string }) => void;
           onDelta: (delta: string) => void;
+          onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
@@ -552,10 +696,16 @@ export function useCardbushChat(
       const sessionId = conversation.id;
       const controller = new AbortController();
       let finalSnapshot: ChatMessage[] | null = null;
-      abortRef.current = controller;
-      activeTurnIdRef.current = null;
-      setActiveTurnId('');
-      setSending(true);
+      const streamBuffer = createAssistantStreamDeltaBuffer((delta) => {
+        setMessagesByConversation((current) =>
+          appendAssistantDelta(current, sessionId, tempAssistant.id, delta),
+        );
+      });
+      const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
+      const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
+      let finalSnapshotPromise: Promise<void> | null = null;
+      controllersRef.current[sessionId] = controller;
+      markSessionRunning(sessionId);
       setError(null);
       setMessagesByConversation((current) => ({
         ...current,
@@ -572,26 +722,31 @@ export function useCardbushChat(
       try {
         await stream(controller, {
           onStart: (start) => {
-            activeTurnIdRef.current = start.turnId;
-            setActiveTurnId(start.turnId);
+            markSessionRunning(sessionId, start.turnId);
             setMessagesByConversation((current) => ({
               ...current,
               [sessionId]: (current[sessionId] ?? initialMessages).map((item) =>
-                item.id === tempAssistant.id
+                startIds.has(item.id)
                   ? { ...item, turnId: start.turnId, conversationId: sessionId }
                   : item,
               ),
             }));
           },
           onDelta: (delta) => {
+            streamBuffer.push(delta);
+          },
+          onAssistantRevision: (revision) => {
+            streamBuffer.reset(revision.content ?? '');
             setMessagesByConversation((current) =>
-              appendAssistantDelta(current, sessionId, tempAssistant.id, delta),
+              applyAssistantRevision(current, sessionId, tempAssistant.id, revision),
             );
           },
           onToolExecution: (execution) => {
-            setMessagesByConversation((current) =>
-              appendToolExecution(current, sessionId, tempAssistant.id, execution),
-            );
+            void streamBuffer.flushAllStreaming().then(() => {
+              setMessagesByConversation((current) =>
+                appendToolExecution(current, sessionId, tempAssistant.id, execution),
+              );
+            });
           },
           onInteractiveRequest: (interaction) => {
             setPendingInteraction({
@@ -602,20 +757,29 @@ export function useCardbushChat(
           onMessages: (nextMessages, finalSnapshotEvent) => {
             if (finalSnapshotEvent) {
               finalSnapshot = nextMessages;
-              setMessagesByConversation((current) =>
-                mergeFinalStreamMessages(current, sessionId, nextMessages, {
-                  turnId: activeTurnIdRef.current ?? tempAssistant.turnId,
-                  temporaryMessageIds: [tempAssistant.id],
-                  toolSourceMessageId: tempAssistant.id,
-                }),
-              );
+              const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
+              const finalContent = finalAssistantContentForStream(nextMessages, turnId);
+              finalSnapshotPromise = streamBuffer.flushFinalText(finalContent).then(() => {
+                setMessagesByConversation((current) =>
+                  mergeFinalStreamMessages(current, sessionId, nextMessages, {
+                    turnId,
+                    temporaryMessageIds: replacementIds,
+                    toolSourceMessageId: tempAssistant.id,
+                  }),
+                );
+              });
               return;
             }
-            setMessagesByConversation((current) =>
-              mergeMessages(current, sessionId, nextMessages),
-            );
+            void streamBuffer.flushAllStreaming().then(() => {
+              setMessagesByConversation((current) =>
+                mergeMessages(current, sessionId, nextMessages),
+              );
+            });
           },
         });
+        if (finalSnapshotPromise) {
+          await finalSnapshotPromise;
+        }
 
         const loadedMessages = await fetchMessages(sessionId).catch(() => finalSnapshot);
         if (loadedMessages && loadedMessages.length > 0) {
@@ -637,23 +801,23 @@ export function useCardbushChat(
           [sessionId]: rollbackMessages,
         }));
       } finally {
-        if (abortRef.current === controller) {
-          abortRef.current = null;
-          activeTurnIdRef.current = null;
-          setActiveTurnId('');
+        await streamBuffer.flushAllStreaming();
+        streamBuffer.dispose();
+        if (controllersRef.current[sessionId] === controller) {
+          delete controllersRef.current[sessionId];
+          clearSessionRunning(sessionId);
         }
-        setSending(false);
       }
     },
-    [reloadConversations],
+    [clearSessionRunning, markSessionRunning, reloadConversations],
   );
 
   const regenerateAssistantMessage = useCallback(
     async (message: ChatMessage) => {
-      if (sending) {
+      const conversationId = message.conversationId?.trim() || activeConversationId;
+      if (isSessionSending(conversationId)) {
         return;
       }
-      const conversationId = message.conversationId?.trim() || activeConversationId;
       const turnId = message.turnId?.trim() ?? '';
       const conversation =
         conversations.find((item) => item.id === conversationId) ?? activeConversation;
@@ -682,7 +846,7 @@ export function useCardbushChat(
       };
       const initialMessages = [...messages];
       initialMessages[index] = tempAssistant;
-      const projectDir = conversation.projectDir?.trim();
+      const projectDir = conversationProjectRequestDir(conversation);
       const projectUserPrompt = projectDir
         ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
         : '';
@@ -698,11 +862,13 @@ export function useCardbushChat(
             turnId,
             model: selectedModel,
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+            agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
             projectDir,
             projectUserPrompt,
             allowedSkills: skills
               .map((skill) => skill.name)
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+            referencePlanMode,
             signal: controller.signal,
             ...handlers,
           }),
@@ -713,29 +879,31 @@ export function useCardbushChat(
       activeConversationId,
       activeMessages,
       conversations,
+      isSessionSending,
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,
       requestContext.projectContexts,
+      referencePlanMode,
       runControlAssistantStream,
+      sendMessage,
       selectedModel,
-      sending,
+      selectedRuntimeProfile,
       skills,
     ],
   );
 
   const editUserMessageAndRegenerate = useCallback(
     async (message: ChatMessage, nextContent: string) => {
-      if (sending) {
-        return;
-      }
       const content = nextContent.trim();
       const outbound = splitStreamAttachmentMentions(content);
       const conversationId = message.conversationId?.trim() || activeConversationId;
-      const messageId = message.id.trim();
+      if (isSessionSending(conversationId)) {
+        return;
+      }
       const conversation =
         conversations.find((item) => item.id === conversationId) ?? activeConversation;
-      if (!conversation || !conversationId || !messageId || !content) {
+      if (!conversation || !conversationId || !content) {
         return;
       }
       if (!selectedModel.trim()) {
@@ -747,11 +915,44 @@ export function useCardbushChat(
       if (index < 0) {
         return;
       }
+      let editSourceMessage = findPersistedEditableUserMessage(message, messages);
+      let messageId = persistedChatMessageId(editSourceMessage);
+      let refreshFailed = false;
+      if (!messageId) {
+        const loadedMessages = await fetchMessages(conversationId).catch((caught) => {
+          refreshFailed = true;
+          setError(`刷新会话消息失败: ${errorMessage(caught)}`);
+          return [] as ChatMessage[];
+        });
+        if (loadedMessages.length > 0) {
+          setMessagesByConversation((current) => ({
+            ...current,
+            [conversationId]: mergeLoadedMessagesPreservingLocalState(
+              current[conversationId] ?? [],
+              loadedMessages,
+            ),
+          }));
+          editSourceMessage = findPersistedEditableUserMessage(
+            message,
+            loadedMessages,
+          );
+          messageId = persistedChatMessageId(editSourceMessage);
+        }
+      }
+      if (refreshFailed && !messageId) {
+        return;
+      }
+      if (!editSourceMessage || !messageId) {
+        await sendMessage(content, conversation);
+        setNotice('未定位到原消息，已作为新提问发送。');
+        return;
+      }
       const createdAt = new Date().toISOString();
       const editedUser: ChatMessage = {
-        ...message,
+        ...editSourceMessage,
         content,
         conversationId,
+        turnId: undefined,
         createdAt,
       };
       const tempAssistant: ChatMessage = {
@@ -766,7 +967,7 @@ export function useCardbushChat(
         editedUser,
         tempAssistant,
       ];
-      const projectDir = conversation.projectDir?.trim();
+      const projectDir = conversationProjectRequestDir(conversation);
       const projectUserPrompt = projectDir
         ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
         : '';
@@ -776,6 +977,12 @@ export function useCardbushChat(
         initialMessages,
         rollbackMessages: messages,
         tempAssistant,
+        startedMessageIds: [editedUser.id, tempAssistant.id],
+        temporaryMessageIds: uniqueMessageIds([
+          message.id,
+          editedUser.id,
+          tempAssistant.id,
+        ]),
         stream: (controller, handlers) =>
           editMessage({
             sessionId: conversationId,
@@ -783,11 +990,13 @@ export function useCardbushChat(
             content,
             model: selectedModel,
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
+            agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
             projectDir,
             projectUserPrompt,
             allowedSkills: skills
               .map((skill) => skill.name)
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+            referencePlanMode,
             images: outbound.images,
             files: outbound.files,
             signal: controller.signal,
@@ -800,13 +1009,15 @@ export function useCardbushChat(
       activeConversationId,
       activeMessages,
       conversations,
+      isSessionSending,
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,
       requestContext.projectContexts,
+      referencePlanMode,
       runControlAssistantStream,
       selectedModel,
-      sending,
+      selectedRuntimeProfile,
       skills,
     ],
   );
@@ -821,13 +1032,15 @@ export function useCardbushChat(
       if (!text) {
         return;
       }
-      if (!sending) {
-        await sendMessage(text);
-        return;
-      }
       const turnId = message.turnId?.trim() ?? '';
       const conversationId = message.conversationId?.trim() || activeConversationId;
-      const active = activeTurnIdRef.current?.trim() ?? '';
+      const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
+      if (!isSessionSending(conversationId)) {
+        const conversation =
+          conversations.find((item) => item.id === conversationId) ?? activeConversation;
+        await sendMessage(text, conversation);
+        return;
+      }
       if (!conversationId || !turnId || !active || active !== turnId) {
         setError('当前回复尚未准备好插入引导，请稍后再试');
         return;
@@ -843,8 +1056,11 @@ export function useCardbushChat(
       } catch (caught) {
         if (String(caught).includes('404')) {
           for (let attempt = 0; attempt < 40; attempt += 1) {
-            if (!sendingRef.current) {
-              await sendMessageRef.current(text);
+            if (!isSessionSending(conversationId)) {
+              const conversation =
+                conversations.find((item) => item.id === conversationId) ??
+                activeConversation;
+              await sendMessageRef.current(text, conversation);
               return;
             }
             await delay(100);
@@ -855,7 +1071,13 @@ export function useCardbushChat(
         setError(`引导发送失败: ${errorMessage(caught)}`);
       }
     },
-    [activeConversationId, sendMessage, sending],
+    [
+      activeConversation,
+      activeConversationId,
+      conversations,
+      isSessionSending,
+      sendMessage,
+    ],
   );
 
   const sendQueuedMessageAsGuidance = useCallback(
@@ -865,13 +1087,13 @@ export function useCardbushChat(
     ) => {
       const queued = queuedMessagesRef.current.find((item) => item.id === queuedId);
       const text = queued?.text.trim() ?? '';
-      const active = activeTurnIdRef.current?.trim() ?? '';
       const conversationId =
         queued?.conversation?.id?.trim() || activeConversationId.trim();
       if (!queued || !text) {
         return;
       }
-      if (!sendingRef.current || !conversationId || !active) {
+      const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
+      if (!isSessionSending(conversationId) || !conversationId || !active) {
         setError('当前回复尚未准备好插入引导，请稍后再试');
         return;
       }
@@ -888,7 +1110,7 @@ export function useCardbushChat(
         setError(`引导发送失败: ${errorMessage(caught)}`);
       }
     },
-    [activeConversationId, removeQueuedMessage],
+    [activeConversationId, isSessionSending, removeQueuedMessage],
   );
 
   const replyToInteraction = useCallback(
@@ -924,18 +1146,22 @@ export function useCardbushChat(
     }
   }, [pendingInteraction]);
 
-  const cancelSending = useCallback(async () => {
-    abortRef.current?.abort();
-    const turnId = activeTurnIdRef.current;
-    sendingRef.current = false;
-    setSending(false);
-    setActiveTurnId('');
+  const cancelSending = useCallback(async (conversationId?: string) => {
+    const sessionId = (conversationId ?? activeConversationId).trim();
+    if (!sessionId) {
+      return;
+    }
+    controllersRef.current[sessionId]?.abort();
+    const turnId = activeTurnIdsRef.current[sessionId];
+    delete controllersRef.current[sessionId];
+    clearSessionRunning(sessionId);
     if (turnId) {
       await stopTurn(turnId).catch((caught) => setError(errorMessage(caught)));
     }
-  }, []);
+  }, [activeConversationId, clearSessionRunning]);
 
   const clearError = useCallback(() => setError(null), []);
+  const clearNotice = useCallback(() => setNotice(null), []);
 
   return {
     conversations,
@@ -948,13 +1174,20 @@ export function useCardbushChat(
     messagesLoading,
     sending,
     activeTurnId,
-    queuedMessages,
-    queuedMessageCount: queuedMessages.length,
-    queuedMessagePreview: queuedMessages[0]?.text ?? '',
+    runningByConversation,
+    queuedMessages: activeQueuedMessages,
+    queuedMessageCount: activeQueuedMessages.length,
+    queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
     pendingInteraction,
     error,
+    notice,
     selectedModel,
     setSelectedModel,
+    selectedRuntimeProfile: activeRuntimeProfile,
+    runtimeProfiles,
+    setSelectedRuntimeProfile,
+    referencePlanMode,
+    setReferencePlanMode,
     openConversation,
     startConversation,
     deleteConversation,
@@ -974,6 +1207,7 @@ export function useCardbushChat(
     cancelPendingInteraction,
     cancelSending,
     clearError,
+    clearNotice,
   };
 }
 
@@ -983,6 +1217,83 @@ function readInitialSelectedModel(availableModels: string[]) {
     return stored;
   }
   return availableModels[0] ?? '';
+}
+
+const defaultRuntimeProfiles: RuntimeProfileSummary[] = [
+  {
+    id: 'general',
+    label: 'General',
+    description: 'General purpose assistant.',
+    defaultLane: 'general',
+    phases: [],
+    allowedLanes: [],
+    raw: { id: 'general' },
+  },
+  {
+    id: 'code',
+    label: 'Code',
+    description: 'Programming workflow: inspect, edit, verify, final.',
+    defaultLane: 'code',
+    phases: ['inspect', 'edit', 'verify', 'final'],
+    allowedLanes: ['code'],
+    raw: { id: 'code' },
+  },
+  {
+    id: 'code-review',
+    label: 'Code Review',
+    description: 'Read-only review focused on findings and risks.',
+    defaultLane: 'review',
+    phases: ['inspect', 'review', 'final'],
+    allowedLanes: ['review'],
+    raw: { id: 'code-review' },
+  },
+  {
+    id: 'research',
+    label: 'Research',
+    description: 'Evidence-first research workflow.',
+    defaultLane: 'research',
+    phases: ['collect', 'compare', 'synthesize', 'final'],
+    allowedLanes: ['research'],
+    raw: { id: 'research' },
+  },
+];
+
+function readInitialRuntimeProfile() {
+  return normalizeRuntimeProfileId(
+    window.localStorage.getItem('cardbush.runtime_profile') ?? 'general',
+  );
+}
+
+function readInitialReferencePlanMode(): ReferencePlanMode {
+  return normalizeReferencePlanMode(
+    window.localStorage.getItem('cardbush.reference_plan_mode') ?? 'off',
+  );
+}
+
+function normalizeReferencePlanMode(value: string): ReferencePlanMode {
+  return value.trim() === 'auto' ? 'auto' : 'off';
+}
+
+function normalizeRuntimeProfileId(value: string) {
+  const normalized = value.trim();
+  return normalized || 'general';
+}
+
+function mergeRuntimeProfiles(profiles: RuntimeProfileSummary[]) {
+  const merged = new Map<string, RuntimeProfileSummary>();
+  for (const profile of defaultRuntimeProfiles) {
+    merged.set(profile.id, profile);
+  }
+  for (const profile of profiles) {
+    if (profile.id.trim()) {
+      merged.set(profile.id, profile);
+    }
+  }
+  return [...merged.values()];
+}
+
+function queuedMessageConversationId(item: QueuedChatMessage) {
+  return item.conversation?.id?.trim() ?? '';
 }
 
 function modelConfigFor(configs: ManagedModelConfig[], selectedModel: string) {
@@ -999,6 +1310,430 @@ function projectKey(projectDir: string) {
   return projectDir.trim().replace(/\\/g, '/').toLowerCase();
 }
 
+function conversationProjectRequestDir(conversation: ConversationSummary) {
+  const workspaceMode = conversation.workspaceContext?.mode;
+  if (workspaceMode === 'task') {
+    return '';
+  }
+  return (
+    conversation.projectDir?.trim() ||
+    (workspaceMode === 'project'
+      ? conversation.workspaceContext?.projectDir?.trim() || ''
+      : '')
+  );
+}
+
+function finalAssistantContentForStream(messages: ChatMessage[], turnId?: string) {
+  const normalizedTurnId = turnId?.trim() ?? '';
+  const assistants = messages.filter(
+    (message) =>
+      message.role === 'assistant' &&
+      message.content.trim() &&
+      !isSupersededLoopAssistant(message),
+  );
+  if (normalizedTurnId) {
+    const finalExact = [...assistants]
+      .reverse()
+      .find(
+        (message) =>
+          (message.turnId?.trim() ?? '') === normalizedTurnId &&
+          isAssistantFinalTranscript(message),
+      );
+    if (finalExact) {
+      return finalExact.content;
+    }
+    const exact = [...assistants]
+      .reverse()
+      .find((message) => (message.turnId?.trim() ?? '') === normalizedTurnId);
+    if (exact) {
+      return exact.content;
+    }
+  }
+  return [...assistants].reverse().find(isAssistantFinalTranscript)?.content ??
+    assistants.at(-1)?.content ??
+    '';
+}
+
+const streamSentenceFlushThreshold = 50;
+const streamForceFlushThreshold = 140;
+const streamFlushIntervalMs = 18;
+const streamBaseCharChunkSize = 2;
+const streamMediumCharChunkSize = 4;
+const streamFastCharChunkSize = 7;
+const streamCatchUpCharChunkSize = 11;
+
+type StreamReadySegment = {
+  text: string;
+  atomic: boolean;
+};
+
+function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
+  let pending = '';
+  const ready: StreamReadySegment[] = [];
+  let timer: number | undefined;
+  let emitted = '';
+  const drainWaiters: Array<() => void> = [];
+
+  const clearTimer = () => {
+    if (!timer) {
+      return;
+    }
+    window.clearTimeout(timer);
+    timer = undefined;
+  };
+
+  const queueReady = () => {
+    for (;;) {
+      const release = streamBufferedRelease(pending);
+      if (release.index <= 0) {
+        return;
+      }
+      ready.push({
+        text: pending.slice(0, release.index),
+        atomic: release.atomic,
+      });
+      pending = pending.slice(release.index);
+    }
+  };
+
+  const schedule = () => {
+    if (timer) {
+      return;
+    }
+    timer = window.setTimeout(() => {
+      timer = undefined;
+      queueReady();
+      drainReadyChunk();
+      if (pending || ready.length > 0) {
+        schedule();
+        return;
+      }
+      resolveDrainWaiters();
+    }, streamFlushIntervalMs);
+  };
+
+  const drainReadyChunk = () => {
+    const segment = ready[0];
+    if (!segment) {
+      resolveDrainWaiters();
+      return;
+    }
+    const index = acceleratedCharacterChunkEnd(segment.text, readyBacklogLength());
+    if (segment.text.length <= index) {
+      ready.shift();
+      emit(segment.text);
+      resolveDrainWaiters();
+      return;
+    }
+    emit(segment.text.slice(0, index));
+    segment.text = segment.text.slice(index);
+  };
+
+  const emit = (delta: string) => {
+    if (!delta) {
+      return;
+    }
+    emitted += delta;
+    append(delta);
+  };
+
+  const forceReleasePending = () => {
+    if (!pending) {
+      return;
+    }
+    ready.push({
+      text: pending,
+      atomic: false,
+    });
+    pending = '';
+  };
+
+  const bufferedText = () =>
+    `${ready.map((segment) => segment.text).join('')}${pending}`;
+
+  const readyBacklogLength = () =>
+    ready.reduce((total, segment) => total + segment.text.length, 0) + pending.length;
+
+  const resolveDrainWaiters = () => {
+    if (pending || ready.length > 0 || drainWaiters.length === 0) {
+      return;
+    }
+    const waiters = drainWaiters.splice(0);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  };
+
+  const waitForDrain = () =>
+    new Promise<void>((resolve) => {
+      if (!pending && ready.length === 0) {
+        resolve();
+        return;
+      }
+      drainWaiters.push(resolve);
+      schedule();
+    });
+
+  const flushAllStreaming = () => {
+    forceReleasePending();
+    drainReadyChunk();
+    return waitForDrain();
+  };
+
+  return {
+    push(delta: string) {
+      if (!delta) {
+        return;
+      }
+      pending += delta;
+      queueReady();
+      drainReadyChunk();
+      if (pending || ready.length > 0) {
+        schedule();
+      }
+    },
+    flushAllStreaming() {
+      return flushAllStreaming();
+    },
+    flushFinalText(finalText: string) {
+      const knownText = `${emitted}${bufferedText()}`;
+      if (finalText && finalText.startsWith(knownText)) {
+        pending += finalText.slice(knownText.length);
+      } else if (finalText && finalText.startsWith(emitted)) {
+        ready.length = 0;
+        pending = finalText.slice(emitted.length);
+      }
+      return flushAllStreaming();
+    },
+    reset(nextEmitted = '') {
+      clearTimer();
+      ready.length = 0;
+      pending = '';
+      emitted = nextEmitted;
+      resolveDrainWaiters();
+    },
+    dispose() {
+      clearTimer();
+      ready.length = 0;
+      pending = '';
+      resolveDrainWaiters();
+    },
+  };
+}
+
+function acceleratedCharacterChunkEnd(value: string, backlogLength: number) {
+  const targetSize = streamCharacterChunkSize(backlogLength);
+  let index = 0;
+  let count = 0;
+  for (const char of value) {
+    index += char.length;
+    count += 1;
+    if (count >= targetSize) {
+      break;
+    }
+  }
+  return Math.max(1, Math.min(value.length, index));
+}
+
+function streamCharacterChunkSize(backlogLength: number) {
+  if (backlogLength >= 900) {
+    return streamCatchUpCharChunkSize;
+  }
+  if (backlogLength >= 360) {
+    return streamFastCharChunkSize;
+  }
+  if (backlogLength >= 120) {
+    return streamMediumCharChunkSize;
+  }
+  return streamBaseCharChunkSize;
+}
+
+function streamBufferedRelease(buffer: string): { index: number; atomic: boolean } {
+  if (!buffer) {
+    return { index: 0, atomic: false };
+  }
+  const incompleteTableStart = markdownIncompleteTableStart(buffer);
+  const completeTableEnd = markdownFirstCompleteTableEnd(buffer);
+  if (
+    completeTableEnd > 0 &&
+    (incompleteTableStart == null || completeTableEnd <= incompleteTableStart)
+  ) {
+    return { index: completeTableEnd, atomic: true };
+  }
+
+  const eligible =
+    incompleteTableStart == null ? buffer : buffer.slice(0, incompleteTableStart);
+  if (!eligible) {
+    return { index: 0, atomic: false };
+  }
+
+  if (eligible.length >= streamSentenceFlushThreshold) {
+    const sentenceEnd = lastSentenceBoundary(eligible);
+    if (sentenceEnd > 0) {
+      return { index: sentenceEnd, atomic: false };
+    }
+  }
+
+  const paragraphEnd = lastParagraphBoundary(eligible);
+  if (paragraphEnd >= streamSentenceFlushThreshold) {
+    return { index: paragraphEnd, atomic: false };
+  }
+
+  if (eligible.length >= streamForceFlushThreshold) {
+    return { index: relaxedTextBoundary(eligible), atomic: false };
+  }
+
+  return { index: 0, atomic: false };
+}
+
+function lastSentenceBoundary(value: string) {
+  let boundary = 0;
+  const pattern = /[。！？.!?](?:["'”’）)]|\s|$)*/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(value)) != null) {
+    boundary = match.index + match[0].length;
+  }
+  return boundary;
+}
+
+function lastParagraphBoundary(value: string) {
+  const index = Math.max(value.lastIndexOf('\n\n'), value.lastIndexOf('\r\n\r\n'));
+  return index >= 0 ? index + (value[index] === '\r' ? 4 : 2) : 0;
+}
+
+function relaxedTextBoundary(value: string) {
+  const sentenceEnd = lastSentenceBoundary(value);
+  if (sentenceEnd > 0) {
+    return sentenceEnd;
+  }
+  const newlineIndex = value.lastIndexOf('\n');
+  if (newlineIndex > 0) {
+    return newlineIndex + 1;
+  }
+  const whitespaceMatch = value.slice(0, streamForceFlushThreshold).match(/\s+\S*$/);
+  if (whitespaceMatch?.index != null && whitespaceMatch.index > 0) {
+    return whitespaceMatch.index + whitespaceMatch[0].length;
+  }
+  return Math.min(value.length, streamForceFlushThreshold);
+}
+
+type MarkdownLineSegment = {
+  text: string;
+  body: string;
+  start: number;
+  end: number;
+  hasLineBreak: boolean;
+};
+
+function markdownFirstCompleteTableEnd(value: string) {
+  const table = markdownTableRange(value);
+  return table?.complete ? table.end : 0;
+}
+
+function markdownIncompleteTableStart(value: string) {
+  const table = markdownTableRange(value);
+  return table && !table.complete ? table.start : undefined;
+}
+
+function markdownTableRange(value: string) {
+  const lines = markdownLineSegments(value);
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index];
+    const separator = lines[index + 1];
+    if (!isMarkdownTableRow(header.body) || !isMarkdownTableSeparator(separator.body)) {
+      continue;
+    }
+    if (!separator.hasLineBreak) {
+      return {
+        start: header.start,
+        end: value.length,
+        complete: false,
+      };
+    }
+    let endIndex = index + 2;
+    while (
+      endIndex < lines.length &&
+      isMarkdownTableRow(lines[endIndex].body)
+    ) {
+      if (!lines[endIndex].hasLineBreak && endIndex === lines.length - 1) {
+        return {
+          start: header.start,
+          end: value.length,
+          complete: false,
+        };
+      }
+      endIndex += 1;
+    }
+    if (endIndex >= lines.length) {
+      return {
+        start: header.start,
+        end: value.length,
+        complete: false,
+      };
+    }
+    return {
+      start: header.start,
+      end: lines[endIndex - 1]?.end ?? separator.end,
+      complete: true,
+    };
+  }
+  return null;
+}
+
+function markdownLineSegments(value: string): MarkdownLineSegment[] {
+  const lines: MarkdownLineSegment[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== '\n') {
+      continue;
+    }
+    const end = index + 1;
+    const text = value.slice(start, end);
+    lines.push({
+      text,
+      body: text.replace(/\r?\n$/, ''),
+      start,
+      end,
+      hasLineBreak: true,
+    });
+    start = end;
+  }
+  if (start < value.length) {
+    const text = value.slice(start);
+    lines.push({
+      text,
+      body: text,
+      start,
+      end: value.length,
+      hasLineBreak: false,
+    });
+  }
+  return lines;
+}
+
+function isMarkdownTableRow(value: string) {
+  const text = value.trim();
+  if (!text.includes('|')) {
+    return false;
+  }
+  return text.startsWith('|') || text.endsWith('|') || text.split('|').length >= 3;
+}
+
+function isMarkdownTableSeparator(value: string) {
+  const text = value.trim();
+  if (!text.includes('|')) {
+    return false;
+  }
+  const cells = text
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+    .filter(Boolean);
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
 function appendAssistantDelta(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
@@ -1008,11 +1743,104 @@ function appendAssistantDelta(
   const messages = current[sessionId] ?? [];
   return {
     ...current,
-    [sessionId]: messages.map((message) =>
-      message.id === assistantId
-        ? { ...message, content: `${message.content}${delta}` }
-        : message,
-    ),
+    [sessionId]: messages.map((message) => {
+      if (message.id !== assistantId) {
+        return message;
+      }
+      if (shouldStartNextLocalAssistantSegment(message, delta)) {
+        const loopHistory = mergeLoopHistoryMessages(
+          message.loopHistory ?? [],
+          [localLoopHistorySnapshot(message)],
+        );
+        return {
+          ...message,
+          content: delta,
+          toolExecutions: undefined,
+          loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
+        };
+      }
+      return { ...message, content: `${message.content}${delta}` };
+    }),
+  };
+}
+
+function shouldStartNextLocalAssistantSegment(message: ChatMessage, delta: string) {
+  return (
+    message.role === 'assistant' &&
+    delta.trim().length > 0 &&
+    (message.toolExecutions?.length ?? 0) > 0 &&
+    hasVisibleLoopHistory(message)
+  );
+}
+
+function localLoopHistorySnapshot(message: ChatMessage): ChatMessage {
+  const nextLoopIndex = nextLocalLoopIndex(message);
+  return {
+    ...snapshotLoopHistoryMessage(message),
+    id: `${message.id}:local-loop:${nextLoopIndex}`,
+    createdAt: new Date().toISOString(),
+    status: 'superseded',
+    loopIndex: message.loopIndex ?? nextLoopIndex,
+    metadata: {
+      ...(message.metadata ?? {}),
+      status: 'superseded',
+      transcript_kind: 'assistant_loop',
+      ui_transcript_only: true,
+    },
+  };
+}
+
+function nextLocalLoopIndex(message: ChatMessage) {
+  const existing = message.loopHistory ?? [];
+  const loopIndexes = existing
+    .map((item) => item.loopIndex)
+    .filter((value): value is number => Number.isFinite(value));
+  const maxLoopIndex = loopIndexes.length > 0 ? Math.max(...loopIndexes) : 0;
+  return maxLoopIndex + 1;
+}
+
+function applyAssistantRevision(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  assistantId: string,
+  revision: AssistantRevision,
+) {
+  const messages = current[sessionId] ?? [];
+  const revisionTurnId = revision.turnId?.trim() ?? '';
+  const isClear = revision.action === 'clear' || revision.action === 'replace';
+  if (!isClear) {
+    return current;
+  }
+  const nextContent = revision.content ?? '';
+  return {
+    ...current,
+    [sessionId]: messages.map((message) => {
+      const messageTurnId = message.turnId?.trim() ?? '';
+      const isTarget =
+        message.id === assistantId ||
+        (Boolean(revisionTurnId) && message.role === 'assistant' && messageTurnId === revisionTurnId);
+      if (!isTarget) {
+        return message;
+      }
+      const shouldPreserveCurrent =
+        message.role === 'assistant' &&
+        !isSupersededLoopAssistant(message) &&
+        hasVisibleLoopHistory(message) &&
+        normalizeLoopContent(message.content) !== normalizeLoopContent(nextContent);
+      const loopHistory = shouldPreserveCurrent
+        ? mergeLoopHistoryMessages(
+            message.loopHistory ?? [],
+            [localLoopHistorySnapshot(message)],
+          )
+        : message.loopHistory;
+      return {
+        ...message,
+        content: nextContent,
+        toolExecutions: shouldPreserveCurrent ? undefined : message.toolExecutions,
+        loopHistory:
+          loopHistory && loopHistory.length > 0 ? loopHistory : undefined,
+      };
+    }),
   };
 }
 
@@ -1040,18 +1868,24 @@ function appendToolExecution(
   execution: ChatToolExecution,
 ) {
   const messages = current[sessionId] ?? [];
+  const targetMessageId = toolExecutionTargetMessageId(messages, assistantId, execution);
   return {
     ...current,
     [sessionId]: messages.map((message) => {
-      if (message.id !== assistantId) {
+      if (message.id !== targetMessageId) {
         return message;
       }
       const existing = message.toolExecutions ?? [];
       const index = existing.findIndex((item) => item.id === execution.id);
+      if (index < 0 && loopHistoryHasToolExecution(message, execution.id)) {
+        return updateLoopHistoryToolExecution(message, execution);
+      }
       const contentOffset =
         index >= 0
           ? existing[index].contentOffset
-          : message.content.length;
+          : execution.contentOffsetExplicit
+            ? execution.contentOffset
+            : message.content.length;
       const nextExecution = {
         ...execution,
         contentOffset,
@@ -1068,6 +1902,62 @@ function appendToolExecution(
       };
     }),
   };
+}
+
+function loopHistoryHasToolExecution(message: ChatMessage, executionId: string) {
+  return Boolean(
+    message.loopHistory?.some((loopMessage) =>
+      loopMessage.toolExecutions?.some((item) => item.id === executionId),
+    ),
+  );
+}
+
+function updateLoopHistoryToolExecution(
+  message: ChatMessage,
+  execution: ChatToolExecution,
+) {
+  return {
+    ...message,
+    loopHistory: message.loopHistory?.map((loopMessage) => {
+      const existing = loopMessage.toolExecutions ?? [];
+      const index = existing.findIndex((item) => item.id === execution.id);
+      if (index < 0) {
+        return loopMessage;
+      }
+      const nextExecutions = existing.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              ...execution,
+              contentOffset: item.contentOffset,
+            }
+          : item,
+      );
+      return {
+        ...loopMessage,
+        toolExecutions: nextExecutions,
+      };
+    }),
+  };
+}
+
+function toolExecutionTargetMessageId(
+  messages: ChatMessage[],
+  fallbackAssistantId: string,
+  execution: ChatToolExecution,
+) {
+  const assistantMessageId = execution.assistantMessageId?.trim() ?? '';
+  if (assistantMessageId) {
+    const matched = messages.find(
+      (message) =>
+        message.id === assistantMessageId ||
+        message.assistantMessageId === assistantMessageId,
+    );
+    if (matched) {
+      return matched.id;
+    }
+  }
+  return fallbackAssistantId;
 }
 
 function mergeMessages(
@@ -1098,7 +1988,7 @@ function mergeMessages(
   }
   return {
     ...current,
-    [sessionId]: Array.from(byId.values()),
+    [sessionId]: collapseLoopTranscriptMessages(Array.from(byId.values())),
   };
 }
 
@@ -1129,31 +2019,42 @@ function mergeFinalStreamMessages(
     ? existingById.get(options.toolSourceMessageId)
     : undefined;
   const localToolExecutions = toolSource?.toolExecutions ?? [];
+  const completedAt = new Date().toISOString();
 
-  const mergedIncoming = incoming.map((message) => {
+  const mergedIncoming = attachLocalToolExecutionsToTranscriptMessages(incoming.map((message) => {
     const existingMessage =
       existingById.get(message.id) ??
       findStreamReplacementSource(existing, message, {
         targetTurnId,
         temporaryIds,
       });
+    const existingToolExecutions =
+      existingMessage && !temporaryIds.has(existingMessage.id)
+        ? existingMessage.toolExecutions
+        : undefined;
     return {
       ...message,
       createdAt: existingMessage?.createdAt ?? message.createdAt,
+      metadata: mergeFinalAssistantTimingMetadata(
+        message,
+        existingMessage,
+        completedAt,
+      ),
       toolExecutions:
         (message.toolExecutions?.length ?? 0) > 0
           ? message.toolExecutions
-          : existingMessage?.toolExecutions,
+          : existingToolExecutions,
       loopHistory:
         (message.loopHistory?.length ?? 0) > 0
           ? message.loopHistory
           : existingMessage?.loopHistory,
     };
-  });
+  }), localToolExecutions);
 
   if (
     localToolExecutions.length > 0 &&
-    !mergedIncoming.some((message) => (message.toolExecutions?.length ?? 0) > 0)
+    !mergedIncoming.some((message) => (message.toolExecutions?.length ?? 0) > 0) &&
+    mergedIncoming.filter((message) => message.role === 'assistant').length === 1
   ) {
     const targetIndex = findLastIndex(
       mergedIncoming,
@@ -1163,7 +2064,10 @@ function mergeFinalStreamMessages(
       const target = mergedIncoming[targetIndex];
       mergedIncoming[targetIndex] = {
         ...target,
-        toolExecutions: localToolExecutions,
+        toolExecutions: mergeToolExecutionLists(
+          target.toolExecutions ?? [],
+          localToolExecutions,
+        ),
       };
     }
   }
@@ -1179,14 +2083,15 @@ function mergeFinalStreamMessages(
     return Boolean(messageTurnId && incomingTurnIds.has(messageTurnId));
   };
 
+  const normalizedIncoming = collapseLoopTranscriptMessages(mergedIncoming);
   const replacedMessages = existing.filter(shouldReplace);
   const loopHistory = collectLoopHistoryFromReplaced(
     replacedMessages,
-    mergedIncoming,
+    normalizedIncoming,
     temporaryIds,
   );
   if (loopHistory.length > 0) {
-    attachLoopHistoryToFinalAssistant(mergedIncoming, loopHistory);
+    attachLoopHistoryToFinalAssistant(normalizedIncoming, loopHistory);
   }
 
   const replaceIndex = existing.findIndex(shouldReplace);
@@ -1195,11 +2100,105 @@ function mergeFinalStreamMessages(
     ? kept.length
     : existing.slice(0, replaceIndex).filter((message) => !shouldReplace(message)).length;
   const nextMessages = [...kept];
-  nextMessages.splice(insertAt, 0, ...mergedIncoming);
+  nextMessages.splice(insertAt, 0, ...normalizedIncoming);
   return {
     ...current,
-    [sessionId]: nextMessages,
+    [sessionId]: collapseLoopTranscriptMessages(nextMessages),
   };
+}
+
+function mergeFinalAssistantTimingMetadata(
+  message: ChatMessage,
+  existingMessage: ChatMessage | undefined,
+  completedAt: string,
+) {
+  if (message.role !== 'assistant' || isSupersededLoopAssistant(message)) {
+    return message.metadata;
+  }
+  return {
+    ...(message.metadata ?? {}),
+    cardbush_turn_started_at:
+      message.metadata?.cardbush_turn_started_at ??
+      existingMessage?.metadata?.cardbush_turn_started_at ??
+      existingMessage?.createdAt ??
+      message.createdAt,
+    cardbush_turn_completed_at:
+      message.metadata?.cardbush_turn_completed_at ??
+      existingMessage?.metadata?.cardbush_turn_completed_at ??
+      completedAt,
+  };
+}
+
+function attachLocalToolExecutionsToTranscriptMessages(
+  messages: ChatMessage[],
+  localToolExecutions: ChatToolExecution[],
+) {
+  if (localToolExecutions.length === 0) {
+    return messages;
+  }
+  return messages.map((message) => {
+    if (message.role !== 'assistant') {
+      return message;
+    }
+    const matchedExecutions = localToolExecutions.filter((execution) =>
+      toolExecutionBelongsToMessage(message, execution),
+    );
+    if (matchedExecutions.length === 0) {
+      return message;
+    }
+    return {
+      ...message,
+      toolExecutions: mergeToolExecutionLists(
+        message.toolExecutions ?? [],
+        matchedExecutions,
+      ),
+    };
+  });
+}
+
+function toolExecutionBelongsToMessage(
+  message: ChatMessage,
+  execution: ChatToolExecution,
+) {
+  const assistantMessageId = execution.assistantMessageId?.trim() ?? '';
+  if (assistantMessageId) {
+    return (
+      message.id === assistantMessageId ||
+      (message.assistantMessageId?.trim() ?? '') === assistantMessageId
+    );
+  }
+  const executionLoopIndex = numericOrderValue(execution.loopIndex);
+  const messageLoopIndex = numericOrderValue(message.loopIndex);
+  return (
+    executionLoopIndex != null &&
+    messageLoopIndex != null &&
+    executionLoopIndex === messageLoopIndex
+  );
+}
+
+function mergeToolExecutionLists(
+  primary: ChatToolExecution[],
+  fallback: ChatToolExecution[],
+) {
+  const byId = new Map<string, ChatToolExecution>();
+  for (const execution of fallback) {
+    byId.set(execution.id, execution);
+  }
+  for (const execution of primary) {
+    byId.set(execution.id, execution);
+  }
+  return Array.from(byId.values()).sort(compareToolExecutionTranscriptOrder);
+}
+
+function compareToolExecutionTranscriptOrder(
+  left: ChatToolExecution,
+  right: ChatToolExecution,
+) {
+  return (
+    compareOptionalOrder(numericOrderValue(left.sequence), numericOrderValue(right.sequence)) ||
+    compareOptionalOrder(numericOrderValue(left.loopIndex), numericOrderValue(right.loopIndex)) ||
+    compareOptionalOrder(dateOrderValue(left.createdAt), dateOrderValue(right.createdAt))
+  );
 }
 
 function mergeLoadedMessagesPreservingLocalState(
@@ -1207,9 +2206,9 @@ function mergeLoadedMessagesPreservingLocalState(
   loaded: ChatMessage[],
 ) {
   if (existing.length === 0 || loaded.length === 0) {
-    return loaded;
+    return collapseLoopTranscriptMessages(loaded);
   }
-  return loaded.map((message) => {
+  return collapseLoopTranscriptMessages(loaded.map((message) => {
     const source = findLocalMessageStateSource(existing, message);
     if (!source) {
       return message;
@@ -1225,7 +2224,11 @@ function mergeLoadedMessagesPreservingLocalState(
           ? message.loopHistory
           : source.loopHistory,
     };
-  });
+  }));
+}
+
+export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
+  return collapseLoopTranscriptMessages(messages);
 }
 
 function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessage) {
@@ -1240,6 +2243,13 @@ function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessa
   return [...existing].reverse().find((item) => {
     if (item.role !== message.role) {
       return false;
+    }
+    const assistantMessageId = message.assistantMessageId?.trim() ?? '';
+    if (
+      assistantMessageId &&
+      (item.assistantMessageId?.trim() ?? item.id) === assistantMessageId
+    ) {
+      return true;
     }
     if ((item.turnId?.trim() ?? '') !== turnId) {
       return false;
@@ -1264,9 +2274,39 @@ function collectLoopHistoryFromReplaced(
     .filter(hasVisibleLoopHistory)
     .filter(
       (message) =>
+        !isTemporaryAssistantCoveredByBackendTranscript(
+          message,
+          finalMessages,
+          temporaryIds,
+        ) &&
         !isRedundantTemporaryAssistant(message, finalAssistant, temporaryIds),
     )
     .map(snapshotLoopHistoryMessage);
+}
+
+function isTemporaryAssistantCoveredByBackendTranscript(
+  message: ChatMessage,
+  finalMessages: ChatMessage[],
+  temporaryIds: Set<string>,
+) {
+  if (!temporaryIds.has(message.id)) {
+    return false;
+  }
+  const turnKey = turnTranscriptKey(message);
+  return finalMessages.some((candidate) => {
+    if (candidate.role !== 'assistant' || turnTranscriptKey(candidate) !== turnKey) {
+      return false;
+    }
+    if (isSupersededLoopAssistant(candidate)) {
+      return true;
+    }
+    return (candidate.loopHistory ?? []).some(
+      (item) =>
+        !temporaryIds.has(item.id) &&
+        turnTranscriptKey(item) === turnKey &&
+        isSupersededLoopAssistant(item),
+    );
+  });
 }
 
 function attachLoopHistoryToFinalAssistant(
@@ -1287,6 +2327,254 @@ function attachLoopHistoryToFinalAssistant(
   };
 }
 
+function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
+  if (messages.length === 0) {
+    return messages;
+  }
+  const sorted = sortMessagesByTranscriptOrder(messages);
+  const loopHistoryByTurn = new Map<string, ChatMessage[]>();
+  const visible: ChatMessage[] = [];
+  for (const message of sorted) {
+    if (isSupersededLoopAssistant(message)) {
+      const key = turnTranscriptKey(message);
+      loopHistoryByTurn.set(key, [
+        ...(loopHistoryByTurn.get(key) ?? []),
+        snapshotLoopHistoryMessage(message),
+      ]);
+      continue;
+    }
+    visible.push(message);
+  }
+  for (const [turnKey, loopHistory] of loopHistoryByTurn) {
+    const targetIndex = findLastIndex(
+      visible,
+      (message) =>
+        message.role === 'assistant' &&
+        turnTranscriptKey(message) === turnKey &&
+        !isSupersededLoopAssistant(message),
+    );
+    if (targetIndex < 0) {
+      visible.push(...loopHistory);
+      continue;
+    }
+    const target = visible[targetIndex];
+    visible[targetIndex] = {
+      ...target,
+      loopHistory: mergeLoopHistoryMessages(target.loopHistory ?? [], loopHistory),
+    };
+  }
+  return sortMessagesByTranscriptOrder(visible);
+}
+
+function sortMessagesByTranscriptOrder(messages: ChatMessage[]) {
+  return messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const turnDelta = compareOptionalOrder(
+        numericOrderValue(left.message.turnSequence),
+        numericOrderValue(right.message.turnSequence),
+      );
+      if (turnDelta !== 0) {
+        return turnDelta;
+      }
+      const sameTurn =
+        turnTranscriptKey(left.message) === turnTranscriptKey(right.message);
+      const indexDelta = sameTurn
+        ? compareOptionalOrder(
+            numericOrderValue(left.message.messageIndex),
+            numericOrderValue(right.message.messageIndex),
+          )
+        : 0;
+      if (indexDelta !== 0) {
+        return indexDelta;
+      }
+      const loopDelta = sameTurn
+        ? compareOptionalOrder(
+            numericOrderValue(left.message.loopIndex),
+            numericOrderValue(right.message.loopIndex),
+          )
+        : 0;
+      if (loopDelta !== 0) {
+        return loopDelta;
+      }
+      const dateDelta = compareOptionalOrder(
+        dateOrderValue(left.message.createdAt),
+        dateOrderValue(right.message.createdAt),
+      );
+      if (dateDelta !== 0) {
+        return dateDelta;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.message);
+}
+
+function compareOptionalOrder(left: number | undefined, right: number | undefined) {
+  if (left == null || right == null) {
+    return 0;
+  }
+  return left - right;
+}
+
+function dateOrderValue(value: string | undefined) {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function numericOrderValue(value: number | undefined) {
+  return Number.isFinite(value) ? Number(value) : undefined;
+}
+
+function persistedChatMessageId(message: ChatMessage | undefined) {
+  if (!message) {
+    return '';
+  }
+  const ownId = message.id.trim();
+  if (isPersistedChatMessageId(ownId)) {
+    return ownId;
+  }
+  const metadata = message.metadata ?? {};
+  for (const value of [
+    metadata.message_id,
+    metadata.messageId,
+    metadata.chat_message_id,
+    metadata.chatMessageId,
+  ]) {
+    const candidate = String(value ?? '').trim();
+    if (isPersistedChatMessageId(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
+}
+
+function isPersistedChatMessageId(value: string) {
+  const normalized = value.trim();
+  return /^msg_\d+$/.test(normalized) || /^\d+$/.test(normalized);
+}
+
+function findPersistedEditableUserMessage(
+  source: ChatMessage,
+  candidates: ChatMessage[],
+) {
+  if (source.role !== 'user') {
+    return undefined;
+  }
+  const sourceId = persistedChatMessageId(source);
+  if (sourceId) {
+    return source.id === sourceId ? source : { ...source, id: sourceId };
+  }
+  const persistedCandidates = candidates.filter(
+    (candidate) => candidate.role === 'user' && persistedChatMessageId(candidate),
+  );
+  const sourceTurnId = chatMessageTurnId(source);
+  if (sourceTurnId) {
+    const turnMatch = persistedCandidates.find(
+      (candidate) => chatMessageTurnId(candidate) === sourceTurnId,
+    );
+    if (turnMatch) {
+      return turnMatch;
+    }
+  }
+  const sourceTurnSequence = numericOrderValue(source.turnSequence);
+  const sourceMessageIndex = numericOrderValue(source.messageIndex);
+  if (sourceTurnSequence != null && sourceMessageIndex != null) {
+    const orderMatch = persistedCandidates.find(
+      (candidate) =>
+        numericOrderValue(candidate.turnSequence) === sourceTurnSequence &&
+        numericOrderValue(candidate.messageIndex) === sourceMessageIndex,
+    );
+    if (orderMatch) {
+      return orderMatch;
+    }
+  }
+  const sourceContent = normalizeEditableUserContent(source.content);
+  if (!sourceContent) {
+    return undefined;
+  }
+  const contentMatches = persistedCandidates.filter(
+    (candidate) => normalizeEditableUserContent(candidate.content) === sourceContent,
+  );
+  return contentMatches.length === 1 ? contentMatches[0] : undefined;
+}
+
+function chatMessageTurnId(message: ChatMessage) {
+  return String(
+    message.turnId ??
+      message.metadata?.turn_id ??
+      message.metadata?.turnId ??
+      '',
+  ).trim();
+}
+
+function normalizeEditableUserContent(value: string) {
+  return value.trim().replace(/\r\n/g, '\n');
+}
+
+function uniqueMessageIds(values: string[]) {
+  return Array.from(
+    new Set(values.map((value) => value.trim()).filter(Boolean)),
+  );
+}
+
+function turnTranscriptKey(message: ChatMessage) {
+  const turnId = message.turnId?.trim();
+  if (turnId) {
+    return `turn:${turnId}`;
+  }
+  const metadataTurnId = String(
+    message.metadata?.turn_id ?? message.metadata?.turnId ?? '',
+  ).trim();
+  if (metadataTurnId) {
+    return `turn:${metadataTurnId}`;
+  }
+  const assistantMessageId = message.assistantMessageId?.trim();
+  if (assistantMessageId) {
+    return `assistant:${assistantMessageId}`;
+  }
+  return `message:${message.id}`;
+}
+
+function isSupersededLoopAssistant(message: ChatMessage) {
+  const status = String(message.status ?? message.metadata?.status ?? '')
+    .trim()
+    .toLowerCase();
+  const transcriptKind = assistantTranscriptKind(message);
+  return (
+    message.role === 'assistant' &&
+    status === 'superseded' &&
+    (!transcriptKind || transcriptKind === 'assistant_loop')
+  );
+}
+
+function isAssistantFinalTranscript(message: ChatMessage) {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+  const status = String(message.status ?? message.metadata?.status ?? '')
+    .trim()
+    .toLowerCase();
+  const transcriptKind = assistantTranscriptKind(message);
+  return (
+    status === 'complete' ||
+    transcriptKind === 'assistant_final' ||
+    (!status && !transcriptKind)
+  );
+}
+
+function assistantTranscriptKind(message: ChatMessage) {
+  return String(
+    message.metadata?.transcript_kind ??
+      message.metadata?.transcriptKind ??
+      '',
+  )
+    .trim()
+    .toLowerCase();
+}
+
 function mergeLoopHistoryMessages(
   existing: ChatMessage[],
   incoming: ChatMessage[],
@@ -1298,7 +2586,7 @@ function mergeLoopHistoryMessages(
     }
     byKey.set(loopHistoryMessageKey(message), snapshotLoopHistoryMessage(message));
   }
-  return Array.from(byKey.values());
+  return sortMessagesByTranscriptOrder(Array.from(byKey.values()));
 }
 
 function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
@@ -1309,6 +2597,11 @@ function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
     conversationId: message.conversationId,
     turnId: message.turnId,
     createdAt: message.createdAt,
+    status: message.status,
+    loopIndex: message.loopIndex,
+    turnSequence: message.turnSequence,
+    messageIndex: message.messageIndex,
+    assistantMessageId: message.assistantMessageId,
     attachments: message.attachments?.map((attachment) => ({ ...attachment })),
     toolExecutions: message.toolExecutions?.map((execution) => ({
       ...execution,
@@ -1359,6 +2652,11 @@ function loopHistoryMessageKey(message: ChatMessage) {
     message.id.trim(),
     message.role,
     message.turnId?.trim() ?? '',
+    message.assistantMessageId?.trim() ?? '',
+    message.status?.trim() ?? '',
+    message.loopIndex ?? '',
+    message.turnSequence ?? '',
+    message.messageIndex ?? '',
     message.createdAt?.trim() ?? '',
     normalizeLoopContent(message.content),
     message.toolExecutions
