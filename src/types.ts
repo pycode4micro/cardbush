@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 
-export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'gamecoding';
+export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
   | 'companion'
@@ -17,7 +17,8 @@ export type LightThemeStyle = 'parchment' | 'bright';
 export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
 export type ReferencePlanMode = 'off' | 'auto';
-export type ProxyMode = 'system' | 'manual';
+export type ProxyMode = 'none' | 'system' | 'manual';
+export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
 export type CompanionSize = 'compact' | 'normal' | 'large';
 export type CompanionMotionMode = 'full' | 'reduced' | 'off';
@@ -55,12 +56,36 @@ export interface BackendAuthSettings {
   localRequestKey: string;
 }
 
+export interface BackendCapabilities {
+  chatStream: boolean;
+  sessions: boolean;
+  skills: boolean;
+  interactions: boolean;
+  turnStop: boolean;
+  runtimeInspection: boolean;
+  maintenanceConversationHistoryClear: boolean;
+  maintenanceLogsCacheClear: boolean;
+  botControl: boolean;
+  messageEditRegenerate: boolean;
+  turnRegenerate: boolean;
+  stableMessageIds: boolean;
+  standardImageInputTool: boolean;
+  standardImageInputToolName: string;
+  projects: boolean;
+  git: boolean;
+  terminal: boolean;
+  resources: boolean;
+  settingsSync: boolean;
+  localMusicLibrary: boolean;
+}
+
 export interface ManagedModelConfig {
   id: string;
   provider: string;
   apiKey: string;
   modelName: string;
   baseUrl: string;
+  maxContextTokens?: number;
 }
 
 export interface RuntimeProfileSummary {
@@ -205,6 +230,7 @@ export interface AssistantRevision {
 
 export interface ChatMessage {
   id: string;
+  messageId?: string;
   role: ChatRole;
   content: string;
   conversationId?: string;

@@ -1,5 +1,6 @@
 import type {
   AssistantRevision,
+  BackendCapabilities,
   ChatMessage,
   ChatToolExecution,
   ConversationSummary,
@@ -31,8 +32,18 @@ import type {
   InteractionReplyAnswer,
   InteractionQuestion,
   InteractionOption,
+  PermissionMode,
   ReferencePlanMode,
 } from '../types';
+import {
+  applyDisabledToolsToMetadata,
+  standardImageInputToolDefaultName,
+} from './toolVisibility';
+import { applyAllowedResourcePathsToMetadata } from './localPathMetadata';
+
+const conversationListPageSize = 160;
+const conversationListMaxPages = 1;
+const conversationListMaxVisible = 160;
 
 export const backendBaseUrl =
   import.meta.env.VITE_BACKEND_BASE_URL?.trim() || 'http://127.0.0.1:51717';
@@ -52,6 +63,12 @@ export interface SaveBotConfigRequest {
   config: Record<string, unknown>;
 }
 
+export interface BackendModelConfigsResult {
+  defaultModelId: string;
+  models: ManagedModelConfig[];
+  raw: unknown;
+}
+
 export interface ChatStreamRequest {
   sessionId: string;
   userInput: string;
@@ -62,14 +79,18 @@ export interface ChatStreamRequest {
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
+  permissionMode?: PermissionMode;
+  standardImageInputEnabled?: boolean;
   images?: Array<{ path: string }>;
   files?: string[];
+  disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
 }
 
@@ -82,14 +103,18 @@ export interface ControlStreamRequest {
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
+  permissionMode?: PermissionMode;
+  standardImageInputEnabled?: boolean;
   images?: Array<{ path: string }>;
   files?: string[];
+  disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
 }
 
@@ -113,8 +138,32 @@ export interface SendGuidanceRequest {
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
+  onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
 }
+
+export const defaultBackendCapabilities: BackendCapabilities = {
+  chatStream: true,
+  sessions: true,
+  skills: true,
+  interactions: true,
+  turnStop: true,
+  runtimeInspection: true,
+  maintenanceConversationHistoryClear: false,
+  maintenanceLogsCacheClear: false,
+  botControl: false,
+  messageEditRegenerate: false,
+  turnRegenerate: false,
+  stableMessageIds: false,
+  standardImageInputTool: false,
+  standardImageInputToolName: standardImageInputToolDefaultName,
+  projects: false,
+  git: false,
+  terminal: false,
+  resources: false,
+  settingsSync: false,
+  localMusicLibrary: false,
+};
 
 export interface SubagentDispatchRequest {
   sessionId: string;
@@ -305,25 +354,122 @@ async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchConversations(): Promise<ConversationSummary[]> {
-  const payload = await readJson<
-    { items?: unknown[]; sessions?: unknown[] } | unknown[]
-  >(
-    url('/v1/sessions?limit=120'),
-  );
-  const items = Array.isArray(payload)
-    ? payload
-    : Array.isArray(payload.items)
-      ? payload.items
-      : payload.sessions;
-  if (!Array.isArray(items)) {
-    return [];
+export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
+  const endpoint = url('/v1/capabilities');
+  const response = await fetch(endpoint, {
+    headers: await headersFor(endpoint),
+  });
+  if (response.status === 404) {
+    return defaultBackendCapabilities;
   }
-  return items
-    .filter((item) => !isInternalConversationPayload(item))
-    .map(conversationFromPayload)
-    .filter((item) => item.id.trim())
-    .slice(0, 30);
+  if (!response.ok) {
+    throw new Error(formatHttpError(response.status, await response.text()));
+  }
+  return backendCapabilitiesFromPayload(await response.json());
+}
+
+export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
+  const payload = await readJson<unknown>(url('/v1/model-configs'));
+  return modelConfigsFromPayload(payload);
+}
+
+export async function saveModelConfigs(request: {
+  defaultModelId?: string;
+  models: ManagedModelConfig[];
+}): Promise<BackendModelConfigsResult> {
+  const payload = await readJson<unknown>(url('/v1/model-configs'), {
+    method: 'PUT',
+    body: JSON.stringify({
+      version: 1,
+      default_model_id: request.defaultModelId ?? '',
+      models: request.models.map((item) => ({
+        id: item.id,
+        provider: item.provider,
+        model: item.modelName,
+        model_name: item.modelName,
+        api_key: item.apiKey,
+        base_url: item.baseUrl,
+        max_context_tokens: item.maxContextTokens,
+      })),
+    }),
+  });
+  return modelConfigsFromPayload(payload);
+}
+
+function modelConfigsFromPayload(payload: unknown): BackendModelConfigsResult {
+  const root = recordFromUnknown(payload);
+  const rawItems = Array.isArray(root.models)
+    ? root.models
+    : Array.isArray(root.items)
+      ? root.items
+      : [];
+  const models = rawItems
+    .map(managedModelConfigFromPayload)
+    .filter((item): item is ManagedModelConfig => item !== null);
+  return {
+    defaultModelId: String(root.default_model_id ?? root.defaultModelId ?? ''),
+    models,
+    raw: payload,
+  };
+}
+
+function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | null {
+  const item = recordFromUnknown(payload);
+  const provider = String(item.provider ?? '').trim();
+  const modelName = String(
+    item.modelName ?? item.model_name ?? item.model ?? item.name ?? '',
+  ).trim();
+  if (!provider || !modelName) {
+    return null;
+  }
+  const maxContextTokens = positiveNumber(
+    item.maxContextTokens ??
+      item.max_context_tokens ??
+      item.contextWindowTokens ??
+      item.context_window_tokens ??
+      item.maxInputTokens ??
+      item.max_input_tokens,
+  );
+  return {
+    id: String(item.id ?? ''),
+    provider,
+    apiKey: String(item.apiKey ?? item.api_key ?? ''),
+    modelName,
+    baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
+    ...(maxContextTokens ? { maxContextTokens } : {}),
+  };
+}
+
+function recordFromUnknown(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function positiveNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+export async function fetchConversations(): Promise<ConversationSummary[]> {
+  const rawItems: unknown[] = [];
+  for (let page = 0; page < conversationListMaxPages; page += 1) {
+    const offset = page * conversationListPageSize;
+    const payload = await readJson<
+      { items?: unknown[]; sessions?: unknown[] } | unknown[]
+    >(
+      url(`/v1/sessions?limit=${conversationListPageSize}&offset=${offset}`),
+    );
+    const items = sessionItemsFromPayload(payload);
+    if (items.length === 0) {
+      break;
+    }
+    rawItems.push(...items);
+    if (items.length < conversationListPageSize) {
+      break;
+    }
+  }
+  return normalizeConversationList(rawItems);
 }
 
 export async function fetchRuntimeProfiles(): Promise<RuntimeProfileSummary[]> {
@@ -331,16 +477,21 @@ export async function fetchRuntimeProfiles(): Promise<RuntimeProfileSummary[]> {
   return runtimeProfilesFromPayload(payload);
 }
 
-export async function fetchMessages(sessionId: string): Promise<ChatMessage[]> {
-  const result = await fetchSessionMessages(sessionId);
+export async function fetchMessages(
+  sessionId: string,
+  options: { includeSuperseded?: boolean } = {},
+): Promise<ChatMessage[]> {
+  const result = await fetchSessionMessages(sessionId, options);
   return result.messages;
 }
 
 export async function fetchSessionMessages(
   sessionId: string,
+  options: { includeSuperseded?: boolean } = {},
 ): Promise<SessionMessagesResult> {
+  const query = options.includeSuperseded ? '?include_superseded=true' : '';
   const payload = await readJson<{ messages?: unknown[] }>(
-    url(`/v1/sessions/${encodeURIComponent(sessionId)}?include_superseded=true`),
+    url(`/v1/sessions/${encodeURIComponent(sessionId)}${query}`),
   );
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const conversation = conversationFromPayload(payload);
@@ -1105,6 +1256,7 @@ async function streamEndpoint({
     | 'onAssistantRevision'
     | 'onToolExecution'
     | 'onInteractiveRequest'
+    | 'onFinalAssistantText'
     | 'onMessages'
   >;
 }) {
@@ -1179,7 +1331,6 @@ function controlStreamBody(request: ControlStreamRequest) {
   const body: Record<string, unknown> = {
     stream: true,
     stream_render_mode: 'strict',
-    history_limit: 20,
     progressive_tool_disclosure: true,
     reference_plan_mode: normalizeReferencePlanMode(request.referencePlanMode),
     workspace_mode: request.projectDir?.trim() ? 'project' : 'task',
@@ -1190,7 +1341,11 @@ function controlStreamBody(request: ControlStreamRequest) {
     },
   };
   const metadata = body.metadata as Record<string, unknown>;
+  applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyRuntimeProfileToBody(body, metadata, request.agentProfile);
+  applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyDisabledToolsToMetadata(metadata, request.disabledTools);
+  applyAllowedResourcePathsToMetadata(metadata, request);
   const projectDir = request.projectDir?.trim();
   if (projectDir) {
     body.project_dir = projectDir;
@@ -1221,6 +1376,11 @@ function controlStreamBody(request: ControlStreamRequest) {
     putIfNotEmpty(body, 'provider', config.provider);
     putIfNotEmpty(body, 'api_key', config.apiKey);
     putIfNotEmpty(body, 'base_url', config.baseUrl);
+    if (config.maxContextTokens && config.maxContextTokens > 0) {
+      body.max_input_tokens = Math.floor(config.maxContextTokens);
+      metadata.max_input_tokens = Math.floor(config.maxContextTokens);
+      metadata.context_window_tokens = Math.floor(config.maxContextTokens);
+    }
     putIfNotEmpty(metadata, 'selected_model', config.modelName);
     putIfNotEmpty(metadata, 'selected_provider', config.provider);
     putIfNotEmpty(metadata, 'selected_model_alias', request.model);
@@ -1234,7 +1394,6 @@ function chatStreamBody(request: ChatStreamRequest) {
     user_input: request.userInput,
     stream: true,
     stream_render_mode: 'strict',
-    history_limit: 20,
     progressive_tool_disclosure: true,
     reference_plan_mode: normalizeReferencePlanMode(request.referencePlanMode),
     workspace_mode: request.projectDir?.trim() ? 'project' : 'task',
@@ -1245,7 +1404,11 @@ function chatStreamBody(request: ChatStreamRequest) {
     },
   };
   const metadata = body.metadata as Record<string, unknown>;
+  applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyRuntimeProfileToBody(body, metadata, request.agentProfile);
+  applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyDisabledToolsToMetadata(metadata, request.disabledTools);
+  applyAllowedResourcePathsToMetadata(metadata, request);
   const projectDir = request.projectDir?.trim();
   if (projectDir) {
     body.project_dir = projectDir;
@@ -1276,6 +1439,11 @@ function chatStreamBody(request: ChatStreamRequest) {
     putIfNotEmpty(body, 'provider', config.provider);
     putIfNotEmpty(body, 'api_key', config.apiKey);
     putIfNotEmpty(body, 'base_url', config.baseUrl);
+    if (config.maxContextTokens && config.maxContextTokens > 0) {
+      body.max_input_tokens = Math.floor(config.maxContextTokens);
+      metadata.max_input_tokens = Math.floor(config.maxContextTokens);
+      metadata.context_window_tokens = Math.floor(config.maxContextTokens);
+    }
     putIfNotEmpty(metadata, 'selected_model', config.modelName);
     putIfNotEmpty(metadata, 'selected_provider', config.provider);
     putIfNotEmpty(metadata, 'selected_model_alias', request.model);
@@ -1285,6 +1453,33 @@ function chatStreamBody(request: ChatStreamRequest) {
 
 function normalizeReferencePlanMode(value?: ReferencePlanMode): ReferencePlanMode {
   return value === 'auto' ? 'auto' : 'off';
+}
+
+function normalizePermissionMode(value?: PermissionMode): PermissionMode {
+  if (value === 'user_free' || value === 'all_free') {
+    return value;
+  }
+  return 'task_free';
+}
+
+function applyPermissionModeToBody(
+  body: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+  value?: PermissionMode,
+) {
+  const normalized = normalizePermissionMode(value);
+  body.permission_mode = normalized;
+  metadata.permission_mode = normalized;
+  metadata.permissionMode = normalized;
+}
+
+function applyStandardImageInputEnabledToMetadata(
+  metadata: Record<string, unknown>,
+  value?: boolean,
+) {
+  const enabled = value === true;
+  metadata.standard_image_input_enabled = enabled;
+  metadata.standardImageInputEnabled = enabled;
 }
 
 function normalizeSkillNames(values?: string[]) {
@@ -1312,7 +1507,12 @@ function handleStreamEvent(
   emittedAny: boolean,
   request: Pick<
     ChatStreamRequest,
-    'onStart' | 'onDelta' | 'onToolExecution' | 'onInteractiveRequest' | 'onMessages'
+    | 'onStart'
+    | 'onDelta'
+    | 'onToolExecution'
+    | 'onInteractiveRequest'
+    | 'onFinalAssistantText'
+    | 'onMessages'
     | 'onAssistantRevision'
   >,
 ): { clearEmitted?: boolean } | undefined {
@@ -1376,12 +1576,11 @@ function handleStreamEvent(
   }
 
   if (eventName === 'done') {
-    const messages = messagesFromPayload(decoded);
-    if (messages.length > 0) {
-      request.onMessages?.(messages, true);
+    const text = String(decoded.assistant_message ?? decoded.assistantMessage ?? '');
+    if (text && request.onFinalAssistantText) {
+      request.onFinalAssistantText(text);
       return;
     }
-    const text = String(decoded.assistant_message ?? '');
     if (text && !emittedAny) {
       request.onDelta?.(text);
     }
@@ -1392,6 +1591,73 @@ function handleStreamEvent(
   if (text != null) {
     request.onDelta?.(String(text));
   }
+}
+
+function sessionItemsFromPayload(
+  payload: { items?: unknown[]; sessions?: unknown[] } | unknown[],
+) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload.items)) {
+    return payload.items;
+  }
+  return Array.isArray(payload.sessions) ? payload.sessions : [];
+}
+
+function normalizeConversationList(items: unknown[]): ConversationSummary[] {
+  const byId = new Map<
+    string,
+    { conversation: ConversationSummary; index: number; timestamp: number }
+  >();
+  items.forEach((item, index) => {
+    if (isInternalConversationPayload(item)) {
+      return;
+    }
+    const conversation = conversationFromPayload(item, index);
+    const id = conversation.id.trim();
+    if (!id) {
+      return;
+    }
+    const timestamp = conversationTimestamp(item);
+    const existing = byId.get(id);
+    if (!existing || timestamp > existing.timestamp) {
+      byId.set(id, { conversation, index, timestamp });
+    }
+  });
+  return Array.from(byId.values())
+    .sort((left, right) => {
+      if (left.timestamp !== right.timestamp) {
+        return right.timestamp - left.timestamp;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.conversation)
+    .slice(0, conversationListMaxVisible);
+}
+
+function conversationTimestamp(item: unknown) {
+  const value = asRecord(item);
+  const metadata = asRecord(value.metadata);
+  const candidates = [
+    value.updated_at,
+    value.updatedAt,
+    value.last_message_at,
+    value.lastMessageAt,
+    value.created_at,
+    value.createdAt,
+    metadata.updated_at,
+    metadata.updatedAt,
+    metadata.last_message_at,
+    metadata.lastMessageAt,
+  ];
+  for (const candidate of candidates) {
+    const parsed = Date.parse(String(candidate ?? ''));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
 }
 
 function conversationFromPayload(item: unknown, index = 0): ConversationSummary {
@@ -1469,6 +1735,123 @@ function runtimeProfileFromPayload(payload: unknown): RuntimeProfileSummary | nu
   };
 }
 
+function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
+  const root = asRecord(payload);
+  const features = asRecord(root.features ?? root.capabilities ?? root);
+  const endpoints = asRecord(root.endpoints);
+  const standardImageInputTool = asRecord(
+    root.standard_image_input_tool ??
+      root.standardImageInputTool ??
+      features.standard_image_input_tool ??
+      features.standardImageInputTool ??
+      features.standard_image_input_tool_config ??
+      features.standardImageInputToolConfig,
+  );
+  return {
+    chatStream: capabilityBoolean(features, endpoints, 'chatStream', ['chat_stream']),
+    sessions: capabilityBoolean(features, endpoints, 'sessions', ['session_history']),
+    skills: capabilityBoolean(features, endpoints, 'skills'),
+    interactions: capabilityBoolean(features, endpoints, 'interactions'),
+    turnStop: capabilityBoolean(features, endpoints, 'turnStop', ['turn_stop']),
+    runtimeInspection: capabilityBoolean(features, endpoints, 'runtimeInspection', [
+      'runtime_inspection',
+    ]),
+    maintenanceConversationHistoryClear: capabilityBoolean(
+      features,
+      endpoints,
+      'maintenanceConversationHistoryClear',
+      ['maintenance_conversation_history_clear'],
+    ),
+    maintenanceLogsCacheClear: capabilityBoolean(
+      features,
+      endpoints,
+      'maintenanceLogsCacheClear',
+      ['maintenance_logs_cache_clear'],
+    ),
+    botControl: capabilityBoolean(features, endpoints, 'botControl', ['bot_control']),
+    messageEditRegenerate: capabilityBoolean(
+      features,
+      endpoints,
+      'messageEditRegenerate',
+      ['message_edit_regenerate'],
+    ),
+    turnRegenerate: capabilityBoolean(features, endpoints, 'turnRegenerate', [
+      'turn_regenerate',
+    ]),
+    stableMessageIds: capabilityBoolean(
+      features,
+      endpoints,
+      'stableMessageIds',
+      ['stable_message_ids', 'stable_message_id', 'message_ids'],
+    ),
+    standardImageInputTool: standardImageInputToolAvailable(
+      features,
+      endpoints,
+      standardImageInputTool,
+    ),
+    standardImageInputToolName:
+      nonEmpty(
+        standardImageInputTool.tool_name ??
+          standardImageInputTool.toolName ??
+          root.standard_image_input_tool_name ??
+          root.standardImageInputToolName ??
+          features.standard_image_input_tool_name ??
+          features.standardImageInputToolName,
+      ) ?? standardImageInputToolDefaultName,
+    projects: capabilityBoolean(features, endpoints, 'projects'),
+    git: capabilityBoolean(features, endpoints, 'git'),
+    terminal: capabilityBoolean(features, endpoints, 'terminal'),
+    resources: capabilityBoolean(features, endpoints, 'resources'),
+    settingsSync: capabilityBoolean(features, endpoints, 'settingsSync', [
+      'settings_sync',
+    ]),
+    localMusicLibrary: capabilityBoolean(features, endpoints, 'localMusicLibrary', [
+      'local_music_library',
+    ]),
+  };
+}
+
+function standardImageInputToolAvailable(
+  features: Record<string, unknown>,
+  endpoints: Record<string, unknown>,
+  config: Record<string, unknown>,
+) {
+  if (
+    capabilityBoolean(features, endpoints, 'standardImageInputTool', [
+      'standard_image_input_tool',
+    ])
+  ) {
+    return true;
+  }
+  return Object.keys(config).length > 0;
+}
+
+type BackendCapabilityBooleanKey = {
+  [Key in keyof BackendCapabilities]: BackendCapabilities[Key] extends boolean
+    ? Key
+    : never;
+}[keyof BackendCapabilities];
+
+function capabilityBoolean(
+  features: Record<string, unknown>,
+  endpoints: Record<string, unknown>,
+  key: BackendCapabilityBooleanKey,
+  aliases: string[] = [],
+) {
+  const snakeKey = key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+  for (const candidate of [key, snakeKey, ...aliases]) {
+    const raw = features[candidate];
+    if (typeof raw === 'boolean') {
+      return raw;
+    }
+    const endpoint = asRecord(endpoints[candidate]);
+    if (typeof endpoint.available === 'boolean') {
+      return endpoint.available;
+    }
+  }
+  return defaultBackendCapabilities[key];
+}
+
 function applyRuntimeProfileToBody(
   body: Record<string, unknown>,
   metadata: Record<string, unknown>,
@@ -1495,6 +1878,9 @@ function isInternalConversationPayload(item: unknown) {
     return true;
   }
   const metadata = asRecord(value.metadata);
+  if (isBotConversationPayload(id, value, metadata)) {
+    return false;
+  }
   const kind = String(
     metadata.kind ??
       metadata.type ??
@@ -1527,6 +1913,57 @@ function isInternalConversationPayload(item: unknown) {
   const taskDir = String(workspace.task_dir ?? workspace.taskDir ?? '');
   return /[\\/]task[\\/]subagent_[^\\/]+/i.test(executionRoot) ||
     /[\\/]task[\\/]subagent_[^\\/]+/i.test(taskDir);
+}
+
+function isBotConversationPayload(
+  id: string,
+  value: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+) {
+  const platform = normalizeBotPlatform(
+    value.platform ??
+      value.bot_platform ??
+      value.botPlatform ??
+      metadata.platform ??
+      metadata.bot_platform ??
+      metadata.botPlatform ??
+      metadata.source_platform ??
+      metadata.sourcePlatform,
+  );
+  if (platform) {
+    return true;
+  }
+  const source = String(
+    metadata.source ??
+      metadata.kind ??
+      metadata.type ??
+      metadata.session_kind ??
+      metadata.sessionKind ??
+      value.source ??
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  if (
+    source === 'bot' ||
+    source === 'bot_session' ||
+    source === 'external_bot' ||
+    source === 'weixin' ||
+    source === 'feishu' ||
+    source === 'telegram' ||
+    source === 'discord'
+  ) {
+    return true;
+  }
+  const normalizedId = id.toLowerCase();
+  return (
+    normalizedId.includes('@im.bot') ||
+    normalizedId.startsWith('weixin:') ||
+    normalizedId.startsWith('feishu:') ||
+    normalizedId.startsWith('telegram:') ||
+    normalizedId.startsWith('discord:') ||
+    normalizedId.includes('@im.wechat')
+  );
 }
 
 function shareLinkFromPayload(item: unknown): SessionShareLinkResult {
@@ -1885,6 +2322,7 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   );
   return {
     id,
+    messageId: optionalString(value.message_id ?? value.messageId),
     role,
     content,
     conversationId: optionalString(
@@ -2711,15 +3149,42 @@ function extractErrorDetail(body: string) {
   }
   try {
     const decoded = JSON.parse(text) as Record<string, unknown>;
-    const detail = decoded.detail;
-    if (typeof detail === 'string') {
-      return detail;
-    }
-    if (detail != null) {
-      return JSON.stringify(detail);
-    }
+    return (
+      errorDetailText(decoded.detail) ||
+      errorDetailText(decoded.message) ||
+      errorDetailText(decoded.error) ||
+      text
+    );
   } catch {
     return text;
   }
-  return text;
+}
+
+function errorDetailText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        const record = asRecord(item);
+        const location = Array.isArray(record.loc)
+          ? record.loc.map((part) => String(part)).join('.')
+          : '';
+        const message = String(record.msg ?? record.message ?? '');
+        return [location, message].filter(Boolean).join(': ');
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (value && typeof value === 'object') {
+    const record = asRecord(value);
+    return (
+      errorDetailText(record.message) ||
+      errorDetailText(record.detail) ||
+      errorDetailText(record.error) ||
+      JSON.stringify(record)
+    );
+  }
+  return '';
 }

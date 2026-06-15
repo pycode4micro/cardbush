@@ -1,3 +1,7 @@
+import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
+
+export { isImagePath, stripWrappingQuotes };
+
 export function splitMessageImages(content: string) {
   const imagePaths: string[] = [];
   const textLines: string[] = [];
@@ -15,27 +19,6 @@ export function splitMessageImages(content: string) {
   };
 }
 
-export function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(stripWrappingQuotes(value.trim()));
-}
-
-export function stripWrappingQuotes(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.length < 2) {
-    return trimmed;
-  }
-  const first = trimmed[0];
-  const last = trimmed[trimmed.length - 1];
-  if (
-    (first === '"' && last === '"') ||
-    (first === "'" && last === "'") ||
-    (first === '`' && last === '`')
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
 function imagePathFromMessageLine(value: string) {
   const trimmed = value.trim();
   const pathValue = stripWrappingQuotes(
@@ -45,8 +28,4 @@ function imagePathFromMessageLine(value: string) {
     return '';
   }
   return isImagePath(pathValue) ? pathValue : '';
-}
-
-function isAbsoluteLocalPath(value: string) {
-  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\') || value.startsWith('/');
 }

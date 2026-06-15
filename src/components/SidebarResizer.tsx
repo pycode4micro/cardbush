@@ -4,13 +4,16 @@ import { useCallback, useRef } from 'react';
 import type { AppLanguage } from '../types';
 
 const defaultSidebarWidth = 272;
+const collapseSidebarWidthThreshold = 220;
 
 export function SidebarResizer({
   language,
   onWidthChange,
+  onCollapse,
 }: {
   language: AppLanguage;
   onWidthChange: (value: number) => void;
+  onCollapse?: () => void;
 }) {
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -23,23 +26,32 @@ export function SidebarResizer({
       };
       document.body.classList.add('sidebar-resizing');
 
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        const state = dragStateRef.current;
-        if (!state) {
-          return;
-        }
-        onWidthChange(state.startWidth + moveEvent.clientX - state.startX);
-      };
-      const handlePointerUp = () => {
+      const endResize = () => {
         dragStateRef.current = null;
         document.body.classList.remove('sidebar-resizing');
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
       };
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const state = dragStateRef.current;
+        if (!state) {
+          return;
+        }
+        const nextWidth = state.startWidth + moveEvent.clientX - state.startX;
+        if (onCollapse && nextWidth < collapseSidebarWidthThreshold) {
+          onCollapse();
+          endResize();
+          return;
+        }
+        onWidthChange(nextWidth);
+      };
+      const handlePointerUp = () => {
+        endResize();
+      };
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
     },
-    [onWidthChange],
+    [onCollapse, onWidthChange],
   );
 
   return (

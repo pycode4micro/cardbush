@@ -21,6 +21,11 @@ import {
 } from 'react';
 
 import type { AppLanguage } from '../types';
+import {
+  basename,
+  encodedLocalResourceUrl,
+  stripLooseWrappingQuotes as stripWrappingQuotes,
+} from '../shared/localPaths';
 
 const LOCAL_MUSIC_LIBRARY_STORAGE_KEY = 'cardbush_local_music_library';
 const LOCAL_MUSIC_PLAYLISTS_STORAGE_KEY = 'cardbush_local_music_playlists';
@@ -768,29 +773,6 @@ function localFileUrl(value: string) {
     }
   }
   return encodedLocalResourceUrl(normalized);
-}
-
-function encodedLocalResourceUrl(value: string) {
-  const pathValue = value.replaceAll('\\', '/').replace(/^\/+/, '');
-  const encodedPath = pathValue
-    .split('/')
-    .map((segment, index) =>
-      index === 0 && /^[a-z]:$/i.test(segment)
-        ? segment
-        : encodeURIComponent(segment),
-    )
-    .join('/');
-  const scheme = window.cardbushDesktop ? 'cardbush-file' : 'file';
-  return `${scheme}:///${encodedPath}`;
-}
-
-function basename(value: string) {
-  const normalized = value.replaceAll('\\', '/').replace(/\/+$/, '');
-  return normalized.split('/').pop() || value;
-}
-
-function stripWrappingQuotes(value: string) {
-  return value.replace(/^['"]|['"]$/g, '');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

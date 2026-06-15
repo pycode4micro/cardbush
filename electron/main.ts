@@ -154,6 +154,12 @@ type ProjectFileSearchResult = {
   kind: 'file' | 'folder';
 };
 
+type UiPreviewTarget = {
+  url: string;
+  externalTarget: string;
+  localPath?: string;
+};
+
 function appLogsDir() {
   return path.join(app.isPackaged ? app.getPath('userData') : process.cwd(), 'logs');
 }
@@ -260,7 +266,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   target.webContents.setWindowOpenHandler(({ url }) => {
-    void openInAppBrowser(url);
+    void openUiPreview(url);
     return { action: 'deny' };
   });
   target.webContents.on('will-navigate', (event, targetUrl) => {
@@ -270,18 +276,18 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     const parsed = safeUrl(targetUrl);
     if (parsed != null && isWebProtocol(parsed)) {
       event.preventDefault();
-      void openInAppBrowser(targetUrl);
+      void openUiPreview(targetUrl);
       return;
     }
     event.preventDefault();
-    void shell.openExternal(targetUrl);
+    void openTargetExternally(targetUrl);
   });
 }
 
-async function openInAppBrowser(targetUrl: string) {
-  const parsed = safeUrl(targetUrl);
-  if (parsed == null || !isWebProtocol(parsed)) {
-    await shell.openExternal(targetUrl);
+async function openUiPreview(targetUrl: string) {
+  const previewTarget = resolveUiPreviewTarget(targetUrl);
+  if (previewTarget == null) {
+    await openTargetExternally(targetUrl);
     return;
   }
   const browser = new BrowserWindow({
@@ -289,7 +295,7 @@ async function openInAppBrowser(targetUrl: string) {
     height: 760,
     minWidth: 760,
     minHeight: 520,
-    title: 'CardBush 浏览器',
+    title: 'CardBush UI 预览',
     icon: loadCardbushIcon(128),
     parent: mainWindow ?? undefined,
     show: false,
@@ -304,7 +310,7 @@ async function openInAppBrowser(targetUrl: string) {
   browser.setMenu(
     Menu.buildFromTemplate([
       {
-        label: 'CardBush',
+        label: 'UI 预览',
         submenu: [
           {
             label: '返回应用',
@@ -315,22 +321,27 @@ async function openInAppBrowser(targetUrl: string) {
             },
           },
           {
-            label: '关闭浏览器',
+            label: '关闭预览',
             accelerator: 'Ctrl+W',
             click: () => browser.close(),
           },
           { type: 'separator' },
           {
-            label: '在系统浏览器打开',
+            label: previewTarget.localPath ? '在系统中打开' : '在系统浏览器打开',
             click: () => {
-              const currentUrl = browser.webContents.getURL() || targetUrl;
-              void shell.openExternal(currentUrl);
+              const currentUrl = browser.webContents.getURL() || previewTarget.url;
+              void openTargetExternally(currentUrl);
             },
+          },
+          {
+            label: '复制地址',
+            accelerator: 'Ctrl+Shift+C',
+            click: () => clipboard.writeText(browser.webContents.getURL() || previewTarget.url),
           },
         ],
       },
       {
-        label: '导航',
+        label: '视图',
         submenu: [
           {
             label: '后退',
@@ -358,6 +369,33 @@ async function openInAppBrowser(targetUrl: string) {
             accelerator: 'Ctrl+R',
             click: () => browser.webContents.reload(),
           },
+          {
+            label: '强制刷新',
+            accelerator: 'Ctrl+Shift+R',
+            click: () => browser.webContents.reloadIgnoringCache(),
+          },
+          { type: 'separator' },
+          {
+            label: '放大',
+            accelerator: 'Ctrl+=',
+            click: () => setPreviewZoom(browser, 0.1),
+          },
+          {
+            label: '缩小',
+            accelerator: 'Ctrl+-',
+            click: () => setPreviewZoom(browser, -0.1),
+          },
+          {
+            label: '重置缩放',
+            accelerator: 'Ctrl+0',
+            click: () => browser.webContents.setZoomFactor(1),
+          },
+          { type: 'separator' },
+          {
+            label: '打开开发者工具',
+            accelerator: 'Ctrl+Shift+I',
+            click: () => browser.webContents.openDevTools({ mode: 'detach' }),
+          },
         ],
       },
     ]),
@@ -370,26 +408,130 @@ async function openInAppBrowser(targetUrl: string) {
     externalBrowserWindows.delete(browser);
   });
   browser.webContents.setWindowOpenHandler(({ url }) => {
-    const next = safeUrl(url);
-    if (next != null && isWebProtocol(next)) {
-      void browser.loadURL(url);
+    const next = resolveUiPreviewTarget(url);
+    if (next != null) {
+      void browser.loadURL(next.url);
     } else {
-      void shell.openExternal(url);
+      void openTargetExternally(url);
     }
     return { action: 'deny' };
   });
   browser.webContents.on('will-navigate', (event, nextUrl) => {
-    const next = safeUrl(nextUrl);
-    if (next != null && isWebProtocol(next)) {
+    if (resolveUiPreviewTarget(nextUrl) != null) {
       return;
     }
     event.preventDefault();
-    void shell.openExternal(nextUrl);
+    void openTargetExternally(nextUrl);
   });
-  await browser.loadURL(targetUrl).catch(async () => {
+  await browser.loadURL(previewTarget.url).catch(async () => {
     browser.close();
-    await shell.openExternal(targetUrl);
+    await openTargetExternally(targetUrl, previewTarget);
   });
+}
+
+function setPreviewZoom(browser: BrowserWindow, delta: number) {
+  if (browser.isDestroyed()) {
+    return;
+  }
+  const current = browser.webContents.getZoomFactor();
+  const next = Math.min(3, Math.max(0.25, Math.round((current + delta) * 10) / 10));
+  browser.webContents.setZoomFactor(next);
+}
+
+function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = safeUrl(trimmed);
+  if (parsed != null && isWebProtocol(parsed)) {
+    return {
+      url: parsed.toString(),
+      externalTarget: parsed.toString(),
+    };
+  }
+  const localhostUrl = localhostPreviewUrl(trimmed);
+  if (localhostUrl != null) {
+    return {
+      url: localhostUrl.toString(),
+      externalTarget: localhostUrl.toString(),
+    };
+  }
+  const localPath = previewHtmlPath(trimmed);
+  if (!localPath) {
+    return null;
+  }
+  return {
+    url: pathToFileURL(localPath).toString(),
+    externalTarget: localPath,
+    localPath,
+  };
+}
+
+function localhostPreviewUrl(value: string) {
+  if (!/^(?:localhost|0\.0\.0\.0|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#].*)?$/i.test(value)) {
+    return null;
+  }
+  return safeUrl(`http://${value}`);
+}
+
+function previewHtmlPath(value: string) {
+  const normalized = normalizeShellPath(value);
+  const candidates = path.isAbsolute(normalized)
+    ? [normalized]
+    : [path.resolve(process.cwd(), normalized)];
+  for (const candidate of candidates) {
+    const resolved = resolvePreviewHtmlPath(candidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return '';
+}
+
+function resolvePreviewHtmlPath(candidate: string) {
+  try {
+    const stats = fs.statSync(candidate);
+    if (stats.isDirectory()) {
+      for (const indexName of ['index.html', 'index.htm']) {
+        const indexPath = path.join(candidate, indexName);
+        if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+          return indexPath;
+        }
+      }
+      return '';
+    }
+    return stats.isFile() && isPreviewHtmlFile(candidate) ? candidate : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPreviewHtmlFile(value: string) {
+  return ['.html', '.htm', '.xhtml'].includes(path.extname(value).toLowerCase());
+}
+
+async function openTargetExternally(value: string, previewTarget?: UiPreviewTarget) {
+  const localPath = previewTarget?.localPath ?? previewHtmlPath(value);
+  if (localPath) {
+    const result = await shell.openPath(localPath);
+    if (!result) {
+      return;
+    }
+  }
+  const parsed = safeUrl(value);
+  if (parsed != null && !/^[a-z]:$/i.test(parsed.protocol)) {
+    await shell.openExternal(parsed.toString());
+    return;
+  }
+  const normalized = normalizeShellPath(value);
+  if (normalized) {
+    const result = await shell.openPath(normalized);
+    if (!result) {
+      return;
+    }
+  }
+  await shell.openExternal(value);
 }
 
 function createCardlingWindow() {
@@ -908,7 +1050,7 @@ ipcMain.handle(
   async (
     _,
     proxy: {
-      mode: 'system' | 'manual';
+      mode: 'none' | 'system' | 'manual';
       httpProxy: string;
       httpsProxy: string;
       noProxy: string;
@@ -1230,10 +1372,24 @@ ipcMain.handle('shell:open-external', (event, targetUrl: string) => {
   if (sourceWindow !== mainWindow) {
     return;
   }
-  return openInAppBrowser(targetUrl);
+  return openUiPreview(targetUrl);
 });
 
-app.whenReady().then(() => {
+ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow) {
+    return;
+  }
+  return openUiPreview(target);
+});
+
+app.whenReady().then(async () => {
+  await applyProxySettings({
+    mode: 'none',
+    httpProxy: '',
+    httpsProxy: '',
+    noProxy: '',
+  }).catch(() => undefined);
   registerLocalFileProtocol();
   createWindow();
   createTray();
@@ -1597,13 +1753,17 @@ function isAllowedAppNavigation(targetUrl: string) {
 }
 
 async function applyProxySettings(proxy: {
-  mode: 'system' | 'manual';
+  mode: 'none' | 'system' | 'manual';
   httpProxy: string;
   httpsProxy: string;
   noProxy: string;
 }) {
   if (proxy.mode === 'system') {
     await session.defaultSession.setProxy({ mode: 'system' });
+    return;
+  }
+  if (proxy.mode === 'none') {
+    await session.defaultSession.setProxy({ mode: 'direct' });
     return;
   }
   const rules = [
@@ -2103,16 +2263,11 @@ function readGitInfo(rootPath: string) {
 
 function readGitBranches(rootPath: string) {
   const root = requireGitRoot(rootPath);
-  const local = runGit(root, ['branch', '--format=%(refname:short)'])
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^\*\s*/, ''))
-    .filter(Boolean);
-  const remote = runGit(root, ['branch', '-r', '--format=%(refname:short)'])
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.includes('->'))
-    .map((line) => line.replace(/^origin\//, ''))
-    .filter(Boolean);
+  const local = readLocalGitBranches(root);
+  const remote = readRemoteGitBranches(root).filter((branch) => {
+    const localName = localNameFromRemoteBranch(branch);
+    return !local.includes(branch) && !local.includes(localName);
+  });
   return [...new Set([...local, ...remote])].sort((left, right) =>
     left.localeCompare(right),
   );
@@ -2121,12 +2276,54 @@ function readGitBranches(rootPath: string) {
 function checkoutGitBranch(rootPath: string, branch: string) {
   const root = requireGitRoot(rootPath);
   const target = normalizeGitName(branch, 'branch');
-  const output = runGit(root, ['switch', target]);
+  const local = readLocalGitBranches(root);
+  const remote = readRemoteGitBranches(root);
+  const output = checkoutGitBranchTarget(root, target, local, remote);
   const info = readGitInfo(root);
   return {
     branch: info.branch,
     output: output.trim() || `Switched to ${target}`,
   };
+}
+
+function readLocalGitBranches(root: string) {
+  return runGit(root, ['branch', '--format=%(refname:short)'])
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^\*\s*/, ''))
+    .filter(Boolean);
+}
+
+function readRemoteGitBranches(root: string) {
+  return runGit(root, ['branch', '-r', '--format=%(refname:short)'])
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.includes('->') && !line.endsWith('/HEAD'));
+}
+
+function checkoutGitBranchTarget(root: string, target: string, local: string[], remote: string[]) {
+  if (local.includes(target)) {
+    return runGit(root, ['switch', target]);
+  }
+
+  if (remote.includes(target)) {
+    const localName = localNameFromRemoteBranch(target);
+    if (localName && local.includes(localName)) {
+      return runGit(root, ['switch', localName]);
+    }
+    return runGit(root, ['switch', '--track', target]);
+  }
+
+  const remoteMatches = remote.filter((branch) => localNameFromRemoteBranch(branch) === target);
+  if (remoteMatches.length === 1) {
+    return runGit(root, ['switch', '--track', remoteMatches[0]]);
+  }
+
+  return runGit(root, ['switch', target]);
+}
+
+function localNameFromRemoteBranch(branch: string) {
+  const separatorIndex = branch.indexOf('/');
+  return separatorIndex >= 0 ? branch.slice(separatorIndex + 1) : branch;
 }
 
 function createGitBranch(rootPath: string, branch: string) {

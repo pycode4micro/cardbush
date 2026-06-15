@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../types';
+import { truncateText } from '../shared/text';
 
 export const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 export const ASSISTANT_FEEDBACK_EVENT = 'cardbush-assistant-feedback';
@@ -92,7 +93,7 @@ export function recordAssistantFeedback(
         conversationId: message.conversationId,
         turnId: message.turnId,
         rating,
-        contentPreview: message.content.trim().slice(0, 600),
+        contentPreview: truncateText(message.content.trim(), 600),
         createdAt: new Date().toISOString(),
       } satisfies AssistantFeedbackRecord);
     }

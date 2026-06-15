@@ -24,7 +24,7 @@ declare global {
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
       bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
       setProxy: (proxy: {
-        mode: 'system' | 'manual';
+        mode: 'none' | 'system' | 'manual';
         httpProxy: string;
         httpsProxy: string;
         noProxy: string;
@@ -151,6 +151,7 @@ declare global {
       ) => () => void;
       onCardlingCollapse: (callback: () => void) => () => void;
       openPath: (targetPath: string) => Promise<string>;
+      openUiPreview: (target: string) => Promise<void>;
       openExternal: (targetUrl: string) => Promise<void>;
     };
   }

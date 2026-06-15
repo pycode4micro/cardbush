@@ -51,7 +51,7 @@ const desktopApi = {
   bushHeaders: (targetUrl: string, json = false) =>
     ipcRenderer.invoke('bush:headers', targetUrl, json) as Promise<Record<string, string>>,
   setProxy: (proxy: {
-    mode: 'system' | 'manual';
+    mode: 'none' | 'system' | 'manual';
     httpProxy: string;
     httpsProxy: string;
     noProxy: string;
@@ -203,6 +203,8 @@ const desktopApi = {
   },
   openPath: (targetPath: string) =>
     ipcRenderer.invoke('shell:open-path', targetPath) as Promise<string>,
+  openUiPreview: (target: string) =>
+    ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   openExternal: (targetUrl: string) =>
     ipcRenderer.invoke('shell:open-external', targetUrl) as Promise<void>,
 };

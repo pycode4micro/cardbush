@@ -13,7 +13,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   deleteSubagent,
@@ -40,17 +40,6 @@ import type {
   SubagentUsageResult,
   SubagentValidationResult,
 } from '../types';
-import {
-  characterPresetForAgent,
-  GAME_CODING_SETTINGS_EVENT,
-  gameCodingCharacterImageForAgent,
-  gameCodingDisplayName,
-  gameCodingMapImage,
-  gameCodingRoleText,
-  mapPresetForSettings,
-  readGameCodingSettings,
-  type GameCodingSettings,
-} from './gameCodingPresets';
 export function SubagentsPanel({ language }: { language: AppLanguage }) {
   const [query, setQuery] = useState('');
   const [agents, setAgents] = useState<SubagentListItem[]>([]);
@@ -65,9 +54,6 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [gameCodingSettings, setGameCodingSettings] = useState<GameCodingSettings>(() =>
-    readGameCodingSettings(),
-  );
 
   const runtimeByAgent = useMemo(() => {
     const map = new Map<string, Record<string, unknown>>();
@@ -81,10 +67,6 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
   const supervisorTotalActive = supervisor
     ? subagentSupervisorTotalActive(supervisor)
     : 0;
-  const gameCodingMap = mapPresetForSettings(gameCodingSettings, agents);
-  const subagentMapStyle = {
-    '--subagent-map-image': `url("${gameCodingMapImage(gameCodingSettings, agents)}")`,
-  } as CSSProperties;
 
   const filteredAgents = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -125,16 +107,6 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    const update = () => setGameCodingSettings(readGameCodingSettings());
-    window.addEventListener(GAME_CODING_SETTINGS_EVENT, update);
-    window.addEventListener('storage', update);
-    return () => {
-      window.removeEventListener(GAME_CODING_SETTINGS_EVENT, update);
-      window.removeEventListener('storage', update);
-    };
-  }, []);
 
   const updateAgent = useCallback((updated: SubagentDetail | SubagentListItem) => {
     setAgents((current) =>
@@ -317,13 +289,13 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
         </section>
       )}
       <div className="subagent-workbench">
-        <section className="subagent-map-pane" style={subagentMapStyle}>
+        <section className="subagent-map-pane">
           <header className="subagent-map-header">
             <div>
-              <span>{language === 'zh' ? '分身地图' : 'Agent map'}</span>
-              <strong>{gameCodingDisplayName(gameCodingMap, language)}</strong>
+              <span>{language === 'zh' ? '子 Agent' : 'Subagents'}</span>
+              <strong>{language === 'zh' ? '运行配置' : 'Runtime profiles'}</strong>
             </div>
-            <em>{language === 'zh' ? '员工席位' : 'Staff seats'} {filteredAgents.length}</em>
+            <em>{filteredAgents.length}</em>
           </header>
           <div className="subagent-map-command">
             <span className="subagent-command-avatar">
@@ -352,11 +324,6 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
               const active =
                 detail != null &&
                 (detail.id === agent.id || detail.name === agent.name);
-              const characterPreset = characterPresetForAgent(
-                agent,
-                index,
-                gameCodingSettings,
-              );
               return (
                 <article
                   className={`result-card subagent subagent-agent-node ${agent.enabled ? '' : 'disabled'} ${agent.validationStatus} ${atAgentLimit ? 'at-limit' : ''} ${active ? 'selected' : ''} ${runningCount > 0 ? 'running' : ''}`}
@@ -368,24 +335,12 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
                     onClick={() => void openDetail(agent)}
                   >
                     <span className="subagent-avatar-frame">
-                      <img
-                        src={gameCodingCharacterImageForAgent(
-                          agent,
-                          index,
-                          gameCodingSettings,
-                        )}
-                        alt=""
-                        aria-hidden="true"
-                      />
+                      <Network size={24} />
                     </span>
                     <div>
                       <h3>{agent.displayName || agent.name}</h3>
                       <p>{agent.description || (language === 'zh' ? '暂无描述' : 'No description')}</p>
                       <small>
-                        {gameCodingDisplayName(characterPreset, language)}
-                        {' · '}
-                        {gameCodingRoleText(characterPreset, language)}
-                        {' · '}
                         {agent.name}
                         {agent.source ? ` · ${agent.source}` : ''}
                         {runningCount > 0 ? ` · ${language === 'zh' ? '运行中' : 'running'} ${runningCount}` : ''}
@@ -472,7 +427,7 @@ export function SubagentsPanel({ language }: { language: AppLanguage }) {
               <strong>{language === 'zh' ? '选择一个子 Agent' : 'Select a subagent'}</strong>
               <p>
                 {language === 'zh'
-                  ? '在右侧直接查看运行信息、编辑基础配置和原始注册配置。'
+                  ? '选择后在这里查看运行信息、基础配置和原始注册配置。'
                   : 'Open a profile to inspect runtime details and edit its registry config.'}
               </p>
             </div>

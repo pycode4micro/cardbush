@@ -20,7 +20,6 @@ import {
   RotateCcw,
   Settings,
   Smartphone,
-  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -53,10 +52,12 @@ import {
 } from '../backend/api';
 import { BotPlatformIcon } from '../components/BotPlatformIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
+import { basename } from '../shared/localPaths';
 import type {
   AppLanguage,
   AppLanguageMode,
   AppSettingsState,
+  BackendCapabilities,
   BotConfigResult,
   BotPlatform,
   BotPlatformOverview,
@@ -98,9 +99,21 @@ const defaultCompanionSettings: CompanionSettings = {
   motion: 'full',
 };
 
-const settingsLabels: Record<SettingsSection, { zh: string; en: string }> = {
+type VisibleSettingsSection = Exclude<SettingsSection, 'companion'>;
+
+const visibleSettingsSections: VisibleSettingsSection[] = [
+  'profile',
+  'proxy',
+  'bots',
+  'cache',
+  'models',
+  'diagnostics',
+  'mobile',
+  'about',
+];
+
+const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
   profile: { zh: '外观', en: 'Appearance' },
-  companion: { zh: '卡布', en: 'Kabu' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot links' },
   cache: { zh: '缓存', en: 'Cache' },
@@ -110,9 +123,8 @@ const settingsLabels: Record<SettingsSection, { zh: string; en: string }> = {
   about: { zh: '关于', en: 'About' },
 };
 
-const settingsIcons: Record<SettingsSection, typeof Settings> = {
+const settingsIcons: Record<VisibleSettingsSection, typeof Settings> = {
   profile: Settings,
-  companion: Sparkles,
   proxy: Monitor,
   bots: Network,
   cache: Archive,
@@ -121,6 +133,12 @@ const settingsIcons: Record<SettingsSection, typeof Settings> = {
   mobile: Smartphone,
   about: Circle,
 };
+
+function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection {
+  return visibleSettingsSections.includes(value as VisibleSettingsSection)
+    ? (value as VisibleSettingsSection)
+    : 'profile';
+}
 
 const botPlatforms: BotPlatform[] = ['weixin', 'feishu', 'telegram', 'discord'];
 const botPlatformLabels: Record<BotPlatform, { zh: string; en: string }> = {
@@ -139,6 +157,7 @@ export function SettingsView({
   backgroundImageSource,
   selectedModel,
   availableModels,
+  backendCapabilities,
   initialSection,
   onBack,
   onThemePreferenceChange,
@@ -158,6 +177,7 @@ export function SettingsView({
   backgroundImageSource: string;
   selectedModel: string;
   availableModels: string[];
+  backendCapabilities: BackendCapabilities;
   initialSection: SettingsSection;
   onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
@@ -168,7 +188,9 @@ export function SettingsView({
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
 }) {
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [section, setSection] = useState<VisibleSettingsSection>(
+    visibleSettingsSection(initialSection),
+  );
   const [providerSelection, setProviderSelection] = useState(
     settings.managedModelConfigs[0]?.provider || suggestedProviders[0],
   );
@@ -176,6 +198,7 @@ export function SettingsView({
   const [apiKey, setApiKey] = useState('');
   const [modelName, setModelName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [maxContextTokens, setMaxContextTokens] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
   const providerOptions = useMemo(
@@ -184,7 +207,7 @@ export function SettingsView({
   );
 
   useEffect(() => {
-    setSection(initialSection);
+    setSection(visibleSettingsSection(initialSection));
   }, [initialSection]);
 
   useEffect(() => {
@@ -240,11 +263,17 @@ export function SettingsView({
             apiKey,
             modelName: nextModel,
             baseUrl,
+            ...(
+              normalizeMaxContextTokens(maxContextTokens)
+                ? { maxContextTokens: normalizeMaxContextTokens(maxContextTokens) }
+                : {}
+            ),
           },
         ],
       }));
       setProviderSelection(provider);
       setModelName('');
+      setMaxContextTokens('');
       notify(language === 'zh' ? '模型配置已添加' : 'Model configuration added');
     },
     [
@@ -252,6 +281,7 @@ export function SettingsView({
       baseUrl,
       customProvider,
       language,
+      maxContextTokens,
       modelName,
       notify,
       providerSelection,
@@ -269,6 +299,40 @@ export function SettingsView({
       }));
     },
     [updateSettings],
+  );
+
+  const updateModelContextTokens = useCallback(
+    (id: string, value: string) => {
+      const trimmed = value.trim();
+      const normalized = normalizeMaxContextTokens(trimmed);
+      if (trimmed && !normalized) {
+        notify(
+          language === 'zh'
+            ? '最大上下文 token 必须是大于 0 的数字'
+            : 'Max context tokens must be a number greater than 0',
+        );
+        return;
+      }
+      updateSettings((current) => ({
+        ...current,
+        managedModelConfigs: current.managedModelConfigs.map((item) => {
+          if (item.id !== id) {
+            return item;
+          }
+          if (!trimmed) {
+            const { maxContextTokens: _removed, ...withoutContextTokens } = item;
+            return withoutContextTokens;
+          }
+          return { ...item, maxContextTokens: normalized };
+        }),
+      }));
+      notify(
+        language === 'zh'
+          ? '最大上下文 token 已更新'
+          : 'Max context tokens updated',
+      );
+    },
+    [language, notify, updateSettings],
   );
 
   const resetModels = useCallback(() => {
@@ -362,12 +426,6 @@ export function SettingsView({
     }));
   }, [updateSettings]);
 
-  const resetCompanionPosition = useCallback(() => {
-    window.localStorage.removeItem('cardbush_cardling_position');
-    void window.cardbushDesktop?.resetCardlingPosition?.();
-    notify(language === 'zh' ? '卡布位置已重置' : 'Kabu position reset');
-  }, [language, notify]);
-
   const content = (() => {
     if (section === 'profile') {
       return (
@@ -390,57 +448,71 @@ export function SettingsView({
         />
       );
     }
-    if (section === 'companion') {
-      return (
-        <CompanionSettingsPanel
-          language={language}
-          settings={settings}
-          onSettingsChange={updateSettings}
-          onResetCompanionPosition={resetCompanionPosition}
-        />
-      );
-    }
     if (section === 'proxy') {
       return (
         <SettingsCard
           title={language === 'zh' ? '代理设置' : 'Proxy settings'}
           subtitle={
             language === 'zh'
-              ? '配置 cardbush 发起网络请求时使用的代理环境。'
-              : 'Configure proxy environment values used by cardbush network requests.'
+              ? '配置 cardbush 发起网络请求时使用的代理方式；默认直连，不继承环境代理。'
+              : 'Configure how cardbush network requests use proxy settings; direct connection is the default.'
           }
         >
-          <SettingsSwitch
+          <SettingsRadio
+            name="proxy-mode"
+            value="none"
+            title={language === 'zh' ? '不使用代理' : 'No proxy'}
+            subtitle={
+              language === 'zh'
+                ? '默认直连，本地 BushServer 请求不会被 HTTP_PROXY / HTTPS_PROXY 接走。'
+                : 'Direct connection by default; local BushServer requests are not routed through HTTP_PROXY / HTTPS_PROXY.'
+            }
+            checked={settings.proxy.mode === 'none'}
+            onChange={() => updateProxy({ mode: 'none' })}
+          />
+          <SettingsRadio
+            name="proxy-mode"
+            value="manual"
+            title={language === 'zh' ? '手动代理' : 'Manual proxy'}
+            subtitle={
+              language === 'zh'
+                ? '使用下方 HTTP_PROXY / HTTPS_PROXY，并保留 NO_PROXY 绕过列表。'
+                : 'Use the HTTP_PROXY / HTTPS_PROXY values below with the NO_PROXY bypass list.'
+            }
+            checked={settings.proxy.mode === 'manual'}
+            onChange={() => updateProxy({ mode: 'manual' })}
+          />
+          <SettingsRadio
+            name="proxy-mode"
+            value="system"
             title={language === 'zh' ? '跟随系统代理' : 'Follow system proxy'}
             subtitle={
               language === 'zh'
-                ? '开启后禁用手动 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 输入。'
-                : 'Disables manual HTTP_PROXY / HTTPS_PROXY / NO_PROXY fields.'
+                ? '使用操作系统或 Chromium 会话代理配置。'
+                : 'Use the operating system or Chromium session proxy configuration.'
             }
             checked={settings.proxy.mode === 'system'}
-            onChange={(checked) =>
-              updateProxy({ mode: checked ? 'system' : 'manual' })
-            }
+            onChange={() => updateProxy({ mode: 'system' })}
           />
           <SettingsDivider />
           <SettingsInput
             label="HTTP_PROXY"
             value={settings.proxy.httpProxy}
-            disabled={settings.proxy.mode === 'system'}
+            disabled={settings.proxy.mode !== 'manual'}
             placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
             onChange={(value) => updateProxy({ httpProxy: value })}
           />
           <SettingsInput
             label="HTTPS_PROXY"
             value={settings.proxy.httpsProxy}
-            disabled={settings.proxy.mode === 'system'}
+            disabled={settings.proxy.mode !== 'manual'}
             placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
             onChange={(value) => updateProxy({ httpsProxy: value })}
           />
           <SettingsInput
             label="NO_PROXY"
             value={settings.proxy.noProxy}
-            disabled={settings.proxy.mode === 'system'}
+            disabled={settings.proxy.mode !== 'manual'}
             placeholder="127.0.0.1,localhost,::1,.internal"
             onChange={(value) => updateProxy({ noProxy: value })}
           />
@@ -459,28 +531,64 @@ export function SettingsView({
           apiKey={apiKey}
           modelName={modelName}
           baseUrl={baseUrl}
+          maxContextTokens={maxContextTokens}
           showApiKey={showApiKey}
           onProviderSelectionChange={setProviderSelection}
           onCustomProviderChange={setCustomProvider}
           onApiKeyChange={setApiKey}
           onModelNameChange={setModelName}
           onBaseUrlChange={setBaseUrl}
+          onMaxContextTokensChange={setMaxContextTokens}
           onShowApiKeyChange={setShowApiKey}
           onAddModelConfig={addModelConfig}
           onResetModels={resetModels}
           onRemoveModelConfig={removeModelConfig}
+          onUpdateModelContextTokens={updateModelContextTokens}
           onUseModel={useModel}
           onOpenDocs={openDocs}
         />
       );
     }
     if (section === 'bots') {
-      return <BotSettingsPanel language={language} />;
+      if (!backendCapabilities.botControl) {
+        return (
+          <SettingsCard
+            title={language === 'zh' ? 'Bot 连接' : 'Bot links'}
+            subtitle={
+              language === 'zh'
+                ? '当前 BushServer 尚未注册 Bot 控制 API。'
+                : 'BushServer does not expose Bot control APIs yet.'
+            }
+          >
+            <div className="maintenance-action-row">
+              <AlertCircle size={18} />
+              <span>
+                <strong>
+                  {language === 'zh' ? '等待后端能力开放' : 'Waiting for backend support'}
+                </strong>
+                <small>
+                  {language === 'zh'
+                    ? '后端 /v1/capabilities 返回 botControl=true 后，这里会恢复 Bot 配置、登录和服务控制。'
+                    : 'When /v1/capabilities returns botControl=true, Bot config, login, and service controls will be enabled.'}
+                </small>
+              </span>
+            </div>
+          </SettingsCard>
+        );
+      }
+      return (
+        <BotSettingsPanel
+          language={language}
+          modelConfigs={settings.managedModelConfigs}
+          selectedModel={selectedModel}
+        />
+      );
     }
     if (section === 'cache') {
       return (
         <CacheMaintenancePanel
           language={language}
+          capabilities={backendCapabilities}
           onNotify={notify}
           onConversationHistoryCleared={onConversationHistoryCleared}
         />
@@ -510,7 +618,7 @@ export function SettingsView({
           <ArrowLeft size={18} />
           {language === 'zh' ? '返回应用' : 'Back to app'}
         </button>
-        {(Object.keys(settingsLabels) as SettingsSection[]).map((id) => {
+        {visibleSettingsSections.map((id) => {
           const Icon = settingsIcons[id];
           return (
             <button
@@ -770,224 +878,6 @@ function SettingsProfilePanel({
   );
 }
 
-function CompanionSettingsPanel({
-  language,
-  settings,
-  onSettingsChange,
-  onResetCompanionPosition,
-}: {
-  language: AppLanguage;
-  settings: AppSettingsState;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onResetCompanionPosition: () => void;
-}) {
-  const updateCompanion = useCallback(
-    (patch: Partial<CompanionSettings>) => {
-      onSettingsChange((current) => ({
-        ...current,
-        companion: normalizeCompanionSettings({
-          ...current.companion,
-          ...patch,
-        }),
-      }));
-    },
-    [onSettingsChange],
-  );
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? '卡布状态助手' : 'Kabu companion'}
-        subtitle={
-          language === 'zh'
-            ? '配置卡布在桌面上的显示、动效和停靠行为。'
-            : 'Configure Kabu display, motion, and dock behavior.'
-        }
-      >
-        <div
-          className="companion-preview"
-          data-motion={settings.companion.motion}
-          style={
-            {
-              '--cardling-scale': String(companionSizeScale(settings.companion.size)),
-              '--cardling-opacity': String(settings.companion.opacity),
-            } as CSSProperties
-          }
-        >
-          <div className="cardling-badge companion-preview-stage" data-status="idle">
-            <span className="cardling-orbit" />
-            <span className="cardling-card" aria-hidden="true">
-              <span className="cardling-stack" />
-              <span className="cardling-leaf" />
-              <span className="cardling-eye left" />
-              <span className="cardling-eye right" />
-              <span className="cardling-wave" />
-              <span className="cardling-cursor" />
-              <span className="cardling-error-corner" />
-              <span className="cardling-spark one" />
-              <span className="cardling-spark two" />
-            </span>
-          </div>
-          <div>
-            <strong>{language === 'zh' ? 'Kabu / 卡布' : 'Kabu'}</strong>
-            <span>
-              {language === 'zh'
-                ? '轻量、可拖拽、跟随对话状态。'
-                : 'Lightweight, draggable, and tied to chat state.'}
-            </span>
-          </div>
-        </div>
-        <SettingsSwitch
-          title={language === 'zh' ? '显示卡布' : 'Show Kabu'}
-          subtitle={
-            language === 'zh'
-              ? '关闭后隐藏聊天界面的卡布入口，但保留现有偏好。'
-              : 'Hides Kabu in chat while keeping current preferences.'
-          }
-          checked={settings.companionEnabled}
-          onChange={(checked) =>
-            onSettingsChange((current) => ({
-              ...current,
-              companionEnabled: checked,
-            }))
-          }
-        />
-        <SettingsDivider />
-        <SettingsGroupTitle>
-          {language === 'zh' ? '形态' : 'Shape'}
-        </SettingsGroupTitle>
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '小号' : 'Compact'}
-          subtitle={language === 'zh' ? '更适合小屏或窄窗口。' : 'Better for small screens or narrow windows.'}
-          value="compact"
-          checked={settings.companion.size === 'compact'}
-          onChange={() => updateCompanion({ size: 'compact' })}
-        />
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '标准' : 'Standard'}
-          value="normal"
-          checked={settings.companion.size === 'normal'}
-          onChange={() => updateCompanion({ size: 'normal' })}
-        />
-        <SettingsRadio
-          name="companion-size"
-          title={language === 'zh' ? '大号' : 'Large'}
-          subtitle={language === 'zh' ? '状态更醒目，但占用更多边缘空间。' : 'More visible, with more edge space.'}
-          value="large"
-          checked={settings.companion.size === 'large'}
-          onChange={() => updateCompanion({ size: 'large' })}
-        />
-        <SettingsRange
-          label={language === 'zh' ? '透明度' : 'Opacity'}
-          value={Math.round(settings.companion.opacity * 100)}
-          min={55}
-          max={100}
-          step={5}
-          suffix="%"
-          onChange={(value) => updateCompanion({ opacity: value / 100 })}
-        />
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '动效与位置' : 'Motion and position'}
-        subtitle={
-          language === 'zh'
-            ? '控制卡布的循环动画、反馈强度和停靠位置。'
-            : 'Control Kabu loops, feedback intensity, and dock position.'
-        }
-      >
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '完整动效' : 'Full motion'}
-          subtitle={language === 'zh' ? '保留呼吸、扫描和完成反馈。' : 'Keeps breathing, scan, and completion feedback.'}
-          value="full"
-          checked={settings.companion.motion === 'full'}
-          onChange={() => updateCompanion({ motion: 'full' })}
-        />
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '轻动效' : 'Reduced motion'}
-          subtitle={language === 'zh' ? '减少工具运行和等待状态的循环动画。' : 'Reduces tool and waiting loops.'}
-          value="reduced"
-          checked={settings.companion.motion === 'reduced'}
-          onChange={() => updateCompanion({ motion: 'reduced' })}
-        />
-        <SettingsRadio
-          name="companion-motion"
-          title={language === 'zh' ? '关闭动效' : 'Motion off'}
-          value="off"
-          checked={settings.companion.motion === 'off'}
-          onChange={() => updateCompanion({ motion: 'off' })}
-        />
-        <div className="settings-actions">
-          <button className="secondary-button" type="button" onClick={onResetCompanionPosition}>
-            <RotateCcw size={14} />
-            {language === 'zh' ? '重置卡布位置' : 'Reset Kabu position'}
-          </button>
-        </div>
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '状态事件表' : 'Status event map'}
-        subtitle={
-          language === 'zh'
-            ? '卡布只反映产品状态，不替代主流程操作。'
-            : 'Kabu reflects product state without replacing primary workflows.'
-        }
-      >
-        <div className="companion-event-table">
-          {companionEventRows(language).map((row) => (
-            <div className="companion-event-row" key={row.status}>
-              <b>{row.status}</b>
-              <span>{row.trigger}</span>
-              <em>{row.visual}</em>
-            </div>
-          ))}
-        </div>
-      </SettingsCard>
-    </div>
-  );
-}
-
-function companionEventRows(language: AppLanguage) {
-  return [
-    {
-      status: 'idle',
-      trigger: language === 'zh' ? '没有运行中的回复或工具' : 'No active reply or tool',
-      visual: language === 'zh' ? '慢呼吸' : 'slow breathing',
-    },
-    {
-      status: 'thinking',
-      trigger: language === 'zh' ? 'AI 正在生成回复' : 'assistant is generating',
-      visual: language === 'zh' ? '眼部轻闪' : 'eye pulse',
-    },
-    {
-      status: 'tool',
-      trigger: language === 'zh' ? '工具或文件操作运行中' : 'tool or file operation running',
-      visual: language === 'zh' ? '扫描线和光标' : 'scan line and cursor',
-    },
-    {
-      status: 'waiting',
-      trigger: language === 'zh' ? '需要用户选择或输入' : 'user choice or input needed',
-      visual: language === 'zh' ? '暖色叶片' : 'warm leaf',
-    },
-    {
-      status: 'queued',
-      trigger: language === 'zh' ? '回复期间提交了排队消息' : 'message queued during a reply',
-      visual: language === 'zh' ? '叠卡和计数' : 'stacked card and count',
-    },
-    {
-      status: 'complete',
-      trigger: language === 'zh' ? '一轮回复正常结束' : 'turn completed successfully',
-      visual: language === 'zh' ? '短暂星光反馈' : 'brief sparkle feedback',
-    },
-    {
-      status: 'error',
-      trigger: language === 'zh' ? '当前流程出现错误' : 'current flow has an error',
-      visual: language === 'zh' ? '红色角标' : 'red corner signal',
-    },
-  ];
-}
-
 function ModelsSettingsPanel({
   language,
   settings,
@@ -998,16 +888,19 @@ function ModelsSettingsPanel({
   apiKey,
   modelName,
   baseUrl,
+  maxContextTokens,
   showApiKey,
   onProviderSelectionChange,
   onCustomProviderChange,
   onApiKeyChange,
   onModelNameChange,
   onBaseUrlChange,
+  onMaxContextTokensChange,
   onShowApiKeyChange,
   onAddModelConfig,
   onResetModels,
   onRemoveModelConfig,
+  onUpdateModelContextTokens,
   onUseModel,
   onOpenDocs,
 }: {
@@ -1020,16 +913,19 @@ function ModelsSettingsPanel({
   apiKey: string;
   modelName: string;
   baseUrl: string;
+  maxContextTokens: string;
   showApiKey: boolean;
   onProviderSelectionChange: (value: string) => void;
   onCustomProviderChange: (value: string) => void;
   onApiKeyChange: (value: string) => void;
   onModelNameChange: (value: string) => void;
   onBaseUrlChange: (value: string) => void;
+  onMaxContextTokensChange: (value: string) => void;
   onShowApiKeyChange: (value: boolean) => void;
   onAddModelConfig: (event?: FormEvent) => void;
   onResetModels: () => void;
   onRemoveModelConfig: (id: string) => void;
+  onUpdateModelContextTokens: (id: string, value: string) => void;
   onUseModel: (model: string) => void;
   onOpenDocs: (name: string, url: string) => void;
 }) {
@@ -1237,6 +1133,12 @@ function ModelsSettingsPanel({
             placeholder="gpt-4.1-mini"
             onChange={onModelNameChange}
           />
+          <SettingsInput
+            label={language === 'zh' ? '最大上下文 token' : 'Max context tokens'}
+            value={maxContextTokens}
+            placeholder="131072"
+            onChange={onMaxContextTokensChange}
+          />
           <div className="settings-actions">
             <button className="primary-button" type="submit">
               <Plus size={14} />
@@ -1333,6 +1235,9 @@ function ModelsSettingsPanel({
                 selected={selectedModel === config.modelName}
                 onUse={() => onUseModel(config.modelName)}
                 onDelete={() => onRemoveModelConfig(config.id)}
+                onSaveContextTokens={(value) =>
+                  onUpdateModelContextTokens(config.id, value)
+                }
               />
             ))}
           </SettingsCard>
@@ -1344,10 +1249,12 @@ function ModelsSettingsPanel({
 
 function CacheMaintenancePanel({
   language,
+  capabilities,
   onNotify,
   onConversationHistoryCleared,
 }: {
   language: AppLanguage;
+  capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
 }) {
@@ -1358,6 +1265,18 @@ function CacheMaintenancePanel({
   const runClear = useCallback(
     async (target: 'conversation' | 'logs') => {
       if (busyTarget) {
+        return;
+      }
+      const supported =
+        target === 'conversation'
+          ? capabilities.maintenanceConversationHistoryClear
+          : capabilities.maintenanceLogsCacheClear;
+      if (!supported) {
+        setError(
+          language === 'zh'
+            ? 'BushServer 尚未提供这个缓存维护接口。'
+            : 'BushServer does not expose this cache maintenance API yet.',
+        );
         return;
       }
       const confirmed = window.confirm(
@@ -1393,13 +1312,22 @@ function CacheMaintenancePanel({
               : 'Logs cache cleared',
         );
       } catch (caught) {
-        setError(errorMessage(caught));
+        const message = errorMessage(caught);
+        setError(
+          message.includes('404')
+            ? language === 'zh'
+              ? 'BushServer 尚未提供缓存维护接口，请后端接入 maintenance clear API 后再使用。'
+              : 'BushServer does not expose the cache maintenance API yet.'
+            : message,
+        );
       } finally {
         setBusyTarget('');
       }
     },
-    [busyTarget, language, onConversationHistoryCleared, onNotify],
+    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify],
   );
+  const conversationClearSupported = capabilities.maintenanceConversationHistoryClear;
+  const logsClearSupported = capabilities.maintenanceLogsCacheClear;
 
   return (
     <div className="settings-stack">
@@ -1427,8 +1355,15 @@ function CacheMaintenancePanel({
             <button
               className="secondary-button"
               type="button"
-              disabled={Boolean(busyTarget)}
+              disabled={Boolean(busyTarget) || !conversationClearSupported}
               onClick={() => void runClear('conversation')}
+              title={
+                conversationClearSupported
+                  ? undefined
+                  : language === 'zh'
+                    ? '后端尚未提供此接口'
+                    : 'Backend API is not available yet'
+              }
             >
               {busyTarget === 'conversation' ? (
                 <LoaderCircle size={14} />
@@ -1451,14 +1386,28 @@ function CacheMaintenancePanel({
             <button
               className="secondary-button"
               type="button"
-              disabled={Boolean(busyTarget)}
+              disabled={Boolean(busyTarget) || !logsClearSupported}
               onClick={() => void runClear('logs')}
+              title={
+                logsClearSupported
+                  ? undefined
+                  : language === 'zh'
+                    ? '后端尚未提供此接口'
+                    : 'Backend API is not available yet'
+              }
             >
               {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
               {language === 'zh' ? '清空' : 'Clear'}
             </button>
           </div>
         </div>
+        {(!conversationClearSupported || !logsClearSupported) && (
+          <p className="bot-settings-error">
+            {language === 'zh'
+              ? '部分缓存维护能力尚未由 BushServer 暴露，已暂时禁用对应按钮。'
+              : 'Some cache maintenance capabilities are not exposed by BushServer yet, so the matching buttons are disabled.'}
+          </p>
+        )}
         {error && <p className="bot-settings-error">{error}</p>}
         {result && (
           <div className="maintenance-result">
@@ -1737,7 +1686,15 @@ function AboutSettingsPanel({ language }: { language: AppLanguage }) {
   );
 }
 
-function BotSettingsPanel({ language }: { language: AppLanguage }) {
+function BotSettingsPanel({
+  language,
+  modelConfigs,
+  selectedModel,
+}: {
+  language: AppLanguage;
+  modelConfigs: ManagedModelConfig[];
+  selectedModel: string;
+}) {
   const [overviews, setOverviews] = useState<BotPlatformOverview[]>([]);
   const [selectedPlatform, setSelectedPlatform] = useState<BotPlatform>('weixin');
   const [statusByPlatform, setStatusByPlatform] = useState<
@@ -1780,6 +1737,13 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
   const selectedServiceStatus =
     selectedStatus?.serviceStatus ?? selectedOverview?.serviceStatus ?? 'stopped';
   const selectedLastError = botServiceDetailText(selectedStatus, selectedOverview, language);
+  const selectedModelConfig = useMemo(
+    () => modelConfigForBot(modelConfigs, selectedModel),
+    [modelConfigs, selectedModel],
+  );
+  const selectedModelInfo = selectedModelConfig
+    ? `${selectedModelConfig.provider} / ${selectedModelConfig.modelName}`
+    : selectedModel.trim() || (language === 'zh' ? '未选择' : 'not selected');
 
   const notify = useCallback((message: string) => {
     setNotice(message);
@@ -1930,7 +1894,13 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
         setBusyKey('');
       }
     },
-    [language, loadLogs, notify, overviewByPlatform, statusByPlatform],
+    [
+      language,
+      loadLogs,
+      notify,
+      overviewByPlatform,
+      statusByPlatform,
+    ],
   );
 
   const beginWeixinLogin = useCallback(async () => {
@@ -2167,6 +2137,17 @@ function BotSettingsPanel({ language }: { language: AppLanguage }) {
             </small>
           </div>
         </div>
+        <InfoRow
+          label={language === 'zh' ? '使用模型' : 'Model'}
+          value={selectedModelInfo}
+        />
+        {selectedModelConfig && (
+          <p className="settings-muted">
+            {language === 'zh'
+              ? 'Bot 启动时由 BushServer 统一模型配置的默认槽位注入 provider / model / api_key / base_url。'
+              : 'Bot startup uses the default slot from BushServer model configs for provider / model / api_key / base_url.'}
+          </p>
+        )}
         {(!selectedEnabled || !selectedConfigured) && (
           <p className="bot-settings-warning">
             {!selectedEnabled
@@ -2427,6 +2408,19 @@ function botPanelError(caught: unknown, language: AppLanguage) {
       : 'The WeChat bot has no logged-in account. Complete QR login before starting the service.';
   }
   return message;
+}
+
+function modelConfigForBot(
+  configs: ManagedModelConfig[],
+  selectedModel: string,
+) {
+  const normalized = selectedModel.trim().toLowerCase();
+  if (!normalized) {
+    return configs.length === 1 ? configs[0] : undefined;
+  }
+  return configs.find(
+    (config) => config.modelName.trim().toLowerCase() === normalized,
+  ) ?? (configs.length === 1 ? configs[0] : undefined);
 }
 
 function botServiceDetailText(
@@ -2713,21 +2707,68 @@ function ModelConfigRow({
   selected,
   onUse,
   onDelete,
+  onSaveContextTokens,
 }: {
   config: ManagedModelConfig;
   language: AppLanguage;
   selected: boolean;
   onUse: () => void;
   onDelete: () => void;
+  onSaveContextTokens: (value: string) => void;
 }) {
+  const [contextDraft, setContextDraft] = useState(
+    contextTokenDraftValue(config.maxContextTokens),
+  );
+  const savedContextDraft = contextTokenDraftValue(config.maxContextTokens);
+  const trimmedContextDraft = contextDraft.trim();
+  const hasInvalidContext =
+    trimmedContextDraft.length > 0 && !normalizeMaxContextTokens(trimmedContextDraft);
+  const contextDraftChanged = contextDraft !== savedContextDraft;
+
+  useEffect(() => {
+    setContextDraft(savedContextDraft);
+  }, [savedContextDraft]);
+
   return (
     <div className="model-row">
-      <div>
+      <div className="model-row-summary">
         <strong>{config.modelName}</strong>
         <span>
-          provider={config.provider || 'custom'} · api_key={maskSecret(config.apiKey, language)} · base_url={config.baseUrl || (language === 'zh' ? '未填写' : 'not filled')}
+          provider={config.provider || 'custom'} · api_key={maskSecret(config.apiKey, language)} · base_url={config.baseUrl || (language === 'zh' ? '未填写' : 'not filled')} · context={formatContextTokens(config.maxContextTokens, language)}
         </span>
       </div>
+      <label className="model-context-editor">
+        <span>{language === 'zh' ? '最大上下文' : 'Max context'}</span>
+        <div className="model-context-controls">
+          <input
+            aria-label={
+              language === 'zh'
+                ? `${config.modelName} 最大上下文 token`
+                : `${config.modelName} max context tokens`
+            }
+            inputMode="numeric"
+            min={1}
+            placeholder={language === 'zh' ? '默认' : 'default'}
+            type="number"
+            value={contextDraft}
+            onChange={(event) => setContextDraft(event.currentTarget.value)}
+          />
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!contextDraftChanged || hasInvalidContext}
+            onClick={() => onSaveContextTokens(contextDraft)}
+          >
+            <Check size={14} />
+            {language === 'zh' ? '保存' : 'Save'}
+          </button>
+        </div>
+        {hasInvalidContext && (
+          <small>
+            {language === 'zh' ? '请输入正整数' : 'Use a positive integer'}
+          </small>
+        )}
+      </label>
       {selected && (
         <span className="current-badge">
           <CheckCircle2 size={13} />
@@ -3024,16 +3065,6 @@ function diagnosticSummary(probe: DiagnosticProbe) {
   return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
 }
 
-function companionSizeScale(size: CompanionSize) {
-  if (size === 'compact') {
-    return 0.86;
-  }
-  if (size === 'large') {
-    return 1.16;
-  }
-  return 1;
-}
-
 function normalizeCompanionSettings(
   value?: Partial<CompanionSettings>,
 ): CompanionSettings {
@@ -3059,12 +3090,6 @@ function normalizeCompanionMotion(value?: string): CompanionMotionMode {
   return value === 'full' || value === 'reduced' || value === 'off'
     ? value
     : defaultCompanionSettings.motion;
-}
-
-function basename(value: string) {
-  const normalized = value.replaceAll('\\', '/');
-  const parts = normalized.split('/').filter(Boolean);
-  return parts.at(-1) ?? value;
 }
 
 function cssImageUrl(value: string) {
@@ -3098,6 +3123,22 @@ function fileUrl(value: string) {
 
 function normalizeProvider(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function normalizeMaxContextTokens(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function formatContextTokens(value: number | undefined, language: AppLanguage) {
+  if (!value || value <= 0) {
+    return language === 'zh' ? '未填写' : 'not filled';
+  }
+  return new Intl.NumberFormat(language === 'zh' ? 'zh-CN' : 'en-US').format(value);
+}
+
+function contextTokenDraftValue(value: number | undefined) {
+  return value && value > 0 ? String(Math.floor(value)) : '';
 }
 
 function newModelConfigId() {

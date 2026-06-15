@@ -11,6 +11,9 @@
     "gui": "npm run build && electron .",
     "fix:electron": "node scripts/install-electron.mjs",
     "preview": "vite preview --host 127.0.0.1",
+    "test:path-metadata": "node scripts/test-local-path-metadata.mjs",
+    "test:markdown": "node scripts/test-markdown-format.mjs",
+    "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {

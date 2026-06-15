@@ -13,7 +13,6 @@ import {
   fetchSkillDetail,
   fetchSkills,
   fetchSessionMessages,
-  regenerateTurn,
   replyInteraction,
   sendGuidance,
   stopTurn,
@@ -31,8 +30,11 @@ import type {
   ChatToolExecution,
   PendingInteraction,
   InteractionReplyAnswer,
+  PermissionMode,
   ReferencePlanMode,
 } from '../types';
+import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
+import { truncateText } from '../shared/text';
 
 export type QueuedChatMessage = {
   id: string;
@@ -47,6 +49,8 @@ export function useCardbushChat(
   requestContext: {
     projectContexts?: Record<string, string>;
     disabledSkillNames?: Set<string>;
+    disabledToolNames?: Set<string>;
+    standardImageInputEnabled?: boolean;
   } = {},
 ) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -75,6 +79,9 @@ export function useCardbushChat(
   );
   const [referencePlanMode, setReferencePlanModeState] = useState<ReferencePlanMode>(
     readInitialReferencePlanMode,
+  );
+  const [permissionMode, setPermissionModeState] = useState<PermissionMode>(
+    readInitialPermissionMode,
   );
   const controllersRef = useRef<Record<string, AbortController>>({});
   const activeTurnIdsRef = useRef<Record<string, string>>({});
@@ -126,6 +133,55 @@ export function useCardbushChat(
     return next;
   }, []);
 
+  const persistAutoConversationTitle = useCallback(
+    (conversation: ConversationSummary, sourceText: string) => {
+      const sessionId = conversation.id.trim();
+      const nextTitle = conversationTitleFromUserText(sourceText);
+      if (
+        !sessionId ||
+        !nextTitle ||
+        shouldAutoTitleConversation(nextTitle, sessionId) ||
+        !shouldAutoTitleConversation(conversation.title, sessionId)
+      ) {
+        return;
+      }
+
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === sessionId && shouldAutoTitleConversation(item.title, item.id)
+            ? { ...item, title: nextTitle }
+            : item,
+        ),
+      );
+
+      const sync = (attempt: number) => {
+        void updateConversation({ sessionId, title: nextTitle })
+          .then((synced) => {
+            setConversations((current) =>
+              current.map((item) =>
+                item.id === sessionId
+                  ? {
+                      ...item,
+                      ...synced,
+                      id: sessionId,
+                      title: mergeSyncedConversationTitle(item.title, synced.title, sessionId),
+                    }
+                  : item,
+              ),
+            );
+          })
+          .catch(() => {
+            if (attempt >= 2) {
+              return;
+            }
+            window.setTimeout(() => sync(attempt + 1), 250 * (attempt + 1));
+          });
+      };
+      sync(0);
+    },
+    [],
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function load() {
@@ -139,7 +195,9 @@ export function useCardbushChat(
         if (cancelled) {
           return;
         }
-        setConversations(loadedConversations);
+        setConversations((current) =>
+          mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations),
+        );
         setActiveConversationId((current) =>
           loadedConversations.some((item) => item.id === current)
             ? current
@@ -225,6 +283,12 @@ export function useCardbushChat(
     window.localStorage.setItem('cardbush.reference_plan_mode', normalized);
   }, []);
 
+  const setPermissionMode = useCallback((mode: PermissionMode) => {
+    const normalized = normalizePermissionMode(mode);
+    setPermissionModeState(normalized);
+    window.localStorage.setItem('cardbush.permission_mode', normalized);
+  }, []);
+
   useEffect(() => {
     if (!activeConversationId || messagesByConversation[activeConversationId]) {
       return;
@@ -242,6 +306,10 @@ export function useCardbushChat(
               result.messages,
             ),
           }));
+          persistAutoConversationTitle(
+            result.conversation,
+            firstUserTitleSource(result.messages, ''),
+          );
           if (result.conversation.projectDir || result.conversation.workspaceContext) {
             setConversations((current) =>
               current.map((item) =>
@@ -275,7 +343,7 @@ export function useCardbushChat(
     return () => {
       cancelled = true;
     };
-  }, [activeConversationId, messagesByConversation]);
+  }, [activeConversationId, messagesByConversation, persistAutoConversationTitle]);
 
   const activeConversation = useMemo(
     () =>
@@ -331,7 +399,9 @@ export function useCardbushChat(
 
   const reloadConversations = useCallback(async () => {
     const loadedConversations = await fetchConversations();
-    setConversations(loadedConversations);
+    setConversations((current) =>
+      mergeLoadedConversationsPreservingLocalTitles(current, loadedConversations),
+    );
     setActiveConversationId((current) =>
       loadedConversations.some((item) => item.id === current)
         ? current
@@ -353,6 +423,7 @@ export function useCardbushChat(
   const refreshActiveSession = useCallback(async (options?: { silent?: boolean }) => {
     const sessionId = activeConversationId.trim();
     if (!sessionId) {
+      await reloadConversations().catch(() => undefined);
       return;
     }
     if (!options?.silent) {
@@ -367,11 +438,16 @@ export function useCardbushChat(
           result.messages,
         ),
       }));
+      persistAutoConversationTitle(
+        result.conversation,
+        firstUserTitleSource(result.messages, ''),
+      );
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
         setError(null);
       }
     } catch (caught) {
+      await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
         setError(errorMessage(caught));
       }
@@ -381,7 +457,7 @@ export function useCardbushChat(
         setMessagesLoading(false);
       }
     }
-  }, [activeConversationId, reloadConversations]);
+  }, [activeConversationId, reloadConversations, persistAutoConversationTitle]);
 
   const createSessionShareLink = useCallback(
     (request: { sessionId: string; platform?: string; expiresSeconds?: number }) =>
@@ -419,41 +495,51 @@ export function useCardbushChat(
     [conversations],
   );
 
-  const startConversation = useCallback(async (projectDir?: string) => {
-    try {
-      const created = await createConversation({
-        projectDir,
-        agentProfile: selectedRuntimeProfile,
-      });
-      const nextCreated = projectDir
-        ? {
-            ...created,
-            agentProfile: created.agentProfile ?? selectedRuntimeProfile,
-            projectDir: created.projectDir ?? projectDir,
-          }
-        : { ...created, agentProfile: created.agentProfile ?? selectedRuntimeProfile };
-      setConversations((current) => [nextCreated, ...current]);
-      setMessagesByConversation((current) => ({
-        ...current,
-        [nextCreated.id]: [],
-      }));
-      setActiveConversationId(nextCreated.id);
-      setError(null);
-      return nextCreated;
-    } catch (caught) {
-      setError(errorMessage(caught));
-      const created = {
-        ...localConversation(projectDir),
-        agentProfile: selectedRuntimeProfile,
-      };
-      setConversations((current) => [created, ...current]);
-      setMessagesByConversation((current) => ({
-        ...current,
-        [created.id]: [],
-      }));
-      setActiveConversationId(created.id);
-      return created;
-    }
+  const startConversation = useCallback(async (projectDir?: string, initialTitle?: string) => {
+    const optimistic = {
+      ...localConversation(projectDir, initialTitle),
+      agentProfile: selectedRuntimeProfile,
+    };
+    setConversations((current) => [
+      optimistic,
+      ...current.filter((item) => item.id !== optimistic.id),
+    ]);
+    setMessagesByConversation((current) => ({
+      ...current,
+      [optimistic.id]: current[optimistic.id] ?? [],
+    }));
+    setActiveConversationId(optimistic.id);
+    setError(null);
+
+    void createConversation({
+      sessionId: optimistic.id,
+      title: optimistic.title,
+      projectDir,
+      agentProfile: selectedRuntimeProfile,
+    })
+      .then((created) => {
+        const synced = {
+          ...created,
+          id: optimistic.id,
+          agentProfile: created.agentProfile ?? selectedRuntimeProfile,
+          projectDir: created.projectDir ?? projectDir,
+        };
+        setConversations((current) =>
+          current.map((item) =>
+            item.id === optimistic.id
+              ? {
+                  ...item,
+                  ...synced,
+                  id: optimistic.id,
+                  title: mergeSyncedConversationTitle(item.title, synced.title, optimistic.id),
+                }
+              : item,
+          ),
+        );
+      })
+      .catch(() => undefined);
+
+    return optimistic;
   }, [selectedRuntimeProfile]);
 
   const deleteConversation = useCallback((conversationId: string) => {
@@ -496,9 +582,17 @@ export function useCardbushChat(
         return;
       }
       const outbound = splitStreamAttachmentMentions(trimmed);
+      const attachments = streamAttachmentsForVision(
+        outbound,
+        requestContext.standardImageInputEnabled === true,
+      );
       const conversation =
-        queuedConversation ?? activeConversation ?? (await startConversation());
+        queuedConversation ??
+        activeConversation ??
+        (await startConversation(undefined, conversationTitleFromUserText(trimmed)));
       const sessionId = conversation.id;
+      const previousMessages = messagesByConversation[sessionId] ?? [];
+      const titleSource = firstUserTitleSource(previousMessages, trimmed);
       if (isSessionSending(sessionId)) {
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
@@ -537,8 +631,9 @@ export function useCardbushChat(
         [sessionId]: [...(current[sessionId] ?? []), userMessage, assistantMessage],
       }));
       setConversations((current) =>
-        upsertConversationPreview(current, conversation, trimmed),
+        upsertConversationPreview(current, conversation, trimmed, titleSource),
       );
+      persistAutoConversationTitle(conversation, titleSource);
       markSessionRunning(sessionId);
       setError(null);
       const controller = new AbortController();
@@ -563,8 +658,11 @@ export function useCardbushChat(
             .map((skill) => skill.name)
             .filter((name) => !requestContext.disabledSkillNames?.has(name)),
           referencePlanMode,
-          images: outbound.images,
-          files: outbound.files,
+          permissionMode,
+          standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+          disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
+          images: attachments.images,
+          files: attachments.files,
           signal: controller.signal,
           onStart: (start) => {
             markSessionRunning(sessionId, start.turnId);
@@ -597,6 +695,18 @@ export function useCardbushChat(
               sessionId: interaction.sessionId ?? sessionId,
             });
           },
+          onFinalAssistantText: (text) => {
+            finalSnapshotPromise = streamBuffer.flushFinalText(text).then(() => {
+              setMessagesByConversation((current) =>
+                markLocalAssistantTurnCompleted(
+                  current,
+                  sessionId,
+                  assistantId,
+                  new Date().toISOString(),
+                ),
+              );
+            });
+          },
           onMessages: (nextMessages, finalSnapshot) => {
             if (finalSnapshot) {
               const turnId = activeTurnIdsRef.current[sessionId];
@@ -622,10 +732,36 @@ export function useCardbushChat(
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
         }
+        const loadedMessages = await fetchMessages(sessionId).catch(() => null);
+        if (loadedMessages && loadedMessages.length > 0) {
+          setMessagesByConversation((current) => ({
+            ...current,
+            [sessionId]: mergeLoadedMessagesPreservingLocalState(
+              current[sessionId] ?? [],
+              loadedMessages,
+            ),
+          }));
+        }
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (!controller.signal.aborted) {
-          setError(errorMessage(caught));
+          const turnId = activeTurnIdsRef.current[sessionId];
+          const loadedMessages = await fetchMessages(sessionId).catch(() => null);
+          if (loadedMessages && loadedMessages.length > 0) {
+            setMessagesByConversation((current) => ({
+              ...current,
+              [sessionId]: mergeLoadedMessagesPreservingLocalState(
+                current[sessionId] ?? [],
+                loadedMessages,
+              ),
+            }));
+            void reloadConversations().catch(() => undefined);
+          }
+          if (loadedMessages && hasCompletedAssistantForTurn(loadedMessages, turnId)) {
+            setError(null);
+          } else {
+            setError(errorMessage(caught));
+          }
         }
       } finally {
         await streamBuffer.flushAllStreaming();
@@ -651,9 +787,14 @@ export function useCardbushChat(
       markSessionRunning,
       reloadConversations,
       managedModelConfigs,
+      messagesByConversation,
+      persistAutoConversationTitle,
       requestContext.disabledSkillNames,
+      requestContext.disabledToolNames,
+      requestContext.standardImageInputEnabled,
       requestContext.projectContexts,
       referencePlanMode,
+      permissionMode,
       selectedModel,
       selectedRuntimeProfile,
       skills,
@@ -689,6 +830,7 @@ export function useCardbushChat(
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
+          onFinalAssistantText: (text: string) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
         },
       ) => Promise<void>;
@@ -723,11 +865,15 @@ export function useCardbushChat(
         await stream(controller, {
           onStart: (start) => {
             markSessionRunning(sessionId, start.turnId);
+            const startedAt = new Date().toISOString();
             setMessagesByConversation((current) => ({
               ...current,
               [sessionId]: (current[sessionId] ?? initialMessages).map((item) =>
                 startIds.has(item.id)
-                  ? { ...item, turnId: start.turnId, conversationId: sessionId }
+                  ? markLocalMessageTurnStarted(
+                      { ...item, turnId: start.turnId, conversationId: sessionId },
+                      startedAt,
+                    )
                   : item,
               ),
             }));
@@ -752,6 +898,18 @@ export function useCardbushChat(
             setPendingInteraction({
               ...interaction,
               sessionId: interaction.sessionId ?? sessionId,
+            });
+          },
+          onFinalAssistantText: (text) => {
+            finalSnapshotPromise = streamBuffer.flushFinalText(text).then(() => {
+              setMessagesByConversation((current) =>
+                markLocalAssistantTurnCompleted(
+                  current,
+                  sessionId,
+                  tempAssistant.id,
+                  new Date().toISOString(),
+                ),
+              );
             });
           },
           onMessages: (nextMessages, finalSnapshotEvent) => {
@@ -818,11 +976,10 @@ export function useCardbushChat(
       if (isSessionSending(conversationId)) {
         return;
       }
-      const turnId = message.turnId?.trim() ?? '';
       const conversation =
         conversations.find((item) => item.id === conversationId) ?? activeConversation;
-      if (!conversation || !conversationId || !turnId) {
-        setError('这条回复缺少 BushServer turn_id，无法重新生成');
+      if (!conversation || !conversationId) {
+        setError('这条回复缺少会话信息，无法重新生成');
         return;
       }
       if (!selectedModel.trim()) {
@@ -834,6 +991,47 @@ export function useCardbushChat(
       if (index < 0) {
         return;
       }
+      let sourceUserMessage = findUserMessageForAssistantRegenerate(message, messages);
+      let messageId = persistedChatMessageId(sourceUserMessage);
+      let refreshFailed = false;
+      if (!messageId) {
+        const loadedMessages = await fetchMessages(conversationId).catch((caught) => {
+          refreshFailed = true;
+          setError(`刷新会话消息失败: ${errorMessage(caught)}`);
+          return [] as ChatMessage[];
+        });
+        if (loadedMessages.length > 0) {
+          setMessagesByConversation((current) => ({
+            ...current,
+            [conversationId]: mergeLoadedMessagesPreservingLocalState(
+              current[conversationId] ?? [],
+              loadedMessages,
+            ),
+          }));
+          sourceUserMessage = findUserMessageForAssistantRegenerate(
+            message,
+            loadedMessages,
+          );
+          messageId = persistedChatMessageId(sourceUserMessage);
+        }
+      }
+      if (refreshFailed && !messageId) {
+        return;
+      }
+      if (!sourceUserMessage || !messageId) {
+        setError('未定位到可编辑的用户消息，无法重新生成。请编辑上一条用户消息重跑。');
+        return;
+      }
+      const userIndex = messages.findIndex((item) =>
+        messageIdentityMatches(item, sourceUserMessage),
+      );
+      const keptMessages = userIndex >= 0 ? messages.slice(0, userIndex) : messages.slice(0, index);
+      const createdAt = new Date().toISOString();
+      const replayedUser: ChatMessage = {
+        ...sourceUserMessage,
+        conversationId,
+        createdAt,
+      };
       const tempAssistant: ChatMessage = {
         ...message,
         id: `assistant-regenerate-${crypto.randomUUID()}`,
@@ -842,10 +1040,9 @@ export function useCardbushChat(
         toolExecutions: [],
         loopHistory: [],
         conversationId,
-        createdAt: new Date().toISOString(),
+        createdAt,
       };
-      const initialMessages = [...messages];
-      initialMessages[index] = tempAssistant;
+      const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
       const projectUserPrompt = projectDir
         ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
@@ -856,10 +1053,17 @@ export function useCardbushChat(
         initialMessages,
         rollbackMessages: messages,
         tempAssistant,
+        startedMessageIds: [replayedUser.id, tempAssistant.id],
+        temporaryMessageIds: uniqueMessageIds([
+          message.id,
+          replayedUser.id,
+          tempAssistant.id,
+        ]),
         stream: (controller, handlers) =>
-          regenerateTurn({
+          editMessage({
             sessionId: conversationId,
-            turnId,
+            messageId,
+            content: sourceUserMessage.content,
             model: selectedModel,
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
@@ -869,6 +1073,9 @@ export function useCardbushChat(
               .map((skill) => skill.name)
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
+            permissionMode,
+            standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+            disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
             signal: controller.signal,
             ...handlers,
           }),
@@ -883,8 +1090,11 @@ export function useCardbushChat(
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,
+      requestContext.disabledToolNames,
       requestContext.projectContexts,
+      requestContext.standardImageInputEnabled,
       referencePlanMode,
+      permissionMode,
       runControlAssistantStream,
       sendMessage,
       selectedModel,
@@ -897,6 +1107,10 @@ export function useCardbushChat(
     async (message: ChatMessage, nextContent: string) => {
       const content = nextContent.trim();
       const outbound = splitStreamAttachmentMentions(content);
+      const attachments = streamAttachmentsForVision(
+        outbound,
+        requestContext.standardImageInputEnabled === true,
+      );
       const conversationId = message.conversationId?.trim() || activeConversationId;
       if (isSessionSending(conversationId)) {
         return;
@@ -997,8 +1211,11 @@ export function useCardbushChat(
               .map((skill) => skill.name)
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
-            images: outbound.images,
-            files: outbound.files,
+            permissionMode,
+            standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+            disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
+            images: attachments.images,
+            files: attachments.files,
             signal: controller.signal,
             ...handlers,
           }),
@@ -1013,8 +1230,11 @@ export function useCardbushChat(
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,
+      requestContext.disabledToolNames,
       requestContext.projectContexts,
+      requestContext.standardImageInputEnabled,
       referencePlanMode,
+      permissionMode,
       runControlAssistantStream,
       selectedModel,
       selectedRuntimeProfile,
@@ -1188,6 +1408,8 @@ export function useCardbushChat(
     setSelectedRuntimeProfile,
     referencePlanMode,
     setReferencePlanMode,
+    permissionMode,
+    setPermissionMode,
     openConversation,
     startConversation,
     deleteConversation,
@@ -1270,13 +1492,38 @@ function readInitialReferencePlanMode(): ReferencePlanMode {
   );
 }
 
+function readInitialPermissionMode(): PermissionMode {
+  return normalizePermissionMode(
+    window.localStorage.getItem('cardbush.permission_mode') ?? 'task_free',
+  );
+}
+
 function normalizeReferencePlanMode(value: string): ReferencePlanMode {
   return value.trim() === 'auto' ? 'auto' : 'off';
+}
+
+function normalizePermissionMode(value: string): PermissionMode {
+  const normalized = value.trim();
+  if (normalized === 'user_free' || normalized === 'all_free') {
+    return normalized;
+  }
+  return 'task_free';
 }
 
 function normalizeRuntimeProfileId(value: string) {
   const normalized = value.trim();
   return normalized || 'general';
+}
+
+function normalizeDisabledToolNames(values?: Set<string>) {
+  if (!values || values.size === 0) {
+    return undefined;
+  }
+  const normalized = [...values]
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .filter((item, index, all) => all.indexOf(item) === index);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function mergeRuntimeProfiles(profiles: RuntimeProfileSummary[]) {
@@ -1352,6 +1599,21 @@ function finalAssistantContentForStream(messages: ChatMessage[], turnId?: string
   return [...assistants].reverse().find(isAssistantFinalTranscript)?.content ??
     assistants.at(-1)?.content ??
     '';
+}
+
+function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) {
+  const normalizedTurnId = turnId?.trim() ?? '';
+  if (!normalizedTurnId) {
+    return false;
+  }
+  return messages.some(
+    (message) =>
+      message.role === 'assistant' &&
+      message.content.trim() &&
+      chatMessageTurnId(message) === normalizedTurnId &&
+      isAssistantFinalTranscript(message) &&
+      !isSupersededLoopAssistant(message),
+  );
 }
 
 const streamSentenceFlushThreshold = 50;
@@ -1851,13 +2113,59 @@ function assignTurnToLocalMessages(
   messageIds: string[],
 ) {
   const ids = new Set(messageIds);
+  const startedAt = new Date().toISOString();
   return {
     ...current,
     [sessionId]: (current[sessionId] ?? []).map((message) =>
       ids.has(message.id)
-        ? { ...message, turnId, conversationId: sessionId }
+        ? markLocalMessageTurnStarted(
+            { ...message, turnId, conversationId: sessionId },
+            startedAt,
+          )
         : message,
     ),
+  };
+}
+
+function markLocalMessageTurnStarted(message: ChatMessage, startedAt: string) {
+  if (message.role !== 'assistant') {
+    return message;
+  }
+  return {
+    ...message,
+    metadata: {
+      ...(message.metadata ?? {}),
+      cardbush_turn_started_at:
+        message.metadata?.cardbush_turn_started_at ??
+        message.createdAt ??
+        startedAt,
+    },
+  };
+}
+
+function markLocalAssistantTurnCompleted(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  assistantId: string,
+  completedAt: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).map((message) => {
+      if (message.id !== assistantId || message.role !== 'assistant') {
+        return message;
+      }
+      return {
+        ...message,
+        metadata: {
+          ...(message.metadata ?? {}),
+          cardbush_turn_started_at:
+            message.metadata?.cardbush_turn_started_at ?? message.createdAt,
+          cardbush_turn_completed_at:
+            message.metadata?.cardbush_turn_completed_at ?? completedAt,
+        },
+      };
+    }),
   };
 }
 
@@ -2072,18 +2380,48 @@ function mergeFinalStreamMessages(
     }
   }
 
+  const normalizedIncoming = collapseLoopTranscriptMessages(mergedIncoming);
   const shouldReplace = (message: ChatMessage) => {
+    const messageTurnId = message.turnId?.trim() ?? '';
+    if (message.role === 'user') {
+      const matchingIncomingUser = normalizedIncoming.find((candidate) => {
+        if (candidate.role !== 'user') {
+          return false;
+        }
+        if (candidate.id === message.id) {
+          return true;
+        }
+        const candidateTurnId = candidate.turnId?.trim() ?? '';
+        if (messageTurnId && candidateTurnId === messageTurnId) {
+          return true;
+        }
+        return (
+          normalizeEditableUserContent(candidate.content) ===
+          normalizeEditableUserContent(message.content)
+        );
+      });
+      if (
+        incomingIds.has(message.id) ||
+        temporaryIds.has(message.id) ||
+        (targetTurnId && messageTurnId === targetTurnId) ||
+        Boolean(messageTurnId && incomingTurnIds.has(messageTurnId))
+      ) {
+        return Boolean(
+          matchingIncomingUser ??
+            findPersistedEditableUserMessage(message, normalizedIncoming),
+        );
+      }
+      return false;
+    }
     if (incomingIds.has(message.id) || temporaryIds.has(message.id)) {
       return true;
     }
-    const messageTurnId = message.turnId?.trim() ?? '';
     if (targetTurnId && messageTurnId === targetTurnId) {
       return true;
     }
     return Boolean(messageTurnId && incomingTurnIds.has(messageTurnId));
   };
 
-  const normalizedIncoming = collapseLoopTranscriptMessages(mergedIncoming);
   const replacedMessages = existing.filter(shouldReplace);
   const loopHistory = collectLoopHistoryFromReplaced(
     replacedMessages,
@@ -2215,6 +2553,7 @@ function mergeLoadedMessagesPreservingLocalState(
     }
     return {
       ...message,
+      metadata: preserveLocalAssistantTimingMetadata(message, source),
       toolExecutions:
         (message.toolExecutions?.length ?? 0) > 0
           ? message.toolExecutions
@@ -2227,8 +2566,28 @@ function mergeLoadedMessagesPreservingLocalState(
   }));
 }
 
+function preserveLocalAssistantTimingMetadata(
+  message: ChatMessage,
+  source: ChatMessage,
+) {
+  if (message.role !== 'assistant') {
+    return message.metadata;
+  }
+  return {
+    ...(message.metadata ?? {}),
+    cardbush_turn_started_at:
+      message.metadata?.cardbush_turn_started_at ??
+      source.metadata?.cardbush_turn_started_at ??
+      source.createdAt ??
+      message.createdAt,
+    cardbush_turn_completed_at:
+      message.metadata?.cardbush_turn_completed_at ??
+      source.metadata?.cardbush_turn_completed_at,
+  };
+}
+
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  return collapseLoopTranscriptMessages(messages);
+  return dedupeVisibleTranscriptMessages(collapseLoopTranscriptMessages(messages));
 }
 
 function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessage) {
@@ -2254,8 +2613,41 @@ function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessa
     if ((item.turnId?.trim() ?? '') !== turnId) {
       return false;
     }
-    return (item.loopHistory?.length ?? 0) > 0 || (item.toolExecutions?.length ?? 0) > 0;
+    return (
+      messagesShareTranscriptPosition(item, message) ||
+      (item.loopHistory?.length ?? 0) > 0 ||
+      (item.toolExecutions?.length ?? 0) > 0
+    );
   });
+}
+
+function messagesShareTranscriptPosition(
+  left: ChatMessage,
+  right: ChatMessage,
+) {
+  if (left.role !== right.role) {
+    return false;
+  }
+  const leftTurn = chatMessageTurnId(left);
+  const rightTurn = chatMessageTurnId(right);
+  if (!leftTurn || leftTurn !== rightTurn) {
+    return false;
+  }
+  const leftMessageIndex = numericOrderValue(left.messageIndex);
+  const rightMessageIndex = numericOrderValue(right.messageIndex);
+  if (leftMessageIndex != null && rightMessageIndex != null) {
+    return leftMessageIndex === rightMessageIndex;
+  }
+  const leftTurnSequence = numericOrderValue(left.turnSequence);
+  const rightTurnSequence = numericOrderValue(right.turnSequence);
+  if (
+    leftTurnSequence != null &&
+    rightTurnSequence != null &&
+    leftTurnSequence !== rightTurnSequence
+  ) {
+    return false;
+  }
+  return normalizeLoopContent(left.content) === normalizeLoopContent(right.content);
 }
 
 function collectLoopHistoryFromReplaced(
@@ -2363,7 +2755,129 @@ function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
       loopHistory: mergeLoopHistoryMessages(target.loopHistory ?? [], loopHistory),
     };
   }
-  return sortMessagesByTranscriptOrder(visible);
+  return sortMessagesByTranscriptOrder(dedupeVisibleTranscriptMessages(visible));
+}
+
+function dedupeVisibleTranscriptMessages(messages: ChatMessage[]) {
+  const deduped: ChatMessage[] = [];
+  for (const message of messages) {
+    const existingIndex = deduped.findIndex((candidate) =>
+      shouldCollapseDuplicateTranscriptMessage(candidate, message),
+    );
+    if (existingIndex < 0) {
+      deduped.push(message);
+      continue;
+    }
+    deduped[existingIndex] = mergeDuplicateTranscriptMessage(
+      deduped[existingIndex],
+      message,
+    );
+  }
+  return deduped;
+}
+
+function shouldCollapseDuplicateTranscriptMessage(
+  left: ChatMessage,
+  right: ChatMessage,
+) {
+  if (left.id === right.id) {
+    return true;
+  }
+  const leftPersistedId = persistedChatMessageId(left);
+  const rightPersistedId = persistedChatMessageId(right);
+  if (leftPersistedId && rightPersistedId && leftPersistedId === rightPersistedId) {
+    return true;
+  }
+  if (left.role !== right.role) {
+    return false;
+  }
+  const leftTurn = chatMessageTurnId(left);
+  const rightTurn = chatMessageTurnId(right);
+  if (!leftTurn || leftTurn !== rightTurn) {
+    return false;
+  }
+  if (!transcriptOrderCompatible(left, right)) {
+    return false;
+  }
+  const leftContent = normalizeLoopContent(left.content);
+  const rightContent = normalizeLoopContent(right.content);
+  return Boolean(leftContent && leftContent === rightContent);
+}
+
+function transcriptOrderCompatible(left: ChatMessage, right: ChatMessage) {
+  const leftTurnSequence = numericOrderValue(left.turnSequence);
+  const rightTurnSequence = numericOrderValue(right.turnSequence);
+  if (
+    leftTurnSequence != null &&
+    rightTurnSequence != null &&
+    leftTurnSequence !== rightTurnSequence
+  ) {
+    return false;
+  }
+  const leftMessageIndex = numericOrderValue(left.messageIndex);
+  const rightMessageIndex = numericOrderValue(right.messageIndex);
+  if (
+    leftMessageIndex != null &&
+    rightMessageIndex != null &&
+    leftMessageIndex !== rightMessageIndex
+  ) {
+    return false;
+  }
+  const leftLoopIndex = numericOrderValue(left.loopIndex);
+  const rightLoopIndex = numericOrderValue(right.loopIndex);
+  if (
+    leftLoopIndex != null &&
+    rightLoopIndex != null &&
+    leftLoopIndex !== rightLoopIndex
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function mergeDuplicateTranscriptMessage(left: ChatMessage, right: ChatMessage) {
+  const primary = transcriptMessagePriority(right) >= transcriptMessagePriority(left)
+    ? right
+    : left;
+  const fallback = primary === right ? left : right;
+  const toolExecutions = mergeToolExecutionLists(
+    primary.toolExecutions ?? [],
+    fallback.toolExecutions ?? [],
+  );
+  const loopHistory = mergeLoopHistoryMessages(
+    primary.loopHistory ?? [],
+    fallback.loopHistory ?? [],
+  );
+  return {
+    ...fallback,
+    ...primary,
+    messageId: primary.messageId ?? fallback.messageId,
+    assistantMessageId: primary.assistantMessageId ?? fallback.assistantMessageId,
+    createdAt: primary.createdAt ?? fallback.createdAt,
+    metadata: {
+      ...(fallback.metadata ?? {}),
+      ...(primary.metadata ?? {}),
+    },
+    toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined,
+    loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
+  };
+}
+
+function transcriptMessagePriority(message: ChatMessage) {
+  let score = 0;
+  if (persistedChatMessageId(message)) {
+    score += 8;
+  }
+  if (message.messageId?.trim()) {
+    score += 4;
+  }
+  if (message.role === 'assistant' && isAssistantFinalTranscript(message)) {
+    score += 2;
+  }
+  if (message.createdAt?.trim()) {
+    score += 1;
+  }
+  return score;
 }
 
 function sortMessagesByTranscriptOrder(messages: ChatMessage[]) {
@@ -2432,6 +2946,10 @@ function persistedChatMessageId(message: ChatMessage | undefined) {
   if (!message) {
     return '';
   }
+  const explicitId = message.messageId?.trim() ?? '';
+  if (isPersistedChatMessageId(explicitId)) {
+    return explicitId;
+  }
   const ownId = message.id.trim();
   if (isPersistedChatMessageId(ownId)) {
     return ownId;
@@ -2453,7 +2971,12 @@ function persistedChatMessageId(message: ChatMessage | undefined) {
 
 function isPersistedChatMessageId(value: string) {
   const normalized = value.trim();
-  return /^msg_\d+$/.test(normalized) || /^\d+$/.test(normalized);
+  return (
+    /^msg:\S+$/.test(normalized) ||
+    /^msg-[\w-]+$/.test(normalized) ||
+    /^msg_[\w-]+$/.test(normalized) ||
+    /^\d+$/.test(normalized)
+  );
 }
 
 function findPersistedEditableUserMessage(
@@ -2499,6 +3022,55 @@ function findPersistedEditableUserMessage(
     (candidate) => normalizeEditableUserContent(candidate.content) === sourceContent,
   );
   return contentMatches.length === 1 ? contentMatches[0] : undefined;
+}
+
+function findUserMessageForAssistantRegenerate(
+  source: ChatMessage,
+  candidates: ChatMessage[],
+) {
+  const persistedCandidates = candidates.filter(
+    (candidate) => candidate.role === 'user' && persistedChatMessageId(candidate),
+  );
+  const sourceTurnId = chatMessageTurnId(source);
+  if (sourceTurnId) {
+    const turnMatch = [...persistedCandidates]
+      .reverse()
+      .find((candidate) => chatMessageTurnId(candidate) === sourceTurnId);
+    if (turnMatch) {
+      return turnMatch;
+    }
+  }
+  const sourceIndex = candidates.findIndex((candidate) =>
+    messageIdentityMatches(candidate, source),
+  );
+  const previousMessages =
+    sourceIndex >= 0 ? candidates.slice(0, sourceIndex) : candidates;
+  return [...previousMessages]
+    .reverse()
+    .find((candidate) => candidate.role === 'user' && persistedChatMessageId(candidate));
+}
+
+function messageIdentityMatches(left: ChatMessage, right: ChatMessage) {
+  if (left.id === right.id) {
+    return true;
+  }
+  const leftId = persistedChatMessageId(left);
+  const rightId = persistedChatMessageId(right);
+  if (leftId && rightId && leftId === rightId) {
+    return true;
+  }
+  const leftTurn = chatMessageTurnId(left);
+  const rightTurn = chatMessageTurnId(right);
+  if (!leftTurn || leftTurn !== rightTurn) {
+    return false;
+  }
+  const leftMessageIndex = numericOrderValue(left.messageIndex);
+  const rightMessageIndex = numericOrderValue(right.messageIndex);
+  return (
+    leftMessageIndex != null &&
+    rightMessageIndex != null &&
+    leftMessageIndex === rightMessageIndex
+  );
 }
 
 function chatMessageTurnId(message: ChatMessage) {
@@ -2592,6 +3164,7 @@ function mergeLoopHistoryMessages(
 function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
   return {
     id: message.id,
+    messageId: message.messageId,
     role: message.role,
     content: message.content,
     conversationId: message.conversationId,
@@ -2713,9 +3286,17 @@ function upsertConversationPreview(
   current: ConversationSummary[],
   conversation: ConversationSummary,
   preview: string,
+  titleSource = preview,
 ) {
+  const existing = current.find((item) => item.id === conversation.id);
+  const currentTitle = existing?.title ?? conversation.title;
+  const nextTitle = shouldAutoTitleConversation(currentTitle, conversation.id)
+    ? conversationTitleFromUserText(titleSource) || currentTitle || '新会话'
+    : currentTitle;
   const updated = {
     ...conversation,
+    ...existing,
+    title: nextTitle,
     preview,
     updatedAt: new Date().toISOString(),
   };
@@ -2723,9 +3304,79 @@ function upsertConversationPreview(
   return [updated, ...without];
 }
 
+function mergeLoadedConversationsPreservingLocalTitles(
+  current: ConversationSummary[],
+  loaded: ConversationSummary[],
+) {
+  const localById = new Map(current.map((item) => [item.id, item]));
+  return loaded.map((conversation) => {
+    const local = localById.get(conversation.id);
+    if (
+      local &&
+      !shouldAutoTitleConversation(local.title, local.id) &&
+      shouldAutoTitleConversation(conversation.title, conversation.id)
+    ) {
+      return { ...conversation, title: local.title };
+    }
+    return conversation;
+  });
+}
+
 function conversationPreviewFromMessages(messages: ChatMessage[]) {
   const lastUser = [...messages].reverse().find((item) => item.role === 'user');
   return lastUser?.content.trim() || messages.at(-1)?.content.trim() || '';
+}
+
+function shouldAutoTitleConversation(title: string | undefined, sessionId?: string) {
+  const normalized = String(title ?? '').trim();
+  if (!normalized || normalized === '新会话' || normalized === 'New chat') {
+    return true;
+  }
+  const normalizedId = String(sessionId ?? '').trim();
+  if (normalizedId && normalized === normalizedId) {
+    return true;
+  }
+  const lower = normalized.toLowerCase();
+  return (
+    lower.startsWith('local-') ||
+    lower.startsWith('weixin:') ||
+    lower.startsWith('feishu:') ||
+    lower.startsWith('telegram:') ||
+    lower.startsWith('discord:') ||
+    lower.includes('@im.bot') ||
+    lower.includes('@im.wechat') ||
+    /^cardbush-\d/.test(lower)
+  );
+}
+
+function mergeSyncedConversationTitle(
+  localTitle: string,
+  syncedTitle: string,
+  sessionId?: string,
+) {
+  if (!shouldAutoTitleConversation(localTitle, sessionId)) {
+    return localTitle;
+  }
+  return syncedTitle;
+}
+
+function firstUserTitleSource(messages: ChatMessage[], fallback: string) {
+  return (
+    messages.find((message) => message.role === 'user')?.content.trim() ||
+    fallback.trim()
+  );
+}
+
+function conversationTitleFromUserText(value: string) {
+  const readable = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !attachmentPathFromLine(line))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const fallback = value.replace(/\s+/g, ' ').trim();
+  return truncateText(readable || fallback, 28);
 }
 
 function splitStreamAttachmentMentions(content: string) {
@@ -2756,43 +3407,39 @@ function splitStreamAttachmentMentions(content: string) {
   };
 }
 
+function streamAttachmentsForVision(
+  attachments: ReturnType<typeof splitStreamAttachmentMentions>,
+  standardImageInputEnabled: boolean,
+) {
+  if (standardImageInputEnabled) {
+    return attachments;
+  }
+  return {
+    ...attachments,
+    images: [],
+    files: [
+      ...attachments.files,
+      ...attachments.images.map((image) => image.path).filter(Boolean),
+    ],
+  };
+}
+
 function attachmentPathFromLine(value: string) {
   const trimmed = value.trim();
   const pathValue = stripWrappingQuotes(
     trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed,
   );
-  if (/^[a-zA-Z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\') || pathValue.startsWith('/')) {
+  if (isAbsoluteLocalPath(pathValue)) {
     return pathValue;
   }
   return '';
 }
 
-function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(stripWrappingQuotes(value.trim()));
-}
-
-function stripWrappingQuotes(value: string) {
-  const trimmed = value.trim();
-  if (trimmed.length < 2) {
-    return trimmed;
-  }
-  const first = trimmed[0];
-  const last = trimmed[trimmed.length - 1];
-  if (
-    (first === '"' && last === '"') ||
-    (first === "'" && last === "'") ||
-    (first === '`' && last === '`')
-  ) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-function localConversation(projectDir?: string): ConversationSummary {
+function localConversation(projectDir?: string, initialTitle?: string): ConversationSummary {
   const id = `local-${crypto.randomUUID()}`;
   return {
     id,
-    title: '新会话',
+    title: initialTitle?.trim() || '新会话',
     preview: '',
     updatedAt: new Date().toISOString(),
     projectDir,
