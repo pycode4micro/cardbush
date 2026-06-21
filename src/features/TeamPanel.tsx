@@ -606,12 +606,12 @@ function PlanModule({
   onSelectNode: (nodeId: string) => void;
 }) {
   return (
-    <div className="team-panel-split plan">
-      <section className="team-graph-surface compact">
+    <div className="team-flow-layout">
+      <section className="team-flow-surface">
         <header className="team-section-header">
           <span>
             <Route size={16} />
-            {language === 'zh' ? 'Mission DAG' : 'Mission DAG'}
+            {language === 'zh' ? '渐进任务流' : 'Progressive flow'}
           </span>
           <em>
             {planReady
@@ -623,16 +623,17 @@ function PlanModule({
                 : 'Draft'}
           </em>
         </header>
-        <div className="team-node-board compact">
-          {visibleNodes.map((node) => {
+        <div className="team-flow-track">
+          {visibleNodes.map((node, index) => {
             const owner = teamMembers.find((member) => member.id === node.ownerId);
             return (
-              <TeamNodeCard
+              <TeamFlowNode
                 activeMember={activeMember}
                 isActive={node.id === selectedNode?.id}
                 key={node.id}
                 language={language}
                 node={node}
+                nodeIndex={index + 1}
                 owner={owner}
                 visibleNodeIds={visibleNodeIds}
                 onClick={() => onSelectNode(node.id)}
@@ -933,11 +934,12 @@ function EventsModule({
   );
 }
 
-function TeamNodeCard({
+function TeamFlowNode({
   activeMember,
   isActive,
   language,
   node,
+  nodeIndex,
   owner,
   visibleNodeIds,
   onClick,
@@ -946,32 +948,38 @@ function TeamNodeCard({
   isActive: boolean;
   language: AppLanguage;
   node: TeamNode;
+  nodeIndex: number;
   owner?: TeamMember;
   visibleNodeIds: Set<string>;
   onClick: () => void;
 }) {
+  const visibleDependencies = node.dependsOn.filter(
+    (id) => visibleNodeIds.has(id) || activeMember.role === 'boss',
+  );
   return (
     <button
-      className={`team-node-card ${node.status} ${isActive ? 'active' : ''}`}
+      aria-current={isActive ? 'step' : undefined}
+      className={`team-flow-node ${node.status} ${isActive ? 'active' : ''}`}
       type="button"
       onClick={onClick}
     >
-      <header>
-        <span>{node.id.toUpperCase()}</span>
-        <TeamStatus status={node.status} language={language} />
-      </header>
-      <strong>{node.title}</strong>
-      <p>{node.summary}</p>
-      <footer>
-        <small>{owner?.name ?? 'AI'}</small>
-        {node.dependsOn.length > 0 && (
-          <span>
-            {node.dependsOn
-              .filter((id) => visibleNodeIds.has(id) || activeMember.role === 'boss')
-              .join(' -> ')}
-          </span>
-        )}
-      </footer>
+      <span className="team-flow-node-index">{String(nodeIndex).padStart(2, '0')}</span>
+      <span className="team-flow-node-body">
+        <span className="team-flow-node-kicker">
+          <TeamStatus status={node.status} language={language} />
+          <small>{owner?.name ?? 'AI'}</small>
+        </span>
+        <strong>{node.title}</strong>
+        <span className="team-flow-node-summary">{node.summary}</span>
+        <span className="team-flow-node-meta">
+          {visibleDependencies.length > 0
+            ? `${language === 'zh' ? '依赖' : 'Depends'} ${visibleDependencies.join(' -> ')}`
+            : language === 'zh'
+              ? '入口节点'
+              : 'Entry node'}
+        </span>
+      </span>
+      <ArrowRight size={16} />
     </button>
   );
 }

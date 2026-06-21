@@ -6,6 +6,7 @@ export type SettingsSection =
   | 'companion'
   | 'proxy'
   | 'bots'
+  | 'agents'
   | 'cache'
   | 'models'
   | 'diagnostics'
@@ -77,6 +78,7 @@ export interface BackendCapabilities {
   resources: boolean;
   settingsSync: boolean;
   localMusicLibrary: boolean;
+  agentConfigPackages: boolean;
 }
 
 export interface ManagedModelConfig {
@@ -99,6 +101,43 @@ export interface RuntimeProfileSummary {
   toolPolicy?: Record<string, unknown>;
   verificationPolicy?: Record<string, unknown>;
   finalResponseContract?: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+export interface AgentConfigPackageItem {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+  sourcePath?: string;
+  profileIds: string[];
+  frontendMetadata?: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+export interface AgentConfigPackageSchema {
+  configNames: string[];
+  profilePolicySections: string[];
+  raw: Record<string, unknown>;
+}
+
+export interface AgentConfigPackagesResult {
+  packageSchemaVersion: string;
+  schema: AgentConfigPackageSchema;
+  packages: AgentConfigPackageItem[];
+  raw: Record<string, unknown>;
+}
+
+export interface AgentConfigPackageValidationMessage {
+  path: string;
+  message: string;
+  severity: 'error' | 'warning' | 'info';
+}
+
+export interface AgentConfigPackageValidationResult {
+  ok: boolean;
+  packageId?: string;
+  messages: AgentConfigPackageValidationMessage[];
   raw: Record<string, unknown>;
 }
 

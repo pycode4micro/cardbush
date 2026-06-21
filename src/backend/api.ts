@@ -1,5 +1,9 @@
 import type {
   AssistantRevision,
+  AgentConfigPackageItem,
+  AgentConfigPackagesResult,
+  AgentConfigPackageValidationMessage,
+  AgentConfigPackageValidationResult,
   BackendCapabilities,
   ChatMessage,
   ChatToolExecution,
@@ -163,7 +167,13 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   resources: false,
   settingsSync: false,
   localMusicLibrary: false,
+  agentConfigPackages: false,
 };
+
+export type AgentConfigPackageInput =
+  | { yaml: string; rawConfig?: never; sourcePath?: never; replace?: boolean }
+  | { yaml?: never; rawConfig: Record<string, unknown>; sourcePath?: never; replace?: boolean }
+  | { yaml?: never; rawConfig?: never; sourcePath: string; replace?: boolean };
 
 export interface SubagentDispatchRequest {
   sessionId: string;
@@ -396,6 +406,61 @@ export async function saveModelConfigs(request: {
   return modelConfigsFromPayload(payload);
 }
 
+export async function fetchAgentConfigPackages(): Promise<AgentConfigPackagesResult> {
+  const payload = await readJson<unknown>(url('/v1/agent-config-packages'));
+  return agentConfigPackagesFromPayload(payload);
+}
+
+export async function validateAgentConfigPackage(
+  input: AgentConfigPackageInput,
+): Promise<AgentConfigPackageValidationResult> {
+  const payload = await readJson<unknown>(url('/v1/agent-config-packages/validate'), {
+    method: 'POST',
+    body: JSON.stringify(agentConfigPackageRequestBody(input)),
+  });
+  return agentConfigPackageValidationFromPayload(payload);
+}
+
+export async function installAgentConfigPackage(
+  input: AgentConfigPackageInput,
+): Promise<AgentConfigPackageItem> {
+  const payload = await readJson<unknown>(url('/v1/agent-config-packages/install'), {
+    method: 'POST',
+    body: JSON.stringify(agentConfigPackageRequestBody(input)),
+  });
+  return agentConfigPackageFromPayload(payload, 0);
+}
+
+export async function setAgentConfigPackageEnabled(
+  packageId: string,
+  enabled: boolean,
+): Promise<AgentConfigPackageItem> {
+  const normalized = packageId.trim();
+  if (!normalized) {
+    throw new Error('Agent config package id 为空');
+  }
+  const payload = await readJson<unknown>(
+    url(
+      `/v1/agent-config-packages/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`,
+    ),
+    { method: 'POST' },
+  );
+  return agentConfigPackageFromPayload(payload, 0);
+}
+
+export async function deleteAgentConfigPackage(
+  packageId: string,
+): Promise<Record<string, unknown>> {
+  const normalized = packageId.trim();
+  if (!normalized) {
+    throw new Error('Agent config package id 为空');
+  }
+  return readJson<Record<string, unknown>>(
+    url(`/v1/agent-config-packages/${encodeURIComponent(normalized)}`),
+    { method: 'DELETE' },
+  );
+}
+
 function modelConfigsFromPayload(payload: unknown): BackendModelConfigsResult {
   const root = recordFromUnknown(payload);
   const rawItems = Array.isArray(root.models)
@@ -438,6 +503,155 @@ function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | n
     baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
     ...(maxContextTokens ? { maxContextTokens } : {}),
   };
+}
+
+function agentConfigPackageRequestBody(input: AgentConfigPackageInput) {
+  const body: Record<string, unknown> = {};
+  if ('yaml' in input && input.yaml != null) {
+    body.yaml = input.yaml;
+  }
+  if ('rawConfig' in input && input.rawConfig != null) {
+    body.raw_config = input.rawConfig;
+  }
+  if ('sourcePath' in input && input.sourcePath != null) {
+    body.source_path = input.sourcePath;
+  }
+  if (input.replace != null) {
+    body.replace = input.replace;
+  }
+  return body;
+}
+
+function agentConfigPackagesFromPayload(payload: unknown): AgentConfigPackagesResult {
+  const root = asRecord(payload);
+  const rawSchema = asRecord(root.schema);
+  const packages = Array.isArray(root.packages)
+    ? root.packages
+    : Array.isArray(root.items)
+      ? root.items
+      : [];
+  return {
+    packageSchemaVersion: String(
+      root.package_schema_version ?? root.packageSchemaVersion ?? '',
+    ),
+    schema: {
+      configNames: stringList(rawSchema.config_names ?? rawSchema.configNames),
+      profilePolicySections: stringList(
+        rawSchema.profile_policy_sections ?? rawSchema.profilePolicySections,
+      ),
+      raw: rawSchema,
+    },
+    packages: packages.map(agentConfigPackageFromPayload),
+    raw: root,
+  };
+}
+
+function agentConfigPackageFromPayload(
+  payload: unknown,
+  index = 0,
+): AgentConfigPackageItem {
+  const root = asRecord(payload);
+  const item = asRecord(
+    root.package ??
+      root.item ??
+      root.agent_config_package ??
+      root.agentConfigPackage ??
+      payload,
+  );
+  const frontendMetadata = asOptionalRecord(
+    item.frontend_metadata ?? item.frontendMetadata,
+  );
+  const id = String(item.id ?? item.package_id ?? item.packageId ?? `package-${index}`).trim();
+  const rawProfiles = Array.isArray(item.profiles)
+    ? item.profiles
+    : Array.isArray(item.runtime_profiles)
+      ? item.runtime_profiles
+      : Array.isArray(item.runtimeProfiles)
+        ? item.runtimeProfiles
+        : [];
+  const profileIds = rawProfiles
+    .map((profile) =>
+      typeof profile === 'string'
+        ? profile
+        : String(
+            asRecord(profile).id ??
+              asRecord(profile).name ??
+              asRecord(profile).profile ??
+              '',
+          ),
+    )
+    .map((profileId) => profileId.trim())
+    .filter(Boolean);
+  return {
+    id,
+    label: String(
+      item.label ??
+        item.display_name ??
+        item.displayName ??
+        frontendMetadata?.label ??
+        frontendMetadata?.display_name ??
+        frontendMetadata?.displayName ??
+        id,
+    ),
+    description: String(
+      item.description ??
+        item.summary ??
+        frontendMetadata?.description ??
+        frontendMetadata?.summary ??
+        '',
+    ),
+    enabled: Boolean(item.enabled ?? true),
+    sourcePath: optionalString(item.source_path ?? item.sourcePath),
+    profileIds,
+    frontendMetadata,
+    raw: item,
+  };
+}
+
+function agentConfigPackageValidationFromPayload(
+  payload: unknown,
+): AgentConfigPackageValidationResult {
+  const root = asRecord(payload);
+  const messages = [
+    ...validationMessagesFromPayload(root.errors, 'error'),
+    ...validationMessagesFromPayload(root.warnings, 'warning'),
+    ...validationMessagesFromPayload(root.messages, 'info'),
+  ];
+  const ok = typeof root.ok === 'boolean'
+    ? root.ok
+    : typeof root.valid === 'boolean'
+      ? root.valid
+      : !messages.some((item) => item.severity === 'error');
+  return {
+    ok,
+    packageId: optionalString(root.package_id ?? root.packageId ?? root.id),
+    messages,
+    raw: root,
+  };
+}
+
+function validationMessagesFromPayload(
+  payload: unknown,
+  fallbackSeverity: AgentConfigPackageValidationMessage['severity'],
+): AgentConfigPackageValidationMessage[] {
+  if (!Array.isArray(payload)) {
+    return [];
+  }
+  return payload.map((item) => {
+    if (typeof item === 'string') {
+      return { path: '', message: item, severity: fallbackSeverity };
+    }
+    const value = asRecord(item);
+    const severity = String(value.severity ?? fallbackSeverity).toLowerCase();
+    return {
+      path: String(value.path ?? value.field ?? ''),
+      message: String(value.message ?? value.detail ?? value.error ?? item),
+      severity:
+        severity === 'error' || severity === 'warning' || severity === 'info'
+          ? severity
+          : fallbackSeverity,
+    };
+  });
 }
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
@@ -1696,7 +1910,7 @@ function conversationFromPayload(item: unknown, index = 0): ConversationSummary 
 
 function runtimeProfilesFromPayload(payload: unknown): RuntimeProfileSummary[] {
   const value = asRecord(payload);
-  const candidates = Array.isArray(payload)
+  const primary = Array.isArray(payload)
     ? payload
     : Array.isArray(value.profiles)
       ? value.profiles
@@ -1705,7 +1919,12 @@ function runtimeProfilesFromPayload(payload: unknown): RuntimeProfileSummary[] {
         : Array.isArray(value.data)
           ? value.data
           : [];
-  return candidates
+  const custom = Array.isArray(value.custom_profiles)
+    ? value.custom_profiles
+    : Array.isArray(value.customProfiles)
+      ? value.customProfiles
+      : [];
+  return [...primary, ...custom]
     .map(runtimeProfileFromPayload)
     .filter((item): item is RuntimeProfileSummary => item != null);
 }
@@ -1807,6 +2026,9 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     ]),
     localMusicLibrary: capabilityBoolean(features, endpoints, 'localMusicLibrary', [
       'local_music_library',
+    ]),
+    agentConfigPackages: capabilityBoolean(features, endpoints, 'agentConfigPackages', [
+      'agent_config_packages',
     ]),
   };
 }

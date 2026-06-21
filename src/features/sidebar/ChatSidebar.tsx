@@ -988,7 +988,12 @@ function ConversationRow({
           role="status"
           aria-label={language === 'zh' ? '会话运行中' : 'Session running'}
           title={language === 'zh' ? '会话运行中' : 'Session running'}
-        />
+        >
+          <span />
+          <span />
+          <span />
+          <span />
+        </span>
       )}
       {changeCount > 0 && (
         <button

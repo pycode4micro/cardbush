@@ -415,6 +415,13 @@ export function useCardbushChat(
     return loadedSkills;
   }, []);
 
+  const reloadRuntimeProfiles = useCallback(async () => {
+    const loadedRuntimeProfiles = await fetchRuntimeProfiles();
+    const mergedProfiles = mergeRuntimeProfiles(loadedRuntimeProfiles);
+    setRuntimeProfiles(mergedProfiles);
+    return mergedProfiles;
+  }, []);
+
   const loadSkillDetail = useCallback(
     (skillName: string): Promise<SkillDetail> => fetchSkillDetail(skillName),
     [],
@@ -423,7 +430,7 @@ export function useCardbushChat(
   const refreshActiveSession = useCallback(async (options?: { silent?: boolean }) => {
     const sessionId = activeConversationId.trim();
     if (!sessionId) {
-      await reloadConversations().catch(() => undefined);
+      await reloadConversations();
       return;
     }
     if (!options?.silent) {
@@ -1416,6 +1423,7 @@ export function useCardbushChat(
     renameConversation,
     reloadConversations,
     reloadSkills,
+    reloadRuntimeProfiles,
     loadSkillDetail,
     createSessionShareLink,
     refreshActiveSession,

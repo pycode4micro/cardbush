@@ -3,6 +3,7 @@ import {
   Archive,
   ArrowLeft,
   Bot,
+  Boxes,
   Check,
   CheckCircle2,
   Circle,
@@ -39,15 +40,20 @@ import {
   clearConversationHistory,
   clearLogsCache,
   controlBotService,
+  deleteAgentConfigPackage,
   deleteWeixinAccount,
+  fetchAgentConfigPackages,
   fetchBotConfig,
   fetchBots,
   fetchBotServiceLogs,
   fetchBotStatus,
   fetchWeixinLoginStatus,
+  installAgentConfigPackage,
   llmEndpoint,
   saveBotConfig,
+  setAgentConfigPackageEnabled,
   startWeixinLogin,
+  validateAgentConfigPackage,
   type MaintenanceClearResult,
 } from '../backend/api';
 import { BotPlatformIcon } from '../components/BotPlatformIcon';
@@ -57,6 +63,9 @@ import type {
   AppLanguage,
   AppLanguageMode,
   AppSettingsState,
+  AgentConfigPackageItem,
+  AgentConfigPackagesResult,
+  AgentConfigPackageValidationResult,
   BackendCapabilities,
   BotConfigResult,
   BotPlatform,
@@ -105,6 +114,7 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
   'profile',
   'proxy',
   'bots',
+  'agents',
   'cache',
   'models',
   'diagnostics',
@@ -116,6 +126,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   profile: { zh: '外观', en: 'Appearance' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot links' },
+  agents: { zh: 'Agent 配置包', en: 'Agent packages' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
   diagnostics: { zh: '连接诊断', en: 'Diagnostics' },
@@ -127,6 +138,7 @@ const settingsIcons: Record<VisibleSettingsSection, typeof Settings> = {
   profile: Settings,
   proxy: Monitor,
   bots: Network,
+  agents: Boxes,
   cache: Archive,
   models: Cpu,
   diagnostics: Clipboard,
@@ -167,6 +179,7 @@ export function SettingsView({
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
+  onAgentConfigPackagesChanged,
 }: {
   themePreference: ThemePreference;
   lightThemeStyle: LightThemeStyle;
@@ -187,6 +200,7 @@ export function SettingsView({
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
+  onAgentConfigPackagesChanged?: () => void | Promise<void>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -581,6 +595,16 @@ export function SettingsView({
           language={language}
           modelConfigs={settings.managedModelConfigs}
           selectedModel={selectedModel}
+        />
+      );
+    }
+    if (section === 'agents') {
+      return (
+        <AgentPackagesPanel
+          language={language}
+          capabilities={backendCapabilities}
+          onNotify={notify}
+          onPackagesChanged={onAgentConfigPackagesChanged}
         />
       );
     }
@@ -2385,6 +2409,376 @@ function BotSettingsPanel({
   );
 }
 
+function AgentPackagesPanel({
+  language,
+  capabilities,
+  onNotify,
+  onPackagesChanged,
+}: {
+  language: AppLanguage;
+  capabilities: BackendCapabilities;
+  onNotify: (message: string) => void;
+  onPackagesChanged?: () => void | Promise<void>;
+}) {
+  const [result, setResult] = useState<AgentConfigPackagesResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [busyKey, setBusyKey] = useState('');
+  const [error, setError] = useState('');
+  const [inputMode, setInputMode] = useState<'yaml' | 'raw' | 'path'>('yaml');
+  const [yamlText, setYamlText] = useState('');
+  const [rawConfigText, setRawConfigText] = useState('{\n  \"id\": \"my-agent-package\",\n  \"enabled\": true,\n  \"profiles\": []\n}');
+  const [sourcePath, setSourcePath] = useState('');
+  const [replace, setReplace] = useState(true);
+  const [validation, setValidation] =
+    useState<AgentConfigPackageValidationResult | null>(null);
+
+  const loadPackages = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setResult(await fetchAgentConfigPackages());
+    } catch (caught) {
+      setError(agentPackageErrorText(caught, language));
+    } finally {
+      setLoading(false);
+    }
+  }, [language]);
+
+  useEffect(() => {
+    void loadPackages();
+  }, [loadPackages]);
+
+  const makeInput = useCallback(() => {
+    if (inputMode === 'yaml') {
+      const yaml = yamlText.trim();
+      if (!yaml) {
+        throw new Error(language === 'zh' ? '请输入 YAML 内容' : 'Enter YAML content');
+      }
+      return { yaml, replace };
+    }
+    if (inputMode === 'path') {
+      const path = sourcePath.trim();
+      if (!path) {
+        throw new Error(language === 'zh' ? '请输入 source_path' : 'Enter source_path');
+      }
+      return { sourcePath: path, replace };
+    }
+    try {
+      return { rawConfig: JSON.parse(rawConfigText), replace };
+    } catch {
+      throw new Error(language === 'zh' ? 'raw_config 不是合法 JSON' : 'raw_config is not valid JSON');
+    }
+  }, [inputMode, language, rawConfigText, replace, sourcePath, yamlText]);
+
+  const validatePackage = useCallback(async () => {
+    setBusyKey('validate');
+    setError('');
+    setValidation(null);
+    try {
+      const next = await validateAgentConfigPackage(makeInput());
+      setValidation(next);
+      onNotify(
+        next.ok
+          ? language === 'zh'
+            ? '配置包校验通过'
+            : 'Package validation passed'
+          : language === 'zh'
+            ? '配置包校验未通过'
+            : 'Package validation failed',
+      );
+    } catch (caught) {
+      setError(agentPackageErrorText(caught, language));
+    } finally {
+      setBusyKey('');
+    }
+  }, [language, makeInput, onNotify]);
+
+  const installPackage = useCallback(async () => {
+    setBusyKey('install');
+    setError('');
+    try {
+      await installAgentConfigPackage(makeInput());
+      setValidation(null);
+      await loadPackages();
+      await onPackagesChanged?.();
+      onNotify(language === 'zh' ? '配置包已安装' : 'Agent package installed');
+    } catch (caught) {
+      setError(agentPackageErrorText(caught, language));
+    } finally {
+      setBusyKey('');
+    }
+  }, [language, loadPackages, makeInput, onNotify, onPackagesChanged]);
+
+  const setPackageEnabled = useCallback(
+    async (item: AgentConfigPackageItem, enabled: boolean) => {
+      setBusyKey(`${enabled ? 'enable' : 'disable'}:${item.id}`);
+      setError('');
+      try {
+        await setAgentConfigPackageEnabled(item.id, enabled);
+        await loadPackages();
+        await onPackagesChanged?.();
+        onNotify(
+          enabled
+            ? language === 'zh'
+              ? '配置包已启用'
+              : 'Package enabled'
+            : language === 'zh'
+              ? '配置包已停用'
+              : 'Package disabled',
+        );
+      } catch (caught) {
+        setError(agentPackageErrorText(caught, language));
+      } finally {
+        setBusyKey('');
+      }
+    },
+    [language, loadPackages, onNotify, onPackagesChanged],
+  );
+
+  const removePackage = useCallback(
+    async (item: AgentConfigPackageItem) => {
+      const confirmed = window.confirm(
+        language === 'zh'
+          ? `确定删除配置包 ${item.label || item.id} 吗？`
+          : `Delete agent package ${item.label || item.id}?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+      setBusyKey(`delete:${item.id}`);
+      setError('');
+      try {
+        await deleteAgentConfigPackage(item.id);
+        await loadPackages();
+        await onPackagesChanged?.();
+        onNotify(language === 'zh' ? '配置包已删除' : 'Package deleted');
+      } catch (caught) {
+        setError(agentPackageErrorText(caught, language));
+      } finally {
+        setBusyKey('');
+      }
+    },
+    [language, loadPackages, onNotify, onPackagesChanged],
+  );
+
+  const packages = result?.packages ?? [];
+  const capabilityUndeclared = !capabilities.agentConfigPackages;
+
+  return (
+    <div className="settings-stack">
+      <SettingsCard
+        title={language === 'zh' ? 'Agent 配置包' : 'Agent config packages'}
+        subtitle={
+          language === 'zh'
+            ? '安装和启停后端 Agent package；启用后 profile 会进入自动路由和运行模式列表。前端只负责传递配置，不执行 hook。'
+            : 'Install and toggle backend agent packages. Enabled profiles participate in routing and runtime profile selection. Hooks stay backend-owned.'
+        }
+      >
+        {capabilityUndeclared && (
+          <p className="bot-settings-error">
+            {language === 'zh'
+              ? '当前 /v1/capabilities 未声明 agent_config_packages；如果后端已上线接口，仍可直接尝试加载。'
+              : '/v1/capabilities does not declare agent_config_packages yet. If the backend exposes the endpoints, loading can still work.'}
+          </p>
+        )}
+        <div className="agent-package-summary">
+          <InfoRow
+            label={language === 'zh' ? 'schema 版本' : 'Schema version'}
+            value={result?.packageSchemaVersion || '-'}
+          />
+          <InfoRow
+            label={language === 'zh' ? '配置名' : 'Config names'}
+            value={result?.schema.configNames.join(', ') || '-'}
+          />
+          <InfoRow
+            label={language === 'zh' ? '策略段' : 'Policy sections'}
+            value={result?.schema.profilePolicySections.join(', ') || '-'}
+          />
+        </div>
+        <div className="settings-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={loading}
+            onClick={() => void loadPackages()}
+          >
+            {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+            {language === 'zh' ? '重新加载' : 'Reload'}
+          </button>
+        </div>
+        {error && <p className="bot-settings-error">{error}</p>}
+      </SettingsCard>
+
+      <SettingsCard
+        title={language === 'zh' ? '安装配置包' : 'Install package'}
+        subtitle={
+          language === 'zh'
+            ? '支持 YAML、raw_config JSON 或 source_path，最终校验以后端返回为准。'
+            : 'Use YAML, raw_config JSON, or source_path. Backend validation is authoritative.'
+        }
+      >
+        <div className="agent-package-input-row">
+          <label className="settings-field">
+            <span>{language === 'zh' ? '输入方式' : 'Input mode'}</span>
+            <select
+              value={inputMode}
+              onChange={(event) => setInputMode(event.currentTarget.value as 'yaml' | 'raw' | 'path')}
+            >
+              <option value="yaml">YAML</option>
+              <option value="raw">raw_config JSON</option>
+              <option value="path">source_path</option>
+            </select>
+          </label>
+          <SettingsSwitch
+            title={language === 'zh' ? '允许覆盖' : 'Replace existing'}
+            subtitle={language === 'zh' ? '安装时传 replace=true' : 'Send replace=true on install'}
+            checked={replace}
+            onChange={setReplace}
+          />
+        </div>
+        {inputMode === 'yaml' && (
+          <label className="agent-package-editor">
+            <span>YAML</span>
+            <textarea
+              value={yamlText}
+              placeholder="protocol: cardbush.agent_config_package.v1&#10;id: my-agent-package&#10;enabled: true&#10;profiles: []"
+              onChange={(event) => setYamlText(event.currentTarget.value)}
+            />
+          </label>
+        )}
+        {inputMode === 'raw' && (
+          <label className="agent-package-editor">
+            <span>raw_config JSON</span>
+            <textarea
+              value={rawConfigText}
+              onChange={(event) => setRawConfigText(event.currentTarget.value)}
+            />
+          </label>
+        )}
+        {inputMode === 'path' && (
+          <SettingsInput
+            label="source_path"
+            value={sourcePath}
+            placeholder="C:\\Users\\...\\agent-package.yaml"
+            onChange={setSourcePath}
+          />
+        )}
+        <div className="settings-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={Boolean(busyKey)}
+            onClick={() => void validatePackage()}
+          >
+            {busyKey === 'validate' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
+            {language === 'zh' ? '校验' : 'Validate'}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={Boolean(busyKey)}
+            onClick={() => void installPackage()}
+          >
+            {busyKey === 'install' ? <LoaderCircle size={14} /> : <Upload size={14} />}
+            {language === 'zh' ? '安装' : 'Install'}
+          </button>
+        </div>
+        {validation && (
+          <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
+            <strong>
+              {validation.ok
+                ? language === 'zh'
+                  ? '校验通过'
+                  : 'Validation passed'
+                : language === 'zh'
+                  ? '校验未通过'
+                  : 'Validation failed'}
+              {validation.packageId ? ` · ${validation.packageId}` : ''}
+            </strong>
+            {validation.messages.length > 0 ? (
+              validation.messages.map((message, index) => (
+                <p key={`${message.severity}-${message.path}-${index}`}>
+                  {message.severity}
+                  {message.path ? ` · ${message.path}` : ''}: {message.message}
+                </p>
+              ))
+            ) : (
+              <p>{language === 'zh' ? '后端未返回错误。' : 'No backend messages returned.'}</p>
+            )}
+          </div>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        title={language === 'zh' ? '已安装包' : 'Installed packages'}
+        subtitle={
+          language === 'zh'
+            ? '启用后 profile 会参与自动路由；停用后不应再出现在 runtime profiles。'
+            : 'Enabled profiles participate in routing; disabled packages should disappear from runtime profiles.'
+        }
+      >
+        <div className="agent-package-list">
+          {packages.length === 0 ? (
+            <div className="maintenance-result">
+              <strong>{language === 'zh' ? '暂无配置包' : 'No packages'}</strong>
+            </div>
+          ) : (
+            packages.map((item) => (
+              <div className={`agent-package-row ${item.enabled ? 'enabled' : 'disabled'}`} key={item.id}>
+                <div>
+                  <strong>{item.label || item.id}</strong>
+                  <span>{item.description || item.id}</span>
+                  <small>
+                    {item.profileIds.length
+                      ? `profiles: ${item.profileIds.join(', ')}`
+                      : language === 'zh'
+                        ? '未声明 profiles'
+                        : 'No profiles declared'}
+                    {item.sourcePath ? ` · ${item.sourcePath}` : ''}
+                  </small>
+                </div>
+                <span className={`subagent-status ${item.enabled ? 'valid' : 'disabled'}`}>
+                  <b>{item.enabled ? (language === 'zh' ? '启用' : 'Enabled') : (language === 'zh' ? '停用' : 'Disabled')}</b>
+                </span>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={Boolean(busyKey)}
+                  onClick={() => void setPackageEnabled(item, !item.enabled)}
+                >
+                  {busyKey.endsWith(`:${item.id}`) && busyKey !== `delete:${item.id}` ? (
+                    <LoaderCircle size={14} />
+                  ) : item.enabled ? (
+                    <EyeOff size={14} />
+                  ) : (
+                    <Eye size={14} />
+                  )}
+                  {item.enabled
+                    ? language === 'zh'
+                      ? '停用'
+                      : 'Disable'
+                    : language === 'zh'
+                      ? '启用'
+                      : 'Enable'}
+                </button>
+                <button
+                  className="secondary-button danger"
+                  type="button"
+                  disabled={Boolean(busyKey)}
+                  onClick={() => void removePackage(item)}
+                >
+                  {busyKey === `delete:${item.id}` ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+                  {language === 'zh' ? '删除' : 'Delete'}
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </SettingsCard>
+    </div>
+  );
+}
+
 function botPanelError(caught: unknown, language: AppLanguage) {
   const message = caught instanceof Error ? caught.message : String(caught);
   if (message.includes('Failed to fetch')) {
@@ -2406,6 +2800,26 @@ function botPanelError(caught: unknown, language: AppLanguage) {
     return language === 'zh'
       ? '微信 Bot 还没有已登录账号。请先完成微信扫码确认，再启动服务。'
       : 'The WeChat bot has no logged-in account. Complete QR login before starting the service.';
+  }
+  return message;
+}
+
+function agentPackageErrorText(caught: unknown, language: AppLanguage) {
+  const message = errorMessage(caught);
+  if (message.includes('Failed to fetch')) {
+    return language === 'zh'
+      ? '无法连接 BushServer。请确认后端服务已启动后重试。'
+      : 'Could not connect to BushServer. Start the backend and try again.';
+  }
+  if (message.includes('404')) {
+    return language === 'zh'
+      ? 'Agent 配置包接口尚未由 BushServer 提供。'
+      : 'Agent config package API is not available from BushServer yet.';
+  }
+  if (message.includes('unknown_agent_profile')) {
+    return language === 'zh'
+      ? '后端拒绝了未知或已停用的 agent profile。请刷新配置包和运行模式。'
+      : 'Backend rejected an unknown or disabled agent profile. Refresh packages and runtime profiles.';
   }
   return message;
 }

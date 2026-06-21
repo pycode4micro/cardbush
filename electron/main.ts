@@ -193,7 +193,7 @@ function createWindow() {
     frame: false,
     title: 'cardbush',
     icon: loadCardbushIcon(256),
-    backgroundColor: backgroundForMainWindowTheme(lastMainWindowTheme),
+    backgroundColor: mainWindowThemeBackgrounds.dark,
     backgroundMaterial: 'none',
     show: false,
     webPreferences: {

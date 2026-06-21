@@ -522,6 +522,25 @@ function CardbushApp() {
     disabledToolNames: effectiveDisabledToolNames,
     standardImageInputEnabled: visualInputEnabled,
   });
+  const refreshBackendAndActiveSession = useCallback(
+    async (options?: { silent?: boolean }) => {
+      let capabilityError: unknown = null;
+      try {
+        const capabilities = await fetchBackendCapabilities();
+        setBackendCapabilities(capabilities);
+      } catch (caught) {
+        capabilityError = caught;
+        setBackendCapabilities(defaultBackendCapabilities);
+      }
+
+      await chat.refreshActiveSession(options);
+
+      if (capabilityError) {
+        throw capabilityError;
+      }
+    },
+    [chat.refreshActiveSession],
+  );
   const runningConversationIds = useMemo(
     () => new Set(Object.keys(chat.runningByConversation)),
     [chat.runningByConversation],
@@ -1198,6 +1217,9 @@ function CardbushApp() {
           onUseModel={chat.setSelectedModel}
           onSidebarWidthChange={setSidebarWidth}
           onConversationHistoryCleared={() => chat.reloadConversations()}
+          onAgentConfigPackagesChanged={async () => {
+            await chat.reloadRuntimeProfiles();
+          }}
         />
       ) : (
         <main className="desktop-shell">
@@ -1279,7 +1301,7 @@ function CardbushApp() {
                 onToggleSkill={toggleSkillEnabled}
                 onVisualInputEnabledChange={setVisualInputEnabled}
                 onCreateSessionShareLink={chat.createSessionShareLink}
-                onRefreshActiveSession={chat.refreshActiveSession}
+                onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
                 onRegenerate={chat.regenerateAssistantMessage}
                 onEditUserMessage={chat.editUserMessageAndRegenerate}
@@ -3712,7 +3734,7 @@ function ChatPanel({
         onCreateSessionShareLink={
           botControlAvailable ? onCreateSessionShareLink : undefined
         }
-        onRefreshActiveSession={botControlAvailable ? onRefreshActiveSession : undefined}
+        onRefreshActiveSession={onRefreshActiveSession}
         activeConsole={consoleMode}
         onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
         onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
@@ -3982,7 +4004,7 @@ function BackendLoading() {
   return (
     <div className="loading-view">
       <div className="loading-brand" aria-label="cardbush">
-        <span className="loading-logo-mark">c</span>
+        <img className="loading-logo-mark" src="./cardbush-logo.png" alt="" />
         <strong>cardbush</strong>
       </div>
       <div className="loading-rhythm" aria-hidden="true">
@@ -4509,17 +4531,13 @@ function TopBar({
         disabled={!onRefreshActiveSession || botHistoryRefreshing}
         onClick={() => void refreshBotHistory()}
         title={
-          !botControlAvailable
+          botHistoryRefreshFailed
             ? language === 'zh'
-              ? 'BushServer 尚未提供 Bot API'
-              : 'BushServer does not expose Bot APIs yet'
-          : botHistoryRefreshFailed
-            ? language === 'zh'
-              ? '刷新 Bot 内容失败'
-              : 'Failed to refresh Bot content'
+              ? '刷新后端内容失败'
+              : 'Failed to refresh backend content'
             : language === 'zh'
-              ? '刷新 Bot 内容和会话列表'
-              : 'Refresh Bot content and sessions'
+              ? '重新连接后端并刷新会话'
+              : 'Reconnect backend and refresh sessions'
         }
       >
         {botHistoryRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}

@@ -158,6 +158,87 @@
           linear-gradient(180deg, rgba(26, 26, 26, 0.2), transparent 30%, rgba(26, 26, 26, 0.24));
       }
 
+      #cardbush-startup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 5;
+        display: grid;
+        place-items: center;
+        color: #f6f1e9;
+        background:
+          radial-gradient(circle at 50% 46%, rgba(123, 158, 135, 0.18), transparent 34%),
+          #121311;
+        font-family:
+          "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC",
+          Arial, sans-serif;
+      }
+
+      .cardbush-startup-inner {
+        display: grid;
+        place-items: center;
+        gap: 16px;
+        transform: translateY(-8px);
+      }
+
+      .cardbush-startup-logo {
+        width: 132px;
+        height: 132px;
+        object-fit: contain;
+        filter: drop-shadow(0 18px 36px rgba(0, 0, 0, 0.36));
+      }
+
+      .cardbush-startup-wordmark {
+        margin-top: -8px;
+        font-size: 22px;
+        font-weight: 800;
+        letter-spacing: 0;
+      }
+
+      .cardbush-startup-rhythm {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 24px;
+      }
+
+      .cardbush-startup-rhythm span {
+        width: 4px;
+        height: 9px;
+        border-radius: 999px;
+        background: #7b9e87;
+        opacity: 0.58;
+        animation: cardbush-startup-rhythm 960ms ease-in-out infinite;
+      }
+
+      .cardbush-startup-rhythm span:nth-child(2) {
+        animation-delay: 90ms;
+      }
+
+      .cardbush-startup-rhythm span:nth-child(3) {
+        animation-delay: 180ms;
+      }
+
+      .cardbush-startup-rhythm span:nth-child(4) {
+        animation-delay: 270ms;
+      }
+
+      .cardbush-startup-rhythm span:nth-child(5) {
+        animation-delay: 360ms;
+      }
+
+      @keyframes cardbush-startup-rhythm {
+        0%,
+        100% {
+          height: 8px;
+          opacity: 0.42;
+        }
+
+        45% {
+          height: 22px;
+          opacity: 0.96;
+        }
+      }
+
       html[data-start-theme='bright'][data-start-custom-background='true'] body::after,
       html[data-start-theme='parchment'][data-start-custom-background='true'] body::after {
         background:
@@ -175,10 +256,28 @@
       html[data-cardling-window='true'] body::after {
         content: none !important;
       }
+
+      html[data-cardling-window='true'] #cardbush-startup-splash {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="cardbush-startup-splash" role="status" aria-label="cardbush 正在启动">
+        <div class="cardbush-startup-inner">
+          <img class="cardbush-startup-logo" src="./cardbush-logo.png" alt="" />
+          <div class="cardbush-startup-wordmark">cardbush</div>
+          <div class="cardbush-startup-rhythm" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
