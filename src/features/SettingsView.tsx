@@ -43,6 +43,7 @@ import {
   deleteAgentConfigPackage,
   deleteWeixinAccount,
   fetchAgentConfigPackages,
+  fetchAgentConfigPackageTransactionContracts,
   fetchBotConfig,
   fetchBots,
   fetchBotServiceLogs,
@@ -66,6 +67,7 @@ import type {
   AgentConfigPackageItem,
   AgentConfigPackagesResult,
   AgentConfigPackageValidationResult,
+  AgentTransactionContractsResult,
   BackendCapabilities,
   BotConfigResult,
   BotPlatform,
@@ -2421,9 +2423,12 @@ function AgentPackagesPanel({
   onPackagesChanged?: () => void | Promise<void>;
 }) {
   const [result, setResult] = useState<AgentConfigPackagesResult | null>(null);
+  const [transactionContracts, setTransactionContracts] =
+    useState<AgentTransactionContractsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
+  const [contractError, setContractError] = useState('');
   const [inputMode, setInputMode] = useState<'yaml' | 'raw' | 'path'>('yaml');
   const [yamlText, setYamlText] = useState('');
   const [rawConfigText, setRawConfigText] = useState('{\n  \"id\": \"my-agent-package\",\n  \"enabled\": true,\n  \"profiles\": []\n}');
@@ -2435,8 +2440,17 @@ function AgentPackagesPanel({
   const loadPackages = useCallback(async () => {
     setLoading(true);
     setError('');
+    setContractError('');
     try {
-      setResult(await fetchAgentConfigPackages());
+      const [packagesResult, contractsResult] = await Promise.all([
+        fetchAgentConfigPackages(),
+        fetchAgentConfigPackageTransactionContracts().catch((caught) => {
+          setContractError(agentPackageErrorText(caught, language));
+          return null;
+        }),
+      ]);
+      setResult(packagesResult);
+      setTransactionContracts(contractsResult);
     } catch (caught) {
       setError(agentPackageErrorText(caught, language));
     } finally {
@@ -2563,6 +2577,8 @@ function AgentPackagesPanel({
 
   const packages = result?.packages ?? [];
   const capabilityUndeclared = !capabilities.agentConfigPackages;
+  const contractCapabilityUndeclared =
+    !capabilities.agentConfigPackageTransactionContracts;
 
   return (
     <div className="settings-stack">
@@ -2594,7 +2610,58 @@ function AgentPackagesPanel({
             label={language === 'zh' ? '策略段' : 'Policy sections'}
             value={result?.schema.profilePolicySections.join(', ') || '-'}
           />
+          <InfoRow
+            label={language === 'zh' ? '事务契约' : 'Transaction contracts'}
+            value={
+              transactionContracts
+                ? `${transactionContracts.contracts.length}`
+                : contractError
+                  ? language === 'zh'
+                    ? '未加载'
+                    : 'Not loaded'
+                  : '-'
+            }
+          />
         </div>
+        {(transactionContracts || contractError) && (
+          <div className="agent-transaction-contracts">
+            <div>
+              <strong>
+                {language === 'zh' ? '通用事务契约' : 'Generic transaction contracts'}
+              </strong>
+              <small>
+                {transactionContracts?.protocol ||
+                  (language === 'zh'
+                    ? '前端只展示契约声明，不执行事务。'
+                    : 'The frontend displays declarations only and does not execute transactions.')}
+              </small>
+            </div>
+            {contractError ? (
+              <p>
+                {contractCapabilityUndeclared
+                  ? language === 'zh'
+                    ? '后端暂未声明 transaction-contracts 能力。'
+                    : 'The backend has not declared transaction-contracts yet.'
+                  : contractError}
+              </p>
+            ) : transactionContracts && transactionContracts.contracts.length > 0 ? (
+              <div className="agent-transaction-chip-row">
+                {transactionContracts.contracts.map((contract) => (
+                  <span className="agent-transaction-chip" key={contract.id}>
+                    <b>{contract.label || contract.id}</b>
+                    {contract.description && <em>{contract.description}</em>}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p>
+                {language === 'zh'
+                  ? '后端未返回契约类型。'
+                  : 'No transaction contracts returned.'}
+              </p>
+            )}
+          </div>
+        )}
         <div className="settings-actions">
           <button
             className="secondary-button"
@@ -2736,6 +2803,18 @@ function AgentPackagesPanel({
                         : 'No profiles declared'}
                     {item.sourcePath ? ` · ${item.sourcePath}` : ''}
                   </small>
+                  {item.transactionContracts.length > 0 && (
+                    <div className="agent-package-contracts">
+                      {item.transactionContracts.map((contract) => (
+                        <span
+                          className="agent-package-contract"
+                          key={`${item.id}-${contract.profileId}-${contract.contractId}`}
+                        >
+                          {contract.profileId}: {contract.label || contract.contractId}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <span className={`subagent-status ${item.enabled ? 'valid' : 'disabled'}`}>
                   <b>{item.enabled ? (language === 'zh' ? '启用' : 'Enabled') : (language === 'zh' ? '停用' : 'Disabled')}</b>

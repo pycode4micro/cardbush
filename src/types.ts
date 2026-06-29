@@ -79,6 +79,7 @@ export interface BackendCapabilities {
   settingsSync: boolean;
   localMusicLibrary: boolean;
   agentConfigPackages: boolean;
+  agentConfigPackageTransactionContracts: boolean;
 }
 
 export interface ManagedModelConfig {
@@ -101,7 +102,15 @@ export interface RuntimeProfileSummary {
   toolPolicy?: Record<string, unknown>;
   verificationPolicy?: Record<string, unknown>;
   finalResponseContract?: Record<string, unknown>;
+  transactionContract?: Record<string, unknown>;
   raw: Record<string, unknown>;
+}
+
+export interface ProfileTransactionContractBinding {
+  profileId: string;
+  contractId: string;
+  label: string;
+  raw?: Record<string, unknown>;
 }
 
 export interface AgentConfigPackageItem {
@@ -111,7 +120,22 @@ export interface AgentConfigPackageItem {
   enabled: boolean;
   sourcePath?: string;
   profileIds: string[];
+  transactionContracts: ProfileTransactionContractBinding[];
   frontendMetadata?: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+export interface AgentTransactionContractSummary {
+  id: string;
+  label: string;
+  description: string;
+  protocol?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface AgentTransactionContractsResult {
+  protocol: string;
+  contracts: AgentTransactionContractSummary[];
   raw: Record<string, unknown>;
 }
 

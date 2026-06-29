@@ -4,6 +4,8 @@ import type {
   AgentConfigPackagesResult,
   AgentConfigPackageValidationMessage,
   AgentConfigPackageValidationResult,
+  AgentTransactionContractsResult,
+  AgentTransactionContractSummary,
   BackendCapabilities,
   ChatMessage,
   ChatToolExecution,
@@ -37,6 +39,7 @@ import type {
   InteractionQuestion,
   InteractionOption,
   PermissionMode,
+  ProfileTransactionContractBinding,
   ReferencePlanMode,
 } from '../types';
 import {
@@ -168,6 +171,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   settingsSync: false,
   localMusicLibrary: false,
   agentConfigPackages: false,
+  agentConfigPackageTransactionContracts: false,
 };
 
 export type AgentConfigPackageInput =
@@ -411,6 +415,13 @@ export async function fetchAgentConfigPackages(): Promise<AgentConfigPackagesRes
   return agentConfigPackagesFromPayload(payload);
 }
 
+export async function fetchAgentConfigPackageTransactionContracts(): Promise<AgentTransactionContractsResult> {
+  const payload = await readJson<unknown>(
+    url('/v1/agent-config-packages/transaction-contracts'),
+  );
+  return agentTransactionContractsFromPayload(payload);
+}
+
 export async function validateAgentConfigPackage(
   input: AgentConfigPackageInput,
 ): Promise<AgentConfigPackageValidationResult> {
@@ -582,6 +593,9 @@ function agentConfigPackageFromPayload(
     )
     .map((profileId) => profileId.trim())
     .filter(Boolean);
+  const transactionContracts = rawProfiles
+    .map(transactionContractBindingFromProfile)
+    .filter((binding): binding is ProfileTransactionContractBinding => binding != null);
   return {
     id,
     label: String(
@@ -603,9 +617,125 @@ function agentConfigPackageFromPayload(
     enabled: Boolean(item.enabled ?? true),
     sourcePath: optionalString(item.source_path ?? item.sourcePath),
     profileIds,
+    transactionContracts,
     frontendMetadata,
     raw: item,
   };
+}
+
+function transactionContractBindingFromProfile(
+  payload: unknown,
+): ProfileTransactionContractBinding | null {
+  if (typeof payload === 'string') {
+    return null;
+  }
+  const profile = asRecord(payload);
+  const rawContract = profile.transaction_contract ?? profile.transactionContract;
+  if (rawContract == null) {
+    return null;
+  }
+  const profileId = String(
+    profile.id ?? profile.name ?? profile.profile ?? profile.profile_id ?? profile.profileId ?? '',
+  ).trim();
+  const contract =
+    typeof rawContract === 'string' ? { id: rawContract } : asRecord(rawContract);
+  const contractId = transactionContractId(contract);
+  if (!contractId) {
+    return null;
+  }
+  return {
+    profileId: profileId || '-',
+    contractId,
+    label: String(
+      contract.label ??
+        contract.display_name ??
+        contract.displayName ??
+        contract.title ??
+        contractId,
+    ),
+    raw: contract,
+  };
+}
+
+function transactionContractId(value: Record<string, unknown>) {
+  return String(
+    value.id ??
+      value.name ??
+      value.type ??
+      value.kind ??
+      value.contract ??
+      value.contract_id ??
+      value.contractId ??
+      value.protocol ??
+      '',
+  ).trim();
+}
+
+function agentTransactionContractsFromPayload(
+  payload: unknown,
+): AgentTransactionContractsResult {
+  const root = asRecord(payload);
+  const manifest = asRecord(root.manifest);
+  const rawContracts =
+    arrayOrRecordValues(root.transaction_contracts ?? root.transactionContracts) ??
+    arrayOrRecordValues(root.contracts) ??
+    arrayOrRecordValues(root.items) ??
+    arrayOrRecordValues(manifest.transaction_contracts ?? manifest.transactionContracts) ??
+    arrayOrRecordValues(manifest.contracts) ??
+    [];
+  const protocol = String(
+    root.protocol ??
+      root.transaction_contract_protocol ??
+      root.transactionContractProtocol ??
+      root.profile_transaction_contract_protocol ??
+      root.profileTransactionContractProtocol ??
+      manifest.protocol ??
+      '',
+  );
+  return {
+    protocol,
+    contracts: rawContracts
+      .map(agentTransactionContractFromPayload)
+      .filter((item): item is AgentTransactionContractSummary => item != null),
+    raw: root,
+  };
+}
+
+function agentTransactionContractFromPayload(
+  payload: unknown,
+): AgentTransactionContractSummary | null {
+  const item =
+    typeof payload === 'string'
+      ? { id: payload }
+      : asRecord(payload);
+  const id = transactionContractId(item);
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    label: String(
+      item.label ?? item.display_name ?? item.displayName ?? item.title ?? id,
+    ),
+    description: String(item.description ?? item.summary ?? ''),
+    protocol: optionalString(item.protocol),
+    raw: item,
+  };
+}
+
+function arrayOrRecordValues(value: unknown): unknown[] | null {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).map(([key, item]) => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return { id: key, ...asRecord(item) };
+      }
+      return { id: key, value: item };
+    });
+  }
+  return null;
 }
 
 function agentConfigPackageValidationFromPayload(
@@ -1876,18 +2006,20 @@ function conversationTimestamp(item: unknown) {
 
 function conversationFromPayload(item: unknown, index = 0): ConversationSummary {
   if (typeof item === 'string') {
+    const id = item.trim();
     return {
-      id: item,
-      title: item,
+      id,
+      title: defaultConversationTitle(id),
       preview: '',
       updatedAt: new Date().toISOString(),
     };
   }
   const value = asRecord(item);
   const metadata = asRecord(value.metadata);
+  const id = String(value.id ?? value.session_id ?? value.sessionId ?? `session-${index}`);
   return {
-    id: String(value.id ?? value.session_id ?? `session-${index}`),
-    title: String(value.title ?? value.name ?? '新会话'),
+    id,
+    title: normalizeConversationTitle(value.title ?? value.name, id),
     preview: String(value.preview ?? value.summary ?? value.last_message_preview ?? ''),
     updatedAt: String(value.updated_at ?? value.updatedAt ?? new Date().toISOString()),
     agentProfile: optionalString(
@@ -1906,6 +2038,37 @@ function conversationFromPayload(item: unknown, index = 0): ConversationSummary 
       value.workspace_context ?? value.workspaceContext,
     ),
   };
+}
+
+function normalizeConversationTitle(value: unknown, sessionId: string) {
+  const title = String(value ?? '').trim();
+  if (!title || isGeneratedConversationTitle(title, sessionId)) {
+    return defaultConversationTitle(sessionId);
+  }
+  return title;
+}
+
+function defaultConversationTitle(_sessionId: string) {
+  return '新会话';
+}
+
+function isGeneratedConversationTitle(title: string, sessionId: string) {
+  const normalized = title.trim();
+  const normalizedId = sessionId.trim();
+  if (normalizedId && normalized === normalizedId) {
+    return true;
+  }
+  const lower = normalized.toLowerCase();
+  return (
+    lower.startsWith('local-') ||
+    lower.startsWith('weixin:') ||
+    lower.startsWith('feishu:') ||
+    lower.startsWith('telegram:') ||
+    lower.startsWith('discord:') ||
+    lower.includes('@im.bot') ||
+    lower.includes('@im.wechat') ||
+    /^cardbush-\d/.test(lower)
+  );
 }
 
 function runtimeProfilesFromPayload(payload: unknown): RuntimeProfileSummary[] {
@@ -1949,6 +2112,9 @@ function runtimeProfileFromPayload(payload: unknown): RuntimeProfileSummary | nu
     ),
     finalResponseContract: asOptionalRecord(
       value.final_response_contract ?? value.finalResponseContract,
+    ),
+    transactionContract: asOptionalRecord(
+      value.transaction_contract ?? value.transactionContract,
     ),
     raw: value,
   };
@@ -2030,6 +2196,16 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     agentConfigPackages: capabilityBoolean(features, endpoints, 'agentConfigPackages', [
       'agent_config_packages',
     ]),
+    agentConfigPackageTransactionContracts: capabilityBoolean(
+      features,
+      endpoints,
+      'agentConfigPackageTransactionContracts',
+      [
+        'agent_config_package_transaction_contracts',
+        'agent_config_packages_transaction_contracts',
+        'transaction_contracts',
+      ],
+    ),
   };
 }
 
