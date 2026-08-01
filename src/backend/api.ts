@@ -1,16 +1,15 @@
 import type {
   AssistantRevision,
-  AgentConfigPackageItem,
-  AgentConfigPackagesResult,
-  AgentConfigPackageValidationMessage,
-  AgentConfigPackageValidationResult,
-  AgentTransactionContractsResult,
-  AgentTransactionContractSummary,
   BackendCapabilities,
   ChatMessage,
   ChatToolExecution,
   ConversationSummary,
   ManagedModelConfig,
+  McpServerConfig,
+  McpServersResult,
+  McpServerValidationResult,
+  McpTransport,
+  McpValidationMessage,
   PendingInteraction,
   BotConfigResult,
   BotPlatform,
@@ -23,7 +22,15 @@ import type {
   WeixinLoginStatusResult,
   SkillDetail,
   SkillSummary,
-  RuntimeProfileSummary,
+  TeamFlowActionType,
+  TeamFlowActionOption,
+  TeamFlowEdge,
+  TeamFlowGraph,
+  TeamFlowLayer,
+  TeamFlowNode,
+  TeamFlowState,
+  TeamFlowStreamEvent,
+  TaskPlanStreamUpdate,
   SubagentCapabilities,
   SubagentDetail,
   SubagentListItem,
@@ -39,14 +46,20 @@ import type {
   InteractionQuestion,
   InteractionOption,
   PermissionMode,
-  ProfileTransactionContractBinding,
+  ReasoningLevel,
   ReferencePlanMode,
+  TerminalRuntime,
 } from '../types';
 import {
   applyDisabledToolsToMetadata,
   standardImageInputToolDefaultName,
 } from './toolVisibility';
 import { applyAllowedResourcePathsToMetadata } from './localPathMetadata';
+import { applyAllowedSkillsToRequest } from './skillSelectionMetadata';
+import {
+  taskPlanFromPayload,
+  taskPlanUpdateFromExecutionPayload,
+} from './taskPlan';
 
 const conversationListPageSize = 160;
 const conversationListMaxPages = 1;
@@ -81,13 +94,17 @@ export interface ChatStreamRequest {
   userInput: string;
   model: string;
   modelConfig?: ManagedModelConfig;
-  agentProfile?: string;
   projectDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
+  reasoningLevel?: ReasoningLevel;
   standardImageInputEnabled?: boolean;
+  browserPrivacyMode?: boolean;
+  teamModeEnabled?: boolean;
+  osModeEnabled?: boolean;
+  terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
   disabledTools?: string[];
@@ -96,22 +113,28 @@ export interface ChatStreamRequest {
   onDelta?: (delta: string) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
+  onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+  onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
 }
 
 export interface ControlStreamRequest {
   sessionId: string;
   model: string;
   modelConfig?: ManagedModelConfig;
-  agentProfile?: string;
   projectDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
+  reasoningLevel?: ReasoningLevel;
   standardImageInputEnabled?: boolean;
+  browserPrivacyMode?: boolean;
+  teamModeEnabled?: boolean;
+  osModeEnabled?: boolean;
+  terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
   disabledTools?: string[];
@@ -120,9 +143,11 @@ export interface ControlStreamRequest {
   onDelta?: (delta: string) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
+  onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+  onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
 }
 
 export interface RegenerateTurnRequest extends ControlStreamRequest {
@@ -139,14 +164,25 @@ export interface SendGuidanceRequest {
   turnId: string;
   guidance: string;
   mode: 'append_context' | 'interrupt_and_continue';
+  terminalRuntime?: TerminalRuntime;
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
+  onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+  onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+}
+
+export interface TeamFlowActionRequest {
+  flowId: string;
+  action: TeamFlowActionType;
+  text?: string;
+  values?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export const defaultBackendCapabilities: BackendCapabilities = {
@@ -170,14 +206,45 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   resources: false,
   settingsSync: false,
   localMusicLibrary: false,
-  agentConfigPackages: false,
-  agentConfigPackageTransactionContracts: false,
+  mcpServers: false,
+  subagents: false,
+  subagentFrontendConfiguration: false,
+  subagentLocalDefault: false,
+  remoteAgentsViaMcp: false,
+  teamMode: false,
+  teamAgentFlow: false,
+  teamFlowState: false,
+  teamFlowActions: false,
+  teamFlowEvents: false,
+  browserCookiePersistence: false,
+  browserPrivacyMode: false,
+  browserApiCandidates: false,
+  browserContextApiRequest: false,
+  osMode: false,
+  desktopAutomation: false,
+  taskPlan: false,
+  reasoningLevelSelection: false,
+  reasoningLevels: ['low', 'medium', 'max'],
+  defaultReasoningLevel: 'medium',
+  terminalRuntimeSelection: false,
+  terminalRuntimes: ['powershell', 'wsl'],
+  defaultTerminalRuntime: 'powershell',
 };
 
-export type AgentConfigPackageInput =
-  | { yaml: string; rawConfig?: never; sourcePath?: never; replace?: boolean }
-  | { yaml?: never; rawConfig: Record<string, unknown>; sourcePath?: never; replace?: boolean }
-  | { yaml?: never; rawConfig?: never; sourcePath: string; replace?: boolean };
+export interface McpServerConfigInput {
+  id: string;
+  name?: string;
+  description?: string;
+  enabled?: boolean;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  timeoutSeconds?: number;
+}
 
 export interface SubagentDispatchRequest {
   sessionId: string;
@@ -410,64 +477,62 @@ export async function saveModelConfigs(request: {
   return modelConfigsFromPayload(payload);
 }
 
-export async function fetchAgentConfigPackages(): Promise<AgentConfigPackagesResult> {
-  const payload = await readJson<unknown>(url('/v1/agent-config-packages'));
-  return agentConfigPackagesFromPayload(payload);
+export async function fetchMcpServers(): Promise<McpServersResult> {
+  const payload = await readJson<unknown>(url('/v1/mcp/servers'));
+  return mcpServersFromPayload(payload);
 }
 
-export async function fetchAgentConfigPackageTransactionContracts(): Promise<AgentTransactionContractsResult> {
-  const payload = await readJson<unknown>(
-    url('/v1/agent-config-packages/transaction-contracts'),
-  );
-  return agentTransactionContractsFromPayload(payload);
-}
-
-export async function validateAgentConfigPackage(
-  input: AgentConfigPackageInput,
-): Promise<AgentConfigPackageValidationResult> {
-  const payload = await readJson<unknown>(url('/v1/agent-config-packages/validate'), {
+export async function validateMcpServerConfig(
+  input: McpServerConfigInput,
+): Promise<McpServerValidationResult> {
+  const payload = await readJson<unknown>(url('/v1/mcp/servers/validate'), {
     method: 'POST',
-    body: JSON.stringify(agentConfigPackageRequestBody(input)),
+    body: JSON.stringify(mcpServerRequestBody(input)),
   });
-  return agentConfigPackageValidationFromPayload(payload);
+  return mcpServerValidationFromPayload(payload);
 }
 
-export async function installAgentConfigPackage(
-  input: AgentConfigPackageInput,
-): Promise<AgentConfigPackageItem> {
-  const payload = await readJson<unknown>(url('/v1/agent-config-packages/install'), {
-    method: 'POST',
-    body: JSON.stringify(agentConfigPackageRequestBody(input)),
-  });
-  return agentConfigPackageFromPayload(payload, 0);
-}
-
-export async function setAgentConfigPackageEnabled(
-  packageId: string,
-  enabled: boolean,
-): Promise<AgentConfigPackageItem> {
-  const normalized = packageId.trim();
+export async function saveMcpServerConfig(
+  input: McpServerConfigInput,
+): Promise<McpServerConfig> {
+  const normalized = input.id.trim();
   if (!normalized) {
-    throw new Error('Agent config package id 为空');
+    throw new Error('MCP server id 为空');
   }
   const payload = await readJson<unknown>(
-    url(
-      `/v1/agent-config-packages/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`,
-    ),
+    url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
+    {
+      method: 'PUT',
+      body: JSON.stringify(mcpServerRequestBody(input)),
+    },
+  );
+  return mcpServerFromPayload(payload, 0);
+}
+
+export async function setMcpServerEnabled(
+  serverId: string,
+  enabled: boolean,
+): Promise<McpServerConfig> {
+  const normalized = serverId.trim();
+  if (!normalized) {
+    throw new Error('MCP server id 为空');
+  }
+  const payload = await readJson<unknown>(
+    url(`/v1/mcp/servers/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`),
     { method: 'POST' },
   );
-  return agentConfigPackageFromPayload(payload, 0);
+  return mcpServerFromPayload(payload, 0);
 }
 
-export async function deleteAgentConfigPackage(
-  packageId: string,
+export async function deleteMcpServerConfig(
+  serverId: string,
 ): Promise<Record<string, unknown>> {
-  const normalized = packageId.trim();
+  const normalized = serverId.trim();
   if (!normalized) {
-    throw new Error('Agent config package id 为空');
+    throw new Error('MCP server id 为空');
   }
   return readJson<Record<string, unknown>>(
-    url(`/v1/agent-config-packages/${encodeURIComponent(normalized)}`),
+    url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
     { method: 'DELETE' },
   );
 }
@@ -516,237 +581,116 @@ function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | n
   };
 }
 
-function agentConfigPackageRequestBody(input: AgentConfigPackageInput) {
-  const body: Record<string, unknown> = {};
-  if ('yaml' in input && input.yaml != null) {
-    body.yaml = input.yaml;
+function mcpServerRequestBody(input: McpServerConfigInput) {
+  const body: Record<string, unknown> = {
+    id: input.id.trim(),
+    name: input.name?.trim() ?? '',
+    description: input.description?.trim() ?? '',
+    enabled: input.enabled !== false,
+    transport: input.transport,
+  };
+  if (input.command?.trim()) {
+    body.command = input.command.trim();
   }
-  if ('rawConfig' in input && input.rawConfig != null) {
-    body.raw_config = input.rawConfig;
+  if (input.args?.length) {
+    body.args = input.args;
   }
-  if ('sourcePath' in input && input.sourcePath != null) {
-    body.source_path = input.sourcePath;
+  if (input.cwd?.trim()) {
+    body.cwd = input.cwd.trim();
   }
-  if (input.replace != null) {
-    body.replace = input.replace;
+  if (input.env && Object.keys(input.env).length > 0) {
+    body.env = input.env;
+  }
+  if (input.url?.trim()) {
+    body.url = input.url.trim();
+  }
+  if (input.headers && Object.keys(input.headers).length > 0) {
+    body.headers = input.headers;
+  }
+  if (input.timeoutSeconds != null) {
+    body.timeout_seconds = input.timeoutSeconds;
+    body.timeoutSeconds = input.timeoutSeconds;
   }
   return body;
 }
 
-function agentConfigPackagesFromPayload(payload: unknown): AgentConfigPackagesResult {
+function mcpServersFromPayload(payload: unknown): McpServersResult {
   const root = asRecord(payload);
-  const rawSchema = asRecord(root.schema);
-  const packages = Array.isArray(root.packages)
-    ? root.packages
+  const servers = Array.isArray(root.servers)
+    ? root.servers
     : Array.isArray(root.items)
       ? root.items
-      : [];
+      : Array.isArray(root.mcp_servers)
+        ? root.mcp_servers
+        : Array.isArray(root.mcpServers)
+          ? root.mcpServers
+          : Array.isArray(payload)
+            ? payload
+            : [];
   return {
-    packageSchemaVersion: String(
-      root.package_schema_version ?? root.packageSchemaVersion ?? '',
+    servers: servers
+      .map(mcpServerFromPayload)
+      .filter((item): item is McpServerConfig => Boolean(item.id.trim())),
+    protocolVersions: stringList(
+      root.protocol_versions ?? root.protocolVersions ?? root.supported_protocol_versions,
     ),
-    schema: {
-      configNames: stringList(rawSchema.config_names ?? rawSchema.configNames),
-      profilePolicySections: stringList(
-        rawSchema.profile_policy_sections ?? rawSchema.profilePolicySections,
-      ),
-      raw: rawSchema,
-    },
-    packages: packages.map(agentConfigPackageFromPayload),
     raw: root,
   };
 }
 
-function agentConfigPackageFromPayload(
-  payload: unknown,
-  index = 0,
-): AgentConfigPackageItem {
+function mcpServerFromPayload(payload: unknown, index = 0): McpServerConfig {
   const root = asRecord(payload);
-  const item = asRecord(
-    root.package ??
-      root.item ??
-      root.agent_config_package ??
-      root.agentConfigPackage ??
-      payload,
+  const item = asRecord(root.server ?? root.item ?? root.mcp_server ?? root.mcpServer ?? payload);
+  const id = String(item.id ?? item.name ?? item.server_id ?? item.serverId ?? `mcp-${index}`).trim();
+  const transport = normalizeMcpTransport(
+    item.transport ?? item.protocol ?? asRecord(item.connection).transport,
   );
-  const frontendMetadata = asOptionalRecord(
-    item.frontend_metadata ?? item.frontendMetadata,
+  const command = optionalString(
+    item.command ?? item.cmd ?? asRecord(item.stdio).command ?? asRecord(item.connection).command,
   );
-  const id = String(item.id ?? item.package_id ?? item.packageId ?? `package-${index}`).trim();
-  const rawProfiles = Array.isArray(item.profiles)
-    ? item.profiles
-    : Array.isArray(item.runtime_profiles)
-      ? item.runtime_profiles
-      : Array.isArray(item.runtimeProfiles)
-        ? item.runtimeProfiles
-        : [];
-  const profileIds = rawProfiles
-    .map((profile) =>
-      typeof profile === 'string'
-        ? profile
-        : String(
-            asRecord(profile).id ??
-              asRecord(profile).name ??
-              asRecord(profile).profile ??
-              '',
-          ),
-    )
-    .map((profileId) => profileId.trim())
-    .filter(Boolean);
-  const transactionContracts = rawProfiles
-    .map(transactionContractBindingFromProfile)
-    .filter((binding): binding is ProfileTransactionContractBinding => binding != null);
+  const urlValue = optionalString(
+    item.url ?? item.endpoint ?? asRecord(item.sse).url ?? asRecord(item.connection).url,
+  );
+  const env = stringRecord(item.env ?? item.environment);
+  const headers = stringRecord(item.headers ?? asRecord(item.sse).headers);
   return {
     id,
-    label: String(
-      item.label ??
-        item.display_name ??
-        item.displayName ??
-        frontendMetadata?.label ??
-        frontendMetadata?.display_name ??
-        frontendMetadata?.displayName ??
-        id,
-    ),
-    description: String(
-      item.description ??
-        item.summary ??
-        frontendMetadata?.description ??
-        frontendMetadata?.summary ??
-        '',
-    ),
-    enabled: Boolean(item.enabled ?? true),
-    sourcePath: optionalString(item.source_path ?? item.sourcePath),
-    profileIds,
-    transactionContracts,
-    frontendMetadata,
-    raw: item,
-  };
-}
-
-function transactionContractBindingFromProfile(
-  payload: unknown,
-): ProfileTransactionContractBinding | null {
-  if (typeof payload === 'string') {
-    return null;
-  }
-  const profile = asRecord(payload);
-  const rawContract = profile.transaction_contract ?? profile.transactionContract;
-  if (rawContract == null) {
-    return null;
-  }
-  const profileId = String(
-    profile.id ?? profile.name ?? profile.profile ?? profile.profile_id ?? profile.profileId ?? '',
-  ).trim();
-  const contract =
-    typeof rawContract === 'string' ? { id: rawContract } : asRecord(rawContract);
-  const contractId = transactionContractId(contract);
-  if (!contractId) {
-    return null;
-  }
-  return {
-    profileId: profileId || '-',
-    contractId,
-    label: String(
-      contract.label ??
-        contract.display_name ??
-        contract.displayName ??
-        contract.title ??
-        contractId,
-    ),
-    raw: contract,
-  };
-}
-
-function transactionContractId(value: Record<string, unknown>) {
-  return String(
-    value.id ??
-      value.name ??
-      value.type ??
-      value.kind ??
-      value.contract ??
-      value.contract_id ??
-      value.contractId ??
-      value.protocol ??
-      '',
-  ).trim();
-}
-
-function agentTransactionContractsFromPayload(
-  payload: unknown,
-): AgentTransactionContractsResult {
-  const root = asRecord(payload);
-  const manifest = asRecord(root.manifest);
-  const rawContracts =
-    arrayOrRecordValues(root.transaction_contracts ?? root.transactionContracts) ??
-    arrayOrRecordValues(root.contracts) ??
-    arrayOrRecordValues(root.items) ??
-    arrayOrRecordValues(manifest.transaction_contracts ?? manifest.transactionContracts) ??
-    arrayOrRecordValues(manifest.contracts) ??
-    [];
-  const protocol = String(
-    root.protocol ??
-      root.transaction_contract_protocol ??
-      root.transactionContractProtocol ??
-      root.profile_transaction_contract_protocol ??
-      root.profileTransactionContractProtocol ??
-      manifest.protocol ??
-      '',
-  );
-  return {
-    protocol,
-    contracts: rawContracts
-      .map(agentTransactionContractFromPayload)
-      .filter((item): item is AgentTransactionContractSummary => item != null),
-    raw: root,
-  };
-}
-
-function agentTransactionContractFromPayload(
-  payload: unknown,
-): AgentTransactionContractSummary | null {
-  const item =
-    typeof payload === 'string'
-      ? { id: payload }
-      : asRecord(payload);
-  const id = transactionContractId(item);
-  if (!id) {
-    return null;
-  }
-  return {
-    id,
-    label: String(
-      item.label ?? item.display_name ?? item.displayName ?? item.title ?? id,
-    ),
+    name: String(item.label ?? item.display_name ?? item.displayName ?? item.name ?? id),
     description: String(item.description ?? item.summary ?? ''),
-    protocol: optionalString(item.protocol),
+    enabled: item.enabled !== false,
+    transport,
+    ...(command ? { command } : {}),
+    args: stringList(item.args ?? item.arguments ?? asRecord(item.stdio).args),
+    cwd: optionalString(item.cwd ?? item.working_dir ?? item.workingDir),
+    ...(env ? { env } : {}),
+    ...(urlValue ? { url: urlValue } : {}),
+    ...(headers ? { headers } : {}),
+    timeoutSeconds: optionalNumber(item.timeout_seconds ?? item.timeoutSeconds),
+    toolCount: optionalNumber(
+      item.tool_count ?? item.toolCount ?? asRecord(item.tools).count,
+    ),
+    status: optionalString(item.status ?? item.state),
+    lastError: optionalString(item.last_error ?? item.lastError ?? item.error),
     raw: item,
   };
 }
 
-function arrayOrRecordValues(value: unknown): unknown[] | null {
-  if (Array.isArray(value)) {
-    return value;
-  }
-  if (value && typeof value === 'object') {
-    return Object.entries(value as Record<string, unknown>).map(([key, item]) => {
-      if (item && typeof item === 'object' && !Array.isArray(item)) {
-        return { id: key, ...asRecord(item) };
-      }
-      return { id: key, value: item };
-    });
-  }
-  return null;
-}
-
-function agentConfigPackageValidationFromPayload(
+function mcpServerValidationFromPayload(
   payload: unknown,
-): AgentConfigPackageValidationResult {
+): McpServerValidationResult {
   const root = asRecord(payload);
   const messages = [
-    ...validationMessagesFromPayload(root.errors, 'error'),
-    ...validationMessagesFromPayload(root.warnings, 'warning'),
-    ...validationMessagesFromPayload(root.messages, 'info'),
+    ...mcpValidationMessagesFromPayload(root.errors, 'error'),
+    ...mcpValidationMessagesFromPayload(root.warnings, 'warning'),
+    ...mcpValidationMessagesFromPayload(root.messages, 'info'),
   ];
+  const lastError = optionalString(root.last_error ?? root.lastError ?? root.error);
+  if (
+    lastError &&
+    !messages.some((item) => item.severity === 'error' && item.message === lastError)
+  ) {
+    messages.push({ path: '', message: lastError, severity: 'error' });
+  }
   const ok = typeof root.ok === 'boolean'
     ? root.ok
     : typeof root.valid === 'boolean'
@@ -754,16 +698,17 @@ function agentConfigPackageValidationFromPayload(
       : !messages.some((item) => item.severity === 'error');
   return {
     ok,
-    packageId: optionalString(root.package_id ?? root.packageId ?? root.id),
+    serverId: optionalString(root.server_id ?? root.serverId ?? root.id),
+    tools: stringList(root.tools ?? root.tool_names ?? root.toolNames),
     messages,
     raw: root,
   };
 }
 
-function validationMessagesFromPayload(
+function mcpValidationMessagesFromPayload(
   payload: unknown,
-  fallbackSeverity: AgentConfigPackageValidationMessage['severity'],
-): AgentConfigPackageValidationMessage[] {
+  fallbackSeverity: McpValidationMessage['severity'],
+): McpValidationMessage[] {
   if (!Array.isArray(payload)) {
     return [];
   }
@@ -782,6 +727,34 @@ function validationMessagesFromPayload(
           : fallbackSeverity,
     };
   });
+}
+
+function normalizeMcpTransport(value: unknown): McpTransport {
+  const text = String(value ?? '').trim().toLowerCase().replace(/-/g, '_');
+  if (text === 'sse') {
+    return 'sse';
+  }
+  if (text === 'streamable_http' || text === 'streamablehttp') {
+    return 'streamable_http';
+  }
+  if (text === 'http' || text === 'https') {
+    return 'http';
+  }
+  return 'stdio';
+}
+
+function stringRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const record: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = String(key ?? '').trim();
+    if (normalized) {
+      record[normalized] = String(raw ?? '');
+    }
+  }
+  return Object.keys(record).length > 0 ? record : undefined;
 }
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
@@ -814,11 +787,6 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
     }
   }
   return normalizeConversationList(rawItems);
-}
-
-export async function fetchRuntimeProfiles(): Promise<RuntimeProfileSummary[]> {
-  const payload = await readJson<unknown>(url('/v1/runtime-profiles'));
-  return runtimeProfilesFromPayload(payload);
 }
 
 export async function fetchMessages(
@@ -858,13 +826,11 @@ export async function createConversation({
   projectDir,
   sessionId,
   metadata,
-  agentProfile,
 }: {
   title?: string;
   projectDir?: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;
-  agentProfile?: string;
 } = {}): Promise<ConversationSummary> {
   const endpoint = url('/v1/sessions');
   const payload = await readJson<Record<string, unknown>>(endpoint, {
@@ -873,7 +839,6 @@ export async function createConversation({
       title,
       ...(sessionId?.trim() ? { session_id: sessionId.trim() } : {}),
       ...(projectDir?.trim() ? { project_dir: projectDir.trim() } : {}),
-      ...(agentProfile?.trim() ? { agent_profile: agentProfile.trim() } : {}),
       ...(metadata ? { metadata } : {}),
     }),
   });
@@ -885,13 +850,11 @@ export async function updateConversation({
   title,
   projectDir,
   metadata,
-  agentProfile,
 }: {
   sessionId: string;
   title?: string;
   projectDir?: string | null;
   metadata?: Record<string, unknown>;
-  agentProfile?: string;
 }): Promise<ConversationSummary> {
   const normalized = sessionId.trim();
   if (!normalized) {
@@ -904,7 +867,6 @@ export async function updateConversation({
       body: JSON.stringify({
         ...(title != null ? { title } : {}),
         ...(projectDir !== undefined ? { project_dir: projectDir } : {}),
-        ...(agentProfile?.trim() ? { agent_profile: agentProfile.trim() } : {}),
         ...(metadata ? { metadata } : {}),
       }),
     },
@@ -1150,6 +1112,51 @@ export async function fetchSessionScene({
     ),
   );
   return sceneRecordFromPayload(payload, normalizedSessionId);
+}
+
+export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error('Team Flow session_id 为空');
+  }
+  const payload = await readJson<unknown>(
+    url(`/v1/team-flows/${encodeURIComponent(normalized)}`),
+  );
+  return teamFlowStateFromPayload(payload, normalized);
+}
+
+export async function fetchTeamFlowGraph(sessionId: string): Promise<TeamFlowGraph> {
+  const normalized = sessionId.trim();
+  if (!normalized) {
+    throw new Error('Team Flow session_id 为空');
+  }
+  const payload = await readJson<unknown>(
+    url(`/v1/team-flows/${encodeURIComponent(normalized)}/graph`),
+  );
+  return teamFlowGraphFromPayload(payload, normalized);
+}
+
+export async function sendTeamFlowAction(
+  request: TeamFlowActionRequest,
+): Promise<TeamFlowState> {
+  const flowId = request.flowId.trim();
+  if (!flowId) {
+    throw new Error('Team Flow id 为空');
+  }
+  const text = request.text?.trim() ?? '';
+  const payload = await readJson<unknown>(
+    url(`/v1/team-flows/${encodeURIComponent(flowId)}/actions`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        action: request.action,
+        ...(text ? { text, instructions: text } : {}),
+        ...(request.values ? { values: request.values } : {}),
+        ...(request.metadata ? { metadata: request.metadata } : {}),
+      }),
+    },
+  );
+  return teamFlowStateFromPayload(payload, flowId);
 }
 
 export async function fetchSubagents(): Promise<SubagentListItem[]> {
@@ -1578,6 +1585,13 @@ export async function sendGuidance(request: SendGuidanceRequest) {
       guidance,
       mode: request.mode,
       stream: true,
+      metadata: {
+        source: 'cardbush_electron',
+        terminal_runtime: normalizeTerminalRuntime(request.terminalRuntime),
+        terminalRuntime: normalizeTerminalRuntime(request.terminalRuntime),
+        command_shell: normalizeTerminalRuntime(request.terminalRuntime),
+        commandShell: normalizeTerminalRuntime(request.terminalRuntime),
+      },
     },
     request,
   });
@@ -1594,14 +1608,17 @@ async function streamEndpoint({
   body: Record<string, unknown>;
   request: Pick<
     ChatStreamRequest,
+    | 'sessionId'
     | 'signal'
     | 'onStart'
     | 'onDelta'
     | 'onAssistantRevision'
     | 'onToolExecution'
+    | 'onTaskPlanUpdate'
     | 'onInteractiveRequest'
     | 'onFinalAssistantText'
     | 'onMessages'
+    | 'onTeamFlowEvent'
   >;
 }) {
   const response = await fetch(endpoint, {
@@ -1686,8 +1703,12 @@ function controlStreamBody(request: ControlStreamRequest) {
   };
   const metadata = body.metadata as Record<string, unknown>;
   applyPermissionModeToBody(body, metadata, request.permissionMode);
-  applyRuntimeProfileToBody(body, metadata, request.agentProfile);
+  applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
   applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
+  applyTeamModeToMetadata(metadata, request.teamModeEnabled);
+  applyOsModeToMetadata(metadata, request.osModeEnabled);
+  applyTerminalRuntimeToMetadata(metadata, request.terminalRuntime);
   applyDisabledToolsToMetadata(metadata, request.disabledTools);
   applyAllowedResourcePathsToMetadata(metadata, request);
   const projectDir = request.projectDir?.trim();
@@ -1709,11 +1730,7 @@ function controlStreamBody(request: ControlStreamRequest) {
     metadata.project_user_prompt = projectUserPrompt;
   }
   const allowedSkills = normalizeSkillNames(request.allowedSkills);
-  if (allowedSkills) {
-    body.allowed_skills = allowedSkills;
-    metadata.allowed_skills = allowedSkills;
-    metadata.skills = allowedSkills;
-  }
+  applyAllowedSkillsToRequest(body, metadata, allowedSkills);
   const config = request.modelConfig;
   if (config) {
     putIfNotEmpty(body, 'model', config.modelName);
@@ -1749,8 +1766,12 @@ function chatStreamBody(request: ChatStreamRequest) {
   };
   const metadata = body.metadata as Record<string, unknown>;
   applyPermissionModeToBody(body, metadata, request.permissionMode);
-  applyRuntimeProfileToBody(body, metadata, request.agentProfile);
+  applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
   applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
+  applyTeamModeToMetadata(metadata, request.teamModeEnabled);
+  applyOsModeToMetadata(metadata, request.osModeEnabled);
+  applyTerminalRuntimeToMetadata(metadata, request.terminalRuntime);
   applyDisabledToolsToMetadata(metadata, request.disabledTools);
   applyAllowedResourcePathsToMetadata(metadata, request);
   const projectDir = request.projectDir?.trim();
@@ -1772,11 +1793,7 @@ function chatStreamBody(request: ChatStreamRequest) {
     metadata.project_user_prompt = projectUserPrompt;
   }
   const allowedSkills = normalizeSkillNames(request.allowedSkills);
-  if (allowedSkills) {
-    body.allowed_skills = allowedSkills;
-    metadata.allowed_skills = allowedSkills;
-    metadata.skills = allowedSkills;
-  }
+  applyAllowedSkillsToRequest(body, metadata, allowedSkills);
   const config = request.modelConfig;
   if (config) {
     putIfNotEmpty(body, 'model', config.modelName);
@@ -1806,6 +1823,23 @@ function normalizePermissionMode(value?: PermissionMode): PermissionMode {
   return 'task_free';
 }
 
+function normalizeReasoningLevel(value?: ReasoningLevel): ReasoningLevel {
+  if (value === 'low' || value === 'high' || value === 'max') {
+    return value;
+  }
+  return 'medium';
+}
+
+function applyReasoningLevelToBody(
+  body: Record<string, unknown>,
+  metadata: Record<string, unknown>,
+  value?: ReasoningLevel,
+) {
+  const normalized = normalizeReasoningLevel(value);
+  body.reasoning_level = normalized;
+  metadata.reasoning_level = normalized;
+}
+
 function applyPermissionModeToBody(
   body: Record<string, unknown>,
   metadata: Record<string, unknown>,
@@ -1824,6 +1858,65 @@ function applyStandardImageInputEnabledToMetadata(
   const enabled = value === true;
   metadata.standard_image_input_enabled = enabled;
   metadata.standardImageInputEnabled = enabled;
+}
+
+function applyBrowserPrivacyModeToMetadata(
+  metadata: Record<string, unknown>,
+  value?: boolean,
+) {
+  if (value !== true) {
+    return;
+  }
+  metadata.browser_privacy_mode = true;
+  metadata.browserPrivacyMode = true;
+  metadata.browser_storage_mode = 'private';
+  metadata.browserStorageMode = 'private';
+}
+
+function applyTeamModeToMetadata(
+  metadata: Record<string, unknown>,
+  value?: boolean,
+) {
+  if (value !== true) {
+    return;
+  }
+  metadata.team_mode_enabled = true;
+  metadata.teamModeEnabled = true;
+  metadata.team_mode = 'agent_flow';
+  metadata.teamMode = 'agent_flow';
+}
+
+function applyOsModeToMetadata(
+  metadata: Record<string, unknown>,
+  value?: boolean,
+) {
+  if (value !== true) {
+    return;
+  }
+  metadata.os_mode_enabled = true;
+  metadata.osModeEnabled = true;
+  metadata.runtime_mode = 'desktop_os';
+  metadata.runtimeMode = 'desktop_os';
+  metadata.workspace_mode = 'desktop';
+  metadata.workspaceMode = 'desktop';
+}
+
+function normalizeTerminalRuntime(value?: TerminalRuntime) {
+  if (value === 'wsl' || value === 'git_bash' || value === 'bash') {
+    return value;
+  }
+  return 'powershell';
+}
+
+function applyTerminalRuntimeToMetadata(
+  metadata: Record<string, unknown>,
+  value?: TerminalRuntime,
+) {
+  const normalized = normalizeTerminalRuntime(value);
+  metadata.terminal_runtime = normalized;
+  metadata.terminalRuntime = normalized;
+  metadata.command_shell = normalized;
+  metadata.commandShell = normalized;
 }
 
 function normalizeSkillNames(values?: string[]) {
@@ -1851,13 +1944,16 @@ function handleStreamEvent(
   emittedAny: boolean,
   request: Pick<
     ChatStreamRequest,
+    | 'sessionId'
     | 'onStart'
     | 'onDelta'
     | 'onToolExecution'
+    | 'onTaskPlanUpdate'
     | 'onInteractiveRequest'
     | 'onFinalAssistantText'
     | 'onMessages'
     | 'onAssistantRevision'
+    | 'onTeamFlowEvent'
   >,
 ): { clearEmitted?: boolean } | undefined {
   const decoded = parseJson(rawData);
@@ -1899,6 +1995,14 @@ function handleStreamEvent(
     return;
   }
 
+  if (eventName === 'execution') {
+    const update = taskPlanUpdateFromExecutionPayload(decoded, request.sessionId);
+    if (update) {
+      request.onTaskPlanUpdate?.(update);
+    }
+    return;
+  }
+
   if (eventName === 'interactive_request') {
     const interaction = pendingInteractionFromPayload(decoded);
     if (interaction) {
@@ -1908,9 +2012,17 @@ function handleStreamEvent(
   }
 
   if (
+    eventName === 'team_layer' ||
+    eventName === 'team_node' ||
+    eventName === 'team_action_required'
+  ) {
+    request.onTeamFlowEvent?.(teamFlowStreamEventFromPayload(eventName, decoded));
+    return;
+  }
+
+  if (
     eventName === 'message' ||
-    eventName === 'assistant_message' ||
-    eventName === 'node_state'
+    eventName === 'assistant_message'
   ) {
     const messages = messagesFromPayload(decoded);
     if (messages.length > 0) {
@@ -2015,23 +2127,12 @@ function conversationFromPayload(item: unknown, index = 0): ConversationSummary 
     };
   }
   const value = asRecord(item);
-  const metadata = asRecord(value.metadata);
   const id = String(value.id ?? value.session_id ?? value.sessionId ?? `session-${index}`);
   return {
     id,
     title: normalizeConversationTitle(value.title ?? value.name, id),
     preview: String(value.preview ?? value.summary ?? value.last_message_preview ?? ''),
     updatedAt: String(value.updated_at ?? value.updatedAt ?? new Date().toISOString()),
-    agentProfile: optionalString(
-      value.agent_profile ??
-        value.agentProfile ??
-        value.runtime_profile ??
-        value.runtimeProfile ??
-        metadata.agent_profile ??
-        metadata.agentProfile ??
-        metadata.runtime_profile ??
-        metadata.runtimeProfile,
-    ),
     projectDir: value.project_dir == null ? undefined : String(value.project_dir),
     metadata: asOptionalRecord(value.metadata),
     workspaceContext: workspaceContextFromPayload(
@@ -2071,59 +2172,343 @@ function isGeneratedConversationTitle(title: string, sessionId: string) {
   );
 }
 
-function runtimeProfilesFromPayload(payload: unknown): RuntimeProfileSummary[] {
-  const value = asRecord(payload);
-  const primary = Array.isArray(payload)
-    ? payload
-    : Array.isArray(value.profiles)
-      ? value.profiles
-      : Array.isArray(value.items)
-        ? value.items
-        : Array.isArray(value.data)
-          ? value.data
-          : [];
-  const custom = Array.isArray(value.custom_profiles)
-    ? value.custom_profiles
-    : Array.isArray(value.customProfiles)
-      ? value.customProfiles
-      : [];
-  return [...primary, ...custom]
-    .map(runtimeProfileFromPayload)
-    .filter((item): item is RuntimeProfileSummary => item != null);
+function teamFlowStateFromPayload(
+  payload: unknown,
+  fallbackId = '',
+): TeamFlowState {
+  const root = asRecord(payload);
+  const flow = asRecord(
+    root.flow ??
+      root.team_flow ??
+      root.teamFlow ??
+      root.state ??
+      root.snapshot ??
+      payload,
+  );
+  const sessionId = String(
+    flow.session_id ??
+      flow.sessionId ??
+      root.session_id ??
+      root.sessionId ??
+      fallbackId,
+  ).trim();
+  const flowId = String(
+    flow.team_flow_id ??
+      flow.teamFlowId ??
+      flow.flow_id ??
+      flow.flowId ??
+      flow.id ??
+      root.team_flow_id ??
+      root.teamFlowId ??
+      root.flow_id ??
+      root.flowId ??
+      fallbackId,
+  ).trim();
+  const currentLayer = asRecord(flow.current_layer ?? flow.currentLayer);
+  const currentLayerId = optionalString(
+    flow.current_layer_id ??
+      flow.currentLayerId ??
+      currentLayer.id ??
+      currentLayer.layer_id ??
+      currentLayer.layerId,
+  );
+  const currentLayerIndex = optionalNumber(
+    flow.current_layer_index ??
+      flow.currentLayerIndex ??
+      currentLayer.index ??
+      currentLayer.layer_index ??
+      currentLayer.layerIndex,
+  );
+  const rawLayers = arrayFrom(
+    flow.layers ?? root.layers ?? flow.layer_list ?? flow.layerList,
+  );
+  const layers = rawLayers.map((item, index) => teamFlowLayerFromPayload(item, index));
+  if (Object.keys(currentLayer).length > 0) {
+    const normalizedCurrent = teamFlowLayerFromPayload(
+      {
+        ...currentLayer,
+        id: currentLayerId ?? currentLayer.id,
+        index: currentLayerIndex ?? currentLayer.index,
+      },
+      layers.length,
+    );
+    if (!layers.some((item) => item.id === normalizedCurrent.id)) {
+      layers.push(normalizedCurrent);
+    }
+  }
+  const directNodes = arrayFrom(flow.nodes ?? root.nodes).map((item, index) =>
+    teamFlowNodeFromPayload(item, index),
+  );
+  const layerNodes = layers.flatMap((layer) => layer.nodes);
+  const nodes = mergeTeamFlowNodes([...directNodes, ...layerNodes]);
+  const actionOptions = teamFlowActionOptionList(
+    flow.action_options ??
+      flow.actionOptions ??
+      root.action_options ??
+      root.actionOptions,
+  );
+  const suggestedActions =
+    actionOptions.length > 0
+      ? actionOptions.map((option) => option.action)
+      : teamFlowActionList(
+          flow.suggested_actions ??
+            flow.suggestedActions ??
+            flow.actions ??
+            root.suggested_actions ??
+            root.suggestedActions ??
+            root.actions,
+        );
+  return {
+    id: flowId || sessionId || fallbackId,
+    flowId: flowId || fallbackId,
+    sessionId,
+    status: String(flow.status ?? root.status ?? ''),
+    currentLayerId,
+    currentLayerIndex,
+    layers,
+    nodes,
+    suggestedActions,
+    actionOptions:
+      actionOptions.length > 0
+        ? actionOptions
+        : suggestedActions.map(teamFlowActionOptionFromAction),
+    raw: root,
+  };
 }
 
-function runtimeProfileFromPayload(payload: unknown): RuntimeProfileSummary | null {
-  const value = asRecord(payload);
-  const id = String(value.id ?? value.name ?? value.profile ?? '').trim();
-  if (!id) {
-    return null;
-  }
+function teamFlowGraphFromPayload(
+  payload: unknown,
+  fallbackSessionId = '',
+): TeamFlowGraph {
+  const root = asRecord(payload);
+  const flow = teamFlowStateFromPayload(
+    root.flow ?? root.team_flow ?? root.teamFlow ?? root.state ?? payload,
+    fallbackSessionId,
+  );
+  const nodes = mergeTeamFlowNodes([
+    ...arrayFrom(root.nodes).map((item, index) => teamFlowNodeFromPayload(item, index)),
+    ...flow.nodes,
+  ]);
+  const edges = arrayFrom(root.edges ?? root.links).map((item, index) =>
+    teamFlowEdgeFromPayload(item, index),
+  );
+  return {
+    flow,
+    nodes,
+    edges,
+    raw: root,
+  };
+}
+
+function teamFlowLayerFromPayload(payload: unknown, index = 0): TeamFlowLayer {
+  const item = asRecord(payload);
+  const layerIndex = optionalNumber(
+    item.index ?? item.layer_index ?? item.layerIndex ?? item.order,
+  );
+  const id = String(
+    item.id ??
+      item.layer_id ??
+      item.layerId ??
+      (layerIndex != null ? `layer-${layerIndex}` : `layer-${index + 1}`),
+  ).trim();
+  const nodes = arrayFrom(item.nodes ?? item.scene_agents ?? item.sceneAgents).map(
+    (node, nodeIndex) =>
+      teamFlowNodeFromPayload(
+        {
+          ...asRecord(node),
+          layer_id: asRecord(node).layer_id ?? asRecord(node).layerId ?? id,
+          layer_index:
+            asRecord(node).layer_index ?? asRecord(node).layerIndex ?? layerIndex,
+        },
+        nodeIndex,
+      ),
+  );
   return {
     id,
-    label: String(value.label ?? value.display_name ?? value.displayName ?? id),
-    description: String(value.description ?? value.summary ?? ''),
-    defaultLane: optionalString(value.default_lane ?? value.defaultLane),
-    phases: stringList(value.phases),
-    allowedLanes: stringList(value.allowed_lanes ?? value.allowedLanes),
-    hookSet: optionalString(value.hook_set ?? value.hookSet),
-    toolPolicy: asOptionalRecord(value.tool_policy ?? value.toolPolicy),
-    verificationPolicy: asOptionalRecord(
-      value.verification_policy ?? value.verificationPolicy,
+    index: layerIndex,
+    title: String(
+      item.title ??
+        item.name ??
+        item.label ??
+        (layerIndex != null ? `Layer ${layerIndex}` : `Layer ${index + 1}`),
     ),
-    finalResponseContract: asOptionalRecord(
-      value.final_response_contract ?? value.finalResponseContract,
+    goal: String(item.goal ?? item.objective ?? item.target ?? ''),
+    summary: String(item.summary ?? item.description ?? item.message ?? ''),
+    status: String(item.status ?? item.state ?? ''),
+    nodes,
+    suggestedActions: teamFlowActionList(
+      item.suggested_actions ?? item.suggestedActions ?? item.actions,
     ),
-    transactionContract: asOptionalRecord(
-      value.transaction_contract ?? value.transactionContract,
-    ),
-    raw: value,
+    actionOptions: teamFlowActionOptionList(item.action_options ?? item.actionOptions),
+    raw: item,
   };
+}
+
+function teamFlowNodeFromPayload(payload: unknown, index = 0): TeamFlowNode {
+  const item = asRecord(payload);
+  const id = String(
+    item.id ??
+      item.node_id ??
+      item.nodeId ??
+      item.name ??
+      item.title ??
+      `node-${index + 1}`,
+  ).trim();
+  return {
+    id,
+    layerId: optionalString(item.layer_id ?? item.layerId),
+    layerIndex: optionalNumber(item.layer_index ?? item.layerIndex),
+    title: String(item.title ?? item.name ?? item.label ?? id),
+    summary: String(item.summary ?? item.description ?? item.goal ?? item.objective ?? ''),
+    status: String(item.status ?? item.state ?? ''),
+    kind: optionalString(item.kind ?? item.type),
+    profileId: optionalString(item.profile_id ?? item.profileId ?? item.profile),
+    parentIds: stringList(
+      item.parent_ids ?? item.parentIds ?? item.parents ?? item.dependencies,
+    ),
+    tools: stringList(item.tools ?? item.tool_names ?? item.toolNames),
+    validation: optionalString(
+      item.validation ?? item.validation_contract ?? item.validationContract,
+    ),
+    raw: item,
+  };
+}
+
+function teamFlowEdgeFromPayload(payload: unknown, index = 0): TeamFlowEdge {
+  const item = asRecord(payload);
+  const source = String(item.source ?? item.from ?? item.parent ?? '').trim();
+  const target = String(item.target ?? item.to ?? item.child ?? '').trim();
+  return {
+    id: String(item.id ?? `${source || 'source'}-${target || 'target'}-${index}`),
+    source,
+    target,
+    label: optionalString(item.label ?? item.title),
+    raw: item,
+  };
+}
+
+function teamFlowStreamEventFromPayload(
+  type: TeamFlowStreamEvent['type'],
+  payload: unknown,
+): TeamFlowStreamEvent {
+  const root = asRecord(payload);
+  const layerPayload = root.layer ?? root.current_layer ?? root.currentLayer;
+  const nodePayload = root.node ?? root.team_node ?? root.teamNode;
+  const layer =
+    layerPayload != null
+      ? teamFlowLayerFromPayload(layerPayload)
+      : type === 'team_layer'
+        ? teamFlowLayerFromPayload(root)
+        : undefined;
+  const node =
+    nodePayload != null
+      ? teamFlowNodeFromPayload(nodePayload)
+      : type === 'team_node'
+        ? teamFlowNodeFromPayload(root)
+        : undefined;
+  return {
+    type,
+    flowId: optionalString(
+      root.team_flow_id ?? root.teamFlowId ?? root.flow_id ?? root.flowId,
+    ),
+    sessionId: optionalString(root.session_id ?? root.sessionId),
+    status: optionalString(root.status ?? root.state),
+    currentLayerId: optionalString(
+      root.current_layer_id ??
+        root.currentLayerId ??
+        layer?.id ??
+        node?.layerId,
+    ),
+    currentLayerIndex: optionalNumber(
+      root.current_layer_index ??
+        root.currentLayerIndex ??
+        layer?.index ??
+        node?.layerIndex,
+    ),
+    layer,
+    node,
+    suggestedActions:
+      teamFlowActionOptionList(root.action_options ?? root.actionOptions).length > 0
+        ? teamFlowActionOptionList(root.action_options ?? root.actionOptions).map(
+            (option) => option.action,
+          )
+        : teamFlowActionList(root.suggested_actions ?? root.suggestedActions ?? root.actions),
+    actionOptions: teamFlowActionOptionList(
+      root.action_options ?? root.actionOptions,
+    ),
+    raw: root,
+  };
+}
+
+function teamFlowActionList(value: unknown): TeamFlowActionType[] {
+  return stringList(value).filter(Boolean);
+}
+
+function teamFlowActionOptionList(value: unknown): TeamFlowActionOption[] {
+  return arrayFrom(value)
+    .map((item, index) => teamFlowActionOptionFromPayload(item, index))
+    .filter((item): item is TeamFlowActionOption => Boolean(item?.action));
+}
+
+function teamFlowActionOptionFromPayload(
+  payload: unknown,
+  index = 0,
+): TeamFlowActionOption | null {
+  if (typeof payload === 'string') {
+    return teamFlowActionOptionFromAction(payload);
+  }
+  const item = asRecord(payload);
+  const action = String(item.action ?? item.id ?? item.name ?? '').trim();
+  if (!action) {
+    return null;
+  }
+  const id = String(item.id ?? action ?? `action-${index + 1}`).trim();
+  return {
+    id: id || action,
+    action,
+    label: optionalString(item.label ?? item.title ?? item.text),
+    labelKey: optionalString(item.label_key ?? item.labelKey),
+    control: optionalString(item.control ?? item.preferred_control ?? item.preferredControl),
+    description: optionalString(item.description ?? item.summary),
+    raw: item,
+  };
+}
+
+function teamFlowActionOptionFromAction(
+  action: TeamFlowActionType,
+): TeamFlowActionOption {
+  return {
+    id: action,
+    action,
+    raw: { action },
+  };
+}
+
+function mergeTeamFlowNodes(nodes: TeamFlowNode[]) {
+  const byId = new Map<string, TeamFlowNode>();
+  for (const node of nodes) {
+    if (!node.id) {
+      continue;
+    }
+    byId.set(node.id, { ...(byId.get(node.id) ?? node), ...node });
+  }
+  return Array.from(byId.values());
+}
+
+function arrayFrom(value: unknown) {
+  return Array.isArray(value) ? value : [];
 }
 
 function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
   const root = asRecord(payload);
   const features = asRecord(root.features ?? root.capabilities ?? root);
   const endpoints = asRecord(root.endpoints);
+  const terminalRuntime = asRecord(
+    root.terminal_runtime ?? root.terminalRuntime,
+  );
+  const reasoningLevel = asRecord(
+    root.reasoning_level ?? root.reasoningLevel,
+  );
   const standardImageInputTool = asRecord(
     root.standard_image_input_tool ??
       root.standardImageInputTool ??
@@ -2193,20 +2578,148 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     localMusicLibrary: capabilityBoolean(features, endpoints, 'localMusicLibrary', [
       'local_music_library',
     ]),
-    agentConfigPackages: capabilityBoolean(features, endpoints, 'agentConfigPackages', [
-      'agent_config_packages',
+    mcpServers: capabilityBoolean(features, endpoints, 'mcpServers', [
+      'mcp_servers',
+      'mcp_tool_loading',
+      'mcp_tools',
+      'mcp',
     ]),
-    agentConfigPackageTransactionContracts: capabilityBoolean(
+    subagents: capabilityBoolean(features, endpoints, 'subagents'),
+    subagentFrontendConfiguration: capabilityBoolean(
       features,
       endpoints,
-      'agentConfigPackageTransactionContracts',
-      [
-        'agent_config_package_transaction_contracts',
-        'agent_config_packages_transaction_contracts',
-        'transaction_contracts',
-      ],
+      'subagentFrontendConfiguration',
+      ['subagent_frontend_configuration'],
     ),
+    subagentLocalDefault: capabilityBoolean(
+      features,
+      endpoints,
+      'subagentLocalDefault',
+      ['subagent_local_default'],
+    ),
+    remoteAgentsViaMcp: capabilityBoolean(features, endpoints, 'remoteAgentsViaMcp', [
+      'remote_agents_via_mcp',
+    ]),
+    teamMode: capabilityBoolean(features, endpoints, 'teamMode', ['team_mode']),
+    teamAgentFlow: capabilityBoolean(features, endpoints, 'teamAgentFlow', [
+      'team_agent_flow',
+    ]),
+    teamFlowState: capabilityBoolean(features, endpoints, 'teamFlowState', [
+      'team_flow_state',
+    ]),
+    teamFlowActions: capabilityBoolean(features, endpoints, 'teamFlowActions', [
+      'team_flow_actions',
+    ]),
+    teamFlowEvents: capabilityBoolean(features, endpoints, 'teamFlowEvents', [
+      'team_flow_events',
+    ]),
+    browserCookiePersistence: capabilityBoolean(
+      features,
+      endpoints,
+      'browserCookiePersistence',
+      ['browser_cookie_persistence'],
+    ),
+    browserPrivacyMode: capabilityBoolean(features, endpoints, 'browserPrivacyMode', [
+      'browser_privacy_mode',
+    ]),
+    browserApiCandidates: capabilityBoolean(features, endpoints, 'browserApiCandidates', [
+      'browser_api_candidates',
+    ]),
+    browserContextApiRequest: capabilityBoolean(
+      features,
+      endpoints,
+      'browserContextApiRequest',
+      ['browser_context_api_request'],
+    ),
+    osMode: capabilityBoolean(features, endpoints, 'osMode', ['os_mode']),
+    desktopAutomation: capabilityBoolean(features, endpoints, 'desktopAutomation', [
+      'desktop_automation',
+    ]),
+    taskPlan: capabilityBoolean(features, endpoints, 'taskPlan', ['task_plan']),
+    reasoningLevelSelection: capabilityBoolean(
+      features,
+      endpoints,
+      'reasoningLevelSelection',
+      ['reasoning_level_selection'],
+    ),
+    reasoningLevels: reasoningLevelValues(
+      reasoningLevel.available ?? reasoningLevel.levels,
+    ),
+    defaultReasoningLevel: reasoningLevelValue(
+      reasoningLevel.default,
+      defaultBackendCapabilities.defaultReasoningLevel,
+    ) ?? defaultBackendCapabilities.defaultReasoningLevel,
+    terminalRuntimeSelection: capabilityBoolean(
+      features,
+      endpoints,
+      'terminalRuntimeSelection',
+      ['terminal_runtime_selection'],
+    ),
+    terminalRuntimes: terminalRuntimeValues(terminalRuntime.available),
+    defaultTerminalRuntime: terminalRuntimeValue(
+      terminalRuntime.default,
+      defaultBackendCapabilities.defaultTerminalRuntime,
+    ) ?? defaultBackendCapabilities.defaultTerminalRuntime,
   };
+}
+
+function reasoningLevelValues(value: unknown): ReasoningLevel[] {
+  if (!Array.isArray(value)) {
+    return defaultBackendCapabilities.reasoningLevels;
+  }
+  const levels = value
+    .map((item) => reasoningLevelValue(item))
+    .filter((item): item is ReasoningLevel => item != null)
+    .filter((item, index, all) => all.indexOf(item) === index);
+  return levels.length > 0 ? levels : defaultBackendCapabilities.reasoningLevels;
+}
+
+function reasoningLevelValue(
+  value: unknown,
+  fallback?: ReasoningLevel,
+): ReasoningLevel | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (
+    normalized === 'low' ||
+    normalized === 'medium' ||
+    normalized === 'high' ||
+    normalized === 'max'
+  ) {
+    return normalized;
+  }
+  return fallback;
+}
+
+function terminalRuntimeValues(value: unknown): TerminalRuntime[] {
+  if (!Array.isArray(value)) {
+    return defaultBackendCapabilities.terminalRuntimes;
+  }
+  const runtimes = value
+    .map((item) => terminalRuntimeValue(item))
+    .filter((item): item is TerminalRuntime => item != null)
+    .filter((item, index, all) => all.indexOf(item) === index);
+  return runtimes.length > 0
+    ? runtimes
+    : defaultBackendCapabilities.terminalRuntimes;
+}
+
+function terminalRuntimeValue(
+  value: unknown,
+  fallback?: TerminalRuntime,
+): TerminalRuntime | undefined {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_');
+  if (
+    normalized === 'powershell' ||
+    normalized === 'wsl' ||
+    normalized === 'git_bash' ||
+    normalized === 'bash'
+  ) {
+    return normalized;
+  }
+  return fallback;
 }
 
 function standardImageInputToolAvailable(
@@ -2248,21 +2761,6 @@ function capabilityBoolean(
     }
   }
   return defaultBackendCapabilities[key];
-}
-
-function applyRuntimeProfileToBody(
-  body: Record<string, unknown>,
-  metadata: Record<string, unknown>,
-  value?: string,
-) {
-  const normalized = value?.trim();
-  if (!normalized) {
-    return;
-  }
-  body.agent_profile = normalized;
-  body.runtime_profile = normalized;
-  metadata.agent_profile = normalized;
-  metadata.runtime_profile = normalized;
 }
 
 function isInternalConversationPayload(item: unknown) {
@@ -2706,6 +3204,10 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   const content = normalizeContent(value.content);
   const turnId = optionalString(value.turn_id ?? value.turnId);
   const role = normalizeRole(value.role);
+  const metadata = asOptionalRecord(value.metadata);
+  const conversationId = optionalString(
+    value.conversation_id ?? value.session_id ?? value.conversationId ?? value.sessionId,
+  );
   const id = String(
     value.id ??
       value.message_id ??
@@ -2723,9 +3225,7 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     messageId: optionalString(value.message_id ?? value.messageId),
     role,
     content,
-    conversationId: optionalString(
-      value.conversation_id ?? value.session_id ?? value.conversationId ?? value.sessionId,
-    ),
+    conversationId,
     turnId,
     createdAt: optionalString(value.created_at ?? value.createdAt),
     status: optionalString(value.status ?? asRecord(value.metadata).status),
@@ -2743,7 +3243,8 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     toolExecutions: toolExecutionsFromPayload(
       value.toolExecutions ?? value.tool_executions,
     ),
-    metadata: asOptionalRecord(value.metadata),
+    taskPlan: taskPlanFromPayload(metadata?.active_task_plan, conversationId) ?? undefined,
+    metadata,
   };
 }
 

@@ -9,12 +9,13 @@ import {
   fetchConversations,
   fetchMessages,
   fetchPendingInteraction,
-  fetchRuntimeProfiles,
   fetchSkillDetail,
   fetchSkills,
   fetchSessionMessages,
+  fetchTeamFlow,
   replyInteraction,
   sendGuidance,
+  sendTeamFlowAction,
   stopTurn,
   streamChat,
   updateConversation,
@@ -24,14 +25,22 @@ import type {
   ChatMessage,
   ConversationSummary,
   ManagedModelConfig,
-  RuntimeProfileSummary,
   SkillDetail,
   SkillSummary,
   ChatToolExecution,
   PendingInteraction,
   InteractionReplyAnswer,
   PermissionMode,
+  ReasoningLevel,
   ReferencePlanMode,
+  TerminalRuntime,
+  TeamFlowActionType,
+  TeamFlowActionOption,
+  TeamFlowLayer,
+  TeamFlowNode,
+  TeamFlowState,
+  TeamFlowStreamEvent,
+  TaskPlanStreamUpdate,
 } from '../types';
 import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
@@ -51,6 +60,13 @@ export function useCardbushChat(
     disabledSkillNames?: Set<string>;
     disabledToolNames?: Set<string>;
     standardImageInputEnabled?: boolean;
+    browserPrivacyMode?: boolean;
+    teamModeEnabled?: boolean;
+    osModeEnabled?: boolean;
+    terminalRuntime?: TerminalRuntime;
+    reasoningLevelSelection?: boolean;
+    reasoningLevels?: ReasoningLevel[];
+    defaultReasoningLevel?: ReasoningLevel;
   } = {},
 ) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -64,6 +80,15 @@ export function useCardbushChat(
   const [runningByConversation, setRunningByConversation] = useState<
     Record<string, { activeTurnId: string }>
   >({});
+  const [teamFlowsByConversation, setTeamFlowsByConversation] = useState<
+    Record<string, TeamFlowState | null>
+  >({});
+  const [teamFlowLoadingByConversation, setTeamFlowLoadingByConversation] = useState<
+    Record<string, boolean>
+  >({});
+  const [teamFlowActionByConversation, setTeamFlowActionByConversation] = useState<
+    Record<string, TeamFlowActionType | ''>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] =
@@ -71,17 +96,17 @@ export function useCardbushChat(
   const [selectedModel, setSelectedModelState] = useState(() =>
     readInitialSelectedModel(availableModels),
   );
-  const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfileSummary[]>(
-    defaultRuntimeProfiles,
-  );
-  const [selectedRuntimeProfile, setSelectedRuntimeProfileState] = useState(
-    readInitialRuntimeProfile,
-  );
   const [referencePlanMode, setReferencePlanModeState] = useState<ReferencePlanMode>(
     readInitialReferencePlanMode,
   );
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>(
     readInitialPermissionMode,
+  );
+  const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() =>
+    readInitialReasoningLevel(
+      requestContext.reasoningLevels,
+      requestContext.defaultReasoningLevel,
+    ),
   );
   const controllersRef = useRef<Record<string, AbortController>>({});
   const activeTurnIdsRef = useRef<Record<string, string>>({});
@@ -187,10 +212,9 @@ export function useCardbushChat(
     async function load() {
       setLoading(true);
       try {
-        const [loadedConversations, loadedSkills, loadedRuntimeProfiles] = await Promise.all([
+        const [loadedConversations, loadedSkills] = await Promise.all([
           fetchConversations(),
           fetchSkills().catch(() => []),
-          fetchRuntimeProfiles().catch(() => defaultRuntimeProfiles),
         ]);
         if (cancelled) {
           return;
@@ -212,7 +236,6 @@ export function useCardbushChat(
           );
         });
         setSkills(loadedSkills);
-        setRuntimeProfiles(mergeRuntimeProfiles(loadedRuntimeProfiles));
         setError(null);
       } catch (caught) {
         if (!cancelled) {
@@ -220,7 +243,6 @@ export function useCardbushChat(
           setActiveConversationId('');
           setMessagesByConversation({});
           setSkills([]);
-          setRuntimeProfiles(defaultRuntimeProfiles);
           setError(errorMessage(caught));
         }
       } finally {
@@ -255,27 +277,6 @@ export function useCardbushChat(
     window.localStorage.setItem('cardbush.selected_model', model);
   }, []);
 
-  const setSelectedRuntimeProfile = useCallback(
-    (profileId: string, conversationId = activeConversationId) => {
-      const normalized = normalizeRuntimeProfileId(profileId);
-      setSelectedRuntimeProfileState(normalized);
-      window.localStorage.setItem('cardbush.runtime_profile', normalized);
-      const targetConversationId = conversationId.trim();
-      if (!targetConversationId) {
-        return;
-      }
-      setConversations((current) =>
-        current.map((item) =>
-          item.id === targetConversationId ? { ...item, agentProfile: normalized } : item,
-        ),
-      );
-      void updateConversation({
-        sessionId: targetConversationId,
-        agentProfile: normalized,
-      }).catch((caught) => setError(errorMessage(caught)));
-    },
-    [activeConversationId],
-  );
 
   const setReferencePlanMode = useCallback((mode: ReferencePlanMode) => {
     const normalized = normalizeReferencePlanMode(mode);
@@ -288,6 +289,26 @@ export function useCardbushChat(
     setPermissionModeState(normalized);
     window.localStorage.setItem('cardbush.permission_mode', normalized);
   }, []);
+
+  const setReasoningLevel = useCallback((level: ReasoningLevel) => {
+    setReasoningLevelState(level);
+    window.localStorage.setItem('cardbush.reasoning_level', level);
+  }, []);
+
+  useEffect(() => {
+    const levels = normalizeReasoningLevels(requestContext.reasoningLevels);
+    setReasoningLevelState((current) => {
+      if (levels.includes(current)) {
+        return current;
+      }
+      const next = normalizeReasoningLevel(
+        requestContext.defaultReasoningLevel,
+        levels,
+      );
+      window.localStorage.setItem('cardbush.reasoning_level', next);
+      return next;
+    });
+  }, [requestContext.defaultReasoningLevel, requestContext.reasoningLevels]);
 
   useEffect(() => {
     if (!activeConversationId || messagesByConversation[activeConversationId]) {
@@ -351,12 +372,19 @@ export function useCardbushChat(
       conversations[0],
     [activeConversationId, conversations],
   );
-  const activeRuntimeProfile =
-    activeConversation?.agentProfile?.trim() || selectedRuntimeProfile;
 
   const activeMessages = activeConversationId
     ? messagesByConversation[activeConversationId] ?? []
     : [];
+  const activeTeamFlow = activeConversationId
+    ? teamFlowsByConversation[activeConversationId] ?? null
+    : null;
+  const activeTeamFlowLoading = activeConversationId
+    ? teamFlowLoadingByConversation[activeConversationId] === true
+    : false;
+  const activeTeamFlowAction = activeConversationId
+    ? teamFlowActionByConversation[activeConversationId] ?? ''
+    : '';
 
   const markSessionRunning = useCallback((sessionId: string, turnId = '') => {
     const normalized = sessionId.trim();
@@ -415,15 +443,65 @@ export function useCardbushChat(
     return loadedSkills;
   }, []);
 
-  const reloadRuntimeProfiles = useCallback(async () => {
-    const loadedRuntimeProfiles = await fetchRuntimeProfiles();
-    const mergedProfiles = mergeRuntimeProfiles(loadedRuntimeProfiles);
-    setRuntimeProfiles(mergedProfiles);
-    return mergedProfiles;
-  }, []);
 
   const loadSkillDetail = useCallback(
     (skillName: string): Promise<SkillDetail> => fetchSkillDetail(skillName),
+    [],
+  );
+
+  const loadTeamFlow = useCallback(
+    async (sessionId = activeConversationId, options?: { silent?: boolean }) => {
+      const normalized = sessionId.trim();
+      if (!normalized || requestContext.teamModeEnabled !== true) {
+        return null;
+      }
+      if (!options?.silent) {
+        setTeamFlowLoadingByConversation((current) => ({
+          ...current,
+          [normalized]: true,
+        }));
+      }
+      try {
+        const flow = await fetchTeamFlow(normalized);
+        setTeamFlowsByConversation((current) => ({
+          ...current,
+          [normalized]: flow,
+        }));
+        return flow;
+      } catch (caught) {
+        if (!isNotFoundLikeError(caught)) {
+          if (!options?.silent) {
+            setError(errorMessage(caught));
+          }
+        }
+        setTeamFlowsByConversation((current) => ({
+          ...current,
+          [normalized]: null,
+        }));
+        return null;
+      } finally {
+        if (!options?.silent) {
+          setTeamFlowLoadingByConversation((current) => ({
+            ...current,
+            [normalized]: false,
+          }));
+        }
+      }
+    },
+    [activeConversationId, requestContext.teamModeEnabled],
+  );
+
+  const mergeTeamFlowStreamEvent = useCallback(
+    (sessionId: string, event: TeamFlowStreamEvent) => {
+      const normalized = (event.sessionId ?? sessionId).trim();
+      if (!normalized) {
+        return;
+      }
+      setTeamFlowsByConversation((current) => ({
+        ...current,
+        [normalized]: mergeTeamFlowEvent(current[normalized], event, normalized),
+      }));
+    },
     [],
   );
 
@@ -449,6 +527,7 @@ export function useCardbushChat(
         result.conversation,
         firstUserTitleSource(result.messages, ''),
       );
+      await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
         setError(null);
@@ -464,7 +543,12 @@ export function useCardbushChat(
         setMessagesLoading(false);
       }
     }
-  }, [activeConversationId, reloadConversations, persistAutoConversationTitle]);
+  }, [
+    activeConversationId,
+    loadTeamFlow,
+    reloadConversations,
+    persistAutoConversationTitle,
+  ]);
 
   const createSessionShareLink = useCallback(
     (request: { sessionId: string; platform?: string; expiresSeconds?: number }) =>
@@ -491,6 +575,13 @@ export function useCardbushChat(
     };
   }, [activeConversationId]);
 
+  useEffect(() => {
+    if (requestContext.teamModeEnabled !== true) {
+      return;
+    }
+    void loadTeamFlow(activeConversationId, { silent: true });
+  }, [activeConversationId, loadTeamFlow, requestContext.teamModeEnabled]);
+
   const openConversation = useCallback(
     (conversationId: string) => {
       const normalized = conversationId.trim();
@@ -503,10 +594,7 @@ export function useCardbushChat(
   );
 
   const startConversation = useCallback(async (projectDir?: string, initialTitle?: string) => {
-    const optimistic = {
-      ...localConversation(projectDir, initialTitle),
-      agentProfile: selectedRuntimeProfile,
-    };
+    const optimistic = localConversation(projectDir, initialTitle);
     setConversations((current) => [
       optimistic,
       ...current.filter((item) => item.id !== optimistic.id),
@@ -522,13 +610,11 @@ export function useCardbushChat(
       sessionId: optimistic.id,
       title: optimistic.title,
       projectDir,
-      agentProfile: selectedRuntimeProfile,
     })
       .then((created) => {
         const synced = {
           ...created,
           id: optimistic.id,
-          agentProfile: created.agentProfile ?? selectedRuntimeProfile,
           projectDir: created.projectDir ?? projectDir,
         };
         setConversations((current) =>
@@ -547,7 +633,7 @@ export function useCardbushChat(
       .catch(() => undefined);
 
     return optimistic;
-  }, [selectedRuntimeProfile]);
+  }, []);
 
   const deleteConversation = useCallback((conversationId: string) => {
     setConversations((current) => {
@@ -610,9 +696,10 @@ export function useCardbushChat(
         return;
       }
       const projectDir = conversationProjectRequestDir(conversation);
-      const projectUserPrompt = projectDir
-        ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
-        : '';
+      const projectUserPrompt = mergedRequestContextPrompt(
+        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
+        requestContext.teamModeEnabled === true,
+      );
       if (!selectedModel.trim()) {
         setError('请先在设置中配置模型');
         return;
@@ -658,7 +745,6 @@ export function useCardbushChat(
           userInput: outbound.userInput,
           model: selectedModel,
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
-          agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
           projectDir,
           projectUserPrompt,
           allowedSkills: skills
@@ -666,7 +752,12 @@ export function useCardbushChat(
             .filter((name) => !requestContext.disabledSkillNames?.has(name)),
           referencePlanMode,
           permissionMode,
+          reasoningLevel,
           standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+          browserPrivacyMode: requestContext.browserPrivacyMode === true,
+          teamModeEnabled: requestContext.teamModeEnabled === true,
+          osModeEnabled: requestContext.osModeEnabled === true,
+          terminalRuntime: requestContext.terminalRuntime,
           disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
           images: attachments.images,
           files: attachments.files,
@@ -695,6 +786,11 @@ export function useCardbushChat(
                 appendToolExecution(current, sessionId, assistantId, execution),
               );
             });
+          },
+          onTaskPlanUpdate: (update) => {
+            setMessagesByConversation((current) =>
+              applyTaskPlanUpdate(current, sessionId, assistantId, update),
+            );
           },
           onInteractiveRequest: (interaction) => {
             setPendingInteraction({
@@ -735,10 +831,14 @@ export function useCardbushChat(
               );
             });
           },
+          onTeamFlowEvent: (event) => {
+            mergeTeamFlowStreamEvent(sessionId, event);
+          },
         });
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
         }
+        await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
         const loadedMessages = await fetchMessages(sessionId).catch(() => null);
         if (loadedMessages && loadedMessages.length > 0) {
           setMessagesByConversation((current) => ({
@@ -791,19 +891,24 @@ export function useCardbushChat(
       dequeueMessageForConversation,
       enqueueMessage,
       isSessionSending,
+      loadTeamFlow,
       markSessionRunning,
+      mergeTeamFlowStreamEvent,
       reloadConversations,
       managedModelConfigs,
       messagesByConversation,
       persistAutoConversationTitle,
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
+      requestContext.browserPrivacyMode,
+      requestContext.osModeEnabled,
+      requestContext.teamModeEnabled,
       requestContext.standardImageInputEnabled,
       requestContext.projectContexts,
       referencePlanMode,
       permissionMode,
+      reasoningLevel,
       selectedModel,
-      selectedRuntimeProfile,
       skills,
       startConversation,
     ],
@@ -836,9 +941,11 @@ export function useCardbushChat(
           onDelta: (delta: string) => void;
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
+          onTaskPlanUpdate: (update: TaskPlanStreamUpdate) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
           onFinalAssistantText: (text: string) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
+          onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
         },
       ) => Promise<void>;
     }) => {
@@ -901,6 +1008,11 @@ export function useCardbushChat(
               );
             });
           },
+          onTaskPlanUpdate: (update) => {
+            setMessagesByConversation((current) =>
+              applyTaskPlanUpdate(current, sessionId, tempAssistant.id, update),
+            );
+          },
           onInteractiveRequest: (interaction) => {
             setPendingInteraction({
               ...interaction,
@@ -941,11 +1053,15 @@ export function useCardbushChat(
               );
             });
           },
+          onTeamFlowEvent: (event) => {
+            mergeTeamFlowStreamEvent(sessionId, event);
+          },
         });
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
         }
 
+        await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
         const loadedMessages = await fetchMessages(sessionId).catch(() => finalSnapshot);
         if (loadedMessages && loadedMessages.length > 0) {
           setMessagesByConversation((current) => ({
@@ -974,7 +1090,13 @@ export function useCardbushChat(
         }
       }
     },
-    [clearSessionRunning, markSessionRunning, reloadConversations],
+    [
+      clearSessionRunning,
+      loadTeamFlow,
+      markSessionRunning,
+      mergeTeamFlowStreamEvent,
+      reloadConversations,
+    ],
   );
 
   const regenerateAssistantMessage = useCallback(
@@ -1045,15 +1167,17 @@ export function useCardbushChat(
         role: 'assistant',
         content: '',
         toolExecutions: [],
+        taskPlan: undefined,
         loopHistory: [],
         conversationId,
         createdAt,
       };
       const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
-      const projectUserPrompt = projectDir
-        ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
-        : '';
+      const projectUserPrompt = mergedRequestContextPrompt(
+        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
+        requestContext.teamModeEnabled === true,
+      );
 
       await runControlAssistantStream({
         conversation,
@@ -1073,7 +1197,6 @@ export function useCardbushChat(
             content: sourceUserMessage.content,
             model: selectedModel,
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
-            agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
             projectDir,
             projectUserPrompt,
             allowedSkills: skills
@@ -1081,7 +1204,12 @@ export function useCardbushChat(
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
             permissionMode,
+            reasoningLevel,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+            browserPrivacyMode: requestContext.browserPrivacyMode === true,
+            teamModeEnabled: requestContext.teamModeEnabled === true,
+            osModeEnabled: requestContext.osModeEnabled === true,
+            terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
             signal: controller.signal,
             ...handlers,
@@ -1098,14 +1226,18 @@ export function useCardbushChat(
       messagesByConversation,
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
+      requestContext.browserPrivacyMode,
+      requestContext.osModeEnabled,
+      requestContext.teamModeEnabled,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
+      requestContext.terminalRuntime,
       referencePlanMode,
       permissionMode,
+      reasoningLevel,
       runControlAssistantStream,
       sendMessage,
       selectedModel,
-      selectedRuntimeProfile,
       skills,
     ],
   );
@@ -1189,9 +1321,10 @@ export function useCardbushChat(
         tempAssistant,
       ];
       const projectDir = conversationProjectRequestDir(conversation);
-      const projectUserPrompt = projectDir
-        ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim()
-        : '';
+      const projectUserPrompt = mergedRequestContextPrompt(
+        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
+        requestContext.teamModeEnabled === true,
+      );
 
       await runControlAssistantStream({
         conversation,
@@ -1211,7 +1344,6 @@ export function useCardbushChat(
             content,
             model: selectedModel,
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
-            agentProfile: conversation.agentProfile ?? selectedRuntimeProfile,
             projectDir,
             projectUserPrompt,
             allowedSkills: skills
@@ -1219,7 +1351,12 @@ export function useCardbushChat(
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
             permissionMode,
+            reasoningLevel,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
+            browserPrivacyMode: requestContext.browserPrivacyMode === true,
+            teamModeEnabled: requestContext.teamModeEnabled === true,
+            osModeEnabled: requestContext.osModeEnabled === true,
+            terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
             images: attachments.images,
             files: attachments.files,
@@ -1238,13 +1375,17 @@ export function useCardbushChat(
       messagesByConversation,
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
+      requestContext.browserPrivacyMode,
+      requestContext.osModeEnabled,
+      requestContext.teamModeEnabled,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
+      requestContext.terminalRuntime,
       referencePlanMode,
       permissionMode,
+      reasoningLevel,
       runControlAssistantStream,
       selectedModel,
-      selectedRuntimeProfile,
       skills,
     ],
   );
@@ -1278,6 +1419,7 @@ export function useCardbushChat(
           turnId,
           guidance: text,
           mode,
+          terminalRuntime: requestContext.terminalRuntime,
         });
         setError(null);
       } catch (caught) {
@@ -1304,6 +1446,7 @@ export function useCardbushChat(
       conversations,
       isSessionSending,
       sendMessage,
+      requestContext.terminalRuntime,
     ],
   );
 
@@ -1330,6 +1473,7 @@ export function useCardbushChat(
           turnId: active,
           guidance: text,
           mode,
+          terminalRuntime: requestContext.terminalRuntime,
         });
         removeQueuedMessage(queuedId);
         setError(null);
@@ -1337,7 +1481,49 @@ export function useCardbushChat(
         setError(`引导发送失败: ${errorMessage(caught)}`);
       }
     },
-    [activeConversationId, isSessionSending, removeQueuedMessage],
+    [activeConversationId, isSessionSending, removeQueuedMessage, requestContext.terminalRuntime],
+  );
+
+  const submitTeamFlowAction = useCallback(
+    async (action: TeamFlowActionType, text?: string) => {
+      const sessionId = activeConversationId.trim();
+      const flow = sessionId ? teamFlowsByConversation[sessionId] : null;
+      const flowId = (flow?.flowId || flow?.id || sessionId).trim();
+      if (!sessionId || !flowId || requestContext.teamModeEnabled !== true) {
+        return;
+      }
+      setTeamFlowActionByConversation((current) => ({
+        ...current,
+        [sessionId]: action,
+      }));
+      try {
+        const result = await sendTeamFlowAction({
+          flowId,
+          action,
+          text,
+          metadata: { session_id: sessionId, source: 'cardbush_electron' },
+        });
+        setTeamFlowsByConversation((current) => ({
+          ...current,
+          [sessionId]: result,
+        }));
+        await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
+        setError(null);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      } finally {
+        setTeamFlowActionByConversation((current) => ({
+          ...current,
+          [sessionId]: '',
+        }));
+      }
+    },
+    [
+      activeConversationId,
+      loadTeamFlow,
+      requestContext.teamModeEnabled,
+      teamFlowsByConversation,
+    ],
   );
 
   const replyToInteraction = useCallback(
@@ -1402,6 +1588,9 @@ export function useCardbushChat(
     sending,
     activeTurnId,
     runningByConversation,
+    activeTeamFlow,
+    activeTeamFlowLoading,
+    activeTeamFlowAction,
     queuedMessages: activeQueuedMessages,
     queuedMessageCount: activeQueuedMessages.length,
     queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
@@ -1410,23 +1599,23 @@ export function useCardbushChat(
     notice,
     selectedModel,
     setSelectedModel,
-    selectedRuntimeProfile: activeRuntimeProfile,
-    runtimeProfiles,
-    setSelectedRuntimeProfile,
     referencePlanMode,
     setReferencePlanMode,
     permissionMode,
     setPermissionMode,
+    reasoningLevel,
+    setReasoningLevel,
     openConversation,
     startConversation,
     deleteConversation,
     renameConversation,
     reloadConversations,
     reloadSkills,
-    reloadRuntimeProfiles,
     loadSkillDetail,
     createSessionShareLink,
     refreshActiveSession,
+    loadTeamFlow,
+    submitTeamFlowAction,
     sendMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,
@@ -1449,51 +1638,6 @@ function readInitialSelectedModel(availableModels: string[]) {
   return availableModels[0] ?? '';
 }
 
-const defaultRuntimeProfiles: RuntimeProfileSummary[] = [
-  {
-    id: 'general',
-    label: 'General',
-    description: 'General purpose assistant.',
-    defaultLane: 'general',
-    phases: [],
-    allowedLanes: [],
-    raw: { id: 'general' },
-  },
-  {
-    id: 'code',
-    label: 'Code',
-    description: 'Programming workflow: inspect, edit, verify, final.',
-    defaultLane: 'code',
-    phases: ['inspect', 'edit', 'verify', 'final'],
-    allowedLanes: ['code'],
-    raw: { id: 'code' },
-  },
-  {
-    id: 'code-review',
-    label: 'Code Review',
-    description: 'Read-only review focused on findings and risks.',
-    defaultLane: 'review',
-    phases: ['inspect', 'review', 'final'],
-    allowedLanes: ['review'],
-    raw: { id: 'code-review' },
-  },
-  {
-    id: 'research',
-    label: 'Research',
-    description: 'Evidence-first research workflow.',
-    defaultLane: 'research',
-    phases: ['collect', 'compare', 'synthesize', 'final'],
-    allowedLanes: ['research'],
-    raw: { id: 'research' },
-  },
-];
-
-function readInitialRuntimeProfile() {
-  return normalizeRuntimeProfileId(
-    window.localStorage.getItem('cardbush.runtime_profile') ?? 'general',
-  );
-}
-
 function readInitialReferencePlanMode(): ReferencePlanMode {
   return normalizeReferencePlanMode(
     window.localStorage.getItem('cardbush.reference_plan_mode') ?? 'off',
@@ -1503,6 +1647,17 @@ function readInitialReferencePlanMode(): ReferencePlanMode {
 function readInitialPermissionMode(): PermissionMode {
   return normalizePermissionMode(
     window.localStorage.getItem('cardbush.permission_mode') ?? 'task_free',
+  );
+}
+
+function readInitialReasoningLevel(
+  available?: ReasoningLevel[],
+  fallback?: ReasoningLevel,
+): ReasoningLevel {
+  const levels = normalizeReasoningLevels(available);
+  return normalizeReasoningLevel(
+    window.localStorage.getItem('cardbush.reasoning_level') ?? fallback,
+    levels,
   );
 }
 
@@ -1518,9 +1673,22 @@ function normalizePermissionMode(value: string): PermissionMode {
   return 'task_free';
 }
 
-function normalizeRuntimeProfileId(value: string) {
-  const normalized = value.trim();
-  return normalized || 'general';
+function normalizeReasoningLevels(values?: ReasoningLevel[]): ReasoningLevel[] {
+  const normalized = (values ?? [])
+    .filter((item) => item === 'low' || item === 'medium' || item === 'high' || item === 'max')
+    .filter((item, index, all) => all.indexOf(item) === index);
+  return normalized.length > 0 ? normalized : ['low', 'medium', 'max'];
+}
+
+function normalizeReasoningLevel(
+  value: unknown,
+  available: ReasoningLevel[],
+): ReasoningLevel {
+  const normalized = String(value ?? '').trim().toLowerCase() as ReasoningLevel;
+  if (available.includes(normalized)) {
+    return normalized;
+  }
+  return available.includes('medium') ? 'medium' : available[0] ?? 'medium';
 }
 
 function normalizeDisabledToolNames(values?: Set<string>) {
@@ -1532,19 +1700,6 @@ function normalizeDisabledToolNames(values?: Set<string>) {
     .filter(Boolean)
     .filter((item, index, all) => all.indexOf(item) === index);
   return normalized.length > 0 ? normalized : undefined;
-}
-
-function mergeRuntimeProfiles(profiles: RuntimeProfileSummary[]) {
-  const merged = new Map<string, RuntimeProfileSummary>();
-  for (const profile of defaultRuntimeProfiles) {
-    merged.set(profile.id, profile);
-  }
-  for (const profile of profiles) {
-    if (profile.id.trim()) {
-      merged.set(profile.id, profile);
-    }
-  }
-  return [...merged.values()];
 }
 
 function queuedMessageConversationId(item: QueuedChatMessage) {
@@ -1563,6 +1718,24 @@ function modelConfigFor(configs: ManagedModelConfig[], selectedModel: string) {
 
 function projectKey(projectDir: string) {
   return projectDir.trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function mergedRequestContextPrompt(projectPrompt: string | undefined, teamModeEnabled: boolean) {
+  return [projectPrompt?.trim() ?? '', teamModeEnabled ? teamModeContextPrompt() : '']
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function teamModeContextPrompt() {
+  return [
+    'Team mode / Agent Flow instructions:',
+    '- Treat the user as the Boss who makes final decisions; do not assume human members will join execution.',
+    '- Design a progressive Agent Flow before execution: mission boundary, scene profiles, tools, validation, and stop/continue criteria.',
+    '- Prefer compact conversational output with one current layer at a time. Do not dump the full DAG unless the Boss asks for it.',
+    '- When proposing a layer, include concise cards for each scene Agent: name, responsibility, profile/tool needs, and validation evidence.',
+    '- Ask the Boss to choose: revise this layer, continue to the next layer, or enter execution.',
+    '- If the Boss asks to execute, run the task using available tools and keep the Agent Flow decisions auditable.',
+  ].join('\n');
 }
 
 function conversationProjectRequestDir(conversation: ConversationSummary) {
@@ -2220,6 +2393,34 @@ function appendToolExecution(
   };
 }
 
+function applyTaskPlanUpdate(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  assistantId: string,
+  update: TaskPlanStreamUpdate,
+) {
+  if (update.plan.sessionId !== sessionId) {
+    return current;
+  }
+  let applied = false;
+  const messages = (current[sessionId] ?? []).map((message) => {
+    if (message.id !== assistantId || message.role !== 'assistant') {
+      return message;
+    }
+    const currentTurnId = message.turnId?.trim() ?? '';
+    if (currentTurnId && currentTurnId !== update.turnId) {
+      return message;
+    }
+    applied = true;
+    return {
+      ...message,
+      turnId: currentTurnId || update.turnId,
+      taskPlan: update.plan,
+    };
+  });
+  return applied ? { ...current, [sessionId]: messages } : current;
+}
+
 function loopHistoryHasToolExecution(message: ChatMessage, executionId: string) {
   return Boolean(
     message.loopHistory?.some((loopMessage) =>
@@ -2298,6 +2499,7 @@ function mergeMessages(
     );
     byId.set(message.id, {
       ...message,
+      taskPlan: message.taskPlan ?? existing?.taskPlan,
       toolExecutions: nextToolExecutions,
       loopHistory: nextLoopHistory.length > 0 ? nextLoopHistory : undefined,
     });
@@ -2360,6 +2562,7 @@ function mergeFinalStreamMessages(
         (message.toolExecutions?.length ?? 0) > 0
           ? message.toolExecutions
           : existingToolExecutions,
+      taskPlan: message.taskPlan ?? existingMessage?.taskPlan,
       loopHistory:
         (message.loopHistory?.length ?? 0) > 0
           ? message.loopHistory
@@ -2562,6 +2765,7 @@ function mergeLoadedMessagesPreservingLocalState(
     return {
       ...message,
       metadata: preserveLocalAssistantTimingMetadata(message, source),
+      taskPlan: message.taskPlan ?? source.taskPlan,
       toolExecutions:
         (message.toolExecutions?.length ?? 0) > 0
           ? message.toolExecutions
@@ -2866,6 +3070,7 @@ function mergeDuplicateTranscriptMessage(left: ChatMessage, right: ChatMessage) 
       ...(fallback.metadata ?? {}),
       ...(primary.metadata ?? {}),
     },
+    taskPlan: primary.taskPlan ?? fallback.taskPlan,
     toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined,
     loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
   };
@@ -3188,6 +3393,7 @@ function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
       ...execution,
       metadata: { ...execution.metadata },
     })),
+    taskPlan: message.taskPlan,
     metadata: message.metadata ? { ...message.metadata } : undefined,
   };
 }
@@ -3452,6 +3658,124 @@ function localConversation(projectDir?: string, initialTitle?: string): Conversa
     updatedAt: new Date().toISOString(),
     projectDir,
   };
+}
+
+function mergeTeamFlowEvent(
+  current: TeamFlowState | null | undefined,
+  event: TeamFlowStreamEvent,
+  sessionId: string,
+): TeamFlowState {
+  const flowId = event.flowId || current?.flowId || current?.id || sessionId;
+  const currentLayerId =
+    event.currentLayerId || event.layer?.id || event.node?.layerId || current?.currentLayerId;
+  const currentLayerIndex =
+    event.currentLayerIndex ??
+    event.layer?.index ??
+    event.node?.layerIndex ??
+    current?.currentLayerIndex;
+  const layers = mergeTeamFlowLayers(current?.layers ?? [], event.layer);
+  const nodes = mergeTeamFlowNodes(current?.nodes ?? [], event.node);
+  return {
+    id: current?.id || flowId,
+    flowId,
+    sessionId: event.sessionId || current?.sessionId || sessionId,
+    status: event.status || current?.status || '',
+    currentLayerId,
+    currentLayerIndex,
+    layers: attachNodesToTeamFlowLayers(layers, nodes),
+    nodes,
+    suggestedActions:
+      event.suggestedActions.length > 0
+        ? event.suggestedActions
+        : current?.suggestedActions ?? [],
+    actionOptions:
+      event.actionOptions.length > 0
+        ? event.actionOptions
+        : event.suggestedActions.length > 0
+          ? event.suggestedActions.map(teamFlowActionOptionFromAction)
+          : current?.actionOptions ?? [],
+    raw: {
+      ...(current?.raw ?? {}),
+      last_event: event.raw,
+      lastEvent: event.raw,
+    },
+  };
+}
+
+function teamFlowActionOptionFromAction(
+  action: TeamFlowActionType,
+): TeamFlowActionOption {
+  return {
+    id: action,
+    action,
+    raw: { action },
+  };
+}
+
+function mergeTeamFlowLayers(
+  layers: TeamFlowLayer[],
+  nextLayer?: TeamFlowLayer,
+) {
+  if (!nextLayer) {
+    return layers;
+  }
+  const existingIndex = layers.findIndex((layer) => layer.id === nextLayer.id);
+  if (existingIndex < 0) {
+    return [...layers, nextLayer];
+  }
+  return layers.map((layer, index) =>
+    index === existingIndex
+      ? {
+          ...layer,
+          ...nextLayer,
+          nodes: mergeLayerNodeList(layer.nodes, nextLayer.nodes),
+        }
+      : layer,
+  );
+}
+
+function mergeTeamFlowNodes(nodes: TeamFlowNode[], nextNode?: TeamFlowNode) {
+  if (!nextNode) {
+    return nodes;
+  }
+  const existingIndex = nodes.findIndex((node) => node.id === nextNode.id);
+  if (existingIndex < 0) {
+    return [...nodes, nextNode];
+  }
+  return nodes.map((node, index) =>
+    index === existingIndex ? { ...node, ...nextNode } : node,
+  );
+}
+
+function attachNodesToTeamFlowLayers(
+  layers: TeamFlowLayer[],
+  nodes: TeamFlowNode[],
+) {
+  if (layers.length === 0) {
+    return layers;
+  }
+  return layers.map((layer) => {
+    const attached = nodes.filter(
+      (node) =>
+        node.layerId === layer.id ||
+        (node.layerIndex != null && node.layerIndex === layer.index),
+    );
+    return attached.length > 0
+      ? { ...layer, nodes: mergeLayerNodeList(layer.nodes, attached) }
+      : layer;
+  });
+}
+
+function mergeLayerNodeList(nodes: TeamFlowNode[], attached: TeamFlowNode[]) {
+  const byId = new Map<string, TeamFlowNode>();
+  for (const node of [...nodes, ...attached]) {
+    byId.set(node.id, { ...(byId.get(node.id) ?? node), ...node });
+  }
+  return Array.from(byId.values());
+}
+
+function isNotFoundLikeError(error: unknown) {
+  return /(^|\\s)(404|not found)(\\s|:|$)/i.test(errorMessage(error));
 }
 
 function errorMessage(error: unknown) {

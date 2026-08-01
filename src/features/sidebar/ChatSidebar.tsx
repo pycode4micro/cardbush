@@ -4,12 +4,13 @@ import {
   Clipboard,
   Code2,
   Edit3,
+  Flag,
   Folder,
   FolderOpen,
   LoaderCircle,
   MessageSquare,
+  MonitorCog,
   MoreHorizontal,
-  Network,
   Pin,
   Plus,
   Puzzle,
@@ -18,7 +19,6 @@ import {
   Search,
   Settings,
   Trash2,
-  UsersRound,
   X,
 } from 'lucide-react';
 import type * as React from 'react';
@@ -420,6 +420,22 @@ export function ChatSidebar({
           }
         />
         <NavRow
+          active={section === 'os'}
+          icon={<MonitorCog size={17} />}
+          label={t('os')}
+          onClick={() => onSectionChange('os')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:os', [
+              {
+                key: 'open',
+                icon: <MonitorCog size={15} />,
+                label: language === 'zh' ? '进入 OS' : 'Open OS',
+                onClick: () => onSectionChange('os'),
+              },
+            ])
+          }
+        />
+        <NavRow
           active={section === 'search'}
           icon={<Search size={17} />}
           label={t('search')}
@@ -452,31 +468,15 @@ export function ChatSidebar({
           }
         />
         <NavRow
-          active={section === 'subagents'}
-          icon={<Network size={17} />}
-          label={t('subagents')}
-          onClick={() => onSectionChange('subagents')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:subagents', [
-              {
-                key: 'open',
-                icon: <Network size={15} />,
-                label: language === 'zh' ? '打开子 Agent' : 'Open subagents',
-                onClick: () => onSectionChange('subagents'),
-              },
-            ])
-          }
-        />
-        <NavRow
           active={section === 'team'}
-          icon={<UsersRound size={17} />}
+          icon={<Flag size={17} />}
           label={t('team')}
           onClick={() => onSectionChange('team')}
           onContextMenu={(event) =>
             openContextMenu(event, 'nav:team', [
               {
                 key: 'open',
-                icon: <UsersRound size={15} />,
+                icon: <Flag size={15} />,
                 label: language === 'zh' ? '打开 Team' : 'Open Team',
                 onClick: () => onSectionChange('team'),
               },

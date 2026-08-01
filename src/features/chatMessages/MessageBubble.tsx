@@ -397,10 +397,12 @@ export function MessageBubble({
         language,
       })
     : '';
+  const taskPlan = message.role === 'assistant' ? message.taskPlan : undefined;
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
       toolExecutions.length > 0 ||
+      taskPlan ||
       renderActiveTranscript ||
       visibleLoopHistory.length > 0 ||
       agentHookSummaryFromMessage(message),
@@ -421,6 +423,7 @@ export function MessageBubble({
             </div>
           )}
           <AgentHookSummaryBadge message={message} language={language} />
+          {taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
           {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
           {renderActiveTranscript ? (
             <AssistantActiveTranscript
@@ -522,6 +525,39 @@ export function MessageBubble({
         />
       )}
     </>
+  );
+}
+
+function TaskPlanBlock({
+  plan,
+  language,
+}: {
+  plan: NonNullable<ChatMessage['taskPlan']>;
+  language: AppLanguage;
+}) {
+  const completed = plan.nodes.filter((item) => item.status === 'completed').length;
+  return (
+    <section className={`task-plan-block ${plan.active ? 'active' : 'completed'}`}>
+      <div className="task-plan-header">
+        <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
+        <span>{completed}/{plan.nodes.length}</span>
+      </div>
+      {plan.explanation && <p>{plan.explanation}</p>}
+      <ol>
+        {plan.nodes.map((item, index) => (
+          <li className={item.status} key={`${index}-${item.step}`}>
+            {item.status === 'completed' ? (
+              <CheckCircle2 size={14} />
+            ) : item.status === 'in_progress' ? (
+              <LoaderCircle size={14} />
+            ) : (
+              <Clock3 size={14} />
+            )}
+            <span>{item.step}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

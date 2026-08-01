@@ -1,12 +1,15 @@
 import type { LucideIcon } from 'lucide-react';
 
-export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team';
+export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
   | 'companion'
+  | 'os'
+  | 'runtime'
   | 'proxy'
   | 'bots'
-  | 'agents'
+  | 'subagents'
+  | 'mcp'
   | 'cache'
   | 'models'
   | 'diagnostics'
@@ -18,8 +21,12 @@ export type LightThemeStyle = 'parchment' | 'bright';
 export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
 export type ReferencePlanMode = 'off' | 'auto';
+export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
 export type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
+export type ReasoningLevel = 'low' | 'medium' | 'high' | 'max';
+export type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
+export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
 export type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
 export type CompanionSize = 'compact' | 'normal' | 'large';
 export type CompanionMotionMode = 'full' | 'reduced' | 'off';
@@ -57,6 +64,24 @@ export interface BackendAuthSettings {
   localRequestKey: string;
 }
 
+export interface TerminalSettings {
+  runtime: TerminalRuntime;
+}
+
+export interface OsSettings {
+  launchAtLogin: boolean;
+  startInOsMode: boolean;
+  taskbarPlacement: 'top' | 'bottom';
+  backgroundContrast: number;
+  gamepad: {
+    confirmButton: number;
+    backButton: number;
+    keyboardButton: number;
+    appsButton: number;
+    settingsButton: number;
+  };
+}
+
 export interface BackendCapabilities {
   chatStream: boolean;
   sessions: boolean;
@@ -78,8 +103,29 @@ export interface BackendCapabilities {
   resources: boolean;
   settingsSync: boolean;
   localMusicLibrary: boolean;
-  agentConfigPackages: boolean;
-  agentConfigPackageTransactionContracts: boolean;
+  mcpServers: boolean;
+  subagents: boolean;
+  subagentFrontendConfiguration: boolean;
+  subagentLocalDefault: boolean;
+  remoteAgentsViaMcp: boolean;
+  teamMode: boolean;
+  teamAgentFlow: boolean;
+  teamFlowState: boolean;
+  teamFlowActions: boolean;
+  teamFlowEvents: boolean;
+  browserCookiePersistence: boolean;
+  browserPrivacyMode: boolean;
+  browserApiCandidates: boolean;
+  browserContextApiRequest: boolean;
+  osMode: boolean;
+  desktopAutomation: boolean;
+  taskPlan: boolean;
+  reasoningLevelSelection: boolean;
+  reasoningLevels: ReasoningLevel[];
+  defaultReasoningLevel: ReasoningLevel;
+  terminalRuntimeSelection: boolean;
+  terminalRuntimes: TerminalRuntime[];
+  defaultTerminalRuntime: TerminalRuntime;
 }
 
 export interface ManagedModelConfig {
@@ -91,77 +137,42 @@ export interface ManagedModelConfig {
   maxContextTokens?: number;
 }
 
-export interface RuntimeProfileSummary {
+export interface McpServerConfig {
   id: string;
-  label: string;
-  description: string;
-  defaultLane?: string;
-  phases: string[];
-  allowedLanes: string[];
-  hookSet?: string;
-  toolPolicy?: Record<string, unknown>;
-  verificationPolicy?: Record<string, unknown>;
-  finalResponseContract?: Record<string, unknown>;
-  transactionContract?: Record<string, unknown>;
-  raw: Record<string, unknown>;
-}
-
-export interface ProfileTransactionContractBinding {
-  profileId: string;
-  contractId: string;
-  label: string;
-  raw?: Record<string, unknown>;
-}
-
-export interface AgentConfigPackageItem {
-  id: string;
-  label: string;
+  name: string;
   description: string;
   enabled: boolean;
-  sourcePath?: string;
-  profileIds: string[];
-  transactionContracts: ProfileTransactionContractBinding[];
-  frontendMetadata?: Record<string, unknown>;
+  transport: McpTransport;
+  command?: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  timeoutSeconds?: number;
+  toolCount?: number;
+  status?: string;
+  lastError?: string;
   raw: Record<string, unknown>;
 }
 
-export interface AgentTransactionContractSummary {
-  id: string;
-  label: string;
-  description: string;
-  protocol?: string;
+export interface McpServersResult {
+  servers: McpServerConfig[];
+  protocolVersions: string[];
   raw: Record<string, unknown>;
 }
 
-export interface AgentTransactionContractsResult {
-  protocol: string;
-  contracts: AgentTransactionContractSummary[];
-  raw: Record<string, unknown>;
-}
-
-export interface AgentConfigPackageSchema {
-  configNames: string[];
-  profilePolicySections: string[];
-  raw: Record<string, unknown>;
-}
-
-export interface AgentConfigPackagesResult {
-  packageSchemaVersion: string;
-  schema: AgentConfigPackageSchema;
-  packages: AgentConfigPackageItem[];
-  raw: Record<string, unknown>;
-}
-
-export interface AgentConfigPackageValidationMessage {
+export interface McpValidationMessage {
   path: string;
   message: string;
   severity: 'error' | 'warning' | 'info';
 }
 
-export interface AgentConfigPackageValidationResult {
+export interface McpServerValidationResult {
   ok: boolean;
-  packageId?: string;
-  messages: AgentConfigPackageValidationMessage[];
+  serverId?: string;
+  tools: string[];
+  messages: McpValidationMessage[];
   raw: Record<string, unknown>;
 }
 
@@ -182,6 +193,10 @@ export interface CompanionSettings {
   size: CompanionSize;
   opacity: number;
   motion: CompanionMotionMode;
+}
+
+export interface BrowserSettings {
+  privacyMode: boolean;
 }
 
 export interface CardlingDesktopState {
@@ -214,6 +229,9 @@ export type CardlingDesktopAction =
 
 export interface AppSettingsState {
   proxy: ProxySettings;
+  browser: BrowserSettings;
+  terminal: TerminalSettings;
+  os: OsSettings;
   backendAuth: BackendAuthSettings;
   managedModelConfigs: ManagedModelConfig[];
   backgroundImagePath: string;
@@ -234,7 +252,6 @@ export interface ConversationSummary {
   title: string;
   preview: string;
   updatedAt: string;
-  agentProfile?: string;
   projectDir?: string;
   metadata?: Record<string, unknown>;
   workspaceContext?: WorkspaceContext;
@@ -281,6 +298,25 @@ export interface ChatToolExecution {
   metadata: Record<string, unknown>;
 }
 
+export interface TaskPlanNode {
+  step: string;
+  status: TaskPlanStatus;
+}
+
+export interface TaskPlanSnapshot {
+  protocol: 'bush.task_plan.v1';
+  planId: string;
+  sessionId: string;
+  nodes: TaskPlanNode[];
+  explanation: string;
+  active: boolean;
+}
+
+export interface TaskPlanStreamUpdate {
+  turnId: string;
+  plan: TaskPlanSnapshot;
+}
+
 export interface AssistantRevision {
   action: 'clear' | 'replace' | string;
   turnId?: string;
@@ -306,6 +342,7 @@ export interface ChatMessage {
   assistantMessageId?: string;
   attachments?: ChatAttachment[];
   toolExecutions?: ChatToolExecution[];
+  taskPlan?: TaskPlanSnapshot;
   loopHistory?: ChatMessage[];
   metadata?: Record<string, unknown>;
 }
@@ -313,6 +350,99 @@ export interface ChatMessage {
 export interface StreamStart {
   sessionId: string;
   turnId: string;
+}
+
+export type TeamFlowActionType =
+  | 'modify_layer'
+  | 'continue_next_layer'
+  | 'enter_execution'
+  | 'cancel'
+  | string;
+
+export interface TeamFlowActionOption {
+  id: string;
+  action: TeamFlowActionType;
+  label?: string;
+  labelKey?: string;
+  control?: string;
+  description?: string;
+  raw: Record<string, unknown>;
+}
+
+export type TeamFlowEventType =
+  | 'team_layer'
+  | 'team_node'
+  | 'team_action_required';
+
+export interface TeamFlowNode {
+  id: string;
+  layerId?: string;
+  layerIndex?: number;
+  title: string;
+  summary: string;
+  status: string;
+  kind?: string;
+  profileId?: string;
+  parentIds: string[];
+  tools: string[];
+  validation?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface TeamFlowLayer {
+  id: string;
+  index?: number;
+  title: string;
+  goal: string;
+  summary: string;
+  status: string;
+  nodes: TeamFlowNode[];
+  suggestedActions: TeamFlowActionType[];
+  actionOptions: TeamFlowActionOption[];
+  raw: Record<string, unknown>;
+}
+
+export interface TeamFlowState {
+  id: string;
+  flowId: string;
+  sessionId: string;
+  status: string;
+  currentLayerId?: string;
+  currentLayerIndex?: number;
+  layers: TeamFlowLayer[];
+  nodes: TeamFlowNode[];
+  suggestedActions: TeamFlowActionType[];
+  actionOptions: TeamFlowActionOption[];
+  raw: Record<string, unknown>;
+}
+
+export interface TeamFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  label?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface TeamFlowGraph {
+  flow: TeamFlowState;
+  nodes: TeamFlowNode[];
+  edges: TeamFlowEdge[];
+  raw: Record<string, unknown>;
+}
+
+export interface TeamFlowStreamEvent {
+  type: TeamFlowEventType;
+  flowId?: string;
+  sessionId?: string;
+  status?: string;
+  currentLayerId?: string;
+  currentLayerIndex?: number;
+  layer?: TeamFlowLayer;
+  node?: TeamFlowNode;
+  suggestedActions: TeamFlowActionType[];
+  actionOptions: TeamFlowActionOption[];
+  raw: Record<string, unknown>;
 }
 
 export interface PendingInteraction {

@@ -14,6 +14,7 @@ import {
   Edit3,
   Eye,
   EyeOff,
+  Flag,
   Folder,
   FolderOpen,
   Gauge,
@@ -44,6 +45,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import {
   basename,
@@ -55,8 +57,8 @@ import type {
   AppLanguage,
   ChatMessage,
   PermissionMode,
+  ReasoningLevel,
   ReferencePlanMode,
-  RuntimeProfileSummary,
   SkillSummary,
 } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages';
@@ -95,14 +97,13 @@ type ComposerMenu =
   | 'tokens'
   | 'git'
   | 'skills'
-  | 'runtime'
   | 'models'
+  | 'reasoning'
   | 'permissions'
   | null;
 
 type MorePanelMenu =
   | 'project'
-  | 'runtime'
   | 'skills'
   | 'git'
   | 'tokens'
@@ -144,8 +145,8 @@ const composerPopoverWidths: Record<Exclude<ComposerMenu, null>, number> = {
   tokens: 214,
   git: 260,
   skills: 336,
-  runtime: 310,
   models: 232,
+  reasoning: 220,
   permissions: 274,
 };
 
@@ -213,6 +214,8 @@ function readFileAsDataUrl(file: File) {
 
 export function Composer({
   compact,
+  autoFocus = false,
+  osMode = false,
   language,
   draft,
   onDraftChange,
@@ -222,14 +225,16 @@ export function Composer({
   queuedMessages = [],
   selectedModel,
   availableModels,
-  selectedRuntimeProfile,
-  runtimeProfiles,
+  referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  reasoningLevelAvailable,
+  reasoningLevel,
+  reasoningLevels,
   onModelChange,
-  onRuntimeProfileChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onReasoningLevelChange,
   onSend,
   onCancel,
   messages = [],
@@ -237,6 +242,7 @@ export function Composer({
   disabledSkillNames,
   visualInputAvailable,
   visualInputEnabled,
+  teamModeEnabled,
   gitAvailable = false,
   terminalAvailable = false,
   activeProjectDir,
@@ -251,8 +257,11 @@ export function Composer({
   onOpenTerminalConsole,
   onToggleSkill,
   onVisualInputEnabledChange,
+  onTeamModeChange,
 }: {
   compact?: boolean;
+  autoFocus?: boolean;
+  osMode?: boolean;
   language: AppLanguage;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -262,14 +271,16 @@ export function Composer({
   queuedMessages?: ComposerQueuedMessage[];
   selectedModel: string;
   availableModels: string[];
-  selectedRuntimeProfile: string;
-  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  reasoningLevelAvailable: boolean;
+  reasoningLevel: ReasoningLevel;
+  reasoningLevels: ReasoningLevel[];
   onModelChange: (value: string) => void;
-  onRuntimeProfileChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onReasoningLevelChange: (value: ReasoningLevel) => void;
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
   messages?: ChatMessage[];
@@ -277,6 +288,7 @@ export function Composer({
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
+  teamModeEnabled: boolean;
   gitAvailable?: boolean;
   terminalAvailable?: boolean;
   activeProjectDir?: string;
@@ -291,6 +303,7 @@ export function Composer({
   onOpenTerminalConsole?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
+  onTeamModeChange: (enabled: boolean) => void;
 }) {
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -577,12 +590,6 @@ export function Composer({
     setPopoverAnchor(null);
   }
 
-  function selectRuntimeProfile(profileId: string) {
-    onRuntimeProfileChange(profileId);
-    setActiveMenu(null);
-    setPopoverAnchor(null);
-  }
-
   function focusComposer(nextCaret?: number) {
     window.requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -735,36 +742,26 @@ export function Composer({
           title: '/agents',
           subtitle:
             language === 'zh'
-              ? '查看子代理配置和可用场景'
-              : 'Review subagent profiles and use cases',
+              ? '查看后端托管的子任务能力和适用场景'
+              : 'Review backend-managed subagent capabilities and use cases',
           icon: <Network size={16} />,
           value:
             language === 'zh'
-              ? '请帮我查看当前项目适合使用哪些子代理，并说明它们各自的使用场景。'
-              : 'Review which subagents fit this project and explain when to use each one.',
+              ? '请概述当前可用的子任务能力，并说明主 Agent 应在什么情况下进行委派。'
+              : 'Summarize the available subagent capabilities and when the parent agent should delegate.',
         },
         {
           id: '/subagents',
           title: '/subagents',
           subtitle:
             language === 'zh'
-              ? 'CLI 同款：管理子代理配置'
-              : 'CLI parity: manage subagent profiles',
+              ? '查看本地子任务运行状态'
+              : 'Inspect local subagent runtime status',
           icon: <Network size={16} />,
           value:
             language === 'zh'
-              ? '请帮我梳理当前可用的子代理配置，并给出推荐的启用策略。'
-              : 'Summarize available subagent profiles and recommend an enablement strategy.',
-        },
-        {
-          id: '/subagent',
-          title: '/subagent <on|off>',
-          subtitle:
-            language === 'zh'
-              ? 'CLI 同款：切换子代理；GUI 暂以对话方式确认'
-              : 'CLI parity: toggle subagents; confirm through chat in the GUI',
-          icon: <Network size={16} />,
-          value: '/subagent ',
+              ? '请检查当前本地子任务的运行状态和可用能力；是否委派由主 Agent 根据任务决定。'
+              : 'Inspect local subagent runtime status and capabilities; delegation is decided by the parent agent.',
         },
         ...(gitAvailable
           ? [
@@ -911,20 +908,15 @@ export function Composer({
   const modelLabel =
     selectedModel.trim() ||
     (language === 'zh' ? '待配置' : 'Configure');
-  const runtimeProfileLabel = runtimeProfileDisplayName(
-    selectedRuntimeProfile,
-    runtimeProfiles,
-    language,
-  );
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
   const referencePlanEnabled = referencePlanMode === 'auto';
   const referencePlanLabel =
-    language === 'zh' ? '复杂任务计划书' : 'Reference plan';
+    language === 'zh' ? '任务计划' : 'Task plan';
   const referencePlanDescription =
     language === 'zh'
-      ? '开启后，复杂任务会让模型判断是否先生成 PLAN.md；可能增加一点耗时。'
-      : 'When enabled, complex tasks let the model decide whether to generate PLAN.md first; this may take a little longer.';
+      ? '开启后，复杂任务可由模型维护分步进度清单；它不替代实际执行与验收。'
+      : 'When enabled, the model may maintain a step checklist for complex tasks; it does not replace execution or verification.';
   const firstQueuedMessage = queuedMessages[0] ?? null;
   const queuePreview =
     queuedMessagePreview.trim() || firstQueuedMessage?.text.trim() || '';
@@ -972,8 +964,10 @@ export function Composer({
           onSelect={(item) => applyCommand(item)}
         />
       )}
-      {activeMenu && (
-        <ComposerPopover
+      {activeMenu &&
+        (() => {
+          const popover = (
+            <ComposerPopover
           menu={activeMenu}
           language={language}
           messages={messages}
@@ -984,9 +978,10 @@ export function Composer({
           gitAvailable={gitAvailable}
           selectedModel={selectedModel}
           availableModels={availableModels}
-          selectedRuntimeProfile={selectedRuntimeProfile}
-          runtimeProfiles={runtimeProfiles}
           permissionMode={permissionMode}
+          reasoningLevel={reasoningLevel}
+          reasoningLevels={reasoningLevels}
+          referencePlanAvailable={referencePlanAvailable}
           referencePlanMode={referencePlanMode}
           activeProjectDir={activeProjectDir}
           projectContext={projectContext}
@@ -995,8 +990,8 @@ export function Composer({
           onVisualInputEnabledChange={onVisualInputEnabledChange}
           onSaveProjectContext={onSaveProjectContext}
           onSelectModel={selectModel}
-          onSelectRuntimeProfile={selectRuntimeProfile}
           onSelectPermissionMode={onPermissionModeChange}
+          onSelectReasoningLevel={onReasoningLevelChange}
           onSelectReferencePlanMode={onReferencePlanModeChange}
           onOpenMenu={openAnchoredMenu}
           onConfigureModels={onConfigureModels}
@@ -1004,9 +999,12 @@ export function Composer({
             setActiveMenu(null);
             setPopoverAnchor(null);
           }}
-          anchor={popoverAnchor}
-        />
-      )}
+              anchor={popoverAnchor}
+            />
+          );
+          const portalRoot = document.querySelector<HTMLElement>('.app') ?? document.body;
+          return popoverAnchor ? createPortal(popover, portalRoot) : popover;
+        })()}
       {previewImage && (
         <ImagePreviewDialog
           image={previewImage}
@@ -1070,6 +1068,8 @@ export function Composer({
         )}
         <textarea
           ref={textareaRef}
+          data-os-primary-input={osMode ? 'true' : undefined}
+          autoFocus={autoFocus}
           value={draft}
           onChange={(event) => {
             const next = event.target.value;
@@ -1114,7 +1114,11 @@ export function Composer({
             }
           }}
           placeholder={
-            language === 'zh'
+            osMode
+              ? language === 'zh'
+                ? '告诉 CardBush 你想让电脑完成什么…'
+                : 'Tell CardBush what your computer should do...'
+              : language === 'zh'
               ? compact
                 ? '问 cardbush 任何事。输入 @ 引用项目文件'
                 : '给 cardbush 发消息…'
@@ -1126,7 +1130,7 @@ export function Composer({
         />
         <div className="composer-footer">
           <div className="composer-tools">
-            <ToolChip
+            {!osMode && <ToolChip
               icon={<Boxes size={14} />}
               label={language === 'zh' ? '更多工具' : 'More tools'}
               active={
@@ -1134,12 +1138,17 @@ export function Composer({
                 activeMenu === 'project' ||
                 activeMenu === 'tokens' ||
                 (gitAvailable && activeMenu === 'git') ||
-                activeMenu === 'skills' ||
-                activeMenu === 'runtime'
+                activeMenu === 'skills'
               }
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
-            />
+            />}
+            {!osMode && <ToolChip
+              icon={<Flag size={14} />}
+              label={language === 'zh' ? 'Team 模式' : 'Team mode'}
+              active={teamModeEnabled}
+              onClick={() => onTeamModeChange(!teamModeEnabled)}
+            />}
             <ToolChip
               icon={<Paperclip size={15} />}
               label={language === 'zh' ? '附件' : 'Attach'}
@@ -1160,6 +1169,23 @@ export function Composer({
             </button>
           </div>
           <div className="composer-actions">
+            {reasoningLevelAvailable && reasoningLevels.length > 0 && (
+              <button
+                className="model-select reasoning-select"
+                type="button"
+                data-composer-menu-trigger="true"
+                title={
+                  language === 'zh'
+                    ? `推理强度：${reasoningLevelLabel(reasoningLevel, language)}`
+                    : `Reasoning: ${reasoningLevelLabel(reasoningLevel, language)}`
+                }
+                onClick={(event) => toggleMenu('reasoning', event)}
+              >
+                <Gauge size={14} />
+                <span>{reasoningLevelLabel(reasoningLevel, language)}</span>
+                <ChevronDown size={13} />
+              </button>
+            )}
             <button
               className="model-select"
               type="button"
@@ -1246,6 +1272,22 @@ export function Composer({
                 </button>
               </div>
             )}
+          </div>
+        )}
+        {teamModeEnabled && (
+          <div className="composer-secondary-row composer-team-row">
+            <div className="composer-team-summary">
+              <Flag size={13} />
+              <span>{language === 'zh' ? 'Team 模式' : 'Team mode'}</span>
+              <small>
+                {language === 'zh'
+                  ? 'Boss 在对话中裁决，Team Agent 逐层设计场景 Agent。'
+                  : 'Boss decides in chat; Team Agent designs scene agents layer by layer.'}
+              </small>
+            </div>
+            <button type="button" onClick={() => onTeamModeChange(false)}>
+              {language === 'zh' ? '关闭' : 'Off'}
+            </button>
           </div>
         )}
       </div>
@@ -1451,9 +1493,10 @@ function ComposerPopover({
   gitAvailable,
   selectedModel,
   availableModels,
-  selectedRuntimeProfile,
-  runtimeProfiles,
   permissionMode,
+  reasoningLevel,
+  reasoningLevels,
+  referencePlanAvailable,
   referencePlanMode,
   activeProjectDir,
   projectContext,
@@ -1462,9 +1505,9 @@ function ComposerPopover({
   onVisualInputEnabledChange,
   onSaveProjectContext,
   onSelectModel,
-  onSelectRuntimeProfile,
   onConfigureModels,
   onSelectPermissionMode,
+  onSelectReasoningLevel,
   onSelectReferencePlanMode,
   onOpenMenu,
   onClose,
@@ -1480,9 +1523,10 @@ function ComposerPopover({
   gitAvailable: boolean;
   selectedModel: string;
   availableModels: string[];
-  selectedRuntimeProfile: string;
-  runtimeProfiles: RuntimeProfileSummary[];
   permissionMode: PermissionMode;
+  reasoningLevel: ReasoningLevel;
+  reasoningLevels: ReasoningLevel[];
+  referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   activeProjectDir?: string;
   projectContext: string;
@@ -1491,9 +1535,9 @@ function ComposerPopover({
   onVisualInputEnabledChange: (enabled: boolean) => void;
   onSaveProjectContext?: (value: string) => Promise<string>;
   onSelectModel: (model: string) => void;
-  onSelectRuntimeProfile: (profileId: string) => void;
   onConfigureModels: () => void;
   onSelectPermissionMode: (mode: PermissionMode) => void;
+  onSelectReasoningLevel: (level: ReasoningLevel) => void;
   onSelectReferencePlanMode: (mode: ReferencePlanMode) => void;
   onOpenMenu: (menu: Exclude<ComposerMenu, null>) => void;
   onClose: () => void;
@@ -1503,7 +1547,6 @@ function ComposerPopover({
   const chars = content.length;
   const estimatedTokens = Math.ceil(chars / 4);
   const models = Array.from(new Set([selectedModel, ...availableModels].filter(Boolean)));
-  const profiles = normalizeRuntimeProfiles(runtimeProfiles, selectedRuntimeProfile);
   const pickerMenu = menu === 'models';
   const [morePanel, setMorePanel] = useState<MorePanelMenu>('project');
   const morePanelHoverTimerRef = useRef<number | null>(null);
@@ -1515,6 +1558,10 @@ function ComposerPopover({
   }, [gitAvailable, morePanel]);
   const selectPermission = (mode: PermissionMode) => {
     onSelectPermissionMode(mode);
+    onClose();
+  };
+  const selectReasoningLevel = (level: ReasoningLevel) => {
+    onSelectReasoningLevel(level);
     onClose();
   };
   const clearMorePanelHoverTimer = useCallback(() => {
@@ -1582,23 +1629,16 @@ function ComposerPopover({
               onHover={() => previewMorePanel('project')}
               onClick={() => onOpenMenu('project')}
             />
-            <MoreMenuRow
-              active={morePanel === 'runtime'}
-              icon={<SlidersHorizontal size={13} />}
-              title={language === 'zh' ? '运行模式' : 'Runtime'}
-              detail={runtimeProfileDisplayName(selectedRuntimeProfile, profiles, language)}
-              onHover={() => previewMorePanel('runtime')}
-              onClick={() => onOpenMenu('runtime')}
-            />
-            <div className="more-menu-separator" />
-            <MoreMenuRow
-              active={morePanel === 'plan'}
-              icon={<ListChecks size={13} />}
-              title={language === 'zh' ? '复杂任务' : 'Plan'}
-              detail={referencePlanEnabled ? (language === 'zh' ? '开' : 'On') : (language === 'zh' ? '关' : 'Off')}
-              onHover={() => previewMorePanel('plan')}
-              onClick={() => selectMorePanel('plan')}
-            />
+            {referencePlanAvailable && (
+              <MoreMenuRow
+                active={morePanel === 'plan'}
+                icon={<ListChecks size={13} />}
+                title={language === 'zh' ? '复杂任务' : 'Plan'}
+                detail={referencePlanEnabled ? (language === 'zh' ? '开' : 'On') : (language === 'zh' ? '关' : 'Off')}
+                onHover={() => previewMorePanel('plan')}
+                onClick={() => selectMorePanel('plan')}
+              />
+            )}
             <MoreMenuRow
               active={morePanel === 'vision'}
               icon={visualInputEnabled ? <Eye size={13} /> : <EyeOff size={13} />}
@@ -1658,28 +1698,7 @@ function ComposerPopover({
                 onSave={onSaveProjectContext}
               />
             )}
-            {morePanel === 'runtime' && (
-              <div className="popover-list runtime-profile-list nested">
-                {profiles.map((profile) => (
-                  <button
-                    className={`popover-row runtime-profile-row ${
-                      profile.id === selectedRuntimeProfile ? 'active' : ''
-                    }`}
-                    type="button"
-                    key={profile.id}
-                    onClick={() => onSelectRuntimeProfile(profile.id)}
-                  >
-                    <RuntimeProfileIcon profileId={profile.id} size={14} />
-                    <span>
-                      <strong>{runtimeProfileDisplayName(profile.id, profiles, language)}</strong>
-                      <small>{runtimeProfileDescription(profile, language)}</small>
-                    </span>
-                    {profile.id === selectedRuntimeProfile && <Check size={13} />}
-                  </button>
-                ))}
-              </div>
-            )}
-            {morePanel === 'plan' && (
+            {referencePlanAvailable && morePanel === 'plan' && (
               <div className="more-plan-panel">
                 <button
                   className={`more-plan-toggle ${referencePlanEnabled ? 'active' : ''}`}
@@ -1691,11 +1710,11 @@ function ComposerPopover({
                 >
                   {referencePlanEnabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
                   <span>
-                    <strong>{language === 'zh' ? '复杂任务计划书' : 'Reference plan'}</strong>
+                    <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
                     <small>
                       {language === 'zh'
-                        ? '复杂任务时允许先生成 PLAN.md。'
-                        : 'Allow PLAN.md before complex tasks.'}
+                        ? '允许模型维护后端任务进度清单。'
+                        : 'Allow the model to maintain the backend task checklist.'}
                     </small>
                   </span>
                 </button>
@@ -1948,24 +1967,23 @@ function ComposerPopover({
           </button>
         </div>
       )}
-      {menu === 'runtime' && (
-        <div className="popover-list runtime-profile-list">
-          {profiles.map((profile) => (
+      {menu === 'reasoning' && (
+        <div className="popover-list reasoning-level-list">
+          {reasoningLevels.map((level) => (
             <button
-              className={`popover-row runtime-profile-row ${
-                profile.id === selectedRuntimeProfile ? 'active' : ''
+              className={`popover-row reasoning-level-row ${
+                level === reasoningLevel ? 'active' : ''
               }`}
               type="button"
-              key={profile.id}
-              onClick={() => onSelectRuntimeProfile(profile.id)}
+              key={level}
+              onClick={() => selectReasoningLevel(level)}
             >
-              <RuntimeProfileIcon profileId={profile.id} size={16} />
+              <Gauge size={15} />
               <span>
-                <strong>{runtimeProfileDisplayName(profile.id, profiles, language)}</strong>
-                <small>{runtimeProfileDescription(profile, language)}</small>
-                <small>{runtimeProfileMetaLine(profile, language)}</small>
+                <strong>{reasoningLevelLabel(level, language)}</strong>
+                <small>{reasoningLevelDescription(level, language)}</small>
               </span>
-              {profile.id === selectedRuntimeProfile && <Check size={15} />}
+              {level === reasoningLevel && <Check size={14} />}
             </button>
           ))}
         </div>
@@ -1981,31 +1999,31 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
     tokens: { zh: 'Token 用量', en: 'Token usage' },
     git: { zh: 'Git 分支', en: 'Git branches' },
     skills: { zh: 'Skills', en: 'Skills' },
-    runtime: { zh: '运行模式', en: 'Runtime' },
     models: { zh: '模型', en: 'Model' },
+    reasoning: { zh: '推理强度', en: 'Reasoning effort' },
     permissions: { zh: '权限中心', en: 'Permissions' },
   };
   return labels[menu][language];
 }
 
-function RuntimeProfileIcon({
-  profileId,
-  size = 14,
-}: {
-  profileId: string;
-  size?: number;
-}) {
-  const normalized = profileId.trim().toLowerCase();
-  if (normalized.includes('review')) {
-    return <CheckCircle2 size={size} />;
-  }
-  if (normalized.includes('research')) {
-    return <Network size={size} />;
-  }
-  if (normalized.includes('code')) {
-    return <Code2 size={size} />;
-  }
-  return <Bot size={size} />;
+function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
+  const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
+    low: { zh: '低', en: 'Low' },
+    medium: { zh: '中', en: 'Medium' },
+    high: { zh: '高', en: 'High' },
+    max: { zh: '最高', en: 'Max' },
+  };
+  return labels[level][language];
+}
+
+function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage) {
+  const descriptions: Record<ReasoningLevel, { zh: string; en: string }> = {
+    low: { zh: '更快，适合直接问题', en: 'Faster for direct questions' },
+    medium: { zh: '速度与分析深度平衡', en: 'Balanced speed and depth' },
+    high: { zh: '更深入分析复杂问题', en: 'Deeper analysis for complex work' },
+    max: { zh: '使用后端允许的最高强度', en: 'Highest effort allowed by backend' },
+  };
+  return descriptions[level][language];
 }
 
 function MoreMenuRow({
@@ -2120,129 +2138,6 @@ function permissionModeDescription(mode: PermissionMode, language: AppLanguage) 
     permissionModeOptions(language).find((option) => option.id === mode)?.description ??
     permissionModeOptions(language)[0].description
   );
-}
-
-function normalizeRuntimeProfiles(
-  profiles: RuntimeProfileSummary[],
-  selectedRuntimeProfile: string,
-) {
-  const merged = new Map<string, RuntimeProfileSummary>();
-  for (const profile of [
-    {
-      id: 'general',
-      label: 'General',
-      description: 'General purpose assistant.',
-      phases: [],
-      allowedLanes: [],
-      raw: { id: 'general' },
-    },
-    {
-      id: 'code',
-      label: 'Code',
-      description: 'Programming workflow: inspect, edit, verify, final.',
-      phases: ['inspect', 'edit', 'verify', 'final'],
-      allowedLanes: ['code'],
-      raw: { id: 'code' },
-    },
-    {
-      id: 'code-review',
-      label: 'Code Review',
-      description: 'Read-only review focused on findings and risks.',
-      phases: ['inspect', 'review', 'final'],
-      allowedLanes: ['review'],
-      raw: { id: 'code-review' },
-    },
-    {
-      id: 'research',
-      label: 'Research',
-      description: 'Evidence-first research workflow.',
-      phases: ['collect', 'compare', 'synthesize', 'final'],
-      allowedLanes: ['research'],
-      raw: { id: 'research' },
-    },
-    ...profiles,
-  ]) {
-    if (profile.id.trim()) {
-      merged.set(profile.id, profile);
-    }
-  }
-  if (selectedRuntimeProfile.trim() && !merged.has(selectedRuntimeProfile)) {
-    merged.set(selectedRuntimeProfile, {
-      id: selectedRuntimeProfile,
-      label: selectedRuntimeProfile,
-      description: '',
-      phases: [],
-      allowedLanes: [],
-      raw: { id: selectedRuntimeProfile },
-    });
-  }
-  return [...merged.values()];
-}
-
-function runtimeProfileDisplayName(
-  profileId: string,
-  profiles: RuntimeProfileSummary[],
-  language: AppLanguage,
-) {
-  const normalized = profileId.trim() || 'general';
-  if (language === 'zh') {
-    const zhLabels: Record<string, string> = {
-      general: '通用',
-      code: '编程',
-      'code-review': '审查',
-      research: '研究',
-    };
-    if (zhLabels[normalized]) {
-      return zhLabels[normalized];
-    }
-  }
-  const profile = profiles.find((item) => item.id === normalized);
-  return profile?.label?.trim() || normalized;
-}
-
-function runtimeProfileDescription(
-  profile: RuntimeProfileSummary,
-  language: AppLanguage,
-) {
-  if (language === 'zh') {
-    const zhDescriptions: Record<string, string> = {
-      general: '普通通用会话，适合问答、计划和轻量任务',
-      code: '编程模式，按 inspect / edit / verify / final 推进',
-      'code-review': '只读审查模式，优先输出问题、风险和测试缺口',
-      research: '证据优先研究模式，强调来源、对照和结论',
-    };
-    if (zhDescriptions[profile.id]) {
-      return zhDescriptions[profile.id];
-    }
-  }
-  if (profile.description.trim()) {
-    return profile.description;
-  }
-  if (profile.phases.length > 0) {
-    return profile.phases.join(' / ');
-  }
-  return profile.defaultLane || profile.id;
-}
-
-function runtimeProfileMetaLine(profile: RuntimeProfileSummary, language: AppLanguage) {
-  const segments = [
-    profile.hookSet
-      ? language === 'zh'
-        ? `Hook: ${profile.hookSet}`
-        : `Hook: ${profile.hookSet}`
-      : '',
-    profile.phases.length > 0
-      ? language === 'zh'
-        ? `流程: ${profile.phases.join(' / ')}`
-        : `Flow: ${profile.phases.join(' / ')}`
-      : '',
-    profile.verificationPolicy
-      ? language === 'zh'
-        ? '含验证策略'
-        : 'verification policy'
-      : '',
-  ].filter(Boolean);
-  return segments.join(' · ') || (language === 'zh' ? '默认运行约束' : 'Default runtime constraints');
 }
 
 function GitBranchMenu({

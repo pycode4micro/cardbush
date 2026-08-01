@@ -21,6 +21,8 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
+      wallpaperPath: () => Promise<string>;
+      wallpaperDataUrl: () => Promise<string>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
       bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
       setProxy: (proxy: {
@@ -29,6 +31,95 @@ declare global {
         httpsProxy: string;
         noProxy: string;
       }) => Promise<void>;
+      osLoginSettings: () => Promise<{
+        enabled: boolean;
+        startInOsMode: boolean;
+        supported: boolean;
+      }>;
+      setOsLoginSettings: (value: {
+        enabled: boolean;
+        startInOsMode: boolean;
+      }) => Promise<{
+        enabled: boolean;
+        startInOsMode: boolean;
+        supported: boolean;
+      }>;
+      osStartupContext: () => Promise<{
+        launchedInOsMode: boolean;
+        supported: boolean;
+      }>;
+      setOsShellMode: (enabled: boolean) => Promise<{
+        enabled: boolean;
+      }>;
+      osFilesystemLocations: () => Promise<Array<{
+        id: string;
+        name: string;
+        path: string;
+      }>>;
+      osListDirectory: (targetPath?: string) => Promise<{
+        path: string;
+        parentPath: string;
+        truncated: boolean;
+        items: Array<{
+          id: string;
+          name: string;
+          path: string;
+          kind: 'file' | 'directory';
+          extension: string;
+          size: number;
+          modifiedAt: string;
+          hidden: boolean;
+        }>;
+      }>;
+      osCreateDirectory: (parentPath: string, name: string) => Promise<string>;
+      osRenamePath: (sourcePath: string, name: string) => Promise<string>;
+      osTrashPath: (targetPath: string) => Promise<void>;
+      osListApplications: (forceRefresh?: boolean) => Promise<Array<{
+        id: string;
+        name: string;
+        path: string;
+        source: 'start_menu';
+        icon: string;
+      }>>;
+      osRunningApplications: () => Promise<Array<{
+        id: string;
+        name: string;
+        path: string;
+        source: 'start_menu';
+        icon: string;
+      }>>;
+      osListWindows: () => Promise<Array<{
+        id: string;
+        processId: number;
+        handle: number;
+        title: string;
+        processName: string;
+        minimized: boolean;
+        maximized: boolean;
+        icon: string;
+      }>>;
+      osWindowAction: (
+        windowId: string,
+        action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close',
+      ) => Promise<{
+        ok: boolean;
+        windowId: string;
+        action: string;
+      }>;
+      osLaunchApplication: (appId: string) => Promise<{
+        status: 'focused' | 'launched' | 'launched_and_focused';
+        applicationId: string;
+      }>;
+      osSearchAppCatalog: (query: string) => Promise<Array<{
+        name: string;
+        id: string;
+        version: string;
+        source: string;
+      }>>;
+      osInstallCatalogApplication: (packageId: string) => Promise<{
+        installed: boolean;
+        output: string;
+      }>;
       listProviderModels: (
         baseUrl: string,
         apiKey: string,
@@ -101,7 +192,10 @@ declare global {
         revertedFiles: number;
         output: string;
       }>;
-      terminalCreate: (cwd?: string) => Promise<{
+      terminalCreate: (
+        cwd?: string,
+        runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+      ) => Promise<{
         id: string;
         cwd: string;
         shell: string;
@@ -118,6 +212,7 @@ declare global {
       terminalRun: (
         command: string,
         cwd?: string,
+        runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
       ) => Promise<{
         command: string;
         cwd: string;

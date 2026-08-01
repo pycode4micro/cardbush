@@ -12,7 +12,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { compactPath } from '../../shared/localPaths';
-import type { AppLanguage } from '../../types';
+import type { AppLanguage, TerminalRuntime } from '../../types';
 
 export type ConsoleMode = 'git' | 'terminal';
 
@@ -33,11 +33,13 @@ export function ConsoleDock({
   mode,
   language,
   activeProjectDir,
+  terminalRuntime,
   onClose,
 }: {
   mode: ConsoleMode;
   language: AppLanguage;
   activeProjectDir?: string;
+  terminalRuntime: TerminalRuntime;
   onClose: () => void;
 }) {
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
@@ -284,7 +286,11 @@ export function ConsoleDock({
           )}
         </div>
       ) : (
-        <EmbeddedTerminal language={language} activeProjectDir={activeProjectDir} />
+        <EmbeddedTerminal
+          language={language}
+          activeProjectDir={activeProjectDir}
+          terminalRuntime={terminalRuntime}
+        />
       )}
     </section>
   );
@@ -293,9 +299,11 @@ export function ConsoleDock({
 function EmbeddedTerminal({
   language,
   activeProjectDir,
+  terminalRuntime,
 }: {
   language: AppLanguage;
   activeProjectDir?: string;
+  terminalRuntime: TerminalRuntime;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTermInstance | null>(null);
@@ -409,7 +417,7 @@ function EmbeddedTerminal({
       resizeToContainer();
 
       window.cardbushDesktop
-        .terminalCreate(activeProjectDir)
+        .terminalCreate(activeProjectDir, terminalRuntime)
         .then((nextSession) => {
           if (disposed) {
             void window.cardbushDesktop?.terminalClose(nextSession.id);
@@ -450,7 +458,7 @@ function EmbeddedTerminal({
         void window.cardbushDesktop?.terminalClose(id);
       }
     };
-  }, [activeProjectDir, language]);
+  }, [activeProjectDir, language, terminalRuntime]);
 
   return (
     <div className="console-content terminal native-terminal-shell">

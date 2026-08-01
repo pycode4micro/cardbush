@@ -26,11 +26,6 @@ import type {
   SkillSummary,
 } from '../../types';
 
-const LazySubagentsPanel = lazy(async () => {
-  const module = await import('../SubagentsPanel');
-  return { default: module.SubagentsPanel };
-});
-
 const LazyTeamPanel = lazy(async () => {
   const module = await import('../TeamPanel');
   return { default: module.TeamPanel };
@@ -82,11 +77,7 @@ export function FeatureContentPanel({
     );
   }
   if (section === 'subagents') {
-    return (
-      <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <LazySubagentsPanel language={language} />
-      </Suspense>
-    );
+    return null;
   }
   if (section === 'team') {
     return (

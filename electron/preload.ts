@@ -46,6 +46,8 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
+  wallpaperPath: () => ipcRenderer.invoke('appearance:wallpaper-path') as Promise<string>,
+  wallpaperDataUrl: () => ipcRenderer.invoke('appearance:wallpaper-data-url') as Promise<string>,
   setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') =>
     ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
   bushHeaders: (targetUrl: string, json = false) =>
@@ -56,6 +58,102 @@ const desktopApi = {
     httpsProxy: string;
     noProxy: string;
   }) => ipcRenderer.invoke('network:set-proxy', proxy) as Promise<void>,
+  osLoginSettings: () =>
+    ipcRenderer.invoke('os:login-settings') as Promise<{
+      enabled: boolean;
+      startInOsMode: boolean;
+      supported: boolean;
+    }>,
+  setOsLoginSettings: (value: { enabled: boolean; startInOsMode: boolean }) =>
+    ipcRenderer.invoke('os:set-login-settings', value) as Promise<{
+      enabled: boolean;
+      startInOsMode: boolean;
+      supported: boolean;
+    }>,
+  osStartupContext: () =>
+    ipcRenderer.invoke('os:startup-context') as Promise<{
+      launchedInOsMode: boolean;
+      supported: boolean;
+    }>,
+  setOsShellMode: (enabled: boolean) =>
+    ipcRenderer.invoke('os:set-shell-mode', enabled) as Promise<{
+      enabled: boolean;
+    }>,
+  osFilesystemLocations: () =>
+    ipcRenderer.invoke('os:filesystem-locations') as Promise<Array<{
+      id: string;
+      name: string;
+      path: string;
+    }>>,
+  osListDirectory: (targetPath?: string) =>
+    ipcRenderer.invoke('os:list-directory', targetPath) as Promise<{
+      path: string;
+      parentPath: string;
+      truncated: boolean;
+      items: Array<{
+        id: string;
+        name: string;
+        path: string;
+        kind: 'file' | 'directory';
+        extension: string;
+        size: number;
+        modifiedAt: string;
+        hidden: boolean;
+      }>;
+    }>,
+  osCreateDirectory: (parentPath: string, name: string) =>
+    ipcRenderer.invoke('os:create-directory', parentPath, name) as Promise<string>,
+  osRenamePath: (sourcePath: string, name: string) =>
+    ipcRenderer.invoke('os:rename-path', sourcePath, name) as Promise<string>,
+  osTrashPath: (targetPath: string) =>
+    ipcRenderer.invoke('os:trash-path', targetPath) as Promise<void>,
+  osListApplications: (forceRefresh?: boolean) => ipcRenderer.invoke('os:list-applications', forceRefresh) as Promise<Array<{
+    id: string;
+    name: string;
+    path: string;
+    source: 'start_menu';
+    icon: string;
+  }>>,
+  osRunningApplications: () => ipcRenderer.invoke('os:running-applications') as Promise<Array<{
+    id: string;
+    name: string;
+    path: string;
+    source: 'start_menu';
+    icon: string;
+  }>>,
+  osListWindows: () => ipcRenderer.invoke('os:list-windows') as Promise<Array<{
+    id: string;
+    processId: number;
+    handle: number;
+    title: string;
+    processName: string;
+    minimized: boolean;
+    maximized: boolean;
+    icon: string;
+  }>>,
+  osWindowAction: (windowId: string, action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close') =>
+    ipcRenderer.invoke('os:window-action', windowId, action) as Promise<{
+      ok: boolean;
+      windowId: string;
+      action: string;
+    }>,
+  osLaunchApplication: (appId: string) =>
+    ipcRenderer.invoke('os:launch-application', appId) as Promise<{
+      status: 'focused' | 'launched' | 'launched_and_focused';
+      applicationId: string;
+    }>,
+  osSearchAppCatalog: (query: string) =>
+    ipcRenderer.invoke('os:search-app-catalog', query) as Promise<Array<{
+      name: string;
+      id: string;
+      version: string;
+      source: string;
+    }>>,
+  osInstallCatalogApplication: (packageId: string) =>
+    ipcRenderer.invoke('os:install-catalog-application', packageId) as Promise<{
+      installed: boolean;
+      output: string;
+    }>,
   listProviderModels: (baseUrl: string, apiKey: string) =>
     ipcRenderer.invoke('models:list', baseUrl, apiKey) as Promise<{
       endpoint: string;
@@ -119,8 +217,11 @@ const desktopApi = {
       revertedFiles: number;
       output: string;
     }>,
-  terminalCreate: (cwd?: string) =>
-    ipcRenderer.invoke('terminal:create', cwd) as Promise<{
+  terminalCreate: (
+    cwd?: string,
+    runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+  ) =>
+    ipcRenderer.invoke('terminal:create', cwd, runtime) as Promise<{
       id: string;
       cwd: string;
       shell: string;
@@ -148,8 +249,12 @@ const desktopApi = {
     ipcRenderer.on('terminal:exit', listener);
     return () => ipcRenderer.removeListener('terminal:exit', listener);
   },
-  terminalRun: (command: string, cwd?: string) =>
-    ipcRenderer.invoke('terminal:run', command, cwd) as Promise<{
+  terminalRun: (
+    command: string,
+    cwd?: string,
+    runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+  ) =>
+    ipcRenderer.invoke('terminal:run', command, cwd, runtime) as Promise<{
       command: string;
       cwd: string;
       exitCode: number | null;

@@ -15,14 +15,19 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  Flag,
   Folder,
+  Gamepad2,
   GitBranch,
   LoaderCircle,
+  LogOut,
   Menu,
   MessageSquare,
   Monitor,
+  MonitorCog,
+  Keyboard,
+  LayoutGrid,
   Music2,
-  Network,
   PanelRightClose,
   PanelRightOpen,
   Play,
@@ -30,6 +35,7 @@ import {
   Puzzle,
   RefreshCw,
   Search,
+  Settings2,
   Smartphone,
   Sparkles,
   Terminal,
@@ -47,6 +53,8 @@ import {
   type ReactNode,
   type UIEvent,
   type WheelEvent,
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -128,10 +136,14 @@ import {
   serializeToolChangeReport,
   type ConversationChangeReport,
 } from './features/tools';
+import { TeamFlowDrawer } from './features/teamFlow';
 import { LocalMusicPanel } from './features/LocalMusicPanel';
-import { SettingsView } from './features/SettingsView';
-import { FeatureContentPanel } from './features/panels';
 import { CardlingSceneHost } from './features/cardling/CardlingSceneHost';
+import {
+  OsSystemSurface,
+  type OsApplication,
+  type OsSystemSurfaceMode,
+} from './features/os/OsSystemSurface';
 import {
   cardlingSceneFromSessionSceneRecord,
   cardlingSceneKey,
@@ -159,8 +171,8 @@ import type {
   LightThemeStyle,
   ManagedModelConfig,
   PermissionMode,
+  ReasoningLevel,
   ReferencePlanMode,
-  RuntimeProfileSummary,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -168,9 +180,23 @@ import type {
   SettingsSection,
   SkillSummary,
   SkillDetail,
+  TeamFlowActionOption,
+  TeamFlowActionType,
+  TeamFlowState,
+  TerminalRuntime,
   ThemePreference,
   ThemeMode,
 } from './types';
+
+const LazySettingsView = lazy(async () => {
+  const module = await import('./features/SettingsView');
+  return { default: module.SettingsView };
+});
+
+const LazyFeatureContentPanel = lazy(async () => {
+  const module = await import('./features/panels');
+  return { default: module.FeatureContentPanel };
+});
 
 type AppErrorBoundaryState = {
   message: string;
@@ -238,6 +264,7 @@ type RefreshActiveSession = (options?: { silent?: boolean }) => Promise<void>;
 const defaultSidebarWidth = 272;
 const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
+const osConversationStorageKey = 'cardbush_os_conversation_id';
 
 function scrollDebug(label: string, data: Record<string, unknown>) {
   void window.cardbushDesktop
@@ -254,6 +281,25 @@ const defaultAppSettings: AppSettingsState = {
     httpProxy: '',
     httpsProxy: '',
     noProxy: '127.0.0.1,localhost,::1',
+  },
+  browser: {
+    privacyMode: false,
+  },
+  terminal: {
+    runtime: 'powershell',
+  },
+  os: {
+    launchAtLogin: false,
+    startInOsMode: true,
+    taskbarPlacement: 'bottom',
+    backgroundContrast: 30,
+    gamepad: {
+      confirmButton: 0,
+      backButton: 1,
+      keyboardButton: 3,
+      appsButton: 2,
+      settingsButton: 9,
+    },
   },
   backendAuth: {
     bearerToken: '',
@@ -349,6 +395,7 @@ function CardbushApp() {
     useState<SettingsSection>('profile');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
+  const [osWallpaperSource, setOsWallpaperSource] = useState('');
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
   const [projectContexts, setProjectContexts] = useState<Record<string, string>>(
     readProjectContexts,
@@ -362,11 +409,16 @@ function CardbushApp() {
   const [visualInputEnabledSetting, setVisualInputEnabledSetting] = useState(
     readVisualInputEnabled,
   );
+  const [teamModeEnabled, setTeamModeEnabledState] = useState(readTeamModeEnabled);
   const [backendCapabilities, setBackendCapabilities] =
     useState<BackendCapabilities>(defaultBackendCapabilities);
   const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
   const [backendDefaultModelName, setBackendDefaultModelName] = useState('');
   const lastSavedModelConfigSignatureRef = useRef('');
+  const osStartupHandledRef = useRef(false);
+  const conversationBeforeOsRef = useRef('');
+  const permissionBeforeOsRef = useRef<PermissionMode>('task_free');
+  const reasoningBeforeOsRef = useRef<ReasoningLevel>('medium');
   const theme = resolveTheme(themePreference, lightThemeStyle, systemDark);
   const language = resolveAppLanguage(languageMode, systemLanguage);
   const customBackgroundImagePath = appSettings.backgroundImagePath.trim();
@@ -507,6 +559,8 @@ function CardbushApp() {
     standardImageInputToolDefaultName;
   const visualInputAvailable = backendCapabilities.standardImageInputTool;
   const visualInputEnabled = visualInputAvailable && visualInputEnabledSetting;
+  const browserPrivacyModeEnabled =
+    backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const effectiveDisabledToolNames = useMemo(
     () =>
       new Set(
@@ -521,6 +575,13 @@ function CardbushApp() {
     disabledSkillNames,
     disabledToolNames: effectiveDisabledToolNames,
     standardImageInputEnabled: visualInputEnabled,
+    browserPrivacyMode: browserPrivacyModeEnabled,
+    teamModeEnabled: section === 'chat' && teamModeEnabled,
+    osModeEnabled: section === 'os',
+    terminalRuntime: appSettings.terminal.runtime,
+    reasoningLevelSelection: backendCapabilities.reasoningLevelSelection,
+    reasoningLevels: backendCapabilities.reasoningLevels,
+    defaultReasoningLevel: backendCapabilities.defaultReasoningLevel,
   });
   const refreshBackendAndActiveSession = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -558,7 +619,7 @@ function CardbushApp() {
   }, [availableModels, backendDefaultModelName, chat]);
 
   useEffect(() => {
-    if (!modelConfigSyncReady) {
+    if (!modelConfigSyncReady || backendDefaultModelName.trim()) {
       return;
     }
     const defaultId = defaultModelConfigId(
@@ -581,6 +642,7 @@ function CardbushApp() {
     });
   }, [
     appSettings.managedModelConfigs,
+    backendDefaultModelName,
     chat.selectedModel,
     modelConfigSyncReady,
   ]);
@@ -593,6 +655,24 @@ function CardbushApp() {
   const activeProjectDir =
     conversationProjectDir ||
     (!chat.activeConversation ? fallbackProjectDir || undefined : undefined);
+  const activeProjectConversationCards = useMemo(() => {
+    const root = activeProjectDir?.trim() ?? '';
+    if (!root) {
+      return [];
+    }
+    return chat.conversations
+      .filter((conversation) => {
+        const conversationRoot = conversationWorkspaceRoot(conversation).trim();
+        return conversationRoot.length > 0 && samePath(conversationRoot, root);
+      })
+      .sort((left, right) => {
+        const leftTime = Date.parse(left.updatedAt);
+        const rightTime = Date.parse(right.updatedAt);
+        return (Number.isFinite(rightTime) ? rightTime : 0) -
+          (Number.isFinite(leftTime) ? leftTime : 0);
+      })
+      .slice(0, 8);
+  }, [activeProjectDir, chat.conversations]);
   const activeDraftKey = chat.activeConversationId.trim() || '__new__';
   const activeDraft = draftsByConversation[activeDraftKey] ?? '';
   const setActiveDraft = useCallback(
@@ -681,6 +761,37 @@ function CardbushApp() {
     },
     [],
   );
+
+  useEffect(() => {
+    void window.cardbushDesktop
+      ?.setOsLoginSettings?.({
+        enabled: appSettings.os.launchAtLogin,
+        startInOsMode: appSettings.os.startInOsMode,
+      })
+      .catch(() => undefined);
+  }, [appSettings.os.launchAtLogin, appSettings.os.startInOsMode]);
+
+  useEffect(() => {
+    if (
+      !backendCapabilities.terminalRuntimeSelection ||
+      backendCapabilities.terminalRuntimes.includes(appSettings.terminal.runtime)
+    ) {
+      return;
+    }
+    updateAppSettings((current) => ({
+      ...current,
+      terminal: {
+        ...current.terminal,
+        runtime: backendCapabilities.defaultTerminalRuntime,
+      },
+    }));
+  }, [
+    appSettings.terminal.runtime,
+    backendCapabilities.defaultTerminalRuntime,
+    backendCapabilities.terminalRuntimeSelection,
+    backendCapabilities.terminalRuntimes,
+    updateAppSettings,
+  ]);
 
   useEffect(() => {
     const darkQuery = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -794,6 +905,50 @@ function CardbushApp() {
     };
   }, [customBackgroundImagePath]);
 
+  useEffect(() => {
+    if (section !== 'os') {
+      return undefined;
+    }
+    let cancelled = false;
+    const refresh = () => {
+      const desktop = window.cardbushDesktop;
+      void desktop
+        ?.wallpaperDataUrl?.()
+        .then(async (wallpaperDataUrl) => {
+          if (!cancelled) {
+            if (wallpaperDataUrl) {
+              setOsWallpaperSource(wallpaperDataUrl);
+              return;
+            }
+            const wallpaperPath = await desktop.wallpaperPath();
+            if (!cancelled) {
+              const normalizedPath = wallpaperPath.trim();
+              setOsWallpaperSource(normalizedPath ? fileUrl(normalizedPath) : '');
+            }
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setOsWallpaperSource('');
+          }
+        });
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', refresh);
+    };
+  }, [section]);
+
+  useEffect(() => {
+    if (section !== 'os') {
+      return;
+    }
+    chat.setPermissionMode('all_free');
+    chat.setReasoningLevel(highestReasoningLevel(backendCapabilities.reasoningLevels));
+  }, [backendCapabilities.reasoningLevels, chat.setPermissionMode, chat.setReasoningLevel, section]);
+
   const createConversation = useCallback(
     (projectDir?: string) => {
       setSection('chat');
@@ -801,6 +956,65 @@ function CardbushApp() {
     },
     [chat],
   );
+
+  const enterOsMode = useCallback(async () => {
+    if (section !== 'os') {
+      conversationBeforeOsRef.current = chat.activeConversationId;
+      permissionBeforeOsRef.current = chat.permissionMode;
+      reasoningBeforeOsRef.current = chat.reasoningLevel;
+    }
+    chat.setPermissionMode('all_free');
+    chat.setReasoningLevel(highestReasoningLevel(backendCapabilities.reasoningLevels));
+    setSection('os');
+    const storedId = window.localStorage.getItem(osConversationStorageKey)?.trim() ?? '';
+    if (storedId && chat.conversations.some((item) => item.id === storedId)) {
+      chat.openConversation(storedId);
+      return storedId;
+    }
+    const conversation = await chat.startConversation(
+      undefined,
+      language === 'zh' ? 'OS 会话' : 'OS session',
+    );
+    window.localStorage.setItem(osConversationStorageKey, conversation.id);
+    return conversation.id;
+  }, [backendCapabilities.reasoningLevels, chat.activeConversationId, chat.conversations, chat.openConversation, chat.permissionMode, chat.reasoningLevel, chat.setPermissionMode, chat.setReasoningLevel, chat.startConversation, language, section]);
+
+  const exitOsMode = useCallback(() => {
+    chat.setPermissionMode(permissionBeforeOsRef.current);
+    chat.setReasoningLevel(reasoningBeforeOsRef.current);
+    setSection('chat');
+    const previousId = conversationBeforeOsRef.current.trim();
+    if (previousId && chat.conversations.some((item) => item.id === previousId)) {
+      chat.openConversation(previousId);
+      return;
+    }
+    void chat.startConversation();
+  }, [chat.conversations, chat.openConversation, chat.setPermissionMode, chat.setReasoningLevel, chat.startConversation]);
+
+  useEffect(() => {
+    const enabled = section === 'os';
+    void window.cardbushDesktop?.setOsShellMode?.(enabled).catch(() => undefined);
+    return () => {
+      if (enabled) {
+        void window.cardbushDesktop?.setOsShellMode?.(false).catch(() => undefined);
+      }
+    };
+  }, [section]);
+
+  useEffect(() => {
+    if (osStartupHandledRef.current) {
+      return;
+    }
+    osStartupHandledRef.current = true;
+    void window.cardbushDesktop
+      ?.osStartupContext?.()
+      .then((context) => {
+        if (context.launchedInOsMode) {
+          void enterOsMode();
+        }
+      })
+      .catch(() => undefined);
+  }, [enterOsMode]);
 
   const addProject = useCallback(async () => {
     const selected = await window.cardbushDesktop?.pickProjectDirectory?.();
@@ -1176,20 +1390,26 @@ function CardbushApp() {
     },
     [visualInputAvailable],
   );
+  const setTeamModeEnabled = useCallback((enabled: boolean) => {
+    setTeamModeEnabledState(enabled);
+    persistTeamModeEnabled(enabled);
+  }, []);
 
   return (
     <div
-      className={`app theme-${theme}${customBackgroundImagePath ? ' has-custom-background' : ''}`}
+      className={`app theme-${theme}${customBackgroundImagePath ? ' has-custom-background' : ''}${section === 'os' ? ' os-shell-active' : ''}`}
       lang={language}
       style={appStyle}
     >
-      <WindowFrame
-        musicOpen={musicPanelOpen}
-        musicAvailable={backendCapabilities.localMusicLibrary}
-        onToggleMusic={() => setMusicPanelOpen((open) => !open)}
-        onOpenBotSettings={() => openSettings('bots')}
-        onOpenCacheSettings={() => openSettings('cache')}
-      />
+      {(section !== 'os' || settingsOpen) && (
+        <WindowFrame
+          musicOpen={musicPanelOpen}
+          musicAvailable={backendCapabilities.localMusicLibrary}
+          onToggleMusic={() => setMusicPanelOpen((open) => !open)}
+          onOpenBotSettings={() => openSettings('bots')}
+          onOpenCacheSettings={() => openSettings('cache')}
+        />
+      )}
       {musicPanelOpen && backendCapabilities.localMusicLibrary && (
         <LocalMusicPanel
           language={language}
@@ -1197,33 +1417,60 @@ function CardbushApp() {
         />
       )}
       {settingsOpen ? (
-        <SettingsView
-          themePreference={themePreference}
-          lightThemeStyle={lightThemeStyle}
-          language={language}
-          languageMode={languageMode}
-          systemLanguage={systemLanguage}
-          settings={appSettings}
-          backgroundImageSource={customBackgroundSource}
-          selectedModel={chat.selectedModel}
-          availableModels={availableModels}
-          backendCapabilities={backendCapabilities}
-          initialSection={settingsInitialSection}
-          onBack={() => setSettingsOpen(false)}
-          onThemePreferenceChange={setThemePreference}
-          onLightThemeStyleChange={setLightThemeStyle}
-          onLanguageModeChange={setLanguageMode}
-          onSettingsChange={updateAppSettings}
-          onUseModel={chat.setSelectedModel}
-          onSidebarWidthChange={setSidebarWidth}
-          onConversationHistoryCleared={() => chat.reloadConversations()}
-          onAgentConfigPackagesChanged={async () => {
-            await chat.reloadRuntimeProfiles();
-          }}
-        />
+        <Suspense fallback={<SettingsLoading language={language} />}>
+          <LazySettingsView
+            themePreference={themePreference}
+            lightThemeStyle={lightThemeStyle}
+            language={language}
+            languageMode={languageMode}
+            systemLanguage={systemLanguage}
+            settings={appSettings}
+            backgroundImageSource={customBackgroundSource}
+            selectedModel={chat.selectedModel}
+            availableModels={availableModels}
+            backendCapabilities={backendCapabilities}
+            initialSection={settingsInitialSection}
+            onBack={() => setSettingsOpen(false)}
+            onThemePreferenceChange={setThemePreference}
+            onLightThemeStyleChange={setLightThemeStyle}
+            onLanguageModeChange={setLanguageMode}
+            onSettingsChange={updateAppSettings}
+            onEnterOsMode={() => {
+              setSettingsOpen(false);
+              void enterOsMode();
+            }}
+            onUseModel={chat.setSelectedModel}
+            onSidebarWidthChange={setSidebarWidth}
+            onConversationHistoryCleared={() => chat.reloadConversations()}
+          />
+        </Suspense>
       ) : (
-        <main className="desktop-shell">
-          {!sidebarCollapsed && (
+        <main
+          className={`desktop-shell ${section === 'os' ? 'os-desktop-shell' : ''}`}
+          style={section === 'os'
+            ? ({
+                '--os-background-filter': appSettings.os.backgroundContrast > 0
+                  ? `blur(${appSettings.os.backgroundContrast * 0.2}px)`
+                  : 'none',
+              } as CSSProperties)
+            : undefined}
+        >
+          {section === 'os' && osWallpaperSource && (
+            <>
+              <img
+                className="os-wallpaper-layer"
+                src={osWallpaperSource}
+                alt=""
+                aria-hidden="true"
+              />
+              <div
+                className="os-wallpaper-contrast"
+                style={{ opacity: appSettings.os.backgroundContrast / 100 }}
+                aria-hidden="true"
+              />
+            </>
+          )}
+          {section !== 'os' && !sidebarCollapsed && (
             <>
               <ChatSidebar
                 language={language}
@@ -1233,7 +1480,13 @@ function CardbushApp() {
                 projects={projectItems}
                 conversations={chat.conversations}
                 changeReportsByConversation={changeReportsByConversation}
-                onSectionChange={setSection}
+                onSectionChange={(nextSection) => {
+                  if (nextSection === 'os') {
+                    void enterOsMode();
+                    return;
+                  }
+                  setSection(nextSection);
+                }}
                 onConversationChange={(id) => {
                   chat.openConversation(id);
                   setSection('chat');
@@ -1259,20 +1512,41 @@ function CardbushApp() {
             </>
           )}
           <section className="main-stage">
-            {section === 'chat' ? (
+            {section === 'chat' || section === 'os' ? (
               <ChatPanel
                 language={language}
-                title={chat.activeConversation?.title ?? 'cardbush'}
+                title={
+                  section === 'os'
+                    ? 'CardBush OS'
+                    : chat.activeConversation?.title ?? 'cardbush'
+                }
+                osModeEnabled={section === 'os'}
+                osRuntimeAvailable={
+                  backendCapabilities.osMode && backendCapabilities.desktopAutomation
+                }
+                osSettings={appSettings.os}
+                onOsSettingsChange={(os) => updateAppSettings((current) => ({ ...current, os }))}
+                onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
-                activeProjectDir={activeProjectDir}
-                projectContext={projectContexts[projectContextKey(activeProjectDir)] ?? ''}
+                activeProjectDir={section === 'os' ? undefined : activeProjectDir}
+                conversationCards={section === 'os' ? [] : activeProjectConversationCards}
+                projectContext={
+                  section === 'os'
+                    ? ''
+                    : projectContexts[projectContextKey(activeProjectDir)] ?? ''
+                }
                 messages={chat.activeMessages}
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
                 visualInputAvailable={visualInputAvailable}
                 visualInputEnabled={visualInputEnabled}
+                teamModeEnabled={section === 'chat' && teamModeEnabled}
+                teamFlow={chat.activeTeamFlow}
+                teamFlowLoading={chat.activeTeamFlowLoading}
+                teamFlowAction={chat.activeTeamFlowAction}
+                terminalRuntime={appSettings.terminal.runtime}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
                 activeTurnId={chat.activeTurnId}
@@ -1284,22 +1558,33 @@ function CardbushApp() {
                 notice={chat.notice}
                 selectedModel={chat.selectedModel}
                 availableModels={availableModels}
-                selectedRuntimeProfile={chat.selectedRuntimeProfile}
-                runtimeProfiles={chat.runtimeProfiles}
+                referencePlanAvailable={backendCapabilities.taskPlan}
                 referencePlanMode={chat.referencePlanMode}
                 permissionMode={chat.permissionMode}
+                reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection}
+                reasoningLevel={chat.reasoningLevel}
+                reasoningLevels={backendCapabilities.reasoningLevels}
                 botControlAvailable={backendCapabilities.botControl}
-                gitAvailable={backendCapabilities.git}
-                terminalAvailable={backendCapabilities.terminal}
+                gitAvailable={section === 'chat' && backendCapabilities.git}
+                terminalAvailable={section === 'chat' && backendCapabilities.terminal}
                 onModelChange={chat.setSelectedModel}
-                onRuntimeProfileChange={chat.setSelectedRuntimeProfile}
                 onReferencePlanModeChange={chat.setReferencePlanMode}
                 onPermissionModeChange={chat.setPermissionMode}
+                onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={() => createConversation(activeProjectDir)}
+                onOpenConversationCard={(conversationId) => {
+                  chat.openConversation(conversationId);
+                  setSection('chat');
+                }}
                 onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
                 onVisualInputEnabledChange={setVisualInputEnabled}
+                onTeamModeChange={setTeamModeEnabled}
+                onRefreshTeamFlow={() =>
+                  chat.loadTeamFlow(chat.activeConversationId, { silent: false })
+                }
+                onTeamFlowAction={chat.submitTeamFlowAction}
                 onCreateSessionShareLink={chat.createSessionShareLink}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
@@ -1364,6 +1649,43 @@ function CardbushApp() {
         />
       )}
       <CopyToastHost language={language} />
+    </div>
+  );
+}
+
+function ConversationCardStrip({
+  language,
+  conversations,
+  activeConversationId,
+  onOpenConversation,
+}: {
+  language: AppLanguage;
+  conversations: ConversationSummary[];
+  activeConversationId: string;
+  onOpenConversation: (conversationId: string) => void;
+}) {
+  return (
+    <div className="conversation-card-strip" data-no-floating-input="true">
+      <div className="conversation-card-strip-inner">
+        {conversations.map((conversation) => {
+          const active = conversation.id === activeConversationId;
+          const title = conversation.title.trim() ||
+            (language === 'zh' ? '新会话' : 'New chat');
+          const time = conversationCardTime(conversation.updatedAt, language);
+          return (
+            <button
+              key={conversation.id}
+              className={`conversation-card-tab ${active ? 'active' : ''}`}
+              type="button"
+              title={title}
+              onClick={() => onOpenConversation(conversation.id)}
+            >
+              <span>{title}</span>
+              {time && <small>{time}</small>}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1571,6 +1893,14 @@ function persistVisualInputEnabled(value: boolean) {
   window.localStorage.setItem('cardbush_visual_input_enabled', value ? 'true' : 'false');
 }
 
+function readTeamModeEnabled() {
+  return window.localStorage.getItem('cardbush_team_mode_enabled') === 'true';
+}
+
+function persistTeamModeEnabled(value: boolean) {
+  window.localStorage.setItem('cardbush_team_mode_enabled', value ? 'true' : 'false');
+}
+
 function projectContextKey(projectDir?: string) {
   return projectDir?.trim().replace(/\\/g, '/').toLowerCase() ?? '';
 }
@@ -1695,6 +2025,7 @@ function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) 
 }
 
 function readInitialAppSettings(): AppSettingsState {
+  const storedOsPreferences = readStoredOsPreferences();
   return normalizeAppSettings({
     proxy: {
       mode: proxyModeFromStorage(
@@ -1707,6 +2038,22 @@ function readInitialAppSettings(): AppSettingsState {
       noProxy:
         window.localStorage.getItem('cardbush_proxy_no_proxy') ??
         '127.0.0.1,localhost,::1',
+    },
+    browser: {
+      privacyMode:
+        window.localStorage.getItem('cardbush_browser_privacy_mode') === 'true',
+    },
+    terminal: {
+      runtime: terminalRuntimeFromStorage(
+        window.localStorage.getItem('cardbush_terminal_runtime'),
+      ),
+    },
+    os: {
+      launchAtLogin: window.localStorage.getItem('cardbush_os_launch_at_login') === 'true',
+      startInOsMode: window.localStorage.getItem('cardbush_os_start_mode') !== 'standard',
+      taskbarPlacement: storedOsPreferences.taskbarPlacement,
+      backgroundContrast: storedOsPreferences.backgroundContrast,
+      gamepad: storedOsPreferences.gamepad,
     },
     backendAuth: {
       bearerToken: window.localStorage.getItem(backendBearerTokenStorageKey) ?? '',
@@ -1735,6 +2082,50 @@ function readInitialAppSettings(): AppSettingsState {
       avatarImagePath: window.localStorage.getItem('cardbush_user_avatar_image') ?? '',
     },
   });
+}
+
+function readStoredOsPreferences(): Pick<AppSettingsState['os'], 'taskbarPlacement' | 'backgroundContrast' | 'gamepad'> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem('cardbush_os_preferences') ?? '{}') as Partial<AppSettingsState['os']>;
+    return {
+      taskbarPlacement: value.taskbarPlacement === 'top' ? 'top' : 'bottom',
+      backgroundContrast: Number.isFinite(value.backgroundContrast)
+        ? Math.min(100, Math.max(0, Math.round(value.backgroundContrast ?? 30)))
+        : defaultAppSettings.os.backgroundContrast,
+      gamepad: {
+        ...defaultAppSettings.os.gamepad,
+        ...(value.gamepad ?? {}),
+      },
+    };
+  } catch {
+    return {
+      taskbarPlacement: defaultAppSettings.os.taskbarPlacement,
+      backgroundContrast: defaultAppSettings.os.backgroundContrast,
+      gamepad: defaultAppSettings.os.gamepad,
+    };
+  }
+}
+
+function readStoredOsPinnedApplications(): OsApplication[] {
+  try {
+    const value: unknown = JSON.parse(
+      window.localStorage.getItem('cardbush_os_pinned_applications') ?? '[]',
+    );
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((item): item is OsApplication => Boolean(
+        item &&
+        typeof item === 'object' &&
+        typeof item.id === 'string' &&
+        typeof item.name === 'string' &&
+        typeof item.path === 'string' &&
+        item.source === 'start_menu' &&
+        typeof item.icon === 'string',
+      ))
+      .slice(0, 12);
+  } catch {
+    return [];
+  }
 }
 
 function readManagedModelConfigs() {
@@ -1792,6 +2183,27 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
       noProxy:
         settings.proxy.noProxy.trim() || defaultAppSettings.proxy.noProxy,
     },
+    browser: {
+      privacyMode: settings.browser.privacyMode === true,
+    },
+    terminal: {
+      runtime: normalizeTerminalRuntime(settings.terminal?.runtime),
+    },
+    os: {
+      launchAtLogin: settings.os?.launchAtLogin === true,
+      startInOsMode: settings.os?.startInOsMode !== false,
+      taskbarPlacement: settings.os?.taskbarPlacement === 'top' ? 'top' : 'bottom',
+      backgroundContrast: Number.isFinite(settings.os?.backgroundContrast)
+        ? Math.min(100, Math.max(0, Math.round(settings.os.backgroundContrast)))
+        : defaultAppSettings.os.backgroundContrast,
+      gamepad: {
+        confirmButton: normalizeGamepadButton(settings.os?.gamepad?.confirmButton, 0),
+        backButton: normalizeGamepadButton(settings.os?.gamepad?.backButton, 1),
+        keyboardButton: normalizeGamepadButton(settings.os?.gamepad?.keyboardButton, 3),
+        appsButton: normalizeGamepadButton(settings.os?.gamepad?.appsButton, 2),
+        settingsButton: normalizeGamepadButton(settings.os?.gamepad?.settingsButton, 9),
+      },
+    },
     backendAuth: {
       bearerToken: settings.backendAuth.bearerToken.trim(),
       localRequestKey: settings.backendAuth.localRequestKey.trim(),
@@ -1816,6 +2228,12 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
       avatarImagePath: settings.user.avatarImagePath?.trim() ?? '',
     },
   };
+}
+
+function normalizeGamepadButton(value: number | undefined, fallback: number) {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= 17
+    ? Number(value)
+    : fallback;
 }
 
 function proxyModeFromStorage(
@@ -1844,11 +2262,43 @@ function normalizeProxyMode(
   return 'none';
 }
 
+function terminalRuntimeFromStorage(value: string | null): TerminalRuntime {
+  return normalizeTerminalRuntime(value as TerminalRuntime | undefined);
+}
+
+function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
+  if (value === 'wsl' || value === 'git_bash' || value === 'bash') {
+    return value;
+  }
+  return 'powershell';
+}
+
 function persistAppSettings(settings: AppSettingsState) {
   window.localStorage.setItem('cardbush_proxy_mode', settings.proxy.mode);
   window.localStorage.setItem('cardbush_proxy_http', settings.proxy.httpProxy);
   window.localStorage.setItem('cardbush_proxy_https', settings.proxy.httpsProxy);
   window.localStorage.setItem('cardbush_proxy_no_proxy', settings.proxy.noProxy);
+  window.localStorage.setItem(
+    'cardbush_browser_privacy_mode',
+    String(settings.browser.privacyMode),
+  );
+  window.localStorage.setItem(
+    'cardbush_terminal_runtime',
+    normalizeTerminalRuntime(settings.terminal.runtime),
+  );
+  window.localStorage.setItem(
+    'cardbush_os_launch_at_login',
+    String(settings.os.launchAtLogin),
+  );
+  window.localStorage.setItem(
+    'cardbush_os_start_mode',
+    settings.os.startInOsMode ? 'os' : 'standard',
+  );
+  window.localStorage.setItem('cardbush_os_preferences', JSON.stringify({
+    taskbarPlacement: settings.os.taskbarPlacement,
+    backgroundContrast: settings.os.backgroundContrast,
+    gamepad: settings.os.gamepad,
+  }));
   window.localStorage.setItem(
     backendBearerTokenStorageKey,
     settings.backendAuth.bearerToken,
@@ -2114,19 +2564,260 @@ function WindowButton({
   );
 }
 
+function SettingsLoading({ language }: { language: AppLanguage }) {
+  return (
+    <main className="settings-shell">
+      <section className="settings-content">
+        <div className="feature-content feature-loading">
+          <LoaderCircle size={18} />
+          <span>{language === 'zh' ? '正在加载设置...' : 'Loading settings...'}</span>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function FeaturePanelLoading({ language }: { language: AppLanguage }) {
+  return (
+    <div className="feature-content feature-loading">
+      <LoaderCircle size={18} />
+      <span>{language === 'zh' ? '正在加载...' : 'Loading...'}</span>
+    </div>
+  );
+}
+
+function sortConversationCards(
+  conversations: ConversationSummary[],
+  activeConversationId: string,
+) {
+  const activeId = activeConversationId.trim();
+  return [...conversations].sort((left, right) => {
+    if (left.id === activeId) {
+      return -1;
+    }
+    if (right.id === activeId) {
+      return 1;
+    }
+    const leftTime = Date.parse(left.updatedAt);
+    const rightTime = Date.parse(right.updatedAt);
+    return (Number.isFinite(rightTime) ? rightTime : 0) -
+      (Number.isFinite(leftTime) ? leftTime : 0);
+  });
+}
+
+function conversationCardTime(value: string, language: AppLanguage) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) {
+    return '';
+  }
+  const diffMs = Date.now() - timestamp;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs >= 0 && diffMs < hour) {
+    const minutes = Math.max(1, Math.round(diffMs / minute));
+    return language === 'zh' ? `${minutes} 分` : `${minutes}m`;
+  }
+  if (diffMs >= 0 && diffMs < day) {
+    const hours = Math.max(1, Math.round(diffMs / hour));
+    return language === 'zh' ? `${hours} 小时` : `${hours}h`;
+  }
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'numeric',
+    day: 'numeric',
+  }).format(new Date(timestamp));
+}
+
+function highestReasoningLevel(levels: ReasoningLevel[]): ReasoningLevel {
+  const available = new Set(levels);
+  return (['max', 'high', 'medium', 'low'] as const).find((level) =>
+    available.has(level)
+  ) ?? 'max';
+}
+
+function useOsGamepadNavigation(
+  enabled: boolean,
+  mapping: AppSettingsState['os']['gamepad'],
+  actions: {
+    openSettings: () => void;
+    openApps: () => void;
+    toggleKeyboard: () => void;
+    goBack: () => void;
+  },
+) {
+  const [connected, setConnected] = useState(false);
+  const [active, setActive] = useState(false);
+  const mappingRef = useRef(mapping);
+  const actionsRef = useRef(actions);
+  const connectedRef = useRef(false);
+  const previousButtonsRef = useRef<boolean[]>([]);
+  const lastMoveAtRef = useRef(0);
+  mappingRef.current = mapping;
+  actionsRef.current = actions;
+
+  useEffect(() => {
+    if (!enabled || typeof navigator.getGamepads !== 'function') {
+      setConnected(false);
+      setActive(false);
+      return undefined;
+    }
+
+    let frame = 0;
+    const visibleControls = () =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.os-chat-panel button:not([disabled]), .os-chat-panel textarea:not([disabled]), .os-chat-panel [data-os-control="true"]',
+        ),
+      ).filter((element, index, items) => {
+        if (items.indexOf(element) !== index) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden';
+      });
+
+    const primaryInput = () =>
+      document.querySelector<HTMLTextAreaElement>(
+        '.os-chat-panel textarea[data-os-primary-input="true"]',
+      );
+
+    const focusDirection = (x: number, y: number) => {
+      const controls = visibleControls();
+      if (controls.length === 0) {
+        return;
+      }
+      const current = document.activeElement as HTMLElement | null;
+      if (!current || !controls.includes(current)) {
+        (primaryInput() ?? controls[0])?.focus({ preventScroll: true });
+        return;
+      }
+      const origin = current.getBoundingClientRect();
+      const originX = origin.left + origin.width / 2;
+      const originY = origin.top + origin.height / 2;
+      let best: { element: HTMLElement; score: number } | null = null;
+      for (const element of controls) {
+        if (element === current) {
+          continue;
+        }
+        const rect = element.getBoundingClientRect();
+        const dx = rect.left + rect.width / 2 - originX;
+        const dy = rect.top + rect.height / 2 - originY;
+        const forward = dx * x + dy * y;
+        if (forward <= 4) {
+          continue;
+        }
+        const sideways = Math.abs(dx * y - dy * x);
+        const score = forward + sideways * 2.4;
+        if (!best || score < best.score) {
+          best = { element, score };
+        }
+      }
+      best?.element.focus({ preventScroll: true });
+    };
+
+    const press = (buttons: readonly GamepadButton[], index: number) => {
+      const down = buttons[index]?.pressed === true;
+      const wasDown = previousButtonsRef.current[index] === true;
+      previousButtonsRef.current[index] = down;
+      return down && !wasDown;
+    };
+
+    const poll = () => {
+      const gamepad = Array.from(navigator.getGamepads()).find(Boolean) ?? null;
+      const isConnected = Boolean(gamepad?.connected);
+      if (connectedRef.current !== isConnected) {
+        connectedRef.current = isConnected;
+        setConnected(isConnected);
+        if (!isConnected) {
+          setActive(false);
+          previousButtonsRef.current = [];
+        }
+      }
+      if (gamepad) {
+        const buttons = gamepad.buttons;
+        const now = performance.now();
+        const horizontal = Math.abs(gamepad.axes[0] ?? 0) > 0.58 ? Math.sign(gamepad.axes[0]) : 0;
+        const vertical = Math.abs(gamepad.axes[1] ?? 0) > 0.58 ? Math.sign(gamepad.axes[1]) : 0;
+        const left = buttons[14]?.pressed || horizontal < 0;
+        const right = buttons[15]?.pressed || horizontal > 0;
+        const up = buttons[12]?.pressed || vertical < 0;
+        const down = buttons[13]?.pressed || vertical > 0;
+        if ((left || right || up || down) && now - lastMoveAtRef.current > 180) {
+          lastMoveAtRef.current = now;
+          setActive(true);
+          focusDirection(left ? -1 : right ? 1 : 0, up ? -1 : down ? 1 : 0);
+        }
+        if (press(buttons, mappingRef.current.confirmButton)) {
+          setActive(true);
+          const focused = document.activeElement as HTMLElement | null;
+          if (focused?.matches('button, [role="button"]')) {
+            focused.click();
+          } else {
+            focused?.focus();
+          }
+        }
+        if (press(buttons, mappingRef.current.backButton)) {
+          setActive(true);
+          actionsRef.current.goBack();
+        }
+        if (press(buttons, mappingRef.current.keyboardButton)) {
+          setActive(true);
+          actionsRef.current.toggleKeyboard();
+        }
+        if (press(buttons, mappingRef.current.appsButton)) {
+          setActive(true);
+          actionsRef.current.openApps();
+        }
+        if (press(buttons, mappingRef.current.settingsButton)) {
+          setActive(true);
+          actionsRef.current.openSettings();
+        }
+        const scrollAxis = gamepad.axes[3] ?? 0;
+        if (Math.abs(scrollAxis) > 0.42) {
+          const scroller = document.querySelector<HTMLElement>('.os-chat-panel .message-list');
+          scroller?.scrollBy({ top: scrollAxis * 14, behavior: 'auto' });
+        }
+      }
+      frame = window.requestAnimationFrame(poll);
+    };
+
+    const usePointer = () => setActive(false);
+    window.addEventListener('pointerdown', usePointer, { passive: true });
+    frame = window.requestAnimationFrame(poll);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('pointerdown', usePointer);
+    };
+  }, [enabled]);
+
+  return { connected, active };
+}
+
 function ChatPanel({
   language,
   title,
+  osModeEnabled,
+  osRuntimeAvailable,
+  osSettings,
+  onOsSettingsChange,
+  onExitOsMode,
   sidebarCollapsed,
   onRevealSidebar,
   activeConversationId,
   activeProjectDir,
+  conversationCards,
   projectContext,
   messages,
   skills,
   disabledSkillNames,
   visualInputAvailable,
   visualInputEnabled,
+  teamModeEnabled,
+  teamFlow,
+  teamFlowLoading,
+  teamFlowAction,
+  terminalRuntime,
   loading,
   sending,
   activeTurnId,
@@ -2138,22 +2829,28 @@ function ChatPanel({
   notice,
   selectedModel,
   availableModels,
-  selectedRuntimeProfile,
-  runtimeProfiles,
+  referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  reasoningLevelAvailable,
+  reasoningLevel,
+  reasoningLevels,
   botControlAvailable,
   gitAvailable,
   terminalAvailable,
   onModelChange,
-  onRuntimeProfileChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
+  onOpenConversationCard,
   onSaveProjectContext,
   onToggleSkill,
   onVisualInputEnabledChange,
+  onTeamModeChange,
+  onRefreshTeamFlow,
+  onTeamFlowAction,
   onCreateSessionShareLink,
   onRefreshActiveSession,
   onSend,
@@ -2173,16 +2870,27 @@ function ChatPanel({
 }: {
   language: AppLanguage;
   title: string;
+  osModeEnabled: boolean;
+  osRuntimeAvailable: boolean;
+  osSettings: AppSettingsState['os'];
+  onOsSettingsChange: (settings: AppSettingsState['os']) => void;
+  onExitOsMode: () => void;
   sidebarCollapsed: boolean;
   onRevealSidebar: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
+  conversationCards: ConversationSummary[];
   projectContext: string;
   messages: ChatMessage[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
+  teamModeEnabled: boolean;
+  teamFlow: TeamFlowState | null;
+  teamFlowLoading: boolean;
+  teamFlowAction: TeamFlowActionType | '';
+  terminalRuntime: TerminalRuntime;
   loading: boolean;
   sending: boolean;
   activeTurnId: string;
@@ -2194,22 +2902,28 @@ function ChatPanel({
   notice: string | null;
   selectedModel: string;
   availableModels: string[];
-  selectedRuntimeProfile: string;
-  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  reasoningLevelAvailable: boolean;
+  reasoningLevel: ReasoningLevel;
+  reasoningLevels: ReasoningLevel[];
   botControlAvailable: boolean;
   gitAvailable: boolean;
   terminalAvailable: boolean;
   onModelChange: (value: string) => void;
-  onRuntimeProfileChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
+  onOpenConversationCard: (conversationId: string) => void;
   onSaveProjectContext: (value: string) => Promise<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
+  onTeamModeChange: (enabled: boolean) => void;
+  onRefreshTeamFlow: () => Promise<TeamFlowState | null>;
+  onTeamFlowAction: (action: TeamFlowActionType, text?: string) => Promise<void>;
   onCreateSessionShareLink: (
     request: SessionShareLinkRequest,
   ) => Promise<SessionShareLinkResult>;
@@ -2290,6 +3004,47 @@ function ChatPanel({
   const streamScrollFrameRef = useRef<number | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
+  const [teamFlowDrawerOpen, setTeamFlowDrawerOpen] = useState(false);
+  const [osSystemSurface, setOsSystemSurface] = useState<OsSystemSurfaceMode | null>(null);
+  const [osNineKeyOpen, setOsNineKeyOpen] = useState(false);
+  const [osSettingsOpen, setOsSettingsOpen] = useState(false);
+  const [osLaunchedApplications, setOsLaunchedApplications] = useState<OsApplication[]>([]);
+  const [osPinnedApplications, setOsPinnedApplications] = useState<OsApplication[]>(
+    readStoredOsPinnedApplications,
+  );
+  const [osDesktopNotice, setOsDesktopNotice] = useState<{
+    tone: 'neutral' | 'error';
+    text: string;
+  } | null>(null);
+  const osApplicationLaunchGraceRef = useRef(new Map<string, number>());
+  const osPinnedApplicationIds = useMemo(
+    () => new Set(osPinnedApplications.map((application) => application.id)),
+    [osPinnedApplications],
+  );
+  const osTaskbarApplications = useMemo(
+    () => [...osPinnedApplications, ...osLaunchedApplications]
+      .filter((application, index, all) =>
+        all.findIndex((candidate) => candidate.id === application.id) === index)
+      .slice(0, 12),
+    [osLaunchedApplications, osPinnedApplications],
+  );
+  const osRunningApplicationIds = useMemo(
+    () => new Set(osLaunchedApplications.map((application) => application.id)),
+    [osLaunchedApplications],
+  );
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      'cardbush_os_pinned_applications',
+      JSON.stringify(osPinnedApplications),
+    );
+  }, [osPinnedApplications]);
+
+  const toggleOsPinnedApplication = useCallback((application: OsApplication) => {
+    setOsPinnedApplications((current) => current.some((item) => item.id === application.id)
+      ? current.filter((item) => item.id !== application.id)
+      : [...current, application].slice(0, 12));
+  }, []);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [chatScrollbarGutter, setChatScrollbarGutter] = useState(0);
   const [activeScene, setActiveScene] = useState<CardlingScene | null>(null);
@@ -2301,6 +3056,141 @@ function ChatPanel({
   const autoPlayedSceneKeysRef = useRef(new Set<string>());
   const streamStatusHeight = 0;
   const virtuosoComponents = useMemo(() => ({ Footer: MessageListFooter }), []);
+  const teamActionOptions = useMemo(
+    () => teamActionOptionsForDisplay(teamFlow),
+    [teamFlow],
+  );
+  const showTeamActionCard =
+    teamModeEnabled &&
+    !pendingInteraction &&
+    teamActionOptions.length > 0 &&
+    !teamFlowActionStateSettled(teamFlow?.status);
+
+  useEffect(() => {
+    if (!teamModeEnabled) {
+      setTeamFlowDrawerOpen(false);
+    }
+  }, [teamModeEnabled]);
+
+  useEffect(() => {
+    if (!osModeEnabled) {
+      setOsSystemSurface(null);
+      setOsNineKeyOpen(false);
+      setOsSettingsOpen(false);
+    }
+  }, [osModeEnabled]);
+
+  useEffect(() => {
+    if (!osModeEnabled || (!osNineKeyOpen && !osSettingsOpen)) {
+      return;
+    }
+    const closeOsOverlays = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.os-system-surface, .os-nine-key, .os-control-center, [data-os-overlay-trigger="true"]')) {
+        return;
+      }
+      setOsNineKeyOpen(false);
+      setOsSettingsOpen(false);
+    };
+    window.addEventListener('pointerdown', closeOsOverlays, true);
+    return () => window.removeEventListener('pointerdown', closeOsOverlays, true);
+  }, [osModeEnabled, osNineKeyOpen, osSettingsOpen]);
+
+  const rememberLaunchedApplication = useCallback((application: OsApplication) => {
+    osApplicationLaunchGraceRef.current.set(application.id, Date.now() + 10_000);
+    setOsLaunchedApplications((current) => {
+      const existingIndex = current.findIndex((item) => item.id === application.id);
+      if (existingIndex < 0) return [...current, application].slice(0, 7);
+      return current.map((item, index) => index === existingIndex ? application : item);
+    });
+  }, []);
+
+  const refreshOsRunningApplications = useCallback(async () => {
+    const request = window.cardbushDesktop?.osRunningApplications?.();
+    const running = request ? await request.catch(() => null) : null;
+    if (!running) return;
+    const now = Date.now();
+    setOsLaunchedApplications((current) => {
+      const runningById = new Map(running.map((application) => [application.id, application]));
+      const stableApplications = current.flatMap((application) => {
+        const runningApplication = runningById.get(application.id);
+        if (runningApplication) {
+          runningById.delete(application.id);
+          osApplicationLaunchGraceRef.current.delete(application.id);
+          return [runningApplication];
+        }
+        const graceUntil = osApplicationLaunchGraceRef.current.get(application.id) ?? 0;
+        if (graceUntil > now) return [application];
+        osApplicationLaunchGraceRef.current.delete(application.id);
+        return [];
+      });
+      return [...stableApplications, ...runningById.values()].slice(0, 7);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!osModeEnabled) return undefined;
+    void refreshOsRunningApplications();
+    const timer = window.setInterval(() => {
+      void refreshOsRunningApplications();
+    }, 4_500);
+    return () => window.clearInterval(timer);
+  }, [osModeEnabled, refreshOsRunningApplications]);
+
+  const launchOsApplication = useCallback(async (application: OsApplication) => {
+    rememberLaunchedApplication(application);
+    setOsDesktopNotice({
+      tone: 'neutral',
+      text: language === 'zh' ? `正在打开 ${application.name}` : `Opening ${application.name}`,
+    });
+    try {
+      const result = await window.cardbushDesktop?.osLaunchApplication?.(application.id);
+      setOsDesktopNotice({
+        tone: 'neutral',
+        text: result?.status === 'focused'
+          ? language === 'zh' ? `已切换到 ${application.name}` : `Switched to ${application.name}`
+          : language === 'zh' ? `${application.name} 已启动` : `${application.name} launched`,
+      });
+      window.setTimeout(() => void refreshOsRunningApplications(), 900);
+    } catch (error) {
+      osApplicationLaunchGraceRef.current.delete(application.id);
+      setOsLaunchedApplications((current) =>
+        current.filter((item) => item.id !== application.id));
+      setOsDesktopNotice({
+        tone: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [language, refreshOsRunningApplications, rememberLaunchedApplication]);
+
+  useEffect(() => {
+    if (!osDesktopNotice) return undefined;
+    const timer = window.setTimeout(() => setOsDesktopNotice(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [osDesktopNotice]);
+
+  const toggleOsSurface = useCallback((surface: OsSystemSurfaceMode) => {
+    setOsNineKeyOpen(false);
+    setOsSettingsOpen(false);
+    setOsSystemSurface((current) => current === surface ? null : surface);
+  }, []);
+
+  const toggleOsSettings = useCallback(() => {
+    setOsSystemSurface(null);
+    setOsNineKeyOpen(false);
+    setOsSettingsOpen((current) => !current);
+  }, []);
+
+  const osGamepad = useOsGamepadNavigation(osModeEnabled, osSettings.gamepad, {
+    openSettings: () => setOsSettingsOpen(true),
+    openApps: () => setOsSystemSurface('apps'),
+    toggleKeyboard: () => setOsNineKeyOpen((current) => !current),
+    goBack: () => {
+      if (osNineKeyOpen) setOsNineKeyOpen(false);
+      else if (osSystemSurface) setOsSystemSurface(null);
+    },
+  });
 
   const setScrollBottomVisible = useCallback((visible: boolean) => {
     showScrollBottomRef.current = visible;
@@ -3304,6 +4194,7 @@ function ChatPanel({
     }
     const dock = composerDockRef.current;
     if (!dock) {
+      setComposerDockHeight(0);
       return undefined;
     }
     const updateHeight = () => {
@@ -3313,7 +4204,7 @@ function ChatPanel({
     const observer = new ResizeObserver(updateHeight);
     observer.observe(dock);
     return () => observer.disconnect();
-  }, [loading, showWelcome]);
+  }, [loading, pendingInteraction, showTeamActionCard, showWelcome]);
 
   useEffect(() => {
     return () => {
@@ -3715,31 +4606,119 @@ function ChatPanel({
   } as CSSProperties;
 
   return (
-    <div className="chat-panel">
-      <TopBar
-        title={title}
-        sidebarCollapsed={sidebarCollapsed}
-        botShareLabel={
-          messages.length === 0
-            ? language === 'zh'
-              ? '发送到 Bot'
-              : 'Send to Bot'
-            : language === 'zh'
-              ? '继续到 Bot'
-              : 'Continue to Bot'
-        }
-        language={language}
-        activeConversationId={activeConversationId}
-        botControlAvailable={botControlAvailable}
-        onCreateSessionShareLink={
-          botControlAvailable ? onCreateSessionShareLink : undefined
-        }
-        onRefreshActiveSession={onRefreshActiveSession}
-        activeConsole={consoleMode}
-        onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
-        onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
-        onRevealSidebar={onRevealSidebar}
-      />
+    <div
+      className={`chat-panel ${osModeEnabled ? `os-chat-panel${osGamepad.active ? ' os-gamepad-active' : ''}` : ''}`}
+    >
+      {osModeEnabled ? (
+        <OsShellBar
+          language={language}
+          runtimeAvailable={osRuntimeAvailable}
+          gamepadConnected={osGamepad.connected}
+          taskbarPlacement={osSettings.taskbarPlacement}
+          launchedApplications={osTaskbarApplications}
+          runningApplicationIds={osRunningApplicationIds}
+          onLaunchApplication={(application) => void launchOsApplication(application)}
+          onOpenApps={() => toggleOsSurface('apps')}
+          onOpenTasks={() => toggleOsSurface('tasks')}
+          onOpenFiles={() => toggleOsSurface('files')}
+          onOpenSettings={toggleOsSettings}
+          onExit={onExitOsMode}
+        />
+      ) : (
+        <TopBar
+          title={title}
+          sidebarCollapsed={sidebarCollapsed}
+          botShareLabel={
+            messages.length === 0
+              ? language === 'zh'
+                ? '发送到 Bot'
+                : 'Send to Bot'
+              : language === 'zh'
+                ? '继续到 Bot'
+                : 'Continue to Bot'
+          }
+          language={language}
+          activeConversationId={activeConversationId}
+          botControlAvailable={botControlAvailable}
+          onCreateSessionShareLink={
+            botControlAvailable ? onCreateSessionShareLink : undefined
+          }
+          onRefreshActiveSession={onRefreshActiveSession}
+          activeConsole={consoleMode}
+          teamModeEnabled={teamModeEnabled}
+          teamFlow={teamFlow}
+          teamFlowLoading={teamFlowLoading}
+          teamFlowDrawerOpen={teamFlowDrawerOpen}
+          onToggleTeamFlowDrawer={() => setTeamFlowDrawerOpen((current) => !current)}
+          onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
+          onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
+          onRevealSidebar={onRevealSidebar}
+        />
+      )}
+      {osModeEnabled && osSystemSurface && (
+        <OsSystemSurface
+          mode={osSystemSurface}
+          language={language}
+          onApplicationLaunched={rememberLaunchedApplication}
+          pinnedApplicationIds={osPinnedApplicationIds}
+          onToggleApplicationPinned={toggleOsPinnedApplication}
+          onAskAgent={(prompt) => {
+            onDraftChange(prompt);
+            setOsSystemSurface(null);
+          }}
+          onClose={() => setOsSystemSurface(null)}
+        />
+      )}
+      {osModeEnabled && osDesktopNotice && (
+        <div className={`os-desktop-notice ${osDesktopNotice.tone}`} role="status">
+          {osDesktopNotice.text}
+        </div>
+      )}
+      {osModeEnabled && osSettings.taskbarPlacement === 'bottom' && (
+        <OsTaskbar
+          language={language}
+          applications={osTaskbarApplications}
+          runningApplicationIds={osRunningApplicationIds}
+          onOpenApps={() => toggleOsSurface('apps')}
+          onLaunch={(application) => void launchOsApplication(application)}
+        />
+      )}
+      {osModeEnabled && osNineKeyOpen && (
+        <OsNineKeyInput
+          language={language}
+          value={draft}
+          onChange={onDraftChange}
+          onSubmit={() => void handleComposerSend(draft)}
+          onClose={() => setOsNineKeyOpen(false)}
+        />
+      )}
+      {osModeEnabled && osSettingsOpen && (
+        <OsControlCenter
+          language={language}
+          settings={osSettings}
+          onChange={onOsSettingsChange}
+          onClose={() => setOsSettingsOpen(false)}
+        />
+      )}
+      {!loading && !showWelcome && conversationCards.length > 1 && (
+        <ConversationCardStrip
+          language={language}
+          conversations={sortConversationCards(
+            conversationCards,
+            activeConversationId,
+          )}
+          activeConversationId={activeConversationId}
+          onOpenConversation={onOpenConversationCard}
+        />
+      )}
+      {teamModeEnabled && teamFlowDrawerOpen && (
+        <TeamFlowDrawer
+          language={language}
+          flow={teamFlow}
+          loading={teamFlowLoading}
+          onRefresh={onRefreshTeamFlow}
+        />
+      )}
       {notice && (
         <div className="notice-banner" role="status" aria-live="polite">
           <CheckCircle2 size={16} />
@@ -3770,6 +4749,8 @@ function ChatPanel({
           <WelcomeComposer
             key={activeConversationId || 'new-session'}
             language={language}
+            osModeEnabled={osModeEnabled}
+            osGamepadConnected={osGamepad.connected}
             draft={draft}
             onDraftChange={onDraftChange}
             sending={sending}
@@ -3778,14 +4759,16 @@ function ChatPanel({
             queuedMessages={queuedMessages}
             selectedModel={selectedModel}
             availableModels={availableModels}
-            selectedRuntimeProfile={selectedRuntimeProfile}
-            runtimeProfiles={runtimeProfiles}
+            referencePlanAvailable={referencePlanAvailable}
             referencePlanMode={referencePlanMode}
             permissionMode={permissionMode}
+            reasoningLevelAvailable={reasoningLevelAvailable}
+            reasoningLevel={reasoningLevel}
+            reasoningLevels={reasoningLevels}
             onModelChange={onModelChange}
-            onRuntimeProfileChange={onRuntimeProfileChange}
             onReferencePlanModeChange={onReferencePlanModeChange}
             onPermissionModeChange={onPermissionModeChange}
+            onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
             activeProjectDir={activeProjectDir}
@@ -3794,10 +4777,12 @@ function ChatPanel({
             disabledSkillNames={disabledSkillNames}
             visualInputAvailable={visualInputAvailable}
             visualInputEnabled={visualInputEnabled}
+            teamModeEnabled={teamModeEnabled}
             gitAvailable={gitAvailable}
             terminalAvailable={terminalAvailable}
             onToggleSkill={onToggleSkill}
             onVisualInputEnabledChange={onVisualInputEnabledChange}
+            onTeamModeChange={onTeamModeChange}
             onSaveProjectContext={onSaveProjectContext}
             onEditQueuedMessage={editQueuedMessage}
             onGuideQueuedMessage={(queuedId) =>
@@ -3928,10 +4913,33 @@ function ChatPanel({
             <span>{language === 'zh' ? '继续场景' : 'Scene'}</span>
           </button>
         )}
-        {!showWelcome && !loading && (
+        {!showWelcome && !loading && pendingInteraction && (
+          <div className="composer-dock interaction-only" ref={composerDockRef}>
+            <InteractionCard
+              language={language}
+              interaction={pendingInteraction}
+              onReply={onReplyInteraction}
+              onCancel={onCancelInteraction}
+            />
+          </div>
+        )}
+        {!showWelcome && !loading && showTeamActionCard && (
+          <div className="composer-dock action-only" ref={composerDockRef}>
+            <TeamActionCard
+              language={language}
+              flow={teamFlow}
+              options={teamActionOptions}
+              busyAction={teamFlowAction}
+              onAction={onTeamFlowAction}
+            />
+          </div>
+        )}
+        {!showWelcome && !loading && !pendingInteraction && !showTeamActionCard && (
           <div className="composer-dock" ref={composerDockRef}>
             <Composer
               key={activeConversationId || 'active-session'}
+              compact
+              osMode={osModeEnabled}
               language={language}
               draft={draft}
               onDraftChange={onDraftChange}
@@ -3941,14 +4949,16 @@ function ChatPanel({
               queuedMessages={queuedMessages}
               selectedModel={selectedModel}
               availableModels={availableModels}
-              selectedRuntimeProfile={selectedRuntimeProfile}
-              runtimeProfiles={runtimeProfiles}
+              referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
               permissionMode={permissionMode}
+              reasoningLevelAvailable={reasoningLevelAvailable}
+              reasoningLevel={reasoningLevel}
+              reasoningLevels={reasoningLevels}
               onModelChange={onModelChange}
-              onRuntimeProfileChange={onRuntimeProfileChange}
               onReferencePlanModeChange={onReferencePlanModeChange}
               onPermissionModeChange={onPermissionModeChange}
+              onReasoningLevelChange={onReasoningLevelChange}
               onSend={handleComposerSend}
               onCancel={onCancel}
               messages={messages}
@@ -3956,10 +4966,12 @@ function ChatPanel({
               disabledSkillNames={disabledSkillNames}
               visualInputAvailable={visualInputAvailable}
               visualInputEnabled={visualInputEnabled}
+              teamModeEnabled={teamModeEnabled}
               gitAvailable={gitAvailable}
               terminalAvailable={terminalAvailable}
               onToggleSkill={onToggleSkill}
               onVisualInputEnabledChange={onVisualInputEnabledChange}
+              onTeamModeChange={onTeamModeChange}
               activeProjectDir={activeProjectDir}
               projectContext={projectContext}
               onQuickLoad={applyQuickLoad}
@@ -3981,23 +4993,178 @@ function ChatPanel({
       {consoleMode &&
         ((consoleMode === 'git' && gitAvailable) ||
           (consoleMode === 'terminal' && terminalAvailable)) && (
-        <ConsoleDock
-          mode={consoleMode}
-          language={language}
-          activeProjectDir={activeProjectDir}
-          onClose={() => setConsoleMode(null)}
-        />
-      )}
-      {pendingInteraction && (
-        <InteractionDialog
-          language={language}
-          interaction={pendingInteraction}
-          onReply={onReplyInteraction}
-          onCancel={onCancelInteraction}
-        />
-      )}
+          <ConsoleDock
+            mode={consoleMode}
+            language={language}
+            activeProjectDir={activeProjectDir}
+            terminalRuntime={terminalRuntime}
+            onClose={() => setConsoleMode(null)}
+          />
+        )}
     </div>
   );
+}
+
+function TeamActionCard({
+  language,
+  flow,
+  options,
+  busyAction,
+  onAction,
+}: {
+  language: AppLanguage;
+  flow: TeamFlowState | null;
+  options: TeamFlowActionOption[];
+  busyAction: TeamFlowActionType | '';
+  onAction: (action: TeamFlowActionType, text?: string) => Promise<void>;
+}) {
+  const title =
+    language === 'zh'
+      ? 'Team Agent 等待你的选择'
+      : 'Team Agent is waiting for your choice';
+  const summary =
+    currentTeamActionLayerLabel(flow) ||
+    (language === 'zh'
+      ? '选择下一步动作，决策会直接写回 Team Flow。'
+      : 'Choose the next action; the decision is written to Team Flow.');
+
+  return (
+    <section className="team-action-card" aria-label={title}>
+      <div className="team-action-copy">
+        <Flag size={15} />
+        <span>
+          <strong>{title}</strong>
+          <small>{summary}</small>
+        </span>
+      </div>
+      <div className="team-action-buttons">
+        {options.map((option) => {
+          const busy = busyAction === option.action;
+          return (
+            <button
+              className={`team-action-button action-${teamActionClassName(option.action)}`}
+              type="button"
+              key={option.id || option.action}
+              disabled={Boolean(busyAction)}
+              onClick={() => void onAction(option.action)}
+              title={teamActionDescription(option, language)}
+            >
+              {busy ? teamActionLoadingIcon() : teamActionIcon(option.action)}
+              <span>{teamActionLabel(option, language)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function teamActionOptionsForDisplay(flow: TeamFlowState | null) {
+  if (!flow || teamFlowActionStateSettled(flow.status)) {
+    return [];
+  }
+  if (flow.actionOptions.length > 0) {
+    return flow.actionOptions.filter((option) => Boolean(option.action));
+  }
+  return flow.suggestedActions.map((action) => ({
+    id: action,
+    action,
+    raw: { action },
+  }));
+}
+
+function teamFlowActionStateSettled(status: string | undefined) {
+  const normalized = status?.trim().toLowerCase() ?? '';
+  return (
+    normalized.includes('execut') ||
+    normalized.includes('cancel') ||
+    normalized.includes('done') ||
+    normalized.includes('complete')
+  );
+}
+
+function currentTeamActionLayerLabel(flow: TeamFlowState | null) {
+  if (!flow) {
+    return '';
+  }
+  const currentLayer =
+    (flow.currentLayerId
+      ? flow.layers.find((layer) => layer.id === flow.currentLayerId)
+      : undefined) ??
+    (flow.currentLayerIndex != null
+      ? flow.layers.find((layer) => layer.index === flow.currentLayerIndex)
+      : undefined) ??
+    flow.layers.at(-1);
+  if (!currentLayer) {
+    return '';
+  }
+  return currentLayer.title || currentLayer.goal || currentLayer.summary;
+}
+
+function teamActionLabel(option: TeamFlowActionOption, language: AppLanguage) {
+  const explicit = option.label?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const action = option.action.trim();
+  const labels: Record<string, { zh: string; en: string }> = {
+    modify_layer: { zh: '修改这一层', en: 'Modify layer' },
+    continue_next_layer: { zh: '继续下一层', en: 'Next layer' },
+    enter_execution: { zh: '进入执行', en: 'Execute' },
+    cancel: { zh: '取消 Team', en: 'Cancel' },
+  };
+  return labels[action]?.[language] ?? action;
+}
+
+function teamActionDescription(option: TeamFlowActionOption, language: AppLanguage) {
+  const description = option.description?.trim();
+  if (description) {
+    return description;
+  }
+  const action = option.action.trim();
+  const descriptions: Record<string, { zh: string; en: string }> = {
+    modify_layer: {
+      zh: '让 Team Agent 根据你的反馈修改当前层',
+      en: 'Ask Team Agent to adjust the current layer',
+    },
+    continue_next_layer: {
+      zh: '确认当前层，继续设计下一层',
+      en: 'Confirm this layer and continue to the next one',
+    },
+    enter_execution: {
+      zh: '确认规划足够，进入执行阶段',
+      en: 'Confirm the plan and enter execution',
+    },
+    cancel: {
+      zh: '结束当前 Team Flow',
+      en: 'Cancel the current Team Flow',
+    },
+  };
+  return descriptions[action]?.[language] ?? teamActionLabel(option, language);
+}
+
+function teamActionIcon(action: TeamFlowActionType) {
+  if (action === 'modify_layer') {
+    return <Edit3 size={13} />;
+  }
+  if (action === 'continue_next_layer') {
+    return <ArrowRight size={13} />;
+  }
+  if (action === 'enter_execution') {
+    return <Check size={13} />;
+  }
+  if (action === 'cancel') {
+    return <X size={13} />;
+  }
+  return <Flag size={13} />;
+}
+
+function teamActionLoadingIcon() {
+  return <LoaderCircle size={13} />;
+}
+
+function teamActionClassName(action: TeamFlowActionType) {
+  return action.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
 }
 
 function BackendLoading() {
@@ -4021,6 +5188,8 @@ function BackendLoading() {
 
 function WelcomeComposer({
   language,
+  osModeEnabled = false,
+  osGamepadConnected = false,
   draft,
   onDraftChange,
   sending,
@@ -4029,24 +5198,28 @@ function WelcomeComposer({
   queuedMessages,
   selectedModel,
   availableModels,
-  selectedRuntimeProfile,
-  runtimeProfiles,
+  referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  reasoningLevelAvailable,
+  reasoningLevel,
+  reasoningLevels,
   activeProjectDir,
   projectContext,
   skills = [],
   disabledSkillNames,
   visualInputAvailable,
   visualInputEnabled,
+  teamModeEnabled,
   gitAvailable,
   terminalAvailable,
   onToggleSkill,
   onVisualInputEnabledChange,
+  onTeamModeChange,
   onModelChange,
-  onRuntimeProfileChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
   onSaveProjectContext,
@@ -4057,6 +5230,8 @@ function WelcomeComposer({
   onCancel,
 }: {
   language: AppLanguage;
+  osModeEnabled?: boolean;
+  osGamepadConnected?: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
@@ -4065,24 +5240,28 @@ function WelcomeComposer({
   queuedMessages: QueuedChatMessage[];
   selectedModel: string;
   availableModels: string[];
-  selectedRuntimeProfile: string;
-  runtimeProfiles: RuntimeProfileSummary[];
+  referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  reasoningLevelAvailable: boolean;
+  reasoningLevel: ReasoningLevel;
+  reasoningLevels: ReasoningLevel[];
   activeProjectDir?: string;
   projectContext: string;
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
+  teamModeEnabled: boolean;
   gitAvailable: boolean;
   terminalAvailable: boolean;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
+  onTeamModeChange: (enabled: boolean) => void;
   onModelChange: (value: string) => void;
-  onRuntimeProfileChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onSaveProjectContext: (value: string) => Promise<string>;
@@ -4093,10 +5272,17 @@ function WelcomeComposer({
   onCancel: () => Promise<void>;
 }) {
   return (
-    <div className="welcome-composer">
-      <h2>{language === 'zh' ? '要在 cardbush 中构建什么？' : 'What do you want to build in cardbush?'}</h2>
+    <div className={`welcome-composer ${osModeEnabled ? 'os-welcome-composer' : ''}`}>
+      {!osModeEnabled && (
+        <h2>
+          {language === 'zh'
+            ? '要在 cardbush 中构建什么？'
+            : 'What do you want to build in cardbush?'}
+        </h2>
+      )}
       <Composer
         compact
+        osMode={osModeEnabled}
         language={language}
         draft={draft}
         onDraftChange={onDraftChange}
@@ -4106,14 +5292,16 @@ function WelcomeComposer({
         queuedMessages={queuedMessages}
         selectedModel={selectedModel}
         availableModels={availableModels}
-        selectedRuntimeProfile={selectedRuntimeProfile}
-        runtimeProfiles={runtimeProfiles}
+        referencePlanAvailable={referencePlanAvailable}
         referencePlanMode={referencePlanMode}
         permissionMode={permissionMode}
+        reasoningLevelAvailable={reasoningLevelAvailable}
+        reasoningLevel={reasoningLevel}
+        reasoningLevels={reasoningLevels}
         onModelChange={onModelChange}
-        onRuntimeProfileChange={onRuntimeProfileChange}
         onReferencePlanModeChange={onReferencePlanModeChange}
         onPermissionModeChange={onPermissionModeChange}
+        onReasoningLevelChange={onReasoningLevelChange}
         onConfigureModels={onConfigureModels}
         onCreateConversation={onCreateConversation}
         activeProjectDir={activeProjectDir}
@@ -4122,10 +5310,12 @@ function WelcomeComposer({
         disabledSkillNames={disabledSkillNames}
         visualInputAvailable={visualInputAvailable}
         visualInputEnabled={visualInputEnabled}
+        teamModeEnabled={teamModeEnabled}
         gitAvailable={gitAvailable}
         terminalAvailable={terminalAvailable}
         onToggleSkill={onToggleSkill}
         onVisualInputEnabledChange={onVisualInputEnabledChange}
+        onTeamModeChange={onTeamModeChange}
         onSaveProjectContext={onSaveProjectContext}
         onEditQueuedMessage={onEditQueuedMessage}
         onGuideQueuedMessage={onGuideQueuedMessage}
@@ -4133,7 +5323,8 @@ function WelcomeComposer({
         onSend={onSend}
         onCancel={onCancel}
       />
-      <div className="prompt-starters">
+      {!osModeEnabled && (
+        <div className="prompt-starters">
         <PromptStarter
           icon={<Monitor size={14} />}
           text={language === 'zh' ? '帮我控制浏览器打开一个网页，检查页面内容并总结结果' : 'Control the browser to open a page, inspect it, and summarize the result'}
@@ -4149,7 +5340,15 @@ function WelcomeComposer({
           text={language === 'zh' ? '告诉我如何使用 skill，并帮我选择适合当前任务的技能' : 'Show me how to use skills and choose the right one for this task'}
           onClick={onDraftChange}
         />
-      </div>
+        </div>
+      )}
+      {osModeEnabled && osGamepadConnected && (
+        <div className="os-controller-hint" aria-hidden="true">
+          <span><kbd>A</kbd>{language === 'zh' ? '选择' : 'Select'}</span>
+          <span><kbd>Y</kbd>{language === 'zh' ? '输入' : 'Type'}</span>
+          <span><kbd>☰</kbd>{language === 'zh' ? '设置' : 'Settings'}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -4399,6 +5598,330 @@ function BotShareMenu({
   );
 }
 
+function OsShellBar({
+  language,
+  runtimeAvailable,
+  gamepadConnected,
+  taskbarPlacement,
+  launchedApplications,
+  runningApplicationIds,
+  onLaunchApplication,
+  onOpenApps,
+  onOpenTasks,
+  onOpenFiles,
+  onOpenSettings,
+  onExit,
+}: {
+  language: AppLanguage;
+  runtimeAvailable: boolean;
+  gamepadConnected: boolean;
+  taskbarPlacement: AppSettingsState['os']['taskbarPlacement'];
+  launchedApplications: OsApplication[];
+  runningApplicationIds: ReadonlySet<string>;
+  onLaunchApplication: (application: OsApplication) => void;
+  onOpenApps: () => void;
+  onOpenTasks: () => void;
+  onOpenFiles: () => void;
+  onOpenSettings: () => void;
+  onExit: () => void;
+}) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const locale = language === 'zh' ? 'zh-CN' : 'en-US';
+  const time = new Intl.DateTimeFormat(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(now);
+  const date = new Intl.DateTimeFormat(locale, {
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(now);
+
+  return (
+    <header className="os-shell-bar" data-no-floating-input="true">
+      <div className="os-shell-brand">
+        <MonitorCog size={16} />
+        <strong>CardBush OS</strong>
+        <span className={runtimeAvailable ? 'ready' : ''} aria-hidden="true" />
+      </div>
+      <div className="os-shell-clock">
+        <strong>{time}</strong>
+        <span>{date}</span>
+      </div>
+      {taskbarPlacement === 'top' && launchedApplications.length > 0 && (
+        <nav className="os-top-taskbar" aria-label={language === 'zh' ? '最近启动' : 'Recently launched'}>
+          {launchedApplications.map((application) => (
+            <button
+              className={runningApplicationIds.has(application.id) ? 'running' : 'pinned'}
+              type="button"
+              data-os-control="true"
+              key={application.id}
+              title={application.name}
+              onClick={() => onLaunchApplication(application)}
+            >
+              {application.icon
+                ? <img src={application.icon} alt="" />
+                : <span>{Array.from(application.name)[0]?.toLocaleUpperCase()}</span>}
+            </button>
+          ))}
+        </nav>
+      )}
+      <div className="os-shell-actions">
+        {gamepadConnected && (
+          <span
+            className="os-controller-status"
+            title={language === 'zh' ? '手柄导航已启用' : 'Controller navigation enabled'}
+          >
+            <Gamepad2 size={15} />
+          </span>
+        )}
+        <button
+          type="button"
+          data-os-control="true"
+          data-os-overlay-trigger="true"
+          title={language === 'zh' ? '应用' : 'Applications'}
+          onClick={onOpenApps}
+        >
+          <LayoutGrid size={16} />
+        </button>
+        <button
+          type="button"
+          data-os-control="true"
+          data-os-overlay-trigger="true"
+          title={language === 'zh' ? '任务' : 'Tasks'}
+          onClick={onOpenTasks}
+        >
+          <Monitor size={16} />
+        </button>
+        <button
+          type="button"
+          data-os-control="true"
+          data-os-overlay-trigger="true"
+          title={language === 'zh' ? 'AI 空间' : 'AI Space'}
+          onClick={onOpenFiles}
+        >
+          <Folder size={16} />
+        </button>
+        <button
+          type="button"
+          data-os-control="true"
+          data-os-overlay-trigger="true"
+          title={language === 'zh' ? 'OS 设置' : 'OS settings'}
+          onClick={onOpenSettings}
+        >
+          <Settings2 size={16} />
+        </button>
+        <button
+          type="button"
+          data-os-control="true"
+          title={language === 'zh' ? '退出桌面 OS' : 'Exit desktop OS'}
+          onClick={onExit}
+        >
+          <LogOut size={16} />
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function OsTaskbar({
+  language,
+  applications,
+  runningApplicationIds,
+  onOpenApps,
+  onLaunch,
+}: {
+  language: AppLanguage;
+  applications: OsApplication[];
+  runningApplicationIds: ReadonlySet<string>;
+  onOpenApps: () => void;
+  onLaunch: (application: OsApplication) => void;
+}) {
+  return (
+    <nav className="os-bottom-taskbar" aria-label={language === 'zh' ? 'CardBush 任务栏' : 'CardBush taskbar'}>
+      <div className="os-taskbar-handle" aria-hidden="true" />
+      <div className="os-taskbar-content">
+        <button type="button" data-os-control="true" data-os-overlay-trigger="true" onClick={onOpenApps} title={language === 'zh' ? '所有应用' : 'All apps'}>
+          <LayoutGrid size={17} />
+        </button>
+        {applications.map((application) => (
+          <button className={runningApplicationIds.has(application.id) ? 'running' : 'pinned'} type="button" data-os-control="true" key={application.id} title={application.name} onClick={() => onLaunch(application)}>
+            {application.icon
+              ? <img src={application.icon} alt="" />
+              : <span>{Array.from(application.name)[0]?.toLocaleUpperCase()}</span>}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+const osNineKeyGroups: Record<string, string> = {
+  '1': '.,?!',
+  '2': 'abc',
+  '3': 'def',
+  '4': 'ghi',
+  '5': 'jkl',
+  '6': 'mno',
+  '7': 'pqrs',
+  '8': 'tuv',
+  '9': 'wxyz',
+};
+
+function OsNineKeyInput({
+  language,
+  value,
+  onChange,
+  onSubmit,
+  onClose,
+}: {
+  language: AppLanguage;
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  onClose: () => void;
+}) {
+  const [numeric, setNumeric] = useState(false);
+  const cycleRef = useRef({ key: '', index: 0, at: 0 });
+
+  const pressKey = (key: string) => {
+    if (numeric) {
+      onChange(`${value}${key}`);
+      cycleRef.current = { key: '', index: 0, at: 0 };
+      return;
+    }
+    const group = osNineKeyGroups[key] ?? key;
+    const now = Date.now();
+    const continuing = cycleRef.current.key === key && now - cycleRef.current.at < 900 && value.length > 0;
+    const index = continuing ? (cycleRef.current.index + 1) % group.length : 0;
+    const character = group[index];
+    onChange(continuing ? `${value.slice(0, -1)}${character}` : `${value}${character}`);
+    cycleRef.current = { key, index, at: now };
+  };
+
+  return (
+    <section className="os-nine-key" aria-label={language === 'zh' ? '九键输入' : 'Nine-key input'}>
+      <header>
+        <span><Keyboard size={15} />{language === 'zh' ? '九键输入' : 'Nine-key input'}</span>
+        <button type="button" data-os-control="true" onClick={() => setNumeric((current) => !current)}>{numeric ? '123' : 'abc'}</button>
+        <button type="button" data-os-control="true" onClick={onClose}><X size={15} /></button>
+      </header>
+      <div className="os-nine-key-grid">
+        {Object.entries(osNineKeyGroups).map(([key, letters]) => (
+          <button type="button" data-os-control="true" key={key} onClick={() => pressKey(key)}>
+            <strong>{key}</strong><small>{numeric ? key : letters.toLocaleUpperCase()}</small>
+          </button>
+        ))}
+      </div>
+      <footer>
+        <button type="button" data-os-control="true" onClick={() => onChange(value.slice(0, -1))}>{language === 'zh' ? '删除' : 'Delete'}</button>
+        <button type="button" data-os-control="true" onClick={() => onChange(`${value} `)}>{language === 'zh' ? '空格' : 'Space'}</button>
+        <button type="button" data-os-control="true" disabled={!value.trim()} onClick={onSubmit}>{language === 'zh' ? '发送' : 'Send'}</button>
+      </footer>
+    </section>
+  );
+}
+
+const osGamepadButtonOptions = [
+  [0, 'A'], [1, 'B'], [2, 'X'], [3, 'Y'], [4, 'LB'], [5, 'RB'],
+  [8, 'View'], [9, 'Menu'], [10, 'L3'], [11, 'R3'],
+] as const;
+
+function OsControlCenter({
+  language,
+  settings,
+  onChange,
+  onClose,
+}: {
+  language: AppLanguage;
+  settings: AppSettingsState['os'];
+  onChange: (settings: AppSettingsState['os']) => void;
+  onClose: () => void;
+}) {
+  const updateGamepad = (key: keyof AppSettingsState['os']['gamepad'], value: number) => {
+    onChange({ ...settings, gamepad: { ...settings.gamepad, [key]: value } });
+  };
+  const mappings = [
+    ['confirmButton', language === 'zh' ? '确认' : 'Confirm'],
+    ['backButton', language === 'zh' ? '返回' : 'Back'],
+    ['keyboardButton', language === 'zh' ? '九键输入' : 'Nine-key input'],
+    ['appsButton', language === 'zh' ? '应用' : 'Applications'],
+    ['settingsButton', language === 'zh' ? '控制中心' : 'Control center'],
+  ] as const;
+
+  return (
+    <aside className="os-control-center" data-no-floating-input="true">
+      <header>
+        <span><Settings2 size={16} />{language === 'zh' ? '控制中心' : 'Control center'}</span>
+        <button type="button" data-os-control="true" onClick={onClose}><X size={16} /></button>
+      </header>
+      <section>
+        <h3>{language === 'zh' ? '桌面' : 'Desktop'}</h3>
+        <div className="os-control-segmented">
+          <button
+            type="button"
+            data-os-control="true"
+            aria-pressed={settings.taskbarPlacement === 'bottom'}
+            onClick={() => onChange({ ...settings, taskbarPlacement: 'bottom' })}
+          >{language === 'zh' ? '底部呼吸条' : 'Bottom bar'}</button>
+          <button
+            type="button"
+            data-os-control="true"
+            aria-pressed={settings.taskbarPlacement === 'top'}
+            onClick={() => onChange({ ...settings, taskbarPlacement: 'top' })}
+          >{language === 'zh' ? '顶部状态栏' : 'Top bar'}</button>
+        </div>
+        <label className="os-control-range">
+          <span>
+            {language === 'zh' ? '背景对比度' : 'Background contrast'}
+            <output>{settings.backgroundContrast}%</output>
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="5"
+            value={settings.backgroundContrast}
+            data-os-control="true"
+            onChange={(event) => onChange({
+              ...settings,
+              backgroundContrast: Number(event.currentTarget.value),
+            })}
+          />
+        </label>
+        <label className="os-control-toggle">
+          <span>{language === 'zh' ? '开机启动' : 'Launch at login'}</span>
+          <input type="checkbox" checked={settings.launchAtLogin} onChange={(event) => onChange({ ...settings, launchAtLogin: event.currentTarget.checked })} />
+        </label>
+        <label className="os-control-toggle">
+          <span>{language === 'zh' ? '启动后直接进入 OS' : 'Open directly in OS mode'}</span>
+          <input type="checkbox" checked={settings.startInOsMode} onChange={(event) => onChange({ ...settings, startInOsMode: event.currentTarget.checked })} />
+        </label>
+      </section>
+      <section>
+        <h3><Gamepad2 size={14} />{language === 'zh' ? '手柄' : 'Controller'}</h3>
+        <div className="os-control-mappings">
+          {mappings.map(([key, label]) => (
+            <label key={key}>
+              <span>{label}</span>
+              <select data-os-control="true" value={settings.gamepad[key]} onChange={(event) => updateGamepad(key, Number(event.currentTarget.value))}>
+                {osGamepadButtonOptions.map(([button, name]) => <option key={button} value={button}>{name}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+      </section>
+      <p>{language === 'zh' ? '设置与普通模式共享，但在 OS 中保持即时生效。' : 'Settings are shared with standard mode and apply immediately.'}</p>
+    </aside>
+  );
+}
+
 function TopBar({
   title,
   sidebarCollapsed,
@@ -4409,6 +5932,11 @@ function TopBar({
   onCreateSessionShareLink,
   onRefreshActiveSession,
   activeConsole,
+  teamModeEnabled = false,
+  teamFlow = null,
+  teamFlowLoading = false,
+  teamFlowDrawerOpen = false,
+  onToggleTeamFlowDrawer,
   onToggleGit,
   onToggleTerminal,
   onRevealSidebar,
@@ -4424,6 +5952,11 @@ function TopBar({
   ) => Promise<SessionShareLinkResult>;
   onRefreshActiveSession?: RefreshActiveSession;
   activeConsole?: ConsoleMode | null;
+  teamModeEnabled?: boolean;
+  teamFlow?: TeamFlowState | null;
+  teamFlowLoading?: boolean;
+  teamFlowDrawerOpen?: boolean;
+  onToggleTeamFlowDrawer?: () => void;
   onToggleGit?: () => void;
   onToggleTerminal?: () => void;
   onRevealSidebar: () => void;
@@ -4437,6 +5970,8 @@ function TopBar({
       onCreateSessionShareLink &&
       onRefreshActiveSession,
   );
+  const teamFlowItemCount =
+    (teamFlow?.layers.length ?? 0) || (teamFlow?.nodes.length ?? 0);
 
   useEffect(() => {
     if (!botMenuOpen) {
@@ -4487,6 +6022,40 @@ function TopBar({
         </button>
       )}
       <h1>{title}</h1>
+      {teamModeEnabled && onToggleTeamFlowDrawer && (
+        <button
+          className={`topbar-team-status ${teamFlowDrawerOpen ? 'active' : ''}`}
+          type="button"
+          aria-expanded={teamFlowDrawerOpen}
+          aria-label={
+            language === 'zh'
+              ? teamFlowDrawerOpen
+                ? '收起 Team DAG'
+                : '展开 Team DAG'
+              : teamFlowDrawerOpen
+                ? 'Collapse Team DAG'
+                : 'Expand Team DAG'
+          }
+          title={
+            language === 'zh'
+              ? teamFlowDrawerOpen
+                ? '收起 Team DAG'
+                : '展开 Team DAG'
+              : teamFlowDrawerOpen
+                ? 'Collapse Team DAG'
+                : 'Expand Team DAG'
+          }
+          onClick={onToggleTeamFlowDrawer}
+        >
+          {teamFlowLoading ? <LoaderCircle size={14} /> : <Flag size={14} />}
+          <span
+            className={`topbar-team-badge ${teamFlowItemCount > 0 ? 'has-count' : ''}`}
+            aria-hidden="true"
+          >
+            {teamFlowItemCount > 0 ? teamFlowItemCount : ''}
+          </span>
+        </button>
+      )}
       <div className="bot-share-wrap" ref={botShareRef}>
         <button
           className="topbar-native-menu"
@@ -4606,7 +6175,7 @@ function formatDuration(durationMs: number) {
   return `${Math.round(durationMs)}ms`;
 }
 
-function InteractionDialog({
+function InteractionCard({
   language,
   interaction,
   onReply,
@@ -4687,8 +6256,11 @@ function InteractionDialog({
   }
 
   return (
-    <div className="modal-backdrop interaction-dialog-backdrop">
-      <form className="interaction-dialog" onSubmit={(event) => void submit(event)}>
+      <form
+        className="interaction-dialog interaction-card"
+        data-no-floating-input="true"
+        onSubmit={(event) => void submit(event)}
+      >
         <header>
           {permission ? <AlertCircle size={18} /> : <MessageSquare size={18} />}
           <strong>{title}</strong>
@@ -4752,7 +6324,6 @@ function InteractionDialog({
           </footer>
         )}
       </form>
-    </div>
   );
 }
 
@@ -4834,8 +6405,7 @@ function InteractionQuestionField({
 }) {
   const showInput =
     question.needInput ||
-    question.selectionMode === 'input' ||
-    (question.selectionMode === 'single' && question.options.length > 0);
+    question.selectionMode === 'input';
 
   function toggleOption(optionId: string) {
     if (question.selectionMode === 'multiple') {
@@ -5050,18 +6620,20 @@ function FeaturePanel({
         activeConsole={null}
         onRevealSidebar={onRevealSidebar}
       />
-      <FeatureContentPanel
-        language={language}
-        section={section}
-        conversations={conversations}
-        skills={skills}
-        disabledSkillNames={disabledSkillNames}
-        onToggleSkill={onToggleSkill}
-        onReloadSkills={onReloadSkills}
-        onLoadSkillDetail={onLoadSkillDetail}
-        onCreateConversation={onCreateConversation}
-        onOpenConversation={onOpenConversation}
-      />
+      <Suspense fallback={<FeaturePanelLoading language={language} />}>
+        <LazyFeatureContentPanel
+          language={language}
+          section={section}
+          conversations={conversations}
+          skills={skills}
+          disabledSkillNames={disabledSkillNames}
+          onToggleSkill={onToggleSkill}
+          onReloadSkills={onReloadSkills}
+          onLoadSkillDetail={onLoadSkillDetail}
+          onCreateConversation={onCreateConversation}
+          onOpenConversation={onOpenConversation}
+        />
+      </Suspense>
     </div>
   );
 }

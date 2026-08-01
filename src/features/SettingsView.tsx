@@ -3,24 +3,25 @@ import {
   Archive,
   ArrowLeft,
   Bot,
-  Boxes,
   Check,
   CheckCircle2,
   Circle,
   Clipboard,
   Cpu,
-  ExternalLink,
   Eye,
   EyeOff,
+  Gamepad2,
   Image,
   LoaderCircle,
   Monitor,
+  MonitorCog,
   Network,
   Plus,
   RefreshCw,
   RotateCcw,
   Settings,
   Smartphone,
+  Terminal,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -31,6 +32,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -40,34 +42,32 @@ import {
   clearConversationHistory,
   clearLogsCache,
   controlBotService,
-  deleteAgentConfigPackage,
+  deleteMcpServerConfig,
   deleteWeixinAccount,
-  fetchAgentConfigPackages,
-  fetchAgentConfigPackageTransactionContracts,
   fetchBotConfig,
   fetchBots,
   fetchBotServiceLogs,
   fetchBotStatus,
+  fetchMcpServers,
   fetchWeixinLoginStatus,
-  installAgentConfigPackage,
   llmEndpoint,
   saveBotConfig,
-  setAgentConfigPackageEnabled,
+  saveMcpServerConfig,
+  setMcpServerEnabled,
   startWeixinLogin,
-  validateAgentConfigPackage,
+  validateMcpServerConfig,
   type MaintenanceClearResult,
+  type McpServerConfigInput,
 } from '../backend/api';
+import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { BotPlatformIcon } from '../components/BotPlatformIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
+import { SubagentsPanel } from './SubagentsPanel';
 import type {
   AppLanguage,
   AppLanguageMode,
   AppSettingsState,
-  AgentConfigPackageItem,
-  AgentConfigPackagesResult,
-  AgentConfigPackageValidationResult,
-  AgentTransactionContractsResult,
   BackendCapabilities,
   BotConfigResult,
   BotPlatform,
@@ -79,6 +79,9 @@ import type {
   CompanionSize,
   LightThemeStyle,
   ManagedModelConfig,
+  McpServerConfig,
+  McpServerValidationResult,
+  McpTransport,
   SettingsSection,
   ThemePreference,
   WeixinLoginStartResult,
@@ -96,9 +99,6 @@ const suggestedProviders = [
   'moonshot',
   'qwen',
 ];
-const liteLlmProvidersDocsUrl = 'https://docs.litellm.ai/docs/providers';
-const volcengineArkUrl = 'https://www.volcengine.cn/product/ark';
-const miniMaxUrl = 'https://platform.minimaxi.com';
 const defaultFontSettings = {
   family: '',
   displayName: '',
@@ -111,12 +111,16 @@ const defaultCompanionSettings: CompanionSettings = {
 };
 
 type VisibleSettingsSection = Exclude<SettingsSection, 'companion'>;
+type SettingsIconComponent = React.ComponentType<{ size?: number; className?: string }>;
 
 const visibleSettingsSections: VisibleSettingsSection[] = [
   'profile',
+  'os',
+  'runtime',
   'proxy',
   'bots',
-  'agents',
+  'subagents',
+  'mcp',
   'cache',
   'models',
   'diagnostics',
@@ -126,9 +130,12 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
 
 const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
   profile: { zh: '外观', en: 'Appearance' },
+  os: { zh: '桌面 OS', en: 'Desktop OS' },
+  runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot links' },
-  agents: { zh: 'Agent 配置包', en: 'Agent packages' },
+  subagents: { zh: '子任务状态', en: 'Subagent status' },
+  mcp: { zh: 'MCP 服务器', en: 'MCP servers' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
   diagnostics: { zh: '连接诊断', en: 'Diagnostics' },
@@ -136,11 +143,14 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   about: { zh: '关于', en: 'About' },
 };
 
-const settingsIcons: Record<VisibleSettingsSection, typeof Settings> = {
+const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
   profile: Settings,
+  os: MonitorCog,
+  runtime: Terminal,
   proxy: Monitor,
-  bots: Network,
-  agents: Boxes,
+  bots: SettingsBotIcon,
+  subagents: Network,
+  mcp: McpLogoIcon,
   cache: Archive,
   models: Cpu,
   diagnostics: Clipboard,
@@ -152,6 +162,48 @@ function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection 
   return visibleSettingsSections.includes(value as VisibleSettingsSection)
     ? (value as VisibleSettingsSection)
     : 'profile';
+}
+
+function SettingsBotIcon({
+  size = 18,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`settings-bot-icon ${className ?? ''}`.trim()}
+      style={{ width: size, height: size }}
+      aria-hidden="true"
+    >
+      <BotPlatformIcon platform="any" />
+    </span>
+  );
+}
+
+function McpLogoIcon({
+  size = 18,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <img
+      className={`mcp-logo-mark ${className ?? ''}`.trim()}
+      src={mcpLogoUrl}
+      width={size}
+      height={size}
+      style={{
+        width: size,
+        height: size,
+      }}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+    />
+  );
 }
 
 const botPlatforms: BotPlatform[] = ['weixin', 'feishu', 'telegram', 'discord'];
@@ -178,10 +230,10 @@ export function SettingsView({
   onLightThemeStyleChange,
   onLanguageModeChange,
   onSettingsChange,
+  onEnterOsMode,
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
-  onAgentConfigPackagesChanged,
 }: {
   themePreference: ThemePreference;
   lightThemeStyle: LightThemeStyle;
@@ -199,10 +251,10 @@ export function SettingsView({
   onLightThemeStyleChange: (value: LightThemeStyle) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
+  onEnterOsMode: () => void;
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
-  onAgentConfigPackagesChanged?: () => void | Promise<void>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -377,18 +429,6 @@ export function SettingsView({
     [availableModels, language, notify, onUseModel],
   );
 
-  const openDocs = useCallback(
-    async (name: string, url: string) => {
-      try {
-        await window.cardbushDesktop?.openExternal?.(url);
-        notify(language === 'zh' ? `已打开 ${name}` : `Opened ${name}`);
-      } catch {
-        window.open(url, '_blank', 'noopener,noreferrer');
-      }
-    },
-    [language, notify],
-  );
-
   const importFont = useCallback(async () => {
     const filePath = await window.cardbushDesktop?.pickFont?.();
     if (!filePath) {
@@ -464,6 +504,217 @@ export function SettingsView({
         />
       );
     }
+    if (section === 'runtime') {
+      return (
+        <SettingsCard
+          title={language === 'zh' ? '运行环境' : 'Runtime environment'}
+          subtitle={
+            language === 'zh'
+              ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给 BushServer。'
+              : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to BushServer with chat requests.'
+          }
+        >
+          <SettingsRadio
+            name="terminal-runtime"
+            value="powershell"
+            title="PowerShell"
+            subtitle={
+              language === 'zh'
+                ? '默认 Windows 终端环境，适合 npm、Electron、PowerShell 脚本和本机路径。'
+                : 'Default Windows terminal runtime for npm, Electron, PowerShell scripts, and local Windows paths.'
+            }
+            checked={settings.terminal.runtime === 'powershell'}
+            onChange={() =>
+              updateSettings((current) => ({
+                ...current,
+                terminal: {
+                  ...current.terminal,
+                  runtime: 'powershell',
+                },
+              }))
+            }
+          />
+          {backendCapabilities.terminalRuntimes.includes('wsl') && (
+            <SettingsRadio
+              name="terminal-runtime"
+              value="wsl"
+              title="WSL"
+              subtitle={
+                language === 'zh'
+                  ? '使用 Windows Subsystem for Linux 执行命令；需要本机已安装并配置 WSL。'
+                  : 'Run commands through Windows Subsystem for Linux. Requires WSL to be installed and configured.'
+              }
+              checked={settings.terminal.runtime === 'wsl'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  terminal: {
+                    ...current.terminal,
+                    runtime: 'wsl',
+                  },
+                }))
+              }
+            />
+          )}
+          {backendCapabilities.terminalRuntimes.includes('git_bash') && (
+            <SettingsRadio
+              name="terminal-runtime"
+              value="git_bash"
+              title="Git Bash"
+              subtitle={
+                language === 'zh'
+                  ? '使用 Git for Windows 自带的 Bash，适合 Unix 命令和 Windows 项目路径。'
+                  : 'Use Git for Windows Bash for Unix-style commands and Windows project paths.'
+              }
+              checked={settings.terminal.runtime === 'git_bash'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  terminal: {
+                    ...current.terminal,
+                    runtime: 'git_bash',
+                  },
+                }))
+              }
+            />
+          )}
+          {backendCapabilities.terminalRuntimes.includes('bash') && (
+            <SettingsRadio
+              name="terminal-runtime"
+              value="bash"
+              title="Bash"
+              subtitle={
+                language === 'zh'
+                  ? '使用系统原生 Bash。'
+                  : 'Use the system-native Bash runtime.'
+              }
+              checked={settings.terminal.runtime === 'bash'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  terminal: {
+                    ...current.terminal,
+                    runtime: 'bash',
+                  },
+                }))
+              }
+            />
+          )}
+        </SettingsCard>
+      );
+    }
+    if (section === 'os') {
+      const loginSettingsAvailable = Boolean(window.cardbushDesktop?.setOsLoginSettings);
+      return (
+        <SettingsCard
+          title={language === 'zh' ? '桌面 OS' : 'Desktop OS'}
+          subtitle={
+            language === 'zh'
+              ? '让 CardBush 随系统启动，并作为桌面 Agent 的默认对话入口。'
+              : 'Start CardBush with the system and use it as the desktop agent entry point.'
+          }
+        >
+          <SettingsSwitch
+            title={language === 'zh' ? '开机自动启动' : 'Launch at login'}
+            subtitle={
+              language === 'zh'
+                ? '登录 Windows 后自动启动 CardBush。'
+                : 'Start CardBush automatically after signing in.'
+            }
+            checked={settings.os.launchAtLogin}
+            disabled={!loginSettingsAvailable}
+            onChange={(checked) =>
+              updateSettings((current) => ({
+                ...current,
+                os: { ...current.os, launchAtLogin: checked },
+              }))
+            }
+          />
+          <SettingsSwitch
+            title={language === 'zh' ? '启动后进入 OS 模式' : 'Open in OS mode'}
+            subtitle={
+              language === 'zh'
+                ? '开机启动时直接进入极简桌面对话，不打开项目工作区。'
+                : 'Open the minimal desktop conversation instead of a project workspace.'
+            }
+            checked={settings.os.startInOsMode}
+            disabled={!settings.os.launchAtLogin || !loginSettingsAvailable}
+            onChange={(checked) =>
+              updateSettings((current) => ({
+                ...current,
+                os: { ...current.os, startInOsMode: checked },
+              }))
+            }
+          />
+          <SettingsDivider />
+          <SettingsGroupTitle>{language === 'zh' ? '任务栏位置' : 'Taskbar placement'}</SettingsGroupTitle>
+          <SettingsRadio
+            name="os-taskbar-placement"
+            value="bottom"
+            title={language === 'zh' ? '底部呼吸条' : 'Bottom breathing bar'}
+            subtitle={language === 'zh' ? '默认收起，靠近底部时展开最近启动的应用。' : 'Collapsed by default; reveals recent apps near the bottom edge.'}
+            checked={settings.os.taskbarPlacement === 'bottom'}
+            onChange={() => updateSettings((current) => ({
+              ...current,
+              os: { ...current.os, taskbarPlacement: 'bottom' },
+            }))}
+          />
+          <SettingsRadio
+            name="os-taskbar-placement"
+            value="top"
+            title={language === 'zh' ? '顶部状态栏' : 'Top status bar'}
+            subtitle={language === 'zh' ? '把最近启动的应用固定在 CardBush OS 顶栏。' : 'Keep recently launched apps in the CardBush OS status bar.'}
+            checked={settings.os.taskbarPlacement === 'top'}
+            onChange={() => updateSettings((current) => ({
+              ...current,
+              os: { ...current.os, taskbarPlacement: 'top' },
+            }))}
+          />
+          <SettingsDivider />
+          <SettingsGroupTitle>{language === 'zh' ? '手柄映射' : 'Controller mapping'}</SettingsGroupTitle>
+          <div className="os-gamepad-settings">
+            <div className="os-gamepad-settings-heading">
+              <Gamepad2 size={16} />
+              <span>{language === 'zh' ? '使用标准手柄按键，可在 OS 界面完成导航、输入和启动应用。' : 'Use standard gamepad buttons to navigate, type, and launch apps in OS mode.'}</span>
+            </div>
+            {([
+              ['confirmButton', language === 'zh' ? '确认' : 'Confirm'],
+              ['backButton', language === 'zh' ? '返回' : 'Back'],
+              ['keyboardButton', language === 'zh' ? '九键输入' : 'Nine-key input'],
+              ['appsButton', language === 'zh' ? '应用' : 'Applications'],
+              ['settingsButton', language === 'zh' ? '设置' : 'Settings'],
+            ] as const).map(([key, label]) => (
+              <GamepadMappingRow
+                key={key}
+                label={label}
+                value={settings.os.gamepad[key]}
+                onChange={(value) => updateSettings((current) => ({
+                  ...current,
+                  os: {
+                    ...current.os,
+                    gamepad: { ...current.os.gamepad, [key]: value },
+                  },
+                }))}
+              />
+            ))}
+          </div>
+          <div className="os-settings-note">
+            <MonitorCog size={16} />
+            <span>
+              {language === 'zh'
+                ? '应用启动能力由桌面端提供；软件识别、窗口控制和界面操作仍需要 BushServer 暴露对应能力。'
+                : 'Startup is handled by the desktop app. App discovery, window control, and UI actions still require BushServer support.'}
+            </span>
+          </div>
+          <div className="settings-actions">
+            <button className="primary-button" type="button" onClick={onEnterOsMode}>
+              <MonitorCog size={14} />
+              {language === 'zh' ? '立即进入' : 'Open now'}
+            </button>
+          </div>
+        </SettingsCard>
+      );
+    }
     if (section === 'proxy') {
       return (
         <SettingsCard
@@ -532,6 +783,30 @@ export function SettingsView({
             placeholder="127.0.0.1,localhost,::1,.internal"
             onChange={(value) => updateProxy({ noProxy: value })}
           />
+          <SettingsDivider />
+          <SettingsSwitch
+            title={language === 'zh' ? '隐私浏览 / 不保存 Cookie' : 'Private browsing'}
+            subtitle={
+              backendCapabilities.browserPrivacyMode
+                ? language === 'zh'
+                  ? '开启后浏览器工具不会读取或保存 cookie/localStorage；默认关闭以保持登录态。'
+                  : 'When enabled, browser tools do not read or save cookie/localStorage. Off keeps signed-in state.'
+                : language === 'zh'
+                  ? '当前 BushServer 未声明 browser_privacy_mode，前端不会发送该模式。'
+                  : 'The current BushServer does not advertise browser_privacy_mode, so this mode is not sent.'
+            }
+            checked={settings.browser.privacyMode}
+            disabled={!backendCapabilities.browserPrivacyMode}
+            onChange={(checked) =>
+              updateSettings((current) => ({
+                ...current,
+                browser: {
+                  ...current.browser,
+                  privacyMode: checked,
+                },
+              }))
+            }
+          />
         </SettingsCard>
       );
     }
@@ -561,7 +836,6 @@ export function SettingsView({
           onRemoveModelConfig={removeModelConfig}
           onUpdateModelContextTokens={updateModelContextTokens}
           onUseModel={useModel}
-          onOpenDocs={openDocs}
         />
       );
     }
@@ -600,13 +874,21 @@ export function SettingsView({
         />
       );
     }
-    if (section === 'agents') {
+    if (section === 'subagents') {
       return (
-        <AgentPackagesPanel
+        <SubagentsPanel
+          language={language}
+          embedded
+          capabilities={backendCapabilities}
+        />
+      );
+    }
+    if (section === 'mcp') {
+      return (
+        <McpServersPanel
           language={language}
           capabilities={backendCapabilities}
           onNotify={notify}
-          onPackagesChanged={onAgentConfigPackagesChanged}
         />
       );
     }
@@ -928,7 +1210,6 @@ function ModelsSettingsPanel({
   onRemoveModelConfig,
   onUpdateModelContextTokens,
   onUseModel,
-  onOpenDocs,
 }: {
   language: AppLanguage;
   settings: AppSettingsState;
@@ -953,7 +1234,6 @@ function ModelsSettingsPanel({
   onRemoveModelConfig: (id: string) => void;
   onUpdateModelContextTokens: (id: string, value: string) => void;
   onUseModel: (model: string) => void;
-  onOpenDocs: (name: string, url: string) => void;
 }) {
   const grouped = groupModelConfigs(settings.managedModelConfigs);
   const providers = Object.keys(grouped).sort();
@@ -1047,11 +1327,11 @@ function ModelsSettingsPanel({
   return (
     <div className="settings-stack">
       <SettingsCard
-        title={language === 'zh' ? '模型管理' : 'Model management'}
+        title={language === 'zh' ? '添加模型' : 'Add model'}
         subtitle={
           language === 'zh'
-            ? '先填写 base_url 和 api_key，获取模型列表后选择并添加。'
-            : 'Enter base_url and api_key, then fetch models and add the one you want.'
+            ? '连接模型服务，选择模型并保存。'
+            : 'Connect a provider, choose a model, and save it.'
         }
       >
         <form className="model-form" onSubmit={onAddModelConfig}>
@@ -1088,27 +1368,27 @@ function ModelsSettingsPanel({
               onChange={onCustomProviderChange}
             />
           )}
-          <label>
-            <span>api_key</span>
-            <div className="password-field">
-              <input
-                value={apiKey}
-                type={showApiKey ? 'text' : 'password'}
-                placeholder={`${language === 'zh' ? '模型商' : 'Provider'} API Key`}
-                onChange={(event) => onApiKeyChange(event.currentTarget.value)}
-              />
-              <button
-                type="button"
-                title={showApiKey ? (language === 'zh' ? '隐藏' : 'Hide') : (language === 'zh' ? '显示' : 'Show')}
-                onClick={() => onShowApiKeyChange(!showApiKey)}
-              >
-                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
-              </button>
-            </div>
-          </label>
-          <div className="model-fetch-row">
+          <div className="model-credentials-row">
+            <label>
+              <span>api_key</span>
+              <div className="password-field">
+                <input
+                  value={apiKey}
+                  type={showApiKey ? 'text' : 'password'}
+                  placeholder={`${language === 'zh' ? '模型商' : 'Provider'} API Key`}
+                  onChange={(event) => onApiKeyChange(event.currentTarget.value)}
+                />
+                <button
+                  type="button"
+                  title={showApiKey ? (language === 'zh' ? '隐藏' : 'Hide') : (language === 'zh' ? '显示' : 'Show')}
+                  onClick={() => onShowApiKeyChange(!showApiKey)}
+                >
+                  {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+            </label>
             <button
-              className="secondary-button"
+              className="secondary-button model-fetch-button"
               type="button"
               disabled={modelDiscovery.status === 'loading'}
               onClick={() => void fetchProviderModels()}
@@ -1120,11 +1400,6 @@ function ModelsSettingsPanel({
               )}
               {language === 'zh' ? '获取模型列表' : 'Fetch models'}
             </button>
-            <span>
-              {language === 'zh'
-                ? 'GET base_url + /models，Authorization: Bearer <api_key>'
-                : 'GET base_url + /models with Authorization: Bearer <api_key>'}
-            </span>
           </div>
           {modelDiscovery.status !== 'idle' && (
             <div className={`model-discovery-panel ${modelDiscovery.status}`}>
@@ -1153,81 +1428,31 @@ function ModelsSettingsPanel({
               )}
             </div>
           )}
-          <SettingsInput
-            label={language === 'zh' ? '模型名称' : 'Model name'}
-            value={modelName}
-            placeholder="gpt-4.1-mini"
-            onChange={onModelNameChange}
-          />
-          <SettingsInput
-            label={language === 'zh' ? '最大上下文 token' : 'Max context tokens'}
-            value={maxContextTokens}
-            placeholder="131072"
-            onChange={onMaxContextTokensChange}
-          />
+          <div className="model-form-grid model-form-grid-final">
+            <SettingsInput
+              label={language === 'zh' ? '模型名称' : 'Model name'}
+              value={modelName}
+              placeholder="gpt-4.1-mini"
+              onChange={onModelNameChange}
+            />
+            <SettingsInput
+              label={language === 'zh' ? '最大上下文 token' : 'Max context tokens'}
+              value={maxContextTokens}
+              placeholder="131072"
+              onChange={onMaxContextTokensChange}
+            />
+          </div>
           <div className="settings-actions">
             <button className="primary-button" type="submit">
               <Plus size={14} />
               {language === 'zh' ? '添加模型' : 'Add model'}
             </button>
-            <button className="secondary-button" type="button" onClick={onResetModels}>
+            <button className="secondary-button danger" type="button" onClick={onResetModels}>
               <RotateCcw size={14} />
-              {language === 'zh' ? '清空模型配置' : 'Clear model configs'}
+              {language === 'zh' ? '清空全部' : 'Clear all'}
             </button>
           </div>
         </form>
-        <details className="model-reference-details">
-          <summary>{language === 'zh' ? '接入参考' : 'Integration reference'}</summary>
-          <div className="model-reference-links">
-            <button
-              className="settings-link-tile"
-              type="button"
-              onClick={() =>
-                onOpenDocs(
-                  language === 'zh' ? 'LiteLLM 文档' : 'LiteLLM docs',
-                  liteLlmProvidersDocsUrl,
-                )
-              }
-            >
-              <ExternalLink size={16} />
-              <span>
-                <strong>LiteLLM Providers</strong>
-                <small>
-                  {language === 'zh'
-                    ? 'provider / base_url 兼容写法'
-                    : 'Provider and base_url compatibility'}
-                </small>
-              </span>
-            </button>
-            <button
-              className="settings-link-tile"
-              type="button"
-              onClick={() =>
-                onOpenDocs(
-                  language === 'zh' ? '火山方舟' : 'Volcengine Ark',
-                  volcengineArkUrl,
-                )
-              }
-            >
-              <ExternalLink size={16} />
-              <span>
-                <strong>{language === 'zh' ? '火山方舟' : 'Volcengine Ark'}</strong>
-                <small>{language === 'zh' ? '国内模型接入参考' : 'China model reference'}</small>
-              </span>
-            </button>
-            <button
-              className="settings-link-tile"
-              type="button"
-              onClick={() => onOpenDocs('minimax', miniMaxUrl)}
-            >
-              <ExternalLink size={16} />
-              <span>
-                <strong>minimax</strong>
-                <small>{language === 'zh' ? '多模态与文本模型平台' : 'Text and multimodal models'}</small>
-              </span>
-            </button>
-          </div>
-        </details>
       </SettingsCard>
       {providers.length === 0 ? (
         <SettingsCard
@@ -1243,31 +1468,38 @@ function ModelsSettingsPanel({
           </p>
         </SettingsCard>
       ) : (
-        providers.map((provider) => (
-          <SettingsCard
-            key={provider}
-            title={provider}
-            subtitle={
-              language === 'zh'
-                ? `${grouped[provider].length} 个模型`
-                : `${grouped[provider].length} models`
-            }
-          >
-            {grouped[provider].map((config) => (
-              <ModelConfigRow
-                key={config.id}
-                config={config}
-                language={language}
-                selected={selectedModel === config.modelName}
-                onUse={() => onUseModel(config.modelName)}
-                onDelete={() => onRemoveModelConfig(config.id)}
-                onSaveContextTokens={(value) =>
-                  onUpdateModelContextTokens(config.id, value)
-                }
-              />
+        <SettingsCard
+          title={language === 'zh' ? '已配置模型' : 'Configured models'}
+          subtitle={
+            language === 'zh'
+              ? `${settings.managedModelConfigs.length} 个模型`
+              : `${settings.managedModelConfigs.length} models`
+          }
+        >
+          <div className="model-provider-list">
+            {providers.map((provider) => (
+              <section className="model-provider-group" key={provider}>
+                <header>
+                  <strong>{provider}</strong>
+                  <span>{grouped[provider].length}</span>
+                </header>
+                {grouped[provider].map((config) => (
+                  <ModelConfigRow
+                    key={config.id}
+                    config={config}
+                    language={language}
+                    selected={selectedModel === config.modelName}
+                    onUse={() => onUseModel(config.modelName)}
+                    onDelete={() => onRemoveModelConfig(config.id)}
+                    onSaveContextTokens={(value) =>
+                      onUpdateModelContextTokens(config.id, value)
+                    }
+                  />
+                ))}
+              </section>
             ))}
-          </SettingsCard>
-        ))
+          </div>
+        </SettingsCard>
       )}
     </div>
   );
@@ -2411,450 +2643,636 @@ function BotSettingsPanel({
   );
 }
 
-function AgentPackagesPanel({
+type McpServerDraft = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  transport: McpTransport;
+  command: string;
+  argsText: string;
+  cwd: string;
+  envText: string;
+  url: string;
+  headersText: string;
+  timeoutSeconds: string;
+};
+
+const emptyMcpDraft: McpServerDraft = {
+  id: '',
+  name: '',
+  description: '',
+  enabled: true,
+  transport: 'stdio',
+  command: '',
+  argsText: '',
+  cwd: '',
+  envText: '{}',
+  url: '',
+  headersText: '{}',
+  timeoutSeconds: '60',
+};
+
+function McpServersPanel({
   language,
   capabilities,
   onNotify,
-  onPackagesChanged,
 }: {
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
-  onPackagesChanged?: () => void | Promise<void>;
 }) {
-  const [result, setResult] = useState<AgentConfigPackagesResult | null>(null);
-  const [transactionContracts, setTransactionContracts] =
-    useState<AgentTransactionContractsResult | null>(null);
+  const [servers, setServers] = useState<McpServerConfig[]>([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [draft, setDraft] = useState<McpServerDraft>(emptyMcpDraft);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
-  const [contractError, setContractError] = useState('');
-  const [inputMode, setInputMode] = useState<'yaml' | 'raw' | 'path'>('yaml');
-  const [yamlText, setYamlText] = useState('');
-  const [rawConfigText, setRawConfigText] = useState('{\n  \"id\": \"my-agent-package\",\n  \"enabled\": true,\n  \"profiles\": []\n}');
-  const [sourcePath, setSourcePath] = useState('');
-  const [replace, setReplace] = useState(true);
-  const [validation, setValidation] =
-    useState<AgentConfigPackageValidationResult | null>(null);
+  const [validation, setValidation] = useState<McpServerValidationResult | null>(null);
+  const selectedIdRef = useRef('');
 
-  const loadPackages = useCallback(async () => {
+  const selectServerId = useCallback((serverId: string) => {
+    selectedIdRef.current = serverId;
+    setSelectedId(serverId);
+  }, []);
+
+  const loadServers = useCallback(async () => {
     setLoading(true);
     setError('');
-    setContractError('');
     try {
-      const [packagesResult, contractsResult] = await Promise.all([
-        fetchAgentConfigPackages(),
-        fetchAgentConfigPackageTransactionContracts().catch((caught) => {
-          setContractError(agentPackageErrorText(caught, language));
-          return null;
-        }),
-      ]);
-      setResult(packagesResult);
-      setTransactionContracts(contractsResult);
+      const result = await fetchMcpServers();
+      setServers(result.servers);
+      const currentId = selectedIdRef.current;
+      const selected =
+        result.servers.find((server) => server.id === currentId) ??
+        result.servers[0];
+      if (selected) {
+        if (selected.id !== currentId) {
+          selectServerId(selected.id);
+        }
+        setDraft(mcpDraftFromServer(selected));
+      } else if (currentId) {
+        selectServerId('');
+        setDraft(emptyMcpDraft);
+      }
     } catch (caught) {
-      setError(agentPackageErrorText(caught, language));
+      setError(mcpErrorText(caught, language));
     } finally {
       setLoading(false);
     }
-  }, [language]);
+  }, [language, selectServerId]);
 
   useEffect(() => {
-    void loadPackages();
-  }, [loadPackages]);
+    void loadServers();
+  }, [loadServers]);
 
-  const makeInput = useCallback(() => {
-    if (inputMode === 'yaml') {
-      const yaml = yamlText.trim();
-      if (!yaml) {
-        throw new Error(language === 'zh' ? '请输入 YAML 内容' : 'Enter YAML content');
-      }
-      return { yaml, replace };
-    }
-    if (inputMode === 'path') {
-      const path = sourcePath.trim();
-      if (!path) {
-        throw new Error(language === 'zh' ? '请输入 source_path' : 'Enter source_path');
-      }
-      return { sourcePath: path, replace };
-    }
-    try {
-      return { rawConfig: JSON.parse(rawConfigText), replace };
-    } catch {
-      throw new Error(language === 'zh' ? 'raw_config 不是合法 JSON' : 'raw_config is not valid JSON');
-    }
-  }, [inputMode, language, rawConfigText, replace, sourcePath, yamlText]);
+  const updateDraft = useCallback((patch: Partial<McpServerDraft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+  }, []);
 
-  const validatePackage = useCallback(async () => {
+  const startNew = useCallback(() => {
+    selectServerId('');
+    setDraft(emptyMcpDraft);
+    setEditorOpen(true);
+    setValidation(null);
+    setError('');
+  }, [selectServerId]);
+
+  const selectServer = useCallback((server: McpServerConfig) => {
+    selectServerId(server.id);
+    setDraft(mcpDraftFromServer(server));
+    setEditorOpen(true);
+    setValidation(null);
+    setError('');
+  }, [selectServerId]);
+
+  const makeInput = useCallback(
+    (): McpServerConfigInput => mcpDraftToInput(draft, language),
+    [draft, language],
+  );
+
+  const validateServer = useCallback(async () => {
     setBusyKey('validate');
     setError('');
     setValidation(null);
     try {
-      const next = await validateAgentConfigPackage(makeInput());
-      setValidation(next);
+      const result = await validateMcpServerConfig(makeInput());
+      setValidation(result);
       onNotify(
-        next.ok
+        result.ok
           ? language === 'zh'
-            ? '配置包校验通过'
-            : 'Package validation passed'
+            ? 'MCP 配置校验通过'
+            : 'MCP config validation passed'
           : language === 'zh'
-            ? '配置包校验未通过'
-            : 'Package validation failed',
+            ? 'MCP 配置校验未通过'
+            : 'MCP config validation failed',
       );
     } catch (caught) {
-      setError(agentPackageErrorText(caught, language));
+      setError(mcpErrorText(caught, language));
     } finally {
       setBusyKey('');
     }
   }, [language, makeInput, onNotify]);
 
-  const installPackage = useCallback(async () => {
-    setBusyKey('install');
+  const saveServer = useCallback(async () => {
+    setBusyKey('save');
     setError('');
     try {
-      await installAgentConfigPackage(makeInput());
+      const saved = await saveMcpServerConfig(makeInput());
+      selectServerId(saved.id);
+      setDraft(mcpDraftFromServer(saved));
       setValidation(null);
-      await loadPackages();
-      await onPackagesChanged?.();
-      onNotify(language === 'zh' ? '配置包已安装' : 'Agent package installed');
+      await loadServers();
+      onNotify(language === 'zh' ? 'MCP 服务配置已保存' : 'MCP server saved');
     } catch (caught) {
-      setError(agentPackageErrorText(caught, language));
+      setError(mcpErrorText(caught, language));
     } finally {
       setBusyKey('');
     }
-  }, [language, loadPackages, makeInput, onNotify, onPackagesChanged]);
+  }, [language, loadServers, makeInput, onNotify, selectServerId]);
 
-  const setPackageEnabled = useCallback(
-    async (item: AgentConfigPackageItem, enabled: boolean) => {
-      setBusyKey(`${enabled ? 'enable' : 'disable'}:${item.id}`);
+  const toggleServer = useCallback(
+    async (server: McpServerConfig) => {
+      const nextEnabled = !server.enabled;
+      setBusyKey(`toggle:${server.id}`);
       setError('');
       try {
-        await setAgentConfigPackageEnabled(item.id, enabled);
-        await loadPackages();
-        await onPackagesChanged?.();
+        await setMcpServerEnabled(server.id, nextEnabled);
+        await loadServers();
         onNotify(
-          enabled
+          nextEnabled
             ? language === 'zh'
-              ? '配置包已启用'
-              : 'Package enabled'
+              ? 'MCP 服务已启用'
+              : 'MCP server enabled'
             : language === 'zh'
-              ? '配置包已停用'
-              : 'Package disabled',
+              ? 'MCP 服务已停用'
+              : 'MCP server disabled',
         );
       } catch (caught) {
-        setError(agentPackageErrorText(caught, language));
+        setError(mcpErrorText(caught, language));
       } finally {
         setBusyKey('');
       }
     },
-    [language, loadPackages, onNotify, onPackagesChanged],
+    [language, loadServers, onNotify],
   );
 
-  const removePackage = useCallback(
-    async (item: AgentConfigPackageItem) => {
+  const removeServer = useCallback(
+    async (server: McpServerConfig) => {
       const confirmed = window.confirm(
         language === 'zh'
-          ? `确定删除配置包 ${item.label || item.id} 吗？`
-          : `Delete agent package ${item.label || item.id}?`,
+          ? `确定删除 MCP 服务 ${server.name || server.id} 吗？`
+          : `Delete MCP server ${server.name || server.id}?`,
       );
       if (!confirmed) {
         return;
       }
-      setBusyKey(`delete:${item.id}`);
+      setBusyKey(`delete:${server.id}`);
       setError('');
       try {
-        await deleteAgentConfigPackage(item.id);
-        await loadPackages();
-        await onPackagesChanged?.();
-        onNotify(language === 'zh' ? '配置包已删除' : 'Package deleted');
+        await deleteMcpServerConfig(server.id);
+        if (selectedId === server.id) {
+          startNew();
+        }
+        await loadServers();
+        onNotify(language === 'zh' ? 'MCP 服务已删除' : 'MCP server deleted');
       } catch (caught) {
-        setError(agentPackageErrorText(caught, language));
+        setError(mcpErrorText(caught, language));
       } finally {
         setBusyKey('');
       }
     },
-    [language, loadPackages, onNotify, onPackagesChanged],
+    [language, loadServers, onNotify, selectedId, startNew],
   );
 
-  const packages = result?.packages ?? [];
-  const capabilityUndeclared = !capabilities.agentConfigPackages;
-  const contractCapabilityUndeclared =
-    !capabilities.agentConfigPackageTransactionContracts;
+  const selectedServer = servers.find((server) => server.id === selectedId);
+  const pluginServers = servers.filter(mcpServerIsFromPlugin);
+  const userServers = servers.filter((server) => !mcpServerIsFromPlugin(server));
+  const capabilityUndeclared = !capabilities.mcpServers;
 
   return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? 'Agent 配置包' : 'Agent config packages'}
-        subtitle={
-          language === 'zh'
-            ? '安装和启停后端 Agent package；启用后 profile 会进入自动路由和运行模式列表。前端只负责传递配置，不执行 hook。'
-            : 'Install and toggle backend agent packages. Enabled profiles participate in routing and runtime profile selection. Hooks stay backend-owned.'
-        }
-      >
-        {capabilityUndeclared && (
-          <p className="bot-settings-error">
+    <div className="mcp-simple-page">
+      <header className="mcp-page-header">
+        <div>
+          <h3>{language === 'zh' ? 'MCP 服务器' : 'MCP servers'}</h3>
+          <p>
             {language === 'zh'
-              ? '当前 /v1/capabilities 未声明 agent_config_packages；如果后端已上线接口，仍可直接尝试加载。'
-              : '/v1/capabilities does not declare agent_config_packages yet. If the backend exposes the endpoints, loading can still work.'}
-          </p>
-        )}
-        <div className="agent-package-summary">
-          <InfoRow
-            label={language === 'zh' ? 'schema 版本' : 'Schema version'}
-            value={result?.packageSchemaVersion || '-'}
-          />
-          <InfoRow
-            label={language === 'zh' ? '配置名' : 'Config names'}
-            value={result?.schema.configNames.join(', ') || '-'}
-          />
-          <InfoRow
-            label={language === 'zh' ? '策略段' : 'Policy sections'}
-            value={result?.schema.profilePolicySections.join(', ') || '-'}
-          />
-          <InfoRow
-            label={language === 'zh' ? '事务契约' : 'Transaction contracts'}
-            value={
-              transactionContracts
-                ? `${transactionContracts.contracts.length}`
-                : contractError
-                  ? language === 'zh'
-                    ? '未加载'
-                    : 'Not loaded'
-                  : '-'
-            }
-          />
-        </div>
-        {(transactionContracts || contractError) && (
-          <div className="agent-transaction-contracts">
-            <div>
-              <strong>
-                {language === 'zh' ? '通用事务契约' : 'Generic transaction contracts'}
-              </strong>
-              <small>
-                {transactionContracts?.protocol ||
-                  (language === 'zh'
-                    ? '前端只展示契约声明，不执行事务。'
-                    : 'The frontend displays declarations only and does not execute transactions.')}
-              </small>
-            </div>
-            {contractError ? (
-              <p>
-                {contractCapabilityUndeclared
-                  ? language === 'zh'
-                    ? '后端暂未声明 transaction-contracts 能力。'
-                    : 'The backend has not declared transaction-contracts yet.'
-                  : contractError}
-              </p>
-            ) : transactionContracts && transactionContracts.contracts.length > 0 ? (
-              <div className="agent-transaction-chip-row">
-                {transactionContracts.contracts.map((contract) => (
-                  <span className="agent-transaction-chip" key={contract.id}>
-                    <b>{contract.label || contract.id}</b>
-                    {contract.description && <em>{contract.description}</em>}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p>
-                {language === 'zh'
-                  ? '后端未返回契约类型。'
-                  : 'No transaction contracts returned.'}
-              </p>
-            )}
-          </div>
-        )}
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={loading}
-            onClick={() => void loadPackages()}
-          >
-            {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {language === 'zh' ? '重新加载' : 'Reload'}
-          </button>
-        </div>
-        {error && <p className="bot-settings-error">{error}</p>}
-      </SettingsCard>
-
-      <SettingsCard
-        title={language === 'zh' ? '安装配置包' : 'Install package'}
-        subtitle={
-          language === 'zh'
-            ? '支持 YAML、raw_config JSON 或 source_path，最终校验以后端返回为准。'
-            : 'Use YAML, raw_config JSON, or source_path. Backend validation is authoritative.'
-        }
-      >
-        <div className="agent-package-input-row">
-          <label className="settings-field">
-            <span>{language === 'zh' ? '输入方式' : 'Input mode'}</span>
-            <select
-              value={inputMode}
-              onChange={(event) => setInputMode(event.currentTarget.value as 'yaml' | 'raw' | 'path')}
+              ? '连接外部工具和数据源。'
+              : 'Connect external tools and data sources.'}
+            <a
+              className="mcp-inline-link"
+              href="https://modelcontextprotocol.io"
+              target="_blank"
+              rel="noreferrer"
             >
-              <option value="yaml">YAML</option>
-              <option value="raw">raw_config JSON</option>
-              <option value="path">source_path</option>
-            </select>
-          </label>
-          <SettingsSwitch
-            title={language === 'zh' ? '允许覆盖' : 'Replace existing'}
-            subtitle={language === 'zh' ? '安装时传 replace=true' : 'Send replace=true on install'}
-            checked={replace}
-            onChange={setReplace}
-          />
+              {language === 'zh' ? '了解更多。' : 'Learn more.'}
+            </a>
+          </p>
         </div>
-        {inputMode === 'yaml' && (
-          <label className="agent-package-editor">
-            <span>YAML</span>
-            <textarea
-              value={yamlText}
-              placeholder="protocol: cardbush.agent_config_package.v1&#10;id: my-agent-package&#10;enabled: true&#10;profiles: []"
-              onChange={(event) => setYamlText(event.currentTarget.value)}
-            />
-          </label>
-        )}
-        {inputMode === 'raw' && (
-          <label className="agent-package-editor">
-            <span>raw_config JSON</span>
-            <textarea
-              value={rawConfigText}
-              onChange={(event) => setRawConfigText(event.currentTarget.value)}
-            />
-          </label>
-        )}
-        {inputMode === 'path' && (
-          <SettingsInput
-            label="source_path"
-            value={sourcePath}
-            placeholder="C:\\Users\\...\\agent-package.yaml"
-            onChange={setSourcePath}
-          />
-        )}
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={Boolean(busyKey)}
-            onClick={() => void validatePackage()}
-          >
-            {busyKey === 'validate' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
-            {language === 'zh' ? '校验' : 'Validate'}
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            disabled={Boolean(busyKey)}
-            onClick={() => void installPackage()}
-          >
-            {busyKey === 'install' ? <LoaderCircle size={14} /> : <Upload size={14} />}
-            {language === 'zh' ? '安装' : 'Install'}
-          </button>
-        </div>
-        {validation && (
-          <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
-            <strong>
-              {validation.ok
-                ? language === 'zh'
-                  ? '校验通过'
-                  : 'Validation passed'
-                : language === 'zh'
-                  ? '校验未通过'
-                  : 'Validation failed'}
-              {validation.packageId ? ` · ${validation.packageId}` : ''}
-            </strong>
-            {validation.messages.length > 0 ? (
-              validation.messages.map((message, index) => (
-                <p key={`${message.severity}-${message.path}-${index}`}>
-                  {message.severity}
-                  {message.path ? ` · ${message.path}` : ''}: {message.message}
-                </p>
-              ))
-            ) : (
-              <p>{language === 'zh' ? '后端未返回错误。' : 'No backend messages returned.'}</p>
-            )}
-          </div>
-        )}
-      </SettingsCard>
+      </header>
 
-      <SettingsCard
-        title={language === 'zh' ? '已安装包' : 'Installed packages'}
-        subtitle={
-          language === 'zh'
-            ? '启用后 profile 会参与自动路由；停用后不应再出现在 runtime profiles。'
-            : 'Enabled profiles participate in routing; disabled packages should disappear from runtime profiles.'
-        }
-      >
-        <div className="agent-package-list">
-          {packages.length === 0 ? (
-            <div className="maintenance-result">
-              <strong>{language === 'zh' ? '暂无配置包' : 'No packages'}</strong>
+      {capabilityUndeclared && (
+        <p className="bot-settings-error">
+          {language === 'zh'
+            ? '当前 /v1/capabilities 未声明 mcp_servers；后端接口上线后这里会直接可用。'
+            : '/v1/capabilities does not declare mcp_servers yet. This panel will work once backend endpoints are exposed.'}
+        </p>
+      )}
+      {error && <p className="bot-settings-error">{error}</p>}
+
+      <section className="mcp-simple-section">
+        <div className="mcp-section-title">
+          <strong>{language === 'zh' ? '服务器' : 'Servers'}</strong>
+          <button className="mcp-add-button" type="button" onClick={startNew}>
+            <Plus size={16} />
+            {language === 'zh' ? '添加服务器' : 'Add server'}
+          </button>
+        </div>
+        <div className="mcp-simple-list">
+          {loading ? (
+            <div className="mcp-empty-row">
+              <LoaderCircle size={16} />
+              <span>{language === 'zh' ? '正在加载' : 'Loading'}</span>
+            </div>
+          ) : userServers.length === 0 ? (
+            <div className="mcp-empty-row">
+              <span>{language === 'zh' ? '暂无服务器' : 'No servers'}</span>
             </div>
           ) : (
-            packages.map((item) => (
-              <div className={`agent-package-row ${item.enabled ? 'enabled' : 'disabled'}`} key={item.id}>
-                <div>
-                  <strong>{item.label || item.id}</strong>
-                  <span>{item.description || item.id}</span>
-                  <small>
-                    {item.profileIds.length
-                      ? `profiles: ${item.profileIds.join(', ')}`
-                      : language === 'zh'
-                        ? '未声明 profiles'
-                        : 'No profiles declared'}
-                    {item.sourcePath ? ` · ${item.sourcePath}` : ''}
-                  </small>
-                  {item.transactionContracts.length > 0 && (
-                    <div className="agent-package-contracts">
-                      {item.transactionContracts.map((contract) => (
-                        <span
-                          className="agent-package-contract"
-                          key={`${item.id}-${contract.profileId}-${contract.contractId}`}
-                        >
-                          {contract.profileId}: {contract.label || contract.contractId}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <span className={`subagent-status ${item.enabled ? 'valid' : 'disabled'}`}>
-                  <b>{item.enabled ? (language === 'zh' ? '启用' : 'Enabled') : (language === 'zh' ? '停用' : 'Disabled')}</b>
-                </span>
+            userServers.map((server) => (
+              <div className="mcp-simple-row" key={server.id}>
+                <McpLogoIcon className="mcp-logo-icon" size={18} />
+                <strong>{server.name || server.id}</strong>
                 <button
-                  className="secondary-button"
+                  className="mcp-icon-button"
                   type="button"
-                  disabled={Boolean(busyKey)}
-                  onClick={() => void setPackageEnabled(item, !item.enabled)}
+                  title={language === 'zh' ? '配置' : 'Configure'}
+                  onClick={() => selectServer(server)}
                 >
-                  {busyKey.endsWith(`:${item.id}`) && busyKey !== `delete:${item.id}` ? (
-                    <LoaderCircle size={14} />
-                  ) : item.enabled ? (
-                    <EyeOff size={14} />
-                  ) : (
-                    <Eye size={14} />
-                  )}
-                  {item.enabled
-                    ? language === 'zh'
-                      ? '停用'
-                      : 'Disable'
-                    : language === 'zh'
-                      ? '启用'
-                      : 'Enable'}
+                  <Settings size={16} />
                 </button>
                 <button
-                  className="secondary-button danger"
+                  className={`mcp-toggle ${server.enabled ? 'on' : ''}`}
                   type="button"
                   disabled={Boolean(busyKey)}
-                  onClick={() => void removePackage(item)}
+                  title={server.enabled ? (language === 'zh' ? '停用' : 'Disable') : (language === 'zh' ? '启用' : 'Enable')}
+                  onClick={() => void toggleServer(server)}
                 >
-                  {busyKey === `delete:${item.id}` ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-                  {language === 'zh' ? '删除' : 'Delete'}
+                  <span />
                 </button>
               </div>
             ))
           )}
         </div>
-      </SettingsCard>
+      </section>
+
+      {pluginServers.length > 0 && (
+        <section className="mcp-simple-section">
+          <div className="mcp-section-title">
+            <strong>{language === 'zh' ? '来自插件' : 'From plugins'}</strong>
+          </div>
+          <div className="mcp-simple-list">
+            {pluginServers.map((server) => (
+              <div className="mcp-simple-row plugin" key={server.id}>
+                <McpLogoIcon className="mcp-logo-icon" size={18} />
+                <strong>{server.name || server.id}</strong>
+                <button
+                  className={`mcp-toggle ${server.enabled ? 'on' : ''}`}
+                  type="button"
+                  disabled={Boolean(busyKey)}
+                  onClick={() => void toggleServer(server)}
+                >
+                  <span />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {editorOpen && (
+        <section className="mcp-editor-panel">
+          <div className="mcp-section-title">
+            <strong>
+              {selectedId
+                ? language === 'zh'
+                  ? '配置服务器'
+                  : 'Configure server'
+                : language === 'zh'
+                  ? '添加服务器'
+                  : 'Add server'}
+            </strong>
+            <button
+              className="mcp-icon-button"
+              type="button"
+              onClick={() => {
+                setEditorOpen(false);
+                setValidation(null);
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div className="mcp-compact-form">
+            <SettingsInput
+              label={language === 'zh' ? '名称' : 'Name'}
+              value={draft.name}
+              placeholder="node_repl"
+              onChange={(value) => updateDraft({ name: value })}
+            />
+            <label className="settings-field">
+              <span>{language === 'zh' ? '连接方式' : 'Connection'}</span>
+              <select
+                value={draft.transport}
+                onChange={(event) => updateDraft({ transport: event.currentTarget.value as McpTransport })}
+              >
+                <option value="stdio">stdio</option>
+                <option value="sse">SSE</option>
+                <option value="streamable_http">HTTP stream</option>
+                <option value="http">HTTP</option>
+              </select>
+            </label>
+            {draft.transport === 'stdio' ? (
+              <SettingsInput
+                label={language === 'zh' ? '启动命令' : 'Command'}
+                value={draft.command}
+                placeholder="npx @modelcontextprotocol/server-filesystem C:\\Users\\wfang\\Desktop"
+                onChange={(value) => updateDraft({ command: value })}
+              />
+            ) : (
+              <SettingsInput
+                label="URL"
+                value={draft.url}
+                placeholder="http://127.0.0.1:3000/sse"
+                onChange={(value) => updateDraft({ url: value })}
+              />
+            )}
+          </div>
+          <details className="mcp-advanced">
+            <summary>{language === 'zh' ? '高级设置' : 'Advanced settings'}</summary>
+            <div className="mcp-form-grid">
+              <SettingsInput
+                label="id"
+                value={draft.id}
+                placeholder="filesystem"
+                onChange={(value) => updateDraft({ id: value })}
+              />
+              <SettingsInput
+                label={language === 'zh' ? '超时秒数' : 'Timeout seconds'}
+                value={draft.timeoutSeconds}
+                placeholder="60"
+                onChange={(value) => updateDraft({ timeoutSeconds: value })}
+              />
+              <SettingsInput
+                label={language === 'zh' ? '工作目录' : 'Working directory'}
+                value={draft.cwd}
+                placeholder="C:\\Users\\..."
+                onChange={(value) => updateDraft({ cwd: value })}
+              />
+              <SettingsInput
+                label={language === 'zh' ? '描述' : 'Description'}
+                value={draft.description}
+                placeholder={language === 'zh' ? '这个 MCP 服务提供什么工具' : 'What this MCP server provides'}
+                onChange={(value) => updateDraft({ description: value })}
+              />
+            </div>
+            <div className="mcp-form-grid">
+              <label className="mcp-editor">
+                <span>env JSON</span>
+                <textarea
+                  value={draft.envText}
+                  placeholder="{&#10;  &quot;API_KEY&quot;: &quot;...&quot;&#10;}"
+                  onChange={(event) => updateDraft({ envText: event.currentTarget.value })}
+                />
+              </label>
+              <label className="mcp-editor">
+                <span>headers JSON</span>
+                <textarea
+                  value={draft.headersText}
+                  placeholder="{&#10;  &quot;Authorization&quot;: &quot;Bearer ...&quot;&#10;}"
+                  onChange={(event) => updateDraft({ headersText: event.currentTarget.value })}
+                />
+              </label>
+            </div>
+          </details>
+          <div className="settings-actions">
+            <button className="secondary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void validateServer()}>
+              {busyKey === 'validate' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
+              {language === 'zh' ? '校验' : 'Validate'}
+            </button>
+            <button className="primary-button" type="button" disabled={Boolean(busyKey)} onClick={() => void saveServer()}>
+              {busyKey === 'save' ? <LoaderCircle size={14} /> : <Upload size={14} />}
+              {language === 'zh' ? '保存' : 'Save'}
+            </button>
+            {selectedServer && (
+              <button
+                className="secondary-button danger"
+                type="button"
+                disabled={Boolean(busyKey)}
+                onClick={() => void removeServer(selectedServer)}
+              >
+                {busyKey === `delete:${selectedServer.id}` ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+                {language === 'zh' ? '删除' : 'Delete'}
+              </button>
+            )}
+          </div>
+          {validation && (
+            <div className={`subagent-validation ${validation.ok ? 'ok' : 'invalid'}`}>
+              <strong>
+                {validation.ok
+                  ? language === 'zh'
+                    ? '校验通过'
+                    : 'Validation passed'
+                  : language === 'zh'
+                    ? '校验未通过'
+                    : 'Validation failed'}
+                {validation.tools.length ? ` · tools: ${validation.tools.length}` : ''}
+              </strong>
+              {validation.messages.length > 0 ? (
+                validation.messages.map((message, index) => (
+                  <p key={`${message.severity}-${message.path}-${index}`}>
+                    {message.severity}
+                    {message.path ? ` · ${message.path}` : ''}: {message.message}
+                  </p>
+                ))
+              ) : (
+                <p>
+                  {validation.tools.length
+                    ? validation.tools.join(', ')
+                    : language === 'zh'
+                      ? '后端未返回错误。'
+                      : 'No backend messages returned.'}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
     </div>
+  );
+}
+
+function mcpDraftFromServer(server: McpServerConfig): McpServerDraft {
+  return {
+    id: server.id,
+    name: server.name,
+    description: server.description,
+    enabled: server.enabled,
+    transport: server.transport,
+    command: mcpCommandLineFromServer(server),
+    argsText: '',
+    cwd: server.cwd ?? '',
+    envText: jsonRecordText(server.env),
+    url: server.url ?? '',
+    headersText: jsonRecordText(server.headers),
+    timeoutSeconds: server.timeoutSeconds ? String(server.timeoutSeconds) : '60',
+  };
+}
+
+function mcpDraftToInput(
+  draft: McpServerDraft,
+  language: AppLanguage,
+): McpServerConfigInput {
+  const commandParts =
+    draft.transport === 'stdio' ? splitMcpCommandLine(draft.command.trim()) : [];
+  const id =
+    draft.id.trim() ||
+    mcpSlug(draft.name || commandParts[0] || draft.url) ||
+    'mcp-server';
+  const timeoutSeconds = Number(draft.timeoutSeconds);
+  if (draft.timeoutSeconds.trim() && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+    throw new Error(language === 'zh' ? '超时秒数必须大于 0' : 'Timeout must be greater than 0');
+  }
+  const env = draft.transport === 'stdio'
+    ? parseStringRecordText(draft.envText, 'env', language)
+    : {};
+  const headers = draft.transport !== 'stdio'
+    ? parseStringRecordText(draft.headersText, 'headers', language)
+    : {};
+  const args = draft.argsText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (draft.transport === 'stdio' && commandParts.length === 0) {
+    throw new Error(language === 'zh' ? 'stdio 模式需要填写命令' : 'stdio transport requires a command');
+  }
+  if (draft.transport !== 'stdio' && !draft.url.trim()) {
+    throw new Error(language === 'zh' ? '远程 MCP 模式需要填写 URL' : 'Remote MCP transport requires a URL');
+  }
+  return {
+    id,
+    name: draft.name.trim() || id,
+    description: draft.description.trim(),
+    enabled: draft.enabled,
+    transport: draft.transport,
+    command: draft.transport === 'stdio' ? commandParts[0] : '',
+    args: draft.transport === 'stdio' ? [...commandParts.slice(1), ...args] : [],
+    cwd: draft.cwd.trim(),
+    env,
+    url: draft.url.trim(),
+    headers,
+    ...(Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+      ? { timeoutSeconds: Math.floor(timeoutSeconds) }
+      : {}),
+  };
+}
+
+function mcpCommandLineFromServer(server: McpServerConfig) {
+  if (!server.command) {
+    return '';
+  }
+  return [server.command, ...server.args.map(quoteMcpArg)].filter(Boolean).join(' ');
+}
+
+function quoteMcpArg(value: string) {
+  if (!/\s/.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function splitMcpCommandLine(value: string) {
+  const tokens: string[] = [];
+  let current = '';
+  let quote = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === quote) {
+        quote = '';
+      } else {
+        current += char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+function mcpSlug(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z]+:\/\/+/i, '')
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+}
+
+function parseStringRecordText(
+  value: string,
+  label: string,
+  language: AppLanguage,
+): Record<string, string> {
+  const text = value.trim();
+  if (!text || text === '{}') {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('not_object');
+    }
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>)
+        .map(([key, item]) => [key.trim(), String(item ?? '')])
+        .filter(([key]) => key),
+    );
+  } catch {
+    throw new Error(
+      language === 'zh'
+        ? `${label} 必须是合法 JSON 对象`
+        : `${label} must be a valid JSON object`,
+    );
+  }
+}
+
+function jsonRecordText(value: Record<string, string> | undefined) {
+  return value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : '{}';
+}
+
+function mcpServerIsFromPlugin(server: McpServerConfig) {
+  const raw = server.raw;
+  const source = String(raw.source ?? raw.origin ?? raw.kind ?? '').toLowerCase();
+  return (
+    source.includes('plugin') ||
+    Boolean(raw.plugin ?? raw.plugin_id ?? raw.pluginId ?? raw.plugin_name ?? raw.pluginName)
   );
 }
 
@@ -2883,7 +3301,7 @@ function botPanelError(caught: unknown, language: AppLanguage) {
   return message;
 }
 
-function agentPackageErrorText(caught: unknown, language: AppLanguage) {
+function mcpErrorText(caught: unknown, language: AppLanguage) {
   const message = errorMessage(caught);
   if (message.includes('Failed to fetch')) {
     return language === 'zh'
@@ -2892,13 +3310,13 @@ function agentPackageErrorText(caught: unknown, language: AppLanguage) {
   }
   if (message.includes('404')) {
     return language === 'zh'
-      ? 'Agent 配置包接口尚未由 BushServer 提供。'
-      : 'Agent config package API is not available from BushServer yet.';
+      ? 'MCP 服务配置接口尚未由 BushServer 提供。'
+      : 'MCP server configuration API is not available from BushServer yet.';
   }
-  if (message.includes('unknown_agent_profile')) {
+  if (/mcp/i.test(message) && /transport/i.test(message)) {
     return language === 'zh'
-      ? '后端拒绝了未知或已停用的 agent profile。请刷新配置包和运行模式。'
-      : 'Backend rejected an unknown or disabled agent profile. Refresh packages and runtime profiles.';
+      ? `MCP transport 配置无效：${message}`
+      : `Invalid MCP transport config: ${message}`;
   }
   return message;
 }
@@ -3065,6 +3483,32 @@ function SettingsGroupTitle({ children }: { children: React.ReactNode }) {
   return <div className="settings-group-title">{children}</div>;
 }
 
+const gamepadButtonOptions = [
+  [0, 'A'], [1, 'B'], [2, 'X'], [3, 'Y'], [4, 'LB'], [5, 'RB'],
+  [8, 'View'], [9, 'Menu'], [10, 'L3'], [11, 'R3'],
+] as const;
+
+function GamepadMappingRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="os-gamepad-mapping-row">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(Number(event.currentTarget.value))}>
+        {gamepadButtonOptions.map(([button, name]) => (
+          <option key={button} value={button}>{name}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function SettingsRadio({
   name,
   title,
@@ -3095,15 +3539,17 @@ function SettingsSwitch({
   title,
   subtitle,
   checked,
+  disabled,
   onChange,
 }: {
   title: string;
   subtitle?: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="settings-switch">
+    <label className={`settings-switch${disabled ? ' disabled' : ''}`}>
       <span>
         <strong>{title}</strong>
         {subtitle && <small>{subtitle}</small>}
@@ -3111,6 +3557,7 @@ function SettingsSwitch({
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
     </label>
@@ -3227,11 +3674,15 @@ function ModelConfigRow({
       <div className="model-row-summary">
         <strong>{config.modelName}</strong>
         <span>
-          provider={config.provider || 'custom'} · api_key={maskSecret(config.apiKey, language)} · base_url={config.baseUrl || (language === 'zh' ? '未填写' : 'not filled')} · context={formatContextTokens(config.maxContextTokens, language)}
+          {config.baseUrl || (language === 'zh' ? '默认服务地址' : 'Default endpoint')}
+          {' · '}
+          {config.apiKey
+            ? language === 'zh' ? '凭证已保存' : 'Credential saved'
+            : language === 'zh' ? '未设置凭证' : 'No credential'}
         </span>
       </div>
       <label className="model-context-editor">
-        <span>{language === 'zh' ? '最大上下文' : 'Max context'}</span>
+        <span>{language === 'zh' ? '上下文' : 'Context'}</span>
         <div className="model-context-controls">
           <input
             aria-label={
@@ -3247,13 +3698,14 @@ function ModelConfigRow({
             onChange={(event) => setContextDraft(event.currentTarget.value)}
           />
           <button
-            className="secondary-button"
+            className="icon-button model-context-save"
             type="button"
+            aria-label={language === 'zh' ? '保存上下文' : 'Save context'}
+            title={language === 'zh' ? '保存上下文' : 'Save context'}
             disabled={!contextDraftChanged || hasInvalidContext}
             onClick={() => onSaveContextTokens(contextDraft)}
           >
             <Check size={14} />
-            {language === 'zh' ? '保存' : 'Save'}
           </button>
         </div>
         {hasInvalidContext && (
@@ -3268,12 +3720,19 @@ function ModelConfigRow({
           {language === 'zh' ? '当前' : 'Current'}
         </span>
       )}
-      <button className="secondary-button" type="button" onClick={onUse}>
-        {language === 'zh' ? '设为当前' : 'Use'}
-      </button>
-      <button className="secondary-button danger" type="button" onClick={onDelete}>
+      {!selected && (
+        <button className="secondary-button model-use-button" type="button" onClick={onUse}>
+          {language === 'zh' ? '设为当前' : 'Use'}
+        </button>
+      )}
+      <button
+        className="icon-button model-delete-button"
+        type="button"
+        aria-label={language === 'zh' ? `删除 ${config.modelName}` : `Delete ${config.modelName}`}
+        title={language === 'zh' ? '删除模型' : 'Delete model'}
+        onClick={onDelete}
+      >
         <Trash2 size={14} />
-        {language === 'zh' ? '删除' : 'Delete'}
       </button>
     </div>
   );
