@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "main": "dist-electron/main.js",
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10"
+  },
   "scripts": {
     "postinstall": "node scripts/install-electron.mjs",
     "predev": "node scripts/free-dev-port.mjs",
@@ -22,25 +26,25 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "*",
     "@xterm/xterm": "^6.0.0",
-    "concurrently": "*",
-    "electron": "*",
-    "lucide-react": "*",
+    "lucide-react": "^1.16.0",
     "qrcode": "^1.5.4",
-    "react": "*",
-    "react-dom": "*",
-    "react-markdown": "*",
-    "react-virtuoso": "*",
-    "remark-gfm": "*",
-    "typescript": "*",
-    "vite": "*",
-    "wait-on": "*"
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "react-virtuoso": "^4.18.7",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@types/node": "*",
+    "@types/node": "^25.8.0",
     "@types/qrcode": "^1.5.6",
-    "@types/react": "*",
-    "@types/react-dom": "*"
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^10.0.4",
+    "electron": "^42.8.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.1",
+    "wait-on": "^9.0.10"
   }
 }
