@@ -30,6 +30,12 @@ export type ConversationChangeReport = ToolChangeReport & {
   createdAt?: string;
 };
 
+export type ConversationChangeSummary = {
+  fileCount: number;
+  additions: number;
+  deletions: number;
+};
+
 export type SerializedToolFileChange = {
   path: string;
   diff: string;
@@ -91,6 +97,34 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
       },
     ];
   });
+}
+
+export function summarizeChangeReports(
+  reports: ConversationChangeReport[],
+): ConversationChangeSummary | null {
+  if (reports.length === 0) {
+    return null;
+  }
+  const paths = new Set<string>();
+  let fallbackFileCount = 0;
+  let additions = 0;
+  let deletions = 0;
+  for (const report of reports) {
+    additions += report.additions;
+    deletions += report.deletions;
+    fallbackFileCount += report.fileCount;
+    for (const file of report.files) {
+      const normalizedPath = file.path.trim().replaceAll('\\', '/').toLowerCase();
+      if (normalizedPath) {
+        paths.add(normalizedPath);
+      }
+    }
+  }
+  return {
+    fileCount: paths.size > 0 ? paths.size : fallbackFileCount,
+    additions,
+    deletions,
+  };
 }
 
 export function serializeToolChangeReport(report: ToolChangeReport): SerializedToolFileChange[] {

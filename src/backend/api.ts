@@ -30,15 +30,12 @@ import type {
   TeamFlowNode,
   TeamFlowState,
   TeamFlowStreamEvent,
+  ThinkingStreamEvent,
   TaskPlanStreamUpdate,
   SubagentCapabilities,
-  SubagentDetail,
   SubagentListItem,
   SubagentRuntimeResult,
   SubagentSupervisorSnapshot,
-  SubagentTemplate,
-  SubagentUsageResult,
-  SubagentValidationResult,
   SubagentValidationStatus,
   StreamStart,
   WorkspaceContext,
@@ -48,6 +45,8 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
+  RuntimeContextWindowUsage,
+  CapabilityCandidatesUpdate,
   TerminalRuntime,
 } from '../types';
 import {
@@ -60,6 +59,8 @@ import {
   taskPlanFromPayload,
   taskPlanUpdateFromExecutionPayload,
 } from './taskPlan';
+import { desktopActionToolPayload } from './desktopAction';
+import { capabilityCandidatesFromPayload } from './capabilityCandidates';
 
 const conversationListPageSize = 160;
 const conversationListMaxPages = 1;
@@ -89,6 +90,50 @@ export interface BackendModelConfigsResult {
   raw: unknown;
 }
 
+export interface RuntimeToolInventoryEntry {
+  name: string;
+  package: string;
+  description: string;
+  enabled: boolean;
+  runtimeLoaded: boolean;
+  schemaAvailable: boolean;
+  injection: {
+    core: boolean;
+    default: boolean;
+  };
+  category: 'default' | 'discoverable_plugin' | 'disabled' | string;
+}
+
+export interface RuntimeToolInventory {
+  protocol: string;
+  tools: string[];
+  installed: RuntimeToolInventoryEntry[];
+  modelVisibleDefault: string[];
+  modelVisibleThisTurn: string[];
+  modelVisibleSource: string;
+  modelVisibleSnapshot: {
+    requestId: string;
+    sessionId: string;
+    turnId: string;
+    loopIndex?: number;
+    provider: string;
+    model: string;
+    completedAt: string;
+  } | null;
+  conditional: Array<{ name: string; reason: string }>;
+  turnAdded: string[];
+  discoverablePlugins: string[];
+  disabled: string[];
+  internalGuardEvents: Array<{
+    name: string;
+    kind: string;
+    modelVisible: boolean;
+    frontendVisible: boolean;
+    description: string;
+  }>;
+  loadErrors: Array<Record<string, unknown>>;
+}
+
 export interface ChatStreamRequest {
   sessionId: string;
   userInput: string;
@@ -100,6 +145,8 @@ export interface ChatStreamRequest {
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
   reasoningLevel?: ReasoningLevel;
+  reasoningTraceVisible?: boolean;
+  interactiveRequestsEnabled?: boolean;
   standardImageInputEnabled?: boolean;
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
@@ -118,6 +165,11 @@ export interface ChatStreamRequest {
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onThinking?: (event: ThinkingStreamEvent) => void;
+  onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
+  onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
+  onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
+  onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
 export interface ControlStreamRequest {
@@ -130,6 +182,8 @@ export interface ControlStreamRequest {
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
   reasoningLevel?: ReasoningLevel;
+  reasoningTraceVisible?: boolean;
+  interactiveRequestsEnabled?: boolean;
   standardImageInputEnabled?: boolean;
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
@@ -148,6 +202,11 @@ export interface ControlStreamRequest {
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onThinking?: (event: ThinkingStreamEvent) => void;
+  onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
+  onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
+  onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
+  onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
 export interface RegenerateTurnRequest extends ControlStreamRequest {
@@ -165,6 +224,7 @@ export interface SendGuidanceRequest {
   guidance: string;
   mode: 'append_context' | 'interrupt_and_continue';
   terminalRuntime?: TerminalRuntime;
+  interactiveRequestsEnabled?: boolean;
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string) => void;
@@ -175,6 +235,94 @@ export interface SendGuidanceRequest {
   onFinalAssistantText?: (text: string) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onThinking?: (event: ThinkingStreamEvent) => void;
+  onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
+  onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
+  onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
+  onSceneEvent?: (event: SceneStreamEvent) => void;
+}
+
+export interface ShadowConversationRecord {
+  id: string;
+  sessionId: string;
+  sourceTurnId: string;
+  agentName: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  raw: Record<string, unknown>;
+}
+
+export interface ShadowConversationStreamRequest {
+  conversationId: string;
+  content: string;
+  clientMessageId: string;
+  modelConfig: ManagedModelConfig;
+  reasoningLevel?: ReasoningLevel;
+  signal?: AbortSignal;
+  onStart?: (messageId: string) => void;
+  onDelta?: (delta: string) => void;
+  onDone?: (message: { id: string; content: string; createdAt: string }) => void;
+}
+
+export interface SessionContextSearchItem {
+  messageId: string;
+  turnId: string;
+  role: ChatMessage['role'];
+  score: number;
+  snippet: string;
+  createdAt: string;
+}
+
+export interface SessionContextSearchResult {
+  requestId: string;
+  sessionId: string;
+  queryFingerprint: string;
+  items: SessionContextSearchItem[];
+  nextCursor?: string;
+  indexState: string;
+}
+
+export interface SessionMessageWindow {
+  anchorMessageId: string;
+  messages: ChatMessage[];
+  hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
+  beforeCursor?: string;
+  afterCursor?: string;
+}
+
+export interface TeamWorkflowValidationResult {
+  valid: boolean;
+  errors: Array<Record<string, unknown>>;
+  warnings: Array<Record<string, unknown>>;
+  normalized?: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+export interface TeamWorkflowStreamEvent {
+  type: string;
+  runId: string;
+  workflowId: string;
+  sessionId: string;
+  turnId: string;
+  nodeId: string;
+  status: string;
+  summary: string;
+  raw: Record<string, unknown>;
+}
+
+export interface SceneStreamEvent {
+  type: 'scene_presented' | 'scene_updated' | 'scene_closed';
+  sceneId: string;
+  sessionId: string;
+  turnId: string;
+  revision?: number;
+  status: string;
+  title: string;
+  summary: string;
+  scene?: Record<string, unknown>;
+  raw: Record<string, unknown>;
 }
 
 export interface TeamFlowActionRequest {
@@ -190,6 +338,8 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   sessions: true,
   skills: true,
   interactions: true,
+  interactiveRequests: false,
+  permissionRequests: true,
   turnStop: true,
   runtimeInspection: true,
   maintenanceConversationHistoryClear: false,
@@ -205,17 +355,24 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   terminal: false,
   resources: false,
   settingsSync: false,
-  localMusicLibrary: false,
   mcpServers: false,
   subagents: false,
   subagentFrontendConfiguration: false,
-  subagentLocalDefault: false,
   remoteAgentsViaMcp: false,
   teamMode: false,
   teamAgentFlow: false,
   teamFlowState: false,
   teamFlowActions: false,
   teamFlowEvents: false,
+  teamWorkflows: false,
+  workflowRuntime: false,
+  shadowConversationActivation: false,
+  contextWindowUsage: false,
+  capabilityDiscovery: false,
+  workspaceChanges: false,
+  sessionContextSearch: false,
+  sessionActivityOrdering: false,
+  agentVisualScenes: false,
   browserCookiePersistence: false,
   browserPrivacyMode: false,
   browserApiCandidates: false,
@@ -223,6 +380,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   osMode: false,
   desktopAutomation: false,
   taskPlan: false,
+  reasoningStream: false,
   reasoningLevelSelection: false,
   reasoningLevels: ['low', 'medium', 'max'],
   defaultReasoningLevel: 'medium',
@@ -420,6 +578,28 @@ function hasHeader(headers: Record<string, string>, name: string) {
   return Object.keys(headers).some((key) => key.toLowerCase() === normalized);
 }
 
+export class BushServerHttpError extends Error {
+  readonly statusCode: number;
+  readonly responseBody: string;
+
+  constructor(statusCode: number, responseBody: string) {
+    super(formatHttpError(statusCode, responseBody));
+    this.name = 'BushServerHttpError';
+    this.statusCode = statusCode;
+    this.responseBody = responseBody;
+  }
+}
+
+export function isBushServerHttpError(
+  error: unknown,
+  statusCode?: number,
+): error is BushServerHttpError {
+  return (
+    error instanceof BushServerHttpError &&
+    (statusCode == null || error.statusCode === statusCode)
+  );
+}
+
 async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -430,7 +610,7 @@ async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(formatHttpError(response.status, body));
+    throw new BushServerHttpError(response.status, body);
   }
   return (await response.json()) as T;
 }
@@ -447,6 +627,20 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
     throw new Error(formatHttpError(response.status, await response.text()));
   }
   return backendCapabilitiesFromPayload(await response.json());
+}
+
+export async function fetchRuntimeToolInventory(filters?: {
+  sessionId?: string;
+  turnId?: string;
+}): Promise<RuntimeToolInventory> {
+  const endpoint = new URL(url('/v1/tools'));
+  if (filters?.sessionId?.trim()) {
+    endpoint.searchParams.set('session_id', filters.sessionId.trim());
+  }
+  if (filters?.turnId?.trim()) {
+    endpoint.searchParams.set('turn_id', filters.turnId.trim());
+  }
+  return runtimeToolInventoryFromPayload(await readJson<unknown>(endpoint.toString()));
 }
 
 export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
@@ -761,6 +955,98 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function runtimeToolInventoryFromPayload(payload: unknown): RuntimeToolInventory {
+  const root = recordFromUnknown(payload);
+  const snapshotValue = root.model_visible_snapshot ?? root.modelVisibleSnapshot;
+  const snapshot = recordFromUnknown(snapshotValue);
+  const hasSnapshot = snapshotValue != null && Object.keys(snapshot).length > 0;
+  const guardEventsValue = root.internal_guard_events ?? root.internalGuardEvents;
+  const loadErrorsValue = root.load_errors ?? root.loadErrors;
+  return {
+    protocol: String(root.protocol ?? ''),
+    tools: stringList(root.tools),
+    installed: Array.isArray(root.installed)
+      ? root.installed.map(runtimeToolInventoryEntryFromPayload)
+      : [],
+    modelVisibleDefault: stringList(
+      root.model_visible_default ?? root.modelVisibleDefault,
+    ),
+    modelVisibleThisTurn: stringList(
+      root.model_visible_this_turn ?? root.modelVisibleThisTurn,
+    ),
+    modelVisibleSource: String(
+      root.model_visible_source ?? root.modelVisibleSource ?? 'none',
+    ),
+    modelVisibleSnapshot: hasSnapshot
+      ? {
+          requestId: String(snapshot.request_id ?? snapshot.requestId ?? ''),
+          sessionId: String(snapshot.session_id ?? snapshot.sessionId ?? ''),
+          turnId: String(snapshot.turn_id ?? snapshot.turnId ?? ''),
+          loopIndex: positiveNumber(snapshot.loop_index ?? snapshot.loopIndex),
+          provider: String(snapshot.provider ?? ''),
+          model: String(snapshot.model ?? ''),
+          completedAt: String(snapshot.completed_at ?? snapshot.completedAt ?? ''),
+        }
+      : null,
+    conditional: runtimeToolReasonItems(root.conditional),
+    turnAdded: stringList(root.turn_added ?? root.turnAdded),
+    discoverablePlugins: stringList(
+      root.discoverable_plugins ?? root.discoverablePlugins,
+    ),
+    disabled: stringList(root.disabled),
+    internalGuardEvents: Array.isArray(guardEventsValue)
+      ? guardEventsValue.map((item) => {
+          const value = recordFromUnknown(item);
+          return {
+            name: String(value.name ?? ''),
+            kind: String(value.kind ?? ''),
+            modelVisible: Boolean(value.model_visible ?? value.modelVisible),
+            frontendVisible: Boolean(
+              value.frontend_visible ?? value.frontendVisible,
+            ),
+            description: String(value.description ?? ''),
+          };
+        })
+      : [],
+    loadErrors: Array.isArray(loadErrorsValue)
+      ? loadErrorsValue.map(recordFromUnknown)
+      : [],
+  };
+}
+
+function runtimeToolInventoryEntryFromPayload(
+  payload: unknown,
+): RuntimeToolInventoryEntry {
+  const value = recordFromUnknown(payload);
+  const injection = recordFromUnknown(value.injection);
+  return {
+    name: String(value.name ?? ''),
+    package: String(value.package ?? ''),
+    description: String(value.description ?? ''),
+    enabled: Boolean(value.enabled),
+    runtimeLoaded: Boolean(value.runtime_loaded ?? value.runtimeLoaded),
+    schemaAvailable: Boolean(value.schema_available ?? value.schemaAvailable),
+    injection: {
+      core: Boolean(injection.core),
+      default: Boolean(injection.default),
+    },
+    category: String(value.category ?? ''),
+  };
+}
+
+function runtimeToolReasonItems(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => {
+    const record = recordFromUnknown(item);
+    return {
+      name: String(record.name ?? ''),
+      reason: String(record.reason ?? ''),
+    };
+  });
 }
 
 function positiveNumber(value: unknown) {
@@ -1114,6 +1400,314 @@ export async function fetchSessionScene({
   return sceneRecordFromPayload(payload, normalizedSessionId);
 }
 
+export async function createShadowConversation({
+  sessionId,
+  sourceTurnId,
+  clientConversationId,
+}: {
+  sessionId: string;
+  sourceTurnId?: string;
+  clientConversationId: string;
+}): Promise<ShadowConversationRecord> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error('Shadow 需要一个已建立的会话');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/shadow-conversations`),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        client_conversation_id: clientConversationId,
+        ...(sourceTurnId?.trim() ? { source_turn_id: sourceTurnId.trim() } : {}),
+      }),
+    },
+  );
+  return shadowConversationFromPayload(payload, normalizedSessionId);
+}
+
+export async function closeShadowConversation(conversationId: string): Promise<void> {
+  const normalizedConversationId = conversationId.trim();
+  if (!normalizedConversationId) return;
+  await readJson<Record<string, unknown>>(
+    url(`/v1/shadow-conversations/${encodeURIComponent(normalizedConversationId)}/close`),
+    {
+      method: 'POST',
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export async function streamShadowConversationMessage(
+  request: ShadowConversationStreamRequest,
+): Promise<void> {
+  const conversationId = request.conversationId.trim();
+  const content = request.content.trim();
+  if (!conversationId || !content) return;
+  const endpoint = url(
+    `/v1/shadow-conversations/${encodeURIComponent(conversationId)}/messages/stream`,
+  );
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    signal: request.signal,
+    headers: {
+      ...(await headersFor(endpoint, true)),
+      accept: 'text/event-stream',
+    },
+    body: JSON.stringify({
+      content,
+      client_message_id: request.clientMessageId,
+      model: request.modelConfig.modelName,
+      provider: request.modelConfig.provider,
+      api_key: request.modelConfig.apiKey,
+      base_url: request.modelConfig.baseUrl,
+      reasoning_level: normalizeReasoningLevel(request.reasoningLevel),
+      stream: true,
+    }),
+  });
+  if (!response.ok || response.body == null) {
+    throw new Error(formatHttpError(response.status, await response.text()));
+  }
+
+  await readShadowConversationStream(response.body, request);
+}
+
+async function readShadowConversationStream(
+  body: ReadableStream<Uint8Array>,
+  request: ShadowConversationStreamRequest,
+) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let eventName = 'message';
+  let dataLines: string[] = [];
+  let assistantText = '';
+  let assistantMessageId = '';
+
+  const flush = () => {
+    if (dataLines.length === 0) {
+      eventName = 'message';
+      return;
+    }
+    const decoded = parseJson(dataLines.join('\n'));
+    const currentEvent = eventName;
+    eventName = 'message';
+    dataLines = [];
+    if (!decoded) return;
+    if (currentEvent === 'error' || currentEvent === 'shadow_error') {
+      throw new Error(streamErrorMessage(decoded));
+    }
+    if (currentEvent === 'shadow_start') {
+      assistantMessageId = String(decoded.message_id ?? decoded.id ?? '');
+      request.onStart?.(assistantMessageId);
+      return;
+    }
+    if (currentEvent === 'shadow_token') {
+      const delta = String(decoded.delta ?? '');
+      if (delta) {
+        assistantText += delta;
+        request.onDelta?.(delta);
+      }
+      return;
+    }
+    if (currentEvent === 'shadow_done') {
+      const content = String(decoded.content ?? decoded.message ?? assistantText);
+      request.onDone?.({
+        id: String(decoded.message_id ?? decoded.id ?? assistantMessageId),
+        content,
+        createdAt: String(decoded.created_at ?? decoded.createdAt ?? new Date().toISOString()),
+      });
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (line === '') {
+        flush();
+      } else if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+      } else if (line.startsWith('data:')) {
+        const raw = line.slice(5);
+        dataLines.push(raw.startsWith(' ') ? raw.slice(1) : raw);
+      }
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) dataLines.push(buffer.trim());
+  flush();
+}
+
+export async function searchSessionContext({
+  sessionId,
+  query,
+  limit = 8,
+  cursor,
+  roles = ['user'],
+  excludeMessageIds,
+  requestId,
+  signal,
+}: {
+  sessionId: string;
+  query: string;
+  limit?: number;
+  cursor?: string;
+  roles?: ChatMessage['role'][];
+  excludeMessageIds?: string[];
+  requestId?: string;
+  signal?: AbortSignal;
+}): Promise<SessionContextSearchResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/context-search`),
+    {
+      method: 'POST',
+      signal,
+      body: JSON.stringify({
+        query: query.trim(),
+        limit,
+        roles,
+        ...(cursor ? { cursor } : {}),
+        ...(excludeMessageIds?.length ? { exclude_message_ids: excludeMessageIds } : {}),
+        ...(requestId ? { request_id: requestId } : {}),
+      }),
+    },
+  );
+  return {
+    requestId: String(payload.request_id ?? ''),
+    sessionId: String(payload.session_id ?? sessionId),
+    queryFingerprint: String(payload.query_fingerprint ?? ''),
+    items: arrayFrom(payload.items).map((value) => {
+      const item = asRecord(value);
+      return {
+        messageId: String(item.message_id ?? ''),
+        turnId: String(item.turn_id ?? ''),
+        role: normalizeRole(item.role),
+        score: Number(item.score ?? 0),
+        snippet: String(item.snippet ?? ''),
+        createdAt: String(item.created_at ?? ''),
+      };
+    }),
+    nextCursor: optionalString(payload.next_cursor),
+    indexState: String(payload.index_state ?? ''),
+  };
+}
+
+export async function fetchSessionMessageWindow({
+  sessionId,
+  messageId,
+  before = 6,
+  after = 6,
+  signal,
+}: {
+  sessionId: string;
+  messageId: string;
+  before?: number;
+  after?: number;
+  signal?: AbortSignal;
+}): Promise<SessionMessageWindow> {
+  const query = new URLSearchParams({ before: String(before), after: String(after) });
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/messages/${encodeURIComponent(messageId.trim())}/window?${query}`),
+    { signal },
+  );
+  return {
+    anchorMessageId: String(payload.anchor_message_id ?? messageId),
+    messages: arrayFrom(payload.messages).map((item, index) => ({
+      ...messageFromPayload(item, index),
+      conversationId: sessionId,
+    })),
+    hasMoreBefore: payload.has_more_before === true,
+    hasMoreAfter: payload.has_more_after === true,
+    beforeCursor: optionalString(payload.before_cursor),
+    afterCursor: optionalString(payload.after_cursor),
+  };
+}
+
+export async function fetchSessionContextWindowUsage(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<RuntimeContextWindowUsage> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error('session_id is required');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/context-window`),
+    { signal },
+  );
+  return contextWindowUsageFromPayload(payload, normalizedSessionId);
+}
+
+export async function fetchSessionWorkspaceChanges(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ChatToolExecution[]> {
+  const normalized = sessionId.trim();
+  if (!normalized) return [];
+  const payload = await readJson<{ items?: unknown[] }>(
+    url(`/v1/sessions/${encodeURIComponent(normalized)}/workspace-changes`),
+    { signal },
+  );
+  return arrayFrom(payload.items)
+    .map(asRecord)
+    .map((item) => toolExecutionFromPayload(workspaceChangeToolPayload(item)));
+}
+
+export async function validateTeamWorkflow({
+  yaml,
+  projectDir,
+  workflowId,
+}: {
+  yaml?: string;
+  projectDir?: string;
+  workflowId?: string;
+}): Promise<TeamWorkflowValidationResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url('/v1/team-workflows/validate'),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(yaml?.trim() ? { yaml } : {}),
+        ...(projectDir?.trim() ? { project_dir: projectDir.trim() } : {}),
+        ...(workflowId?.trim() ? { workflow_id: workflowId.trim() } : {}),
+      }),
+    },
+  );
+  return {
+    valid: payload.valid === true,
+    errors: arrayFrom(payload.errors).map(asRecord),
+    warnings: arrayFrom(payload.warnings).map(asRecord),
+    normalized: asOptionalRecord(payload.normalized ?? payload.workflow),
+    raw: payload,
+  };
+}
+
+export async function fetchWorkflowRun(runId: string): Promise<Record<string, unknown>> {
+  return readJson<Record<string, unknown>>(
+    url(`/v1/workflow-runs/${encodeURIComponent(runId.trim())}`),
+  );
+}
+
+export async function fetchSessionWorkflowRuns(
+  sessionId: string,
+  limit = 20,
+): Promise<Record<string, unknown>[]> {
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/workflow-runs?limit=${limit}`),
+  );
+  return arrayFrom(payload.items).map(asRecord);
+}
+
+export async function stopWorkflowRun(runId: string): Promise<Record<string, unknown>> {
+  return readJson<Record<string, unknown>>(
+    url(`/v1/workflow-runs/${encodeURIComponent(runId.trim())}/stop`),
+    { method: 'POST' },
+  );
+}
+
 export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
   const normalized = sessionId.trim();
   if (!normalized) {
@@ -1159,134 +1753,6 @@ export async function sendTeamFlowAction(
   return teamFlowStateFromPayload(payload, flowId);
 }
 
-export async function fetchSubagents(): Promise<SubagentListItem[]> {
-  const payload = await readJson<{ subagents?: unknown[]; items?: unknown[] }>(
-    url('/v1/subagents'),
-  );
-  const items = Array.isArray(payload.subagents) ? payload.subagents : payload.items;
-  return Array.isArray(items) ? items.map(subagentListItemFromPayload) : [];
-}
-
-export async function fetchSubagentDetail(agentId: string): Promise<SubagentDetail> {
-  const normalized = agentId.trim();
-  if (!normalized) {
-    throw new Error('Subagent id 为空');
-  }
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/subagents/${encodeURIComponent(normalized)}`),
-  );
-  return subagentDetailFromPayload(payload);
-}
-
-export async function registerSubagent(input: {
-  sourcePath?: string;
-  rawConfig?: Record<string, unknown>;
-  replace?: boolean;
-}): Promise<SubagentDetail> {
-  const payload = await readJson<Record<string, unknown>>(
-    url('/v1/subagents/register'),
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        ...(input.sourcePath?.trim() ? { source_path: input.sourcePath.trim() } : {}),
-        ...(input.rawConfig ? { raw_config: input.rawConfig } : {}),
-        replace: Boolean(input.replace),
-      }),
-    },
-  );
-  return subagentDetailFromPayload(payload);
-}
-
-export async function patchSubagent(
-  agentId: string,
-  updates: Record<string, unknown>,
-): Promise<SubagentDetail> {
-  const normalized = agentId.trim();
-  if (!normalized) {
-    throw new Error('Subagent id 为空');
-  }
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/subagents/${encodeURIComponent(normalized)}`),
-    {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    },
-  );
-  return subagentDetailFromPayload(payload);
-}
-
-export async function setSubagentEnabled(
-  agentId: string,
-  enabled: boolean,
-): Promise<SubagentDetail> {
-  const normalized = agentId.trim();
-  if (!normalized) {
-    throw new Error('Subagent id 为空');
-  }
-  const payload = await readJson<Record<string, unknown>>(
-    url(
-      `/v1/subagents/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`,
-    ),
-    { method: 'POST' },
-  );
-  return subagentDetailFromPayload(payload);
-}
-
-export async function deleteSubagent(agentId: string): Promise<Record<string, unknown>> {
-  const normalized = agentId.trim();
-  if (!normalized) {
-    throw new Error('Subagent id 为空');
-  }
-  return readJson<Record<string, unknown>>(
-    url(`/v1/subagents/${encodeURIComponent(normalized)}`),
-    { method: 'DELETE' },
-  );
-}
-
-export async function reloadSubagents(): Promise<{
-  subagents: SubagentListItem[];
-  raw: Record<string, unknown>;
-}> {
-  const payload = await readJson<Record<string, unknown>>(
-    url('/v1/subagents/reload'),
-    { method: 'POST' },
-  );
-  const items = Array.isArray(payload.subagents) ? payload.subagents : [];
-  return {
-    subagents: items.map(subagentListItemFromPayload),
-    raw: payload,
-  };
-}
-
-export async function validateSubagent(
-  rawConfig: Record<string, unknown>,
-): Promise<SubagentValidationResult> {
-  const payload = await readJson<Record<string, unknown>>(
-    url('/v1/subagents/validate'),
-    {
-      method: 'POST',
-      body: JSON.stringify({ raw_config: rawConfig }),
-    },
-  );
-  return subagentValidationFromPayload(payload);
-}
-
-export async function fetchSubagentTemplates(): Promise<SubagentTemplate[]> {
-  const payload = await readJson<Record<string, unknown>>(
-    url('/v1/subagents/templates'),
-  );
-  const items = Array.isArray(payload.templates) ? payload.templates : [];
-  return items.map((item) => {
-    const value = asRecord(item);
-    return {
-      id: String(value.id ?? value.name ?? ''),
-      name: String(value.name ?? value.id ?? ''),
-      description: String(value.description ?? ''),
-      rawConfig: asRecord(value.raw_config ?? value.rawConfig),
-    };
-  });
-}
-
 export async function fetchSubagentCapabilities(): Promise<SubagentCapabilities> {
   const payload = await readJson<Record<string, unknown>>(
     url('/v1/subagents/capabilities'),
@@ -1316,17 +1782,6 @@ export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
     usage: asRecord(payload.usage),
     supervisor: subagentSupervisorFromPayload(payload.supervisor),
   };
-}
-
-export async function fetchSubagentUsage(agentId: string): Promise<SubagentUsageResult> {
-  const normalized = agentId.trim();
-  if (!normalized) {
-    throw new Error('Subagent id 为空');
-  }
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/subagents/${encodeURIComponent(normalized)}/usage`),
-  );
-  return subagentUsageFromPayload(payload);
 }
 
 export async function dispatchSubagent({
@@ -1438,7 +1893,10 @@ export async function fetchPendingInteraction(
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/interactions/pending?session_id=${encodeURIComponent(normalized)}`),
   );
-  return pendingInteractionFromPayload(payload);
+  const interaction = pendingInteractionFromPayload(payload);
+  return interaction && isPermissionInteractionPayload(interaction)
+    ? permissionInteractionFromPayload(payload)
+    : interaction;
 }
 
 export async function replyInteraction({
@@ -1577,24 +2035,42 @@ export async function sendGuidance(request: SendGuidanceRequest) {
   if (!sessionId || !turnId || !guidance) {
     return;
   }
+  const body: Record<string, unknown> = {
+    session_id: sessionId,
+    guidance,
+    mode: request.mode,
+    stream: true,
+    metadata: {
+      source: 'cardbush_electron',
+      terminal_runtime: normalizeTerminalRuntime(request.terminalRuntime),
+      terminalRuntime: normalizeTerminalRuntime(request.terminalRuntime),
+      command_shell: normalizeTerminalRuntime(request.terminalRuntime),
+      commandShell: normalizeTerminalRuntime(request.terminalRuntime),
+    },
+  };
+  applyInteractiveRequestsToBody(body, request.interactiveRequestsEnabled);
   await streamEndpoint({
     endpoint: url(`/v1/turns/${encodeURIComponent(turnId)}/guidance`),
     method: 'POST',
-    body: {
-      session_id: sessionId,
-      guidance,
-      mode: request.mode,
-      stream: true,
-      metadata: {
-        source: 'cardbush_electron',
-        terminal_runtime: normalizeTerminalRuntime(request.terminalRuntime),
-        terminalRuntime: normalizeTerminalRuntime(request.terminalRuntime),
-        command_shell: normalizeTerminalRuntime(request.terminalRuntime),
-        commandShell: normalizeTerminalRuntime(request.terminalRuntime),
-      },
-    },
+    body,
     request,
   });
+}
+
+export class PendingInteractionConflictError extends Error {
+  readonly interaction: PendingInteraction;
+
+  constructor(interaction: PendingInteraction) {
+    super('A pending interaction requires a response');
+    this.name = 'PendingInteractionConflictError';
+    this.interaction = interaction;
+  }
+}
+
+export function isPendingInteractionConflictError(
+  error: unknown,
+): error is PendingInteractionConflictError {
+  return error instanceof PendingInteractionConflictError;
 }
 
 async function streamEndpoint({
@@ -1619,6 +2095,11 @@ async function streamEndpoint({
     | 'onFinalAssistantText'
     | 'onMessages'
     | 'onTeamFlowEvent'
+    | 'onThinking'
+    | 'onContextWindowUsage'
+    | 'onCapabilityCandidates'
+    | 'onWorkflowEvent'
+    | 'onSceneEvent'
   >;
 }) {
   const response = await fetch(endpoint, {
@@ -1632,7 +2113,15 @@ async function streamEndpoint({
   });
 
   if (!response.ok || response.body == null) {
-    throw new Error(formatHttpError(response.status, await response.text()));
+    const responseText = await response.text();
+    if (response.status === 409) {
+      const interaction = interactionFromConflictResponse(responseText);
+      if (interaction) {
+        request.onInteractiveRequest?.(interaction);
+        throw new PendingInteractionConflictError(interaction);
+      }
+    }
+    throw new Error(formatHttpError(response.status, responseText));
   }
 
   const reader = response.body.getReader();
@@ -1702,8 +2191,10 @@ function controlStreamBody(request: ControlStreamRequest) {
     },
   };
   const metadata = body.metadata as Record<string, unknown>;
+  applyInteractiveRequestsToBody(body, request.interactiveRequestsEnabled);
   applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
+  body.reasoning_trace_visible = request.reasoningTraceVisible === true;
   applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
@@ -1765,8 +2256,10 @@ function chatStreamBody(request: ChatStreamRequest) {
     },
   };
   const metadata = body.metadata as Record<string, unknown>;
+  applyInteractiveRequestsToBody(body, request.interactiveRequestsEnabled);
   applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
+  body.reasoning_trace_visible = request.reasoningTraceVisible === true;
   applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
@@ -1813,7 +2306,19 @@ function chatStreamBody(request: ChatStreamRequest) {
 }
 
 function normalizeReferencePlanMode(value?: ReferencePlanMode): ReferencePlanMode {
-  return value === 'auto' ? 'auto' : 'off';
+  return value === 'off' ? 'off' : 'auto';
+}
+
+function applyInteractiveRequestsToBody(
+  body: Record<string, unknown>,
+  enabled?: boolean,
+) {
+  if (enabled !== true) {
+    return;
+  }
+  body.requestCapabilities = {
+    interactiveRequests: true,
+  };
 }
 
 function normalizePermissionMode(value?: PermissionMode): PermissionMode {
@@ -1954,6 +2459,11 @@ function handleStreamEvent(
     | 'onMessages'
     | 'onAssistantRevision'
     | 'onTeamFlowEvent'
+    | 'onThinking'
+    | 'onContextWindowUsage'
+    | 'onCapabilityCandidates'
+    | 'onWorkflowEvent'
+    | 'onSceneEvent'
   >,
 ): { clearEmitted?: boolean } | undefined {
   const decoded = parseJson(rawData);
@@ -1970,7 +2480,7 @@ function handleStreamEvent(
   }
 
   if (eventName === 'error') {
-    throw new Error(String(decoded.message ?? decoded.detail ?? 'BushServer stream error'));
+    throw new Error(streamErrorMessage(decoded));
   }
 
   if (eventName === 'token') {
@@ -1978,6 +2488,67 @@ function handleStreamEvent(
     if (delta) {
       request.onDelta?.(delta);
     }
+    return;
+  }
+
+  if (eventName === 'reasoning') {
+    const rawPhase = String(decoded.phase ?? 'delta').trim().toLowerCase();
+    const phase: ThinkingStreamEvent['phase'] =
+      rawPhase === 'start' || rawPhase === 'end' ? rawPhase : 'delta';
+    const delta = String(decoded.delta ?? '');
+    if (phase === 'delta' && !delta) {
+      return;
+    }
+    const turnId = String(decoded.turn_id ?? '');
+    const generationId = String(decoded.generation_id ?? turnId);
+    if (!turnId || !generationId) {
+      return;
+    }
+    const loopIndex = optionalNumber(decoded.loop_index);
+    const attemptIndex = optionalNumber(decoded.attempt_index);
+    request.onThinking?.({
+      id: generationId,
+      channel: 'reasoning',
+      turnId,
+      generationId,
+      phase,
+      ...(loopIndex !== undefined ? { loopIndex } : {}),
+      ...(attemptIndex !== undefined ? { attemptIndex } : {}),
+      delta,
+      content: '',
+      preview: delta,
+      createdAt: String(decoded.created_at ?? new Date().toISOString()),
+    });
+    return;
+  }
+
+  if (eventName === 'context_window_usage') {
+    request.onContextWindowUsage?.(contextWindowUsageFromPayload(decoded));
+    return;
+  }
+
+  if (eventName === 'capability_candidates') {
+    request.onCapabilityCandidates?.(capabilityCandidatesFromPayload(decoded));
+    return;
+  }
+
+  if (
+    eventName === 'workflow_started' ||
+    eventName === 'workflow_node_state' ||
+    eventName === 'workflow_node_output' ||
+    eventName === 'workflow_completed' ||
+    eventName === 'workflow_failed'
+  ) {
+    request.onWorkflowEvent?.(workflowStreamEventFromPayload(eventName, decoded));
+    return;
+  }
+
+  if (
+    eventName === 'scene_presented' ||
+    eventName === 'scene_updated' ||
+    eventName === 'scene_closed'
+  ) {
+    request.onSceneEvent?.(sceneStreamEventFromPayload(eventName, decoded));
     return;
   }
 
@@ -1995,6 +2566,20 @@ function handleStreamEvent(
     return;
   }
 
+  if (eventName === 'workspace_change' || eventName === 'file_change') {
+    request.onToolExecution?.(
+      toolExecutionFromPayload(workspaceChangeToolPayload(decoded)),
+    );
+    return;
+  }
+
+  if (eventName === 'desktop_action') {
+    request.onToolExecution?.(
+      toolExecutionFromPayload(desktopActionToolPayload(decoded)),
+    );
+    return;
+  }
+
   if (eventName === 'execution') {
     const update = taskPlanUpdateFromExecutionPayload(decoded, request.sessionId);
     if (update) {
@@ -2005,6 +2590,18 @@ function handleStreamEvent(
 
   if (eventName === 'interactive_request') {
     const interaction = pendingInteractionFromPayload(decoded);
+    if (interaction) {
+      request.onInteractiveRequest?.(
+        isPermissionInteractionPayload(interaction)
+          ? permissionInteractionFromPayload(decoded) ?? interaction
+          : interaction,
+      );
+    }
+    return;
+  }
+
+  if (eventName === 'path_permission_request') {
+    const interaction = permissionInteractionFromPayload(decoded);
     if (interaction) {
       request.onInteractiveRequest?.(interaction);
     }
@@ -2499,6 +3096,96 @@ function arrayFrom(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function shadowConversationFromPayload(
+  value: unknown,
+  fallbackSessionId = '',
+): ShadowConversationRecord {
+  const root = asRecord(value);
+  const payload = asRecord(root.conversation ?? root.shadow_conversation ?? root);
+  return {
+    id: String(payload.id ?? payload.conversation_id ?? payload.shadow_conversation_id ?? ''),
+    sessionId: String(payload.session_id ?? payload.sessionId ?? fallbackSessionId),
+    sourceTurnId: String(payload.source_turn_id ?? payload.sourceTurnId ?? ''),
+    agentName: String(payload.agent_name ?? payload.agentName ?? 'Shadow Agent'),
+    status: String(payload.status ?? 'active'),
+    createdAt: String(payload.created_at ?? payload.createdAt ?? ''),
+    updatedAt: String(payload.updated_at ?? payload.updatedAt ?? ''),
+    raw: payload,
+  };
+}
+
+function workflowStreamEventFromPayload(
+  type: string,
+  value: unknown,
+): TeamWorkflowStreamEvent {
+  const payload = asRecord(value);
+  return {
+    type,
+    runId: String(payload.run_id ?? payload.runId ?? ''),
+    workflowId: String(payload.workflow_id ?? payload.workflowId ?? ''),
+    sessionId: String(payload.session_id ?? payload.sessionId ?? ''),
+    turnId: String(payload.turn_id ?? payload.turnId ?? ''),
+    nodeId: String(payload.node_id ?? payload.nodeId ?? ''),
+    status: String(payload.status ?? ''),
+    summary: String(payload.summary ?? payload.message ?? ''),
+    raw: payload,
+  };
+}
+
+function sceneStreamEventFromPayload(
+  type: SceneStreamEvent['type'],
+  value: unknown,
+): SceneStreamEvent {
+  const payload = asRecord(value);
+  return {
+    type,
+    sceneId: String(payload.scene_id ?? payload.sceneId ?? ''),
+    sessionId: String(payload.session_id ?? payload.sessionId ?? ''),
+    turnId: String(payload.turn_id ?? payload.turnId ?? ''),
+    revision: optionalNumber(payload.revision),
+    status: String(payload.status ?? ''),
+    title: String(payload.title ?? ''),
+    summary: String(payload.summary ?? ''),
+    scene: asOptionalRecord(payload.scene),
+    raw: payload,
+  };
+}
+
+function contextWindowUsageFromPayload(
+  value: unknown,
+  fallbackSessionId = '',
+): RuntimeContextWindowUsage {
+  const payload = asRecord(value);
+  const usedTokens = optionalNumber(payload.used_tokens ?? payload.usedTokens);
+  const maxTokens = optionalNumber(payload.max_tokens ?? payload.maxTokens);
+  const remainingTokens = optionalNumber(
+    payload.remaining_tokens ?? payload.remainingTokens,
+  ) ?? (
+    usedTokens != null && maxTokens != null
+      ? Math.max(0, maxTokens - usedTokens)
+      : undefined
+  );
+  const usageRatio = optionalNumber(payload.usage_ratio ?? payload.usageRatio) ?? (
+    usedTokens != null && maxTokens != null && maxTokens > 0
+      ? usedTokens / maxTokens
+      : undefined
+  );
+  return {
+    sessionId: String(payload.session_id ?? payload.sessionId ?? fallbackSessionId),
+    turnId: String(payload.turn_id ?? payload.turnId ?? ''),
+    model: String(payload.model ?? ''),
+    usedTokens,
+    maxTokens,
+    remainingTokens,
+    usageRatio,
+    measuredAt: String(
+      payload.measured_at ?? payload.measuredAt ?? new Date().toISOString(),
+    ),
+    source: String(payload.source ?? 'runtime_context'),
+    raw: payload,
+  };
+}
+
 function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
   const root = asRecord(payload);
   const features = asRecord(root.features ?? root.capabilities ?? root);
@@ -2509,6 +3196,19 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
   const reasoningLevel = asRecord(
     root.reasoning_level ?? root.reasoningLevel,
   );
+  const reasoningStream = asRecord(
+    root.reasoning_stream ?? root.reasoningStream,
+  );
+  const permissionRequests = asRecord(
+    root.permission_requests ?? root.permissionRequests,
+  );
+  const requestCapabilities = asRecord(
+    root.request_capabilities ?? root.requestCapabilities,
+  );
+  const requestCapabilityItems = asRecord(requestCapabilities.capabilities);
+  const interactiveRequestsPayload =
+    requestCapabilityItems.interactive_requests ??
+    requestCapabilityItems.interactiveRequests;
   const standardImageInputTool = asRecord(
     root.standard_image_input_tool ??
       root.standardImageInputTool ??
@@ -2522,6 +3222,15 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     sessions: capabilityBoolean(features, endpoints, 'sessions', ['session_history']),
     skills: capabilityBoolean(features, endpoints, 'skills'),
     interactions: capabilityBoolean(features, endpoints, 'interactions'),
+    interactiveRequests: interactiveRequestCapabilityAvailable(
+      requestCapabilities,
+      interactiveRequestsPayload,
+    ),
+    permissionRequests: typeof permissionRequests.available === 'boolean'
+      ? permissionRequests.available
+      : capabilityBoolean(features, endpoints, 'permissionRequests', [
+          'permission_requests',
+        ]),
     turnStop: capabilityBoolean(features, endpoints, 'turnStop', ['turn_stop']),
     runtimeInspection: capabilityBoolean(features, endpoints, 'runtimeInspection', [
       'runtime_inspection',
@@ -2575,9 +3284,6 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     settingsSync: capabilityBoolean(features, endpoints, 'settingsSync', [
       'settings_sync',
     ]),
-    localMusicLibrary: capabilityBoolean(features, endpoints, 'localMusicLibrary', [
-      'local_music_library',
-    ]),
     mcpServers: capabilityBoolean(features, endpoints, 'mcpServers', [
       'mcp_servers',
       'mcp_tool_loading',
@@ -2590,12 +3296,6 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       endpoints,
       'subagentFrontendConfiguration',
       ['subagent_frontend_configuration'],
-    ),
-    subagentLocalDefault: capabilityBoolean(
-      features,
-      endpoints,
-      'subagentLocalDefault',
-      ['subagent_local_default'],
     ),
     remoteAgentsViaMcp: capabilityBoolean(features, endpoints, 'remoteAgentsViaMcp', [
       'remote_agents_via_mcp',
@@ -2612,6 +3312,46 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
     ]),
     teamFlowEvents: capabilityBoolean(features, endpoints, 'teamFlowEvents', [
       'team_flow_events',
+    ]),
+    teamWorkflows: capabilityBoolean(features, endpoints, 'teamWorkflows', [
+      'team_workflows',
+    ]),
+    workflowRuntime: capabilityBoolean(features, endpoints, 'workflowRuntime', [
+      'workflow_runtime',
+    ]),
+    shadowConversationActivation: capabilityBoolean(
+      features,
+      endpoints,
+      'shadowConversationActivation',
+      [
+        'shadow_conversation_activation',
+        'shadow_conversations',
+        'shadow_conversation_messages',
+      ],
+    ),
+    contextWindowUsage: capabilityBoolean(features, endpoints, 'contextWindowUsage', [
+      'context_window_usage',
+      'session_context_window',
+    ]),
+    capabilityDiscovery: capabilityBoolean(features, endpoints, 'capabilityDiscovery', [
+      'capability_discovery',
+    ]),
+    workspaceChanges: capabilityBoolean(features, endpoints, 'workspaceChanges', [
+      'workspace_changes',
+      'workspace_change_stream',
+      'file_change_stream',
+    ]),
+    sessionContextSearch: capabilityBoolean(features, endpoints, 'sessionContextSearch', [
+      'session_context_search',
+    ]),
+    sessionActivityOrdering: capabilityBoolean(
+      features,
+      endpoints,
+      'sessionActivityOrdering',
+      ['session_activity_ordering'],
+    ),
+    agentVisualScenes: capabilityBoolean(features, endpoints, 'agentVisualScenes', [
+      'agent_visual_scenes',
     ]),
     browserCookiePersistence: capabilityBoolean(
       features,
@@ -2636,6 +3376,9 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       'desktop_automation',
     ]),
     taskPlan: capabilityBoolean(features, endpoints, 'taskPlan', ['task_plan']),
+    reasoningStream: typeof reasoningStream.available === 'boolean'
+      ? reasoningStream.available
+      : capabilityBoolean(features, endpoints, 'reasoningStream', ['reasoning_stream']),
     reasoningLevelSelection: capabilityBoolean(
       features,
       endpoints,
@@ -2661,6 +3404,13 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       defaultBackendCapabilities.defaultTerminalRuntime,
     ) ?? defaultBackendCapabilities.defaultTerminalRuntime,
   };
+}
+
+function interactiveRequestCapabilityAvailable(
+  requestCapabilities: Record<string, unknown>,
+  interactiveRequests: unknown,
+) {
+  return requestCapabilities.available === true && interactiveRequests != null;
 }
 
 function reasoningLevelValues(value: unknown): ReasoningLevel[] {
@@ -3164,6 +3914,29 @@ function pendingInteractionFromPayload(item: unknown): PendingInteraction | null
   };
 }
 
+function interactionFromConflictResponse(body: string) {
+  const payload = parseJson(body);
+  if (!payload) {
+    return null;
+  }
+  const detail = asRecord(payload.detail);
+  const candidate =
+    detail.interactive_request ??
+    detail.interactiveRequest ??
+    payload.interactive_request ??
+    payload.interactiveRequest;
+  if (candidate == null) {
+    return null;
+  }
+  const interaction = pendingInteractionFromPayload(candidate);
+  if (!interaction) {
+    return null;
+  }
+  return isPermissionInteractionPayload(interaction)
+    ? permissionInteractionFromPayload(candidate) ?? interaction
+    : interaction;
+}
+
 function interactionQuestionFromPayload(item: unknown): InteractionQuestion {
   const value = asRecord(item);
   const rawMode = String(value.selection_mode ?? value.selectionMode ?? '').toLowerCase();
@@ -3204,7 +3977,26 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   const content = normalizeContent(value.content);
   const turnId = optionalString(value.turn_id ?? value.turnId);
   const role = normalizeRole(value.role);
-  const metadata = asOptionalRecord(value.metadata);
+  const sourceMetadata = asOptionalRecord(value.metadata);
+  const completedAt = optionalString(
+    value.cardbush_turn_completed_at ??
+      value.cardbushTurnCompletedAt ??
+      value.turn_completed_at ??
+      value.turnCompletedAt ??
+      value.completed_at ??
+      value.completedAt ??
+      value.done_at ??
+      value.doneAt ??
+      value.finished_at ??
+      value.finishedAt,
+  );
+  const metadata = completedAt
+    ? {
+        ...sourceMetadata,
+        cardbush_turn_completed_at:
+          sourceMetadata?.cardbush_turn_completed_at ?? completedAt,
+      }
+    : sourceMetadata;
   const conversationId = optionalString(
     value.conversation_id ?? value.session_id ?? value.conversationId ?? value.sessionId,
   );
@@ -3245,6 +4037,89 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     ),
     taskPlan: taskPlanFromPayload(metadata?.active_task_plan, conversationId) ?? undefined,
     metadata,
+  };
+}
+
+function permissionInteractionFromPayload(item: unknown): PendingInteraction | null {
+  const interaction = pendingInteractionFromPayload(item);
+  if (!interaction) {
+    return null;
+  }
+  const raw = interaction.raw;
+  const preview = interaction.permissionPreview ?? {};
+  const permission = asRecord(
+    raw.permission ?? raw.permission_request ?? raw.permissionRequest,
+  );
+  const mergedPreview = {
+    ...preview,
+    ...permission,
+    path:
+      permission.path ??
+      preview.path ??
+      raw.path ??
+      raw.target,
+    resource_kind:
+      permission.resource_kind ??
+      permission.resourceKind ??
+      preview.resource_kind ??
+      preview.resourceKind ??
+      raw.resource_kind ??
+      raw.resourceKind,
+    access_kind:
+      permission.access_kind ??
+      permission.accessKind ??
+      preview.access_kind ??
+      preview.accessKind ??
+      raw.access_kind ??
+      raw.accessKind,
+    reason: permission.reason ?? preview.reason ?? raw.reason,
+    operation:
+      permission.operation ??
+      preview.operation ??
+      raw.operation ??
+      raw.planned_operation ??
+      raw.plannedOperation,
+  };
+  return {
+    ...interaction,
+    type: 'path_permission_request',
+    toolName: interaction.toolName || 'request_permission',
+    permissionPreview: mergedPreview,
+    questions: [normalizedPermissionQuestion(interaction.questions ?? [])],
+  };
+}
+
+function isPermissionInteractionPayload(interaction: PendingInteraction) {
+  const type = interaction.type?.trim().toLowerCase() ?? '';
+  const toolName = interaction.toolName?.trim().toLowerCase() ?? '';
+  return (
+    type === 'path_permission_request' ||
+    toolName === 'request_permission' ||
+    interaction.permissionPreview != null
+  );
+}
+
+function normalizedPermissionQuestion(questions: InteractionQuestion[]): InteractionQuestion {
+  const source =
+    questions.find((question) => question.id === 'permission') ??
+    questions.find((question) =>
+      question.options.some((option) => option.id === 'allow_once'),
+    );
+  const sourceOptions = new Map(
+    (source?.options ?? []).map((option) => [option.id.toLowerCase(), option]),
+  );
+  return {
+    id: 'permission',
+    label: source?.label || 'Permission',
+    question: source?.question || 'Allow this exact access request?',
+    selectionMode: 'single',
+    needInput: false,
+    required: true,
+    options: ['allow_once', 'allow_session', 'deny'].map((id) => ({
+      id,
+      label: sourceOptions.get(id)?.label || id,
+      description: sourceOptions.get(id)?.description,
+    })),
   };
 }
 
@@ -3296,6 +4171,50 @@ function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExe
         metadata.assistantMessageId,
     ),
     metadata,
+  };
+}
+
+function workspaceChangeToolPayload(payload: Record<string, unknown>) {
+  const metadata = asRecord(payload.metadata);
+  const files = arrayFrom(payload.files).map((value) => {
+    const item = asRecord(value);
+    return {
+      path: String(item.path ?? ''),
+      additions: numericValue(item.additions),
+      deletions: numericValue(item.deletions),
+      diff: String(item.diff ?? ''),
+      status: String(item.status ?? ''),
+    };
+  });
+  const status = String(payload.status ?? payload.state ?? 'running');
+  const additions = numericValue(payload.additions) ||
+    files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = numericValue(payload.deletions) ||
+    files.reduce((sum, file) => sum + file.deletions, 0);
+  const turnId = String(payload.turn_id ?? payload.turnId ?? '');
+  const changeId = nonEmpty(payload.change_id ?? payload.changeId) ??
+    `workspace-change:${turnId || 'current'}`;
+  return {
+    id: changeId,
+    name: 'workspace_change',
+    state: status,
+    summary: String(
+      payload.summary ?? `${files.length} files changed +${additions} -${deletions}`,
+    ),
+    output: '',
+    success: payload.success === true || status === 'completed' || status === 'ok',
+    created_at: payload.created_at ?? payload.createdAt ?? new Date().toISOString(),
+    sequence: payload.sequence,
+    metadata: {
+      ...metadata,
+      ...payload,
+      kind: 'file_change',
+      files,
+      additions,
+      deletions,
+      turn_id: turnId,
+      change_id: changeId,
+    },
   };
 }
 
@@ -3476,12 +4395,20 @@ function normalizeToolState(
   payload: Record<string, unknown>,
   metadata: Record<string, unknown>,
 ) {
-  const rawState = nonEmpty(payload.state) ?? nonEmpty(metadata.state);
+  const rawState =
+    nonEmpty(payload.state) ??
+    nonEmpty(payload.status) ??
+    nonEmpty(metadata.state) ??
+    nonEmpty(metadata.status);
   const state = (rawState ?? '').toLowerCase();
   if (['ok', 'done', 'success', 'completed'].includes(state)) {
     return 'ok';
   }
-  if (['using', 'running', 'pending', 'started'].includes(state)) {
+  if (
+    ['using', 'running', 'pending', 'started', 'queued', 'waiting_confirmation'].includes(
+      state,
+    )
+  ) {
     return 'using';
   }
   if (['fail', 'failed', 'error'].includes(state)) {
@@ -3817,47 +4744,6 @@ function subagentListItemFromPayload(value: unknown): SubagentListItem {
   };
 }
 
-function subagentDetailFromPayload(value: unknown): SubagentDetail {
-  const item = asRecord(value);
-  return {
-    ...subagentListItemFromPayload(item),
-    systemPrompt: String(item.system_prompt ?? item.systemPrompt ?? ''),
-    instruction: String(item.instruction ?? ''),
-    tools: stringList(item.tools),
-    toolProfile: optionalString(item.tool_profile ?? item.toolProfile),
-    skills: stringList(item.skills),
-    model: optionalString(item.model),
-    provider: optionalString(item.provider),
-    baseUrl: optionalString(item.base_url ?? item.baseUrl),
-    inheritsGlobalModel:
-      item.inherits_global_model !== false && item.inheritsGlobalModel !== false,
-    permissionPolicy: asRecord(item.permission_policy ?? item.permissionPolicy),
-    routing: asRecord(item.routing),
-    concurrencyLimit: optionalNumber(item.concurrency_limit ?? item.concurrencyLimit),
-    timeoutSeconds: optionalNumber(item.timeout_seconds ?? item.timeoutSeconds),
-    workdirPolicy: asRecord(item.workdir_policy ?? item.workdirPolicy),
-    rawConfig: asRecord(item.raw_config ?? item.rawConfig),
-  };
-}
-
-function subagentValidationFromPayload(value: unknown): SubagentValidationResult {
-  const item = asRecord(value);
-  const errors = Array.isArray(item.errors) ? item.errors : [];
-  return {
-    ok: item.ok === true,
-    errors: errors.map((error) => {
-      const record = asRecord(error);
-      const severity = String(record.severity ?? '').trim().toLowerCase();
-      return {
-        field: String(record.field ?? ''),
-        message: String(record.message ?? ''),
-        severity: severity === 'warning' ? 'warning' : 'error',
-      };
-    }),
-    effectiveConfig: asRecord(item.effective_config ?? item.effectiveConfig),
-  };
-}
-
 function subagentCapabilitiesFromPayload(value: unknown): SubagentCapabilities {
   const item = asRecord(value);
   const models = Array.isArray(item.models) ? item.models.map(asRecord) : [];
@@ -3909,20 +4795,6 @@ function subagentSupervisorFromPayload(
     rejectStrategy: optionalString(item.reject_strategy ?? item.rejectStrategy),
     depth: optionalNumber(item.depth),
     blockedTools: stringList(item.blocked_tools ?? item.blockedTools),
-  };
-}
-
-function subagentUsageFromPayload(value: unknown): SubagentUsageResult {
-  const item = asRecord(value);
-  return {
-    byAgent: Object.fromEntries(
-      Object.entries(asRecord(item.by_agent ?? item.byAgent)).map(([key, raw]) => [
-        key,
-        asRecord(raw),
-      ]),
-    ),
-    totals: asRecord(item.totals),
-    recent: Array.isArray(item.recent) ? item.recent.map(asRecord) : [],
   };
 }
 
@@ -4038,7 +4910,36 @@ function formatHttpError(statusCode: number, body: string) {
   if (statusCode === 403) {
     return `BushServer 拒绝访问${detail ? `: ${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`;
   }
+  const serviceError = normalizedServiceError(detail, statusCode);
+  if (serviceError) {
+    return serviceError;
+  }
   return detail ? `BushServer error ${statusCode}: ${detail}` : `BushServer error: ${statusCode}`;
+}
+
+function streamErrorMessage(decoded: Record<string, unknown>) {
+  const detail =
+    errorDetailText(decoded.message) ||
+    errorDetailText(decoded.detail) ||
+    errorDetailText(decoded.error) ||
+    'BushServer stream error';
+  return normalizedServiceError(detail) || detail;
+}
+
+function normalizedServiceError(detail: string, statusCode?: number) {
+  const text = detail.trim();
+  const isUpstreamModelError =
+    /InternalServiceError|Service has some internal Error|litellm\.|DeepseekException|OpenAIException/i.test(
+      text,
+    );
+  const isInternalServerError =
+    statusCode === 500 || /InternalServerError|Error code:\s*500/i.test(text);
+  if (!isInternalServerError && !isUpstreamModelError) {
+    return '';
+  }
+  const requestId = text.match(/Request\s*id\s*:\s*([\w-]+)/i)?.[1] ?? '';
+  const serviceName = isUpstreamModelError ? '上游模型服务' : 'BushServer';
+  return `${serviceName}暂时不可用（500），请稍后重试${requestId ? `。请求 ID：${requestId}` : ''}`;
 }
 
 function extractErrorDetail(body: string) {

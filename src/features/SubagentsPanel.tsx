@@ -1,5 +1,4 @@
 import {
-  AlertCircle,
   CheckCircle2,
   Circle,
   Clock3,
@@ -13,22 +12,14 @@ import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react
 
 import {
   fetchSubagentCapabilities,
-  fetchSubagentDetail,
-  fetchSubagents,
   fetchSubagentRuntime,
-  fetchSubagentTemplates,
-  fetchSubagentUsage,
 } from '../backend/api';
 import type {
   AppLanguage,
   BackendCapabilities,
   SubagentCapabilities,
-  SubagentDetail,
-  SubagentListItem,
   SubagentRuntimeResult,
   SubagentSupervisorSnapshot,
-  SubagentTemplate,
-  SubagentUsageResult,
 } from '../types';
 
 export function SubagentsPanel({
@@ -41,69 +32,22 @@ export function SubagentsPanel({
   capabilities?: BackendCapabilities;
 }) {
   const [query, setQuery] = useState('');
-  const [agents, setAgents] = useState<SubagentListItem[]>([]);
   const [runtime, setRuntime] = useState<SubagentRuntimeResult | null>(null);
-  const [subagentCapabilities, setSubagentCapabilities] =
+  const [runtimeCapabilities, setRuntimeCapabilities] =
     useState<SubagentCapabilities | null>(null);
-  const [templates, setTemplates] = useState<SubagentTemplate[]>([]);
-  const [detail, setDetail] = useState<SubagentDetail | null>(null);
-  const [usage, setUsage] = useState<SubagentUsageResult | null>(null);
   const [loading, setLoading] = useState(false);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const runtimeByAgent = useMemo(() => {
-    const map = new Map<string, Record<string, unknown>>();
-    for (const item of runtime?.items ?? []) {
-      map.set(item.id, item.runtime);
-      map.set(item.name, item.runtime);
-    }
-    return map;
-  }, [runtime]);
-
-  const supervisor = runtime?.supervisor ?? null;
-  const supervisorTotalActive = supervisor
-    ? subagentSupervisorTotalActive(supervisor)
-    : 0;
-  const frontendMutationsAllowed =
-    backendCapabilities?.subagentFrontendConfiguration === true;
-  const remoteAgentsViaMcp = backendCapabilities?.remoteAgentsViaMcp === true;
-
-  const filteredAgents = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return agents
-      .filter((agent) => {
-        if (!normalized) {
-          return true;
-        }
-        return `${agent.name} ${agent.displayName} ${agent.description} ${agent.tags.join(' ')} ${agent.source}`
-          .toLowerCase()
-          .includes(normalized);
-      })
-      .sort((left, right) => left.displayName.localeCompare(right.displayName));
-  }, [agents, query]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [nextAgents, nextRuntime, nextCapabilities, nextTemplates] =
-        await Promise.all([
-          fetchSubagents(),
-          fetchSubagentRuntime().catch(() => null),
-          fetchSubagentCapabilities().catch(() => null),
-          fetchSubagentTemplates().catch(() => []),
-        ]);
-      setAgents(nextAgents);
+      const [nextRuntime, nextCapabilities] = await Promise.all([
+        fetchSubagentRuntime(),
+        fetchSubagentCapabilities().catch(() => null),
+      ]);
       setRuntime(nextRuntime);
-      setSubagentCapabilities(nextCapabilities);
-      setTemplates(nextTemplates);
-      setDetail((current) =>
-        current &&
-        nextAgents.some((agent) => agent.id === current.id || agent.name === current.name)
-          ? current
-          : null,
-      );
+      setRuntimeCapabilities(nextCapabilities);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -115,30 +59,23 @@ export function SubagentsPanel({
     void load();
   }, [load]);
 
-  const openDetail = useCallback(async (agent: SubagentListItem) => {
-    const id = agent.id || agent.name;
-    setDetailLoading(true);
-    setError('');
-    try {
-      const [nextDetail, nextUsage] = await Promise.all([
-        fetchSubagentDetail(id),
-        fetchSubagentUsage(id).catch(() => null),
-      ]);
-      setDetail(nextDetail);
-      setUsage(nextUsage);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setDetailLoading(false);
+  const activeTasks = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) {
+      return runtime?.activeTasks ?? [];
     }
-  }, []);
+    return (runtime?.activeTasks ?? []).filter((task) =>
+      taskSearchText(task).includes(normalized),
+    );
+  }, [query, runtime]);
 
-  useEffect(() => {
-    if (detail || detailLoading || filteredAgents.length === 0) {
-      return;
-    }
-    void openDetail(filteredAgents[0]);
-  }, [detail, detailLoading, filteredAgents, openDetail]);
+  const supervisor = runtime?.supervisor ?? null;
+  const supervisorTotalActive = supervisor
+    ? subagentSupervisorTotalActive(supervisor)
+    : runtime?.activeTasks.length ?? 0;
+  const frontendMutationsAllowed =
+    backendCapabilities?.subagentFrontendConfiguration === true;
+  const remoteAgentsViaMcp = backendCapabilities?.remoteAgentsViaMcp === true;
 
   return (
     <div
@@ -154,7 +91,7 @@ export function SubagentsPanel({
           <input
             value={query}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder={language === 'zh' ? '搜索本地子任务' : 'Search local subagents'}
+            placeholder={language === 'zh' ? '搜索活动任务' : 'Search active tasks'}
           />
         </div>
         <button
@@ -163,15 +100,15 @@ export function SubagentsPanel({
           disabled={loading}
           onClick={() => void load()}
         >
-          {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+          {loading ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
           {language === 'zh' ? '刷新状态' : 'Refresh'}
         </button>
       </div>
 
       <p className="feature-hint">
         {language === 'zh'
-          ? '本地子任务由主 Agent 自动调度，前端只读观察；远程 Agent 请通过 MCP 服务器接入。'
-          : 'Local subagents are scheduled by the parent agent. This view is read-only; remote agents are configured through MCP servers.'}
+          ? '子任务由后端运行时按需创建和调度。前端只观察任务、准入限制和能力，不维护固定 Agent。'
+          : 'Subtasks are created and scheduled on demand by the backend runtime. This read-only view observes tasks, admission limits, and capabilities without maintaining fixed agents.'}
       </p>
       {error && <p className="feature-error">{error}</p>}
 
@@ -180,7 +117,7 @@ export function SubagentsPanel({
           <span>
             <ShieldCheck size={17} />
             <strong>
-              {language === 'zh' ? 'Supervisor 运行准入' : 'Supervisor admission'}
+              {language === 'zh' ? '子任务运行准入' : 'Task runtime admission'}
             </strong>
           </span>
           <em>
@@ -195,24 +132,16 @@ export function SubagentsPanel({
         </header>
         <div className="subagent-supervisor-grid">
           <InfoRow
-            label={language === 'zh' ? '本地默认' : 'Local default'}
-            value={
-              backendCapabilities?.subagentLocalDefault
-                ? language === 'zh'
-                  ? '开启'
-                  : 'On'
-                : language === 'zh'
-                  ? '未声明'
-                  : 'Unknown'
-            }
+            label={language === 'zh' ? '调度方式' : 'Scheduling'}
+            value={language === 'zh' ? '运行时按需创建' : 'Runtime on demand'}
           />
           <InfoRow
             label={language === 'zh' ? '前端配置' : 'Frontend config'}
             value={
               frontendMutationsAllowed
                 ? language === 'zh'
-                  ? '可配置'
-                  : 'Configurable'
+                  ? '后端允许'
+                  : 'Backend enabled'
                 : language === 'zh'
                   ? '只读'
                   : 'Read-only'
@@ -226,13 +155,13 @@ export function SubagentsPanel({
             )}
           />
           <InfoRow
-            label={language === 'zh' ? '远程 Agent' : 'Remote agents'}
+            label={language === 'zh' ? '外部能力' : 'External capabilities'}
             value={
               remoteAgentsViaMcp
                 ? 'MCP'
                 : language === 'zh'
-                  ? '等待能力'
-                  : 'Unavailable'
+                  ? '未声明'
+                  : 'Unknown'
             }
           />
           <InfoRow
@@ -249,253 +178,138 @@ export function SubagentsPanel({
       <div className="subagent-readonly-policy">
         <PolicyPill
           icon={<Network size={14} />}
-          label={language === 'zh' ? '本地子任务' : 'Local subagent'}
-          value={language === 'zh' ? '由主 Agent 自动调度' : 'Parent agent decides'}
+          label={language === 'zh' ? '任务委派' : 'Delegation'}
+          value={language === 'zh' ? '运行时决定' : 'Runtime decides'}
         />
         <PolicyPill
           icon={<Circle size={14} />}
-          label={language === 'zh' ? '配置状态' : 'Configuration'}
-          value={
-            frontendMutationsAllowed
-              ? language === 'zh'
-                ? '后端允许前端配置'
-                : 'Frontend mutations enabled'
-              : language === 'zh'
-                ? '前端不可配置'
-                : 'Frontend mutations disabled'
-          }
+          label={language === 'zh' ? '配置边界' : 'Configuration'}
+          value={language === 'zh' ? '无固定 Agent' : 'No fixed agents'}
         />
         <PolicyPill
           icon={<CheckCircle2 size={14} />}
-          label={language === 'zh' ? '远程协作' : 'Remote collaboration'}
+          label={language === 'zh' ? '外部扩展' : 'External extensions'}
           value={
-            language === 'zh'
-              ? remoteAgentsViaMcp
+            remoteAgentsViaMcp
+              ? language === 'zh'
                 ? '通过 MCP 接入'
-                : '等待 MCP 能力'
-              : remoteAgentsViaMcp
-                ? 'Use MCP servers'
-                : 'Waiting for MCP support'
+                : 'Use MCP servers'
+              : language === 'zh'
+                ? '由后端声明'
+                : 'Declared by backend'
           }
         />
       </div>
 
-      <div className="subagent-workbench subagent-readonly-workbench">
-        <section className="subagent-map-pane">
-          <div className="subagent-map-header">
-            <div>
-              <span>{language === 'zh' ? '子任务状态' : 'Subagent status'}</span>
-              <strong>{language === 'zh' ? '只读运行视图' : 'Read-only runtime'}</strong>
-            </div>
-            <em>{agents.length}</em>
+      <section className="subagent-runtime-overview">
+        <header className="subagent-map-header">
+          <div>
+            <span>{language === 'zh' ? '当前运行' : 'Current runtime'}</span>
+            <strong>{language === 'zh' ? '活动子任务' : 'Active tasks'}</strong>
           </div>
-          <div className="subagent-map-grid">
-            {filteredAgents.map((agent) => {
-              const activeCount = subagentAgentActiveCount(
-                supervisor,
-                agent,
-                runtimeNumber(runtimeByAgent.get(agent.id) ?? runtimeByAgent.get(agent.name), [
-                  'active',
-                  'active_tasks',
-                  'activeTasks',
-                ]),
-              );
-              const selected = detail?.id === agent.id || detail?.name === agent.name;
-              return (
-                <button
-                  key={agent.id || agent.name}
-                  className={`result-card subagent subagent-agent-node ${selected ? 'selected' : ''} ${activeCount > 0 ? 'running' : ''}`}
-                  type="button"
-                  onClick={() => void openDetail(agent)}
-                >
-                  <span className="subagent-avatar-frame">
-                    <Network size={21} />
-                  </span>
-                  <span className="subagent-card-main">
-                    <h3>{agent.displayName || agent.name}</h3>
-                    <p>{agent.description || agent.source || 'local-subagent'}</p>
-                    <small>{agent.name}</small>
-                  </span>
-                  <span className={`subagent-status ${agent.validationStatus}`}>
-                    <b>{subagentStatusLabel(agent, language)}</b>
-                  </span>
-                  <span className="subagent-readonly-meta">
-                    {activeCount > 0 ? (
-                      <>
-                        <Clock3 size={12} />
-                        {activeCount}
-                      </>
-                    ) : (
-                      language === 'zh' ? '空闲' : 'Idle'
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-            {filteredAgents.length === 0 && (
-              <div className="subagent-empty-state">
-                <Network size={22} />
-                <strong>
-                  {language === 'zh' ? '没有可展示的本地子任务' : 'No local subagents'}
-                </strong>
-                <span>
-                  {language === 'zh'
-                    ? '后端通常会提供 local-subagent；远程能力请在 MCP 页面配置。'
-                    : 'The backend normally exposes local-subagent. Configure remote capabilities under MCP.'}
-                </span>
-              </div>
-            )}
-          </div>
-        </section>
+          <em>{runtime?.activeTasks.length ?? 0}</em>
+        </header>
 
-        <section className="subagent-detail-pane">
-          {detailLoading && (
-            <div className="feature-loading inline">
-              <LoaderCircle size={18} />
-              <span>{language === 'zh' ? '正在读取详情...' : 'Loading detail...'}</span>
-            </div>
-          )}
-          {!detailLoading && detail ? (
-            <SubagentReadonlyDetail
-              detail={detail}
-              usage={usage}
-              capabilities={subagentCapabilities}
-              templates={templates}
-              runtime={runtimeByAgent.get(detail.id) ?? runtimeByAgent.get(detail.name)}
+        <div className="subagent-runtime-task-list">
+          {activeTasks.map((task, index) => (
+            <RuntimeTaskRow
+              key={runtimeTaskKey(task, index)}
+              task={task}
               language={language}
             />
-          ) : !detailLoading ? (
-            <div className="subagent-empty-state detail">
-              <Network size={24} />
+          ))}
+          {activeTasks.length === 0 && (
+            <div className="subagent-empty-state compact">
+              <Network size={20} />
               <strong>
-                {language === 'zh' ? '选择一个子任务' : 'Select a subagent'}
+                {query.trim()
+                  ? language === 'zh'
+                    ? '没有匹配的活动任务'
+                    : 'No matching active tasks'
+                  : language === 'zh'
+                    ? '当前没有活动子任务'
+                    : 'No active subtasks'}
               </strong>
               <span>
                 {language === 'zh'
-                  ? '这里只展示运行信息、基础配置和后端准入状态。'
-                  : 'This pane only shows runtime information, base config, and backend admission state.'}
+                  ? '运行时创建任务后会在这里出现，不需要预先注册 Agent。'
+                  : 'Tasks appear here when the runtime creates them; no agent registration is required.'}
               </span>
             </div>
-          ) : null}
-        </section>
-      </div>
+          )}
+        </div>
+
+        <RuntimeCapabilitySummary
+          capabilities={runtimeCapabilities}
+          language={language}
+        />
+      </section>
     </div>
   );
 }
 
-function SubagentReadonlyDetail({
-  detail,
-  usage,
-  capabilities,
-  templates,
-  runtime,
+function RuntimeTaskRow({
+  task,
   language,
 }: {
-  detail: SubagentDetail;
-  usage: SubagentUsageResult | null;
-  capabilities: SubagentCapabilities | null;
-  templates: SubagentTemplate[];
-  runtime?: Record<string, unknown>;
+  task: Record<string, unknown>;
   language: AppLanguage;
 }) {
-  const runtimeProfile =
-    detail.toolProfile ||
-    runtimeText(runtime, ['runtime_profile', 'runtimeProfile', 'profile']) ||
-    '';
-  const recentCount = usage?.recent.length ?? 0;
-  const toolCount = detail.tools.length || capabilities?.tools.length || 0;
-  const skillCount = detail.skills.length || capabilities?.skills.length || 0;
+  const title = recordText(task, ['title', 'display_name', 'displayName', 'name']) ||
+    (language === 'zh' ? '运行中的子任务' : 'Running subtask');
+  const id = recordText(task, ['task_id', 'taskId', 'id']);
+  const profile = recordText(task, [
+    'resolved_runtime_profile',
+    'resolvedRuntimeProfile',
+    'runtime_profile',
+    'runtimeProfile',
+    'profile',
+  ]);
+  const status = recordText(task, ['status', 'state']) || 'running';
+  const prompt = recordText(task, ['summary', 'message', 'prompt', 'description']);
 
   return (
-    <div className="subagent-readonly-detail">
-      <header>
-        <span className="subagent-avatar-frame large">
-          <Network size={24} />
-        </span>
-        <div>
-          <strong>{detail.displayName || detail.name}</strong>
-          <small>{detail.name} · {detail.source || 'managed-local'}</small>
-        </div>
-        <span className={`subagent-status ${detail.validationStatus}`}>
-          <b>{subagentStatusLabel(detail, language)}</b>
-        </span>
-      </header>
-
-      {detail.error && (
-        <p className="feature-error subagent-inline-error">
-          <AlertCircle size={14} />
-          {detail.error}
-        </p>
-      )}
-
-      <p className="subagent-readonly-description">
-        {detail.description ||
-          (language === 'zh'
-            ? '后端托管的本地子任务能力。'
-            : 'Backend-managed local subtask capability.')}
-      </p>
-
-      <div className="subagent-detail-grid compact">
-        <InfoRow
-          label={language === 'zh' ? '控制面' : 'Control plane'}
-          value="managed-local"
-        />
-        <InfoRow
-          label={language === 'zh' ? '前端可配置' : 'Frontend configurable'}
-          value={language === 'zh' ? '否' : 'No'}
-        />
-        <InfoRow
-          label={language === 'zh' ? '工具' : 'Tools'}
-          value={String(toolCount)}
-        />
-        <InfoRow
-          label="Skills"
-          value={String(skillCount)}
-        />
-        <InfoRow
-          label={language === 'zh' ? '运行策略' : 'Runtime policy'}
-          value={runtimeProfile || (language === 'zh' ? '后端决定' : 'Backend decides')}
-        />
-        <InfoRow
-          label={language === 'zh' ? '最近任务' : 'Recent tasks'}
-          value={String(recentCount)}
-        />
+    <article className="subagent-runtime-task">
+      <span className={`subagent-runtime-task-state ${status.toLowerCase()}`}>
+        <Clock3 size={14} />
+      </span>
+      <div>
+        <strong>{title}</strong>
+        {prompt && <p>{prompt}</p>}
+        <small>
+          {[profile, id].filter(Boolean).join(' · ') ||
+            (language === 'zh' ? '后端运行时任务' : 'Backend runtime task')}
+        </small>
       </div>
+      <em>{runtimeStatusLabel(status, language)}</em>
+    </article>
+  );
+}
 
-      <section className="subagent-readonly-section">
-        <span>{language === 'zh' ? '能力摘要' : 'Capability summary'}</span>
-        <div className="subagent-chip-row">
-          {compactList(detail.tools, 8).map((item) => (
-            <b key={`tool-${item}`}>{item}</b>
-          ))}
-          {compactList(detail.skills, 6).map((item) => (
-            <b key={`skill-${item}`}>skill:{item}</b>
-          ))}
-          {detail.tools.length === 0 && detail.skills.length === 0 && (
-            <em>{language === 'zh' ? '由后端运行时决定' : 'Resolved by backend runtime'}</em>
-          )}
-        </div>
-      </section>
+function RuntimeCapabilitySummary({
+  capabilities,
+  language,
+}: {
+  capabilities: SubagentCapabilities | null;
+  language: AppLanguage;
+}) {
+  const chips = [
+    ...compactList(capabilities?.runModes ?? [], 4),
+    ...compactList(capabilities?.toolProfiles ?? [], 4),
+    ...compactList(capabilities?.toolPackages ?? [], 4),
+  ];
 
-      <section className="subagent-readonly-section">
-        <span>{language === 'zh' ? '后端边界' : 'Backend boundary'}</span>
-        <p>
-          {language === 'zh'
-            ? '这里不再支持注册、编辑、启用、禁用或删除本地子 Agent。主 Agent 会根据任务上下文自行决定是否调用本地子任务；远程 Agent 统一走 MCP。'
-            : 'Register, edit, enable, disable, and delete operations are no longer exposed here. The parent agent decides when to use local subagents; remote agents go through MCP.'}
-        </p>
-      </section>
-
-      {templates.length > 0 && (
-        <section className="subagent-readonly-section">
-          <span>{language === 'zh' ? '模板' : 'Templates'}</span>
-          <p>
-            {language === 'zh'
-              ? `后端返回 ${templates.length} 个模板，但前端不再提供创建入口。`
-              : `${templates.length} templates are available from the backend, but creation is not exposed in the frontend.`}
-          </p>
-        </section>
-      )}
+  return (
+    <div className="subagent-runtime-capabilities">
+      <span>{language === 'zh' ? '运行能力' : 'Runtime capabilities'}</span>
+      <div className="subagent-chip-row">
+        {chips.map((item) => <b key={item}>{item}</b>)}
+        {chips.length === 0 && (
+          <em>
+            {language === 'zh' ? '由后端在任务创建时解析' : 'Resolved by the backend when a task is created'}
+          </em>
+        )}
+      </div>
     </div>
   );
 }
@@ -527,16 +341,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function subagentStatusLabel(agent: Pick<SubagentListItem, 'enabled' | 'validationStatus'>, language: AppLanguage) {
-  if (agent.validationStatus === 'invalid') {
-    return language === 'zh' ? '异常' : 'Invalid';
-  }
-  if (!agent.enabled || agent.validationStatus === 'disabled') {
-    return language === 'zh' ? '关闭' : 'Disabled';
-  }
-  return language === 'zh' ? '可用' : 'Available';
-}
-
 function subagentSupervisorTotalActive(supervisor: SubagentSupervisorSnapshot) {
   if (Number.isFinite(supervisor.counts.totalActive)) {
     return supervisor.counts.totalActive ?? 0;
@@ -545,20 +349,6 @@ function subagentSupervisorTotalActive(supervisor: SubagentSupervisorSnapshot) {
     (sum, value) => sum + value,
     0,
   );
-}
-
-function subagentAgentActiveCount(
-  supervisor: SubagentSupervisorSnapshot | null | undefined,
-  agent: Pick<SubagentListItem, 'id' | 'name'>,
-  fallback: number,
-) {
-  if (!supervisor) {
-    return Number.isFinite(fallback) ? fallback : 0;
-  }
-  const fromName = supervisor.counts.agentActive[agent.name];
-  const fromId = supervisor.counts.agentActive[agent.id];
-  const value = fromName ?? fromId ?? fallback;
-  return Number.isFinite(value) ? value : 0;
 }
 
 function formatSubagentLimit(current: number, limit?: number) {
@@ -583,35 +373,12 @@ function formatSecondsLimit(value: number | undefined, language: AppLanguage) {
 }
 
 function compactList(items: string[], limit: number) {
-  if (items.length <= limit) {
-    return items;
-  }
-  return [...items.slice(0, limit), `+${items.length - limit}`];
+  return items.length <= limit
+    ? items
+    : [...items.slice(0, limit), `+${items.length - limit}`];
 }
 
-function runtimeNumber(
-  value: Record<string, unknown> | undefined,
-  keys: string[],
-) {
-  if (!value) {
-    return 0;
-  }
-  for (const key of keys) {
-    const number = Number(value[key]);
-    if (Number.isFinite(number)) {
-      return number;
-    }
-  }
-  return 0;
-}
-
-function runtimeText(
-  value: Record<string, unknown> | undefined,
-  keys: string[],
-) {
-  if (!value) {
-    return '';
-  }
+function recordText(value: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const text = String(value[key] ?? '').trim();
     if (text) {
@@ -619,6 +386,31 @@ function runtimeText(
     }
   }
   return '';
+}
+
+function taskSearchText(task: Record<string, unknown>) {
+  return [
+    recordText(task, ['title', 'display_name', 'displayName', 'name']),
+    recordText(task, ['task_id', 'taskId', 'id']),
+    recordText(task, ['summary', 'message', 'prompt', 'description']),
+    recordText(task, ['runtime_profile', 'runtimeProfile', 'profile']),
+    recordText(task, ['status', 'state']),
+  ].join(' ').toLowerCase();
+}
+
+function runtimeTaskKey(task: Record<string, unknown>, index: number) {
+  return recordText(task, ['task_id', 'taskId', 'id']) || `runtime-task-${index}`;
+}
+
+function runtimeStatusLabel(status: string, language: AppLanguage) {
+  const normalized = status.trim().toLowerCase();
+  if (normalized === 'queued' || normalized === 'pending') {
+    return language === 'zh' ? '等待中' : 'Queued';
+  }
+  if (normalized === 'blocked') {
+    return language === 'zh' ? '已阻塞' : 'Blocked';
+  }
+  return language === 'zh' ? '运行中' : 'Running';
 }
 
 function errorMessage(error: unknown) {

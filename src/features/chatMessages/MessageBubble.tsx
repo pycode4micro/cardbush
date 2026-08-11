@@ -19,9 +19,11 @@ import {
   type FormEvent,
   type HTMLAttributes,
   type ReactNode,
+  createContext,
   lazy,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -31,6 +33,12 @@ import { basename, fileUrl } from '../../shared/localPaths';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { normalizeMarkdownContentForDisplay } from './markdownFormat';
+import {
+  linkifyLocalFileReferences,
+  localFileReference,
+  localFileReferenceFromHref,
+} from './fileReferences';
+import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import {
   COPY_FEEDBACK_EVENT,
   copyText,
@@ -65,41 +73,95 @@ const LazyMarkdownContent = lazy(async () => {
     import('remark-gfm'),
   ]);
 
-  function MarkdownRenderer({ content }: { content: string }) {
+  function MarkdownRenderer({
+    content,
+    workspaceRoot,
+  }: {
+    content: string;
+    workspaceRoot: string;
+  }) {
     return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ href, children, ...props }) => (
-            <a
-              {...props}
-              href={href}
-              onClick={(event) => {
-                if (!href || href.startsWith('#')) {
-                  return;
-                }
-                event.preventDefault();
-                void (
-                  window.cardbushDesktop?.openUiPreview ??
-                  window.cardbushDesktop?.openExternal
-                )?.(href);
-              }}
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children, ...props }) => {
+            const directReference = href
+              ? localFileReference(href, workspaceRoot)
+              : null;
+            const localPath = href
+              ? localFileReferenceFromHref(href) || directReference?.path || ''
+              : '';
+            if (localPath) {
+              return (
+                <LocalFileReferenceLink path={localPath}>
+                  {children}
+                </LocalFileReferenceLink>
+              );
+            }
+            return (
+              <a
+                {...props}
+                href={href}
+                onClick={(event) => {
+                  if (!href || href.startsWith('#')) {
+                    return;
+                  }
+                  event.preventDefault();
+                  void (
+                    window.cardbushDesktop?.openUiPreview ??
+                    window.cardbushDesktop?.openExternal
+                  )?.(href);
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
+          code: ({ children, className, ...props }) => {
+            const text = reactNodeText(children).trim();
+            const reference = !className
+              ? localFileReference(text, workspaceRoot)
+              : null;
+            if (reference) {
+              return (
+                <LocalFileReferenceLink path={reference.path}>
+                  {reference.label}
+                </LocalFileReferenceLink>
+              );
+            }
+            return <code {...props} className={className}>{children}</code>;
+          },
           pre: ({ children, ...props }) => (
             <MarkdownCodeBlock {...props}>{children}</MarkdownCodeBlock>
           ),
         }}
       >
-        {normalizeMarkdownContentForDisplay(content)}
+        {linkifyLocalFileReferences(
+          normalizeMarkdownContentForDisplay(content),
+          workspaceRoot,
+        )}
       </ReactMarkdown>
     );
   }
 
   return { default: MarkdownRenderer };
 });
+
+const FileReferenceWorkspaceContext = createContext('');
+
+export function MessageFileReferenceScope({
+  workspaceRoot,
+  children,
+}: {
+  workspaceRoot?: string;
+  children: ReactNode;
+}) {
+  return (
+    <FileReferenceWorkspaceContext.Provider value={workspaceRoot?.trim() ?? ''}>
+      {children}
+    </FileReferenceWorkspaceContext.Provider>
+  );
+}
 
 function MarkdownCodeBlock({
   children,
@@ -397,6 +459,10 @@ export function MessageBubble({
         language,
       })
     : '';
+  const assistantCompletedAt =
+    message.role === 'assistant' && !isActiveAssistantTurn
+      ? assistantTurnCompletedAt(message, assistantProgressExecutions)
+      : undefined;
   const taskPlan = message.role === 'assistant' ? message.taskPlan : undefined;
   const hasAssistantBody = Boolean(
     text.trim() ||
@@ -464,53 +530,62 @@ export function MessageBubble({
           )}
         </div>
         <div className="message-actions">
-          <button
-            type="button"
-            title={language === 'zh' ? '复制' : 'Copy'}
-            onClick={() => void copyText(message.content).catch(() => undefined)}
-          >
-            <Clipboard size={14} />
-          </button>
-          <button
-            className={`feedback-up ${assistantFeedback === 'up' ? 'active' : ''} ${
-              feedbackPulse === 'up' ? 'feedback-pop' : ''
-            }`}
-            type="button"
-            aria-pressed={assistantFeedback === 'up'}
-            title={language === 'zh' ? '有帮助，记录给 LEM' : 'Helpful, record for LEM'}
-            onClick={() => toggleAssistantFeedback('up')}
-          >
-            <ThumbsUp size={14} />
-          </button>
-          <button
-            className={`feedback-down ${assistantFeedback === 'down' ? 'active' : ''} ${
-              feedbackPulse === 'down' ? 'feedback-pop' : ''
-            }`}
-            type="button"
-            aria-pressed={assistantFeedback === 'down'}
-            title={language === 'zh' ? '不理想，记录给 LEM' : 'Needs improvement, record for LEM'}
-            onClick={() => toggleAssistantFeedback('down')}
-          >
-            <ThumbsDown size={14} />
-          </button>
-          {activeMessageTurn && (
             <button
               type="button"
-              title={language === 'zh' ? '重新生成' : 'Retry'}
-              disabled={sending}
-              onClick={() => void onRegenerate(message)}
+              title={language === 'zh' ? '复制' : 'Copy'}
+              onClick={() => void copyText(message.content).catch(() => undefined)}
             >
-              <RefreshCw size={14} />
+              <Clipboard size={14} />
             </button>
-          )}
-          {canGuide && (
             <button
+              className={`feedback-up ${assistantFeedback === 'up' ? 'active' : ''} ${
+                feedbackPulse === 'up' ? 'feedback-pop' : ''
+              }`}
               type="button"
-              title={language === 'zh' ? '插入引导' : 'Guide this turn'}
-              onClick={() => setGuidanceOpen(true)}
+              aria-pressed={assistantFeedback === 'up'}
+              title={language === 'zh' ? '有帮助，记录给 LEM' : 'Helpful, record for LEM'}
+              onClick={() => toggleAssistantFeedback('up')}
             >
-              <Sparkles size={14} />
+              <ThumbsUp size={14} />
             </button>
+            <button
+              className={`feedback-down ${assistantFeedback === 'down' ? 'active' : ''} ${
+                feedbackPulse === 'down' ? 'feedback-pop' : ''
+              }`}
+              type="button"
+              aria-pressed={assistantFeedback === 'down'}
+              title={language === 'zh' ? '不理想，记录给 LEM' : 'Needs improvement, record for LEM'}
+              onClick={() => toggleAssistantFeedback('down')}
+            >
+              <ThumbsDown size={14} />
+            </button>
+            {activeMessageTurn && (
+              <button
+                type="button"
+                title={language === 'zh' ? '重新生成' : 'Retry'}
+                disabled={sending}
+                onClick={() => void onRegenerate(message)}
+              >
+                <RefreshCw size={14} />
+              </button>
+            )}
+            {canGuide && (
+              <button
+                type="button"
+                title={language === 'zh' ? '插入引导' : 'Guide this turn'}
+                onClick={() => setGuidanceOpen(true)}
+              >
+                <Sparkles size={14} />
+              </button>
+            )}
+          {assistantCompletedAt != null && (
+            <time
+              className="assistant-completed-at"
+              dateTime={new Date(assistantCompletedAt).toISOString()}
+              title={formatAssistantCompletedAtTitle(assistantCompletedAt, language)}
+            >
+              {formatAssistantCompletedAt(assistantCompletedAt, language)}
+            </time>
           )}
         </div>
       </div>
@@ -903,6 +978,42 @@ function assistantTurnElapsedMs(
     return completedAt - startedAt;
   }
   return executions.reduce((total, execution) => total + Math.max(0, execution.durationMs), 0);
+}
+
+function assistantTurnCompletedAt(
+  message: ChatMessage,
+  executions: ChatToolExecution[],
+) {
+  const metadata = message.metadata ?? {};
+  return latestTimestamp([
+    metadata.cardbush_turn_completed_at,
+    metadata.cardbushTurnCompletedAt,
+    metadata.turn_completed_at,
+    metadata.turnCompletedAt,
+    metadata.completed_at,
+    metadata.completedAt,
+    metadata.done_at,
+    metadata.doneAt,
+    metadata.finished_at,
+    metadata.finishedAt,
+    ...executions.map((execution) => toolExecutionFinishedAt(execution)),
+  ]);
+}
+
+function formatAssistantCompletedAt(timestamp: number, language: AppLanguage) {
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(timestamp));
+}
+
+function formatAssistantCompletedAtTitle(timestamp: number, language: AppLanguage) {
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  }).format(new Date(timestamp));
 }
 
 function earliestTimestamp(values: unknown[]) {
@@ -1499,9 +1610,10 @@ export function ImagePreviewDialog({
 }
 
 function MarkdownContent({ content }: { content: string }) {
+  const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   return (
     <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
-      <LazyMarkdownContent content={content} />
+      <LazyMarkdownContent content={content} workspaceRoot={workspaceRoot} />
     </Suspense>
   );
 }

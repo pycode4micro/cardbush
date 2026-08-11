@@ -15,8 +15,11 @@ export {
   changeReportsFromMessages,
   looksLikeFileChangeExecution,
   serializeToolChangeReport,
+  summarizeChangeReports,
   toolChangeReportFromExecutions,
   type ConversationChangeReport,
+  type ConversationChangeSummary,
+  type ToolFileChange,
   type ToolChangeReport,
 } from './toolChangeReports';
 export { ToolChangeBlock, ToolFileChangeView } from './ToolChangeBlock';

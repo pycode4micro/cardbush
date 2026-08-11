@@ -3,7 +3,6 @@ import {
   ArrowUp,
   Bot,
   BookOpen,
-  Boxes,
   Brain,
   Check,
   CheckCircle2,
@@ -14,10 +13,8 @@ import {
   Edit3,
   Eye,
   EyeOff,
-  Flag,
   Folder,
   FolderOpen,
-  Gauge,
   GitBranch,
   KeyRound,
   ListChecks,
@@ -55,13 +52,13 @@ import {
 } from '../../shared/localPaths';
 import type {
   AppLanguage,
-  ChatMessage,
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
   SkillSummary,
 } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages';
+import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import { quickPayloadText, type QuickLoadPayload } from './quickLoad';
 
@@ -94,11 +91,9 @@ type ComposerQueuedMessage = {
 type ComposerMenu =
   | 'more'
   | 'project'
-  | 'tokens'
   | 'git'
   | 'skills'
   | 'models'
-  | 'reasoning'
   | 'permissions'
   | null;
 
@@ -106,9 +101,15 @@ type MorePanelMenu =
   | 'project'
   | 'skills'
   | 'git'
-  | 'tokens'
   | 'plan'
   | 'vision';
+
+export type ContextWindowUsage = {
+  usedTokens?: number;
+  maxTokens?: number;
+  remainingTokens?: number;
+  measuredAt?: string;
+};
 
 type ComposerCommandMode = 'slash' | 'mention';
 
@@ -140,13 +141,11 @@ type ComposerPopoverAnchor = {
 };
 
 const composerPopoverWidths: Record<Exclude<ComposerMenu, null>, number> = {
-  more: 520,
+  more: 350,
   project: 300,
-  tokens: 214,
   git: 260,
   skills: 336,
-  models: 232,
-  reasoning: 220,
+  models: 300,
   permissions: 274,
 };
 
@@ -184,25 +183,6 @@ function composerPopoverAnchorFromTrigger(
   };
 }
 
-function composerPopoverAnchorForMenu(
-  anchor: ComposerPopoverAnchor | null,
-  menu: Exclude<ComposerMenu, null>,
-) {
-  if (!anchor) {
-    return null;
-  }
-  const padding = 10;
-  const width = Math.min(
-    composerPopoverWidths[menu],
-    Math.max(180, window.innerWidth - padding * 2),
-  );
-  return {
-    ...anchor,
-    x: Math.max(padding, Math.min(anchor.x, window.innerWidth - width - padding)),
-    width,
-  };
-}
-
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -237,12 +217,10 @@ export function Composer({
   onReasoningLevelChange,
   onSend,
   onCancel,
-  messages = [],
   skills = [],
   disabledSkillNames,
   visualInputAvailable,
   visualInputEnabled,
-  teamModeEnabled,
   gitAvailable = false,
   terminalAvailable = false,
   activeProjectDir,
@@ -257,7 +235,11 @@ export function Composer({
   onOpenTerminalConsole,
   onToggleSkill,
   onVisualInputEnabledChange,
-  onTeamModeChange,
+  shadowActive = false,
+  shadowAvailable = false,
+  shadowAgentName,
+  onToggleShadow,
+  contextWindow,
 }: {
   compact?: boolean;
   autoFocus?: boolean;
@@ -283,12 +265,10 @@ export function Composer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
-  messages?: ChatMessage[];
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
-  teamModeEnabled: boolean;
   gitAvailable?: boolean;
   terminalAvailable?: boolean;
   activeProjectDir?: string;
@@ -303,7 +283,11 @@ export function Composer({
   onOpenTerminalConsole?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
-  onTeamModeChange: (enabled: boolean) => void;
+  shadowActive?: boolean;
+  shadowAvailable?: boolean;
+  shadowAgentName?: string;
+  onToggleShadow?: () => void;
+  contextWindow?: ContextWindowUsage;
 }) {
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -417,12 +401,6 @@ export function Composer({
       }
       return menu;
     });
-    setCommandState(null);
-  }
-
-  function openAnchoredMenu(menu: Exclude<ComposerMenu, null>) {
-    setPopoverAnchor((current) => composerPopoverAnchorForMenu(current, menu));
-    setActiveMenu(menu);
     setCommandState(null);
   }
 
@@ -755,13 +733,13 @@ export function Composer({
           title: '/subagents',
           subtitle:
             language === 'zh'
-              ? '查看本地子任务运行状态'
-              : 'Inspect local subagent runtime status',
+              ? '查看动态子任务运行状态'
+              : 'Inspect dynamic subtask runtime status',
           icon: <Network size={16} />,
           value:
             language === 'zh'
-              ? '请检查当前本地子任务的运行状态和可用能力；是否委派由主 Agent 根据任务决定。'
-              : 'Inspect local subagent runtime status and capabilities; delegation is decided by the parent agent.',
+              ? '请检查当前动态子任务的运行状态和可用能力，并说明运行时调度情况。'
+              : 'Inspect dynamic subtask runtime status and capabilities, then summarize runtime scheduling.',
         },
         ...(gitAvailable
           ? [
@@ -915,8 +893,8 @@ export function Composer({
     language === 'zh' ? '任务计划' : 'Task plan';
   const referencePlanDescription =
     language === 'zh'
-      ? '开启后，复杂任务可由模型维护分步进度清单；它不替代实际执行与验收。'
-      : 'When enabled, the model may maintain a step checklist for complex tasks; it does not replace execution or verification.';
+      ? '交付、Review 与核查任务可由模型维护分步进度并实时显示；它不替代实际执行与验收。'
+      : 'For delivery, review, and audit work, the model may maintain visible step progress; it does not replace execution or verification.';
   const firstQueuedMessage = queuedMessages[0] ?? null;
   const queuePreview =
     queuedMessagePreview.trim() || firstQueuedMessage?.text.trim() || '';
@@ -945,7 +923,7 @@ export function Composer({
 
   return (
     <div
-      className={`composer-stack ${compact ? 'compact' : ''}`}
+      className={`composer-stack ${compact ? 'compact' : ''} ${shadowActive ? 'shadow-active' : ''}`}
       ref={composerStackRef}
       style={
         {
@@ -968,37 +946,42 @@ export function Composer({
         (() => {
           const popover = (
             <ComposerPopover
-          menu={activeMenu}
-          language={language}
-          messages={messages}
-          skills={skills}
-          disabledSkillNames={disabledSkillNames}
-          visualInputAvailable={visualInputAvailable}
-          visualInputEnabled={visualInputEnabled}
-          gitAvailable={gitAvailable}
-          selectedModel={selectedModel}
-          availableModels={availableModels}
-          permissionMode={permissionMode}
-          reasoningLevel={reasoningLevel}
-          reasoningLevels={reasoningLevels}
-          referencePlanAvailable={referencePlanAvailable}
-          referencePlanMode={referencePlanMode}
-          activeProjectDir={activeProjectDir}
-          projectContext={projectContext}
-          onLoad={loadPayload}
-          onToggleSkill={onToggleSkill}
-          onVisualInputEnabledChange={onVisualInputEnabledChange}
-          onSaveProjectContext={onSaveProjectContext}
-          onSelectModel={selectModel}
-          onSelectPermissionMode={onPermissionModeChange}
-          onSelectReasoningLevel={onReasoningLevelChange}
-          onSelectReferencePlanMode={onReferencePlanModeChange}
-          onOpenMenu={openAnchoredMenu}
-          onConfigureModels={onConfigureModels}
-          onClose={() => {
-            setActiveMenu(null);
-            setPopoverAnchor(null);
-          }}
+              menu={activeMenu}
+              language={language}
+              contextWindow={contextWindow}
+              skills={skills}
+              disabledSkillNames={disabledSkillNames}
+              visualInputAvailable={visualInputAvailable}
+              visualInputEnabled={visualInputEnabled}
+              gitAvailable={gitAvailable}
+              selectedModel={selectedModel}
+              availableModels={availableModels}
+              permissionMode={permissionMode}
+              reasoningLevelAvailable={reasoningLevelAvailable}
+              reasoningLevel={reasoningLevel}
+              reasoningLevels={reasoningLevels}
+              referencePlanAvailable={referencePlanAvailable}
+              referencePlanMode={referencePlanMode}
+              activeProjectDir={activeProjectDir}
+              projectContext={projectContext}
+              onLoad={loadPayload}
+              onToggleSkill={onToggleSkill}
+              onVisualInputEnabledChange={onVisualInputEnabledChange}
+              onSaveProjectContext={onSaveProjectContext}
+              onSelectModel={selectModel}
+              onSelectPermissionMode={onPermissionModeChange}
+              onSelectReasoningLevel={onReasoningLevelChange}
+              onSelectReferencePlanMode={onReferencePlanModeChange}
+              onConfigureModels={onConfigureModels}
+              onPickAttachments={() => {
+                void pickAttachments();
+                setActiveMenu(null);
+                setPopoverAnchor(null);
+              }}
+              onClose={() => {
+                setActiveMenu(null);
+                setPopoverAnchor(null);
+              }}
               anchor={popoverAnchor}
             />
           );
@@ -1010,6 +993,53 @@ export function Composer({
           image={previewImage}
           onClose={() => setPreviewImage(null)}
         />
+      )}
+      {queueLabel && (
+        <div className="composer-secondary-row composer-queue-row" title={queueTitle}>
+          <div className="composer-queue-summary">
+            <Clock3 size={13} />
+            <span>{queueLabel}</span>
+            <small>{queuePreview || queueHint}</small>
+          </div>
+          {firstQueuedMessage && (
+            <div className="composer-queue-actions">
+              <button
+                type="button"
+                aria-label={language === 'zh' ? '将排队消息用于引导' : 'Use queued message as guidance'}
+                title={language === 'zh' ? '引导' : 'Guide'}
+                disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
+                onClick={() => void guideFirstQueuedMessage()}
+              >
+                {guidingQueuedId === firstQueuedMessage.id ? (
+                  <LoaderCircle size={12} />
+                ) : (
+                  <Sparkles size={12} />
+                )}
+                <span>{language === 'zh' ? '引导' : 'Guide'}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={language === 'zh' ? '编辑排队消息' : 'Edit queued message'}
+                title={language === 'zh' ? '编辑' : 'Edit'}
+                disabled={!onEditQueuedMessage}
+                onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
+              >
+                <Edit3 size={12} />
+                <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
+              </button>
+              <button
+                type="button"
+                aria-label={language === 'zh' ? '删除排队消息' : 'Delete queued message'}
+                title={language === 'zh' ? '删除' : 'Delete'}
+                disabled={!onRemoveQueuedMessage}
+                onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
+              >
+                <Trash2 size={12} />
+                <span>{language === 'zh' ? '删除' : 'Delete'}</span>
+              </button>
+            </div>
+          )}
+        </div>
       )}
       <div
         className="composer-surface"
@@ -1114,7 +1144,11 @@ export function Composer({
             }
           }}
           placeholder={
-            osMode
+            shadowActive
+              ? language === 'zh'
+                ? `回复 ${shadowAgentName || 'Shadow Agent'}…`
+                : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
+              : osMode
               ? language === 'zh'
                 ? '告诉 CardBush 你想让电脑完成什么…'
                 : 'Tell CardBush what your computer should do...'
@@ -1131,29 +1165,27 @@ export function Composer({
         <div className="composer-footer">
           <div className="composer-tools">
             {!osMode && <ToolChip
-              icon={<Boxes size={14} />}
-              label={language === 'zh' ? '更多工具' : 'More tools'}
+              icon={<Plus size={15} />}
+              label={language === 'zh' ? '添加' : 'Add'}
               active={
                 activeMenu === 'more' ||
                 activeMenu === 'project' ||
-                activeMenu === 'tokens' ||
                 (gitAvailable && activeMenu === 'git') ||
                 activeMenu === 'skills'
               }
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
             />}
-            {!osMode && <ToolChip
-              icon={<Flag size={14} />}
-              label={language === 'zh' ? 'Team 模式' : 'Team mode'}
-              active={teamModeEnabled}
-              onClick={() => onTeamModeChange(!teamModeEnabled)}
-            />}
-            <ToolChip
-              icon={<Paperclip size={15} />}
-              label={language === 'zh' ? '附件' : 'Attach'}
-              onClick={() => void pickAttachments()}
-            />
+            {!osMode && shadowAvailable && onToggleShadow && (
+              <ToolChip
+                icon={<ShadowCloneIcon size={15} />}
+                label={shadowActive
+                  ? language === 'zh' ? '收起 Shadow' : 'Close Shadow'
+                  : language === 'zh' ? '打开 Shadow' : 'Open Shadow'}
+                active={shadowActive}
+                onClick={onToggleShadow}
+              />
+            )}
             <button
               className={`permission-center-button mode-${permissionMode} ${
                 activeMenu === 'permissions' ? 'active' : ''
@@ -1169,25 +1201,8 @@ export function Composer({
             </button>
           </div>
           <div className="composer-actions">
-            {reasoningLevelAvailable && reasoningLevels.length > 0 && (
-              <button
-                className="model-select reasoning-select"
-                type="button"
-                data-composer-menu-trigger="true"
-                title={
-                  language === 'zh'
-                    ? `推理强度：${reasoningLevelLabel(reasoningLevel, language)}`
-                    : `Reasoning: ${reasoningLevelLabel(reasoningLevel, language)}`
-                }
-                onClick={(event) => toggleMenu('reasoning', event)}
-              >
-                <Gauge size={14} />
-                <span>{reasoningLevelLabel(reasoningLevel, language)}</span>
-                <ChevronDown size={13} />
-              </button>
-            )}
             <button
-              className="model-select"
+              className={`model-select ${activeMenu === 'models' ? 'active' : ''}`}
               type="button"
               data-composer-menu-trigger="true"
               title={
@@ -1233,63 +1248,6 @@ export function Composer({
             </button>
           </div>
         </div>
-        {queueLabel && (
-          <div className="composer-secondary-row composer-queue-row" title={queueTitle}>
-            <div className="composer-queue-summary">
-              <Clock3 size={13} />
-              <span>{queueLabel}</span>
-              <small>{queuePreview || queueHint}</small>
-            </div>
-            {firstQueuedMessage && (
-              <div className="composer-queue-actions">
-                <button
-                  type="button"
-                  disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
-                  onClick={() => void guideFirstQueuedMessage()}
-                >
-                  {guidingQueuedId === firstQueuedMessage.id ? (
-                    <LoaderCircle size={12} />
-                  ) : (
-                    <Sparkles size={12} />
-                  )}
-                  <span>{language === 'zh' ? '引导' : 'Guide'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!onEditQueuedMessage}
-                  onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
-                >
-                  <Edit3 size={12} />
-                  <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!onRemoveQueuedMessage}
-                  onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
-                >
-                  <Trash2 size={12} />
-                  <span>{language === 'zh' ? '删除' : 'Delete'}</span>
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-        {teamModeEnabled && (
-          <div className="composer-secondary-row composer-team-row">
-            <div className="composer-team-summary">
-              <Flag size={13} />
-              <span>{language === 'zh' ? 'Team 模式' : 'Team mode'}</span>
-              <small>
-                {language === 'zh'
-                  ? 'Boss 在对话中裁决，Team Agent 逐层设计场景 Agent。'
-                  : 'Boss decides in chat; Team Agent designs scene agents layer by layer.'}
-              </small>
-            </div>
-            <button type="button" onClick={() => onTeamModeChange(false)}>
-              {language === 'zh' ? '关闭' : 'Off'}
-            </button>
-          </div>
-        )}
       </div>
       {!compact && (
         <div className="composer-note">
@@ -1485,7 +1443,7 @@ function detectComposerCommand(
 function ComposerPopover({
   menu,
   language,
-  messages,
+  contextWindow,
   skills,
   disabledSkillNames,
   visualInputAvailable,
@@ -1494,6 +1452,7 @@ function ComposerPopover({
   selectedModel,
   availableModels,
   permissionMode,
+  reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
   referencePlanAvailable,
@@ -1506,16 +1465,16 @@ function ComposerPopover({
   onSaveProjectContext,
   onSelectModel,
   onConfigureModels,
+  onPickAttachments,
   onSelectPermissionMode,
   onSelectReasoningLevel,
   onSelectReferencePlanMode,
-  onOpenMenu,
   onClose,
   anchor,
 }: {
   menu: Exclude<ComposerMenu, null>;
   language: AppLanguage;
-  messages: ChatMessage[];
+  contextWindow?: ContextWindowUsage;
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
@@ -1524,6 +1483,7 @@ function ComposerPopover({
   selectedModel: string;
   availableModels: string[];
   permissionMode: PermissionMode;
+  reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
   referencePlanAvailable: boolean;
@@ -1536,59 +1496,29 @@ function ComposerPopover({
   onSaveProjectContext?: (value: string) => Promise<string>;
   onSelectModel: (model: string) => void;
   onConfigureModels: () => void;
+  onPickAttachments: () => void;
   onSelectPermissionMode: (mode: PermissionMode) => void;
   onSelectReasoningLevel: (level: ReasoningLevel) => void;
   onSelectReferencePlanMode: (mode: ReferencePlanMode) => void;
-  onOpenMenu: (menu: Exclude<ComposerMenu, null>) => void;
   onClose: () => void;
   anchor: ComposerPopoverAnchor | null;
 }) {
-  const content = messages.map((message) => message.content).join('\n');
-  const chars = content.length;
-  const estimatedTokens = Math.ceil(chars / 4);
   const models = Array.from(new Set([selectedModel, ...availableModels].filter(Boolean)));
   const pickerMenu = menu === 'models';
-  const [morePanel, setMorePanel] = useState<MorePanelMenu>('project');
-  const morePanelHoverTimerRef = useRef<number | null>(null);
+  const [morePanel, setMorePanel] = useState<MorePanelMenu | null>(null);
   const referencePlanEnabled = referencePlanMode === 'auto';
   useEffect(() => {
     if (!gitAvailable && morePanel === 'git') {
-      setMorePanel('project');
+      setMorePanel(null);
     }
   }, [gitAvailable, morePanel]);
   const selectPermission = (mode: PermissionMode) => {
     onSelectPermissionMode(mode);
     onClose();
   };
-  const selectReasoningLevel = (level: ReasoningLevel) => {
-    onSelectReasoningLevel(level);
-    onClose();
+  const selectMorePanel = (panel: MorePanelMenu) => {
+    setMorePanel((current) => current === panel ? null : panel);
   };
-  const clearMorePanelHoverTimer = useCallback(() => {
-    if (morePanelHoverTimerRef.current == null) {
-      return;
-    }
-    window.clearTimeout(morePanelHoverTimerRef.current);
-    morePanelHoverTimerRef.current = null;
-  }, []);
-  const previewMorePanel = useCallback(
-    (panel: MorePanelMenu) => {
-      clearMorePanelHoverTimer();
-      morePanelHoverTimerRef.current = window.setTimeout(() => {
-        setMorePanel(panel);
-        morePanelHoverTimerRef.current = null;
-      }, 70);
-    },
-    [clearMorePanelHoverTimer],
-  );
-  const selectMorePanel = useCallback(
-    (panel: MorePanelMenu) => {
-      clearMorePanelHoverTimer();
-      setMorePanel(panel);
-    },
-    [clearMorePanelHoverTimer],
-  );
-  useEffect(() => clearMorePanelHoverTimer, [clearMorePanelHoverTimer]);
   const anchorStyle = anchor
     ? ({
         left: anchor.x,
@@ -1613,8 +1543,16 @@ function ComposerPopover({
         </header>
       )}
       {menu === 'more' && (
-        <div className="more-hierarchy-menu">
+        <div className={`more-hierarchy-menu panel-${morePanel}`}>
           <div className="more-hierarchy-primary">
+            <MoreMenuRow
+              active={false}
+              icon={<Paperclip size={13} />}
+              title={language === 'zh' ? '文件和文件夹' : 'Files and folders'}
+              detail={language === 'zh' ? '添加到当前消息' : 'Add to this message'}
+              onClick={onPickAttachments}
+            />
+            <div className="more-menu-separator" />
             <MoreMenuRow
               active={morePanel === 'project'}
               icon={<BookOpen size={13} />}
@@ -1626,8 +1564,7 @@ function ComposerPopover({
                     ? '无项目'
                     : 'None'
               }
-              onHover={() => previewMorePanel('project')}
-              onClick={() => onOpenMenu('project')}
+              onClick={() => selectMorePanel('project')}
             />
             {referencePlanAvailable && (
               <MoreMenuRow
@@ -1635,7 +1572,6 @@ function ComposerPopover({
                 icon={<ListChecks size={13} />}
                 title={language === 'zh' ? '复杂任务' : 'Plan'}
                 detail={referencePlanEnabled ? (language === 'zh' ? '开' : 'On') : (language === 'zh' ? '关' : 'Off')}
-                onHover={() => previewMorePanel('plan')}
                 onClick={() => selectMorePanel('plan')}
               />
             )}
@@ -1656,7 +1592,6 @@ function ComposerPopover({
                     ? '不可用'
                     : 'Unavailable'
               }
-              onHover={() => previewMorePanel('vision')}
               onClick={() => selectMorePanel('vision')}
             />
             <div className="more-menu-separator" />
@@ -1665,8 +1600,7 @@ function ComposerPopover({
               icon={<Brain size={13} />}
               title="Skills"
               detail={language === 'zh' ? `${skills.length} 个` : `${skills.length}`}
-              onHover={() => previewMorePanel('skills')}
-              onClick={() => onOpenMenu('skills')}
+              onClick={() => selectMorePanel('skills')}
             />
             {gitAvailable && (
               <MoreMenuRow
@@ -1674,21 +1608,10 @@ function ComposerPopover({
                 icon={<GitBranch size={13} />}
                 title={language === 'zh' ? 'Git 分支' : 'Git'}
                 detail={language === 'zh' ? '分支' : 'Branch'}
-                onHover={() => previewMorePanel('git')}
-                onClick={() => onOpenMenu('git')}
+                onClick={() => selectMorePanel('git')}
               />
             )}
-            <div className="more-menu-separator" />
-            <MoreMenuRow
-              active={morePanel === 'tokens'}
-              icon={<Gauge size={13} />}
-              title="Tokens"
-              detail={String(estimatedTokens)}
-              onHover={() => previewMorePanel('tokens')}
-              onClick={() => onOpenMenu('tokens')}
-            />
           </div>
-          <div className="more-hierarchy-divider" />
           <div className="more-hierarchy-panel">
             {morePanel === 'project' && (
               <ProjectContextEditor
@@ -1713,15 +1636,15 @@ function ComposerPopover({
                     <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
                     <small>
                       {language === 'zh'
-                        ? '允许模型维护后端任务进度清单。'
-                        : 'Allow the model to maintain the backend task checklist.'}
+                        ? '允许模型提交并更新可见任务节点。'
+                        : 'Allow the model to submit and update visible task nodes.'}
                     </small>
                   </span>
                 </button>
                 <p>
                   {language === 'zh'
-                    ? '适合长任务、跨文件修改和需要复盘的工作；轻量问答建议关闭。'
-                    : 'Best for long tasks, multi-file edits, and work that needs a clear checkpoint.'}
+                    ? '默认开启，适合交付、Review、审查和需要核对多个证据的工作；轻量问答不会强制建计划。'
+                    : 'Enabled by default for delivery, review, audit, and multi-evidence work; lightweight questions are not forced to create a plan.'}
                 </p>
               </div>
             )}
@@ -1813,13 +1736,6 @@ function ComposerPopover({
             {morePanel === 'git' && gitAvailable && (
               <GitBranchMenu language={language} activeProjectDir={activeProjectDir} />
             )}
-            {morePanel === 'tokens' && (
-              <div className="token-grid nested">
-                <TokenStat label={language === 'zh' ? '消息数' : 'Messages'} value={messages.length} />
-                <TokenStat label={language === 'zh' ? '字符数' : 'Characters'} value={chars} />
-                <TokenStat label="Tokens" value={estimatedTokens} />
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1851,13 +1767,6 @@ function ComposerPopover({
           value={projectContext}
           onSave={onSaveProjectContext}
         />
-      )}
-      {menu === 'tokens' && (
-        <div className="token-grid">
-          <TokenStat label={language === 'zh' ? '消息数' : 'Messages'} value={messages.length} />
-          <TokenStat label={language === 'zh' ? '字符数' : 'Characters'} value={chars} />
-          <TokenStat label="Tokens" value={estimatedTokens} />
-        </div>
       )}
       {menu === 'git' && gitAvailable && (
         <GitBranchMenu language={language} activeProjectDir={activeProjectDir} />
@@ -1956,6 +1865,29 @@ function ComposerPopover({
             ))
           )}
           <div className="model-picker-divider" />
+          <ContextWindowMeter usage={contextWindow} language={language} />
+          {reasoningLevelAvailable && reasoningLevels.length > 0 && (
+            <div className="model-reasoning-section">
+              <div className="model-picker-inline-label">
+                <span>{language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
+                <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>
+              </div>
+              <div className="model-reasoning-options">
+                {reasoningLevels.map((level) => (
+                  <button
+                    className={level === reasoningLevel ? 'active' : ''}
+                    type="button"
+                    key={level}
+                    title={reasoningLevelDescription(level, language)}
+                    onClick={() => onSelectReasoningLevel(level)}
+                  >
+                    {reasoningLevelLabel(level, language)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="model-picker-divider" />
           <button
             className="model-picker-row secondary"
             type="button"
@@ -1967,40 +1899,17 @@ function ComposerPopover({
           </button>
         </div>
       )}
-      {menu === 'reasoning' && (
-        <div className="popover-list reasoning-level-list">
-          {reasoningLevels.map((level) => (
-            <button
-              className={`popover-row reasoning-level-row ${
-                level === reasoningLevel ? 'active' : ''
-              }`}
-              type="button"
-              key={level}
-              onClick={() => selectReasoningLevel(level)}
-            >
-              <Gauge size={15} />
-              <span>
-                <strong>{reasoningLevelLabel(level, language)}</strong>
-                <small>{reasoningLevelDescription(level, language)}</small>
-              </span>
-              {level === reasoningLevel && <Check size={14} />}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
 function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLanguage) {
   const labels: Record<Exclude<ComposerMenu, null>, { zh: string; en: string }> = {
-    more: { zh: '更多', en: 'More' },
+    more: { zh: '添加', en: 'Add' },
     project: { zh: '项目上下文', en: 'Project context' },
-    tokens: { zh: 'Token 用量', en: 'Token usage' },
     git: { zh: 'Git 分支', en: 'Git branches' },
     skills: { zh: 'Skills', en: 'Skills' },
     models: { zh: '模型', en: 'Model' },
-    reasoning: { zh: '推理强度', en: 'Reasoning effort' },
     permissions: { zh: '权限中心', en: 'Permissions' },
   };
   return labels[menu][language];
@@ -2031,22 +1940,18 @@ function MoreMenuRow({
   icon,
   title,
   detail,
-  onHover,
   onClick,
 }: {
   active: boolean;
   icon: ReactNode;
   title: string;
   detail: string;
-  onHover: () => void;
   onClick: () => void;
 }) {
   return (
     <button
       className={`more-menu-row ${active ? 'active' : ''}`}
       type="button"
-      onMouseEnter={onHover}
-      onFocus={onHover}
       onClick={onClick}
     >
       {icon}
@@ -2054,8 +1959,62 @@ function MoreMenuRow({
         <strong>{title}</strong>
         <small>{detail}</small>
       </span>
-      <ArrowRight size={12} />
     </button>
+  );
+}
+
+function compactTokenCount(value: number) {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`;
+  }
+  if (value >= 1_000) {
+    return `${Math.round(value / 1_000)}k`;
+  }
+  return String(value);
+}
+
+function ContextWindowMeter({
+  usage,
+  language,
+}: {
+  usage?: ContextWindowUsage;
+  language: AppLanguage;
+}) {
+  const maxTokens = usage?.maxTokens;
+  const usedTokens = usage?.usedTokens ?? (
+    maxTokens != null && usage?.remainingTokens != null
+      ? Math.max(0, maxTokens - usage.remainingTokens)
+      : undefined
+  );
+  const ratio = usedTokens != null && maxTokens != null && maxTokens > 0
+    ? Math.min(1, Math.max(0, usedTokens / maxTokens))
+    : 0;
+  const percentage = Math.round(ratio * 100);
+  const valueLabel = usedTokens != null && maxTokens != null
+    ? `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}%`
+    : maxTokens != null
+      ? `${language === 'zh' ? '等待统计' : 'Pending'} / ${compactTokenCount(maxTokens)}`
+      : language === 'zh'
+        ? '等待后端统计'
+        : 'Waiting for usage';
+
+  return (
+    <div className="model-context-section">
+      <div className="model-picker-inline-label">
+        <span>{language === 'zh' ? '上下文占用' : 'Context usage'}</span>
+        <strong>{valueLabel}</strong>
+      </div>
+      <div
+        className="model-context-progress"
+        role="progressbar"
+        aria-label={language === 'zh' ? '上下文窗口占用' : 'Context window usage'}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={usedTokens != null && maxTokens != null ? percentage : undefined}
+      >
+        <span style={{ width: `${percentage}%` }} />
+      </div>
+    </div>
   );
 }
 
@@ -2383,15 +2342,6 @@ function ProjectContextEditor({
         </button>
       </div>
       {status && <p className="popover-status">{status}</p>}
-    </div>
-  );
-}
-
-function TokenStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="token-stat">
-      <span>{label}</span>
-      <strong>{value.toLocaleString()}</strong>
     </div>
   );
 }

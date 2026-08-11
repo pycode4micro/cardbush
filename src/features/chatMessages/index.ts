@@ -1,3 +1,7 @@
-export { ImagePreviewDialog, MessageBubble } from './MessageBubble';
+export {
+  ImagePreviewDialog,
+  MessageBubble,
+  MessageFileReferenceScope,
+} from './MessageBubble';
 export type { GuidanceMode } from './MessageBubble';
 

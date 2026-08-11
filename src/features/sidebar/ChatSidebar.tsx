@@ -33,7 +33,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { samePath } from '../../shared/localPaths';
+import { basename, samePath } from '../../shared/localPaths';
 import type {
   AppLanguage,
   AppSection,
@@ -1141,6 +1141,28 @@ export function ConversationChangeDialog({
   onRevert: (report: ConversationChangeReport) => Promise<void>;
   onRevertAll: () => Promise<void>;
 }) {
+  const reviewItems = useMemo(
+    () => reports.flatMap((report, reportIndex) =>
+      report.files.map((file, fileIndex) => ({
+        key: `${report.id}:${file.path}:${fileIndex}`,
+        report,
+        reportIndex,
+        file,
+      }))),
+    [reports],
+  );
+  const [selectedKey, setSelectedKey] = useState(reviewItems[0]?.key ?? '');
+  const selectedItem = reviewItems.find((item) => item.key === selectedKey) ??
+    reviewItems[0] ?? null;
+  useEffect(() => {
+    if (reviewItems.length === 0) {
+      setSelectedKey('');
+      return;
+    }
+    if (!reviewItems.some((item) => item.key === selectedKey)) {
+      setSelectedKey(reviewItems[0]?.key ?? '');
+    }
+  }, [reviewItems, selectedKey]);
   const totals = reports.reduce(
     (sum, report) => ({
       files: sum.files + report.fileCount,
@@ -1189,43 +1211,64 @@ export function ConversationChangeDialog({
           </button>
         </div>
         {notice && <pre className="change-review-notice">{notice}</pre>}
-        <div className="change-review-list">
-          {reports.map((report, index) => {
-            const busy = revertingChangeId === report.id;
-            return (
-              <section className="change-review-card" key={report.id}>
+        <div className="change-review-workspace">
+          <section className="change-review-diff-pane">
+            {selectedItem ? (
+              <>
                 <header>
                   <div>
-                    <strong>
+                    <strong title={selectedItem.file.path}>{selectedItem.file.path}</strong>
+                    <span>
                       {language === 'zh'
-                        ? `修改 ${index + 1}`
-                        : `Change ${index + 1}`}
-                    </strong>
-                    <span>{formatChangeTimestamp(report.createdAt, language)}</span>
+                        ? `修改 ${selectedItem.reportIndex + 1} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`
+                        : `Change ${selectedItem.reportIndex + 1} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`}
+                    </span>
                   </div>
                   <button
                     className="secondary-button"
                     type="button"
                     disabled={Boolean(revertingChangeId)}
-                    onClick={() => void onRevert(report)}
+                    onClick={() => void onRevert(selectedItem.report)}
                   >
-                    {busy ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
+                    {revertingChangeId === selectedItem.report.id
+                      ? <LoaderCircle size={14} />
+                      : <RotateCcw size={14} />}
                     <span>{language === 'zh' ? '撤回这组' : 'Revert set'}</span>
                   </button>
                 </header>
-                <div className="change-review-files">
-                  {report.files.map((file, fileIndex) => (
-                    <ToolFileChangeView
-                      // eslint-disable-next-line react/no-array-index-key
-                      key={`${report.id}-${file.path}-${fileIndex}`}
-                      file={file}
-                      language={language}
-                    />
-                  ))}
-                </div>
-              </section>
-            );
-          })}
+                <ToolFileChangeView file={selectedItem.file} language={language} />
+              </>
+            ) : (
+              <div className="change-review-empty">
+                {language === 'zh' ? '正在等待文件级 diff。' : 'Waiting for a file diff.'}
+              </div>
+            )}
+          </section>
+          <aside className="change-review-file-nav">
+            <header>
+              <strong>{language === 'zh' ? '文件' : 'Files'}</strong>
+              <span>{reviewItems.length}</span>
+            </header>
+            <div>
+              {reviewItems.map((item) => (
+                <button
+                  key={item.key}
+                  className={item.key === selectedItem?.key ? 'active' : ''}
+                  type="button"
+                  title={item.file.path}
+                  onClick={() => setSelectedKey(item.key)}
+                >
+                  <Code2 size={13} />
+                  <span>
+                    <strong>{basename(item.file.path)}</strong>
+                    <small>{item.file.path}</small>
+                  </span>
+                  <b className="diff-count add">+{item.file.additions}</b>
+                  <b className="diff-count del">-{item.file.deletions}</b>
+                </button>
+              ))}
+            </div>
+          </aside>
         </div>
       </section>
     </div>

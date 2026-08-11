@@ -129,9 +129,6 @@ declare global {
         rawCount: number;
       }>;
       pickAttachments: () => Promise<string[]>;
-      pickMusicFiles: () => Promise<string[]>;
-      pickMusicDirectory: () => Promise<string | null>;
-      scanMusicDirectory: (rootPath: string) => Promise<string[]>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;
       pickBackgroundImage: () => Promise<string | null>;
@@ -139,6 +136,13 @@ declare global {
       listProjectEntries: (
         rootPath: string,
       ) => Promise<Array<{ name: string; path: string; kind: 'file' | 'folder' }>>;
+      validateProjectRoots: (
+        rootPaths: string[],
+      ) => Promise<Array<{
+        rootPath: string;
+        resolvedPath: string;
+        exists: boolean;
+      }>>;
       searchProjectFiles: (
         rootPath: string,
         query: string,
@@ -150,6 +154,14 @@ declare global {
           kind: 'file' | 'folder';
         }>
       >;
+      saveTeamWorkflow: (input: {
+        projectDir?: string;
+        workflowId: string;
+        yaml: string;
+      }) => Promise<{
+        path: string;
+        scope: 'project' | 'global';
+      }>;
       gitInfo: (
         rootPath: string,
       ) => Promise<{
@@ -246,6 +258,8 @@ declare global {
       ) => () => void;
       onCardlingCollapse: (callback: () => void) => () => void;
       openPath: (targetPath: string) => Promise<string>;
+      openFileInCardbush: (targetPath: string) => Promise<string>;
+      showFileContextMenu: (targetPath: string) => Promise<string>;
       openUiPreview: (target: string) => Promise<void>;
       openExternal: (targetUrl: string) => Promise<void>;
     };

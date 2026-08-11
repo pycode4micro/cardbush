@@ -161,11 +161,6 @@ const desktopApi = {
       rawCount: number;
     }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
-  pickMusicFiles: () => ipcRenderer.invoke('dialog:pick-music-files') as Promise<string[]>,
-  pickMusicDirectory: () =>
-    ipcRenderer.invoke('dialog:pick-music-directory') as Promise<string | null>,
-  scanMusicDirectory: (rootPath: string) =>
-    ipcRenderer.invoke('music:scan-directory', rootPath) as Promise<string[]>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,
@@ -177,10 +172,19 @@ const desktopApi = {
     ipcRenderer.invoke('project:list-root', rootPath) as Promise<
       Array<{ name: string; path: string; kind: 'file' | 'folder' }>
     >,
+  validateProjectRoots: (rootPaths: string[]) =>
+    ipcRenderer.invoke('project:validate-roots', rootPaths) as Promise<
+      Array<{ rootPath: string; resolvedPath: string; exists: boolean }>
+    >,
   searchProjectFiles: (rootPath: string, query: string) =>
     ipcRenderer.invoke('project:search-files', rootPath, query) as Promise<
       Array<{ name: string; path: string; relativePath: string; kind: 'file' | 'folder' }>
     >,
+  saveTeamWorkflow: (input: { projectDir?: string; workflowId: string; yaml: string }) =>
+    ipcRenderer.invoke('team-workflow:save', input) as Promise<{
+      path: string;
+      scope: 'project' | 'global';
+    }>,
   gitInfo: (rootPath: string) =>
     ipcRenderer.invoke('project:git-info', rootPath) as Promise<{
       branch: string;
@@ -308,6 +312,10 @@ const desktopApi = {
   },
   openPath: (targetPath: string) =>
     ipcRenderer.invoke('shell:open-path', targetPath) as Promise<string>,
+  openFileInCardbush: (targetPath: string) =>
+    ipcRenderer.invoke('shell:open-file-in-cardbush', targetPath) as Promise<string>,
+  showFileContextMenu: (targetPath: string) =>
+    ipcRenderer.invoke('shell:file-context-menu', targetPath) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   openExternal: (targetUrl: string) =>

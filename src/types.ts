@@ -87,6 +87,8 @@ export interface BackendCapabilities {
   sessions: boolean;
   skills: boolean;
   interactions: boolean;
+  interactiveRequests: boolean;
+  permissionRequests: boolean;
   turnStop: boolean;
   runtimeInspection: boolean;
   maintenanceConversationHistoryClear: boolean;
@@ -102,17 +104,24 @@ export interface BackendCapabilities {
   terminal: boolean;
   resources: boolean;
   settingsSync: boolean;
-  localMusicLibrary: boolean;
   mcpServers: boolean;
   subagents: boolean;
   subagentFrontendConfiguration: boolean;
-  subagentLocalDefault: boolean;
   remoteAgentsViaMcp: boolean;
   teamMode: boolean;
   teamAgentFlow: boolean;
   teamFlowState: boolean;
   teamFlowActions: boolean;
   teamFlowEvents: boolean;
+  teamWorkflows: boolean;
+  workflowRuntime: boolean;
+  shadowConversationActivation: boolean;
+  contextWindowUsage: boolean;
+  capabilityDiscovery: boolean;
+  workspaceChanges: boolean;
+  sessionContextSearch: boolean;
+  sessionActivityOrdering: boolean;
+  agentVisualScenes: boolean;
   browserCookiePersistence: boolean;
   browserPrivacyMode: boolean;
   browserApiCandidates: boolean;
@@ -120,12 +129,47 @@ export interface BackendCapabilities {
   osMode: boolean;
   desktopAutomation: boolean;
   taskPlan: boolean;
+  reasoningStream: boolean;
   reasoningLevelSelection: boolean;
   reasoningLevels: ReasoningLevel[];
   defaultReasoningLevel: ReasoningLevel;
   terminalRuntimeSelection: boolean;
   terminalRuntimes: TerminalRuntime[];
   defaultTerminalRuntime: TerminalRuntime;
+}
+
+export interface RuntimeContextWindowUsage {
+  sessionId: string;
+  turnId: string;
+  model: string;
+  usedTokens?: number;
+  maxTokens?: number;
+  remainingTokens?: number;
+  usageRatio?: number;
+  measuredAt: string;
+  source: string;
+  raw: Record<string, unknown>;
+}
+
+export interface CapabilityCandidate {
+  name: string;
+  type: 'skill' | 'tool';
+  description: string;
+  score?: number;
+  path?: string;
+  matchedFields: string[];
+}
+
+export interface CapabilityCandidatesUpdate {
+  protocol: string;
+  sessionId: string;
+  turnId: string;
+  authority: string;
+  selection: string;
+  skills: CapabilityCandidate[];
+  tools: CapabilityCandidate[];
+  timestamp: string;
+  raw: Record<string, unknown>;
 }
 
 export interface ManagedModelConfig {
@@ -199,6 +243,29 @@ export interface BrowserSettings {
   privacyMode: boolean;
 }
 
+export interface ShadowUiSettings {
+  accentColor: string;
+}
+
+export interface ThinkingUiSettings {
+  visible: boolean;
+  accentColor: string;
+}
+
+export interface ThinkingStreamEvent {
+  id: string;
+  channel: 'reasoning';
+  turnId: string;
+  generationId: string;
+  phase: 'start' | 'delta' | 'end';
+  loopIndex?: number;
+  attemptIndex?: number;
+  delta: string;
+  content: string;
+  preview: string;
+  createdAt: string;
+}
+
 export interface CardlingDesktopState {
   enabled: boolean;
   language: AppLanguage;
@@ -230,6 +297,8 @@ export type CardlingDesktopAction =
 export interface AppSettingsState {
   proxy: ProxySettings;
   browser: BrowserSettings;
+  shadow: ShadowUiSettings;
+  thinking: ThinkingUiSettings;
   terminal: TerminalSettings;
   os: OsSettings;
   backendAuth: BackendAuthSettings;
@@ -570,20 +639,6 @@ export interface SkillDetail extends SkillSummary {
 }
 
 export type SubagentValidationStatus = 'valid' | 'invalid' | 'disabled';
-export type SubagentValidationSeverity = 'error' | 'warning';
-
-export interface SubagentValidationErrorItem {
-  field: string;
-  message: string;
-  severity: SubagentValidationSeverity;
-}
-
-export interface SubagentValidationResult {
-  ok: boolean;
-  errors: SubagentValidationErrorItem[];
-  effectiveConfig: Record<string, unknown>;
-}
-
 export interface SubagentListItem {
   id: string;
   name: string;
@@ -597,31 +652,6 @@ export interface SubagentListItem {
   lastLoadedAt?: string;
   validationStatus: SubagentValidationStatus;
   error?: string;
-}
-
-export interface SubagentDetail extends SubagentListItem {
-  systemPrompt: string;
-  instruction: string;
-  tools: string[];
-  toolProfile?: string;
-  skills: string[];
-  model?: string;
-  provider?: string;
-  baseUrl?: string;
-  inheritsGlobalModel: boolean;
-  permissionPolicy: Record<string, unknown>;
-  routing: Record<string, unknown>;
-  concurrencyLimit?: number;
-  timeoutSeconds?: number;
-  workdirPolicy: Record<string, unknown>;
-  rawConfig: Record<string, unknown>;
-}
-
-export interface SubagentTemplate {
-  id: string;
-  name: string;
-  description: string;
-  rawConfig: Record<string, unknown>;
 }
 
 export interface SubagentCapabilities {
@@ -667,12 +697,6 @@ export interface SubagentRuntimeResult {
   items: SubagentRuntimeItem[];
   usage: Record<string, unknown>;
   supervisor?: SubagentSupervisorSnapshot;
-}
-
-export interface SubagentUsageResult {
-  byAgent: Record<string, Record<string, unknown>>;
-  totals: Record<string, unknown>;
-  recent: Array<Record<string, unknown>>;
 }
 
 export interface AutomationTask {

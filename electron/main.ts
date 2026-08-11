@@ -21,19 +21,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { inspectProjectRoots } from './projectRoots';
+
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
-const musicFileExtensions = new Set([
-  '.mp3',
-  '.m4a',
-  '.aac',
-  '.wav',
-  '.ogg',
-  '.oga',
-  '.opus',
-  '.flac',
-  '.webm',
-]);
 const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png'];
 const cardlingExpandedSize = { width: 380, height: 468 };
 const cardlingCollapsedHitSize = { width: 104, height: 104 };
@@ -65,6 +56,12 @@ const projectFileSearchMaxDepth = 3;
 const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
+const previewableFileExtensions = new Set([
+  '.c', '.cc', '.cpp', '.css', '.csv', '.gif', '.go', '.h', '.hpp', '.htm',
+  '.html', '.java', '.jpeg', '.jpg', '.js', '.json', '.jsx', '.log', '.md',
+  '.pdf', '.png', '.py', '.rs', '.scss', '.svg', '.toml', '.ts', '.tsx',
+  '.txt', '.webp', '.xhtml', '.xml', '.yaml', '.yml',
+]);
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -500,7 +497,7 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
       externalTarget: localhostUrl.toString(),
     };
   }
-  const localPath = previewHtmlPath(trimmed);
+  const localPath = previewLocalFilePath(trimmed);
   if (!localPath) {
     return null;
   }
@@ -527,6 +524,34 @@ function previewHtmlPath(value: string) {
     const resolved = resolvePreviewHtmlPath(candidate);
     if (resolved) {
       return resolved;
+    }
+  }
+  return '';
+}
+
+function previewLocalFilePath(value: string) {
+  const normalized = normalizeShellPath(value);
+  const candidates = path.isAbsolute(normalized)
+    ? [normalized]
+    : [path.resolve(process.cwd(), normalized)];
+  for (const candidate of candidates) {
+    try {
+      const stats = fs.statSync(candidate);
+      if (stats.isDirectory()) {
+        const htmlPath = resolvePreviewHtmlPath(candidate);
+        if (htmlPath) {
+          return htmlPath;
+        }
+        continue;
+      }
+      if (
+        stats.isFile() &&
+        previewableFileExtensions.has(path.extname(candidate).toLowerCase())
+      ) {
+        return candidate;
+      }
+    } catch {
+      // Ignore paths that disappeared between rendering and opening.
     }
   }
   return '';
@@ -575,6 +600,23 @@ async function openTargetExternally(value: string, previewTarget?: UiPreviewTarg
     }
   }
   await shell.openExternal(value);
+}
+
+function openFileWithChooser(targetPath: string) {
+  if (process.platform !== 'win32') {
+    void shell.openPath(targetPath);
+    return;
+  }
+  const child = spawn(
+    'rundll32.exe',
+    ['shell32.dll,OpenAs_RunDLL', targetPath],
+    {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    },
+  );
+  child.unref();
 }
 
 function createCardlingWindow() {
@@ -638,15 +680,15 @@ function createCardlingWindow() {
 function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling') {
   if (devServerUrl) {
     const url = new URL(devServerUrl);
-    if (mode === 'cardling') {
-      url.searchParams.set('window', 'cardling');
+    if (mode !== 'main') {
+      url.searchParams.set('window', mode);
     }
     target.loadURL(url.toString());
     return;
   }
   const indexPath = path.join(__dirname, '../dist/index.html');
-  if (mode === 'cardling') {
-    target.loadFile(indexPath, { query: { window: 'cardling' } });
+  if (mode !== 'main') {
+    target.loadFile(indexPath, { query: { window: mode } });
     return;
   }
   target.loadFile(indexPath);
@@ -1323,32 +1365,6 @@ ipcMain.handle('dialog:pick-attachments', async () => {
   return result.canceled ? [] : result.filePaths;
 });
 
-ipcMain.handle('dialog:pick-music-files', async () => {
-  const options: OpenDialogOptions = {
-    title: 'Choose music',
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      { name: 'Audio', extensions: Array.from(musicFileExtensions, (item) => item.slice(1)) },
-      { name: 'All files', extensions: ['*'] },
-    ],
-  };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled ? [] : result.filePaths.filter(isMusicPath);
-});
-
-ipcMain.handle('dialog:pick-music-directory', async () => {
-  const options: OpenDialogOptions = {
-    title: 'Choose music folder',
-    properties: ['openDirectory'],
-  };
-  const result = mainWindow
-    ? await dialog.showOpenDialog(mainWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled ? null : result.filePaths[0] ?? null;
-});
-
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
     title: 'Open project',
@@ -1394,17 +1410,46 @@ ipcMain.handle('dialog:cache-background-image', async (_, targetPath: string) =>
   return cacheBackgroundImage(String(targetPath ?? ''));
 });
 
-ipcMain.handle('music:scan-directory', async (_, rootPath: string) => {
-  return scanMusicDirectory(String(rootPath ?? ''));
-});
-
 ipcMain.handle('project:list-root', (_, rootPath: string) => {
   return listProjectRoot(rootPath);
+});
+
+ipcMain.handle('project:validate-roots', (_, rootPaths: string[]) => {
+  return inspectProjectRoots(Array.isArray(rootPaths) ? rootPaths : []);
 });
 
 ipcMain.handle('project:search-files', (_, rootPath: string, query: string) => {
   return searchProjectFiles(rootPath, query);
 });
+
+ipcMain.handle(
+  'team-workflow:save',
+  (_, input: { projectDir?: string; workflowId?: string; yaml?: string }) => {
+    const workflowId = String(input?.workflowId ?? '').trim().toLowerCase();
+    const yaml = String(input?.yaml ?? '');
+    if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(workflowId)) {
+      throw new Error('Workflow id must contain only letters, numbers, hyphens, or underscores.');
+    }
+    if (!yaml.trim() || yaml.length > 2_000_000) {
+      throw new Error('Workflow YAML is empty or too large.');
+    }
+    const requestedProjectDir = String(input?.projectDir ?? '').trim();
+    const projectDir = requestedProjectDir ? path.resolve(requestedProjectDir) : '';
+    if (projectDir && (!fs.existsSync(projectDir) || !fs.statSync(projectDir).isDirectory())) {
+      throw new Error('Project directory does not exist.');
+    }
+    const workflowDir = projectDir
+      ? path.join(projectDir, '.bush', 'workflows')
+      : path.join(app.getPath('userData'), 'workflows');
+    fs.mkdirSync(workflowDir, { recursive: true });
+    const filePath = path.join(workflowDir, `${workflowId}.yaml`);
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+    fs.writeFileSync(temporaryPath, yaml, 'utf8');
+    if (fs.existsSync(filePath)) fs.rmSync(filePath);
+    fs.renameSync(temporaryPath, filePath);
+    return { path: filePath, scope: projectDir ? 'project' : 'global' };
+  },
+);
 
 ipcMain.handle('project:git-info', (_, rootPath: string) => {
   return readGitInfo(rootPath);
@@ -1589,6 +1634,51 @@ ipcMain.handle('shell:open-path', (event, targetPath: string) => {
     return 'Invalid path.';
   }
   return shell.openPath(normalizedPath);
+});
+
+ipcMain.handle('shell:open-file-in-cardbush', async (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!sourceWindow || sourceWindow !== mainWindow) {
+    return 'File preview is only available from the main CardBush window.';
+  }
+  const normalizedPath = normalizeShellPath(targetPath);
+  if (!normalizedPath || !fs.existsSync(normalizedPath)) {
+    return 'File does not exist.';
+  }
+  await openUiPreview(normalizedPath);
+  return '';
+});
+
+ipcMain.handle('shell:file-context-menu', (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!sourceWindow || sourceWindow !== mainWindow) {
+    return 'File menu is only available from the main CardBush window.';
+  }
+  const normalizedPath = normalizeShellPath(targetPath);
+  if (!normalizedPath || !fs.existsSync(normalizedPath)) {
+    return 'File does not exist.';
+  }
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '在 CardBush 中打开',
+      click: () => void openUiPreview(normalizedPath),
+    },
+    {
+      label: '打开方式...',
+      click: () => openFileWithChooser(normalizedPath),
+    },
+    { type: 'separator' },
+    {
+      label: '跳转到文件位置',
+      click: () => shell.showItemInFolder(normalizedPath),
+    },
+    {
+      label: '复制路径',
+      click: () => clipboard.writeText(normalizedPath),
+    },
+  ]);
+  menu.popup({ window: sourceWindow });
+  return '';
 });
 
 ipcMain.handle('shell:open-external', (event, targetUrl: string) => {
@@ -1882,49 +1972,6 @@ function contentTypeForBytes(bytes: Uint8Array) {
     return 'image/webp';
   }
   return 'application/octet-stream';
-}
-
-function isMusicPath(filePath: string) {
-  return musicFileExtensions.has(path.extname(filePath).toLowerCase());
-}
-
-async function scanMusicDirectory(rootPath: string) {
-  const normalizedRoot = normalizeShellPath(rootPath);
-  if (!normalizedRoot) {
-    return [];
-  }
-  const stats = await fs.promises.stat(normalizedRoot);
-  if (!stats.isDirectory()) {
-    return [];
-  }
-  const results: string[] = [];
-  const stack = [normalizedRoot];
-  while (stack.length > 0 && results.length < 3000) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-    let entries: fs.Dirent[];
-    try {
-      entries = await fs.promises.readdir(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const nextPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(nextPath);
-        continue;
-      }
-      if (entry.isFile() && isMusicPath(nextPath)) {
-        results.push(nextPath);
-        if (results.length >= 3000) {
-          break;
-        }
-      }
-    }
-  }
-  return results.sort((left, right) => path.basename(left).localeCompare(path.basename(right)));
 }
 
 async function cacheBackgroundImage(sourcePath: string) {

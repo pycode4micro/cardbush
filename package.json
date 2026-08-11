@@ -15,6 +15,9 @@
     "test:markdown": "node scripts/test-markdown-format.mjs",
     "test:skill-selection": "node scripts/test-skill-selection-metadata.mjs",
     "test:task-plan": "node scripts/test-task-plan-contract.mjs",
+    "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
+    "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
+    "test:project-roots": "node scripts/test-project-root-contract.mjs",
     "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
   },

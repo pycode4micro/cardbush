@@ -7,11 +7,14 @@ import { CardlingWindow } from './CardlingWindow';
 import './styles/theme.css';
 import './styles/app.css';
 
-const isCardlingWindow =
-  new URLSearchParams(window.location.search).get('window') === 'cardling';
+const rendererWindow = new URLSearchParams(window.location.search).get('window');
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isCardlingWindow ? <CardlingWindow /> : <App />}
+    {rendererWindow === 'cardling' ? (
+      <CardlingWindow />
+    ) : (
+      <App />
+    )}
   </React.StrictMode>,
 );

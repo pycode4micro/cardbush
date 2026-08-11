@@ -49,6 +49,7 @@ import {
   fetchBotServiceLogs,
   fetchBotStatus,
   fetchMcpServers,
+  fetchRuntimeToolInventory,
   fetchWeixinLoginStatus,
   llmEndpoint,
   saveBotConfig,
@@ -58,6 +59,7 @@ import {
   validateMcpServerConfig,
   type MaintenanceClearResult,
   type McpServerConfigInput,
+  type RuntimeToolInventory,
 } from '../backend/api';
 import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { BotPlatformIcon } from '../components/BotPlatformIcon';
@@ -134,7 +136,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot links' },
-  subagents: { zh: '子任务状态', en: 'Subagent status' },
+  subagents: { zh: '子任务运行态', en: 'Task runtime' },
   mcp: { zh: 'MCP 服务器', en: 'MCP servers' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
@@ -269,6 +271,11 @@ export function SettingsView({
   const [maxContextTokens, setMaxContextTokens] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
+  const [runtimeToolInventory, setRuntimeToolInventory] =
+    useState<RuntimeToolInventory | null>(null);
+  const [runtimeToolInventoryLoading, setRuntimeToolInventoryLoading] =
+    useState(false);
+  const [runtimeToolInventoryError, setRuntimeToolInventoryError] = useState('');
   const providerOptions = useMemo(
     () => collectProviderOptions(settings.managedModelConfigs),
     [settings.managedModelConfigs],
@@ -283,6 +290,24 @@ export function SettingsView({
       setProviderSelection(providerOptions[0] ?? suggestedProviders[0]);
     }
   }, [providerOptions, providerSelection]);
+
+  const refreshRuntimeToolInventory = useCallback(async () => {
+    setRuntimeToolInventoryLoading(true);
+    setRuntimeToolInventoryError('');
+    try {
+      setRuntimeToolInventory(await fetchRuntimeToolInventory());
+    } catch (caught) {
+      setRuntimeToolInventoryError(errorMessage(caught));
+    } finally {
+      setRuntimeToolInventoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (section === 'runtime' && runtimeToolInventory === null) {
+      void refreshRuntimeToolInventory();
+    }
+  }, [refreshRuntimeToolInventory, runtimeToolInventory, section]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -492,6 +517,7 @@ export function SettingsView({
           languageMode={languageMode}
           systemLanguage={systemLanguage}
           settings={settings}
+          reasoningStreamAvailable={backendCapabilities.reasoningStream}
           backgroundImageSource={backgroundImageSource}
           onThemePreferenceChange={onThemePreferenceChange}
           onLightThemeStyleChange={onLightThemeStyleChange}
@@ -506,101 +532,110 @@ export function SettingsView({
     }
     if (section === 'runtime') {
       return (
-        <SettingsCard
-          title={language === 'zh' ? '运行环境' : 'Runtime environment'}
-          subtitle={
-            language === 'zh'
-              ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给 BushServer。'
-              : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to BushServer with chat requests.'
-          }
-        >
-          <SettingsRadio
-            name="terminal-runtime"
-            value="powershell"
-            title="PowerShell"
+        <div className="settings-stack">
+          <SettingsCard
+            title={language === 'zh' ? '运行环境' : 'Runtime environment'}
             subtitle={
               language === 'zh'
-                ? '默认 Windows 终端环境，适合 npm、Electron、PowerShell 脚本和本机路径。'
-                : 'Default Windows terminal runtime for npm, Electron, PowerShell scripts, and local Windows paths.'
+                ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给 BushServer。'
+                : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to BushServer with chat requests.'
             }
-            checked={settings.terminal.runtime === 'powershell'}
-            onChange={() =>
-              updateSettings((current) => ({
-                ...current,
-                terminal: {
-                  ...current.terminal,
-                  runtime: 'powershell',
-                },
-              }))
-            }
+          >
+            <SettingsRadio
+              name="terminal-runtime"
+              value="powershell"
+              title="PowerShell"
+              subtitle={
+                language === 'zh'
+                  ? '默认 Windows 终端环境，适合 npm、Electron、PowerShell 脚本和本机路径。'
+                  : 'Default Windows terminal runtime for npm, Electron, PowerShell scripts, and local Windows paths.'
+              }
+              checked={settings.terminal.runtime === 'powershell'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  terminal: {
+                    ...current.terminal,
+                    runtime: 'powershell',
+                  },
+                }))
+              }
+            />
+            {backendCapabilities.terminalRuntimes.includes('wsl') && (
+              <SettingsRadio
+                name="terminal-runtime"
+                value="wsl"
+                title="WSL"
+                subtitle={
+                  language === 'zh'
+                    ? '使用 Windows Subsystem for Linux 执行命令；需要本机已安装并配置 WSL。'
+                    : 'Run commands through Windows Subsystem for Linux. Requires WSL to be installed and configured.'
+                }
+                checked={settings.terminal.runtime === 'wsl'}
+                onChange={() =>
+                  updateSettings((current) => ({
+                    ...current,
+                    terminal: {
+                      ...current.terminal,
+                      runtime: 'wsl',
+                    },
+                  }))
+                }
+              />
+            )}
+            {backendCapabilities.terminalRuntimes.includes('git_bash') && (
+              <SettingsRadio
+                name="terminal-runtime"
+                value="git_bash"
+                title="Git Bash"
+                subtitle={
+                  language === 'zh'
+                    ? '使用 Git for Windows 自带的 Bash，适合 Unix 命令和 Windows 项目路径。'
+                    : 'Use Git for Windows Bash for Unix-style commands and Windows project paths.'
+                }
+                checked={settings.terminal.runtime === 'git_bash'}
+                onChange={() =>
+                  updateSettings((current) => ({
+                    ...current,
+                    terminal: {
+                      ...current.terminal,
+                      runtime: 'git_bash',
+                    },
+                  }))
+                }
+              />
+            )}
+            {backendCapabilities.terminalRuntimes.includes('bash') && (
+              <SettingsRadio
+                name="terminal-runtime"
+                value="bash"
+                title="Bash"
+                subtitle={
+                  language === 'zh'
+                    ? '使用系统原生 Bash。'
+                    : 'Use the system-native Bash runtime.'
+                }
+                checked={settings.terminal.runtime === 'bash'}
+                onChange={() =>
+                  updateSettings((current) => ({
+                    ...current,
+                    terminal: {
+                      ...current.terminal,
+                      runtime: 'bash',
+                    },
+                  }))
+                }
+              />
+            )}
+          </SettingsCard>
+          <RuntimeToolInventoryCard
+            language={language}
+            inventory={runtimeToolInventory}
+            loading={runtimeToolInventoryLoading}
+            error={runtimeToolInventoryError}
+            onRefresh={refreshRuntimeToolInventory}
           />
-          {backendCapabilities.terminalRuntimes.includes('wsl') && (
-            <SettingsRadio
-              name="terminal-runtime"
-              value="wsl"
-              title="WSL"
-              subtitle={
-                language === 'zh'
-                  ? '使用 Windows Subsystem for Linux 执行命令；需要本机已安装并配置 WSL。'
-                  : 'Run commands through Windows Subsystem for Linux. Requires WSL to be installed and configured.'
-              }
-              checked={settings.terminal.runtime === 'wsl'}
-              onChange={() =>
-                updateSettings((current) => ({
-                  ...current,
-                  terminal: {
-                    ...current.terminal,
-                    runtime: 'wsl',
-                  },
-                }))
-              }
-            />
-          )}
-          {backendCapabilities.terminalRuntimes.includes('git_bash') && (
-            <SettingsRadio
-              name="terminal-runtime"
-              value="git_bash"
-              title="Git Bash"
-              subtitle={
-                language === 'zh'
-                  ? '使用 Git for Windows 自带的 Bash，适合 Unix 命令和 Windows 项目路径。'
-                  : 'Use Git for Windows Bash for Unix-style commands and Windows project paths.'
-              }
-              checked={settings.terminal.runtime === 'git_bash'}
-              onChange={() =>
-                updateSettings((current) => ({
-                  ...current,
-                  terminal: {
-                    ...current.terminal,
-                    runtime: 'git_bash',
-                  },
-                }))
-              }
-            />
-          )}
-          {backendCapabilities.terminalRuntimes.includes('bash') && (
-            <SettingsRadio
-              name="terminal-runtime"
-              value="bash"
-              title="Bash"
-              subtitle={
-                language === 'zh'
-                  ? '使用系统原生 Bash。'
-                  : 'Use the system-native Bash runtime.'
-              }
-              checked={settings.terminal.runtime === 'bash'}
-              onChange={() =>
-                updateSettings((current) => ({
-                  ...current,
-                  terminal: {
-                    ...current.terminal,
-                    runtime: 'bash',
-                  },
-                }))
-              }
-            />
-          )}
-        </SettingsCard>
+        </div>
       );
     }
     if (section === 'os') {
@@ -966,6 +1001,7 @@ function SettingsProfilePanel({
   languageMode,
   systemLanguage,
   settings,
+  reasoningStreamAvailable,
   backgroundImageSource,
   onThemePreferenceChange,
   onLightThemeStyleChange,
@@ -982,6 +1018,7 @@ function SettingsProfilePanel({
   languageMode: AppLanguageMode;
   systemLanguage: AppLanguage;
   settings: AppSettingsState;
+  reasoningStreamAvailable: boolean;
   backgroundImageSource: string;
   onThemePreferenceChange: (value: ThemePreference) => void;
   onLightThemeStyleChange: (value: LightThemeStyle) => void;
@@ -1080,6 +1117,72 @@ function SettingsProfilePanel({
           {language === 'zh' ? '清除背景' : 'Clear background'}
         </button>
       </div>
+      <SettingsDivider />
+      <SettingsGroupTitle>
+        {language === 'zh' ? 'Shadow 消息' : 'Shadow messages'}
+      </SettingsGroupTitle>
+      <div className="shadow-color-setting">
+        <label>
+          <input
+            type="color"
+            value={settings.shadow.accentColor}
+            onChange={(event) => {
+              const accentColor = event.currentTarget.value;
+              onSettingsChange((current) => ({
+                ...current,
+                shadow: { ...current.shadow, accentColor },
+              }));
+            }}
+          />
+          <span>
+            <strong>{language === 'zh' ? '提示颜色' : 'Accent color'}</strong>
+            <small>{settings.shadow.accentColor}</small>
+          </span>
+        </label>
+      </div>
+      {reasoningStreamAvailable && (
+        <>
+          <SettingsDivider />
+          <SettingsGroupTitle>
+            {language === 'zh' ? '思考过程' : 'Thinking'}
+          </SettingsGroupTitle>
+          <SettingsSwitch
+            title={language === 'zh' ? '显示思考过程' : 'Show thinking'}
+            subtitle={
+              language === 'zh'
+                ? '仅在运行中的输入框上沿显示，不写入主对话。'
+                : 'Show it only above the composer during a loop, never in the conversation.'
+            }
+            checked={settings.thinking.visible}
+            onChange={(visible) => {
+              onSettingsChange((current) => ({
+                ...current,
+                thinking: { ...current.thinking, visible },
+              }));
+            }}
+          />
+          <div className={`shadow-color-setting${settings.thinking.visible ? '' : ' disabled'}`}>
+            <label>
+              <input
+                type="color"
+                value={settings.thinking.accentColor}
+                disabled={!settings.thinking.visible}
+                onChange={(event) => {
+                  const accentColor = event.currentTarget.value;
+                  onSettingsChange((current) => ({
+                    ...current,
+                    thinking: { ...current.thinking, accentColor },
+                  }));
+                }}
+              />
+              <span>
+                <strong>{language === 'zh' ? '思考颜色' : 'Thinking color'}</strong>
+                <small>{settings.thinking.accentColor}</small>
+              </span>
+            </label>
+          </div>
+        </>
+      )}
       <SettingsDivider />
       <SettingsGroupTitle>
         {language === 'zh' ? '应用语言' : 'App language'}
@@ -3472,6 +3575,156 @@ function SettingsCard({
       </div>
       {children}
     </section>
+  );
+}
+
+function RuntimeToolInventoryCard({
+  language,
+  inventory,
+  loading,
+  error,
+  onRefresh,
+}: {
+  language: AppLanguage;
+  inventory: RuntimeToolInventory | null;
+  loading: boolean;
+  error: string;
+  onRefresh: () => Promise<void>;
+}) {
+  const visibleNames = inventory?.modelVisibleThisTurn.length
+    ? inventory.modelVisibleThisTurn
+    : inventory?.modelVisibleDefault ?? [];
+  const visibleTitle = inventory?.modelVisibleThisTurn.length
+    ? language === 'zh'
+      ? '最近请求真实可见'
+      : 'Visible in latest request'
+    : language === 'zh'
+      ? '默认可见候选'
+      : 'Default visible candidates';
+  return (
+    <SettingsCard
+      title={language === 'zh' ? 'Agent 工具面' : 'Agent tool surface'}
+      subtitle={
+        language === 'zh'
+          ? '由 BushServer 的工具注册表和最近一次 provider 请求快照生成；前端不维护工具白名单。'
+          : 'Projected from the BushServer tool registry and latest provider request snapshot; the frontend keeps no tool allowlist.'
+      }
+    >
+      <div className="runtime-tool-inventory-head">
+        <span>
+          {inventory
+            ? language === 'zh'
+              ? `已安装 ${inventory.installed.length} · Runtime 已加载 ${inventory.tools.length}`
+              : `${inventory.installed.length} installed · ${inventory.tools.length} runtime loaded`
+            : language === 'zh'
+              ? '等待读取 BushServer 工具清单'
+              : 'Waiting for the BushServer tool inventory'}
+        </span>
+        <button
+          className="secondary-button"
+          type="button"
+          disabled={loading}
+          onClick={() => void onRefresh()}
+        >
+          {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+          {language === 'zh' ? '刷新' : 'Refresh'}
+        </button>
+      </div>
+      {error && <div className="runtime-tool-inventory-error">{error}</div>}
+      {inventory && (
+        <div className="runtime-tool-inventory-groups">
+          <RuntimeToolNameGroup
+            title={visibleTitle}
+            names={visibleNames}
+            emptyText={language === 'zh' ? '没有可见工具快照' : 'No visible tool snapshot'}
+          />
+          <RuntimeToolNameGroup
+            title={language === 'zh' ? '按需发现插件' : 'Discoverable plugins'}
+            names={inventory.discoverablePlugins}
+            emptyText={language === 'zh' ? '无' : 'None'}
+          />
+          <RuntimeToolNameGroup
+            title={language === 'zh' ? '最近请求动态加入' : 'Added in latest request'}
+            names={inventory.turnAdded}
+            emptyText={
+              inventory.modelVisibleSource === 'none'
+                ? language === 'zh'
+                  ? '尚无 provider 快照'
+                  : 'No provider snapshot yet'
+                : language === 'zh'
+                  ? '无'
+                  : 'None'
+            }
+          />
+          <RuntimeToolNameGroup
+            title={language === 'zh' ? '本轮条件过滤' : 'Conditionally filtered'}
+            names={inventory.conditional.map((item) => item.name)}
+            emptyText={
+              inventory.modelVisibleSource === 'none'
+                ? language === 'zh'
+                  ? '尚无 provider 快照'
+                  : 'No provider snapshot yet'
+                : language === 'zh'
+                  ? '无'
+                  : 'None'
+            }
+          />
+          <RuntimeToolNameGroup
+            title={language === 'zh' ? '禁用工具' : 'Disabled tools'}
+            names={inventory.disabled}
+            emptyText={language === 'zh' ? '无' : 'None'}
+          />
+          <RuntimeToolNameGroup
+            title={language === 'zh' ? '内部 Guard 事件（不是工具）' : 'Internal guard events (not tools)'}
+            names={inventory.internalGuardEvents.map((item) => item.name)}
+            emptyText={language === 'zh' ? '无' : 'None'}
+            internal
+          />
+        </div>
+      )}
+      {inventory?.modelVisibleSnapshot && (
+        <div className="runtime-tool-inventory-source">
+          <span>{language === 'zh' ? '快照来源' : 'Snapshot source'}</span>
+          <code>
+            {inventory.modelVisibleSnapshot.provider || 'provider'} /{' '}
+            {inventory.modelVisibleSnapshot.model || 'model'} · loop{' '}
+            {inventory.modelVisibleSnapshot.loopIndex ?? '-'}
+          </code>
+        </div>
+      )}
+      {inventory && inventory.loadErrors.length > 0 && (
+        <div className="runtime-tool-inventory-error">
+          {language === 'zh'
+            ? `${inventory.loadErrors.length} 个工具包加载错误，详见后端日志。`
+            : `${inventory.loadErrors.length} tool package load errors; see backend logs.`}
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+function RuntimeToolNameGroup({
+  title,
+  names,
+  emptyText,
+  internal = false,
+}: {
+  title: string;
+  names: string[];
+  emptyText: string;
+  internal?: boolean;
+}) {
+  return (
+    <div className={`runtime-tool-group${internal ? ' internal' : ''}`}>
+      <strong>{title}</strong>
+      <div className="runtime-tool-chips">
+        {names.length > 0 ? (
+          names.map((name) => <code key={name}>{name}</code>)
+        ) : (
+          <span>{emptyText}</span>
+        )}
+      </div>
+    </div>
   );
 }
 

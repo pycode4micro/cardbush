@@ -9,16 +9,22 @@ import {
   fetchConversations,
   fetchMessages,
   fetchPendingInteraction,
+  fetchSessionContextWindowUsage,
+  fetchSessionWorkspaceChanges,
   fetchSkillDetail,
   fetchSkills,
   fetchSessionMessages,
   fetchTeamFlow,
+  isBushServerHttpError,
+  isPendingInteractionConflictError,
   replyInteraction,
   sendGuidance,
   sendTeamFlowAction,
   stopTurn,
   streamChat,
   updateConversation,
+  type SceneStreamEvent,
+  type TeamWorkflowStreamEvent,
 } from '../backend/api';
 import type {
   AssistantRevision,
@@ -33,6 +39,8 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
+  RuntimeContextWindowUsage,
+  CapabilityCandidatesUpdate,
   TerminalRuntime,
   TeamFlowActionType,
   TeamFlowActionOption,
@@ -64,9 +72,13 @@ export function useCardbushChat(
     teamModeEnabled?: boolean;
     osModeEnabled?: boolean;
     terminalRuntime?: TerminalRuntime;
+    reasoningTraceVisible?: boolean;
+    interactiveRequestsAvailable?: boolean;
     reasoningLevelSelection?: boolean;
     reasoningLevels?: ReasoningLevel[];
     defaultReasoningLevel?: ReasoningLevel;
+    contextWindowUsageAvailable?: boolean;
+    workspaceChangesAvailable?: boolean;
   } = {},
 ) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -89,6 +101,10 @@ export function useCardbushChat(
   const [teamFlowActionByConversation, setTeamFlowActionByConversation] = useState<
     Record<string, TeamFlowActionType | ''>
   >({});
+  const [contextWindowUsageByConversation, setContextWindowUsageByConversation] =
+    useState<Record<string, RuntimeContextWindowUsage>>({});
+  const [capabilityCandidatesByConversation, setCapabilityCandidatesByConversation] =
+    useState<Record<string, CapabilityCandidatesUpdate>>({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] =
@@ -282,6 +298,7 @@ export function useCardbushChat(
     const normalized = normalizeReferencePlanMode(mode);
     setReferencePlanModeState(normalized);
     window.localStorage.setItem('cardbush.reference_plan_mode', normalized);
+    window.localStorage.setItem('cardbush.reference_plan_mode_explicit', 'true');
   }, []);
 
   const setPermissionMode = useCallback((mode: PermissionMode) => {
@@ -318,18 +335,27 @@ export function useCardbushChat(
     async function loadMessages() {
       setMessagesLoading(true);
       try {
-        const result = await fetchSessionMessages(activeConversationId);
+        const [result, workspaceChanges] = await Promise.all([
+          fetchSessionMessages(activeConversationId),
+          requestContext.workspaceChangesAvailable === true
+            ? fetchSessionWorkspaceChanges(activeConversationId).catch(() => [])
+            : Promise.resolve([]),
+        ]);
         if (!cancelled) {
+          const loadedMessages = mergeWorkspaceChangeExecutions(
+            result.messages,
+            workspaceChanges,
+          );
           setMessagesByConversation((current) => ({
             ...current,
             [activeConversationId]: mergeLoadedMessagesPreservingLocalState(
               current[activeConversationId] ?? [],
-              result.messages,
+              loadedMessages,
             ),
           }));
           persistAutoConversationTitle(
             result.conversation,
-            firstUserTitleSource(result.messages, ''),
+            firstUserTitleSource(loadedMessages, ''),
           );
           if (result.conversation.projectDir || result.conversation.workspaceContext) {
             setConversations((current) =>
@@ -364,7 +390,12 @@ export function useCardbushChat(
     return () => {
       cancelled = true;
     };
-  }, [activeConversationId, messagesByConversation, persistAutoConversationTitle]);
+  }, [
+    activeConversationId,
+    messagesByConversation,
+    persistAutoConversationTitle,
+    requestContext.workspaceChangesAvailable,
+  ]);
 
   const activeConversation = useMemo(
     () =>
@@ -385,6 +416,40 @@ export function useCardbushChat(
   const activeTeamFlowAction = activeConversationId
     ? teamFlowActionByConversation[activeConversationId] ?? ''
     : '';
+  const activeContextWindowUsage = activeConversationId
+    ? contextWindowUsageByConversation[activeConversationId]
+    : undefined;
+  const activeCapabilityCandidates = activeConversationId
+    ? capabilityCandidatesByConversation[activeConversationId]
+    : undefined;
+
+  const mergeContextWindowUsage = useCallback(
+    (sessionId: string, usage: RuntimeContextWindowUsage) => {
+      const normalized = (usage.sessionId || sessionId).trim();
+      if (!normalized) {
+        return;
+      }
+      setContextWindowUsageByConversation((current) => ({
+        ...current,
+        [normalized]: { ...usage, sessionId: normalized },
+      }));
+    },
+    [],
+  );
+
+  const mergeCapabilityCandidates = useCallback(
+    (sessionId: string, update: CapabilityCandidatesUpdate) => {
+      const normalized = (update.sessionId || sessionId).trim();
+      if (!normalized) {
+        return;
+      }
+      setCapabilityCandidatesByConversation((current) => ({
+        ...current,
+        [normalized]: { ...update, sessionId: normalized },
+      }));
+    },
+    [],
+  );
 
   const markSessionRunning = useCallback((sessionId: string, turnId = '') => {
     const normalized = sessionId.trim();
@@ -515,18 +580,32 @@ export function useCardbushChat(
       setMessagesLoading(true);
     }
     try {
-      const result = await fetchSessionMessages(sessionId);
+      const [result, workspaceChanges] = await Promise.all([
+        fetchSessionMessages(sessionId),
+        requestContext.workspaceChangesAvailable === true
+          ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
+          : Promise.resolve([]),
+      ]);
+      const loadedMessages = mergeWorkspaceChangeExecutions(
+        result.messages,
+        workspaceChanges,
+      );
       setMessagesByConversation((current) => ({
         ...current,
         [sessionId]: mergeLoadedMessagesPreservingLocalState(
           current[sessionId] ?? [],
-          result.messages,
+          loadedMessages,
         ),
       }));
       persistAutoConversationTitle(
         result.conversation,
-        firstUserTitleSource(result.messages, ''),
+        firstUserTitleSource(loadedMessages, ''),
       );
+      if (requestContext.contextWindowUsageAvailable === true) {
+        await fetchSessionContextWindowUsage(sessionId)
+          .then((usage) => mergeContextWindowUsage(sessionId, usage))
+          .catch(() => undefined);
+      }
       await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
@@ -546,8 +625,27 @@ export function useCardbushChat(
   }, [
     activeConversationId,
     loadTeamFlow,
+    mergeContextWindowUsage,
     reloadConversations,
     persistAutoConversationTitle,
+    requestContext.contextWindowUsageAvailable,
+    requestContext.workspaceChangesAvailable,
+  ]);
+
+  useEffect(() => {
+    const sessionId = activeConversationId.trim();
+    if (!sessionId || requestContext.contextWindowUsageAvailable !== true) {
+      return;
+    }
+    const controller = new AbortController();
+    void fetchSessionContextWindowUsage(sessionId, controller.signal)
+      .then((usage) => mergeContextWindowUsage(sessionId, usage))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    activeConversationId,
+    mergeContextWindowUsage,
+    requestContext.contextWindowUsageAvailable,
   ]);
 
   const createSessionShareLink = useCallback(
@@ -562,6 +660,9 @@ export function useCardbushChat(
       setPendingInteraction(null);
       return;
     }
+    setPendingInteraction((current) =>
+      current?.sessionId === sessionId ? current : null,
+    );
     let cancelled = false;
     fetchPendingInteraction(sessionId)
       .then((interaction) => {
@@ -729,6 +830,11 @@ export function useCardbushChat(
       );
       persistAutoConversationTitle(conversation, titleSource);
       markSessionRunning(sessionId);
+      setCapabilityCandidatesByConversation((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
       setError(null);
       const controller = new AbortController();
       const streamBuffer = createAssistantStreamDeltaBuffer((delta) => {
@@ -753,6 +859,9 @@ export function useCardbushChat(
           referencePlanMode,
           permissionMode,
           reasoningLevel,
+          reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
+          interactiveRequestsEnabled:
+            requestContext.interactiveRequestsAvailable === true,
           standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
           browserPrivacyMode: requestContext.browserPrivacyMode === true,
           teamModeEnabled: requestContext.teamModeEnabled === true,
@@ -786,6 +895,12 @@ export function useCardbushChat(
                 appendToolExecution(current, sessionId, assistantId, execution),
               );
             });
+          },
+          onContextWindowUsage: (usage) => {
+            mergeContextWindowUsage(sessionId, usage);
+          },
+          onCapabilityCandidates: (update) => {
+            mergeCapabilityCandidates(sessionId, update);
           },
           onTaskPlanUpdate: (update) => {
             setMessagesByConversation((current) =>
@@ -834,6 +949,21 @@ export function useCardbushChat(
           onTeamFlowEvent: (event) => {
             mergeTeamFlowStreamEvent(sessionId, event);
           },
+          onThinking: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:thinking', {
+              detail: { ...event, sessionId },
+            }));
+          },
+          onWorkflowEvent: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
+              detail: { ...event, sessionId: event.sessionId || sessionId },
+            }));
+          },
+          onSceneEvent: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
+              detail: { ...event, sessionId: event.sessionId || sessionId },
+            }));
+          },
         });
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
@@ -852,6 +982,16 @@ export function useCardbushChat(
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (!controller.signal.aborted) {
+          if (isPendingInteractionConflictError(caught)) {
+            setMessagesByConversation((current) => ({
+              ...current,
+              [sessionId]: (current[sessionId] ?? []).filter(
+                (item) => item.id !== userMessage.id && item.id !== assistantId,
+              ),
+            }));
+            setError(null);
+            return;
+          }
           const turnId = activeTurnIdsRef.current[sessionId];
           const loadedMessages = await fetchMessages(sessionId).catch(() => null);
           if (loadedMessages && loadedMessages.length > 0) {
@@ -893,7 +1033,9 @@ export function useCardbushChat(
       isSessionSending,
       loadTeamFlow,
       markSessionRunning,
+      mergeCapabilityCandidates,
       mergeTeamFlowStreamEvent,
+      mergeContextWindowUsage,
       reloadConversations,
       managedModelConfigs,
       messagesByConversation,
@@ -901,7 +1043,9 @@ export function useCardbushChat(
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
+      requestContext.interactiveRequestsAvailable,
       requestContext.osModeEnabled,
+      requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.standardImageInputEnabled,
       requestContext.projectContexts,
@@ -941,11 +1085,16 @@ export function useCardbushChat(
           onDelta: (delta: string) => void;
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
+          onContextWindowUsage: (usage: RuntimeContextWindowUsage) => void;
+          onCapabilityCandidates: (update: CapabilityCandidatesUpdate) => void;
           onTaskPlanUpdate: (update: TaskPlanStreamUpdate) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
           onFinalAssistantText: (text: string) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
           onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
+          onThinking: (event: import('../types').ThinkingStreamEvent) => void;
+          onWorkflowEvent: (event: TeamWorkflowStreamEvent) => void;
+          onSceneEvent: (event: SceneStreamEvent) => void;
         },
       ) => Promise<void>;
     }) => {
@@ -962,6 +1111,11 @@ export function useCardbushChat(
       let finalSnapshotPromise: Promise<void> | null = null;
       controllersRef.current[sessionId] = controller;
       markSessionRunning(sessionId);
+      setCapabilityCandidatesByConversation((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
       setError(null);
       setMessagesByConversation((current) => ({
         ...current,
@@ -1007,6 +1161,12 @@ export function useCardbushChat(
                 appendToolExecution(current, sessionId, tempAssistant.id, execution),
               );
             });
+          },
+          onContextWindowUsage: (usage) => {
+            mergeContextWindowUsage(sessionId, usage);
+          },
+          onCapabilityCandidates: (update) => {
+            mergeCapabilityCandidates(sessionId, update);
           },
           onTaskPlanUpdate: (update) => {
             setMessagesByConversation((current) =>
@@ -1056,6 +1216,21 @@ export function useCardbushChat(
           onTeamFlowEvent: (event) => {
             mergeTeamFlowStreamEvent(sessionId, event);
           },
+          onThinking: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:thinking', {
+              detail: { ...event, sessionId },
+            }));
+          },
+          onWorkflowEvent: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
+              detail: { ...event, sessionId: event.sessionId || sessionId },
+            }));
+          },
+          onSceneEvent: (event) => {
+            window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
+              detail: { ...event, sessionId: event.sessionId || sessionId },
+            }));
+          },
         });
         if (finalSnapshotPromise) {
           await finalSnapshotPromise;
@@ -1074,8 +1249,10 @@ export function useCardbushChat(
         }
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !isPendingInteractionConflictError(caught)) {
           setError(errorMessage(caught));
+        } else if (isPendingInteractionConflictError(caught)) {
+          setError(null);
         }
         setMessagesByConversation((current) => ({
           ...current,
@@ -1094,6 +1271,8 @@ export function useCardbushChat(
       clearSessionRunning,
       loadTeamFlow,
       markSessionRunning,
+      mergeCapabilityCandidates,
+      mergeContextWindowUsage,
       mergeTeamFlowStreamEvent,
       reloadConversations,
     ],
@@ -1205,6 +1384,9 @@ export function useCardbushChat(
             referencePlanMode,
             permissionMode,
             reasoningLevel,
+            reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
+            interactiveRequestsEnabled:
+              requestContext.interactiveRequestsAvailable === true,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
@@ -1227,7 +1409,9 @@ export function useCardbushChat(
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
+      requestContext.interactiveRequestsAvailable,
       requestContext.osModeEnabled,
+      requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
@@ -1352,6 +1536,9 @@ export function useCardbushChat(
             referencePlanMode,
             permissionMode,
             reasoningLevel,
+            reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
+            interactiveRequestsEnabled:
+              requestContext.interactiveRequestsAvailable === true,
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
@@ -1376,7 +1563,9 @@ export function useCardbushChat(
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
+      requestContext.interactiveRequestsAvailable,
       requestContext.osModeEnabled,
+      requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
@@ -1420,6 +1609,8 @@ export function useCardbushChat(
           guidance: text,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
+          interactiveRequestsEnabled:
+            requestContext.interactiveRequestsAvailable === true,
         });
         setError(null);
       } catch (caught) {
@@ -1447,6 +1638,7 @@ export function useCardbushChat(
       isSessionSending,
       sendMessage,
       requestContext.terminalRuntime,
+      requestContext.interactiveRequestsAvailable,
     ],
   );
 
@@ -1474,6 +1666,8 @@ export function useCardbushChat(
           guidance: text,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
+          interactiveRequestsEnabled:
+            requestContext.interactiveRequestsAvailable === true,
         });
         removeQueuedMessage(queuedId);
         setError(null);
@@ -1481,7 +1675,13 @@ export function useCardbushChat(
         setError(`引导发送失败: ${errorMessage(caught)}`);
       }
     },
-    [activeConversationId, isSessionSending, removeQueuedMessage, requestContext.terminalRuntime],
+    [
+      activeConversationId,
+      isSessionSending,
+      removeQueuedMessage,
+      requestContext.interactiveRequestsAvailable,
+      requestContext.terminalRuntime,
+    ],
   );
 
   const submitTeamFlowAction = useCallback(
@@ -1532,32 +1732,103 @@ export function useCardbushChat(
       if (!interaction) {
         return;
       }
-      if (typeof reply === 'string') {
-        const text = reply.trim();
-        if (!text) {
+      try {
+        if (typeof reply === 'string') {
+          const text = reply.trim();
+          if (!text) {
+            return;
+          }
+          await replyInteraction({ interactionId: interaction.id, rawText: text });
+        } else {
+          if (reply.length === 0) {
+            return;
+          }
+          await replyInteraction({ interactionId: interaction.id, answers: reply });
+        }
+        setPendingInteraction(null);
+        setError(null);
+      } catch (caught) {
+        const sessionId =
+          interaction.sessionId?.trim() || activeConversationId.trim();
+        if (isBushServerHttpError(caught, 409)) {
+          const recovered = sessionId
+            ? await fetchPendingInteraction(sessionId).catch(() => null)
+            : null;
+          if (recovered) {
+            setPendingInteraction(recovered);
+          }
+          setError(null);
+          setNotice('当前会话正在等待权限确认。');
           return;
         }
-        await replyInteraction({ interactionId: interaction.id, rawText: text });
-      } else {
-        if (reply.length === 0) {
+        if (
+          isBushServerHttpError(caught, 404) ||
+          isBushServerHttpError(caught, 410)
+        ) {
+          const expired = isBushServerHttpError(caught, 410);
+          const recovered = sessionId
+            ? await fetchPendingInteraction(sessionId).catch(() => null)
+            : null;
+          setPendingInteraction(recovered);
+          setError(null);
+          setNotice(expired ? '权限申请已过期，未授予权限。' : '权限申请已不存在。');
           return;
         }
-        await replyInteraction({ interactionId: interaction.id, answers: reply });
+        if (isInteractionGoneError(caught)) {
+          setPendingInteraction(null);
+          setError(null);
+          return;
+        }
+        setError(errorMessage(caught));
       }
-      setPendingInteraction(null);
     },
-    [pendingInteraction],
+    [activeConversationId, pendingInteraction],
   );
 
   const cancelPendingInteraction = useCallback(async () => {
     const interaction = pendingInteraction;
-    setPendingInteraction(null);
-    if (interaction) {
-      await cancelInteraction(interaction.id).catch((caught) =>
-        setError(errorMessage(caught)),
-      );
+    if (!interaction) {
+      return;
     }
-  }, [pendingInteraction]);
+    try {
+      await cancelInteraction(interaction.id);
+      setPendingInteraction(null);
+      setError(null);
+    } catch (caught) {
+      const sessionId =
+        interaction.sessionId?.trim() || activeConversationId.trim();
+      if (isBushServerHttpError(caught, 409)) {
+        const recovered = sessionId
+          ? await fetchPendingInteraction(sessionId).catch(() => null)
+          : null;
+        if (recovered) {
+          setPendingInteraction(recovered);
+        }
+        setError(null);
+        setNotice('当前会话正在等待权限确认。');
+        return;
+      }
+      if (
+        isBushServerHttpError(caught, 404) ||
+        isBushServerHttpError(caught, 410)
+      ) {
+        const expired = isBushServerHttpError(caught, 410);
+        const recovered = sessionId
+          ? await fetchPendingInteraction(sessionId).catch(() => null)
+          : null;
+        setPendingInteraction(recovered);
+        setError(null);
+        setNotice(expired ? '权限申请已过期，未授予权限。' : '权限申请已不存在。');
+        return;
+      }
+      if (isInteractionGoneError(caught)) {
+        setPendingInteraction(null);
+        setError(null);
+        return;
+      }
+      setError(errorMessage(caught));
+    }
+  }, [activeConversationId, pendingInteraction]);
 
   const cancelSending = useCallback(async (conversationId?: string) => {
     const sessionId = (conversationId ?? activeConversationId).trim();
@@ -1591,6 +1862,8 @@ export function useCardbushChat(
     activeTeamFlow,
     activeTeamFlowLoading,
     activeTeamFlowAction,
+    activeContextWindowUsage,
+    activeCapabilityCandidates,
     queuedMessages: activeQueuedMessages,
     queuedMessageCount: activeQueuedMessages.length,
     queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
@@ -1639,8 +1912,11 @@ function readInitialSelectedModel(availableModels: string[]) {
 }
 
 function readInitialReferencePlanMode(): ReferencePlanMode {
+  if (window.localStorage.getItem('cardbush.reference_plan_mode_explicit') !== 'true') {
+    return 'auto';
+  }
   return normalizeReferencePlanMode(
-    window.localStorage.getItem('cardbush.reference_plan_mode') ?? 'off',
+    window.localStorage.getItem('cardbush.reference_plan_mode') ?? 'auto',
   );
 }
 
@@ -1662,7 +1938,7 @@ function readInitialReasoningLevel(
 }
 
 function normalizeReferencePlanMode(value: string): ReferencePlanMode {
-  return value.trim() === 'auto' ? 'auto' : 'off';
+  return value.trim() === 'off' ? 'off' : 'auto';
 }
 
 function normalizePermissionMode(value: string): PermissionMode {
@@ -2778,6 +3054,40 @@ function mergeLoadedMessagesPreservingLocalState(
   }));
 }
 
+function mergeWorkspaceChangeExecutions(
+  messages: ChatMessage[],
+  workspaceChanges: ChatToolExecution[],
+) {
+  if (workspaceChanges.length === 0) return messages;
+  const changesByTurn = new Map<string, ChatToolExecution[]>();
+  for (const execution of workspaceChanges) {
+    const metadata = execution.metadata ?? {};
+    const turnId = String(metadata.turn_id ?? metadata.turnId ?? '').trim();
+    if (!turnId) continue;
+    const current = changesByTurn.get(turnId) ?? [];
+    current.push(execution);
+    changesByTurn.set(turnId, current);
+  }
+  if (changesByTurn.size === 0) return messages;
+  return messages.map((message, index) => {
+    const turnId = message.turnId?.trim() ?? '';
+    const changes = changesByTurn.get(turnId);
+    if (!changes || message.role !== 'assistant') return message;
+    const laterAssistantInTurn = messages.slice(index + 1).some(
+      (candidate) => candidate.role === 'assistant'
+        && (candidate.turnId?.trim() ?? '') === turnId,
+    );
+    if (laterAssistantInTurn) return message;
+    return {
+      ...message,
+      toolExecutions: mergeToolExecutionLists(
+        changes,
+        message.toolExecutions ?? [],
+      ),
+    };
+  });
+}
+
 function preserveLocalAssistantTimingMetadata(
   message: ChatMessage,
   source: ChatMessage,
@@ -3776,6 +4086,12 @@ function mergeLayerNodeList(nodes: TeamFlowNode[], attached: TeamFlowNode[]) {
 
 function isNotFoundLikeError(error: unknown) {
   return /(^|\\s)(404|not found)(\\s|:|$)/i.test(errorMessage(error));
+}
+
+function isInteractionGoneError(error: unknown) {
+  return /BushServer error (404|410)\b|\b(404|410)\b.*(not found|gone)/i.test(
+    errorMessage(error),
+  );
 }
 
 function errorMessage(error: unknown) {

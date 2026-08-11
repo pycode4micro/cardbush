@@ -34,6 +34,8 @@ const LazyTeamPanel = lazy(async () => {
 export function FeatureContentPanel({
   language,
   section,
+  activeProjectDir,
+  workflowValidationAvailable,
   conversations,
   skills,
   disabledSkillNames,
@@ -45,6 +47,8 @@ export function FeatureContentPanel({
 }: {
   language: AppLanguage;
   section: AppSection;
+  activeProjectDir?: string;
+  workflowValidationAvailable: boolean;
   conversations: ConversationSummary[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
@@ -82,7 +86,11 @@ export function FeatureContentPanel({
   if (section === 'team') {
     return (
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <LazyTeamPanel language={language} />
+        <LazyTeamPanel
+          language={language}
+          activeProjectDir={activeProjectDir}
+          workflowValidationAvailable={workflowValidationAvailable}
+        />
       </Suspense>
     );
   }
