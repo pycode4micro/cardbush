@@ -261,6 +261,9 @@ declare global {
       openFileInCardbush: (targetPath: string) => Promise<string>;
       showFileContextMenu: (targetPath: string) => Promise<string>;
       openUiPreview: (target: string) => Promise<void>;
+      onOpenInspectorRequest: (
+        callback: (payload: { target: string; title?: string }) => void,
+      ) => () => void;
       openExternal: (targetUrl: string) => Promise<void>;
     };
   }

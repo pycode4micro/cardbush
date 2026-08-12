@@ -872,7 +872,16 @@ function CardbushApp() {
       setInspectorSummaryOpen(false);
     };
     window.addEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
-    return () => window.removeEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
+    const removeDesktopListener = window.cardbushDesktop?.onOpenInspectorRequest?.((detail) => {
+      if (!detail?.target?.trim()) return;
+      setInspectorTarget(detail);
+      setChangeReviewConversationId('');
+      setInspectorSummaryOpen(false);
+    });
+    return () => {
+      window.removeEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
+      removeDesktopListener?.();
+    };
   }, []);
 
   useEffect(() => {

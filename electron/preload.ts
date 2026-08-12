@@ -318,6 +318,16 @@ const desktopApi = {
     ipcRenderer.invoke('shell:file-context-menu', targetPath) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
+  onOpenInspectorRequest: (
+    callback: (payload: { target: string; title?: string }) => void,
+  ) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { target: string; title?: string },
+    ) => callback(payload);
+    ipcRenderer.on('shell:open-inspector', listener);
+    return () => ipcRenderer.removeListener('shell:open-inspector', listener);
+  },
   openExternal: (targetUrl: string) =>
     ipcRenderer.invoke('shell:open-external', targetUrl) as Promise<void>,
 };

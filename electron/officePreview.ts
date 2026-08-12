@@ -31,6 +31,8 @@ type SpreadsheetLayout = {
   merges: Array<{ startRow: number; startColumn: number; endRow: number; endColumn: number }>;
 };
 
+type OfficeApp = 'word' | 'excel' | 'powerpoint';
+
 export function isOfficePreviewPath(filePath: string) {
   return officePreviewExtensions.has(path.extname(filePath).toLowerCase());
 }
@@ -49,13 +51,13 @@ export async function renderOfficePreview(filePath: string) {
       return await renderXlsx(filePath, title);
     }
     if (extension === '.xls') {
-      return await renderLegacyBinary(filePath, title, '旧版 Excel 工作簿');
+      return await renderLegacyBinary(filePath, title, '旧版 Excel 工作簿', 'excel');
     }
     if (extension === '.pptx') {
       return await renderPptx(filePath, title);
     }
     if (extension === '.ppt') {
-      return await renderLegacyBinary(filePath, title, '旧版 PowerPoint 演示文稿');
+      return await renderLegacyBinary(filePath, title, '旧版 PowerPoint 演示文稿', 'powerpoint');
     }
     return officeDocumentShell(title, 'Office 文档', unsupportedDocumentBody());
   } catch (caught) {
@@ -116,7 +118,9 @@ function docxBootstrapScript(base64: string) {
           if (!page || !wrapper) return;
           const available = Math.max(260, container.clientWidth - 44);
           const scale = Math.max(0.42, Math.min(1, available / page.offsetWidth));
-          wrapper.style.setProperty('--docx-preview-scale', String(scale));
+          wrapper.dataset.fitScale = String(scale);
+          wrapper.style.zoom = String(scale);
+          globalThis.cardbushApplyOfficeZoom?.();
         };
         fitPages();
         new ResizeObserver(fitPages).observe(container);
@@ -144,6 +148,7 @@ async function renderLegacyDoc(filePath: string, title: string) {
     title,
     '旧版 Word 文档',
     sections || emptyDocumentBody('文档中没有可提取的文字。'),
+    { app: 'word' },
   );
 }
 
@@ -168,8 +173,8 @@ async function renderXlsx(filePath: string, title: string) {
     ));
   }
   const navigation = sheets.length > 1
-    ? `<nav class="sheet-navigation">${sheets.map((sheet, index) =>
-        `<a href="#sheet-${index + 1}">${escapeHtml(sheet.name)}</a>`,
+    ? `<nav class="sheet-navigation" role="tablist" aria-label="工作表">${sheets.map((sheet, index) =>
+        `<button type="button" role="tab" data-sheet-index="${index}" aria-selected="${index === 0}" class="${index === 0 ? 'active' : ''}">${escapeHtml(sheet.name)}</button>`,
       ).join('')}</nav>`
     : '';
   return officeDocumentShell(
@@ -308,7 +313,7 @@ function renderWorksheet(
         return `<tr${rowStyle ? ` style="${rowStyle}"` : ''}><th class="row-number">${rowNumber}</th>${cells.join('')}</tr>`;
       }).join('')}</tbody>`
     : '';
-  return `<section class="worksheet" id="sheet-${sheetIndex + 1}">
+  return `<section class="worksheet" id="sheet-${sheetIndex + 1}" data-sheet="${sheetIndex}"${sheetIndex === 0 ? '' : ' hidden'}>
     <div class="worksheet-title"><span class="excel-grid-icon">▦</span><h2>${escapeHtml(name)}</h2></div>
     ${truncated ? '<p class="limit-notice">内容较大，预览仅显示前 500 行、100 列或 20,000 个单元格。</p>' : ''}
     ${maxRow > 0 ? `<div class="excel-formula-bar"><span>fx</span><div>只读预览</div></div><div class="table-scroll"><table>${columns}${header}${body}</table></div>` : '<p class="empty-sheet">空工作表</p>'}
@@ -564,6 +569,8 @@ function pptxBootstrapScript(base64: string) {
           for (let index = 0; index < slides.length; index += 1) {
             const stage = document.createElement('section');
             stage.className = 'slide-stage';
+            stage.dataset.slide = String(index);
+            stage.hidden = index !== 0;
             const number = document.createElement('div');
             number.className = 'slide-stage-number';
             number.textContent = String(index + 1);
@@ -577,13 +584,20 @@ function pptxBootstrapScript(base64: string) {
             container.querySelectorAll('.slide-stage-canvas').forEach((canvas) => {
               const viewport = canvas.querySelector('.slide-container');
               if (!viewport) return;
-              const scale = Math.max(0.25, Math.min(1, canvas.clientWidth / 960));
+              const userZoom = Number(document.documentElement.style.getPropertyValue('--office-user-zoom')) || 1;
+              const scale = Math.max(0.2, Math.min(2, canvas.clientWidth / 960 * userZoom));
+              viewport.style.position = 'absolute';
+              viewport.style.inset = '0 auto auto 0';
+              viewport.style.width = '960px';
+              viewport.style.height = '540px';
               viewport.style.transformOrigin = 'top left';
               viewport.style.transform = 'scale(' + scale + ')';
             });
           };
           fitSlides();
           new ResizeObserver(fitSlides).observe(container);
+          window.addEventListener('office:viewport-change', fitSlides);
+          globalThis.cardbushSlidesReady?.();
         })
         .catch((error) => {
           container.innerHTML = '<section class="empty-state"><h2>PowerPoint 样式渲染失败</h2><p>' +
@@ -594,7 +608,12 @@ function pptxBootstrapScript(base64: string) {
   `;
 }
 
-async function renderLegacyBinary(filePath: string, title: string, kind: string) {
+async function renderLegacyBinary(
+  filePath: string,
+  title: string,
+  kind: string,
+  app: OfficeApp,
+) {
   const bytes = await fs.promises.readFile(filePath);
   const recovered = recoverBinaryOfficeText(bytes);
   return officeDocumentShell(
@@ -603,6 +622,7 @@ async function renderLegacyBinary(filePath: string, title: string, kind: string)
     recovered.length > 0
       ? `<article class="legacy-binary">${recovered.map((value) => `<p>${escapeHtml(value)}</p>`).join('')}</article>`
       : emptyDocumentBody('旧版二进制文件中没有可安全提取的文字，请使用右键菜单在系统应用中打开。'),
+    { app },
   );
 }
 
@@ -702,23 +722,159 @@ function escapeHtml(value: string) {
     .replaceAll("'", '&#39;');
 }
 
+function officeRibbonMarkup(app: OfficeApp) {
+  const fourthTab = app === 'powerpoint' ? '设计' : app === 'excel' ? '公式' : '布局';
+  const homeCommands = app === 'powerpoint'
+    ? '<button type="button" data-action="previous-slide">‹ 上一页</button><span class="slide-counter" data-slide-counter>1 / —</span><button type="button" data-action="next-slide">下一页 ›</button><i></i><button type="button" data-action="fit">适应窗口</button>'
+    : app === 'excel'
+      ? '<button type="button" data-action="toggle-gridlines" aria-pressed="false">网格线</button><button type="button" data-action="toggle-formula" aria-pressed="false">公式栏</button><i></i><button type="button" data-action="fit">适应窗口</button>'
+      : '<button type="button" data-action="fit">适应宽度</button><button type="button" data-action="zoom-reset">100%</button><i></i><span class="command-hint">页面布局 · 保留字体、表格与图片</span>';
+  const layoutCommands = app === 'powerpoint'
+    ? '<button type="button" data-action="toggle-canvas" aria-pressed="false">切换画布</button><span class="command-hint">幻灯片比例 16:9</span>'
+    : app === 'excel'
+      ? '<button type="button" data-action="toggle-formula" aria-pressed="false">显示公式栏</button><span class="command-hint">单击单元格可查看值</span>'
+      : '<button type="button" data-action="fit">页面宽度</button><button type="button" data-action="zoom-reset">实际大小</button>';
+  return `
+    <nav class="office-ribbon" role="tablist" aria-label="Office 功能区">
+      <button type="button" role="tab" data-ribbon-tab="file" aria-selected="false">文件</button>
+      <button type="button" role="tab" data-ribbon-tab="home" aria-selected="true" class="active">开始</button>
+      <button type="button" role="tab" data-ribbon-tab="insert" aria-selected="false">插入</button>
+      <button type="button" role="tab" data-ribbon-tab="layout" aria-selected="false">${fourthTab}</button>
+      <button type="button" role="tab" data-ribbon-tab="review" aria-selected="false">审阅</button>
+      <button type="button" role="tab" data-ribbon-tab="view" aria-selected="false">视图</button>
+      <i></i><b class="office-readonly">只读</b>
+    </nav>
+    <div class="office-commandbar">
+      <div data-ribbon-panel="file" hidden><span class="command-hint">安全的本地只读预览，不会修改源文件</span></div>
+      <div data-ribbon-panel="home">${homeCommands}</div>
+      <div data-ribbon-panel="insert" hidden><span class="command-hint">插入与编辑命令在只读模式下不可用</span></div>
+      <div data-ribbon-panel="layout" hidden>${layoutCommands}</div>
+      <div data-ribbon-panel="review" hidden><span class="command-hint">审阅标记按文档原样显示 · 当前为只读模式</span></div>
+      <div data-ribbon-panel="view" hidden><button type="button" data-action="zoom-out">−</button><button type="button" data-action="zoom-reset">100%</button><button type="button" data-action="zoom-in">＋</button><button type="button" data-action="fit">适应窗口</button><span class="office-status">就绪</span></div>
+    </div>`;
+}
+
+function officeInteractionScript(app: OfficeApp) {
+  return `
+    (() => {
+      const app = ${JSON.stringify(app)};
+      const root = document.documentElement;
+      const state = { zoom: 1, slide: 0, sheet: 0 };
+      const statusNodes = () => document.querySelectorAll('.office-status');
+      const setStatus = (value) => statusNodes().forEach((node) => { node.textContent = value; });
+      const applyZoom = () => {
+        root.style.setProperty('--office-user-zoom', String(state.zoom));
+        document.querySelectorAll('.docx-wrapper').forEach((wrapper) => {
+          const fitScale = Number(wrapper.dataset.fitScale) || 1;
+          wrapper.style.zoom = String(fitScale * state.zoom);
+        });
+        setStatus(Math.round(state.zoom * 100) + '%');
+        window.dispatchEvent(new Event('office:viewport-change'));
+      };
+      globalThis.cardbushApplyOfficeZoom = applyZoom;
+      const showRibbonPanel = (name) => {
+        document.querySelectorAll('[data-ribbon-tab]').forEach((button) => {
+          const active = button.dataset.ribbonTab === name;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-selected', String(active));
+        });
+        document.querySelectorAll('[data-ribbon-panel]').forEach((panel) => {
+          panel.hidden = panel.dataset.ribbonPanel !== name;
+        });
+      };
+      const showSheet = (index) => {
+        const sheets = [...document.querySelectorAll('[data-sheet]')];
+        if (!sheets.length) return;
+        state.sheet = Math.max(0, Math.min(index, sheets.length - 1));
+        sheets.forEach((sheet, sheetIndex) => { sheet.hidden = sheetIndex !== state.sheet; });
+        document.querySelectorAll('[data-sheet-index]').forEach((button) => {
+          const active = Number(button.dataset.sheetIndex) === state.sheet;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-selected', String(active));
+        });
+        const activeButton = document.querySelector('[data-sheet-index="' + state.sheet + '"]');
+        setStatus(activeButton ? activeButton.textContent.trim() : '工作表 ' + (state.sheet + 1));
+      };
+      const showSlide = (index) => {
+        const slides = [...document.querySelectorAll('[data-slide]')];
+        if (!slides.length) return;
+        state.slide = Math.max(0, Math.min(index, slides.length - 1));
+        slides.forEach((slide, slideIndex) => { slide.hidden = slideIndex !== state.slide; });
+        document.querySelectorAll('[data-slide-counter]').forEach((node) => {
+          node.textContent = (state.slide + 1) + ' / ' + slides.length;
+        });
+        setStatus('幻灯片 ' + (state.slide + 1) + ' / ' + slides.length);
+        requestAnimationFrame(() => window.dispatchEvent(new Event('office:viewport-change')));
+      };
+      globalThis.cardbushSlidesReady = () => showSlide(state.slide);
+      document.addEventListener('click', (event) => {
+        const ribbonTab = event.target.closest('[data-ribbon-tab]');
+        if (ribbonTab) {
+          showRibbonPanel(ribbonTab.dataset.ribbonTab);
+          return;
+        }
+        const sheetTab = event.target.closest('[data-sheet-index]');
+        if (sheetTab) {
+          showSheet(Number(sheetTab.dataset.sheetIndex));
+          return;
+        }
+        const cell = event.target.closest('td[data-cell]');
+        if (cell) {
+          document.querySelectorAll('td.selected').forEach((node) => node.classList.remove('selected'));
+          cell.classList.add('selected');
+          const worksheet = cell.closest('.worksheet');
+          const formulaValue = worksheet?.querySelector('.excel-formula-bar div');
+          if (formulaValue) formulaValue.textContent = cell.dataset.cell + '    ' + cell.textContent;
+          setStatus(cell.dataset.cell);
+          return;
+        }
+        const command = event.target.closest('button[data-action]');
+        if (!command) return;
+        const action = command.dataset.action;
+        if (action === 'zoom-in') state.zoom = Math.min(2, Math.round((state.zoom + 0.1) * 10) / 10);
+        if (action === 'zoom-out') state.zoom = Math.max(0.5, Math.round((state.zoom - 0.1) * 10) / 10);
+        if (action === 'zoom-reset' || action === 'fit') state.zoom = 1;
+        if (action === 'zoom-in' || action === 'zoom-out' || action === 'zoom-reset' || action === 'fit') applyZoom();
+        if (action === 'previous-slide') showSlide(state.slide - 1);
+        if (action === 'next-slide') showSlide(state.slide + 1);
+        if (action === 'toggle-gridlines') {
+          document.body.classList.toggle('hide-gridlines');
+          command.setAttribute('aria-pressed', String(document.body.classList.contains('hide-gridlines')));
+          setStatus(document.body.classList.contains('hide-gridlines') ? '网格线已隐藏' : '网格线已显示');
+        }
+        if (action === 'toggle-formula') {
+          document.body.classList.toggle('hide-formula-bars');
+          document.querySelectorAll('[data-action="toggle-formula"]').forEach((button) => button.setAttribute('aria-pressed', String(document.body.classList.contains('hide-formula-bars'))));
+          setStatus(document.body.classList.contains('hide-formula-bars') ? '公式栏已隐藏' : '公式栏已显示');
+        }
+        if (action === 'toggle-canvas') {
+          document.body.classList.toggle('dark-slide-canvas');
+          command.setAttribute('aria-pressed', String(document.body.classList.contains('dark-slide-canvas')));
+          setStatus(document.body.classList.contains('dark-slide-canvas') ? '深色画布' : '浅色画布');
+        }
+      });
+      showRibbonPanel('home');
+      if (app === 'excel') showSheet(0);
+      if (app === 'powerpoint') globalThis.cardbushSlidesReady();
+      applyZoom();
+    })();`;
+}
+
 function officeDocumentShell(
   title: string,
   subtitle: string,
   body: string,
-  options: { app?: 'word' | 'excel' | 'powerpoint'; scripts?: string } = {},
+  options: { app?: OfficeApp; scripts?: string } = {},
 ) {
-  const appName = options.app === 'excel'
+  const officeApp: OfficeApp = options.app ?? 'word';
+  const appName = officeApp === 'excel'
     ? 'Excel'
-    : options.app === 'powerpoint'
+    : officeApp === 'powerpoint'
       ? 'PowerPoint'
-      : options.app === 'word'
-        ? 'Word'
-        : 'Office';
-  const appMark = options.app === 'excel' ? 'X' : options.app === 'powerpoint' ? 'P' : 'W';
-  const scripts = options.scripts
-    ? `<script>${options.scripts.replace(/<\/script/gi, '<\\/script')}</script>`
-    : '';
+      : 'Word';
+  const appMark = officeApp === 'excel' ? 'X' : officeApp === 'powerpoint' ? 'P' : 'W';
+  const scriptSource = `${options.scripts ?? ''}\n${officeInteractionScript(officeApp)}`;
+  const scripts = `<script>${scriptSource.replace(/<\/script/gi, '<\\/script')}</script>`;
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -727,8 +883,9 @@ function officeDocumentShell(
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: cardbush-file:; font-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
   <title>${escapeHtml(title)}</title>
   <style>
-    :root { --office-accent: ${options.app === 'excel' ? '#107c41' : options.app === 'powerpoint' ? '#c43e1c' : '#185abd'}; color-scheme: light; font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif; color: #242424; background: #e9e9e9; }
+    :root { --office-accent: ${officeApp === 'excel' ? '#107c41' : officeApp === 'powerpoint' ? '#c43e1c' : '#185abd'}; --office-user-zoom: 1; color-scheme: light; font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif; color: #242424; background: #e9e9e9; }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body { margin: 0; min-width: 280px; }
     .office-chrome { position: sticky; top: 0; z-index: 20; color: #fff; background: var(--office-accent); box-shadow: 0 2px 8px rgba(0,0,0,.14); }
     .document-header { height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
@@ -737,11 +894,20 @@ function officeDocumentShell(
     .document-header h1 { margin: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
     .document-header p { margin: 0; color: rgba(255,255,255,.78); font-size: 10.5px; }
     .office-ribbon { height: 33px; display: flex; align-items: end; gap: 3px; padding: 0 9px; color: #242424; background: #fafafa; border-bottom: 1px solid #d8d8d8; }
-    .office-ribbon span { height: 29px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: 4px 4px 0 0; font-size: 11px; }
-    .office-ribbon span.active { color: var(--office-accent); background: #fff; border-bottom: 2px solid var(--office-accent); font-weight: 650; }
-    .office-ribbon em { flex: 1; }
+    .office-ribbon button { height: 29px; display: inline-flex; align-items: center; padding: 0 10px; color: inherit; background: transparent; border: 0; border-radius: 4px 4px 0 0; font: inherit; font-size: 11px; cursor: pointer; }
+    .office-ribbon button:hover { background: #ededed; }
+    .office-ribbon button.active { color: var(--office-accent); background: #fff; border-bottom: 2px solid var(--office-accent); font-weight: 650; }
+    .office-ribbon > i { flex: 1; }
     .office-readonly { color: #777; font-style: normal; font-size: 10px; }
-    main { min-height: calc(100vh - 75px); padding: 18px; }
+    .office-commandbar { height: 38px; padding: 4px 10px; color: #333; background: #fff; border-bottom: 1px solid #d2d2d2; }
+    .office-commandbar > div { height: 29px; display: flex; align-items: center; gap: 5px; overflow-x: auto; }
+    .office-commandbar button { min-width: 30px; height: 25px; padding: 0 9px; color: #333; background: #fff; border: 1px solid #d4d4d4; border-radius: 3px; font: inherit; font-size: 10.5px; white-space: nowrap; cursor: pointer; }
+    .office-commandbar button:hover, .office-commandbar button[aria-pressed="true"] { color: var(--office-accent); background: #f2f7f4; border-color: var(--office-accent); }
+    .office-commandbar i { width: 1px; height: 21px; margin: 0 3px; background: #ddd; }
+    .command-hint { color: #777; font-size: 10.5px; white-space: nowrap; }
+    .office-status { margin-left: auto; color: #777; font-size: 10px; white-space: nowrap; }
+    .slide-counter { min-width: 44px; color: #555; text-align: center; font-size: 10.5px; }
+    main { min-height: calc(100vh - 113px); padding: 18px; }
     .word-document, .legacy-section, .legacy-binary { max-width: 860px; margin: 0 auto; padding: 34px 42px; background: #fff; border: 1px solid #e2ded6; border-radius: 8px; box-shadow: 0 8px 26px rgba(50,43,34,.08); line-height: 1.65; }
     .word-document img { max-width: 100%; height: auto; }
     .word-document table { width: 100%; border-collapse: collapse; }
@@ -752,15 +918,15 @@ function officeDocumentShell(
     .legacy-binary p { margin: 0; padding-bottom: 7px; border-bottom: 1px solid #efede8; overflow-wrap: anywhere; }
     .preview-warnings { max-width: 860px; margin: 0 auto 12px; padding: 8px 12px; color: #75673e; background: #fff8df; border: 1px solid #eadca9; border-radius: 7px; font-size: 12px; }
     .docx-container { min-height: 240px; margin: -18px; overflow: auto; background: #d2d2d2; }
-    .docx-container .docx-wrapper { padding: 26px 20px !important; background: #d2d2d2 !important; zoom: var(--docx-preview-scale, 1); }
+    .docx-container .docx-wrapper { padding: 26px 20px !important; background: #d2d2d2 !important; }
     .docx-container section.docx { border: 1px solid #b9b9b9; box-shadow: 0 2px 10px rgba(0,0,0,.24) !important; }
     .office-loading { min-height: 260px; display: grid; place-items: center; color: #666; font-size: 12px; }
-    .sheet-navigation { position: sticky; top: 75px; z-index: 4; display: flex; gap: 1px; margin: -18px -18px 0; padding: 4px 8px 0; overflow-x: auto; background: #f5f5f5; border-bottom: 1px solid #cfcfcf; }
-    .sheet-navigation a { padding: 6px 16px 5px; color: #333; background: #e9e9e9; border: 1px solid #d0d0d0; border-bottom: 0; border-radius: 3px 3px 0 0; text-decoration: none; white-space: nowrap; font-size: 11px; }
-    .sheet-navigation a:first-child { color: #107c41; background: #fff; border-top: 2px solid #107c41; }
-    .workbook { display: grid; gap: 20px; }
+    .sheet-navigation { position: sticky; top: 113px; z-index: 4; display: flex; gap: 1px; margin: -18px -18px 0; padding: 4px 8px 0; overflow-x: auto; background: #f5f5f5; border-bottom: 1px solid #cfcfcf; }
+    .sheet-navigation button { padding: 6px 16px 5px; color: #333; background: #e9e9e9; border: 1px solid #d0d0d0; border-bottom: 0; border-radius: 3px 3px 0 0; white-space: nowrap; font: inherit; font-size: 11px; cursor: pointer; }
+    .sheet-navigation button:hover { background: #f4f4f4; }
+    .sheet-navigation button.active { color: #107c41; background: #fff; border-top: 2px solid #107c41; font-weight: 600; }
+    .workbook { zoom: var(--office-user-zoom); }
     .worksheet { scroll-margin-top: 110px; margin: 0 -18px -18px; background: #fff; }
-    .worksheet + .worksheet { margin-top: 28px; border-top: 8px solid #d7d7d7; }
     .worksheet-title { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 10px; background: #fff; border-bottom: 1px solid #ddd; }
     .worksheet h2 { margin: 0; font-size: 11.5px; font-weight: 600; }
     .excel-grid-icon { color: #107c41; font-size: 16px; }
@@ -771,26 +937,30 @@ function officeDocumentShell(
     table { border-spacing: 0; border-collapse: separate; }
     .worksheet table { table-layout: fixed; min-width: 100%; }
     .worksheet th, .worksheet td { height: 20px; min-width: 24px; max-width: 420px; padding: 2px 5px; overflow: hidden; border-right: 1px solid #d9d9d9; border-bottom: 1px solid #d9d9d9; font-family: Calibri,"Microsoft YaHei",sans-serif; font-size: 11pt; text-align: left; text-overflow: ellipsis; white-space: pre; }
-    .worksheet td:hover { outline: 2px solid #107c41; outline-offset: -2px; }
+    .worksheet td:hover, .worksheet td.selected { outline: 2px solid #107c41; outline-offset: -2px; }
+    .hide-formula-bars .excel-formula-bar { display: none; }
+    .hide-gridlines .worksheet th, .hide-gridlines .worksheet td { border-color: transparent; }
     .worksheet thead th { position: sticky; top: 0; z-index: 2; min-width: 44px; height: 22px; color: #555; background: #f2f2f2; text-align: center; font-size: 10px; font-weight: 400; }
     .worksheet .row-number { position: sticky; left: 0; z-index: 1; min-width: 44px; width: 44px; color: #555; background: #f2f2f2; text-align: center; font-size: 10px; font-weight: 400; }
     .worksheet thead .row-number { z-index: 3; }
     .excel-row-heading { width: 44px; }
     .limit-notice { color: #8a6a25; font-size: 11.5px; }
     .empty-sheet { color: #8a857c; font-style: italic; }
-    .slide-deck { display: grid; gap: 26px; max-width: 1000px; margin: 0 auto; counter-reset: slides; }
-    .slide-stage { position: relative; padding: 10px; background: #c8c8c8; border-radius: 3px; box-shadow: 0 5px 18px rgba(0,0,0,.18); }
+    .app-powerpoint main { padding: 12px; overflow: hidden; }
+    .slide-deck { display: block; width: 100%; min-width: 0; margin: 0 auto; }
+    .slide-stage { position: relative; width: 100%; min-width: 0; padding: 10px; background: #c8c8c8; border-radius: 3px; box-shadow: 0 5px 18px rgba(0,0,0,.18); }
     .slide-stage-number { position: absolute; left: -34px; top: 10px; width: 28px; color: #666; font-size: 11px; text-align: right; }
-    .slide-stage-canvas { aspect-ratio: 16 / 9; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.22); }
-    .slide-stage-canvas > * { max-width: 100%; }
+    .slide-stage-canvas { position: relative; width: 100%; min-width: 0; aspect-ratio: 16 / 9; overflow: hidden; background: #fff; box-shadow: 0 1px 5px rgba(0,0,0,.22); }
+    .slide-stage-canvas > .slide-container { max-width: none !important; }
+    .dark-slide-canvas main { background: #292929; }
     .empty-state { min-height: 240px; display: grid; place-content: center; padding: 30px; color: #777168; text-align: center; }
-    @media (max-width: 560px) { main { padding: 10px; } .word-document { padding: 24px 20px; } .office-ribbon span { padding: 0 6px; } .office-ribbon span:nth-of-type(n+5) { display:none; } .slide-stage-number { display:none; } }
+    @media (max-width: 560px) { main { padding: 10px; } .word-document { padding: 24px 20px; } .office-ribbon button { padding: 0 6px; } .office-ribbon button:nth-of-type(n+5) { display:none; } .slide-stage-number { display:none; } }
   </style>
 </head>
-<body>
+<body class="app-${officeApp}">
   <div class="office-chrome">
     <header class="document-header"><span class="office-mark">${appMark}</span><div class="document-heading"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(appName)} · ${escapeHtml(subtitle)}</p></div></header>
-    <nav class="office-ribbon"><span>文件</span><span class="active">开始</span><span>插入</span><span>${options.app === 'powerpoint' ? '设计' : options.app === 'excel' ? '公式' : '布局'}</span><span>审阅</span><span>视图</span><em></em><b class="office-readonly">只读</b></nav>
+    ${officeRibbonMarkup(officeApp)}
   </div>
   <main>${body}</main>
   ${scripts}

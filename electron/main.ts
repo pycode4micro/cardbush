@@ -19,7 +19,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
@@ -309,11 +309,18 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   target.webContents.setWindowOpenHandler(({ url }) => {
+    if (sendLocalPreviewToInspector(target, url)) {
+      return { action: 'deny' };
+    }
     void openUiPreview(url);
     return { action: 'deny' };
   });
   target.webContents.on('will-navigate', (event, targetUrl) => {
     if (isAllowedAppNavigation(targetUrl)) {
+      return;
+    }
+    if (sendLocalPreviewToInspector(target, targetUrl)) {
+      event.preventDefault();
       return;
     }
     const parsed = safeUrl(targetUrl);
@@ -325,6 +332,18 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     event.preventDefault();
     void openTargetExternally(targetUrl);
   });
+}
+
+function sendLocalPreviewToInspector(target: BrowserWindow, value: string) {
+  const previewTarget = resolveUiPreviewTarget(value);
+  if (!previewTarget?.localPath) {
+    return false;
+  }
+  target.webContents.send('shell:open-inspector', {
+    target: previewTarget.localPath,
+    title: path.basename(previewTarget.localPath),
+  });
+  return true;
 }
 
 async function openUiPreview(targetUrl: string) {
@@ -497,6 +516,24 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
     if (localPath && fs.existsSync(localPath) && isOfficePreviewPath(localPath)) {
       return {
         url: parsed.toString(),
+        externalTarget: localPath,
+        localPath,
+      };
+    }
+    return null;
+  }
+  if (parsed != null && parsed.protocol === `${localFileProtocol}:`) {
+    const localPath = localPathFromProtocolUrl(parsed.toString());
+    if (
+      localPath &&
+      fs.existsSync(localPath) &&
+      fs.statSync(localPath).isFile() &&
+      previewableFileExtensions.has(path.extname(localPath).toLowerCase())
+    ) {
+      return {
+        url: isOfficePreviewPath(localPath)
+          ? officePreviewProtocolUrl(localPath)
+          : pathToFileURL(localPath).toString(),
         externalTarget: localPath,
         localPath,
       };
@@ -2077,7 +2114,11 @@ function isAllowedAppNavigation(targetUrl: string) {
     return false;
   }
   if (parsed.protocol === 'file:') {
-    return true;
+    try {
+      return path.resolve(fileURLToPath(parsed)) === path.resolve(__dirname, '../dist/index.html');
+    } catch {
+      return false;
+    }
   }
   if (devServerUrl) {
     const devUrl = safeUrl(devServerUrl);

@@ -59,6 +59,26 @@ app.whenReady().then(async () => {
       await fs.writeFile(screenshotPath, (await window.webContents.capturePage()).toPNG());
       result.screenshotPath = screenshotPath;
     }
+    result.interactions = await window.webContents.executeJavaScript(`
+      (() => {
+        const sheetTabs = [...document.querySelectorAll('[data-sheet-index]')];
+        if (sheetTabs.length > 1) sheetTabs[1].click();
+        const visibleSheets = [...document.querySelectorAll('[data-sheet]')]
+          .filter((sheet) => !sheet.hidden);
+        const viewTab = document.querySelector('[data-ribbon-tab="view"]');
+        viewTab?.click();
+        const visiblePanel = document.querySelector('[data-ribbon-panel]:not([hidden])');
+        const slideCanvas = document.querySelector('.slide-stage-canvas');
+        return {
+          activeSheet: document.querySelector('[data-sheet-index].active')?.textContent?.trim() || '',
+          visibleSheetCount: visibleSheets.length,
+          activeRibbon: document.querySelector('[data-ribbon-tab].active')?.dataset.ribbonTab || '',
+          visibleRibbonPanel: visiblePanel?.dataset.ribbonPanel || '',
+          horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+          slideCanvasFits: !slideCanvas || slideCanvas.getBoundingClientRect().right <= document.documentElement.clientWidth + 1,
+        };
+      })()
+    `, true);
     console.log(JSON.stringify({ target, ...result }));
     window.destroy();
   }
