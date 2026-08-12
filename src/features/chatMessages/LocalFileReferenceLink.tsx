@@ -1,7 +1,7 @@
 import { FileCode2 } from 'lucide-react';
 import type { MouseEvent, ReactNode } from 'react';
 
-import { basename } from '../../shared/localPaths';
+import { basename, fileUrl } from '../../shared/localPaths';
 import { openInspector } from '../inspector/inspectorEvents';
 
 export function LocalFileReferenceLink({
@@ -27,7 +27,7 @@ export function LocalFileReferenceLink({
   return (
     <a
       className="local-file-reference"
-      href="#"
+      href={fileUrl(path)}
       title={path}
       onClick={openInCardbush}
       onContextMenu={openContextMenu}

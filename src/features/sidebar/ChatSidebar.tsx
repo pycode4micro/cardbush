@@ -1128,6 +1128,7 @@ export function ConversationChangeDialog({
   reports,
   notice,
   revertingChangeId,
+  revertedChangeIds,
   onClose,
   onRevert,
   onRevertAll,
@@ -1138,6 +1139,7 @@ export function ConversationChangeDialog({
   reports: ConversationChangeReport[];
   notice: string;
   revertingChangeId: string;
+  revertedChangeIds: ReadonlySet<string>;
   onClose: () => void;
   onRevert: (report: ConversationChangeReport) => Promise<void>;
   onRevertAll: () => Promise<void>;
@@ -1198,6 +1200,7 @@ export function ConversationChangeDialog({
     { files: 0, additions: 0, deletions: 0 },
   );
   const allBusy = revertingChangeId === `conversation:${conversation.id}`;
+  const allReverted = reports.every((report) => revertedChangeIds.has(report.id));
   const dialog = (
       <section className={`change-review-dialog${embedded ? ' embedded' : ''}`}>
         <header>
@@ -1221,11 +1224,15 @@ export function ConversationChangeDialog({
           <button
             className="danger-soft-button"
             type="button"
-            disabled={Boolean(revertingChangeId)}
+            disabled={Boolean(revertingChangeId) || allReverted}
             onClick={() => void onRevertAll()}
           >
             {allBusy ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
-            <span>{language === 'zh' ? '撤回全部修改' : 'Revert all'}</span>
+            <span>
+              {allReverted
+                ? (language === 'zh' ? '已全部撤回' : 'All reverted')
+                : (language === 'zh' ? '撤回全部修改' : 'Revert all')}
+            </span>
           </button>
         </div>
         {notice && <pre className="change-review-notice">{notice}</pre>}
@@ -1248,13 +1255,20 @@ export function ConversationChangeDialog({
                   <button
                     className="secondary-button"
                     type="button"
-                    disabled={Boolean(revertingChangeId)}
+                    disabled={
+                      Boolean(revertingChangeId) ||
+                      revertedChangeIds.has(selectedItem.report.id)
+                    }
                     onClick={() => void onRevert(selectedItem.report)}
                   >
                     {revertingChangeId === selectedItem.report.id
                       ? <LoaderCircle size={14} />
                       : <RotateCcw size={14} />}
-                    <span>{language === 'zh' ? '撤回这组' : 'Revert set'}</span>
+                    <span>
+                      {revertedChangeIds.has(selectedItem.report.id)
+                        ? (language === 'zh' ? '已撤回' : 'Reverted')
+                        : (language === 'zh' ? '撤回这组' : 'Revert set')}
+                    </span>
                   </button>
                 </header>
                 <ToolFileChangeView file={selectedItem.file} language={language} />

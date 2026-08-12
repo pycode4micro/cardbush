@@ -22,6 +22,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { inspectProjectRoots } from './projectRoots';
+import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -60,7 +61,8 @@ const previewableFileExtensions = new Set([
   '.c', '.cc', '.cpp', '.css', '.csv', '.gif', '.go', '.h', '.hpp', '.htm',
   '.html', '.java', '.jpeg', '.jpg', '.js', '.json', '.jsx', '.log', '.md',
   '.pdf', '.png', '.py', '.rs', '.scss', '.svg', '.toml', '.ts', '.tsx',
-  '.txt', '.webp', '.xhtml', '.xml', '.yaml', '.yml',
+  '.txt', '.webp', '.xhtml', '.xml', '.yaml', '.yml', '.doc', '.docx',
+  '.xls', '.xlsx', '.ppt', '.pptx',
 ]);
 
 protocol.registerSchemesAsPrivileged([
@@ -371,7 +373,8 @@ async function openUiPreview(targetUrl: string) {
             label: previewTarget.localPath ? '在系统中打开' : '在系统浏览器打开',
             click: () => {
               const currentUrl = browser.webContents.getURL() || previewTarget.url;
-              void openTargetExternally(currentUrl);
+              const currentTarget = resolveUiPreviewTarget(currentUrl) ?? previewTarget;
+              void openTargetExternally(currentTarget.externalTarget, currentTarget);
             },
           },
           {
@@ -485,6 +488,21 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
     return null;
   }
   const parsed = safeUrl(trimmed);
+  if (
+    parsed != null &&
+    parsed.protocol === `${localFileProtocol}:` &&
+    parsed.hostname.toLowerCase() === 'office-preview'
+  ) {
+    const localPath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+    if (localPath && fs.existsSync(localPath) && isOfficePreviewPath(localPath)) {
+      return {
+        url: parsed.toString(),
+        externalTarget: localPath,
+        localPath,
+      };
+    }
+    return null;
+  }
   if (parsed != null && isWebProtocol(parsed)) {
     return {
       url: parsed.toString(),
@@ -503,10 +521,16 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
     return null;
   }
   return {
-    url: pathToFileURL(localPath).toString(),
+    url: isOfficePreviewPath(localPath)
+      ? officePreviewProtocolUrl(localPath)
+      : pathToFileURL(localPath).toString(),
     externalTarget: localPath,
     localPath,
   };
+}
+
+function officePreviewProtocolUrl(filePath: string) {
+  return `${localFileProtocol}://office-preview/?path=${encodeURIComponent(filePath)}`;
 }
 
 function localhostPreviewUrl(value: string) {
@@ -1725,6 +1749,20 @@ function registerLocalFileProtocol() {
   }
   protocol.handle(localFileProtocol, async (request) => {
     try {
+      const parsed = new URL(request.url);
+      if (parsed.hostname.toLowerCase() === 'office-preview') {
+        const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const stats = await fs.promises.stat(officePath);
+        if (!stats.isFile() || !isOfficePreviewPath(officePath)) {
+          return new Response('Not found', { status: 404 });
+        }
+        return new Response(await renderOfficePreview(officePath), {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store',
+          },
+        });
+      }
       const targetPath = localPathFromProtocolUrl(request.url);
       const normalizedPath = normalizeShellPath(targetPath);
       const stats = await fs.promises.stat(normalizedPath);
@@ -3256,15 +3294,19 @@ function revertFileChanges(
   rootPath: string,
   files: Array<{ path: string; diff?: string; lines?: string[] }>,
 ) {
-  const root = requireGitRoot(rootPath);
+  const root = requireProjectDirectory(rootPath);
   const patch = buildReversePatchInput(root, files);
   if (!patch.trim()) {
     throw new Error('No patch content was provided.');
   }
-  runGitWithInput(root, ['apply', '--reverse', '--check', '--whitespace=nowarn'], patch);
+  runGitWithInput(
+    root,
+    ['apply', '--no-index', '--reverse', '--check', '--whitespace=nowarn'],
+    patch,
+  );
   const output = runGitWithInput(
     root,
-    ['apply', '--reverse', '--whitespace=nowarn'],
+    ['apply', '--no-index', '--reverse', '--whitespace=nowarn'],
     patch,
   );
   return {
@@ -3331,11 +3373,16 @@ function normalizePatchDiff(value: string) {
 }
 
 function requireGitRoot(rootPath: string) {
+  const root = requireProjectDirectory(rootPath);
+  runGit(root, ['rev-parse', '--is-inside-work-tree']);
+  return root;
+}
+
+function requireProjectDirectory(rootPath: string) {
   const root = path.resolve(rootPath);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
     throw new Error(`Project directory does not exist: ${root}`);
   }
-  runGit(root, ['rev-parse', '--is-inside-work-tree']);
   return root;
 }
 

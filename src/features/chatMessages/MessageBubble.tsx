@@ -467,7 +467,6 @@ function MessageBubbleView({
             />
           )}
           <AgentHookSummaryBadge message={message} language={language} />
-          {taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
           {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
           {renderActiveTranscript ? (
             <AssistantActiveTranscript
@@ -506,6 +505,7 @@ function MessageBubbleView({
               onOpenScene={onOpenScene}
             />
           )}
+          {taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
         </div>
         <div className="message-actions">
             <button

@@ -4951,6 +4951,8 @@ body.right-inspector-resizing {
   color: var(--text-soft);
   opacity: 0.78;
   animation: cardbush-spin 1.2s linear infinite;
+  transform-origin: center;
+  will-change: transform;
 }
 
 .assistant-run-header {
@@ -15865,7 +15867,6 @@ body.right-inspector-resizing {
 @media (prefers-reduced-motion: reduce) {
   .cardling-card,
   .assistant-thinking,
-  .assistant-thinking-process svg,
   .assistant-thinking-process span,
   .message-actions button.feedback-pop,
   .message-actions button.feedback-pop svg,

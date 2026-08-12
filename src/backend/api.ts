@@ -1679,6 +1679,33 @@ export async function fetchSessionWorkspaceChanges(
     .map((item) => toolExecutionFromPayload(workspaceChangeToolPayload(item)));
 }
 
+export async function revertSessionWorkspaceChanges(
+  sessionId: string,
+  turnIds: string[],
+): Promise<{
+  revertedFiles: number;
+  revertedAt: string;
+  turnIds: string[];
+}> {
+  const normalizedSession = sessionId.trim();
+  const normalizedTurns = [...new Set(turnIds.map((value) => value.trim()).filter(Boolean))];
+  if (!normalizedSession || normalizedTurns.length === 0) {
+    throw new Error('session_id and turn_ids are required');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSession)}/workspace-changes/revert`),
+    {
+      method: 'POST',
+      body: JSON.stringify({ turn_ids: normalizedTurns }),
+    },
+  );
+  return {
+    revertedFiles: numericValue(payload.reverted_files),
+    revertedAt: String(payload.reverted_at ?? ''),
+    turnIds: arrayFrom(payload.turn_ids).map(String),
+  };
+}
+
 export async function validateTeamWorkflow({
   yaml,
   projectDir,

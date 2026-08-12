@@ -72,6 +72,8 @@ import {
   fetchProjectContext,
   fetchSessionScene,
   fetchSessionScenes,
+  isBushServerHttpError,
+  revertSessionWorkspaceChanges,
   saveModelConfigs,
   saveProjectContext,
   streamShadowConversationMessage,
@@ -816,6 +818,9 @@ function CardbushApp() {
   const [changeReviewConversationId, setChangeReviewConversationId] = useState('');
   const [revertingChangeId, setRevertingChangeId] = useState('');
   const [changeReviewNotice, setChangeReviewNotice] = useState('');
+  const [revertedChangeKeys, setRevertedChangeKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [inspectorTarget, setInspectorTarget] = useState<InspectorOpenDetail | null>(null);
   const [inspectorSummaryOpen, setInspectorSummaryOpen] = useState(false);
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
@@ -1378,7 +1383,9 @@ function CardbushApp() {
         changeRootForConversation(conversation) ||
         activeProjectDir?.trim() ||
         '';
-      if (!root) {
+      const turnId = report.turnId?.trim() ?? '';
+      const usesRecoverySnapshot = Boolean(turnId);
+      if (!usesRecoverySnapshot && !root) {
         const message =
           language === 'zh'
             ? '没有可用于撤回的项目路径。'
@@ -1387,7 +1394,7 @@ function CardbushApp() {
         window.alert(message);
         return;
       }
-      if (!window.cardbushDesktop?.revertFileChanges) {
+      if (!usesRecoverySnapshot && !window.cardbushDesktop?.revertFileChanges) {
         const message =
           language === 'zh'
             ? '当前环境缺少撤回文件修改的桌面接口。'
@@ -1397,7 +1404,7 @@ function CardbushApp() {
         return;
       }
       const files = serializeToolChangeReport(report);
-      if (files.length === 0) {
+      if (!usesRecoverySnapshot && files.length === 0) {
         const message =
           language === 'zh'
             ? '这组修改没有可撤回的 diff。'
@@ -1408,8 +1415,8 @@ function CardbushApp() {
       }
       const confirmed = window.confirm(
         language === 'zh'
-          ? `确定撤回这组修改吗？将按 diff 反向修改 ${files.length} 个文件。`
-          : `Revert this change set? This will reverse-patch ${files.length} file(s).`,
+          ? `确定撤回这组修改吗？恢复前会校验文件是否又被改动。`
+          : 'Revert this change set? Files will be checked for later edits first.',
       );
       if (!confirmed) {
         return;
@@ -1417,19 +1424,42 @@ function CardbushApp() {
       setRevertingChangeId(report.id);
       setChangeReviewNotice('');
       try {
-        const result = await window.cardbushDesktop.revertFileChanges(root, files);
+        let result: { revertedFiles: number };
+        if (usesRecoverySnapshot) {
+          try {
+            result = await revertSessionWorkspaceChanges(conversationId, [turnId]);
+          } catch (caught) {
+            if (
+              !snapshotRevertFallbackAllowed(caught) ||
+              !root ||
+              files.length === 0 ||
+              !window.cardbushDesktop?.revertFileChanges
+            ) {
+              throw caught;
+            }
+            result = await window.cardbushDesktop.revertFileChanges(root, files);
+          }
+        } else {
+          result = await window.cardbushDesktop!.revertFileChanges(root, files);
+        }
         const message =
-          result.output.trim() ||
-          (language === 'zh'
-            ? `已撤回 ${result.revertedFiles} 个文件的修改。`
-            : `Reverted ${result.revertedFiles} file(s).`);
+          language === 'zh'
+            ? `已安全恢复 ${result.revertedFiles} 个文件。`
+            : `Safely restored ${result.revertedFiles} file(s).`;
         setChangeReviewNotice(message);
-        await refreshProjectGitStatus(root);
+        setRevertedChangeKeys((current) => {
+          const next = new Set(current);
+          next.add(`${conversationId}:${report.id}`);
+          return next;
+        });
+        if (root) {
+          await refreshProjectGitStatus(root);
+        }
       } catch (caught) {
         const message =
           language === 'zh'
-            ? `撤回失败：${errorMessage(caught)}`
-            : `Revert failed: ${errorMessage(caught)}`;
+            ? `撤回失败：${workspaceRevertErrorMessage(caught, 'zh')}`
+            : `Revert failed: ${workspaceRevertErrorMessage(caught, 'en')}`;
         setChangeReviewNotice(message);
         window.alert(message);
       } finally {
@@ -1457,7 +1487,15 @@ function CardbushApp() {
       const reversibleReports = reports
         .map((report) => ({ report, files: serializeToolChangeReport(report) }))
         .filter((item) => item.files.length > 0);
-      if (!root || reversibleReports.length === 0) {
+      const snapshotTurnIds = reports
+        .map((report) => report.turnId?.trim() ?? '')
+        .filter(Boolean);
+      const usesRecoverySnapshots =
+        reports.length > 0 && snapshotTurnIds.length === reports.length;
+      if (
+        (!usesRecoverySnapshots && !root) ||
+        (!usesRecoverySnapshots && reversibleReports.length === 0)
+      ) {
         const message =
           language === 'zh'
             ? '没有可撤回的会话修改。'
@@ -1466,7 +1504,7 @@ function CardbushApp() {
         window.alert(message);
         return;
       }
-      if (!window.cardbushDesktop?.revertFileChanges) {
+      if (!usesRecoverySnapshots && !window.cardbushDesktop?.revertFileChanges) {
         const message =
           language === 'zh'
             ? '当前环境缺少撤回文件修改的桌面接口。'
@@ -1475,14 +1513,13 @@ function CardbushApp() {
         window.alert(message);
         return;
       }
-      const fileCount = reversibleReports.reduce(
-        (sum, item) => sum + item.files.length,
-        0,
-      );
+      const fileCount = usesRecoverySnapshots
+        ? reports.reduce((sum, report) => sum + report.fileCount, 0)
+        : reversibleReports.reduce((sum, item) => sum + item.files.length, 0);
       const confirmed = window.confirm(
         language === 'zh'
-          ? `确定撤回这个会话里的全部修改吗？将按时间倒序反向修改 ${fileCount} 个文件。`
-          : `Revert all changes in this chat? This will reverse-patch ${fileCount} file(s) in reverse order.`,
+          ? `确定撤回这个会话里的全部修改吗？将按时间倒序校验并恢复 ${fileCount} 个文件。`
+          : `Revert all changes in this chat? ${fileCount} file(s) will be checked and restored in reverse order.`,
       );
       if (!confirmed) {
         return;
@@ -1492,11 +1529,37 @@ function CardbushApp() {
       try {
         let revertedFiles = 0;
         const outputs: string[] = [];
-        for (const item of [...reversibleReports].reverse()) {
-          const result = await window.cardbushDesktop.revertFileChanges(root, item.files);
-          revertedFiles += result.revertedFiles;
-          if (result.output.trim()) {
-            outputs.push(result.output.trim());
+        if (usesRecoverySnapshots) {
+          try {
+            const result = await revertSessionWorkspaceChanges(
+              conversationId,
+              [...snapshotTurnIds].reverse(),
+            );
+            revertedFiles = result.revertedFiles;
+          } catch (caught) {
+            if (
+              !snapshotRevertFallbackAllowed(caught) ||
+              !root ||
+              reversibleReports.length !== reports.length ||
+              !window.cardbushDesktop?.revertFileChanges
+            ) {
+              throw caught;
+            }
+            for (const item of [...reversibleReports].reverse()) {
+              const result = await window.cardbushDesktop.revertFileChanges(root, item.files);
+              revertedFiles += result.revertedFiles;
+              if (result.output.trim()) {
+                outputs.push(result.output.trim());
+              }
+            }
+          }
+        } else {
+          for (const item of [...reversibleReports].reverse()) {
+            const result = await window.cardbushDesktop!.revertFileChanges(root, item.files);
+            revertedFiles += result.revertedFiles;
+            if (result.output.trim()) {
+              outputs.push(result.output.trim());
+            }
           }
         }
         setChangeReviewNotice(
@@ -1505,12 +1568,21 @@ function CardbushApp() {
               ? `已撤回 ${revertedFiles} 个文件的修改。`
               : `Reverted ${revertedFiles} file(s).`),
         );
-        await refreshProjectGitStatus(root);
+        setRevertedChangeKeys((current) => {
+          const next = new Set(current);
+          for (const report of reports) {
+            next.add(`${conversationId}:${report.id}`);
+          }
+          return next;
+        });
+        if (root) {
+          await refreshProjectGitStatus(root);
+        }
       } catch (caught) {
         const message =
           language === 'zh'
-            ? `撤回失败：${errorMessage(caught)}`
-            : `Revert failed: ${errorMessage(caught)}`;
+            ? `撤回失败：${workspaceRevertErrorMessage(caught, 'zh')}`
+            : `Revert failed: ${workspaceRevertErrorMessage(caught, 'en')}`;
         setChangeReviewNotice(message);
         window.alert(message);
       } finally {
@@ -1921,9 +1993,23 @@ function CardbushApp() {
                     reports={changeReviewReports}
                     notice={changeReviewNotice}
                     revertingChangeId={revertingChangeId}
+                    revertedChangeIds={new Set(
+                      changeReviewReports
+                        .filter((report) =>
+                          revertedChangeKeys.has(`${changeReviewConversation.id}:${report.id}`),
+                        )
+                        .map((report) => report.id),
+                    )}
                     onClose={() => setChangeReviewConversationId('')}
                     onRevert={(report) => revertChangeReport(changeReviewConversation.id, report)}
-                    onRevertAll={() => revertConversationReports(changeReviewConversation.id, changeReviewReports)}
+                    onRevertAll={() => revertConversationReports(
+                      changeReviewConversation.id,
+                      changeReviewReports.filter(
+                        (report) => !revertedChangeKeys.has(
+                          `${changeReviewConversation.id}:${report.id}`,
+                        ),
+                      ),
+                    )}
                   />
                 ) : inspectorTarget ? (
                   createElement('webview', {
@@ -6554,6 +6640,35 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
+  if (isBushServerHttpError(error)) {
+    if (error.code === 'workspace_change_conflict') {
+      return language === 'zh'
+        ? '文件在该修改之后又发生了变化，为避免覆盖后续编辑，本次未执行撤回。'
+        : 'A file changed after this edit, so nothing was overwritten.';
+    }
+    if (error.code === 'workspace_change_revert_unavailable') {
+      return language === 'zh'
+        ? '这组修改没有完整的恢复快照，无法安全撤回。'
+        : 'This change does not have a complete recovery snapshot.';
+    }
+    if (error.statusCode === 404 || error.statusCode === 405) {
+      return language === 'zh'
+        ? '当前 BushServer 版本尚不支持快照撤回，请升级服务端。'
+        : 'The current BushServer version does not support snapshot restore.';
+    }
+  }
+  return errorMessage(error);
+}
+
+function snapshotRevertFallbackAllowed(error: unknown) {
+  return isBushServerHttpError(error) && (
+    error.code === 'workspace_change_revert_unavailable' ||
+    error.statusCode === 404 ||
+    error.statusCode === 405
+  );
+}
+
 function displayableRuntimeLastError(value: unknown) {
   const text = String(value ?? '').trim();
   if (!text) {
@@ -6891,8 +7006,13 @@ function interactionReplyIsReady(
 
 function inspectorSource(target: string) {
   const value = stripWrappingQuotes(target.trim());
-  if (/^(https?|file):\/\//i.test(value)) {
+  if (/^https?:\/\//i.test(value)) {
     return value;
+  }
+  if (/^file:\/\//i.test(value)) {
+    return isOfficeDocumentPath(value)
+      ? officeDocumentPreviewUrl(value)
+      : value;
   }
   if (/^cardbush-file:\/\//i.test(value)) {
     try {
@@ -6903,9 +7023,23 @@ function inspectorSource(target: string) {
     }
   }
   if (/^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\')) {
+    if (isOfficeDocumentPath(value)) {
+      return officeDocumentPreviewUrl(value);
+    }
     return localFilePreviewUrl(value);
   }
+  if (isOfficeDocumentPath(value)) {
+    return officeDocumentPreviewUrl(value);
+  }
   return fileUrl(value);
+}
+
+function isOfficeDocumentPath(value: string) {
+  return /\.(?:docx?|xlsx?|pptx?)$/i.test(value.split(/[?#]/, 1)[0]);
+}
+
+function officeDocumentPreviewUrl(value: string) {
+  return `cardbush-file://office-preview/?path=${encodeURIComponent(value)}`;
 }
 
 function localFilePreviewUrl(value: string) {

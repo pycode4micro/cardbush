@@ -107,10 +107,34 @@ function isInsideBareWebUrl(value: string, index: number) {
 }
 
 function cleanFileReferenceValue(value: string) {
-  return stripWrappingQuotes(value.trim())
-    .replace(/^file:\/\//i, '')
+  const unwrapped = stripWrappingQuotes(value.trim());
+  const localValue = /^file:\/\//i.test(unwrapped)
+    ? localPathFromFileUrl(unwrapped)
+    : decodeFileReference(unwrapped);
+  return localValue
     .replace(/[),.;，。；]+$/, '')
     .trim();
+}
+
+function localPathFromFileUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    const pathname = decodeURIComponent(parsed.pathname);
+    if (parsed.hostname) {
+      return `\\\\${parsed.hostname}${pathname.replaceAll('/', '\\')}`;
+    }
+    return pathname.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
+  } catch {
+    return decodeFileReference(value.replace(/^file:\/\//i, ''));
+  }
+}
+
+function decodeFileReference(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function looksLikeFilePath(value: string) {

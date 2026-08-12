@@ -55,6 +55,18 @@ export function toolChangeReportFromExecutions(
   if (relevant.length === 0) {
     return null;
   }
+  const authoritativeChanges = relevant.filter(
+    (execution) => String(execution.metadata.kind ?? '').trim() === 'file_change',
+  );
+  if (
+    authoritativeChanges.length > 0 &&
+    authoritativeChanges.every((execution) =>
+      String(execution.metadata.revert_status ?? execution.metadata.revertStatus ?? '')
+        .trim()
+        .toLowerCase() === 'reverted')
+  ) {
+    return null;
+  }
   const allFiles: ToolFileChange[] = [];
   let fallbackAdditions = 0;
   let fallbackDeletions = 0;
