@@ -98,10 +98,9 @@ export function ToolExecutionBlock({
       </button>
       {expanded && (
         <div className="tool-execution-details">
-          {executions.map((execution, index) => (
+          {executions.map((execution) => (
             <ToolExecutionDetail
-              // eslint-disable-next-line react/no-array-index-key
-              key={`${execution.id}-${index}`}
+              key={execution.id}
               execution={execution}
               message={message}
               language={language}

@@ -10,7 +10,7 @@ const planKeys = new Set([
   'explanation',
   'active',
 ]);
-const nodeKeys = new Set(['step', 'status']);
+const nodeKeys = new Set(['id', 'step', 'status']);
 const statuses = new Set<TaskPlanStatus>(['pending', 'in_progress', 'completed']);
 
 export function taskPlanFromPayload(
@@ -91,7 +91,14 @@ function taskPlanNodeFromPayload(input: unknown) {
   if (!step || !statuses.has(status)) {
     return null;
   }
-  return { step, status };
+  if (input.id != null && typeof input.id !== 'string') {
+    return null;
+  }
+  const id = typeof input.id === 'string' ? boundedText(input.id, 160) : null;
+  if (input.id != null && !id) {
+    return null;
+  }
+  return id ? { id, step, status } : { step, status };
 }
 
 function boundedText(value: string, limit: number, allowEmpty = false) {

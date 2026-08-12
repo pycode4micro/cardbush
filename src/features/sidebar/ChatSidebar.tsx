@@ -1131,6 +1131,7 @@ export function ConversationChangeDialog({
   onClose,
   onRevert,
   onRevertAll,
+  embedded = false,
 }: {
   language: AppLanguage;
   conversation: ConversationSummary;
@@ -1140,6 +1141,7 @@ export function ConversationChangeDialog({
   onClose: () => void;
   onRevert: (report: ConversationChangeReport) => Promise<void>;
   onRevertAll: () => Promise<void>;
+  embedded?: boolean;
 }) {
   const reviewItems = useMemo(
     () => reports.flatMap((report, reportIndex) =>
@@ -1152,6 +1154,30 @@ export function ConversationChangeDialog({
     [reports],
   );
   const [selectedKey, setSelectedKey] = useState(reviewItems[0]?.key ?? '');
+  const [fileNavWidth, setFileNavWidth] = useState(() => {
+    const stored = Number.parseFloat(window.localStorage.getItem('cardbush.review_file_nav_width') ?? '');
+    return Number.isFinite(stored) ? Math.min(420, Math.max(150, stored)) : 210;
+  });
+  const beginFileNavResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const workspace = event.currentTarget.parentElement;
+    if (!workspace) return;
+    document.body.classList.add('change-review-resizing');
+    const move = (moveEvent: PointerEvent) => {
+      const bounds = workspace.getBoundingClientRect();
+      const maximum = Math.max(150, Math.min(420, bounds.width * 0.48));
+      const next = Math.round(Math.min(maximum, Math.max(150, bounds.right - moveEvent.clientX)));
+      setFileNavWidth(next);
+      window.localStorage.setItem('cardbush.review_file_nav_width', String(next));
+    };
+    const finish = () => {
+      document.body.classList.remove('change-review-resizing');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+  }, []);
   const selectedItem = reviewItems.find((item) => item.key === selectedKey) ??
     reviewItems[0] ?? null;
   useEffect(() => {
@@ -1172,16 +1198,8 @@ export function ConversationChangeDialog({
     { files: 0, additions: 0, deletions: 0 },
   );
   const allBusy = revertingChangeId === `conversation:${conversation.id}`;
-  return (
-    <div
-      className="modal-backdrop change-review-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <section className="change-review-dialog">
+  const dialog = (
+      <section className={`change-review-dialog${embedded ? ' embedded' : ''}`}>
         <header>
           <div>
             <strong>{language === 'zh' ? '会话修改' : 'Chat changes'}</strong>
@@ -1211,7 +1229,10 @@ export function ConversationChangeDialog({
           </button>
         </div>
         {notice && <pre className="change-review-notice">{notice}</pre>}
-        <div className="change-review-workspace">
+        <div
+          className="change-review-workspace"
+          style={{ '--change-file-nav-width': `${fileNavWidth}px` } as React.CSSProperties}
+        >
           <section className="change-review-diff-pane">
             {selectedItem ? (
               <>
@@ -1244,6 +1265,14 @@ export function ConversationChangeDialog({
               </div>
             )}
           </section>
+          <div
+            className="change-review-column-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={language === 'zh' ? '调整文件列表宽度' : 'Resize file list'}
+            title={language === 'zh' ? '拖动调整 Diff 和文件列表宽度' : 'Drag to resize diff and files'}
+            onPointerDown={beginFileNavResize}
+          />
           <aside className="change-review-file-nav">
             <header>
               <strong>{language === 'zh' ? '文件' : 'Files'}</strong>
@@ -1271,6 +1300,20 @@ export function ConversationChangeDialog({
           </aside>
         </div>
       </section>
+  );
+  if (embedded) {
+    return dialog;
+  }
+  return (
+    <div
+      className="modal-backdrop change-review-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      {dialog}
     </div>
   );
 }

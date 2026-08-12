@@ -97,6 +97,8 @@ export interface RuntimeToolInventoryEntry {
   enabled: boolean;
   runtimeLoaded: boolean;
   schemaAvailable: boolean;
+  inputSchema?: Record<string, unknown>;
+  dispatch?: Record<string, unknown>;
   injection: {
     core: boolean;
     default: boolean;
@@ -345,6 +347,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   maintenanceConversationHistoryClear: false,
   maintenanceLogsCacheClear: false,
   botControl: false,
+  sessionShareLinks: false,
   messageEditRegenerate: false,
   turnRegenerate: false,
   stableMessageIds: false,
@@ -581,12 +584,19 @@ function hasHeader(headers: Record<string, string>, name: string) {
 export class BushServerHttpError extends Error {
   readonly statusCode: number;
   readonly responseBody: string;
+  readonly code?: string;
+  readonly requestId?: string;
+  readonly details?: unknown;
 
   constructor(statusCode: number, responseBody: string) {
     super(formatHttpError(statusCode, responseBody));
     this.name = 'BushServerHttpError';
     this.statusCode = statusCode;
     this.responseBody = responseBody;
+    const detail = structuredErrorDetail(responseBody);
+    this.code = detail?.code;
+    this.requestId = detail?.requestId;
+    this.details = detail?.details;
   }
 }
 
@@ -662,7 +672,7 @@ export async function saveModelConfigs(request: {
         provider: item.provider,
         model: item.modelName,
         model_name: item.modelName,
-        api_key: item.apiKey,
+        ...(item.apiKey.trim() ? { api_key: item.apiKey } : {}),
         base_url: item.baseUrl,
         max_context_tokens: item.maxContextTokens,
       })),
@@ -769,6 +779,11 @@ function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | n
     id: String(item.id ?? ''),
     provider,
     apiKey: String(item.apiKey ?? item.api_key ?? ''),
+    hasApiKey:
+      item.hasApiKey === true ||
+      item.has_api_key === true ||
+      Boolean(String(item.apiKeyMasked ?? item.api_key_masked ?? '').trim()),
+    apiKeyMasked: optionalString(item.apiKeyMasked ?? item.api_key_masked),
     modelName,
     baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
     ...(maxContextTokens ? { maxContextTokens } : {}),
@@ -1028,6 +1043,14 @@ function runtimeToolInventoryEntryFromPayload(
     enabled: Boolean(value.enabled),
     runtimeLoaded: Boolean(value.runtime_loaded ?? value.runtimeLoaded),
     schemaAvailable: Boolean(value.schema_available ?? value.schemaAvailable),
+    inputSchema:
+      Object.keys(recordFromUnknown(value.input_schema ?? value.inputSchema)).length > 0
+        ? recordFromUnknown(value.input_schema ?? value.inputSchema)
+        : undefined,
+    dispatch:
+      Object.keys(recordFromUnknown(value.dispatch)).length > 0
+        ? recordFromUnknown(value.dispatch)
+        : undefined,
     injection: {
       core: Boolean(injection.core),
       default: Boolean(injection.default),
@@ -2130,6 +2153,7 @@ async function streamEndpoint({
   let eventName = 'message';
   let dataLines: string[] = [];
   let emittedAny = false;
+  const seenStreamEvents = new Set<string>();
 
   const flush = () => {
     if (dataLines.length === 0) {
@@ -2140,6 +2164,13 @@ async function streamEndpoint({
     dataLines = [];
     const currentEvent = eventName;
     eventName = 'message';
+    const eventIdentity = streamEventIdentity(currentEvent, rawData);
+    if (eventIdentity && seenStreamEvents.has(eventIdentity)) {
+      return;
+    }
+    if (eventIdentity) {
+      seenStreamEvents.add(eventIdentity);
+    }
     const effect = handleStreamEvent(currentEvent, rawData, emittedAny, request);
     if (effect?.clearEmitted) {
       emittedAny = false;
@@ -2175,6 +2206,23 @@ async function streamEndpoint({
     dataLines.push(buffer.trim());
   }
   flush();
+}
+
+function streamEventIdentity(eventName: string, rawData: string) {
+  const payload = parseJson(rawData);
+  if (!payload) {
+    return '';
+  }
+  const eventId = optionalString(payload.event_id ?? payload.eventId);
+  if (eventId) {
+    return `event:${eventId}`;
+  }
+  const sequence = optionalNumber(payload.sequence);
+  if (sequence == null) {
+    return '';
+  }
+  const requestId = optionalString(payload.request_id ?? payload.requestId) ?? '';
+  return `sequence:${requestId}:${eventName}:${sequence}`;
 }
 
 function controlStreamBody(request: ControlStreamRequest) {
@@ -3248,6 +3296,10 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       ['maintenance_logs_cache_clear'],
     ),
     botControl: capabilityBoolean(features, endpoints, 'botControl', ['bot_control']),
+    sessionShareLinks: capabilityBoolean(features, endpoints, 'sessionShareLinks', [
+      'session_share_links',
+      'bot_session_handoff',
+    ]),
     messageEditRegenerate: capabilityBoolean(
       features,
       endpoints,
@@ -4026,6 +4078,13 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     ),
     turnSequence: optionalNumber(value.turn_sequence ?? value.turnSequence),
     messageIndex: optionalNumber(value.message_index ?? value.messageIndex ?? index),
+    sequence: optionalNumber(value.sequence ?? asRecord(value.metadata).sequence),
+    requestId: optionalString(
+      value.request_id ?? value.requestId ?? asRecord(value.metadata).request_id,
+    ),
+    eventId: optionalString(
+      value.event_id ?? value.eventId ?? asRecord(value.metadata).event_id,
+    ),
     assistantMessageId: optionalString(
       value.assistant_message_id ??
         value.assistantMessageId ??
@@ -4126,6 +4185,7 @@ function normalizedPermissionQuestion(questions: InteractionQuestion[]): Interac
 function assistantRevisionFromPayload(payload: Record<string, unknown>): AssistantRevision {
   return {
     action: String(payload.action ?? ''),
+    channel: optionalString(payload.channel),
     turnId: optionalString(payload.turn_id ?? payload.turnId),
     reason: optionalString(payload.reason),
     draftState: optionalString(payload.draft_state ?? payload.draftState),
@@ -4154,7 +4214,7 @@ function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExe
     state,
     summary: toolSummary(payload),
     output: String(payload.output ?? ''),
-    success: typeof payload.success === 'boolean' ? payload.success : state === 'ok',
+    success: typeof payload.success === 'boolean' ? payload.success : state === 'completed',
     durationMs: numericValue(payload.duration_ms ?? payload.durationMs),
     createdAt:
       optionalString(payload.created_at ?? payload.createdAt) ?? new Date().toISOString(),
@@ -4242,7 +4302,7 @@ function toolExecutionsFromPayload(value: unknown): ChatToolExecution[] {
         state,
         summary: String(item.summary ?? ''),
         output: String(item.output ?? ''),
-        success: typeof item.success === 'boolean' ? item.success : state === 'ok',
+        success: typeof item.success === 'boolean' ? item.success : state === 'completed',
         durationMs: numericValue(item.durationMs ?? item.duration_ms),
         createdAt:
           optionalString(item.createdAt ?? item.created_at) ?? new Date().toISOString(),
@@ -4402,22 +4462,24 @@ function normalizeToolState(
     nonEmpty(metadata.status);
   const state = (rawState ?? '').toLowerCase();
   if (['ok', 'done', 'success', 'completed'].includes(state)) {
-    return 'ok';
+    return 'completed';
   }
-  if (
-    ['using', 'running', 'pending', 'started', 'queued', 'waiting_confirmation'].includes(
-      state,
-    )
-  ) {
-    return 'using';
+  if (['pending', 'queued', 'waiting_confirmation'].includes(state)) {
+    return 'queued';
+  }
+  if (['using', 'running', 'started'].includes(state)) {
+    return 'running';
   }
   if (['fail', 'failed', 'error'].includes(state)) {
-    return 'fail';
+    return 'failed';
+  }
+  if (['cancelled', 'canceled', 'stopped'].includes(state)) {
+    return 'cancelled';
   }
   if (Object.prototype.hasOwnProperty.call(payload, 'success')) {
-    return payload.success === true ? 'ok' : 'fail';
+    return payload.success === true ? 'completed' : 'failed';
   }
-  return state || 'using';
+  return state || 'queued';
 }
 
 function toolName(value: unknown) {
@@ -4907,23 +4969,62 @@ function parseJson(value: string) {
 
 function formatHttpError(statusCode: number, body: string) {
   const detail = extractErrorDetail(body);
+  const structured = structuredErrorDetail(body);
+  const diagnostic = [structured?.code, structured?.requestId]
+    .filter(Boolean)
+    .join(' · ');
+  const withDiagnostic = (message: string) =>
+    diagnostic ? `${message} (${diagnostic})` : message;
   if (statusCode === 403) {
-    return `BushServer 拒绝访问${detail ? `: ${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`;
+    return withDiagnostic(`BushServer 拒绝访问${detail ? `: ${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`);
   }
   const serviceError = normalizedServiceError(detail, statusCode);
   if (serviceError) {
-    return serviceError;
+    return withDiagnostic(serviceError);
   }
-  return detail ? `BushServer error ${statusCode}: ${detail}` : `BushServer error: ${statusCode}`;
+  const message = detail
+    ? `BushServer error ${statusCode}: ${detail}`
+    : `BushServer error: ${statusCode}`;
+  return withDiagnostic(message);
+}
+
+function structuredErrorDetail(body: string) {
+  try {
+    const decoded = JSON.parse(body) as Record<string, unknown>;
+    const detail = asRecord(decoded.detail);
+    if (Object.keys(detail).length === 0) {
+      return undefined;
+    }
+    return {
+      code: optionalString(detail.code),
+      requestId: optionalString(detail.request_id ?? detail.requestId),
+      details: detail.details,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 function streamErrorMessage(decoded: Record<string, unknown>) {
+  const structured = asRecord(decoded.detail);
   const detail =
     errorDetailText(decoded.message) ||
     errorDetailText(decoded.detail) ||
     errorDetailText(decoded.error) ||
     'BushServer stream error';
-  return normalizedServiceError(detail) || detail;
+  const message = normalizedServiceError(detail) || detail;
+  const diagnostic = [
+    optionalString(structured.code ?? decoded.code),
+    optionalString(
+      structured.request_id ??
+        structured.requestId ??
+        decoded.request_id ??
+        decoded.requestId,
+    ),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return diagnostic ? `${message} (${diagnostic})` : message;
 }
 
 function normalizedServiceError(detail: string, statusCode?: number) {

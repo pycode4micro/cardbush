@@ -51,6 +51,7 @@ import {
   type ReactNode,
   type UIEvent,
   type WheelEvent,
+  createElement,
   Suspense,
   lazy,
   useCallback,
@@ -85,6 +86,7 @@ import {
 } from './hooks/useCardbushChat';
 import { BotPlatformIcon } from './components/BotPlatformIcon';
 import { SidebarResizer } from './components/SidebarResizer';
+import { RightInspectorResizer } from './components/RightInspectorResizer';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -106,6 +108,7 @@ import {
   type GuidanceMode,
 } from './features/chatMessages';
 import { QuickContextRail } from './features/chat/QuickContextRail';
+import { ConversationWorkSummary } from './features/chat/ConversationWorkSummary';
 import {
   ShadowTemporaryChat,
   type ShadowChatEntry,
@@ -161,6 +164,10 @@ import {
   type ConversationChangeReport,
 } from './features/tools';
 import { CardlingSceneHost } from './features/cardling/CardlingSceneHost';
+import {
+  OPEN_INSPECTOR_EVENT,
+  type InspectorOpenDetail,
+} from './features/inspector/inspectorEvents';
 import {
   OsSystemSurface,
   type OsApplication,
@@ -420,6 +427,7 @@ function CardbushApp() {
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('profile');
@@ -439,6 +447,21 @@ function CardbushApp() {
   const [visualInputEnabledSetting, setVisualInputEnabledSetting] = useState(
     readVisualInputEnabled,
   );
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void window.cardbushDesktop?.isMaximized?.().then((value) => {
+        if (active) setWindowMaximized(Boolean(value));
+      }).catch(() => undefined);
+    };
+    refresh();
+    window.addEventListener('resize', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('resize', refresh);
+    };
+  }, []);
   const [thinkingNotice, setThinkingNotice] = useState<ThinkingNotice | null>(null);
   const activeConversationForThinkingRef = useRef('');
   const reasoningTraceVisibleRef = useRef(false);
@@ -793,6 +816,17 @@ function CardbushApp() {
   const [changeReviewConversationId, setChangeReviewConversationId] = useState('');
   const [revertingChangeId, setRevertingChangeId] = useState('');
   const [changeReviewNotice, setChangeReviewNotice] = useState('');
+  const [inspectorTarget, setInspectorTarget] = useState<InspectorOpenDetail | null>(null);
+  const [inspectorSummaryOpen, setInspectorSummaryOpen] = useState(false);
+  const [inspectorWidth, setInspectorWidthState] = useState(() => {
+    const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
+    return Number.isFinite(stored) ? Math.min(900, Math.max(380, stored)) : 620;
+  });
+  const setInspectorWidth = useCallback((width: number) => {
+    const next = Math.round(width);
+    setInspectorWidthState(next);
+    window.localStorage.setItem('cardbush.inspector_width', String(next));
+  }, []);
   const changeReportsByConversation = useMemo(
     () =>
       Object.fromEntries(
@@ -810,6 +844,31 @@ function CardbushApp() {
   const changeReviewReports = changeReviewConversationId
     ? changeReportsByConversation[changeReviewConversationId] ?? []
     : [];
+  const inspectorOpen = Boolean(
+    (changeReviewConversation && changeReviewReports.length > 0) || inspectorTarget,
+  );
+
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    const preserveChatWidth = () => {
+      if (window.innerWidth < 1220) setSidebarCollapsed(true);
+    };
+    preserveChatWidth();
+    window.addEventListener('resize', preserveChatWidth);
+    return () => window.removeEventListener('resize', preserveChatWidth);
+  }, [inspectorOpen]);
+
+  useEffect(() => {
+    const handleOpenInspector = (event: Event) => {
+      const detail = (event as CustomEvent<InspectorOpenDetail>).detail;
+      if (!detail?.target?.trim()) return;
+      setInspectorTarget(detail);
+      setChangeReviewConversationId('');
+      setInspectorSummaryOpen(false);
+    };
+    window.addEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
+    return () => window.removeEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
+  }, []);
 
   useEffect(() => {
     void window.cardbushDesktop?.setCardlingState?.({
@@ -1591,7 +1650,7 @@ function CardbushApp() {
         </Suspense>
       ) : (
         <main
-          className={`desktop-shell ${section === 'os' ? 'os-desktop-shell' : ''}`}
+          className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''} ${section === 'os' ? 'os-desktop-shell' : ''}`}
           style={section === 'os'
             ? ({
                 '--os-background-filter': appSettings.os.backgroundContrast > 0
@@ -1644,6 +1703,7 @@ function CardbushApp() {
                 onDeleteConversation={chat.deleteConversation}
                 onRenameConversation={chat.renameConversation}
                 onOpenConversationChanges={(conversationId) => {
+                  setInspectorTarget(null);
                   setChangeReviewConversationId(conversationId);
                   setChangeReviewNotice('');
                 }}
@@ -1673,6 +1733,8 @@ function CardbushApp() {
                 onOsSettingsChange={(os) => updateAppSettings((current) => ({ ...current, os }))}
                 onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
+                inspectorOpen={inspectorOpen}
+                windowMaximized={windowMaximized}
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={section === 'os' ? undefined : activeProjectDir}
@@ -1725,7 +1787,7 @@ function CardbushApp() {
                 reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection}
                 reasoningLevel={chat.reasoningLevel}
                 reasoningLevels={backendCapabilities.reasoningLevels}
-                botControlAvailable={backendCapabilities.botControl}
+                botHandoffAvailable={backendCapabilities.sessionShareLinks}
                 gitAvailable={section === 'chat' && backendCapabilities.git}
                 terminalAvailable={section === 'chat' && backendCapabilities.terminal}
                 onModelChange={chat.setSelectedModel}
@@ -1757,6 +1819,7 @@ function CardbushApp() {
                 }
                 onOpenChangeReview={() => {
                   if (!chat.activeConversationId) return;
+                  setInspectorTarget(null);
                   setChangeReviewConversationId(chat.activeConversationId);
                   setChangeReviewNotice('');
                 }}
@@ -1790,26 +1853,90 @@ function CardbushApp() {
               />
             )}
           </section>
+          {inspectorOpen ? (
+            <aside
+              className="right-inspector"
+              aria-label={language === 'zh' ? '右侧检查器' : 'Inspector'}
+              style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
+            >
+              <RightInspectorResizer
+                width={inspectorWidth}
+                onWidthChange={setInspectorWidth}
+                label={language === 'zh' ? '拖动调整右侧栏宽度' : 'Drag to resize inspector'}
+              />
+              <header className="right-inspector-toolbar">
+                <strong>
+                  {changeReviewConversation
+                    ? (language === 'zh' ? '审查' : 'Review')
+                    : inspectorTarget?.title || basename(inspectorTarget?.target ?? '')}
+                </strong>
+                <button
+                  type="button"
+                  className={inspectorSummaryOpen ? 'active' : ''}
+                  onClick={() => setInspectorSummaryOpen((current) => !current)}
+                  title={language === 'zh' ? '摘要' : 'Summary'}
+                >
+                  <Clipboard size={15} />
+                  <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
+                </button>
+                {inspectorTarget && (
+                  <button
+                    type="button"
+                    onClick={() => void window.cardbushDesktop?.openUiPreview?.(inspectorTarget.target)}
+                    title={language === 'zh' ? '弹出到独立窗口' : 'Pop out'}
+                  >
+                    <ExternalLink size={15} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInspectorTarget(null);
+                    setChangeReviewConversationId('');
+                    setChangeReviewNotice('');
+                  }}
+                  title={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
+                >
+                  <PanelRightClose size={16} />
+                </button>
+              </header>
+              {inspectorSummaryOpen && (
+                <div className="right-inspector-summary">
+                  {changeReviewConversation
+                    ? (() => {
+                        const summary = summarizeChangeReports(changeReviewReports);
+                        return summary
+                          ? `${summary.fileCount} ${language === 'zh' ? '个文件' : 'files'} · +${summary.additions} -${summary.deletions}`
+                          : (language === 'zh' ? '暂无修改摘要' : 'No change summary');
+                      })()
+                    : inspectorTarget?.target}
+                </div>
+              )}
+              <div className="right-inspector-body">
+                {changeReviewConversation ? (
+                  <ConversationChangeDialog
+                    embedded
+                    language={language}
+                    conversation={changeReviewConversation}
+                    reports={changeReviewReports}
+                    notice={changeReviewNotice}
+                    revertingChangeId={revertingChangeId}
+                    onClose={() => setChangeReviewConversationId('')}
+                    onRevert={(report) => revertChangeReport(changeReviewConversation.id, report)}
+                    onRevertAll={() => revertConversationReports(changeReviewConversation.id, changeReviewReports)}
+                  />
+                ) : inspectorTarget ? (
+                  createElement('webview', {
+                    key: inspectorTarget.target,
+                    className: 'right-inspector-webview',
+                    src: inspectorSource(inspectorTarget.target),
+                    webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
+                  })
+                ) : null}
+              </div>
+            </aside>
+          ) : null}
         </main>
-      )}
-      {changeReviewConversation && changeReviewReports.length > 0 && (
-        <ConversationChangeDialog
-          language={language}
-          conversation={changeReviewConversation}
-          reports={changeReviewReports}
-          notice={changeReviewNotice}
-          revertingChangeId={revertingChangeId}
-          onClose={() => {
-            setChangeReviewConversationId('');
-            setChangeReviewNotice('');
-          }}
-          onRevert={(report) =>
-            revertChangeReport(changeReviewConversation.id, report)
-          }
-          onRevertAll={() =>
-            revertConversationReports(changeReviewConversation.id, changeReviewReports)
-          }
-        />
       )}
       <CopyToastHost language={language} />
     </div>
@@ -2322,6 +2449,9 @@ function readManagedModelConfigs() {
         id: String(item.id ?? ''),
         provider: String(item.provider ?? ''),
         apiKey: String(item.apiKey ?? ''),
+        hasApiKey: item.hasApiKey === true,
+        apiKeyMasked:
+          typeof item.apiKeyMasked === 'string' ? item.apiKeyMasked : undefined,
         modelName: String(item.modelName ?? ''),
         baseUrl: String(item.baseUrl ?? ''),
         maxContextTokens: normalizeMaxContextTokens(
@@ -2563,6 +2693,8 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
       id,
       provider,
       apiKey,
+      hasApiKey: raw.hasApiKey === true || Boolean(apiKey),
+      apiKeyMasked: raw.apiKeyMasked?.trim() || undefined,
       modelName,
       baseUrl,
       ...(maxContextTokens ? { maxContextTokens } : {}),
@@ -2982,6 +3114,8 @@ function ChatPanel({
   onOsSettingsChange,
   onExitOsMode,
   sidebarCollapsed,
+  inspectorOpen,
+  windowMaximized,
   onRevealSidebar,
   activeConversationId,
   activeProjectDir,
@@ -3021,7 +3155,7 @@ function ChatPanel({
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
-  botControlAvailable,
+  botHandoffAvailable,
   gitAvailable,
   terminalAvailable,
   onModelChange,
@@ -3060,6 +3194,8 @@ function ChatPanel({
   onOsSettingsChange: (settings: AppSettingsState['os']) => void;
   onExitOsMode: () => void;
   sidebarCollapsed: boolean;
+  inspectorOpen: boolean;
+  windowMaximized: boolean;
   onRevealSidebar: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
@@ -3099,7 +3235,7 @@ function ChatPanel({
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
-  botControlAvailable: boolean;
+  botHandoffAvailable: boolean;
   gitAvailable: boolean;
   terminalAvailable: boolean;
   onModelChange: (value: string) => void;
@@ -3874,17 +4010,18 @@ function ChatPanel({
             align: 'end',
             behavior: 'auto',
           });
+          window.requestAnimationFrame(() => {
+            if (
+              autoFollowStreamRef.current &&
+              !userDetachedFromBottomRef.current &&
+              Date.now() >= manualScrollDetachUntilRef.current
+            ) {
+              ensureMessageBottomVisible(messageId, reason);
+            }
+          });
+          return;
         }
-        window.requestAnimationFrame(() => {
-          if (
-            !autoFollowStreamRef.current ||
-            userDetachedFromBottomRef.current ||
-            Date.now() < manualScrollDetachUntilRef.current
-          ) {
-            return;
-          }
-          ensureMessageBottomVisible(messageId, reason);
-        });
+        ensureMessageBottomVisible(messageId, reason);
       });
     },
     [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight],
@@ -3898,13 +4035,6 @@ function ChatPanel({
       if (Math.abs(scroller.scrollTop - lockedScrollTop) >= 0.5) {
         scroller.scrollTop = lockedScrollTop;
       }
-      window.requestAnimationFrame(() => {
-        const currentScrollTop = scroller.scrollTop;
-        if (Math.abs(currentScrollTop - lockedScrollTop) < 0.5) {
-          return;
-        }
-        scroller.scrollTop = lockedScrollTop;
-      });
     },
     [],
   );
@@ -4982,6 +5112,9 @@ function ChatPanel({
     '--chat-scrollbar-gutter': `${chatScrollbarGutter}px`,
     '--chat-scrollbar-gutter-half': `${chatScrollbarGutter / 2}px`,
   } as CSSProperties;
+  const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
+  const showWorkSummary = workSummaryVisible && !inspectorOpen;
+  useEffect(() => setWorkSummaryVisible(false), [activeConversationId]);
 
   if (isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
@@ -4993,7 +5126,7 @@ function ChatPanel({
 
   return (
     <div
-      className={`chat-panel ${osModeEnabled ? `os-chat-panel${osGamepad.active ? ' os-gamepad-active' : ''}` : ''}`}
+      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!showWorkSummary ? ' work-summary-hidden' : ' work-summary-requested'}${windowMaximized ? ' window-maximized' : ' window-restored'} ${osModeEnabled ? `os-chat-panel${osGamepad.active ? ' os-gamepad-active' : ''}` : ''}`}
     >
       {osModeEnabled ? (
         <OsShellBar
@@ -5025,14 +5158,18 @@ function ChatPanel({
           }
           language={language}
           activeConversationId={activeConversationId}
-          botControlAvailable={botControlAvailable}
+          botHandoffAvailable={botHandoffAvailable}
           onCreateSessionShareLink={
-            botControlAvailable ? onCreateSessionShareLink : undefined
+            botHandoffAvailable ? onCreateSessionShareLink : undefined
           }
           onRefreshActiveSession={onRefreshActiveSession}
           activeConsole={consoleMode}
           onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
           onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
+          workSummaryVisible={showWorkSummary}
+          reviewAvailable={changeReports.length > 0}
+          onToggleWorkSummary={() => setWorkSummaryVisible((current) => !current)}
+          onOpenReview={onOpenChangeReview}
           onRevealSidebar={onRevealSidebar}
         />
       )}
@@ -5116,6 +5253,24 @@ function ChatPanel({
         style={chatBodyStyle}
         onWheelCapture={handleChatBodyWheelCapture}
       >
+        {!osModeEnabled && !loading && !showWelcome && showWorkSummary && (
+          <ConversationWorkSummary
+            language={language}
+            sessionId={activeConversationId}
+            messages={renderMessages}
+            changeReports={changeReports}
+            shadowAvailable={shadowCanActivate}
+            shadowOpen={shadowThreadOpen}
+            shadowAgentName={shadowConversation?.agentName || 'Shadow Agent'}
+            shadowEntries={shadowEntries}
+            shadowBusy={shadowReplying}
+            shadowError={shadowError}
+            shadowAccentColor={shadowAccentColor}
+            onToggleShadow={() => void toggleShadowThread()}
+            onCloseShadow={closeShadowThread}
+            onOpenChangeReview={onOpenChangeReview}
+          />
+        )}
         {!osModeEnabled && !loading && !showWelcome && (
           <QuickContextRail
             language={language}
@@ -5125,6 +5280,7 @@ function ChatPanel({
             serverSearchAvailable={contextSearchAvailable}
           />
         )}
+        <div className="chat-content-frame">
         {loading ? (
           <BackendLoading />
         ) : showWelcome ? (
@@ -5341,16 +5497,18 @@ function ChatPanel({
               />
             )}
             {shadowThreadOpen && (
-              <ShadowTemporaryChat
-                language={language}
-                agentName={shadowConversation?.agentName || 'Shadow Agent'}
-                entries={shadowEntries}
-                busy={shadowReplying}
-                error={shadowError}
-                open={shadowThreadOpen}
-                accentColor={shadowAccentColor}
-                onClose={closeShadowThread}
-              />
+              <div className="composer-shadow-chat-host">
+                <ShadowTemporaryChat
+                  language={language}
+                  agentName={shadowConversation?.agentName || 'Shadow Agent'}
+                  entries={shadowEntries}
+                  busy={shadowReplying}
+                  error={shadowError}
+                  open={shadowThreadOpen}
+                  accentColor={shadowAccentColor}
+                  onClose={closeShadowThread}
+                />
+              </div>
             )}
             <Composer
               key={activeConversationId || 'active-session'}
@@ -5418,6 +5576,7 @@ function ChatPanel({
             />
           </div>
         )}
+        </div>
       </div>
       {consoleMode &&
         ((consoleMode === 'git' && gitAvailable) ||
@@ -6189,12 +6348,16 @@ function TopBar({
   botShareLabel,
   language,
   activeConversationId,
-  botControlAvailable,
+  botHandoffAvailable,
   onCreateSessionShareLink,
   onRefreshActiveSession,
   activeConsole,
   onToggleGit,
   onToggleTerminal,
+  workSummaryVisible,
+  reviewAvailable,
+  onToggleWorkSummary,
+  onOpenReview,
   onRevealSidebar,
 }: {
   title: string;
@@ -6202,7 +6365,7 @@ function TopBar({
   botShareLabel: string;
   language: AppLanguage;
   activeConversationId?: string;
-  botControlAvailable: boolean;
+  botHandoffAvailable: boolean;
   onCreateSessionShareLink?: (
     request: SessionShareLinkRequest,
   ) => Promise<SessionShareLinkResult>;
@@ -6210,6 +6373,10 @@ function TopBar({
   activeConsole?: ConsoleMode | null;
   onToggleGit?: () => void;
   onToggleTerminal?: () => void;
+  workSummaryVisible?: boolean;
+  reviewAvailable?: boolean;
+  onToggleWorkSummary?: () => void;
+  onOpenReview?: () => void;
   onRevealSidebar: () => void;
 }) {
   const [botMenuOpen, setBotMenuOpen] = useState(false);
@@ -6271,6 +6438,31 @@ function TopBar({
         </button>
       )}
       <h1>{title}</h1>
+      {onToggleWorkSummary && (
+        <button
+          className={`topbar-inspector-action ${workSummaryVisible ? 'active' : ''}`}
+          type="button"
+          onClick={onToggleWorkSummary}
+          title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
+        >
+          <Clipboard size={15} />
+          <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
+        </button>
+      )}
+      {onOpenReview && (
+        <button
+          className="topbar-inspector-action"
+          type="button"
+          disabled={!reviewAvailable}
+          onClick={onOpenReview}
+          title={reviewAvailable
+            ? (language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right')
+            : (language === 'zh' ? '当前会话没有可审查的修改' : 'No changes to review')}
+        >
+          <PanelRightOpen size={15} />
+          <span>{language === 'zh' ? '审查' : 'Review'}</span>
+        </button>
+      )}
       <div className="bot-share-wrap" ref={botShareRef}>
         <button
           className="topbar-native-menu"
@@ -6281,10 +6473,10 @@ function TopBar({
           title={
             botShareEnabled
               ? botShareLabel
-              : !botControlAvailable
+              : !botHandoffAvailable
                 ? language === 'zh'
-                  ? 'BushServer 尚未提供 Bot API'
-                  : 'BushServer does not expose Bot APIs yet'
+                  ? 'BushServer 尚未提供 Bot 会话交接能力'
+                  : 'BushServer does not expose Bot session handoff yet'
               : language === 'zh'
                 ? '请先创建会话'
                 : 'Create a chat first'
@@ -6697,6 +6889,34 @@ function interactionReplyIsReady(
   });
 }
 
+function inspectorSource(target: string) {
+  const value = stripWrappingQuotes(target.trim());
+  if (/^(https?|file):\/\//i.test(value)) {
+    return value;
+  }
+  if (/^cardbush-file:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      return localFilePreviewUrl(decodeURIComponent(parsed.pathname));
+    } catch {
+      return value;
+    }
+  }
+  if (/^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\')) {
+    return localFilePreviewUrl(value);
+  }
+  return fileUrl(value);
+}
+
+function localFilePreviewUrl(value: string) {
+  const normalized = value.replaceAll('\\', '/').replace(/^\/+/, '');
+  const encoded = normalized
+    .split('/')
+    .map((part, index) => index === 0 && /^[a-z]:$/i.test(part) ? part : encodeURIComponent(part))
+    .join('/');
+  return `file:///${encoded}`;
+}
+
 function FeaturePanel({
   language,
   section,
@@ -6736,7 +6956,7 @@ function FeaturePanel({
         sidebarCollapsed={sidebarCollapsed}
         botShareLabel={language === 'zh' ? '继续到 Bot' : 'Continue to Bot'}
         language={language}
-        botControlAvailable={false}
+        botHandoffAvailable={false}
         activeConsole={null}
         onRevealSidebar={onRevealSidebar}
       />

@@ -22,9 +22,9 @@ const validPlan = {
   plan_id: 'plan-contract',
   session_id: 'session-contract',
   nodes: [
-    { step: 'Inspect the implementation', status: 'completed' },
-    { step: 'Run integration tests', status: 'in_progress' },
-    { step: 'Verify persistence', status: 'pending' },
+    { id: 'node-inspect', step: 'Inspect the implementation', status: 'completed' },
+    { id: 'node-test', step: 'Run integration tests', status: 'in_progress' },
+    { id: 'node-persist', step: 'Verify persistence', status: 'pending' },
   ],
   explanation: 'Progress reported by the model.',
   active: true,
@@ -65,6 +65,7 @@ const attacks = [
   { ...validPlan, session_id: 'different-session' },
   { ...validPlan, root_goal: 'take acceptance authority' },
   { ...validPlan, nodes: [{ ...validPlan.nodes[0], phase: 'write' }] },
+  { ...validPlan, nodes: [{ ...validPlan.nodes[0], id: 'x'.repeat(161) }] },
   {
     ...validPlan,
     nodes: [

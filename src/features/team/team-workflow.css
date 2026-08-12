@@ -339,29 +339,29 @@
   display: flex;
   flex-direction: column;
   justify-content: space-evenly;
-  padding: 9px 0;
+  padding: 10px 0;
 }
 
 .team-agent-track::before {
   position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 6px;
-  width: 8px;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 7px;
   content: "";
-  opacity: 0.34;
+  opacity: 1;
   background: repeating-linear-gradient(
     to bottom,
-    color-mix(in srgb, var(--text-soft) 58%, transparent) 0 2px,
-    transparent 2px 13px
+    color-mix(in srgb, var(--text-soft) 42%, transparent) 0 2px,
+    transparent 2px 9px
   );
 }
 
 .team-agent-marker {
   position: relative;
-  width: 38px;
-  min-height: 24px;
-  flex: 0 1 46px;
+  width: 44px;
+  min-height: 9px;
+  flex: 0 1 42px;
   padding: 0;
   background: transparent;
   border: 0;
@@ -371,33 +371,34 @@
 .team-agent-marker-line {
   position: absolute;
   top: 50%;
-  left: 6px;
-  width: 12px;
+  left: 0;
+  width: 7px;
   height: 2px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-soft) 52%, transparent);
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--text-soft) 42%, transparent);
   transform: translateY(-50%);
   transform-origin: left center;
   transition: width 140ms ease, height 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
 .team-agent-marker:hover .team-agent-marker-line,
-.team-agent-marker:focus-visible .team-agent-marker-line,
-.team-agent-marker.active .team-agent-marker-line {
-  width: 27px;
-  height: 3px;
-  background: var(--text);
+.team-agent-marker:focus-visible .team-agent-marker-line {
+  width: 15px;
+  height: 2px;
+  background: color-mix(in srgb, var(--text) 88%, transparent);
 }
 
 .team-agent-marker.active .team-agent-marker-line {
-  background: var(--accent);
-  box-shadow: 0 10px 0 color-mix(in srgb, var(--accent) 76%, transparent);
+  width: 11px;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 74%, var(--text-soft));
+  box-shadow: none;
 }
 
 .team-agent-preview {
   position: absolute;
   top: 50%;
-  left: 38px;
+  left: 48px;
   z-index: 70;
   width: min(230px, 28vw);
   display: grid;
