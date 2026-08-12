@@ -34,7 +34,10 @@ import { basename, fileUrl } from '../../shared/localPaths';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
-import { normalizeMarkdownContentForDisplay } from './markdownFormat';
+import {
+  normalizeExecutionNarrationForDisplay,
+  normalizeMarkdownContentForDisplay,
+} from './markdownFormat';
 import {
   linkifyLocalFileReferences,
   localFileReference,
@@ -62,6 +65,40 @@ import {
 import { asRecord } from '../tools/toolPayload';
 
 export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
+
+type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
+
+function guidanceDeliveryState(message: ChatMessage): GuidanceDeliveryState | null {
+  const metadata = message.metadata ?? {};
+  const isGuidance =
+    metadata.turn_guidance === true ||
+    typeof metadata.guidance_delivery === 'string';
+  if (!isGuidance) {
+    return null;
+  }
+
+  const delivery =
+    typeof metadata.guidance_delivery === 'string'
+      ? metadata.guidance_delivery.trim().toLowerCase()
+      : message.status?.trim().toLowerCase();
+  if (delivery === 'pending' || delivery === 'queued' || delivery === 'failed') {
+    return delivery;
+  }
+  return 'sent';
+}
+
+function guidanceDeliveryLabel(
+  state: GuidanceDeliveryState,
+  language: AppLanguage,
+): string {
+  const labels = {
+    pending: language === 'zh' ? '发送中' : 'Sending',
+    queued: language === 'zh' ? '已排队' : 'Queued',
+    failed: language === 'zh' ? '发送失败' : 'Failed to send',
+    sent: language === 'zh' ? '已作为引导发送' : 'Sent as guidance',
+  } satisfies Record<GuidanceDeliveryState, string>;
+  return labels[state];
+}
 
 type ImagePreview = {
   src: string;
@@ -217,6 +254,7 @@ function MessageBubbleView({
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
+  onRetryGuidance,
   onRevertChangeReport,
   onOpenScene,
 }: {
@@ -232,6 +270,7 @@ function MessageBubbleView({
     guidance: string,
     mode: GuidanceMode,
   ) => Promise<void>;
+  onRetryGuidance: (message: ChatMessage) => Promise<void>;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -260,6 +299,8 @@ function MessageBubbleView({
     (!activeTurn || !activeMessageTurn || activeTurn === activeMessageTurn);
   const canGuide =
     isActiveAssistantTurn;
+  const guidanceDelivery =
+    message.role === 'user' ? guidanceDeliveryState(message) : null;
 
   useEffect(() => {
     setEditing(false);
@@ -304,14 +345,10 @@ function MessageBubbleView({
     if (!nextContent.trim()) {
       return;
     }
-    if (nextContent.trim() === message.content.trim()) {
-      setEditing(false);
-      return;
-    }
     setSubmittingEdit(true);
+    setEditing(false);
     try {
       await onEditUserMessage(message, nextContent);
-      setEditing(false);
     } finally {
       setSubmittingEdit(false);
     }
@@ -392,6 +429,29 @@ function MessageBubbleView({
         <div className="user-bubble">
           <MessageImageStrip paths={imagePaths} />
           {text && <MarkdownContent content={text} />}
+          {guidanceDelivery && (
+            <div
+              className={`guidance-delivery-status ${guidanceDelivery}`}
+              role="status"
+              aria-live="polite"
+            >
+              {guidanceDelivery === 'pending' && <LoaderCircle size={12} />}
+              {guidanceDelivery === 'queued' && <Clock3 size={12} />}
+              {guidanceDelivery === 'failed' && <X size={12} />}
+              {guidanceDelivery === 'sent' && <Check size={12} />}
+              <span>{guidanceDeliveryLabel(guidanceDelivery, language)}</span>
+              {guidanceDelivery === 'failed' && (
+                <button
+                  type="button"
+                  className="guidance-retry-button"
+                  onClick={() => void onRetryGuidance(message)}
+                >
+                  <RefreshCw size={11} />
+                  {language === 'zh' ? '重试' : 'Retry'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="message-actions">
           <button
@@ -707,13 +767,16 @@ function AssistantMessageContent({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const sortedExecutions = [...executions].sort(compareToolExecutionOrder);
-  const groups = groupExecutionsByContentOffset(content, sortedExecutions);
+  const displayContent = sortedExecutions.some(hasExplicitToolContentOffset)
+    ? content
+    : normalizeExecutionNarrationForDisplay(content, sortedExecutions.length);
+  const groups = groupExecutionsByContentOffset(displayContent, sortedExecutions);
   const blocks: ReactNode[] = [];
   let cursor = 0;
 
   groups.forEach((group, index) => {
     const groupKey = group.executions[0]?.id || String(index);
-    const segment = content.slice(cursor, group.offset);
+    const segment = displayContent.slice(cursor, group.offset);
     if (segment.trim()) {
       blocks.push(
         <MarkdownContent key={`text-before-${groupKey || index}`} content={segment.trim()} />,
@@ -733,7 +796,7 @@ function AssistantMessageContent({
     cursor = group.offset;
   });
 
-  const tail = content.slice(cursor);
+  const tail = displayContent.slice(cursor);
   if (tail.trim()) {
     blocks.push(<MarkdownContent key="text-tail" content={tail.trim()} />);
   }
@@ -1011,6 +1074,7 @@ function assistantTurnCompletedAt(
     metadata.finished_at,
     metadata.finishedAt,
     ...executions.map((execution) => toolExecutionFinishedAt(execution)),
+    message.createdAt,
   ]);
 }
 
@@ -1458,19 +1522,19 @@ function GuidanceDialog({
   }> = [
     {
       value: 'append_context',
-      title: language === 'zh' ? '补充给当前回合' : 'Add to current turn',
+      title: language === 'zh' ? '补充给当前任务' : 'Add to current task',
       description:
         language === 'zh'
-          ? '不打断正在运行的任务，把这段话作为即时引导注入。'
-          : 'Keep the task running and inject this as immediate guidance.',
+          ? '当前模型轮次输出完成后，把这段补充作为上下文继续处理。'
+          : 'After the current model round finishes, continue with this as additional context.',
     },
     {
       value: 'interrupt_and_continue',
-      title: language === 'zh' ? '中断后继续' : 'Interrupt and continue',
+      title: language === 'zh' ? '本轮结束后调整方向' : 'Redirect after this round',
       description:
         language === 'zh'
-          ? '让当前回合停在这里，再按你的新引导继续处理。'
-          : 'Pause the current turn here, then continue with this guidance.',
+          ? '不会截断正在生成的内容；等待本轮完成后，按这段新引导继续下一轮。'
+          : 'Do not cut off the current output; wait for this round to finish, then continue the next round with this guidance.',
     },
   ];
 

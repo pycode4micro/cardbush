@@ -76,7 +76,17 @@ export function taskPlanUpdateFromExecutionPayload(
     return null;
   }
   const plan = taskPlanFromPayload(input.plan, expectedSessionId);
-  return plan ? { turnId, plan } : null;
+  if (!plan) {
+    return null;
+  }
+  const messageId = typeof input.message_id === 'string' ? input.message_id.trim() : '';
+  const assistantSegmentIndex = Number(input.assistant_segment_index);
+  return {
+    turnId,
+    plan,
+    ...(messageId ? { messageId } : {}),
+    ...(Number.isFinite(assistantSegmentIndex) ? { assistantSegmentIndex } : {}),
+  };
 }
 
 function taskPlanNodeFromPayload(input: unknown) {

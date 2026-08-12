@@ -592,7 +592,7 @@ function CardbushApp() {
             persistAppSettings(next);
             return next;
           });
-          setBackendDefaultModelName(defaultConfig?.modelName ?? '');
+          setBackendDefaultModelName(defaultConfig?.id ?? '');
           return;
         }
         const legacy = normalizeManagedModelConfigs(readManagedModelConfigs());
@@ -625,7 +625,7 @@ function CardbushApp() {
             persistAppSettings(next);
             return next;
           });
-          setBackendDefaultModelName(savedDefault?.modelName ?? '');
+          setBackendDefaultModelName(savedDefault?.id ?? '');
         }
       } catch {
         lastSavedModelConfigSignatureRef.current = '';
@@ -739,15 +739,20 @@ function CardbushApp() {
   }, [chat.sending]);
 
   useEffect(() => {
-    const defaultName = backendDefaultModelName.trim();
-    if (!defaultName) {
+    const defaultSelection = backendDefaultModelName.trim();
+    if (!defaultSelection) {
       return;
     }
-    if (availableModels.includes(defaultName) && chat.selectedModel !== defaultName) {
-      chat.setSelectedModel(defaultName);
+    const defaultConfig = appSettings.managedModelConfigs.find(
+      (config) =>
+        config.id === defaultSelection ||
+        config.modelName.trim().toLowerCase() === defaultSelection.toLowerCase(),
+    );
+    if (defaultConfig && chat.selectedModel !== defaultConfig.id) {
+      chat.setSelectedModel(defaultConfig.id);
     }
     setBackendDefaultModelName('');
-  }, [availableModels, backendDefaultModelName, chat]);
+  }, [appSettings.managedModelConfigs, backendDefaultModelName, chat]);
 
   useEffect(() => {
     if (!modelConfigSyncReady || backendDefaultModelName.trim()) {
@@ -1853,11 +1858,10 @@ function CardbushApp() {
                 notice={chat.notice}
                 selectedModel={chat.selectedModel}
                 selectedModelConfig={appSettings.managedModelConfigs.find(
-                  (config) => config.modelName.trim().toLowerCase()
-                    === chat.selectedModel.trim().toLowerCase(),
+                  (config) => config.id === chat.selectedModel,
                 )}
                 contextWindowMaxTokens={appSettings.managedModelConfigs.find(
-                  (config) => config.modelName.trim().toLowerCase() === chat.selectedModel.trim().toLowerCase(),
+                  (config) => config.id === chat.selectedModel,
                 )?.maxContextTokens}
                 contextWindowUsage={chat.activeContextWindowUsage}
                 capabilityCandidates={chat.activeCapabilityCandidates}
@@ -1890,6 +1894,7 @@ function CardbushApp() {
                 onRegenerate={chat.regenerateAssistantMessage}
                 onEditUserMessage={chat.editUserMessageAndRegenerate}
                 onGuideMessage={chat.sendTurnGuidance}
+                onRetryGuidance={chat.retryTurnGuidance}
                 onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance}
                 onRemoveQueuedMessage={chat.removeQueuedMessage}
                 onRevertChangeReport={(report, message) =>
@@ -2830,13 +2835,13 @@ function stableModelConfigId(
 function effectiveModels(configs: ManagedModelConfig[]) {
   const seen = new Set<string>();
   return configs
-    .map((item) => item.modelName.trim())
-    .filter((model) => model && seen.add(model.toLowerCase()));
+    .filter((item) => item.id.trim() && seen.add(item.id.trim().toLowerCase()));
 }
 
 function defaultModelConfigId(configs: ManagedModelConfig[], selectedModel: string) {
   const selected = selectedModel.trim().toLowerCase();
   return (
+    configs.find((item) => item.id.trim().toLowerCase() === selected)?.id ??
     configs.find((item) => item.modelName.trim().toLowerCase() === selected)?.id ??
     configs[0]?.id ??
     ''
@@ -3269,6 +3274,7 @@ function ChatPanel({
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
+  onRetryGuidance,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
   onRevertChangeReport,
@@ -3323,7 +3329,7 @@ function ChatPanel({
   contextWindowMaxTokens?: number;
   contextWindowUsage?: RuntimeContextWindowUsage;
   capabilityCandidates?: CapabilityCandidatesUpdate;
-  availableModels: string[];
+  availableModels: ManagedModelConfig[];
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
@@ -3355,6 +3361,7 @@ function ChatPanel({
     guidance: string,
     mode: 'append_context' | 'interrupt_and_continue',
   ) => Promise<void>;
+  onRetryGuidance: (message: ChatMessage) => Promise<void>;
   onGuideQueuedMessage: (
     queuedId: string,
     mode?: 'append_context' | 'interrupt_and_continue',
@@ -5504,6 +5511,7 @@ function ChatPanel({
                     onRegenerate={onRegenerate}
                     onEditUserMessage={onEditUserMessage}
                     onGuideMessage={onGuideMessage}
+                    onRetryGuidance={onRetryGuidance}
                     onRevertChangeReport={onRevertChangeReport}
                     onOpenScene={openScene}
                   />
@@ -5758,7 +5766,7 @@ function WelcomeComposer({
   queuedMessagePreview: string;
   queuedMessages: QueuedChatMessage[];
   selectedModel: string;
-  availableModels: string[];
+  availableModels: ManagedModelConfig[];
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;

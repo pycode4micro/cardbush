@@ -30,6 +30,8 @@ import type {
   TeamFlowNode,
   TeamFlowState,
   TeamFlowStreamEvent,
+  AssistantStreamChunk,
+  StreamExecutionUpdate,
   ThinkingStreamEvent,
   TaskPlanStreamUpdate,
   SubagentCapabilities,
@@ -61,6 +63,11 @@ import {
 } from './taskPlan';
 import { desktopActionToolPayload } from './desktopAction';
 import { capabilityCandidatesFromPayload } from './capabilityCandidates';
+import {
+  assistantStreamChunkFromPayload,
+  executionUpdateFromPayload,
+} from './streamProtocol';
+import { attachHistoryToolExecutions } from './historyToolAssociation';
 
 const conversationListPageSize = 160;
 const conversationListMaxPages = 1;
@@ -159,12 +166,13 @@ export interface ChatStreamRequest {
   disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
-  onDelta?: (delta: string) => void;
+  onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
-  onFinalAssistantText?: (text: string) => void;
+  onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
@@ -196,12 +204,13 @@ export interface ControlStreamRequest {
   disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
-  onDelta?: (delta: string) => void;
+  onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
-  onFinalAssistantText?: (text: string) => void;
+  onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
@@ -224,17 +233,19 @@ export interface SendGuidanceRequest {
   sessionId: string;
   turnId: string;
   guidance: string;
+  clientMessageId: string;
   mode: 'append_context' | 'interrupt_and_continue';
   terminalRuntime?: TerminalRuntime;
   interactiveRequestsEnabled?: boolean;
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
-  onDelta?: (delta: string) => void;
+  onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
-  onFinalAssistantText?: (text: string) => void;
+  onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
@@ -483,6 +494,7 @@ export interface SessionSceneRecord {
 export interface SessionMessagesResult {
   conversation: ConversationSummary;
   messages: ChatMessage[];
+  toolExecutions: ChatToolExecution[];
   workspaceContext?: WorkspaceContext;
 }
 
@@ -1114,7 +1126,12 @@ export async function fetchSessionMessages(
   const payload = await readJson<{ messages?: unknown[] }>(
     url(`/v1/sessions/${encodeURIComponent(sessionId)}${query}`),
   );
+  const root = asRecord(payload);
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const parsedMessages = messages.map(messageFromPayload).filter((item) => item.id.trim());
+  const toolExecutions = toolExecutionsFromPayload(
+    root.tool_executions ?? root.toolExecutions,
+  );
   const conversation = conversationFromPayload(payload);
   const workspaceContext = workspaceContextFromPayload(
     asRecord(payload).workspace_context ?? asRecord(payload).workspaceContext,
@@ -1125,7 +1142,8 @@ export async function fetchSessionMessages(
       workspaceContext,
       projectDir: conversationProjectDirFromWorkspace(conversation.projectDir, workspaceContext),
     },
-    messages: messages.map(messageFromPayload).filter((item) => item.id.trim()),
+    messages: attachHistoryToolExecutions(parsedMessages, toolExecutions),
+    toolExecutions,
     workspaceContext,
   };
 }
@@ -1679,6 +1697,15 @@ export async function fetchSessionWorkspaceChanges(
     .map((item) => toolExecutionFromPayload(workspaceChangeToolPayload(item)));
 }
 
+export interface SendGuidanceResponse {
+  continuationQueued: boolean;
+  willContinueAfterCurrentRound: boolean;
+  guidance: {
+    clientMessageId: string;
+    mode: 'append_context' | 'interrupt_and_continue';
+  };
+}
+
 export async function revertSessionWorkspaceChanges(
   sessionId: string,
   turnIds: string[],
@@ -2083,12 +2110,14 @@ export async function sendGuidance(request: SendGuidanceRequest) {
   const turnId = request.turnId.trim();
   const guidance = request.guidance.trim();
   if (!sessionId || !turnId || !guidance) {
-    return;
+    throw new Error('会话、turn_id 或引导内容为空');
   }
   const body: Record<string, unknown> = {
     session_id: sessionId,
     guidance,
+    message_id: request.clientMessageId.trim(),
     mode: request.mode,
+    source: 'frontend',
     stream: true,
     metadata: {
       source: 'cardbush_electron',
@@ -2099,12 +2128,23 @@ export async function sendGuidance(request: SendGuidanceRequest) {
     },
   };
   applyInteractiveRequestsToBody(body, request.interactiveRequestsEnabled);
-  await streamEndpoint({
+  const done = await streamEndpoint({
     endpoint: url(`/v1/turns/${encodeURIComponent(turnId)}/guidance`),
     method: 'POST',
     body,
     request,
   });
+  const guidanceResult = asRecord(done.guidance);
+  return {
+    continuationQueued: done.continuation_queued === true,
+    willContinueAfterCurrentRound: done.will_continue_after_current_round === true,
+    guidance: {
+      clientMessageId: String(
+        guidanceResult.client_message_id ?? request.clientMessageId,
+      ),
+      mode: normalizeGuidanceMode(guidanceResult.mode ?? request.mode),
+    },
+  } satisfies SendGuidanceResponse;
 }
 
 export class PendingInteractionConflictError extends Error {
@@ -2138,6 +2178,7 @@ async function streamEndpoint({
     | 'signal'
     | 'onStart'
     | 'onDelta'
+    | 'onExecution'
     | 'onAssistantRevision'
     | 'onToolExecution'
     | 'onTaskPlanUpdate'
@@ -2171,7 +2212,7 @@ async function streamEndpoint({
         throw new PendingInteractionConflictError(interaction);
       }
     }
-    throw new Error(formatHttpError(response.status, responseText));
+    throw new BushServerHttpError(response.status, responseText);
   }
 
   const reader = response.body.getReader();
@@ -2181,6 +2222,7 @@ async function streamEndpoint({
   let dataLines: string[] = [];
   let emittedAny = false;
   const seenStreamEvents = new Set<string>();
+  let donePayload: Record<string, unknown> = {};
 
   const flush = () => {
     if (dataLines.length === 0) {
@@ -2201,6 +2243,9 @@ async function streamEndpoint({
     const effect = handleStreamEvent(currentEvent, rawData, emittedAny, request);
     if (effect?.clearEmitted) {
       emittedAny = false;
+    }
+    if (effect?.donePayload) {
+      donePayload = effect.donePayload;
     }
     if (currentEvent === 'token') {
       emittedAny = true;
@@ -2233,6 +2278,7 @@ async function streamEndpoint({
     dataLines.push(buffer.trim());
   }
   flush();
+  return donePayload;
 }
 
 function streamEventIdentity(eventName: string, rawData: string) {
@@ -2527,6 +2573,7 @@ function handleStreamEvent(
     | 'sessionId'
     | 'onStart'
     | 'onDelta'
+    | 'onExecution'
     | 'onToolExecution'
     | 'onTaskPlanUpdate'
     | 'onInteractiveRequest'
@@ -2540,7 +2587,7 @@ function handleStreamEvent(
     | 'onWorkflowEvent'
     | 'onSceneEvent'
   >,
-): { clearEmitted?: boolean } | undefined {
+): { clearEmitted?: boolean; donePayload?: Record<string, unknown> } | undefined {
   const decoded = parseJson(rawData);
   if (decoded == null) {
     return;
@@ -2550,6 +2597,11 @@ function handleStreamEvent(
     request.onStart?.({
       sessionId: String(decoded.session_id ?? ''),
       turnId: String(decoded.turn_id ?? ''),
+      messageId: optionalString(decoded.message_id ?? decoded.messageId),
+      assistantSegmentIndex: optionalNumber(
+        decoded.assistant_segment_index ?? decoded.assistantSegmentIndex,
+      ),
+      createdAt: optionalString(decoded.created_at ?? decoded.createdAt),
     });
     return;
   }
@@ -2561,7 +2613,7 @@ function handleStreamEvent(
   if (eventName === 'token') {
     const delta = String(decoded.delta ?? '');
     if (delta) {
-      request.onDelta?.(delta);
+      request.onDelta?.(delta, assistantStreamChunkFromPayload(decoded));
     }
     return;
   }
@@ -2656,6 +2708,7 @@ function handleStreamEvent(
   }
 
   if (eventName === 'execution') {
+    request.onExecution?.(executionUpdateFromPayload(decoded));
     const update = taskPlanUpdateFromExecutionPayload(decoded, request.sessionId);
     if (update) {
       request.onTaskPlanUpdate?.(update);
@@ -2706,19 +2759,25 @@ function handleStreamEvent(
   if (eventName === 'done') {
     const text = String(decoded.assistant_message ?? decoded.assistantMessage ?? '');
     if (text && request.onFinalAssistantText) {
-      request.onFinalAssistantText(text);
-      return;
+      request.onFinalAssistantText(text, assistantStreamChunkFromPayload(decoded));
+      return { donePayload: decoded };
     }
     if (text && !emittedAny) {
-      request.onDelta?.(text);
+      request.onDelta?.(text, assistantStreamChunkFromPayload(decoded));
     }
-    return;
+    return { donePayload: decoded };
   }
 
   const text = decoded.delta ?? decoded.text ?? decoded.content;
   if (text != null) {
-    request.onDelta?.(String(text));
+    request.onDelta?.(String(text), assistantStreamChunkFromPayload(decoded));
   }
+}
+
+function normalizeGuidanceMode(value: unknown): SendGuidanceRequest['mode'] {
+  return value === 'interrupt_and_continue'
+    ? 'interrupt_and_continue'
+    : 'append_context';
 }
 
 function sessionItemsFromPayload(
@@ -4069,11 +4128,19 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
       value.finished_at ??
       value.finishedAt,
   );
-  const metadata = completedAt
+  const clientMessageId = optionalString(
+    value.client_message_id ?? value.clientMessageId ?? sourceMetadata?.client_message_id,
+  );
+  const metadata = completedAt || clientMessageId
     ? {
         ...sourceMetadata,
-        cardbush_turn_completed_at:
-          sourceMetadata?.cardbush_turn_completed_at ?? completedAt,
+        ...(completedAt
+          ? {
+              cardbush_turn_completed_at:
+                sourceMetadata?.cardbush_turn_completed_at ?? completedAt,
+            }
+          : {}),
+        ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
       }
     : sourceMetadata;
   const conversationId = optionalString(
@@ -4094,6 +4161,7 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   return {
     id,
     messageId: optionalString(value.message_id ?? value.messageId),
+    clientMessageId,
     role,
     content,
     conversationId,
@@ -4219,6 +4287,10 @@ function assistantRevisionFromPayload(payload: Record<string, unknown>): Assista
     loopIndex: optionalNumber(payload.loop_index ?? payload.loopIndex),
     issue: optionalString(payload.issue),
     content: optionalString(payload.content),
+    messageId: optionalString(payload.message_id ?? payload.messageId),
+    assistantSegmentIndex: optionalNumber(
+      payload.assistant_segment_index ?? payload.assistantSegmentIndex,
+    ),
   };
 }
 
@@ -4251,11 +4323,23 @@ function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExe
     loopIndex: optionalNumber(
       payload.loop_index ?? payload.loopIndex ?? metadata.loop_index ?? metadata.loopIndex,
     ),
+    turnId: optionalString(
+      payload.turn_id ?? payload.turnId ?? metadata.turn_id ?? metadata.turnId,
+    ),
+    messageId: optionalString(payload.message_id ?? payload.messageId),
     assistantMessageId: optionalString(
       payload.assistant_message_id ??
         payload.assistantMessageId ??
+        payload.message_id ??
+        payload.messageId ??
         metadata.assistant_message_id ??
         metadata.assistantMessageId,
+    ),
+    assistantSegmentIndex: optionalNumber(
+      payload.assistant_segment_index ??
+        payload.assistantSegmentIndex ??
+        metadata.assistant_segment_index ??
+        metadata.assistantSegmentIndex,
     ),
     metadata,
   };

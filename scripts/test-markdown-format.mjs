@@ -26,7 +26,10 @@ vm.runInNewContext(transpiled.outputText, {
   exports: module.exports,
 });
 
-const { normalizeMarkdownContentForDisplay } = module.exports;
+const {
+  normalizeExecutionNarrationForDisplay,
+  normalizeMarkdownContentForDisplay,
+} = module.exports;
 
 const cases = [
   {
@@ -63,5 +66,16 @@ for (const testCase of cases) {
     testCase.name,
   );
 }
+
+const crowdedNarration =
+  '我先读取核心文件确认问题。 现在继续检查页面运行状态。 然后读取剩余样式并进行浏览器验证。 核心代码已经读取完成。 接下来启动页面并检查交互表现。 继续确认最后的响应式样式和错误日志。'.repeat(2);
+assert.equal(
+  normalizeExecutionNarrationForDisplay(crowdedNarration, 6),
+  crowdedNarration.replaceAll('。 ', '。\n\n'),
+);
+assert.equal(
+  normalizeExecutionNarrationForDisplay(crowdedNarration, 1),
+  crowdedNarration,
+);
 
 console.log(`markdown format tests passed (${cases.length})`);

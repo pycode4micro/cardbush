@@ -366,7 +366,10 @@ export interface ChatToolExecution {
   contentOffsetExplicit?: boolean;
   sequence?: number;
   loopIndex?: number;
+  turnId?: string;
+  messageId?: string;
   assistantMessageId?: string;
+  assistantSegmentIndex?: number;
   metadata: Record<string, unknown>;
 }
 
@@ -387,6 +390,8 @@ export interface TaskPlanSnapshot {
 
 export interface TaskPlanStreamUpdate {
   turnId: string;
+  messageId?: string;
+  assistantSegmentIndex?: number;
   plan: TaskPlanSnapshot;
 }
 
@@ -399,11 +404,14 @@ export interface AssistantRevision {
   loopIndex?: number;
   issue?: string;
   content?: string;
+  messageId?: string;
+  assistantSegmentIndex?: number;
 }
 
 export interface ChatMessage {
   id: string;
   messageId?: string;
+  clientMessageId?: string;
   role: ChatRole;
   content: string;
   conversationId?: string;
@@ -427,6 +435,29 @@ export interface ChatMessage {
 export interface StreamStart {
   sessionId: string;
   turnId: string;
+  messageId?: string;
+  assistantSegmentIndex?: number;
+  createdAt?: string;
+}
+
+export interface AssistantStreamChunk {
+  messageId: string;
+  assistantSegmentIndex?: number;
+  turnId: string;
+  createdAt?: string;
+  sequence?: number;
+  requestId?: string;
+  eventId?: string;
+}
+
+export interface StreamExecutionUpdate extends AssistantStreamChunk {
+  kind: string;
+  reason?: string;
+  pendingGuidanceCount?: number;
+  guidanceRoundIndex?: number;
+  previousAssistantSegmentIndex?: number;
+  nextAssistantSegmentIndex?: number;
+  nextRound?: number;
 }
 
 export type TeamFlowActionType =

@@ -68,6 +68,20 @@ export function normalizeMarkdownContentForDisplay(content: string) {
   );
 }
 
+export function normalizeExecutionNarrationForDisplay(
+  content: string,
+  executionCount: number,
+) {
+  if (
+    executionCount < 3 ||
+    content.length < 180 ||
+    (content.match(/\r?\n/g)?.length ?? 0) > 1
+  ) {
+    return content;
+  }
+  return content.replace(/([。！？])(?:[ \t]+)(?=\S)/g, '$1\n\n');
+}
+
 function commandAfterShellFence(info: string) {
   const [language, ...rest] = info.split(/\s+/);
   const command = rest.join(' ').trim();

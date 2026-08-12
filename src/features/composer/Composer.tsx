@@ -52,6 +52,7 @@ import {
 } from '../../shared/localPaths';
 import type {
   AppLanguage,
+  ManagedModelConfig,
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
@@ -252,7 +253,7 @@ export function Composer({
   queuedMessagePreview?: string;
   queuedMessages?: ComposerQueuedMessage[];
   selectedModel: string;
-  availableModels: string[];
+  availableModels: ManagedModelConfig[];
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
@@ -606,16 +607,16 @@ export function Composer({
 
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
-      const modelItems: ComposerCommandItem[] = availableModels.map((model) => ({
-        id: `/model ${model}`,
-        title: `/model ${model}`,
+      const modelItems: ComposerCommandItem[] = availableModels.map((config) => ({
+        id: `/model ${config.id}`,
+        title: `/model ${config.provider}/${config.modelName}`,
         subtitle:
           language === 'zh'
-            ? `切换到 ${model}`
-            : `Switch to ${model}`,
+            ? `切换到 ${config.provider} 的 ${config.modelName}`
+            : `Switch to ${config.modelName} on ${config.provider}`,
         icon: <Bot size={16} />,
-        run: () => selectModel(model),
-        searchText: `/model ${model} model ${model}`,
+        run: () => selectModel(config.id),
+        searchText: `/model ${config.provider} ${config.modelName} model`,
       }));
       return [
         {
@@ -883,9 +884,15 @@ export function Composer({
   }
 
   const hasConfiguredModels = availableModels.length > 0;
+  const selectedModelConfig = availableModels.find(
+    (config) => config.id === selectedModel,
+  ) ?? availableModels.find(
+    (config) => config.modelName.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
+  );
   const modelLabel =
-    selectedModel.trim() ||
-    (language === 'zh' ? '待配置' : 'Configure');
+    selectedModelConfig
+      ? `${selectedModelConfig.provider} · ${selectedModelConfig.modelName}`
+      : language === 'zh' ? '待配置' : 'Configure';
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
   const referencePlanEnabled = referencePlanMode === 'auto';
@@ -1218,7 +1225,7 @@ export function Composer({
                 toggleMenu('models', event);
               }}
             >
-              <ModelLogoMark model={modelLabel} size={15} />
+              <ModelLogoMark model={selectedModelConfig?.modelName || modelLabel} size={15} />
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
@@ -1481,7 +1488,7 @@ function ComposerPopover({
   visualInputEnabled: boolean;
   gitAvailable: boolean;
   selectedModel: string;
-  availableModels: string[];
+  availableModels: ManagedModelConfig[];
   permissionMode: PermissionMode;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
@@ -1503,7 +1510,7 @@ function ComposerPopover({
   onClose: () => void;
   anchor: ComposerPopoverAnchor | null;
 }) {
-  const models = Array.from(new Set([selectedModel, ...availableModels].filter(Boolean)));
+  const models = availableModels;
   const pickerMenu = menu === 'models';
   const [morePanel, setMorePanel] = useState<MorePanelMenu | null>(null);
   const referencePlanEnabled = referencePlanMode === 'auto';
@@ -1851,16 +1858,19 @@ function ComposerPopover({
               <ArrowRight size={15} />
             </button>
           ) : (
-            models.map((model) => (
+            models.map((config) => (
               <button
-                className={`model-picker-row ${model === selectedModel ? 'active' : ''}`}
+                className={`model-picker-row ${config.id === selectedModel ? 'active' : ''}`}
                 type="button"
-                key={model}
-                onClick={() => onSelectModel(model)}
+                key={config.id}
+                onClick={() => onSelectModel(config.id)}
               >
-                <ModelLogoMark model={model} size={16} />
-                <span>{model}</span>
-                {model === selectedModel && <Check size={16} />}
+                <ModelLogoMark model={config.modelName} size={16} />
+                <span className="model-picker-copy">
+                  <strong>{config.modelName}</strong>
+                  <small>{config.provider}</small>
+                </span>
+                {config.id === selectedModel && <Check size={16} />}
               </button>
             ))
           )}

@@ -45,10 +45,14 @@ assert.deepEqual(
   plain(taskPlanUpdateFromExecutionPayload({
     kind: 'plan',
     turn_id: 'turn-contract',
+    message_id: 'msg:assistant:turn-contract:2',
+    assistant_segment_index: 2,
     plan: validPlan,
   }, 'session-contract')),
   {
     turnId: 'turn-contract',
+    messageId: 'msg:assistant:turn-contract:2',
+    assistantSegmentIndex: 2,
     plan: {
       protocol: 'bush.task_plan.v1',
       planId: 'plan-contract',

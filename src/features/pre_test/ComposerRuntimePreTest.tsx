@@ -202,8 +202,14 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                   text: '补充移动端状态条的窄屏验收。',
                   createdAt: new Date().toISOString(),
                 }] : []}
-                selectedModel="glm-5.2"
-                availableModels={['glm-5.2']}
+                selectedModel="pre-test-glm"
+                availableModels={[{
+                  id: 'pre-test-glm',
+                  provider: 'zhipu',
+                  modelName: 'glm-5.2',
+                  apiKey: '',
+                  baseUrl: '',
+                }]}
                 referencePlanAvailable
                 referencePlanMode="off"
                 permissionMode="all_free"

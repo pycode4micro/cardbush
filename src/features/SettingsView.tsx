@@ -246,7 +246,7 @@ export function SettingsView({
   settings: AppSettingsState;
   backgroundImageSource: string;
   selectedModel: string;
-  availableModels: string[];
+  availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
   initialSection: SettingsSection;
   onBack: () => void;
@@ -438,20 +438,21 @@ export function SettingsView({
   }, [language, notify, onUseModel, updateSettings]);
 
   const useModel = useCallback(
-    (model: string) => {
-      if (!availableModels.includes(model)) {
+    (modelConfigId: string) => {
+      const config = availableModels.find((item) => item.id === modelConfigId);
+      if (!config) {
         notify(
           language === 'zh'
-            ? `切换失败：当前模型列表中不存在 ${model}`
-            : `Switch failed: ${model} is not in the model list`,
+            ? '切换失败：当前模型配置不存在'
+            : 'Switch failed: the model configuration no longer exists',
         );
         return;
       }
-      onUseModel(model);
+      onUseModel(config.id);
       notify(
         language === 'zh'
-          ? `已切换当前模型：${model}`
-          : `Current model switched: ${model}`,
+          ? `已切换当前模型：${config.provider} / ${config.modelName}`
+          : `Current model switched: ${config.provider} / ${config.modelName}`,
       );
     },
     [availableModels, language, notify, onUseModel],
@@ -1594,8 +1595,8 @@ function ModelsSettingsPanel({
                     key={config.id}
                     config={config}
                     language={language}
-                    selected={selectedModel === config.modelName}
-                    onUse={() => onUseModel(config.modelName)}
+                    selected={selectedModel === config.id}
+                    onUse={() => onUseModel(config.id)}
                     onDelete={() => onRemoveModelConfig(config.id)}
                     onSaveContextTokens={(value) =>
                       onUpdateModelContextTokens(config.id, value)
@@ -3436,6 +3437,8 @@ function modelConfigForBot(
     return configs.length === 1 ? configs[0] : undefined;
   }
   return configs.find(
+    (config) => config.id.trim().toLowerCase() === normalized,
+  ) ?? configs.find(
     (config) => config.modelName.trim().toLowerCase() === normalized,
   ) ?? (configs.length === 1 ? configs[0] : undefined);
 }
@@ -4153,12 +4156,14 @@ function resolveEffectiveModelInfo(
   const determinedByServer =
     language === 'zh' ? '(由 BushServer 决定)' : '(determined by BushServer)';
   const config = settings.managedModelConfigs.find(
+    (item) => item.id.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
+  ) ?? settings.managedModelConfigs.find(
     (item) => item.modelName.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
   );
   if (!config || !shouldUseManagedConfig(config)) {
     return {
       source: llmEndpoint ? 'External LLM_ENDPOINT' : language === 'zh' ? 'BushServer 默认配置' : 'BushServer default config',
-      model: selectedModel || determinedByServer,
+      model: config?.modelName || selectedModel || determinedByServer,
       provider: determinedByServer,
       apiKeyLabel: determinedByServer,
       baseUrl: determinedByServer,

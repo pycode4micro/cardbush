@@ -28,6 +28,7 @@ import {
 } from '../backend/api';
 import type {
   AssistantRevision,
+  AssistantStreamChunk,
   ChatMessage,
   ConversationSummary,
   ManagedModelConfig,
@@ -49,6 +50,7 @@ import type {
   TeamFlowState,
   TeamFlowStreamEvent,
   TaskPlanStreamUpdate,
+  StreamExecutionUpdate,
 } from '../types';
 import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
@@ -62,7 +64,7 @@ export type QueuedChatMessage = {
 
 export function useCardbushChat(
   managedModelConfigs: ManagedModelConfig[] = [],
-  availableModels: string[] = [],
+  availableModels: ManagedModelConfig[] = [],
   requestContext: {
     projectContexts?: Record<string, string>;
     disabledSkillNames?: Set<string>;
@@ -128,6 +130,8 @@ export function useCardbushChat(
   const activeTurnIdsRef = useRef<Record<string, string>>({});
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
+  const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
+  const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
     (text: string, conversation?: ConversationSummary) => Promise<void>
   >(async () => undefined);
@@ -275,10 +279,14 @@ export function useCardbushChat(
 
   useEffect(() => {
     setSelectedModelState((current) => {
-      if (availableModels.some((model) => model === current)) {
-        return current;
+      const selected = modelConfigFor(availableModels, current);
+      if (selected) {
+        if (selected.id !== current) {
+          window.localStorage.setItem('cardbush.selected_model', selected.id);
+        }
+        return selected.id;
       }
-      const next = availableModels[0] ?? '';
+      const next = availableModels[0]?.id ?? '';
       if (next) {
         window.localStorage.setItem('cardbush.selected_model', next);
       } else {
@@ -837,9 +845,9 @@ export function useCardbushChat(
       });
       setError(null);
       const controller = new AbortController();
-      const streamBuffer = createAssistantStreamDeltaBuffer((delta) => {
+      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
         setMessagesByConversation((current) =>
-          appendAssistantDelta(current, sessionId, assistantId, delta),
+          appendAssistantDelta(current, sessionId, assistantId, delta, route),
         );
       });
       controllersRef.current[sessionId] = controller;
@@ -849,7 +857,7 @@ export function useCardbushChat(
         await streamChat({
           sessionId,
           userInput: outbound.userInput,
-          model: selectedModel,
+          model: selectedModelName(managedModelConfigs, selectedModel),
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
           projectDir,
           projectUserPrompt,
@@ -877,17 +885,40 @@ export function useCardbushChat(
               assignTurnToLocalMessages(current, sessionId, start.turnId, [
                 userMessage.id,
                 assistantId,
-              ]),
+              ], {
+                messageId: start.messageId ?? '',
+                assistantSegmentIndex: start.assistantSegmentIndex,
+                turnId: start.turnId,
+                createdAt: start.createdAt,
+              }),
             );
           },
-          onDelta: (delta) => {
-            streamBuffer.push(delta);
+          onDelta: (delta, chunk) => {
+            streamBuffer.push(delta, chunk);
+          },
+          onExecution: (update) => {
+            if (update.reason === 'turn_guidance_pending') {
+              void streamBuffer.flushAllStreaming().then(() => {
+                setMessagesByConversation((current) =>
+                  applyAssistantSegmentBoundary(
+                    current,
+                    sessionId,
+                    assistantId,
+                    update,
+                  ),
+                );
+              });
+            }
           },
           onAssistantRevision: (revision) => {
             if (revision.channel && revision.channel !== 'assistant') {
               return;
             }
-            streamBuffer.reset(revision.content ?? '');
+            streamBuffer.reset({
+              messageId: revision.messageId ?? '',
+              assistantSegmentIndex: revision.assistantSegmentIndex,
+              turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+            }, revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(current, sessionId, assistantId, revision),
             );
@@ -916,14 +947,16 @@ export function useCardbushChat(
               sessionId: interaction.sessionId ?? sessionId,
             });
           },
-          onFinalAssistantText: (text) => {
-            finalSnapshotPromise = streamBuffer.flushFinalText(text).then(() => {
+          onFinalAssistantText: (text, chunk) => {
+            finalSnapshotPromise = streamBuffer.flushRoute(chunk).then(() => {
               setMessagesByConversation((current) =>
                 markLocalAssistantTurnCompleted(
                   current,
                   sessionId,
                   assistantId,
                   new Date().toISOString(),
+                  chunk,
+                  text,
                 ),
               );
             });
@@ -931,8 +964,7 @@ export function useCardbushChat(
           onMessages: (nextMessages, finalSnapshot) => {
             if (finalSnapshot) {
               const turnId = activeTurnIdsRef.current[sessionId];
-              const finalContent = finalAssistantContentForStream(nextMessages, turnId);
-              finalSnapshotPromise = streamBuffer.flushFinalText(finalContent).then(() => {
+              finalSnapshotPromise = streamBuffer.flushAllStreaming().then(() => {
                 setMessagesByConversation((current) =>
                   mergeFinalStreamMessages(current, sessionId, nextMessages, {
                     turnId,
@@ -1084,15 +1116,16 @@ export function useCardbushChat(
       stream: (
         controller: AbortController,
         handlers: {
-          onStart: (start: { sessionId: string; turnId: string }) => void;
-          onDelta: (delta: string) => void;
+          onStart: (start: import('../types').StreamStart) => void;
+          onDelta: (delta: string, chunk: AssistantStreamChunk) => void;
+          onExecution: (update: StreamExecutionUpdate) => void;
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
           onContextWindowUsage: (usage: RuntimeContextWindowUsage) => void;
           onCapabilityCandidates: (update: CapabilityCandidatesUpdate) => void;
           onTaskPlanUpdate: (update: TaskPlanStreamUpdate) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
-          onFinalAssistantText: (text: string) => void;
+          onFinalAssistantText: (text: string, chunk: AssistantStreamChunk) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
           onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
           onThinking: (event: import('../types').ThinkingStreamEvent) => void;
@@ -1104,9 +1137,9 @@ export function useCardbushChat(
       const sessionId = conversation.id;
       const controller = new AbortController();
       let finalSnapshot: ChatMessage[] | null = null;
-      const streamBuffer = createAssistantStreamDeltaBuffer((delta) => {
+      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
         setMessagesByConversation((current) =>
-          appendAssistantDelta(current, sessionId, tempAssistant.id, delta),
+          appendAssistantDelta(current, sessionId, tempAssistant.id, delta, route),
         );
       });
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
@@ -1142,21 +1175,49 @@ export function useCardbushChat(
               [sessionId]: (current[sessionId] ?? initialMessages).map((item) =>
                 startIds.has(item.id)
                   ? markLocalMessageTurnStarted(
-                      { ...item, turnId: start.turnId, conversationId: sessionId },
+                      applyAssistantStreamRoute(
+                        { ...item, turnId: start.turnId, conversationId: sessionId },
+                        item.role === 'assistant'
+                          ? {
+                              messageId: start.messageId ?? '',
+                              assistantSegmentIndex: start.assistantSegmentIndex,
+                              turnId: start.turnId,
+                              createdAt: start.createdAt,
+                            }
+                          : undefined,
+                      ),
                       startedAt,
                     )
                   : item,
               ),
             }));
           },
-          onDelta: (delta) => {
-            streamBuffer.push(delta);
+          onDelta: (delta, chunk) => {
+            streamBuffer.push(delta, chunk);
+          },
+          onExecution: (update) => {
+            if (update.reason === 'turn_guidance_pending') {
+              void streamBuffer.flushAllStreaming().then(() => {
+                setMessagesByConversation((current) =>
+                  applyAssistantSegmentBoundary(
+                    current,
+                    sessionId,
+                    tempAssistant.id,
+                    update,
+                  ),
+                );
+              });
+            }
           },
           onAssistantRevision: (revision) => {
             if (revision.channel && revision.channel !== 'assistant') {
               return;
             }
-            streamBuffer.reset(revision.content ?? '');
+            streamBuffer.reset({
+              messageId: revision.messageId ?? '',
+              assistantSegmentIndex: revision.assistantSegmentIndex,
+              turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+            }, revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(current, sessionId, tempAssistant.id, revision),
             );
@@ -1185,14 +1246,16 @@ export function useCardbushChat(
               sessionId: interaction.sessionId ?? sessionId,
             });
           },
-          onFinalAssistantText: (text) => {
-            finalSnapshotPromise = streamBuffer.flushFinalText(text).then(() => {
+          onFinalAssistantText: (text, chunk) => {
+            finalSnapshotPromise = streamBuffer.flushRoute(chunk).then(() => {
               setMessagesByConversation((current) =>
                 markLocalAssistantTurnCompleted(
                   current,
                   sessionId,
                   tempAssistant.id,
                   new Date().toISOString(),
+                  chunk,
+                  text,
                 ),
               );
             });
@@ -1201,8 +1264,7 @@ export function useCardbushChat(
             if (finalSnapshotEvent) {
               finalSnapshot = nextMessages;
               const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
-              const finalContent = finalAssistantContentForStream(nextMessages, turnId);
-              finalSnapshotPromise = streamBuffer.flushFinalText(finalContent).then(() => {
+              finalSnapshotPromise = streamBuffer.flushAllStreaming().then(() => {
                 setMessagesByConversation((current) =>
                   mergeFinalStreamMessages(current, sessionId, nextMessages, {
                     turnId,
@@ -1380,7 +1442,7 @@ export function useCardbushChat(
             sessionId: conversationId,
             messageId,
             content: sourceUserMessage.content,
-            model: selectedModel,
+            model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
             projectUserPrompt,
@@ -1532,7 +1594,7 @@ export function useCardbushChat(
             sessionId: conversationId,
             messageId,
             content,
-            model: selectedModel,
+            model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
             projectUserPrompt,
@@ -1608,33 +1670,62 @@ export function useCardbushChat(
         setError('当前回复尚未准备好插入引导，请稍后再试');
         return;
       }
+      const clientMessageId = `guidance-${crypto.randomUUID()}`;
+      const optimisticMessage = optimisticGuidanceMessage({
+        clientMessageId,
+        conversationId,
+        turnId,
+        content: text,
+        mode,
+      });
+      setMessagesByConversation((current) => ({
+        ...current,
+        [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
+      }));
       try {
-        await sendGuidance({
+        guidanceRequestIdsRef.current.add(clientMessageId);
+        const result = await sendGuidance({
           sessionId: conversationId,
           turnId,
           guidance: text,
+          clientMessageId,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
         });
+        setMessagesByConversation((current) =>
+          reconcileOptimisticGuidance(
+            current,
+            conversationId,
+            clientMessageId,
+            result.guidance.clientMessageId,
+          ),
+        );
         setError(null);
       } catch (caught) {
-        if (String(caught).includes('404')) {
-          for (let attempt = 0; attempt < 40; attempt += 1) {
-            if (!isSessionSending(conversationId)) {
-              const conversation =
-                conversations.find((item) => item.id === conversationId) ??
-                activeConversation;
-              await sendMessageRef.current(text, conversation);
-              return;
-            }
-            await delay(100);
+        if (
+          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
+          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active')
+        ) {
+          setMessagesByConversation((current) =>
+            removeOptimisticGuidance(current, conversationId, clientMessageId),
+          );
+          const conversation =
+            conversations.find((item) => item.id === conversationId) ?? activeConversation;
+          if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
+            guidanceFallbackIdsRef.current.add(clientMessageId);
+            await sendMessageRef.current(text, conversation);
           }
-          setError('当前 turn 已结束，请把这条引导作为普通追问重新发送');
+          setError(null);
           return;
         }
+        setMessagesByConversation((current) =>
+          markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
+        );
         setError(`引导发送失败: ${errorMessage(caught)}`);
+      } finally {
+        guidanceRequestIdsRef.current.delete(clientMessageId);
       }
     },
     [
@@ -1665,26 +1756,150 @@ export function useCardbushChat(
         setError('当前回复尚未准备好插入引导，请稍后再试');
         return;
       }
+      const clientMessageId = `guidance-${crypto.randomUUID()}`;
+      const optimisticMessage = optimisticGuidanceMessage({
+        clientMessageId,
+        conversationId,
+        turnId: active,
+        content: text,
+        mode,
+      });
+      setMessagesByConversation((current) => ({
+        ...current,
+        [conversationId]: [...(current[conversationId] ?? []), optimisticMessage],
+      }));
+      removeQueuedMessage(queuedId);
       try {
-        await sendGuidance({
+        guidanceRequestIdsRef.current.add(clientMessageId);
+        const result = await sendGuidance({
           sessionId: conversationId,
           turnId: active,
           guidance: text,
+          clientMessageId,
           mode,
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
         });
-        removeQueuedMessage(queuedId);
+        setMessagesByConversation((current) =>
+          reconcileOptimisticGuidance(
+            current,
+            conversationId,
+            clientMessageId,
+            result.guidance.clientMessageId,
+          ),
+        );
         setError(null);
       } catch (caught) {
+        if (
+          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
+          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active')
+        ) {
+          setMessagesByConversation((current) =>
+            removeOptimisticGuidance(current, conversationId, clientMessageId),
+          );
+          if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
+            guidanceFallbackIdsRef.current.add(clientMessageId);
+            await sendMessageRef.current(text, queued.conversation);
+          }
+          setError(null);
+          return;
+        }
+        setMessagesByConversation((current) =>
+          markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
+        );
         setError(`引导发送失败: ${errorMessage(caught)}`);
+      } finally {
+        guidanceRequestIdsRef.current.delete(clientMessageId);
       }
     },
     [
       activeConversationId,
       isSessionSending,
       removeQueuedMessage,
+      requestContext.interactiveRequestsAvailable,
+      requestContext.terminalRuntime,
+    ],
+  );
+
+  const retryTurnGuidance = useCallback(
+    async (message: ChatMessage) => {
+      const clientMessageId =
+        message.clientMessageId?.trim() ||
+        String(message.metadata?.client_message_id ?? '').trim() ||
+        message.id.trim();
+      const conversationId =
+        message.conversationId?.trim() || activeConversationId.trim();
+      const turnId = message.turnId?.trim() ?? '';
+      const text = message.content.trim();
+      const rawMode = String(
+        message.metadata?.guidance_mode ?? message.metadata?.mode ?? 'append_context',
+      );
+      const mode = rawMode === 'interrupt_and_continue'
+        ? 'interrupt_and_continue'
+        : 'append_context';
+      if (
+        !clientMessageId ||
+        !conversationId ||
+        !turnId ||
+        !text ||
+        guidanceRequestIdsRef.current.has(clientMessageId)
+      ) {
+        return;
+      }
+      guidanceRequestIdsRef.current.add(clientMessageId);
+      setMessagesByConversation((current) =>
+        markOptimisticGuidancePending(current, conversationId, clientMessageId),
+      );
+      try {
+        const result = await sendGuidance({
+          sessionId: conversationId,
+          turnId,
+          guidance: text,
+          clientMessageId,
+          mode,
+          terminalRuntime: requestContext.terminalRuntime,
+          interactiveRequestsEnabled:
+            requestContext.interactiveRequestsAvailable === true,
+        });
+        setMessagesByConversation((current) =>
+          reconcileOptimisticGuidance(
+            current,
+            conversationId,
+            clientMessageId,
+            result.guidance.clientMessageId,
+          ),
+        );
+        setError(null);
+      } catch (caught) {
+        const shouldFallback =
+          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
+          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active');
+        if (shouldFallback) {
+          setMessagesByConversation((current) =>
+            removeOptimisticGuidance(current, conversationId, clientMessageId),
+          );
+          if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
+            guidanceFallbackIdsRef.current.add(clientMessageId);
+            const conversation =
+              conversations.find((item) => item.id === conversationId) ?? activeConversation;
+            await sendMessageRef.current(text, conversation);
+          }
+          setError(null);
+          return;
+        }
+        setMessagesByConversation((current) =>
+          markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
+        );
+        setError(`引导发送失败: ${errorMessage(caught)}`);
+      } finally {
+        guidanceRequestIdsRef.current.delete(clientMessageId);
+      }
+    },
+    [
+      activeConversation,
+      activeConversationId,
+      conversations,
       requestContext.interactiveRequestsAvailable,
       requestContext.terminalRuntime,
     ],
@@ -1899,6 +2114,7 @@ export function useCardbushChat(
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,
     sendTurnGuidance,
+    retryTurnGuidance,
     sendQueuedMessageAsGuidance,
     removeQueuedMessage,
     replyToInteraction,
@@ -1909,12 +2125,13 @@ export function useCardbushChat(
   };
 }
 
-function readInitialSelectedModel(availableModels: string[]) {
+function readInitialSelectedModel(availableModels: ManagedModelConfig[]) {
   const stored = window.localStorage.getItem('cardbush.selected_model')?.trim();
-  if (stored && availableModels.some((model) => model === stored)) {
-    return stored;
+  const selected = stored ? modelConfigFor(availableModels, stored) : undefined;
+  if (selected) {
+    return selected.id;
   }
-  return availableModels[0] ?? '';
+  return availableModels[0]?.id ?? '';
 }
 
 function readInitialReferencePlanMode(): ReferencePlanMode {
@@ -1988,14 +2205,25 @@ function queuedMessageConversationId(item: QueuedChatMessage) {
   return item.conversation?.id?.trim() ?? '';
 }
 
-function modelConfigFor(configs: ManagedModelConfig[], selectedModel: string) {
+export function modelConfigFor(configs: ManagedModelConfig[], selectedModel: string) {
   const normalized = selectedModel.trim().toLowerCase();
   if (!normalized) {
     return undefined;
   }
+  const exactId = configs.find(
+    (config) => config.id.trim().toLowerCase() === normalized,
+  );
+
+  if (exactId) {
+    return exactId;
+  }
   return configs.find(
     (config) => config.modelName.trim().toLowerCase() === normalized,
   );
+}
+
+export function selectedModelName(configs: ManagedModelConfig[], selectedModel: string) {
+  return modelConfigFor(configs, selectedModel)?.modelName.trim() || selectedModel.trim();
 }
 
 function projectKey(projectDir: string) {
@@ -2033,37 +2261,6 @@ function conversationProjectRequestDir(conversation: ConversationSummary) {
   );
 }
 
-function finalAssistantContentForStream(messages: ChatMessage[], turnId?: string) {
-  const normalizedTurnId = turnId?.trim() ?? '';
-  const assistants = messages.filter(
-    (message) =>
-      message.role === 'assistant' &&
-      message.content.trim() &&
-      !isSupersededLoopAssistant(message),
-  );
-  if (normalizedTurnId) {
-    const finalExact = [...assistants]
-      .reverse()
-      .find(
-        (message) =>
-          (message.turnId?.trim() ?? '') === normalizedTurnId &&
-          isAssistantFinalTranscript(message),
-      );
-    if (finalExact) {
-      return finalExact.content;
-    }
-    const exact = [...assistants]
-      .reverse()
-      .find((message) => (message.turnId?.trim() ?? '') === normalizedTurnId);
-    if (exact) {
-      return exact.content;
-    }
-  }
-  return [...assistants].reverse().find(isAssistantFinalTranscript)?.content ??
-    assistants.at(-1)?.content ??
-    '';
-}
-
 function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) {
   const normalizedTurnId = turnId?.trim() ?? '';
   if (!normalizedTurnId) {
@@ -2096,7 +2293,6 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
   let pending = '';
   const ready: StreamReadySegment[] = [];
   let timer: number | undefined;
-  let emitted = '';
   const drainWaiters: Array<() => void> = [];
 
   const clearTimer = () => {
@@ -2158,7 +2354,6 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
     if (!delta) {
       return;
     }
-    emitted += delta;
     append(delta);
   };
 
@@ -2172,9 +2367,6 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
     });
     pending = '';
   };
-
-  const bufferedText = () =>
-    `${ready.map((segment) => segment.text).join('')}${pending}`;
 
   const readyBacklogLength = () =>
     ready.reduce((total, segment) => total + segment.text.length, 0) + pending.length;
@@ -2220,21 +2412,10 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
     flushAllStreaming() {
       return flushAllStreaming();
     },
-    flushFinalText(finalText: string) {
-      const knownText = `${emitted}${bufferedText()}`;
-      if (finalText && finalText.startsWith(knownText)) {
-        pending += finalText.slice(knownText.length);
-      } else if (finalText && finalText.startsWith(emitted)) {
-        ready.length = 0;
-        pending = finalText.slice(emitted.length);
-      }
-      return flushAllStreaming();
-    },
-    reset(nextEmitted = '') {
+    reset(_nextEmitted = '') {
       clearTimer();
       ready.length = 0;
       pending = '';
-      emitted = nextEmitted;
       resolveDrainWaiters();
     },
     dispose() {
@@ -2242,6 +2423,51 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
       ready.length = 0;
       pending = '';
       resolveDrainWaiters();
+    },
+  };
+}
+
+type AssistantStreamRoute = Pick<
+  AssistantStreamChunk,
+  'messageId' | 'assistantSegmentIndex' | 'turnId' | 'createdAt'
+>;
+
+function createSegmentedAssistantStreamBuffers(
+  append: (delta: string, route: AssistantStreamRoute) => void,
+) {
+  const buffers = new Map<string, ReturnType<typeof createAssistantStreamDeltaBuffer>>();
+
+  const routeKey = (route: AssistantStreamRoute) =>
+    route.messageId.trim() ||
+    `${route.turnId.trim()}:segment:${route.assistantSegmentIndex ?? 1}`;
+
+  const bufferFor = (route: AssistantStreamRoute) => {
+    const key = routeKey(route);
+    const existing = buffers.get(key);
+    if (existing) return existing;
+    const created = createAssistantStreamDeltaBuffer((delta) => append(delta, route));
+    buffers.set(key, created);
+    return created;
+  };
+
+  return {
+    push(delta: string, route: AssistantStreamRoute) {
+      bufferFor(route).push(delta);
+    },
+    reset(route: AssistantStreamRoute, nextEmitted = '') {
+      bufferFor(route).reset(nextEmitted);
+    },
+    flushRoute(route: AssistantStreamRoute) {
+      return bufferFor(route).flushAllStreaming();
+    },
+    flushAllStreaming() {
+      return Promise.all(
+        [...buffers.values()].map((buffer) => buffer.flushAllStreaming()),
+      ).then(() => undefined);
+    },
+    dispose() {
+      for (const buffer of buffers.values()) buffer.dispose();
+      buffers.clear();
     },
   };
 }
@@ -2459,33 +2685,309 @@ function isMarkdownTableSeparator(value: string) {
   return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
-function appendAssistantDelta(
+export function appendAssistantDelta(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
   assistantId: string,
   delta: string,
+  route?: AssistantStreamRoute,
 ) {
-  const messages = current[sessionId] ?? [];
+  const messages = [...(current[sessionId] ?? [])];
+  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
+  if (targetIndex < 0) {
+    const messageId = route?.messageId.trim() ?? '';
+    const segmentIndex = route?.assistantSegmentIndex ?? 1;
+    messages.push({
+      id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex}`,
+      messageId: messageId || undefined,
+      assistantMessageId: messageId || undefined,
+      role: 'assistant',
+      content: delta,
+      conversationId: sessionId,
+      turnId: route?.turnId || undefined,
+      createdAt: route?.createdAt || new Date().toISOString(),
+      metadata: {
+        ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
+        ...(messageId ? { message_id: messageId } : {}),
+      },
+    });
+    return { ...current, [sessionId]: messages };
+  }
   return {
     ...current,
-    [sessionId]: messages.map((message) => {
-      if (message.id !== assistantId) {
+    [sessionId]: messages.map((message, index) => {
+      if (index !== targetIndex) {
         return message;
       }
-      if (shouldStartNextLocalAssistantSegment(message, delta)) {
+      const routed = applyAssistantStreamRoute(message, route);
+      if (!route?.messageId && shouldStartNextLocalAssistantSegment(routed, delta)) {
         const loopHistory = mergeLoopHistoryMessages(
-          message.loopHistory ?? [],
-          [localLoopHistorySnapshot(message)],
+          routed.loopHistory ?? [],
+          [localLoopHistorySnapshot(routed)],
         );
         return {
-          ...message,
+          ...routed,
           content: delta,
           toolExecutions: undefined,
           loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
         };
       }
-      return { ...message, content: `${message.content}${delta}` };
+      return {
+        ...routed,
+        content: appendAssistantTextAfterToolBoundary(routed, delta),
+      };
     }),
+  };
+}
+
+export function appendAssistantTextAfterToolBoundary(
+  message: ChatMessage,
+  delta: string,
+) {
+  const content = message.content;
+  if (!content.trim() || !delta.trim() || /\r?\n\s*$/.test(content) || /^\s/.test(delta)) {
+    return `${content}${delta}`;
+  }
+  const latestToolOffset = Math.max(
+    -1,
+    ...(message.toolExecutions ?? []).map((execution) => execution.contentOffset),
+  );
+  return latestToolOffset >= content.length
+    ? `${content}\n\n${delta}`
+    : `${content}${delta}`;
+}
+
+export function applyAssistantSegmentBoundary(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  fallbackAssistantId: string,
+  update: StreamExecutionUpdate,
+) {
+  const messages = [...(current[sessionId] ?? [])];
+  const nextSegmentIndex =
+    update.nextAssistantSegmentIndex ?? update.assistantSegmentIndex;
+  const previousSegmentIndex =
+    update.previousAssistantSegmentIndex ??
+    (nextSegmentIndex != null && nextSegmentIndex > 1
+      ? nextSegmentIndex - 1
+      : undefined);
+  const previousIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
+    messageId: '',
+    assistantSegmentIndex: previousSegmentIndex,
+    turnId: update.turnId,
+  });
+  if (previousIndex >= 0 && messages[previousIndex].role === 'assistant') {
+    const previous = messages[previousIndex];
+    messages[previousIndex] = {
+      ...previous,
+      status: 'complete',
+      metadata: {
+        ...(previous.metadata ?? {}),
+        status: 'complete',
+        segment_complete: true,
+        segment_boundary: 'turn_guidance',
+        ...(nextSegmentIndex != null
+          ? { next_assistant_segment_index: nextSegmentIndex }
+          : {}),
+      },
+    };
+  }
+
+  const nextMessageId = update.messageId.trim();
+  if (nextSegmentIndex == null || nextSegmentIndex <= 1) {
+    return { ...current, [sessionId]: messages };
+  }
+  const nextIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
+    messageId: nextMessageId,
+    assistantSegmentIndex: nextSegmentIndex,
+    turnId: update.turnId,
+  });
+  if (nextIndex < 0) {
+    messages.push({
+      id:
+        nextMessageId ||
+        `assistant-${update.turnId || sessionId}-segment-${nextSegmentIndex}`,
+      messageId: nextMessageId || undefined,
+      assistantMessageId: nextMessageId || undefined,
+      role: 'assistant',
+      content: '',
+      conversationId: sessionId,
+      turnId: update.turnId || undefined,
+      createdAt: update.createdAt || new Date().toISOString(),
+      status: 'streaming',
+      metadata: {
+        assistant_segment_index: nextSegmentIndex,
+        ...(nextMessageId ? { message_id: nextMessageId } : {}),
+      },
+    });
+  }
+  return { ...current, [sessionId]: messages };
+}
+
+export function optimisticGuidanceMessage({
+  clientMessageId,
+  conversationId,
+  turnId,
+  content,
+  mode,
+}: {
+  clientMessageId: string;
+  conversationId: string;
+  turnId: string;
+  content: string;
+  mode: 'append_context' | 'interrupt_and_continue';
+}): ChatMessage {
+  return {
+    id: clientMessageId,
+    clientMessageId,
+    role: 'user',
+    content,
+    conversationId,
+    turnId,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+    metadata: {
+      turn_guidance: true,
+      client_message_id: clientMessageId,
+      guidance_mode: mode,
+      guidance_delivery: 'pending',
+    },
+  };
+}
+
+export function reconcileOptimisticGuidance(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  localClientMessageId: string,
+  acceptedClientMessageId: string,
+) {
+  const clientMessageId = acceptedClientMessageId.trim() || localClientMessageId;
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).map((message) =>
+      message.id === localClientMessageId || message.clientMessageId === localClientMessageId
+        ? {
+            ...message,
+            clientMessageId,
+            status: 'queued',
+            metadata: {
+              ...(message.metadata ?? {}),
+              client_message_id: clientMessageId,
+              guidance_delivery: 'queued',
+            },
+          }
+        : message,
+    ),
+  };
+}
+
+function markOptimisticGuidanceFailed(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  clientMessageId: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).map((message) =>
+      message.id === clientMessageId || message.clientMessageId === clientMessageId
+        ? {
+            ...message,
+            status: 'failed',
+            metadata: {
+              ...(message.metadata ?? {}),
+              guidance_delivery: 'failed',
+            },
+          }
+        : message,
+    ),
+  };
+}
+
+function markOptimisticGuidancePending(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  clientMessageId: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).map((message) =>
+      message.id === clientMessageId || message.clientMessageId === clientMessageId
+        ? {
+            ...message,
+            status: 'pending',
+            metadata: {
+              ...(message.metadata ?? {}),
+              guidance_delivery: 'pending',
+            },
+          }
+        : message,
+    ),
+  };
+}
+
+function removeOptimisticGuidance(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  clientMessageId: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).filter(
+      (message) =>
+        message.id !== clientMessageId && message.clientMessageId !== clientMessageId,
+    ),
+  };
+}
+
+function assistantStreamTargetIndex(
+  messages: ChatMessage[],
+  fallbackAssistantId: string,
+  route?: AssistantStreamRoute,
+) {
+  const messageId = route?.messageId.trim() ?? '';
+  if (messageId) {
+    const exact = messages.findIndex((message) =>
+      message.role === 'assistant' && (
+        message.id === messageId ||
+        message.messageId === messageId ||
+        message.assistantMessageId === messageId ||
+        String(message.metadata?.message_id ?? '') === messageId
+      ),
+    );
+    if (exact >= 0) return exact;
+  }
+  const segmentIndex = route?.assistantSegmentIndex;
+  if (segmentIndex != null) {
+    const exactSegment = messages.findIndex((message) =>
+      message.role === 'assistant' &&
+      chatMessageTurnId(message) === route?.turnId &&
+      Number(message.metadata?.assistant_segment_index) === segmentIndex,
+    );
+    if (exactSegment >= 0) return exactSegment;
+    if (segmentIndex > 1) return -1;
+  }
+  return messages.findIndex((message) => message.id === fallbackAssistantId);
+}
+
+function applyAssistantStreamRoute(
+  message: ChatMessage,
+  route?: AssistantStreamRoute,
+): ChatMessage {
+  if (!route) return message;
+  const messageId = route.messageId.trim();
+  return {
+    ...message,
+    messageId: messageId || message.messageId,
+    assistantMessageId: messageId || message.assistantMessageId,
+    turnId: route.turnId || message.turnId,
+    createdAt: message.createdAt ?? route.createdAt,
+    metadata: {
+      ...(message.metadata ?? {}),
+      ...(messageId ? { message_id: messageId } : {}),
+      ...(route.assistantSegmentIndex != null
+        ? { assistant_segment_index: route.assistantSegmentIndex }
+        : {}),
+    },
   };
 }
 
@@ -2537,45 +3039,60 @@ function applyAssistantRevision(
     return current;
   }
   const nextContent = revision.content ?? '';
+  const route: AssistantStreamRoute = {
+    messageId: revision.messageId ?? '',
+    assistantSegmentIndex: revision.assistantSegmentIndex,
+    turnId: revisionTurnId,
+  };
+  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
+  if (
+    targetIndex < 0 &&
+    nextContent &&
+    (route.messageId || (route.assistantSegmentIndex ?? 1) > 1)
+  ) {
+    return applyAssistantRevision(
+      appendAssistantDelta(current, sessionId, assistantId, nextContent, route),
+      sessionId,
+      assistantId,
+      revision,
+    );
+  }
   return {
     ...current,
-    [sessionId]: messages.map((message) => {
-      const messageTurnId = message.turnId?.trim() ?? '';
-      const isTarget =
-        message.id === assistantId ||
-        (Boolean(revisionTurnId) && message.role === 'assistant' && messageTurnId === revisionTurnId);
-      if (!isTarget) {
+    [sessionId]: messages.map((message, index) => {
+      if (index !== targetIndex) {
         return message;
       }
+      const routed = applyAssistantStreamRoute(message, route);
       const shouldPreserveCurrent =
-        message.role === 'assistant' &&
-        !isSupersededLoopAssistant(message) &&
-        hasVisibleLoopHistory(message) &&
-        (normalizeLoopContent(message.content) !== normalizeLoopContent(nextContent) ||
+        routed.role === 'assistant' &&
+        !isSupersededLoopAssistant(routed) &&
+        hasVisibleLoopHistory(routed) &&
+        (normalizeLoopContent(routed.content) !== normalizeLoopContent(nextContent) ||
           revision.reason === 'tool_preamble' ||
           revision.reason === 'assistant_final');
       const loopHistory = shouldPreserveCurrent
         ? mergeLoopHistoryMessages(
-            message.loopHistory ?? [],
-            [localLoopHistorySnapshot(message)],
+            routed.loopHistory ?? [],
+            [localLoopHistorySnapshot(routed)],
           )
-        : message.loopHistory;
+        : routed.loopHistory;
       return {
-        ...message,
+        ...routed,
         content: nextContent,
-        loopIndex: revision.loopIndex ?? message.loopIndex,
-        toolExecutions: shouldPreserveCurrent ? undefined : message.toolExecutions,
+        loopIndex: revision.loopIndex ?? routed.loopIndex,
+        toolExecutions: shouldPreserveCurrent ? undefined : routed.toolExecutions,
         loopHistory:
           loopHistory && loopHistory.length > 0 ? loopHistory : undefined,
         metadata: {
-          ...(message.metadata ?? {}),
+          ...(routed.metadata ?? {}),
           assistant_channel: 'assistant',
           transcript_kind:
             revision.reason === 'assistant_final'
               ? 'assistant_final'
               : revision.reason === 'tool_preamble'
                 ? 'assistant_loop'
-                : message.metadata?.transcript_kind,
+                : routed.metadata?.transcript_kind,
         },
       };
     }),
@@ -2587,6 +3104,7 @@ function assignTurnToLocalMessages(
   sessionId: string,
   turnId: string,
   messageIds: string[],
+  route?: AssistantStreamRoute,
 ) {
   const ids = new Set(messageIds);
   const startedAt = new Date().toISOString();
@@ -2595,7 +3113,10 @@ function assignTurnToLocalMessages(
     [sessionId]: (current[sessionId] ?? []).map((message) =>
       ids.has(message.id)
         ? markLocalMessageTurnStarted(
-            { ...message, turnId, conversationId: sessionId },
+            applyAssistantStreamRoute(
+              { ...message, turnId, conversationId: sessionId },
+              message.role === 'assistant' ? route : undefined,
+            ),
             startedAt,
           )
         : message,
@@ -2624,34 +3145,74 @@ function markLocalAssistantTurnCompleted(
   sessionId: string,
   assistantId: string,
   completedAt: string,
+  route?: AssistantStreamRoute,
+  finalText = '',
 ) {
+  const messages = current[sessionId] ?? [];
+  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
+  if (targetIndex < 0 && finalText) {
+    return markLocalAssistantTurnCompleted(
+      appendAssistantDelta(current, sessionId, assistantId, finalText, route),
+      sessionId,
+      assistantId,
+      completedAt,
+      route,
+    );
+  }
   return {
     ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) => {
-      if (message.id !== assistantId || message.role !== 'assistant') {
+    [sessionId]: messages.map((message, index) => {
+      if (index !== targetIndex || message.role !== 'assistant') {
         return message;
       }
+      const routed = applyAssistantStreamRoute(message, route);
       return {
-        ...message,
+        ...routed,
+        content: routed.content || finalText,
         metadata: {
-          ...(message.metadata ?? {}),
+          ...(routed.metadata ?? {}),
           cardbush_turn_started_at:
-            message.metadata?.cardbush_turn_started_at ?? message.createdAt,
+            routed.metadata?.cardbush_turn_started_at ?? routed.createdAt,
           cardbush_turn_completed_at:
-            message.metadata?.cardbush_turn_completed_at ?? completedAt,
+            routed.metadata?.cardbush_turn_completed_at ?? completedAt,
         },
       };
     }),
   };
 }
 
-function appendToolExecution(
+export function appendToolExecution(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
   assistantId: string,
   execution: ChatToolExecution,
 ) {
-  const messages = current[sessionId] ?? [];
+  const messages = [...(current[sessionId] ?? [])];
+  const executionRoute = assistantRouteFromToolExecution(execution);
+  if (
+    executionRoute.assistantSegmentIndex != null &&
+    executionRoute.assistantSegmentIndex > 1 &&
+    assistantStreamTargetIndex(messages, assistantId, executionRoute) < 0
+  ) {
+    const messageId = executionRoute.messageId.trim();
+    messages.push({
+      id:
+        messageId ||
+        `assistant-${executionRoute.turnId || sessionId}-segment-${executionRoute.assistantSegmentIndex}`,
+      messageId: messageId || undefined,
+      assistantMessageId: messageId || undefined,
+      role: 'assistant',
+      content: '',
+      conversationId: sessionId,
+      turnId: executionRoute.turnId || undefined,
+      createdAt: execution.createdAt,
+      status: 'streaming',
+      metadata: {
+        assistant_segment_index: executionRoute.assistantSegmentIndex,
+        ...(messageId ? { message_id: messageId } : {}),
+      },
+    });
+  }
   const targetMessageId = toolExecutionTargetMessageId(messages, assistantId, execution);
   return {
     ...current,
@@ -2723,9 +3284,15 @@ function applyTaskPlanUpdate(
   if (update.plan.sessionId !== sessionId) {
     return current;
   }
+  const messages = current[sessionId] ?? [];
   let applied = false;
-  const messages = (current[sessionId] ?? []).map((message) => {
-    if (message.id !== assistantId || message.role !== 'assistant') {
+  const targetIndex = assistantStreamTargetIndex(messages, assistantId, {
+    messageId: update.messageId ?? '',
+    assistantSegmentIndex: update.assistantSegmentIndex,
+    turnId: update.turnId,
+  });
+  const nextMessages = messages.map((message, index) => {
+    if (index !== targetIndex || message.role !== 'assistant') {
       return message;
     }
     const currentTurnId = message.turnId?.trim() ?? '';
@@ -2739,7 +3306,7 @@ function applyTaskPlanUpdate(
       taskPlan: update.plan,
     };
   });
-  return applied ? { ...current, [sessionId]: messages } : current;
+  return applied ? { ...current, [sessionId]: nextMessages } : current;
 }
 
 function loopHistoryHasToolExecution(message: ChatMessage, executionId: string) {
@@ -2788,13 +3355,54 @@ function toolExecutionTargetMessageId(
     const matched = messages.find(
       (message) =>
         message.id === assistantMessageId ||
+        message.messageId === assistantMessageId ||
         message.assistantMessageId === assistantMessageId,
     );
     if (matched) {
       return matched.id;
     }
   }
+  const route = assistantRouteFromToolExecution(execution);
+  if (route.assistantSegmentIndex != null) {
+    const matched = messages.find((message) =>
+      message.role === 'assistant' &&
+      chatMessageTurnId(message) === route.turnId &&
+      Number(message.metadata?.assistant_segment_index) === route.assistantSegmentIndex,
+    );
+    if (matched) {
+      return matched.id;
+    }
+  }
+  if (execution.loopIndex != null) {
+    const matched = messages.find((message) =>
+      message.role === 'assistant' &&
+      numericOrderValue(message.loopIndex) === numericOrderValue(execution.loopIndex),
+    );
+    if (matched) {
+      return matched.id;
+    }
+  }
   return fallbackAssistantId;
+}
+
+function assistantRouteFromToolExecution(
+  execution: ChatToolExecution,
+): AssistantStreamRoute {
+  return {
+    messageId:
+      execution.assistantMessageId?.trim() || execution.messageId?.trim() || '',
+    assistantSegmentIndex:
+      execution.assistantSegmentIndex ??
+      optionalFiniteNumber(execution.metadata.assistant_segment_index),
+    turnId:
+      execution.turnId?.trim() || String(execution.metadata.turn_id ?? '').trim(),
+    createdAt: execution.createdAt,
+  };
+}
+
+function optionalFiniteNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function mergeMessages(
@@ -2804,7 +3412,16 @@ function mergeMessages(
 ) {
   const byId = new Map((current[sessionId] ?? []).map((item) => [item.id, item]));
   for (const message of incoming) {
-    const existing = byId.get(message.id);
+    const clientMessageId = chatMessageClientMessageId(message);
+    const clientEntry = clientMessageId
+      ? [...byId.entries()].find(([, item]) =>
+          chatMessageClientMessageId(item) === clientMessageId,
+        )
+      : undefined;
+    const existing = byId.get(message.id) ?? clientEntry?.[1];
+    if (clientEntry && clientEntry[0] !== message.id) {
+      byId.delete(clientEntry[0]);
+    }
     const nextToolExecutions =
       (message.toolExecutions?.length ?? 0) > 0
         ? message.toolExecutions
@@ -2830,7 +3447,7 @@ function mergeMessages(
   };
 }
 
-function mergeFinalStreamMessages(
+export function mergeFinalStreamMessages(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
   incoming: ChatMessage[],
@@ -2912,6 +3529,11 @@ function mergeFinalStreamMessages(
   }
 
   const normalizedIncoming = collapseLoopTranscriptMessages(mergedIncoming);
+  const segmentedIncoming = normalizedIncoming.some(
+    (message) =>
+      message.role === 'assistant' &&
+      Number.isFinite(Number(message.metadata?.assistant_segment_index)),
+  );
   const shouldReplace = (message: ChatMessage) => {
     const messageTurnId = message.turnId?.trim() ?? '';
     if (message.role === 'user') {
@@ -2934,8 +3556,8 @@ function mergeFinalStreamMessages(
       if (
         incomingIds.has(message.id) ||
         temporaryIds.has(message.id) ||
-        (targetTurnId && messageTurnId === targetTurnId) ||
-        Boolean(messageTurnId && incomingTurnIds.has(messageTurnId))
+        (!segmentedIncoming && targetTurnId && messageTurnId === targetTurnId) ||
+        Boolean(!segmentedIncoming && messageTurnId && incomingTurnIds.has(messageTurnId))
       ) {
         return Boolean(
           matchingIncomingUser ??
@@ -2947,10 +3569,10 @@ function mergeFinalStreamMessages(
     if (incomingIds.has(message.id) || temporaryIds.has(message.id)) {
       return true;
     }
-    if (targetTurnId && messageTurnId === targetTurnId) {
+    if (!segmentedIncoming && targetTurnId && messageTurnId === targetTurnId) {
       return true;
     }
-    return Boolean(messageTurnId && incomingTurnIds.has(messageTurnId));
+    return Boolean(!segmentedIncoming && messageTurnId && incomingTurnIds.has(messageTurnId));
   };
 
   const replacedMessages = existing.filter(shouldReplace);
@@ -3033,7 +3655,19 @@ function toolExecutionBelongsToMessage(
   if (assistantMessageId) {
     return (
       message.id === assistantMessageId ||
+      (message.messageId?.trim() ?? '') === assistantMessageId ||
       (message.assistantMessageId?.trim() ?? '') === assistantMessageId
+    );
+  }
+  const executionSegmentIndex =
+    execution.assistantSegmentIndex ??
+    optionalFiniteNumber(execution.metadata.assistant_segment_index);
+  const executionTurnId =
+    execution.turnId?.trim() || String(execution.metadata.turn_id ?? '').trim();
+  if (executionSegmentIndex != null && executionTurnId) {
+    return (
+      chatMessageTurnId(message) === executionTurnId &&
+      Number(message.metadata?.assistant_segment_index) === executionSegmentIndex
     );
   }
   const executionLoopIndex = numericOrderValue(execution.loopIndex);
@@ -3206,6 +3840,13 @@ function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessa
   const byId = existing.find((item) => item.id === message.id);
   if (byId) {
     return byId;
+  }
+  const clientMessageId = chatMessageClientMessageId(message);
+  if (clientMessageId) {
+    const byClientMessageId = existing.find(
+      (item) => chatMessageClientMessageId(item) === clientMessageId,
+    );
+    if (byClientMessageId) return byClientMessageId;
   }
   const turnId = message.turnId?.trim() ?? '';
   if (!turnId) {
@@ -3395,6 +4036,15 @@ function shouldCollapseDuplicateTranscriptMessage(
   if (left.id === right.id) {
     return true;
   }
+  const leftClientMessageId = chatMessageClientMessageId(left);
+  const rightClientMessageId = chatMessageClientMessageId(right);
+  if (
+    leftClientMessageId &&
+    rightClientMessageId &&
+    leftClientMessageId === rightClientMessageId
+  ) {
+    return true;
+  }
   const leftPersistedId = persistedChatMessageId(left);
   const rightPersistedId = persistedChatMessageId(right);
   if (leftPersistedId && rightPersistedId && leftPersistedId === rightPersistedId) {
@@ -3464,6 +4114,7 @@ function mergeDuplicateTranscriptMessage(left: ChatMessage, right: ChatMessage) 
     ...fallback,
     ...primary,
     messageId: primary.messageId ?? fallback.messageId,
+    clientMessageId: primary.clientMessageId ?? fallback.clientMessageId,
     assistantMessageId: primary.assistantMessageId ?? fallback.assistantMessageId,
     createdAt: primary.createdAt ?? fallback.createdAt,
     metadata: {
@@ -3697,6 +4348,15 @@ function chatMessageTurnId(message: ChatMessage) {
     message.turnId ??
       message.metadata?.turn_id ??
       message.metadata?.turnId ??
+      '',
+  ).trim();
+}
+
+function chatMessageClientMessageId(message: ChatMessage) {
+  return String(
+    message.clientMessageId ??
+      message.metadata?.client_message_id ??
+      message.metadata?.clientMessageId ??
       '',
   ).trim();
 }
@@ -4195,10 +4855,4 @@ function isInteractionGoneError(error: unknown) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function delay(milliseconds: number) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, milliseconds);
-  });
 }

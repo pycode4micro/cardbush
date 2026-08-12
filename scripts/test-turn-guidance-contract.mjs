@@ -1,0 +1,290 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+
+import ts from 'typescript';
+
+const protocolPath = path.join(process.cwd(), 'src', 'backend', 'streamProtocol.ts');
+const source = fs.readFileSync(protocolPath, 'utf8');
+const transpiled = ts.transpileModule(source, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const module = { exports: {} };
+vm.runInNewContext(transpiled.outputText, { module, exports: module.exports });
+
+const { assistantStreamChunkFromPayload, executionUpdateFromPayload } = module.exports;
+
+assert.deepEqual(
+  plain(assistantStreamChunkFromPayload({
+    message_id: 'msg:assistant:session:turn:2',
+    assistant_segment_index: 2,
+    turn_id: 'turn-1',
+    sequence: 41,
+    request_id: 'request-1',
+    event_id: 'event-41',
+    created_at: '2026-08-12T08:00:00Z',
+  })),
+  {
+    messageId: 'msg:assistant:session:turn:2',
+    assistantSegmentIndex: 2,
+    turnId: 'turn-1',
+    sequence: 41,
+    requestId: 'request-1',
+    eventId: 'event-41',
+    createdAt: '2026-08-12T08:00:00Z',
+  },
+);
+
+assert.deepEqual(
+  plain(executionUpdateFromPayload({
+    kind: 'loop_transition',
+    reason: 'turn_guidance_pending',
+    pending_guidance_count: 1,
+    guidance_round_index: 1,
+    previous_assistant_segment_index: 1,
+    next_assistant_segment_index: 2,
+    next_round: 2,
+    message_id: 'msg:assistant:session:turn:2',
+    assistant_segment_index: 2,
+    turn_id: 'turn-1',
+  })),
+  {
+    kind: 'loop_transition',
+    reason: 'turn_guidance_pending',
+    pendingGuidanceCount: 1,
+    guidanceRoundIndex: 1,
+    previousAssistantSegmentIndex: 1,
+    nextAssistantSegmentIndex: 2,
+    nextRound: 2,
+    messageId: 'msg:assistant:session:turn:2',
+    assistantSegmentIndex: 2,
+    turnId: 'turn-1',
+  },
+);
+
+const apiSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'api.ts'),
+  'utf8',
+);
+assert.match(apiSource, /message_id:\s*request\.clientMessageId\.trim\(\)/);
+assert.match(apiSource, /source:\s*'frontend'/);
+assert.match(apiSource, /request\.onDelta\?\.\(delta, assistantStreamChunkFromPayload\(decoded\)\)/);
+assert.match(apiSource, /request\.onFinalAssistantText\(text, assistantStreamChunkFromPayload\(decoded\)\)/);
+assert.match(apiSource, /throw new BushServerHttpError\(response\.status, responseText\)/);
+
+const hookSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
+  'utf8',
+);
+assert.match(hookSource, /optimisticGuidanceMessage\(/);
+assert.match(hookSource, /caught\.code === 'turn_guidance_closed'/);
+assert.match(hookSource, /caught\.code === 'turn_not_active'/);
+assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
+assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
+
+const bubbleSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
+  'utf8',
+);
+assert.match(bubbleSource, /guidance-delivery-status/);
+assert.match(bubbleSource, /发送中/);
+assert.match(bubbleSource, /已排队/);
+assert.match(bubbleSource, /发送失败/);
+assert.match(bubbleSource, /guidance-retry-button/);
+assert.match(bubbleSource, /onRetryGuidance\(message\)/);
+assert.match(bubbleSource, /等待本轮完成后/);
+assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
+
+const hookTranspiled = ts.transpileModule(hookSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const hookModule = { exports: {} };
+vm.runInNewContext(hookTranspiled.outputText, {
+  module: hookModule,
+  exports: hookModule.exports,
+  require: () => ({}),
+  Date,
+  Map,
+  Set,
+});
+const {
+  appendAssistantDelta,
+  appendAssistantTextAfterToolBoundary,
+  appendToolExecution,
+  applyAssistantSegmentBoundary,
+  mergeFinalStreamMessages,
+  optimisticGuidanceMessage,
+  reconcileOptimisticGuidance,
+} = hookModule.exports;
+
+const sessionId = 'session-1';
+const initialAssistantId = 'assistant-local';
+const guidance = optimisticGuidanceMessage({
+  clientMessageId: 'client-guidance-1',
+  conversationId: sessionId,
+  turnId: 'turn-1',
+  content: '请补充风险说明',
+  mode: 'append_context',
+});
+let state = {
+  [sessionId]: [
+    { id: 'user-1', role: 'user', content: '原始问题', turnId: 'turn-1' },
+    {
+      id: initialAssistantId,
+      messageId: 'assistant-segment-1',
+      assistantMessageId: 'assistant-segment-1',
+      role: 'assistant',
+      content: '第一轮',
+      turnId: 'turn-1',
+      metadata: { assistant_segment_index: 1 },
+    },
+    guidance,
+  ],
+};
+state = appendAssistantDelta(state, sessionId, initialAssistantId, '第二轮', {
+  messageId: 'assistant-segment-2',
+  assistantSegmentIndex: 2,
+  turnId: 'turn-1',
+});
+state = appendAssistantDelta(state, sessionId, initialAssistantId, '继续', {
+  messageId: 'assistant-segment-2',
+  assistantSegmentIndex: 2,
+  turnId: 'turn-1',
+});
+assert.deepEqual(
+  plain(state[sessionId].map((message) => [message.role, message.content])),
+  [
+    ['user', '原始问题'],
+    ['assistant', '第一轮'],
+    ['user', '请补充风险说明'],
+    ['assistant', '第二轮继续'],
+  ],
+);
+state = reconcileOptimisticGuidance(
+  state,
+  sessionId,
+  'client-guidance-1',
+  'client-guidance-1',
+);
+assert.equal(state[sessionId][2].status, 'queued');
+assert.equal(state[sessionId][2].metadata.guidance_delivery, 'queued');
+
+state = applyAssistantSegmentBoundary(
+  state,
+  sessionId,
+  initialAssistantId,
+  {
+    kind: 'loop_transition',
+    reason: 'turn_guidance_pending',
+    turnId: 'turn-1',
+    messageId: 'assistant-segment-2',
+    assistantSegmentIndex: 2,
+    previousAssistantSegmentIndex: 1,
+    nextAssistantSegmentIndex: 2,
+  },
+);
+assert.equal(state[sessionId][1].status, 'complete');
+assert.equal(state[sessionId][1].metadata.segment_complete, true);
+assert.equal(state[sessionId][3].messageId, 'assistant-segment-2');
+
+state = appendToolExecution(state, sessionId, initialAssistantId, {
+  id: 'tool-segment-2',
+  name: 'read_file',
+  state: 'completed',
+  summary: 'read',
+  output: 'ok',
+  success: true,
+  durationMs: 12,
+  createdAt: '2026-08-12T08:00:01Z',
+  contentOffset: 0,
+  turnId: 'turn-1',
+  assistantMessageId: 'assistant-segment-2',
+  assistantSegmentIndex: 2,
+  metadata: {},
+});
+assert.equal(state[sessionId][1].toolExecutions, undefined);
+assert.equal(state[sessionId][3].toolExecutions[0].id, 'tool-segment-2');
+
+assert.equal(
+  appendAssistantTextAfterToolBoundary(
+    {
+      id: 'assistant-progress',
+      role: 'assistant',
+      content: '我先读取入口文件。',
+      toolExecutions: [{ contentOffset: 9 }],
+    },
+    '现在继续读取样式文件。',
+  ),
+  '我先读取入口文件。\n\n现在继续读取样式文件。',
+);
+
+state = mergeFinalStreamMessages(
+  state,
+  sessionId,
+  [
+    {
+      id: 'msg-user-1',
+      messageId: 'msg-user-1',
+      role: 'user',
+      content: '原始问题',
+      turnId: 'turn-1',
+      messageIndex: 0,
+    },
+    {
+      id: 'assistant-segment-1',
+      messageId: 'assistant-segment-1',
+      role: 'assistant',
+      content: '第一轮',
+      turnId: 'turn-1',
+      messageIndex: 1,
+      metadata: { assistant_segment_index: 1, transcript_kind: 'assistant_segment' },
+    },
+    {
+      id: 'msg-guidance-1',
+      messageId: 'msg-guidance-1',
+      clientMessageId: 'client-guidance-1',
+      role: 'user',
+      content: '请补充风险说明',
+      turnId: 'turn-1',
+      messageIndex: 2,
+      metadata: { turn_guidance: true, client_message_id: 'client-guidance-1' },
+    },
+    {
+      id: 'assistant-segment-2',
+      messageId: 'assistant-segment-2',
+      role: 'assistant',
+      content: '第二轮继续',
+      turnId: 'turn-1',
+      messageIndex: 3,
+      metadata: { assistant_segment_index: 2, transcript_kind: 'assistant_final' },
+    },
+  ],
+  {
+    turnId: 'turn-1',
+    temporaryMessageIds: [initialAssistantId],
+    toolSourceMessageId: initialAssistantId,
+  },
+);
+assert.deepEqual(
+  plain(state[sessionId].map((message) => [message.role, message.content])),
+  [
+    ['user', '原始问题'],
+    ['assistant', '第一轮'],
+    ['user', '请补充风险说明'],
+    ['assistant', '第二轮继续'],
+  ],
+);
+assert.equal(state[sessionId][3].toolExecutions[0].id, 'tool-segment-2');
+
+console.log('turn guidance contract tests passed');
+
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
