@@ -2,7 +2,7 @@ import type { AppLanguage, ChatToolExecution } from '../../types';
 
 export function isToolRunning(execution: ChatToolExecution) {
   const normalized = execution.state.trim().toLowerCase();
-  return ['using', 'running', 'pending', 'started'].includes(normalized);
+  return ['using', 'running', 'pending', 'started', 'queued'].includes(normalized);
 }
 
 export function isToolRunningInContext(

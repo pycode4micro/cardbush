@@ -21,6 +21,7 @@ import {
   type ReactNode,
   createContext,
   lazy,
+  memo,
   Suspense,
   useCallback,
   useContext,
@@ -32,6 +33,7 @@ import {
 import { basename, fileUrl } from '../../shared/localPaths';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
+import { openInspector } from '../inspector/inspectorEvents';
 import { normalizeMarkdownContentForDisplay } from './markdownFormat';
 import {
   linkifyLocalFileReferences,
@@ -107,10 +109,7 @@ const LazyMarkdownContent = lazy(async () => {
                     return;
                   }
                   event.preventDefault();
-                  void (
-                    window.cardbushDesktop?.openUiPreview ??
-                    window.cardbushDesktop?.openExternal
-                  )?.(href);
+                  openInspector(href, href);
                 }}
               >
                 {children}
@@ -209,7 +208,7 @@ function reactNodeText(node: ReactNode): string {
   return '';
 }
 
-export function MessageBubble({
+function MessageBubbleView({
   message,
   language,
   sending,
@@ -259,18 +258,8 @@ export function MessageBubble({
     sending &&
     activeAssistantId === message.id &&
     (!activeTurn || !activeMessageTurn || activeTurn === activeMessageTurn);
-  const [progressNow, setProgressNow] = useState(() => Date.now());
   const canGuide =
     isActiveAssistantTurn;
-
-  useEffect(() => {
-    if (!isActiveAssistantTurn) {
-      return undefined;
-    }
-    setProgressNow(Date.now());
-    const timer = window.setInterval(() => setProgressNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [isActiveAssistantTurn]);
 
   useEffect(() => {
     setEditing(false);
@@ -279,7 +268,13 @@ export function MessageBubble({
     setAssistantFeedback(readAssistantFeedback(message.id));
     setFeedbackPulse(null);
     setEditText(splitMessageImages(message.content).text);
-  }, [message.id, message.content]);
+  }, [message.id]);
+
+  useEffect(() => {
+    if (!editing) {
+      setEditText(splitMessageImages(message.content).text);
+    }
+  }, [editing, message.content]);
 
   useEffect(() => {
     return () => {
@@ -428,37 +423,20 @@ export function MessageBubble({
     ? activeAssistantTranscriptMessages(loopHistory, message)
     : [];
   const renderActiveTranscript = activeTranscriptMessages.length > 1;
-  const suppressFinalTopLevelTools =
-    message.role === 'assistant' &&
-    !isActiveAssistantTurn &&
-    isFinalAssistantDisplayMessage(message);
   const toolExecutions =
     message.role === 'assistant'
-      ? suppressFinalTopLevelTools
-        ? []
-        : visibleTopLevelToolExecutions(
-            allToolExecutions,
-            loopHistory,
-            isActiveAssistantTurn,
-          )
+      ? visibleTopLevelToolExecutions(
+          allToolExecutions,
+          loopHistory,
+          isActiveAssistantTurn,
+        )
       : allToolExecutions;
-  const assistantProgressExecutions = suppressFinalTopLevelTools
-    ? allToolExecutions
-    : toolExecutions;
+  const assistantProgressExecutions = toolExecutions;
   const showAssistantProgress =
     message.role === 'assistant' &&
     (isActiveAssistantTurn ||
       toolExecutions.length > 0 ||
       hasAssistantProgressSource(message, assistantProgressExecutions));
-  const assistantProgressText = showAssistantProgress
-    ? assistantProgressLabel({
-        executions: assistantProgressExecutions,
-        isActive: isActiveAssistantTurn,
-        message,
-        now: progressNow,
-        language,
-      })
-    : '';
   const assistantCompletedAt =
     message.role === 'assistant' && !isActiveAssistantTurn
       ? assistantTurnCompletedAt(message, assistantProgressExecutions)
@@ -481,12 +459,12 @@ export function MessageBubble({
       <div className="message-row assistant">
         <div className="assistant-bubble">
           {showAssistantProgress && (
-            <div
-              className={`assistant-run-header ${isActiveAssistantTurn ? 'running' : ''}`}
-            >
-              <span className="assistant-run-label">{assistantProgressText}</span>
-              <div />
-            </div>
+            <AssistantRunHeader
+              executions={assistantProgressExecutions}
+              isActive={isActiveAssistantTurn}
+              message={message}
+              language={language}
+            />
           )}
           <AgentHookSummaryBadge message={message} language={language} />
           {taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
@@ -734,17 +712,16 @@ function AssistantMessageContent({
   let cursor = 0;
 
   groups.forEach((group, index) => {
+    const groupKey = group.executions[0]?.id || String(index);
     const segment = content.slice(cursor, group.offset);
     if (segment.trim()) {
       blocks.push(
-        // eslint-disable-next-line react/no-array-index-key
-        <MarkdownContent key={`text-${index}`} content={segment.trim()} />,
+        <MarkdownContent key={`text-before-${groupKey || index}`} content={segment.trim()} />,
       );
     }
     blocks.push(
       <ToolExecutionBlock
-        // eslint-disable-next-line react/no-array-index-key
-        key={`tools-${group.offset}-${index}`}
+        key={`tools-${groupKey || index}`}
         executions={group.executions}
         language={language}
         message={message}
@@ -927,6 +904,43 @@ function hasAssistantProgressSource(
     metadata.finished_at,
   ].some((value) => typeof value === 'string' && value.trim());
 }
+
+const AssistantRunHeader = memo(function AssistantRunHeader({
+  executions,
+  isActive,
+  message,
+  language,
+}: {
+  executions: ChatToolExecution[];
+  isActive: boolean;
+  message: ChatMessage;
+  language: AppLanguage;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isActive) {
+      return undefined;
+    }
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive]);
+
+  const label = assistantProgressLabel({
+    executions,
+    isActive,
+    message,
+    now,
+    language,
+  });
+  return (
+    <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
+      <span className="assistant-run-label">{label}</span>
+      <div />
+    </div>
+  );
+});
 
 function assistantProgressLabel({
   executions,
@@ -1609,13 +1623,15 @@ export function ImagePreviewDialog({
   );
 }
 
-function MarkdownContent({ content }: { content: string }) {
+const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   return (
     <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
       <LazyMarkdownContent content={content} workspaceRoot={workspaceRoot} />
     </Suspense>
   );
-}
+});
+
+export const MessageBubble = memo(MessageBubbleView);
 
 

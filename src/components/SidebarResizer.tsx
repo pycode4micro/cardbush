@@ -4,7 +4,7 @@ import { useCallback, useRef } from 'react';
 import type { AppLanguage } from '../types';
 
 const defaultSidebarWidth = 272;
-const collapseSidebarWidthThreshold = 220;
+const collapseSidebarWidthThreshold = 240;
 
 export function SidebarResizer({
   language,

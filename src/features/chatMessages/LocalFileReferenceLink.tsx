@@ -2,6 +2,7 @@ import { FileCode2 } from 'lucide-react';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { basename } from '../../shared/localPaths';
+import { openInspector } from '../inspector/inspectorEvents';
 
 export function LocalFileReferenceLink({
   path,
@@ -14,10 +15,7 @@ export function LocalFileReferenceLink({
 
   function openInCardbush(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
-    void (
-      window.cardbushDesktop?.openFileInCardbush ??
-      window.cardbushDesktop?.openUiPreview
-    )?.(path);
+    openInspector(path, basename(path));
   }
 
   function openContextMenu(event: MouseEvent<HTMLAnchorElement>) {

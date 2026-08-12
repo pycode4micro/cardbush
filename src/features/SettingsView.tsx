@@ -93,6 +93,7 @@ import type {
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 const customProviderValue = '__custom_provider__';
+const defaultMaxContextTokens = 256_000;
 const suggestedProviders = [
   'openai',
   'anthropic',
@@ -268,7 +269,9 @@ export function SettingsView({
   const [apiKey, setApiKey] = useState('');
   const [modelName, setModelName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
-  const [maxContextTokens, setMaxContextTokens] = useState('');
+  const [maxContextTokens, setMaxContextTokens] = useState(
+    String(defaultMaxContextTokens),
+  );
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
   const [runtimeToolInventory, setRuntimeToolInventory] =
@@ -366,7 +369,7 @@ export function SettingsView({
       }));
       setProviderSelection(provider);
       setModelName('');
-      setMaxContextTokens('');
+      setMaxContextTokens(String(defaultMaxContextTokens));
       notify(language === 'zh' ? '模型配置已添加' : 'Model configuration added');
     },
     [
@@ -881,20 +884,20 @@ export function SettingsView({
             title={language === 'zh' ? 'Bot 连接' : 'Bot links'}
             subtitle={
               language === 'zh'
-                ? '当前 BushServer 尚未注册 Bot 控制 API。'
-                : 'BushServer does not expose Bot control APIs yet.'
+                ? 'Bot 适配器独立运行，BushServer 不管理其配置与进程。'
+                : 'Bot adapters run independently; BushServer does not manage their configuration or processes.'
             }
           >
             <div className="maintenance-action-row">
               <AlertCircle size={18} />
               <span>
                 <strong>
-                  {language === 'zh' ? '等待后端能力开放' : 'Waiting for backend support'}
+                  {language === 'zh' ? '未连接 Bot 管理服务' : 'Bot manager not connected'}
                 </strong>
                 <small>
                   {language === 'zh'
-                    ? '后端 /v1/capabilities 返回 botControl=true 后，这里会恢复 Bot 配置、登录和服务控制。'
-                    : 'When /v1/capabilities returns botControl=true, Bot config, login, and service controls will be enabled.'}
+                    ? '请通过独立适配器或其管理服务配置、登录和启停 Bot；聊天与会话交接仍由 BushServer 提供。'
+                    : 'Configure, sign in, and control Bots through an independent adapter or manager; BushServer still provides chat and session handoff.'}
                 </small>
               </span>
             </div>
@@ -1541,7 +1544,7 @@ function ModelsSettingsPanel({
             <SettingsInput
               label={language === 'zh' ? '最大上下文 token' : 'Max context tokens'}
               value={maxContextTokens}
-              placeholder="131072"
+              placeholder={String(defaultMaxContextTokens)}
               onChange={onMaxContextTokensChange}
             />
           </div>
@@ -3388,8 +3391,8 @@ function botPanelError(caught: unknown, language: AppLanguage) {
   }
   if (message.includes('404')) {
     return language === 'zh'
-      ? 'Bot API 尚未由 BushServer 提供，等待后端接入后即可使用。'
-      : 'Bot API is not available from BushServer yet.';
+      ? '当前地址没有 Bot 管理 API。请连接独立 Bot 管理服务。'
+      : 'This endpoint has no Bot management API. Connect an independent Bot manager.';
   }
   if (/bot is disabled/i.test(message)) {
     return language === 'zh'
@@ -3929,7 +3932,7 @@ function ModelConfigRow({
         <span>
           {config.baseUrl || (language === 'zh' ? '默认服务地址' : 'Default endpoint')}
           {' · '}
-          {config.apiKey
+          {config.apiKey || config.hasApiKey
             ? language === 'zh' ? '凭证已保存' : 'Credential saved'
             : language === 'zh' ? '未设置凭证' : 'No credential'}
         </span>
@@ -4165,7 +4168,11 @@ function resolveEffectiveModelInfo(
     source: language === 'zh' ? '托管模型配置' : 'Managed model config',
     model: config.modelName,
     provider: config.provider || (language === 'zh' ? '(未填写)' : '(not filled)'),
-    apiKeyLabel: maskSecret(config.apiKey, language),
+    apiKeyLabel:
+      config.apiKeyMasked ||
+      (config.hasApiKey
+        ? language === 'zh' ? '(已配置)' : '(configured)'
+        : maskSecret(config.apiKey, language)),
     baseUrl: config.baseUrl || (language === 'zh' ? '(未填写)' : '(not filled)'),
   };
 }
@@ -4175,6 +4182,7 @@ function shouldUseManagedConfig(config: ManagedModelConfig) {
     config.modelName.trim() &&
     (config.provider.trim().toLowerCase() !== 'custom' ||
       config.apiKey.trim() ||
+      config.hasApiKey === true ||
       config.baseUrl.trim())
   );
 }
@@ -4343,7 +4351,7 @@ function formatContextTokens(value: number | undefined, language: AppLanguage) {
 }
 
 function contextTokenDraftValue(value: number | undefined) {
-  return value && value > 0 ? String(Math.floor(value)) : '';
+  return String(value && value > 0 ? Math.floor(value) : defaultMaxContextTokens);
 }
 
 function newModelConfigId() {

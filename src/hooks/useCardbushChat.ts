@@ -884,6 +884,9 @@ export function useCardbushChat(
             streamBuffer.push(delta);
           },
           onAssistantRevision: (revision) => {
+            if (revision.channel && revision.channel !== 'assistant') {
+              return;
+            }
             streamBuffer.reset(revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(current, sessionId, assistantId, revision),
@@ -1150,6 +1153,9 @@ export function useCardbushChat(
             streamBuffer.push(delta);
           },
           onAssistantRevision: (revision) => {
+            if (revision.channel && revision.channel !== 'assistant') {
+              return;
+            }
             streamBuffer.reset(revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(current, sessionId, tempAssistant.id, revision),
@@ -2075,11 +2081,11 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
 
 const streamSentenceFlushThreshold = 50;
 const streamForceFlushThreshold = 140;
-const streamFlushIntervalMs = 18;
-const streamBaseCharChunkSize = 2;
-const streamMediumCharChunkSize = 4;
-const streamFastCharChunkSize = 7;
-const streamCatchUpCharChunkSize = 11;
+const streamFlushIntervalMs = 40;
+const streamBaseCharChunkSize = 4;
+const streamMediumCharChunkSize = 8;
+const streamFastCharChunkSize = 14;
+const streamCatchUpCharChunkSize = 24;
 
 type StreamReadySegment = {
   text: string;
@@ -2545,7 +2551,9 @@ function applyAssistantRevision(
         message.role === 'assistant' &&
         !isSupersededLoopAssistant(message) &&
         hasVisibleLoopHistory(message) &&
-        normalizeLoopContent(message.content) !== normalizeLoopContent(nextContent);
+        (normalizeLoopContent(message.content) !== normalizeLoopContent(nextContent) ||
+          revision.reason === 'tool_preamble' ||
+          revision.reason === 'assistant_final');
       const loopHistory = shouldPreserveCurrent
         ? mergeLoopHistoryMessages(
             message.loopHistory ?? [],
@@ -2555,9 +2563,20 @@ function applyAssistantRevision(
       return {
         ...message,
         content: nextContent,
+        loopIndex: revision.loopIndex ?? message.loopIndex,
         toolExecutions: shouldPreserveCurrent ? undefined : message.toolExecutions,
         loopHistory:
           loopHistory && loopHistory.length > 0 ? loopHistory : undefined,
+        metadata: {
+          ...(message.metadata ?? {}),
+          assistant_channel: 'assistant',
+          transcript_kind:
+            revision.reason === 'assistant_final'
+              ? 'assistant_final'
+              : revision.reason === 'tool_preamble'
+                ? 'assistant_loop'
+                : message.metadata?.transcript_kind,
+        },
       };
     }),
   };
@@ -2658,7 +2677,7 @@ function appendToolExecution(
       const nextExecutions =
         index >= 0
           ? existing.map((item, itemIndex) =>
-              itemIndex === index ? { ...item, ...nextExecution } : item,
+              itemIndex === index ? mergeToolExecutionUpdate(item, nextExecution) : item,
             )
           : [...existing, nextExecution];
       return {
@@ -2667,6 +2686,32 @@ function appendToolExecution(
       };
     }),
   };
+}
+
+function mergeToolExecutionUpdate(
+  current: ChatToolExecution,
+  incoming: ChatToolExecution,
+): ChatToolExecution {
+  const currentSettled = toolExecutionStateRank(current.state) >= 2;
+  const incomingRunning = toolExecutionStateRank(incoming.state) < 2;
+  const merged = { ...current, ...incoming };
+  if (!currentSettled || !incomingRunning) {
+    return merged;
+  }
+  return {
+    ...merged,
+    state: current.state,
+    success: current.success,
+    durationMs: Math.max(current.durationMs, incoming.durationMs),
+  };
+}
+
+function toolExecutionStateRank(value: string) {
+  const state = value.trim().toLowerCase();
+  if (['completed', 'complete', 'succeeded', 'success', 'done'].includes(state)) return 3;
+  if (['failed', 'fail', 'error', 'cancelled', 'canceled', 'stopped'].includes(state)) return 2;
+  if (['using', 'running', 'pending', 'started', 'queued'].includes(state)) return 1;
+  return 0;
 }
 
 function applyTaskPlanUpdate(
@@ -2719,11 +2764,10 @@ function updateLoopHistoryToolExecution(
       }
       const nextExecutions = existing.map((item, itemIndex) =>
         itemIndex === index
-          ? {
-              ...item,
+          ? mergeToolExecutionUpdate(item, {
               ...execution,
               contentOffset: item.contentOffset,
-            }
+            })
           : item,
       );
       return {
@@ -3010,7 +3054,11 @@ function mergeToolExecutionLists(
     byId.set(execution.id, execution);
   }
   for (const execution of primary) {
-    byId.set(execution.id, execution);
+    const current = byId.get(execution.id);
+    byId.set(
+      execution.id,
+      current ? mergeToolExecutionUpdate(current, execution) : execution,
+    );
   }
   return Array.from(byId.values()).sort(compareToolExecutionTranscriptOrder);
 }
@@ -3042,10 +3090,10 @@ function mergeLoadedMessagesPreservingLocalState(
       ...message,
       metadata: preserveLocalAssistantTimingMetadata(message, source),
       taskPlan: message.taskPlan ?? source.taskPlan,
-      toolExecutions:
-        (message.toolExecutions?.length ?? 0) > 0
-          ? message.toolExecutions
-          : source.toolExecutions,
+      toolExecutions: mergeToolExecutionLists(
+        message.toolExecutions ?? [],
+        source.toolExecutions ?? [],
+      ),
       loopHistory:
         (message.loopHistory?.length ?? 0) > 0
           ? message.loopHistory
@@ -3109,7 +3157,49 @@ function preserveLocalAssistantTimingMetadata(
 }
 
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
+  if (isStableVisibleTranscript(messages)) {
+    return messages;
+  }
   return dedupeVisibleTranscriptMessages(collapseLoopTranscriptMessages(messages));
+}
+
+function isStableVisibleTranscript(messages: ChatMessage[]) {
+  const ids = new Set<string>();
+  const persistedIds = new Set<string>();
+  const positions = new Set<string>();
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (isSupersededLoopAssistant(message) || ids.has(message.id)) {
+      return false;
+    }
+    ids.add(message.id);
+    const persistedId = persistedChatMessageId(message);
+    if (persistedId) {
+      if (persistedIds.has(persistedId)) {
+        return false;
+      }
+      persistedIds.add(persistedId);
+    }
+    const content = normalizeLoopContent(message.content);
+    if (content) {
+      const position = [
+        message.role,
+        chatMessageTurnId(message),
+        numericOrderValue(message.turnSequence) ?? '',
+        numericOrderValue(message.messageIndex) ?? '',
+        numericOrderValue(message.loopIndex) ?? '',
+        content,
+      ].join('\u0000');
+      if (positions.has(position)) {
+        return false;
+      }
+      positions.add(position);
+    }
+    if (index > 0 && compareTranscriptOrder(messages[index - 1], message) > 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessage) {
@@ -3407,43 +3497,49 @@ function sortMessagesByTranscriptOrder(messages: ChatMessage[]) {
   return messages
     .map((message, index) => ({ message, index }))
     .sort((left, right) => {
-      const turnDelta = compareOptionalOrder(
-        numericOrderValue(left.message.turnSequence),
-        numericOrderValue(right.message.turnSequence),
-      );
-      if (turnDelta !== 0) {
-        return turnDelta;
-      }
-      const sameTurn =
-        turnTranscriptKey(left.message) === turnTranscriptKey(right.message);
-      const indexDelta = sameTurn
-        ? compareOptionalOrder(
-            numericOrderValue(left.message.messageIndex),
-            numericOrderValue(right.message.messageIndex),
-          )
-        : 0;
-      if (indexDelta !== 0) {
-        return indexDelta;
-      }
-      const loopDelta = sameTurn
-        ? compareOptionalOrder(
-            numericOrderValue(left.message.loopIndex),
-            numericOrderValue(right.message.loopIndex),
-          )
-        : 0;
-      if (loopDelta !== 0) {
-        return loopDelta;
-      }
-      const dateDelta = compareOptionalOrder(
-        dateOrderValue(left.message.createdAt),
-        dateOrderValue(right.message.createdAt),
-      );
-      if (dateDelta !== 0) {
-        return dateDelta;
-      }
-      return left.index - right.index;
+      return compareTranscriptOrder(left.message, right.message) || left.index - right.index;
     })
     .map((item) => item.message);
+}
+
+function compareTranscriptOrder(left: ChatMessage, right: ChatMessage) {
+  const turnDelta = compareOptionalOrder(
+    numericOrderValue(left.turnSequence),
+    numericOrderValue(right.turnSequence),
+  );
+  if (turnDelta !== 0) {
+    return turnDelta;
+  }
+  const sameTurn = turnTranscriptKey(left) === turnTranscriptKey(right);
+  const indexDelta = sameTurn
+    ? compareOptionalOrder(
+        numericOrderValue(left.messageIndex),
+        numericOrderValue(right.messageIndex),
+      )
+    : 0;
+  if (indexDelta !== 0) {
+    return indexDelta;
+  }
+  const loopDelta = sameTurn
+    ? compareOptionalOrder(
+        numericOrderValue(left.loopIndex),
+        numericOrderValue(right.loopIndex),
+      )
+    : 0;
+  if (loopDelta !== 0) {
+    return loopDelta;
+  }
+  const sequenceDelta = compareOptionalOrder(
+    numericOrderValue(left.sequence),
+    numericOrderValue(right.sequence),
+  );
+  if (sequenceDelta !== 0) {
+    return sequenceDelta;
+  }
+  return compareOptionalOrder(
+    dateOrderValue(left.createdAt),
+    dateOrderValue(right.createdAt),
+  );
 }
 
 function compareOptionalOrder(left: number | undefined, right: number | undefined) {
@@ -3697,6 +3793,9 @@ function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
     loopIndex: message.loopIndex,
     turnSequence: message.turnSequence,
     messageIndex: message.messageIndex,
+    sequence: message.sequence,
+    requestId: message.requestId,
+    eventId: message.eventId,
     assistantMessageId: message.assistantMessageId,
     attachments: message.attachments?.map((attachment) => ({ ...attachment })),
     toolExecutions: message.toolExecutions?.map((execution) => ({

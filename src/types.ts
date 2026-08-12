@@ -94,6 +94,7 @@ export interface BackendCapabilities {
   maintenanceConversationHistoryClear: boolean;
   maintenanceLogsCacheClear: boolean;
   botControl: boolean;
+  sessionShareLinks: boolean;
   messageEditRegenerate: boolean;
   turnRegenerate: boolean;
   stableMessageIds: boolean;
@@ -176,6 +177,8 @@ export interface ManagedModelConfig {
   id: string;
   provider: string;
   apiKey: string;
+  hasApiKey?: boolean;
+  apiKeyMasked?: string;
   modelName: string;
   baseUrl: string;
   maxContextTokens?: number;
@@ -368,6 +371,7 @@ export interface ChatToolExecution {
 }
 
 export interface TaskPlanNode {
+  id?: string;
   step: string;
   status: TaskPlanStatus;
 }
@@ -388,6 +392,7 @@ export interface TaskPlanStreamUpdate {
 
 export interface AssistantRevision {
   action: 'clear' | 'replace' | string;
+  channel?: 'assistant' | string;
   turnId?: string;
   reason?: string;
   draftState?: string;
@@ -408,6 +413,9 @@ export interface ChatMessage {
   loopIndex?: number;
   turnSequence?: number;
   messageIndex?: number;
+  sequence?: number;
+  requestId?: string;
+  eventId?: string;
   assistantMessageId?: string;
   attachments?: ChatAttachment[];
   toolExecutions?: ChatToolExecution[];
