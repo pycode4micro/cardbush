@@ -97,6 +97,54 @@ export interface BackendModelConfigsResult {
   raw: unknown;
 }
 
+export interface ExperimentalGoalA2AStatus {
+  enabled: boolean;
+  mode: string;
+  goalProtocol: string;
+  a2aProtocolVersion: string;
+}
+
+export type ExperimentalGoalStatus =
+  | 'active'
+  | 'complete'
+  | 'blocked'
+  | 'cancelled';
+
+export interface ExperimentalGoal {
+  protocol: string;
+  goalId: string;
+  sessionId: string;
+  objective: string;
+  status: ExperimentalGoalStatus;
+  statusReason: string;
+  tokenBudget?: number;
+  consumedTokens: number;
+  linkedA2ATaskIds: string[];
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface A2AAgentCard {
+  name: string;
+  description: string;
+  protocolVersions: string[];
+  streaming: boolean;
+  skills: Array<{ id: string; name: string; description: string; tags: string[] }>;
+  raw: Record<string, unknown>;
+}
+
+export interface A2ATask {
+  id: string;
+  contextId: string;
+  state: string;
+  statusMessage: string;
+  artifactText: string;
+  revision: number;
+  raw: Record<string, unknown>;
+}
+
 export interface RuntimeToolInventoryEntry {
   name: string;
   package: string;
@@ -665,6 +713,89 @@ export async function fetchRuntimeToolInventory(filters?: {
   return runtimeToolInventoryFromPayload(await readJson<unknown>(endpoint.toString()));
 }
 
+export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoalA2AStatus> {
+  const payload = recordFromUnknown(
+    await readJson<unknown>(url('/v1/experimental/goal-a2a')),
+  );
+  return {
+    enabled: payload.enabled === true,
+    mode: String(payload.mode ?? ''),
+    goalProtocol: String(payload.goal_protocol ?? payload.goalProtocol ?? ''),
+    a2aProtocolVersion: String(
+      payload.a2a_protocol_version ?? payload.a2aProtocolVersion ?? '',
+    ),
+  };
+}
+
+export async function fetchExperimentalGoals(sessionId: string): Promise<ExperimentalGoal[]> {
+  const endpoint = new URL(url('/v1/experimental/goals'));
+  if (sessionId.trim()) endpoint.searchParams.set('session_id', sessionId.trim());
+  const payload = recordFromUnknown(await readJson<unknown>(endpoint.toString()));
+  return arrayFrom(payload.items).map(experimentalGoalFromPayload).filter(Boolean);
+}
+
+export async function createExperimentalGoal(request: {
+  sessionId: string;
+  objective: string;
+  tokenBudget?: number;
+}): Promise<ExperimentalGoal> {
+  return experimentalGoalFromPayload(await readJson<unknown>(url('/v1/experimental/goals'), {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: request.sessionId,
+      objective: request.objective,
+      ...(request.tokenBudget ? { token_budget: request.tokenBudget } : {}),
+    }),
+  }));
+}
+
+export async function updateExperimentalGoal(request: {
+  goalId: string;
+  status: ExperimentalGoalStatus;
+  statusReason?: string;
+  expectedRevision: number;
+}): Promise<ExperimentalGoal> {
+  return experimentalGoalFromPayload(await readJson<unknown>(
+    url(`/v1/experimental/goals/${encodeURIComponent(request.goalId)}`),
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: request.status,
+        status_reason: request.statusReason ?? '',
+        expected_revision: request.expectedRevision,
+      }),
+    },
+  ));
+}
+
+export async function inspectExperimentalA2AAgent(agentUrl: string): Promise<A2AAgentCard> {
+  return a2aAgentCardFromPayload(await readJson<unknown>(
+    url('/v1/experimental/a2a/inspect'),
+    { method: 'POST', body: JSON.stringify({ agent_url: agentUrl }) },
+  ));
+}
+
+export async function dispatchExperimentalA2ATask(request: {
+  agentUrl: string;
+  text: string;
+  goalId?: string;
+  contextId?: string;
+}): Promise<A2ATask> {
+  const payload = recordFromUnknown(await readJson<unknown>(
+    url('/v1/experimental/a2a/dispatch'),
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        agent_url: request.agentUrl,
+        text: request.text,
+        ...(request.goalId ? { goal_id: request.goalId } : {}),
+        ...(request.contextId ? { context_id: request.contextId } : {}),
+      }),
+    },
+  ));
+  return a2aTaskFromPayload(payload.task ?? payload);
+}
+
 export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
   const payload = await readJson<unknown>(url('/v1/model-configs'));
   return modelConfigsFromPayload(payload);
@@ -767,6 +898,73 @@ function modelConfigsFromPayload(payload: unknown): BackendModelConfigsResult {
     defaultModelId: String(root.default_model_id ?? root.defaultModelId ?? ''),
     models,
     raw: payload,
+  };
+}
+
+function experimentalGoalFromPayload(payload: unknown): ExperimentalGoal {
+  const item = recordFromUnknown(payload);
+  const budget = optionalNumber(item.token_budget ?? item.tokenBudget);
+  return {
+    protocol: String(item.protocol ?? ''),
+    goalId: String(item.goal_id ?? item.goalId ?? ''),
+    sessionId: String(item.session_id ?? item.sessionId ?? ''),
+    objective: String(item.objective ?? ''),
+    status: String(item.status ?? 'active') as ExperimentalGoalStatus,
+    statusReason: String(item.status_reason ?? item.statusReason ?? ''),
+    ...(budget != null ? { tokenBudget: budget } : {}),
+    consumedTokens: numericValue(item.consumed_tokens ?? item.consumedTokens),
+    linkedA2ATaskIds: stringList(
+      item.linked_a2a_task_ids ?? item.linkedA2ATaskIds,
+    ),
+    revision: numericValue(item.revision),
+    createdAt: String(item.created_at ?? item.createdAt ?? ''),
+    updatedAt: String(item.updated_at ?? item.updatedAt ?? ''),
+    completedAt: optionalString(item.completed_at ?? item.completedAt),
+  };
+}
+
+function a2aAgentCardFromPayload(payload: unknown): A2AAgentCard {
+  const item = recordFromUnknown(payload);
+  const capabilities = recordFromUnknown(item.capabilities);
+  return {
+    name: String(item.name ?? ''),
+    description: String(item.description ?? ''),
+    protocolVersions: stringList(item.protocolVersions ?? item.protocol_versions),
+    streaming: capabilities.streaming === true,
+    skills: arrayFrom(item.skills).map((raw) => {
+      const skill = recordFromUnknown(raw);
+      return {
+        id: String(skill.id ?? ''),
+        name: String(skill.name ?? skill.id ?? ''),
+        description: String(skill.description ?? ''),
+        tags: stringList(skill.tags),
+      };
+    }),
+    raw: item,
+  };
+}
+
+function a2aTaskFromPayload(payload: unknown): A2ATask {
+  const item = recordFromUnknown(payload);
+  const status = recordFromUnknown(item.status);
+  const statusMessage = recordFromUnknown(status.message);
+  const artifacts = arrayFrom(item.artifacts);
+  const artifactText = artifacts
+    .flatMap((artifact) => arrayFrom(recordFromUnknown(artifact).parts))
+    .map((part) => String(recordFromUnknown(part).text ?? ''))
+    .filter(Boolean)
+    .join('\n');
+  return {
+    id: String(item.id ?? ''),
+    contextId: String(item.contextId ?? item.context_id ?? ''),
+    state: String(status.state ?? ''),
+    statusMessage: arrayFrom(statusMessage.parts)
+      .map((part) => String(recordFromUnknown(part).text ?? ''))
+      .filter(Boolean)
+      .join('\n'),
+    artifactText,
+    revision: numericValue(item.revision),
+    raw: item,
   };
 }
 

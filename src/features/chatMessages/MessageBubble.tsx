@@ -502,6 +502,9 @@ function MessageBubbleView({
       ? assistantTurnCompletedAt(message, assistantProgressExecutions)
       : undefined;
   const taskPlan = message.role === 'assistant' ? message.taskPlan : undefined;
+  const archiveTaskPlanInHistory = Boolean(
+    taskPlan && !taskPlan.active && visibleLoopHistory.length > 0,
+  );
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
@@ -560,12 +563,15 @@ function MessageBubbleView({
           {visibleLoopHistory.length > 0 && (
             <AssistantLoopHistoryBlock
               history={visibleLoopHistory}
+              archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
               language={language}
               onRevertChangeReport={onRevertChangeReport}
               onOpenScene={onOpenScene}
             />
           )}
-          {taskPlan && <TaskPlanBlock plan={taskPlan} language={language} />}
+          {taskPlan && !archiveTaskPlanInHistory && (
+            <TaskPlanBlock plan={taskPlan} language={language} />
+          )}
         </div>
         <div className="message-actions">
             <button
@@ -1299,11 +1305,13 @@ function nearestOffset(offset: number, before: number, after: number) {
 
 function AssistantLoopHistoryBlock({
   history,
+  archivedPlan,
   language,
   onRevertChangeReport,
   onOpenScene,
 }: {
   history: ChatMessage[];
+  archivedPlan?: NonNullable<ChatMessage['taskPlan']>;
   language: AppLanguage;
   onRevertChangeReport: (
     report: ConversationChangeReport,
@@ -1350,6 +1358,11 @@ function AssistantLoopHistoryBlock({
       </button>
       {expanded && (
         <div className="assistant-loop-history-details">
+          {archivedPlan && (
+            <div className="assistant-loop-history-plan">
+              <TaskPlanBlock plan={archivedPlan} language={language} />
+            </div>
+          )}
           {visibleHistory.map((historyMessage, index) => (
             <AssistantLoopHistoryItem
               // eslint-disable-next-line react/no-array-index-key

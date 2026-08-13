@@ -57,14 +57,6 @@ const projectFileSearchMaxDepth = 3;
 const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
-const previewableFileExtensions = new Set([
-  '.c', '.cc', '.cpp', '.css', '.csv', '.gif', '.go', '.h', '.hpp', '.htm',
-  '.html', '.java', '.jpeg', '.jpg', '.js', '.json', '.jsx', '.log', '.md',
-  '.pdf', '.png', '.py', '.rs', '.scss', '.svg', '.toml', '.ts', '.tsx',
-  '.txt', '.webp', '.xhtml', '.xml', '.yaml', '.yml', '.doc', '.docx',
-  '.xls', '.xlsx', '.ppt', '.pptx',
-]);
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: localFileProtocol,
@@ -510,10 +502,10 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
   if (
     parsed != null &&
     parsed.protocol === `${localFileProtocol}:` &&
-    parsed.hostname.toLowerCase() === 'office-preview'
+    ['office-preview', 'text-preview'].includes(parsed.hostname.toLowerCase())
   ) {
     const localPath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
-    if (localPath && fs.existsSync(localPath) && isOfficePreviewPath(localPath)) {
+    if (localPath && fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
       return {
         url: parsed.toString(),
         externalTarget: localPath,
@@ -527,8 +519,7 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
     if (
       localPath &&
       fs.existsSync(localPath) &&
-      fs.statSync(localPath).isFile() &&
-      previewableFileExtensions.has(path.extname(localPath).toLowerCase())
+      fs.statSync(localPath).isFile()
     ) {
       return {
         url: isOfficePreviewPath(localPath)
@@ -607,8 +598,7 @@ function previewLocalFilePath(value: string) {
         continue;
       }
       if (
-        stats.isFile() &&
-        previewableFileExtensions.has(path.extname(candidate).toLowerCase())
+        stats.isFile()
       ) {
         return candidate;
       }
@@ -1793,7 +1783,29 @@ function registerLocalFileProtocol() {
         if (!stats.isFile() || !isOfficePreviewPath(officePath)) {
           return new Response('Not found', { status: 404 });
         }
-        return new Response(await renderOfficePreview(officePath), {
+        let previewHtml: string;
+        try {
+          previewHtml = await renderOfficePreview(officePath);
+        } catch (error) {
+          previewHtml = await renderTextFilePreview(
+            officePath,
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        return new Response(previewHtml, {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store',
+          },
+        });
+      }
+      if (parsed.hostname.toLowerCase() === 'text-preview') {
+        const textPath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const stats = await fs.promises.stat(textPath);
+        if (!stats.isFile()) {
+          return new Response('Not found', { status: 404 });
+        }
+        return new Response(await renderTextFilePreview(textPath), {
           headers: {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store',
@@ -2025,6 +2037,54 @@ function contentTypeForPath(filePath: string) {
     return 'image/svg+xml';
   }
   return 'application/octet-stream';
+}
+
+async function renderTextFilePreview(filePath: string, previewError = '') {
+  const maxPreviewBytes = 2 * 1024 * 1024;
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const stats = await handle.stat();
+    const byteCount = Math.min(stats.size, maxPreviewBytes);
+    const bytes = Buffer.alloc(byteCount);
+    await handle.read(bytes, 0, byteCount, 0);
+    const zeroBytes = bytes.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
+    const likelyBinary = bytes.length > 0 && zeroBytes / bytes.length > 0.01;
+    const text = likelyBinary
+      ? Array.from(bytes.subarray(0, Math.min(bytes.length, 4096)))
+          .map((value, index) => `${index % 16 === 0 ? `\n${index.toString(16).padStart(8, '0')}  ` : ''}${value.toString(16).padStart(2, '0')} `)
+          .join('')
+          .trim()
+      : bytes.toString('utf8');
+    const notice = previewError
+      ? `专用预览加载失败，已切换为文本兜底：${previewError}`
+      : likelyBinary
+        ? '检测到二进制内容，以下显示前 4 KiB 十六进制数据。'
+        : stats.size > maxPreviewBytes
+          ? '文件较大，仅显示前 2 MiB。'
+          : '文本兜底预览';
+    return `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light">
+<title>${escapePreviewHtml(path.basename(filePath))}</title>
+<style>
+:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background:#1c1b19; color:#dedbd4; }
+body { margin:0; min-height:100vh; background:#1c1b19; }
+header { position:sticky; top:0; padding:10px 14px; background:#2b2b2b; border-bottom:1px solid rgba(255,255,255,.08); z-index:1; }
+header strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12px system-ui,sans-serif; }
+header small { display:block; margin-top:4px; color:#99958d; font:11px system-ui,sans-serif; }
+pre { margin:0; padding:14px; overflow:auto; color:#d7d3cb; font-size:12px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+</style></head><body><header><strong>${escapePreviewHtml(filePath)}</strong><small>${escapePreviewHtml(notice)}</small></header><pre>${escapePreviewHtml(text)}</pre></body></html>`;
+  } finally {
+    await handle.close();
+  }
+}
+
+function escapePreviewHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function contentTypeForBytes(bytes: Uint8Array) {

@@ -23,6 +23,7 @@
     "test:model-selection": "node scripts/test-model-selection-contract.mjs",
     "test:message-edit": "node scripts/test-message-edit-contract.mjs",
     "test:history-tools": "node scripts/test-history-tool-contract.mjs",
+    "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",
     "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
     "test:project-roots": "node scripts/test-project-root-contract.mjs",

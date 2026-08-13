@@ -2026,12 +2026,11 @@ function CardbushApp() {
                     )}
                   />
                 ) : inspectorTarget ? (
-                  createElement('webview', {
-                    key: inspectorTarget.target,
-                    className: 'right-inspector-webview',
-                    src: inspectorSource(inspectorTarget.target),
-                    webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
-                  })
+                  <InspectorWebview
+                    key={inspectorTarget.target}
+                    source={inspectorSource(inspectorTarget.target)}
+                    language={language}
+                  />
                 ) : null}
               </div>
             </aside>
@@ -7027,13 +7026,15 @@ function inspectorSource(target: string) {
     return value;
   }
   if (/^file:\/\//i.test(value)) {
-    return isOfficeDocumentPath(value)
-      ? officeDocumentPreviewUrl(value)
-      : value;
+    if (isOfficeDocumentPath(value)) return officeDocumentPreviewUrl(value);
+    return usesNativeFilePreview(value) ? value : textFilePreviewUrl(value);
   }
   if (/^cardbush-file:\/\//i.test(value)) {
     try {
       const parsed = new URL(value);
+      if (['office-preview', 'text-preview'].includes(parsed.hostname.toLowerCase())) {
+        return value;
+      }
       return localFilePreviewUrl(decodeURIComponent(parsed.pathname));
     } catch {
       return value;
@@ -7043,12 +7044,57 @@ function inspectorSource(target: string) {
     if (isOfficeDocumentPath(value)) {
       return officeDocumentPreviewUrl(value);
     }
-    return localFilePreviewUrl(value);
+    return usesNativeFilePreview(value)
+      ? localFilePreviewUrl(value)
+      : textFilePreviewUrl(value);
   }
   if (isOfficeDocumentPath(value)) {
     return officeDocumentPreviewUrl(value);
   }
-  return fileUrl(value);
+  return usesNativeFilePreview(value) ? fileUrl(value) : textFilePreviewUrl(value);
+}
+
+function InspectorWebview({
+  source,
+  language,
+}: {
+  source: string;
+  language: AppLanguage;
+}) {
+  const webviewRef = useRef<HTMLElement | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return undefined;
+    const finish = () => setLoading(false);
+    const fail = () => setLoading(false);
+    webview.addEventListener('did-finish-load', finish);
+    webview.addEventListener('did-fail-load', fail);
+    return () => {
+      webview.removeEventListener('did-finish-load', finish);
+      webview.removeEventListener('did-fail-load', fail);
+    };
+  }, [source]);
+
+  return (
+    <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
+      {createElement('webview', {
+        ref: webviewRef,
+        className: 'right-inspector-webview',
+        src: source,
+        webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
+      })}
+      {loading && (
+        <div className="right-inspector-preview-loading" role="status">
+          <span />
+          <span />
+          <span />
+          <small>{language === 'zh' ? '正在加载预览' : 'Loading preview'}</small>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function isOfficeDocumentPath(value: string) {
@@ -7057,6 +7103,16 @@ function isOfficeDocumentPath(value: string) {
 
 function officeDocumentPreviewUrl(value: string) {
   return `cardbush-file://office-preview/?path=${encodeURIComponent(value)}`;
+}
+
+function textFilePreviewUrl(value: string) {
+  return `cardbush-file://text-preview/?path=${encodeURIComponent(value)}`;
+}
+
+function usesNativeFilePreview(value: string) {
+  return /\.(?:html?|xhtml|pdf|svg|png|jpe?g|gif|webp|bmp|ico|mp3|m4a|mp4|aac|wav|ogg|oga|opus|flac|webm)$/i.test(
+    value.split(/[?#]/, 1)[0],
+  );
 }
 
 function localFilePreviewUrl(value: string) {

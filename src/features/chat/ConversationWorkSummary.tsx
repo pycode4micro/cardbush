@@ -1,6 +1,5 @@
 import {
   CheckCircle2,
-  CircleDotDashed,
   FileOutput,
   LoaderCircle,
   Wrench,
@@ -19,6 +18,7 @@ import {
   ShadowTemporaryChat,
   type ShadowChatEntry,
 } from './ShadowTemporaryChat';
+import { ExperimentalA2APanel } from './ExperimentalA2APanel';
 
 type WorkSummaryMode = 'summary' | 'a2a';
 
@@ -144,19 +144,7 @@ export function ConversationWorkSummary({
             </p>
           </div>
         ) : mode === 'a2a' ? (
-          <section className="work-summary-a2a">
-            <span className="work-summary-kicker">A2A</span>
-            <h2>{language === 'zh' ? '协作 Agent' : 'Peer agent'}</h2>
-            <p>
-              {language === 'zh'
-                ? '与主会话共享任务边界，但保持独立判断。'
-                : 'Shares the task boundary while keeping an independent judgment.'}
-            </p>
-            <div className="work-summary-a2a-state">
-              <CircleDotDashed size={14} />
-              <span>{language === 'zh' ? '等待后端接入' : 'Backend integration pending'}</span>
-            </div>
-          </section>
+          <ExperimentalA2APanel language={language} sessionId={sessionId} />
         ) : (
           <section className="work-summary-overview">
             <header>
