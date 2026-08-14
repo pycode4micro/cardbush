@@ -70,6 +70,7 @@ import {
   fetchBackendCapabilities,
   fetchModelConfigs,
   fetchProjectContext,
+  fetchRuntimeToolInventory,
   fetchSessionScene,
   fetchSessionScenes,
   isBushServerHttpError,
@@ -86,6 +87,7 @@ import {
   useCardbushChat,
   type QueuedChatMessage,
 } from './hooks/useCardbushChat';
+import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { BotPlatformIcon } from './components/BotPlatformIcon';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
@@ -128,6 +130,10 @@ import {
   isQuickContextPreTestEnabled,
   QuickContextPreTest,
 } from './features/pre_test/QuickContextPreTest';
+import {
+  isLoopHistoryPreTestEnabled,
+  LoopHistoryPreTest,
+} from './features/pre_test/LoopHistoryPreTest';
 import {
   Composer,
   ComposerRuntimeRail,
@@ -429,6 +435,7 @@ function CardbushApp() {
   const [sidebarWidth, setSidebarWidthState] = useState(() =>
     readInitialSidebarWidth(),
   );
+  const [sidebarPreviewWidth, setSidebarPreviewWidth] = useState<number | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
@@ -445,6 +452,9 @@ function CardbushApp() {
   );
   const [disabledToolNames, setDisabledToolNames] = useState<Set<string>>(
     readDisabledToolNames,
+  );
+  const [protectedCoreToolNames, setProtectedCoreToolNames] = useState<Set<string>>(
+    () => new Set(),
   );
   const [visualInputEnabledSetting, setVisualInputEnabledSetting] = useState(
     readVisualInputEnabled,
@@ -675,11 +685,35 @@ function CardbushApp() {
     () =>
       new Set(
         [...disabledToolNames].filter(
-          (toolName) => toolName.trim() !== standardImageInputToolName,
+          (toolName) =>
+            toolName.trim() !== standardImageInputToolName
+            && !protectedCoreToolNames.has(toolName),
         ),
       ),
-    [disabledToolNames, standardImageInputToolName],
+    [disabledToolNames, protectedCoreToolNames, standardImageInputToolName],
   );
+  useEffect(() => {
+    let active = true;
+    void fetchRuntimeToolInventory()
+      .then((inventory) => {
+        if (!active) return;
+        const protectedNames = new Set(
+          inventory.installed
+            .filter((tool) => tool.injection.core)
+            .map((tool) => tool.name),
+        );
+        setProtectedCoreToolNames(protectedNames);
+        setDisabledToolNames((current) => {
+          const next = new Set([...current].filter((name) => !protectedNames.has(name)));
+          if (next.size !== current.size) persistDisabledToolNames(next);
+          return next;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     projectContexts,
     disabledSkillNames,
@@ -791,24 +825,6 @@ function CardbushApp() {
   const activeProjectDir =
     conversationProjectDir ||
     (!chat.activeConversation ? fallbackProjectDir || undefined : undefined);
-  const activeProjectConversationCards = useMemo(() => {
-    const root = activeProjectDir?.trim() ?? '';
-    if (!root) {
-      return [];
-    }
-    return chat.conversations
-      .filter((conversation) => {
-        const conversationRoot = conversationWorkspaceRoot(conversation).trim();
-        return conversationRoot.length > 0 && samePath(conversationRoot, root);
-      })
-      .sort((left, right) => {
-        const leftTime = Date.parse(left.updatedAt);
-        const rightTime = Date.parse(right.updatedAt);
-        return (Number.isFinite(rightTime) ? rightTime : 0) -
-          (Number.isFinite(leftTime) ? leftTime : 0);
-      })
-      .slice(0, 8);
-  }, [activeProjectDir, chat.conversations]);
   const activeDraftKey = chat.activeConversationId.trim() || '__new__';
   const activeDraft = draftsByConversation[activeDraftKey] ?? '';
   const setActiveDraft = useCallback(
@@ -851,12 +867,41 @@ function CardbushApp() {
   );
   const changeReviewConversation =
     chat.conversations.find((item) => item.id === changeReviewConversationId) ?? null;
-  const changeReviewReports = changeReviewConversationId
-    ? changeReportsByConversation[changeReviewConversationId] ?? []
-    : [];
+  const changeReviewReports = useMemo(
+    () => changeReviewConversationId
+      ? changeReportsByConversation[changeReviewConversationId] ?? []
+      : [],
+    [changeReportsByConversation, changeReviewConversationId],
+  );
   const inspectorOpen = Boolean(
     (changeReviewConversation && changeReviewReports.length > 0) || inspectorTarget,
   );
+  const [retainedInspectorContent, setRetainedInspectorContent] = useState<{
+    target: InspectorOpenDetail | null;
+    conversation: ConversationSummary | null;
+    reports: ConversationChangeReport[];
+  }>({ target: null, conversation: null, reports: [] });
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    setRetainedInspectorContent({
+      target: inspectorTarget,
+      conversation: changeReviewConversation,
+      reports: changeReviewReports,
+    });
+  }, [changeReviewConversation, changeReviewReports, inspectorOpen, inspectorTarget]);
+  const displayedInspectorTarget = inspectorTarget ?? (
+    changeReviewConversation ? null : retainedInspectorContent.target
+  );
+  const displayedReviewConversation = changeReviewConversation ?? (
+    inspectorTarget ? null : retainedInspectorContent.conversation
+  );
+  const displayedReviewReports = changeReviewConversation
+    ? changeReviewReports
+    : retainedInspectorContent.reports;
+  const sidebarPresence = useSoftPanelPresence(
+    section !== 'os' && !sidebarCollapsed,
+  );
+  const inspectorPresence = useSoftPanelPresence(inspectorOpen);
 
   useEffect(() => {
     if (!inspectorOpen) return;
@@ -1103,11 +1148,11 @@ function CardbushApp() {
     ? ({
         '--wallpaper-accent-rgb': `${wallpaperAccent.r} ${wallpaperAccent.g} ${wallpaperAccent.b}`,
         '--wallpaper-accent-hex': wallpaperAccent.hex,
-        '--sidebar-width': `${sidebarWidth}px`,
+        '--sidebar-width': `${sidebarPreviewWidth ?? sidebarWidth}px`,
         ...appFontStyle,
       } as CSSProperties)
     : ({
-        '--sidebar-width': `${sidebarWidth}px`,
+        '--sidebar-width': `${sidebarPreviewWidth ?? sidebarWidth}px`,
         ...appFontStyle,
       } as CSSProperties);
 
@@ -1685,6 +1730,21 @@ function CardbushApp() {
     });
   }, []);
 
+  const toggleToolEnabled = useCallback((toolName: string, enabled: boolean) => {
+    const normalized = toolName.trim();
+    if (!normalized) return;
+    setDisabledToolNames((current) => {
+      const next = new Set(current);
+      if (enabled) {
+        next.delete(normalized);
+      } else {
+        next.add(normalized);
+      }
+      persistDisabledToolNames(next);
+      return next;
+    });
+  }, []);
+
   const setVisualInputEnabled = useCallback(
     (enabled: boolean) => {
       const nextEnabled = enabled && visualInputAvailable;
@@ -1760,7 +1820,7 @@ function CardbushApp() {
               />
             </>
           )}
-          {section !== 'os' && !sidebarCollapsed && (
+          {sidebarPresence.mounted && (
             <>
               <ChatSidebar
                 language={language}
@@ -1794,11 +1854,23 @@ function CardbushApp() {
                   setChangeReviewNotice('');
                 }}
                 onOpenSettings={() => openSettings('profile')}
+                softVisible={sidebarPresence.visible}
               />
               <SidebarResizer
                 language={language}
-                onWidthChange={setSidebarWidth}
+                onWidthChange={(width) => {
+                  setSidebarWidth(width);
+                }}
+                onResizeEnd={(width, shouldCollapse) => {
+                  if (shouldCollapse) {
+                    setSidebarPreviewWidth(Math.max(0, Math.min(maxSidebarWidth, width)));
+                    window.setTimeout(() => setSidebarPreviewWidth(null), 260);
+                    return;
+                  }
+                  setSidebarWidth(width);
+                }}
                 onCollapse={() => setSidebarCollapsed(true)}
+                softVisible={sidebarPresence.visible}
               />
             </>
           )}
@@ -1820,11 +1892,15 @@ function CardbushApp() {
                 onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
                 inspectorOpen={inspectorOpen}
+                onCloseInspector={() => {
+                  setInspectorTarget(null);
+                  setChangeReviewConversationId('');
+                  setInspectorSummaryOpen(false);
+                }}
                 windowMaximized={windowMaximized}
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={section === 'os' ? undefined : activeProjectDir}
-                conversationCards={section === 'os' ? [] : activeProjectConversationCards}
                 projectContext={
                   section === 'os'
                     ? ''
@@ -1881,10 +1957,6 @@ function CardbushApp() {
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={() => createConversation(activeProjectDir)}
-                onOpenConversationCard={(conversationId) => {
-                  chat.openConversation(conversationId);
-                  setSection('chat');
-                }}
                 onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
                 onVisualInputEnabledChange={setVisualInputEnabled}
@@ -1928,7 +2000,9 @@ function CardbushApp() {
                 conversations={chat.conversations}
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
+                disabledToolNames={disabledToolNames}
                 onToggleSkill={toggleSkillEnabled}
+                onToggleTool={toggleToolEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
                 onCreateConversation={() => createConversation(activeProjectDir)}
@@ -1939,10 +2013,11 @@ function CardbushApp() {
               />
             )}
           </section>
-          {inspectorOpen ? (
+          {inspectorPresence.mounted ? (
             <aside
-              className="right-inspector"
+              className={`right-inspector soft-panel-motion ${inspectorPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
               aria-label={language === 'zh' ? '右侧检查器' : 'Inspector'}
+              aria-hidden={!inspectorPresence.visible}
               style={{ '--right-inspector-width': `${inspectorWidth}px` } as CSSProperties}
             >
               <RightInspectorResizer
@@ -1952,9 +2027,9 @@ function CardbushApp() {
               />
               <header className="right-inspector-toolbar">
                 <strong>
-                  {changeReviewConversation
+                  {displayedReviewConversation
                     ? (language === 'zh' ? '审查' : 'Review')
-                    : inspectorTarget?.title || basename(inspectorTarget?.target ?? '')}
+                    : displayedInspectorTarget?.title || basename(displayedInspectorTarget?.target ?? '')}
                 </strong>
                 <button
                   type="button"
@@ -1965,10 +2040,10 @@ function CardbushApp() {
                   <Clipboard size={15} />
                   <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
                 </button>
-                {inspectorTarget && (
+                {displayedInspectorTarget && (
                   <button
                     type="button"
-                    onClick={() => void window.cardbushDesktop?.openUiPreview?.(inspectorTarget.target)}
+                    onClick={() => void window.cardbushDesktop?.openUiPreview?.(displayedInspectorTarget.target)}
                     title={language === 'zh' ? '弹出到独立窗口' : 'Pop out'}
                   >
                     <ExternalLink size={15} />
@@ -1988,47 +2063,47 @@ function CardbushApp() {
               </header>
               {inspectorSummaryOpen && (
                 <div className="right-inspector-summary">
-                  {changeReviewConversation
+                  {displayedReviewConversation
                     ? (() => {
-                        const summary = summarizeChangeReports(changeReviewReports);
+                        const summary = summarizeChangeReports(displayedReviewReports);
                         return summary
                           ? `${summary.fileCount} ${language === 'zh' ? '个文件' : 'files'} · +${summary.additions} -${summary.deletions}`
                           : (language === 'zh' ? '暂无修改摘要' : 'No change summary');
                       })()
-                    : inspectorTarget?.target}
+                    : displayedInspectorTarget?.target}
                 </div>
               )}
               <div className="right-inspector-body">
-                {changeReviewConversation ? (
+                {displayedReviewConversation ? (
                   <ConversationChangeDialog
                     embedded
                     language={language}
-                    conversation={changeReviewConversation}
-                    reports={changeReviewReports}
+                    conversation={displayedReviewConversation}
+                    reports={displayedReviewReports}
                     notice={changeReviewNotice}
                     revertingChangeId={revertingChangeId}
                     revertedChangeIds={new Set(
-                      changeReviewReports
+                      displayedReviewReports
                         .filter((report) =>
-                          revertedChangeKeys.has(`${changeReviewConversation.id}:${report.id}`),
+                          revertedChangeKeys.has(`${displayedReviewConversation.id}:${report.id}`),
                         )
                         .map((report) => report.id),
                     )}
                     onClose={() => setChangeReviewConversationId('')}
-                    onRevert={(report) => revertChangeReport(changeReviewConversation.id, report)}
+                    onRevert={(report) => revertChangeReport(displayedReviewConversation.id, report)}
                     onRevertAll={() => revertConversationReports(
-                      changeReviewConversation.id,
-                      changeReviewReports.filter(
+                      displayedReviewConversation.id,
+                      displayedReviewReports.filter(
                         (report) => !revertedChangeKeys.has(
-                          `${changeReviewConversation.id}:${report.id}`,
+                          `${displayedReviewConversation.id}:${report.id}`,
                         ),
                       ),
                     )}
                   />
-                ) : inspectorTarget ? (
+                ) : displayedInspectorTarget ? (
                   <InspectorWebview
-                    key={inspectorTarget.target}
-                    source={inspectorSource(inspectorTarget.target)}
+                    key={displayedInspectorTarget.target}
+                    source={inspectorSource(displayedInspectorTarget.target)}
                     language={language}
                   />
                 ) : null}
@@ -2038,43 +2113,6 @@ function CardbushApp() {
         </main>
       )}
       <CopyToastHost language={language} />
-    </div>
-  );
-}
-
-function ConversationCardStrip({
-  language,
-  conversations,
-  activeConversationId,
-  onOpenConversation,
-}: {
-  language: AppLanguage;
-  conversations: ConversationSummary[];
-  activeConversationId: string;
-  onOpenConversation: (conversationId: string) => void;
-}) {
-  return (
-    <div className="conversation-card-strip" data-no-floating-input="true">
-      <div className="conversation-card-strip-inner">
-        {conversations.map((conversation) => {
-          const active = conversation.id === activeConversationId;
-          const title = conversation.title.trim() ||
-            (language === 'zh' ? '新会话' : 'New chat');
-          const time = conversationCardTime(conversation.updatedAt, language);
-          return (
-            <button
-              key={conversation.id}
-              className={`conversation-card-tab ${active ? 'active' : ''}`}
-              type="button"
-              title={title}
-              onClick={() => onOpenConversation(conversation.id)}
-            >
-              <span>{title}</span>
-              {time && <small>{time}</small>}
-            </button>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -2996,48 +3034,6 @@ function FeaturePanelLoading({ language }: { language: AppLanguage }) {
   );
 }
 
-function sortConversationCards(
-  conversations: ConversationSummary[],
-  activeConversationId: string,
-) {
-  const activeId = activeConversationId.trim();
-  return [...conversations].sort((left, right) => {
-    if (left.id === activeId) {
-      return -1;
-    }
-    if (right.id === activeId) {
-      return 1;
-    }
-    const leftTime = Date.parse(left.updatedAt);
-    const rightTime = Date.parse(right.updatedAt);
-    return (Number.isFinite(rightTime) ? rightTime : 0) -
-      (Number.isFinite(leftTime) ? leftTime : 0);
-  });
-}
-
-function conversationCardTime(value: string, language: AppLanguage) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
-    return '';
-  }
-  const diffMs = Date.now() - timestamp;
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diffMs >= 0 && diffMs < hour) {
-    const minutes = Math.max(1, Math.round(diffMs / minute));
-    return language === 'zh' ? `${minutes} 分` : `${minutes}m`;
-  }
-  if (diffMs >= 0 && diffMs < day) {
-    const hours = Math.max(1, Math.round(diffMs / hour));
-    return language === 'zh' ? `${hours} 小时` : `${hours}h`;
-  }
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    month: 'numeric',
-    day: 'numeric',
-  }).format(new Date(timestamp));
-}
-
 function highestReasoningLevel(levels: ReasoningLevel[]): ReasoningLevel {
   const available = new Set(levels);
   return (['max', 'high', 'medium', 'low'] as const).find((level) =>
@@ -3214,11 +3210,11 @@ function ChatPanel({
   onExitOsMode,
   sidebarCollapsed,
   inspectorOpen,
+  onCloseInspector,
   windowMaximized,
   onRevealSidebar,
   activeConversationId,
   activeProjectDir,
-  conversationCards,
   projectContext,
   messages,
   changeReports,
@@ -3263,7 +3259,6 @@ function ChatPanel({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
-  onOpenConversationCard,
   onSaveProjectContext,
   onToggleSkill,
   onVisualInputEnabledChange,
@@ -3295,11 +3290,11 @@ function ChatPanel({
   onExitOsMode: () => void;
   sidebarCollapsed: boolean;
   inspectorOpen: boolean;
+  onCloseInspector: () => void;
   windowMaximized: boolean;
   onRevealSidebar: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
-  conversationCards: ConversationSummary[];
   projectContext: string;
   messages: ChatMessage[];
   changeReports: ConversationChangeReport[];
@@ -3344,7 +3339,6 @@ function ChatPanel({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
-  onOpenConversationCard: (conversationId: string) => void;
   onSaveProjectContext: (value: string) => Promise<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
@@ -5214,11 +5208,27 @@ function ChatPanel({
     '--chat-scrollbar-gutter-half': `${chatScrollbarGutter / 2}px`,
   } as CSSProperties;
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
+  const [workSummaryMode, setWorkSummaryMode] = useState<'summary' | 'a2a'>('summary');
+  const [workSummaryModeRequestId, setWorkSummaryModeRequestId] = useState(0);
   const showWorkSummary = workSummaryVisible && !inspectorOpen;
-  useEffect(() => setWorkSummaryVisible(false), [activeConversationId]);
+  const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
+  useEffect(() => {
+    setWorkSummaryVisible(false);
+    setWorkSummaryMode('summary');
+  }, [activeConversationId]);
+  const openGoalManager = useCallback(() => {
+    onCloseInspector();
+    setWorkSummaryMode('a2a');
+    setWorkSummaryModeRequestId((current) => current + 1);
+    setWorkSummaryVisible(true);
+  }, [onCloseInspector]);
 
   if (isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
+  }
+
+  if (isLoopHistoryPreTestEnabled()) {
+    return <LoopHistoryPreTest language={language} />;
   }
 
   if (isQuickContextPreTestEnabled()) {
@@ -5227,7 +5237,7 @@ function ChatPanel({
 
   return (
     <div
-      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!showWorkSummary ? ' work-summary-hidden' : ' work-summary-requested'}${windowMaximized ? ' window-maximized' : ' window-restored'} ${osModeEnabled ? `os-chat-panel${osGamepad.active ? ' os-gamepad-active' : ''}` : ''}`}
+      className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${windowMaximized ? ' window-maximized' : ' window-restored'} ${osModeEnabled ? `os-chat-panel${osGamepad.active ? ' os-gamepad-active' : ''}` : ''}`}
     >
       {osModeEnabled ? (
         <OsShellBar
@@ -5269,7 +5279,15 @@ function ChatPanel({
           onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
-          onToggleWorkSummary={() => setWorkSummaryVisible((current) => !current)}
+          onToggleWorkSummary={() => {
+            setWorkSummaryVisible((current) => {
+              if (!current) {
+                setWorkSummaryMode('summary');
+                setWorkSummaryModeRequestId((request) => request + 1);
+              }
+              return !current;
+            });
+          }}
           onOpenReview={onOpenChangeReview}
           onRevealSidebar={onRevealSidebar}
         />
@@ -5319,17 +5337,6 @@ function ChatPanel({
           onClose={() => setOsSettingsOpen(false)}
         />
       )}
-      {!loading && !showWelcome && conversationCards.length > 1 && (
-        <ConversationCardStrip
-          language={language}
-          conversations={sortConversationCards(
-            conversationCards,
-            activeConversationId,
-          )}
-          activeConversationId={activeConversationId}
-          onOpenConversation={onOpenConversationCard}
-        />
-      )}
       {notice && (
         <div className="notice-banner" role="status" aria-live="polite">
           <CheckCircle2 size={16} />
@@ -5354,7 +5361,7 @@ function ChatPanel({
         style={chatBodyStyle}
         onWheelCapture={handleChatBodyWheelCapture}
       >
-        {!osModeEnabled && !loading && !showWelcome && showWorkSummary && (
+        {!osModeEnabled && !loading && workSummaryPresence.mounted && (
           <ConversationWorkSummary
             language={language}
             sessionId={activeConversationId}
@@ -5370,6 +5377,9 @@ function ChatPanel({
             onToggleShadow={() => void toggleShadowThread()}
             onCloseShadow={closeShadowThread}
             onOpenChangeReview={onOpenChangeReview}
+            requestedMode={workSummaryMode}
+            modeRequestId={workSummaryModeRequestId}
+            softVisible={workSummaryPresence.visible}
           />
         )}
         {!osModeEnabled && !loading && !showWelcome && (
@@ -5410,6 +5420,7 @@ function ChatPanel({
             onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
+            onOpenGoal={openGoalManager}
             activeProjectDir={activeProjectDir}
             projectContext={projectContext}
             skills={skills}
@@ -5667,6 +5678,7 @@ function ChatPanel({
               onSaveProjectContext={onSaveProjectContext}
               onConfigureModels={onConfigureModels}
               onCreateConversation={onCreateConversation}
+              onOpenGoal={openGoalManager}
               onOpenTerminalConsole={
                 terminalAvailable ? () => toggleConsole('terminal') : undefined
               }
@@ -5748,6 +5760,7 @@ function WelcomeComposer({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
+  onOpenGoal,
   onSaveProjectContext,
   onEditQueuedMessage,
   onGuideQueuedMessage,
@@ -5788,6 +5801,7 @@ function WelcomeComposer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
+  onOpenGoal?: () => void;
   onSaveProjectContext: (value: string) => Promise<string>;
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
@@ -5828,6 +5842,7 @@ function WelcomeComposer({
         onReasoningLevelChange={onReasoningLevelChange}
         onConfigureModels={onConfigureModels}
         onCreateConversation={onCreateConversation}
+        onOpenGoal={onOpenGoal}
         activeProjectDir={activeProjectDir}
         projectContext={projectContext}
         skills={skills}
@@ -7134,7 +7149,9 @@ function FeaturePanel({
   conversations,
   skills,
   disabledSkillNames,
+  disabledToolNames,
   onToggleSkill,
+  onToggleTool,
   onReloadSkills,
   onLoadSkillDetail,
   onCreateConversation,
@@ -7149,7 +7166,9 @@ function FeaturePanel({
   conversations: ConversationSummary[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
+  disabledToolNames: Set<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
+  onToggleTool: (toolName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onCreateConversation: () => void;
@@ -7176,7 +7195,9 @@ function FeaturePanel({
           conversations={conversations}
           skills={skills}
           disabledSkillNames={disabledSkillNames}
+          disabledToolNames={disabledToolNames}
           onToggleSkill={onToggleSkill}
+          onToggleTool={onToggleTool}
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onCreateConversation={onCreateConversation}

@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Clock3,
   FileOutput,
   LoaderCircle,
   Wrench,
@@ -8,6 +9,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage, ChatMessage } from '../../types';
+import { AssistantLoopHistoryBlock } from '../chatMessages';
 import {
   displayToolName,
   isToolRunning,
@@ -37,6 +39,9 @@ export function ConversationWorkSummary({
   onToggleShadow,
   onCloseShadow,
   onOpenChangeReview,
+  requestedMode = 'summary',
+  modeRequestId = 0,
+  softVisible = true,
 }: {
   language: AppLanguage;
   sessionId: string;
@@ -52,16 +57,35 @@ export function ConversationWorkSummary({
   onToggleShadow: () => void;
   onCloseShadow: () => void;
   onOpenChangeReview: () => void;
+  requestedMode?: WorkSummaryMode;
+  modeRequestId?: number;
+  softVisible?: boolean;
 }) {
   const [mode, setMode] = useState<WorkSummaryMode>('summary');
   const executions = useMemo(
     () => messages
-      .flatMap((message) => message.toolExecutions ?? [])
+      .flatMap((message) => [
+        ...(message.toolExecutions ?? []),
+        ...(message.loopHistory ?? []).flatMap((history) => history.toolExecutions ?? []),
+      ])
       .filter((execution, index, all) =>
         all.findIndex((candidate) => candidate.id === execution.id) === index)
       .slice(-6)
       .reverse(),
     [messages],
+  );
+  const historyGroups = useMemo(
+    () => messages
+      .filter((message) => message.role === 'assistant' && (message.loopHistory?.length ?? 0) > 0)
+      .map((message) => ({
+        message,
+        history: message.loopHistory ?? [],
+      })),
+    [messages],
+  );
+  const historyCount = useMemo(
+    () => historyGroups.reduce((total, group) => total + group.history.length, 0),
+    [historyGroups],
   );
   const changeSummary = useMemo(
     () => summarizeChangeReports(changeReports),
@@ -86,6 +110,10 @@ export function ConversationWorkSummary({
   }, [sessionId]);
 
   useEffect(() => {
+    if (!shadowOpen) setMode(requestedMode);
+  }, [modeRequestId, requestedMode, shadowOpen]);
+
+  useEffect(() => {
     if (shadowOpen) setMode('summary');
   }, [shadowOpen]);
 
@@ -101,7 +129,8 @@ export function ConversationWorkSummary({
 
   return (
     <aside
-      className={`conversation-work-summary${shadowOpen ? ' shadow-mode' : ''}`}
+      className={`conversation-work-summary soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}${shadowOpen ? ' shadow-mode' : ''}`}
+      aria-hidden={!softVisible}
       style={{ '--shadow-accent': shadowAccentColor } as CSSProperties}
     >
       <nav className="work-summary-modes" aria-label={language === 'zh' ? '辅助会话' : 'Assistant channels'}>
@@ -151,6 +180,28 @@ export function ConversationWorkSummary({
               <span className="work-summary-kicker">{language === 'zh' ? '当前会话' : 'Current session'}</span>
               <h2>{language === 'zh' ? '工作摘要' : 'Work summary'}</h2>
             </header>
+
+            {historyCount > 0 && (
+              <div className="work-summary-section work-summary-history" data-testid="work-summary-history">
+                <div className="work-summary-section-title">
+                  <Clock3 size={13} />
+                  <strong>{language === 'zh' ? '历史记录' : 'History'}</strong>
+                  <span>{historyCount}</span>
+                </div>
+                <div className="work-summary-history-list">
+                  {historyGroups.map(({ message, history }) => (
+                    <AssistantLoopHistoryBlock
+                      key={message.id}
+                      history={history}
+                      archivedPlan={message.taskPlan && !message.taskPlan.active
+                        ? message.taskPlan
+                        : undefined}
+                      language={language}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="work-summary-section">
               <div className="work-summary-section-title">

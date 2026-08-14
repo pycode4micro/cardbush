@@ -713,6 +713,38 @@ export async function fetchRuntimeToolInventory(filters?: {
   return runtimeToolInventoryFromPayload(await readJson<unknown>(endpoint.toString()));
 }
 
+export async function manageRuntimeTool(request: {
+  action:
+    | 'user_ask_list'
+    | 'install'
+    | 'install_from_seed'
+    | 'register'
+    | 'uninstall'
+    | 'update'
+    | 'enable'
+    | 'disable'
+    | 'check'
+    | 'update_injection';
+  toolName?: string;
+  sourcePath?: string;
+  replace?: boolean;
+  enabled?: boolean;
+  default?: boolean;
+}): Promise<Record<string, unknown>> {
+  return readJson<Record<string, unknown>>(url('/v1/tools/manage'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: request.action,
+      tool_name: request.toolName ?? '',
+      source_path: request.sourcePath ?? '',
+      replace: request.replace ?? false,
+      enabled: request.enabled ?? true,
+      default: request.default,
+    }),
+  });
+}
+
 export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoalA2AStatus> {
   const payload = recordFromUnknown(
     await readJson<unknown>(url('/v1/experimental/goal-a2a')),
@@ -1320,7 +1352,7 @@ export async function fetchSessionMessages(
   sessionId: string,
   options: { includeSuperseded?: boolean } = {},
 ): Promise<SessionMessagesResult> {
-  const query = options.includeSuperseded ? '?include_superseded=true' : '';
+  const query = options.includeSuperseded !== false ? '?include_superseded=true' : '';
   const payload = await readJson<{ messages?: unknown[] }>(
     url(`/v1/sessions/${encodeURIComponent(sessionId)}${query}`),
   );

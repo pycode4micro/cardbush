@@ -9,18 +9,14 @@ import {
   ChevronDown,
   Circle,
   Clock3,
-  Code2,
   Edit3,
   Eye,
   EyeOff,
-  Folder,
-  FolderOpen,
   GitBranch,
   KeyRound,
   ListChecks,
   LoaderCircle,
   Lock,
-  Network,
   Paperclip,
   Pause,
   Plus,
@@ -62,13 +58,6 @@ import { ImagePreviewDialog } from '../chatMessages';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import { quickPayloadText, type QuickLoadPayload } from './quickLoad';
-
-type ProjectFileSearchResult = {
-  name: string;
-  path: string;
-  kind: 'file' | 'folder';
-  relativePath: string;
-};
 
 type ComposerImageAttachment = {
   id: string;
@@ -112,7 +101,7 @@ export type ContextWindowUsage = {
   measuredAt?: string;
 };
 
-type ComposerCommandMode = 'slash' | 'mention';
+type ComposerCommandMode = 'slash';
 
 type ComposerCommandState = {
   mode: ComposerCommandMode;
@@ -233,6 +222,7 @@ export function Composer({
   onRemoveQueuedMessage,
   onConfigureModels,
   onCreateConversation,
+  onOpenGoal,
   onOpenTerminalConsole,
   onToggleSkill,
   onVisualInputEnabledChange,
@@ -281,6 +271,7 @@ export function Composer({
   onRemoveQueuedMessage?: (queuedId: string) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
+  onOpenGoal?: () => void;
   onOpenTerminalConsole?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
@@ -299,8 +290,6 @@ export function Composer({
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
-  const [mentionFileResults, setMentionFileResults] = useState<ProjectFileSearchResult[]>([]);
-  const [mentionSearchBusy, setMentionSearchBusy] = useState(false);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const hasContent = draft.trim().length > 0 || imageAttachments.length > 0;
 
@@ -456,45 +445,6 @@ export function Composer({
     };
   }, [commandState]);
 
-  useEffect(() => {
-    if (commandState?.mode !== 'mention') {
-      setMentionFileResults([]);
-      setMentionSearchBusy(false);
-      return undefined;
-    }
-    const root = activeProjectDir?.trim();
-    const searchFiles = window.cardbushDesktop?.searchProjectFiles;
-    if (!root || !searchFiles) {
-      setMentionFileResults([]);
-      setMentionSearchBusy(false);
-      return undefined;
-    }
-    let cancelled = false;
-    setMentionSearchBusy(true);
-    const timer = window.setTimeout(() => {
-      void searchFiles(root, commandState.query)
-        .then((results) => {
-          if (!cancelled) {
-            setMentionFileResults(results);
-          }
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setMentionFileResults([]);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) {
-            setMentionSearchBusy(false);
-          }
-        });
-    }, 80);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [activeProjectDir, commandState?.mode, commandState?.query]);
-
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     const raw = event.dataTransfer.getData('application/x-cardbush-quickload');
     if (!raw) {
@@ -606,246 +556,69 @@ export function Composer({
   }
 
   const slashCommands = useMemo<ComposerCommandItem[]>(
-    () => {
-      const modelItems: ComposerCommandItem[] = availableModels.map((config) => ({
-        id: `/model ${config.id}`,
-        title: `/model ${config.provider}/${config.modelName}`,
-        subtitle:
-          language === 'zh'
-            ? `切换到 ${config.provider} 的 ${config.modelName}`
-            : `Switch to ${config.modelName} on ${config.provider}`,
-        icon: <Bot size={16} />,
-        run: () => selectModel(config.id),
-        searchText: `/model ${config.provider} ${config.modelName} model`,
-      }));
-      return [
+    () => [
         {
-          id: '/help',
-          title: '/help',
+          id: '/model',
+          title: language === 'zh' ? '模型管理' : 'Model management',
           subtitle:
             language === 'zh'
-              ? '显示常用指令和 @ 文件引用方式'
-              : 'Show common commands and @ file references',
-          icon: <Circle size={16} />,
-          value:
-            language === 'zh'
-              ? '请说明 CardBush 当前可用的 / 指令、@ 文件引用方式，以及我可以怎样组合使用它们。'
-              : 'Explain the available CardBush / commands, @ file references, and how I can combine them.',
+              ? '打开模型配置、切换与管理'
+              : 'Open model configuration and management',
+          icon: <Bot size={16} />,
+          run: onConfigureModels,
+          searchText: '/model 模型管理 model management',
         },
         {
-          id: '/clear',
-          title: '/clear',
+          id: '/goal',
+          title: language === 'zh' ? '目标' : 'Goal',
           subtitle:
             language === 'zh'
-              ? '清空当前输入框内容'
-              : 'Clear the current composer text',
-          icon: <X size={16} />,
-          run: () => onDraftChange(''),
+              ? '打开当前会话的目标管理'
+              : 'Open goal management for this session',
+          icon: <ListChecks size={16} />,
+          run: () => onOpenGoal?.(),
+          searchText: '/goal 目标 goal',
+        },
+        {
+          id: '/skill',
+          title: language === 'zh' ? '技能' : 'Skills',
+          subtitle:
+            language === 'zh'
+              ? '查看并选择当前会话启用的技能'
+              : 'View and choose skills enabled for this session',
+          icon: <Puzzle size={16} />,
+          run: () => {
+            setPopoverAnchor(null);
+            setActiveMenu('skills');
+          },
+          searchText: '/skill 技能 skill skills',
         },
         {
           id: '/new',
-          title: '/new',
+          title: language === 'zh' ? '新会话' : 'New conversation',
           subtitle:
             language === 'zh'
-              ? '在当前项目中开始新会话'
-              : 'Start a fresh session in the current project',
+              ? '在当前项目中开始一个新会话'
+              : 'Start a new conversation in the current project',
           icon: <Edit3 size={16} />,
           run: () => onCreateConversation?.(),
+          searchText: '/new 新会话 new conversation',
         },
-        {
-          id: '/cd',
-          title: '/cd <path>',
-          subtitle:
-            language === 'zh'
-              ? 'CLI 同款：切换项目目录；在 CardBush 中可直接输入路径让助手处理'
-              : 'CLI parity: change project directory; enter a path for the assistant',
-          icon: <FolderOpen size={16} />,
-          value: '/cd ',
-        },
-        {
-          id: '/changedir',
-          title: '/changedir <path>',
-          subtitle:
-            language === 'zh'
-              ? 'CLI 同款：/cd 的完整写法'
-              : 'CLI parity: long form of /cd',
-          icon: <Folder size={16} />,
-          value: '/changedir ',
-        },
-        {
-          id: '/model',
-          title: '/model',
-          subtitle:
-            language === 'zh'
-              ? '列出或切换已配置模型'
-              : 'List or switch configured models',
-          icon: <Bot size={16} />,
-          run: () => {
-            if (availableModels.length === 0) {
-              onConfigureModels();
-              return;
-            }
-            setPopoverAnchor(null);
-            setActiveMenu('models');
-          },
-        },
-        ...modelItems,
-        {
-          id: '/skill',
-          title: '/skill',
-          subtitle:
-            language === 'zh'
-              ? '查看或选择当前启用的 skills'
-              : 'View or choose currently enabled skills',
-          icon: <Puzzle size={16} />,
-          run: () => {
-            setPopoverAnchor(null);
-            setActiveMenu('skills');
-          },
-        },
-        {
-          id: '/skill-args',
-          title: '/skill <all|none|names>',
-          subtitle:
-            language === 'zh'
-              ? 'CLI 同款：设置 skill 白名单；GUI 中请到 Skills 面板开启/关闭'
-              : 'CLI parity: set skill whitelist; use the Skills panel in the GUI',
-          icon: <Puzzle size={16} />,
-          run: () => {
-            setPopoverAnchor(null);
-            setActiveMenu('skills');
-          },
-        },
-        {
-          id: '/agents',
-          title: '/agents',
-          subtitle:
-            language === 'zh'
-              ? '查看后端托管的子任务能力和适用场景'
-              : 'Review backend-managed subagent capabilities and use cases',
-          icon: <Network size={16} />,
-          value:
-            language === 'zh'
-              ? '请概述当前可用的子任务能力，并说明主 Agent 应在什么情况下进行委派。'
-              : 'Summarize the available subagent capabilities and when the parent agent should delegate.',
-        },
-        {
-          id: '/subagents',
-          title: '/subagents',
-          subtitle:
-            language === 'zh'
-              ? '查看动态子任务运行状态'
-              : 'Inspect dynamic subtask runtime status',
-          icon: <Network size={16} />,
-          value:
-            language === 'zh'
-              ? '请检查当前动态子任务的运行状态和可用能力，并说明运行时调度情况。'
-              : 'Inspect dynamic subtask runtime status and capabilities, then summarize runtime scheduling.',
-        },
-        ...(gitAvailable
-          ? [
-              {
-                id: '/git',
-                title: '/git',
-                subtitle:
-                  language === 'zh'
-                    ? '打开 Git 分支列表'
-                    : 'Open Git branch list',
-                icon: <GitBranch size={16} />,
-                run: () => {
-                  setPopoverAnchor(null);
-                  setActiveMenu('git');
-                },
-              },
-            ]
-          : []),
-        {
-          id: '/attach',
-          title: '/attach',
-          subtitle:
-            language === 'zh'
-              ? '选择图片或文件插入输入框'
-              : 'Pick images or files for this message',
-          icon: <Paperclip size={16} />,
-          run: () => void pickAttachments(),
-        },
-        ...(terminalAvailable && onOpenTerminalConsole
-          ? [
-              {
-                id: '/terminal',
-                title: '/terminal',
-                subtitle:
-                  language === 'zh'
-                    ? '打开当前项目终端'
-                    : 'Open the project terminal',
-                icon: <Terminal size={16} />,
-                run: () => onOpenTerminalConsole(),
-              },
-            ]
-          : []),
-      ];
-    },
+      ],
     [
-      availableModels,
-      gitAvailable,
       language,
       onConfigureModels,
       onCreateConversation,
-      onDraftChange,
-      onOpenTerminalConsole,
-      selectModel,
-      terminalAvailable,
+      onOpenGoal,
     ],
-  );
-
-  const mentionCommands = useMemo<ComposerCommandItem[]>(
-    () => {
-      const root = activeProjectDir?.trim();
-      if (!root) {
-        return [
-          {
-            id: 'no-project',
-            title: language === 'zh' ? '当前没有项目目录' : 'No project directory',
-            subtitle:
-              language === 'zh'
-                ? '@ 只提示当前项目下的文件路径'
-                : '@ only suggests files from the current project',
-            icon: <FolderOpen size={16} />,
-            disabled: true,
-          },
-        ];
-      }
-      return mentionFileResults.map((item) => {
-        const relativePath = item.relativePath || item.name;
-        const kindLabel =
-          item.kind === 'folder'
-            ? language === 'zh'
-              ? '文件夹'
-              : 'Folder'
-            : language === 'zh'
-              ? '文件'
-              : 'File';
-        return {
-          id: item.path,
-          title: `@${relativePath}`,
-          subtitle: `${kindLabel} · ${compactPath(item.path)}`,
-          icon: item.kind === 'folder' ? <Folder size={16} /> : <Code2 size={16} />,
-          value: `@${item.path} `,
-          searchText: `${relativePath} ${item.path} ${item.name}`,
-        };
-      });
-    },
-    [activeProjectDir, language, mentionFileResults],
   );
 
   const commandItems = useMemo(() => {
     if (!commandState) {
       return [];
     }
-    const source = commandState.mode === 'slash' ? slashCommands : mentionCommands;
-    return rankComposerCommandItems(source, commandState.query, commandState.mode)
-      .slice(0, commandState.mode === 'slash' ? 12 : 10);
-  }, [commandState, mentionCommands, slashCommands]);
+    return rankComposerCommandItems(slashCommands, commandState.query).slice(0, 4);
+  }, [commandState, slashCommands]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -859,15 +632,6 @@ export function Composer({
 
   function applyCommand(item: ComposerCommandItem) {
     if (item.disabled) {
-      return;
-    }
-    if (commandState?.mode === 'mention') {
-      if (item.run) {
-        removeCommandToken();
-        void item.run();
-        return;
-      }
-      replaceCommandToken(item.value ?? `${item.title} `);
       return;
     }
     if (item.run) {
@@ -941,10 +705,7 @@ export function Composer({
       {commandState && (
         <ComposerCommandPalette
           language={language}
-          mode={commandState.mode}
-          query={commandState.query}
           items={commandItems}
-          busy={commandState.mode === 'mention' && mentionSearchBusy}
           selectedIndex={commandIndex}
           onSelect={(item) => applyCommand(item)}
         />
@@ -1161,10 +922,10 @@ export function Composer({
                 : 'Tell CardBush what your computer should do...'
               : language === 'zh'
               ? compact
-                ? '问 cardbush 任何事。输入 @ 引用项目文件'
+                ? '问 cardbush 任何事。输入 / 选择快捷功能'
                 : '给 cardbush 发消息…'
               : compact
-                ? 'Ask cardbush anything. Type @ to reference project files'
+                ? 'Ask cardbush anything. Type / for quick actions'
                 : 'Message cardbush...'
           }
           rows={2}
@@ -1269,34 +1030,17 @@ export function Composer({
 
 function ComposerCommandPalette({
   language,
-  mode,
-  query,
   items,
-  busy,
   selectedIndex,
   onSelect,
 }: {
   language: AppLanguage;
-  mode: ComposerCommandMode;
-  query: string;
   items: ComposerCommandItem[];
-  busy?: boolean;
   selectedIndex: number;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const emptyLabel =
-    mode === 'mention'
-      ? language === 'zh'
-        ? busy
-          ? '正在搜索项目文件...'
-          : '没有匹配的项目文件'
-        : busy
-          ? 'Searching project files...'
-          : 'No matching project files'
-      : language === 'zh'
-        ? '没有匹配的指令'
-        : 'No matching commands';
+  const emptyLabel = language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   useEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     row?.scrollIntoView({ block: 'nearest' });
@@ -1304,16 +1048,8 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{mode === 'mention' ? '@' : '/'} {query}</strong>
-        <span>
-          {mode === 'mention'
-            ? language === 'zh'
-              ? '项目文件'
-              : 'Project files'
-            : language === 'zh'
-              ? '指令'
-              : 'Command'}
-        </span>
+        <strong>{language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
+        <span>{language === 'zh' ? '输入 / 选择' : 'Type / to choose'}</span>
       </header>
       <div className="composer-command-list">
         {items.length === 0 ? (
@@ -1351,17 +1087,10 @@ function ComposerCommandPalette({
 function rankComposerCommandItems(
   items: ComposerCommandItem[],
   rawQuery: string,
-  mode: ComposerCommandMode,
 ) {
   const query = normalizeCommandQuery(rawQuery);
   if (!query) {
     return items;
-  }
-  if (mode === 'mention') {
-    return items.filter((item) =>
-      normalizeFileQuery(item.searchText ?? `${item.id} ${item.title} ${item.subtitle}`)
-        .includes(normalizeFileQuery(rawQuery)),
-    );
   }
   return items
     .map((item) => ({
@@ -1384,7 +1113,7 @@ function scoreSlashCommand(
   query: string,
 ): [number, number, number] | null {
   const source = item.searchText ?? `${item.id} ${item.title} ${item.subtitle}`;
-  const commandName = normalizeCommandQuery(item.title.replace(/^\/+/, ''));
+  const commandName = normalizeCommandQuery(item.id.replace(/^\/+/, ''));
   const compactSource = normalizeCommandQuery(source);
   if (!query) {
     return [0, 0, commandName.length];
@@ -1413,37 +1142,23 @@ function normalizeCommandQuery(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '');
 }
 
-function normalizeFileQuery(value: string) {
-  return value.toLowerCase().replaceAll('\\', '/').trim();
-}
-
-function detectComposerCommand(
+export function detectComposerCommand(
   value: string,
   caret: number,
 ): ComposerCommandState | null {
   const safeCaret = Math.max(0, Math.min(value.length, caret));
   const beforeCaret = value.slice(0, safeCaret);
-  const lineStart = Math.max(beforeCaret.lastIndexOf('\n') + 1, 0);
-  const linePrefix = beforeCaret.slice(lineStart);
-  if (/^\/[^\s/]*$/.test(linePrefix)) {
-    return {
-      mode: 'slash',
-      start: lineStart,
-      end: safeCaret,
-      query: linePrefix.slice(1),
-    };
-  }
-  const mentionMatch = beforeCaret.match(/(^|\s)@([^\s@]*)$/);
-  if (!mentionMatch || mentionMatch.index == null) {
+  const slashMatch = beforeCaret.match(/(^| )\/([^\s/]*)$/);
+  if (!slashMatch || slashMatch.index == null) {
     return null;
   }
-  const prefix = mentionMatch[1] ?? '';
-  const start = mentionMatch.index + prefix.length;
+  const prefix = slashMatch[1] ?? '';
+  const start = slashMatch.index + prefix.length;
   return {
-    mode: 'mention',
+    mode: 'slash',
     start,
     end: safeCaret,
-    query: mentionMatch[2] ?? '',
+    query: slashMatch[2] ?? '',
   };
 }
 
@@ -1702,13 +1417,7 @@ function ComposerPopover({
                         <button
                           className="skill-popover-main"
                           type="button"
-                          onClick={() =>
-                            onLoad({
-                              kind: 'text',
-                              title: skill.name,
-                              value: `@${skill.name}`,
-                            })
-                          }
+                          onClick={() => onToggleSkill(skill.name, !enabled)}
                         >
                           <Brain size={14} />
                           <span>
@@ -1795,13 +1504,7 @@ function ComposerPopover({
                   <button
                     className="skill-popover-main"
                     type="button"
-                    onClick={() =>
-                      onLoad({
-                        kind: 'text',
-                        title: skill.name,
-                        value: `@${skill.name}`,
-                      })
-                    }
+                    onClick={() => onToggleSkill(skill.name, !enabled)}
                   >
                     <Brain size={16} />
                     <span>

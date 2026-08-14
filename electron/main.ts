@@ -344,16 +344,19 @@ async function openUiPreview(targetUrl: string) {
     await openTargetExternally(targetUrl);
     return;
   }
+  const officeReadOnlyPreview = Boolean(
+    previewTarget.localPath && isOfficePreviewPath(previewTarget.localPath),
+  );
   const browser = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 760,
     minHeight: 520,
-    title: 'CardBush UI 预览',
+    title: officeReadOnlyPreview ? 'CardBush Office 只读预览' : 'CardBush UI 预览',
     icon: loadCardbushIcon(128),
     parent: mainWindow ?? undefined,
     show: false,
-    autoHideMenuBar: false,
+    autoHideMenuBar: officeReadOnlyPreview,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -379,15 +382,17 @@ async function openUiPreview(targetUrl: string) {
             accelerator: 'Ctrl+W',
             click: () => browser.close(),
           },
-          { type: 'separator' },
-          {
-            label: previewTarget.localPath ? '在系统中打开' : '在系统浏览器打开',
-            click: () => {
-              const currentUrl = browser.webContents.getURL() || previewTarget.url;
-              const currentTarget = resolveUiPreviewTarget(currentUrl) ?? previewTarget;
-              void openTargetExternally(currentTarget.externalTarget, currentTarget);
+          ...(!officeReadOnlyPreview ? [
+            { type: 'separator' as const },
+            {
+              label: previewTarget.localPath ? '在系统中打开' : '在系统浏览器打开',
+              click: () => {
+                const currentUrl = browser.webContents.getURL() || previewTarget.url;
+                const currentTarget = resolveUiPreviewTarget(currentUrl) ?? previewTarget;
+                void openTargetExternally(currentTarget.externalTarget, currentTarget);
+              },
             },
-          },
+          ] : []),
           {
             label: '复制地址',
             accelerator: 'Ctrl+Shift+C',
@@ -1168,15 +1173,23 @@ ipcMain.handle('os:set-shell-mode', (event, enabled: boolean) => {
   }
   const nextEnabled = enabled === true;
   sourceWindow.setMenuBarVisibility(false);
-  sourceWindow.setFullScreen(nextEnabled);
   if (nextEnabled) {
+    // On Windows, forcing an already maximized frameless window into Electron's
+    // fullscreen mode can restore its previous bounds first. Keep the native
+    // maximized state in that case; the OS renderer already fills the window.
+    if (!sourceWindow.isMaximized() && !sourceWindow.isFullScreen()) {
+      sourceWindow.setFullScreen(true);
+    }
     hideWindowsTaskbarWithWatchdog();
     sourceWindow.show();
     sourceWindow.focus();
   } else {
+    if (sourceWindow.isFullScreen()) {
+      sourceWindow.setFullScreen(false);
+    }
     restoreWindowsTaskbar();
   }
-  return { enabled: sourceWindow.isFullScreen() };
+  return { enabled: nextEnabled };
 });
 
 ipcMain.handle('appearance:wallpaper-accent', () => {

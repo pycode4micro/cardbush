@@ -4,59 +4,120 @@ import { useCallback, useRef } from 'react';
 import type { AppLanguage } from '../types';
 
 const defaultSidebarWidth = 272;
-const collapseSidebarWidthThreshold = 240;
+const collapseSidebarWidthThreshold = 180;
+const maximumSidebarWidth = 420;
+
+type SidebarDragState = {
+  startX: number;
+  startWidth: number;
+  currentWidth: number;
+  pointerId: number;
+  scope: HTMLElement;
+  animationFrame: number;
+  pendingWidth: number;
+};
 
 export function SidebarResizer({
   language,
   onWidthChange,
+  onResizeEnd,
   onCollapse,
+  softVisible = true,
 }: {
   language: AppLanguage;
   onWidthChange: (value: number) => void;
+  onResizeEnd?: (value: number, shouldCollapse: boolean) => void;
   onCollapse?: () => void;
+  softVisible?: boolean;
 }) {
-  const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const dragStateRef = useRef<SidebarDragState | null>(null);
 
   const beginResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
+      const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
+      const currentWidth = readCurrentSidebarWidth();
       dragStateRef.current = {
         startX: event.clientX,
-        startWidth: readCurrentSidebarWidth(),
+        startWidth: currentWidth,
+        currentWidth,
+        pointerId: event.pointerId,
+        scope,
+        animationFrame: 0,
+        pendingWidth: currentWidth,
       };
+      event.currentTarget.setPointerCapture(event.pointerId);
       document.body.classList.add('sidebar-resizing');
 
-      const endResize = () => {
+      const endResize = (restoreWidth = false) => {
+        const state = dragStateRef.current;
+        if (state?.animationFrame) {
+          window.cancelAnimationFrame(state.animationFrame);
+        }
+        if (state && restoreWidth) {
+          writePreviewWidth(state.scope, state.startWidth);
+        }
         dragStateRef.current = null;
         document.body.classList.remove('sidebar-resizing');
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
+        window.removeEventListener('pointercancel', handlePointerCancel);
       };
       const handlePointerMove = (moveEvent: PointerEvent) => {
         const state = dragStateRef.current;
-        if (!state) {
+        if (!state || moveEvent.pointerId !== state.pointerId) {
           return;
         }
-        const nextWidth = state.startWidth + moveEvent.clientX - state.startX;
-        if (onCollapse && nextWidth < collapseSidebarWidthThreshold) {
-          onCollapse();
+        const nextWidth = clampPreviewWidth(
+          state.startWidth + moveEvent.clientX - state.startX,
+        );
+        state.currentWidth = nextWidth;
+        state.pendingWidth = nextWidth;
+        const shouldCollapseNow = Boolean(
+          onCollapse
+          && nextWidth < collapseSidebarWidthThreshold
+          && nextWidth < state.startWidth,
+        );
+        if (shouldCollapseNow) {
+          writePreviewWidth(state.scope, nextWidth);
           endResize();
+          onResizeEnd?.(nextWidth, true);
+          onCollapse?.();
           return;
         }
-        onWidthChange(nextWidth);
+        if (!state.animationFrame) {
+          state.animationFrame = window.requestAnimationFrame(() => {
+            const latest = dragStateRef.current;
+            if (!latest) return;
+            latest.animationFrame = 0;
+            writePreviewWidth(latest.scope, latest.pendingWidth);
+          });
+        }
       };
-      const handlePointerUp = () => {
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        const state = dragStateRef.current;
+        if (!state || upEvent.pointerId !== state.pointerId) {
+          return;
+        }
+        writePreviewWidth(state.scope, state.currentWidth);
         endResize();
+        if (onResizeEnd) {
+          onResizeEnd(state.currentWidth, false);
+        } else {
+          onWidthChange(state.currentWidth);
+        }
       };
+      const handlePointerCancel = () => endResize(true);
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
+      window.addEventListener('pointercancel', handlePointerCancel);
     },
-    [onCollapse, onWidthChange],
+    [onCollapse, onResizeEnd, onWidthChange],
   );
 
   return (
     <div
-      className="sidebar-resizer"
+      className={`sidebar-resizer soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       role="separator"
       aria-orientation="vertical"
       aria-label={language === 'zh' ? '调整侧边栏宽度' : 'Resize sidebar'}
@@ -77,4 +138,12 @@ function readCurrentSidebarWidth() {
   }
   const sidebar = document.querySelector<HTMLElement>('.sidebar, .settings-sidebar');
   return sidebar?.getBoundingClientRect().width ?? defaultSidebarWidth;
+}
+
+function clampPreviewWidth(value: number) {
+  return Math.max(0, Math.min(maximumSidebarWidth, value));
+}
+
+function writePreviewWidth(scope: HTMLElement, width: number) {
+  scope.style.setProperty('--sidebar-width', `${width}px`);
 }

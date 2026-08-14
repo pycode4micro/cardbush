@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 
-export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
+export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'tools' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
   | 'companion'

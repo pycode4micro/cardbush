@@ -19,6 +19,7 @@ import {
   Search,
   Settings,
   Trash2,
+  Wrench,
   X,
 } from 'lucide-react';
 import type * as React from 'react';
@@ -110,6 +111,7 @@ export function ChatSidebar({
   onRenameConversation,
   onOpenConversationChanges,
   onOpenSettings,
+  softVisible = true,
 }: {
   language: AppLanguage;
   section: AppSection;
@@ -127,6 +129,7 @@ export function ChatSidebar({
   onRenameConversation: (conversationId: string, title: string) => void;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
+  softVisible?: boolean;
 }) {
   const t = (id: AppSection) => sectionLabels[id][language];
   const [archivedConversationIds, setArchivedConversationIds] = useState<Set<string>>(
@@ -402,7 +405,11 @@ export function ChatSidebar({
   }
 
   return (
-    <aside className="sidebar" ref={sidebarRef}>
+    <aside
+      className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
+      ref={sidebarRef}
+      aria-hidden={!softVisible}
+    >
       <nav className="sidebar-nav">
         <NavRow
           icon={<Edit3 size={17} />}
@@ -463,6 +470,22 @@ export function ChatSidebar({
                 icon: <Puzzle size={15} />,
                 label: language === 'zh' ? '打开技能' : 'Open skills',
                 onClick: () => onSectionChange('skills'),
+              },
+            ])
+          }
+        />
+        <NavRow
+          active={section === 'tools'}
+          icon={<Wrench size={17} />}
+          label={t('tools')}
+          onClick={() => onSectionChange('tools')}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:tools', [
+              {
+                key: 'open',
+                icon: <Wrench size={15} />,
+                label: language === 'zh' ? '打开工具管理' : 'Open tool management',
+                onClick: () => onSectionChange('tools'),
               },
             ])
           }

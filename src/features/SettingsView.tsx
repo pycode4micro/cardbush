@@ -49,7 +49,6 @@ import {
   fetchBotServiceLogs,
   fetchBotStatus,
   fetchMcpServers,
-  fetchRuntimeToolInventory,
   fetchWeixinLoginStatus,
   llmEndpoint,
   saveBotConfig,
@@ -59,7 +58,6 @@ import {
   validateMcpServerConfig,
   type MaintenanceClearResult,
   type McpServerConfigInput,
-  type RuntimeToolInventory,
 } from '../backend/api';
 import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { BotPlatformIcon } from '../components/BotPlatformIcon';
@@ -274,11 +272,6 @@ export function SettingsView({
   );
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
-  const [runtimeToolInventory, setRuntimeToolInventory] =
-    useState<RuntimeToolInventory | null>(null);
-  const [runtimeToolInventoryLoading, setRuntimeToolInventoryLoading] =
-    useState(false);
-  const [runtimeToolInventoryError, setRuntimeToolInventoryError] = useState('');
   const providerOptions = useMemo(
     () => collectProviderOptions(settings.managedModelConfigs),
     [settings.managedModelConfigs],
@@ -293,24 +286,6 @@ export function SettingsView({
       setProviderSelection(providerOptions[0] ?? suggestedProviders[0]);
     }
   }, [providerOptions, providerSelection]);
-
-  const refreshRuntimeToolInventory = useCallback(async () => {
-    setRuntimeToolInventoryLoading(true);
-    setRuntimeToolInventoryError('');
-    try {
-      setRuntimeToolInventory(await fetchRuntimeToolInventory());
-    } catch (caught) {
-      setRuntimeToolInventoryError(errorMessage(caught));
-    } finally {
-      setRuntimeToolInventoryLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (section === 'runtime' && runtimeToolInventory === null) {
-      void refreshRuntimeToolInventory();
-    }
-  }, [refreshRuntimeToolInventory, runtimeToolInventory, section]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -632,13 +607,6 @@ export function SettingsView({
               />
             )}
           </SettingsCard>
-          <RuntimeToolInventoryCard
-            language={language}
-            inventory={runtimeToolInventory}
-            loading={runtimeToolInventoryLoading}
-            error={runtimeToolInventoryError}
-            onRefresh={refreshRuntimeToolInventory}
-          />
         </div>
       );
     }
@@ -3581,156 +3549,6 @@ function SettingsCard({
       </div>
       {children}
     </section>
-  );
-}
-
-function RuntimeToolInventoryCard({
-  language,
-  inventory,
-  loading,
-  error,
-  onRefresh,
-}: {
-  language: AppLanguage;
-  inventory: RuntimeToolInventory | null;
-  loading: boolean;
-  error: string;
-  onRefresh: () => Promise<void>;
-}) {
-  const visibleNames = inventory?.modelVisibleThisTurn.length
-    ? inventory.modelVisibleThisTurn
-    : inventory?.modelVisibleDefault ?? [];
-  const visibleTitle = inventory?.modelVisibleThisTurn.length
-    ? language === 'zh'
-      ? '最近请求真实可见'
-      : 'Visible in latest request'
-    : language === 'zh'
-      ? '默认可见候选'
-      : 'Default visible candidates';
-  return (
-    <SettingsCard
-      title={language === 'zh' ? 'Agent 工具面' : 'Agent tool surface'}
-      subtitle={
-        language === 'zh'
-          ? '由 BushServer 的工具注册表和最近一次 provider 请求快照生成；前端不维护工具白名单。'
-          : 'Projected from the BushServer tool registry and latest provider request snapshot; the frontend keeps no tool allowlist.'
-      }
-    >
-      <div className="runtime-tool-inventory-head">
-        <span>
-          {inventory
-            ? language === 'zh'
-              ? `已安装 ${inventory.installed.length} · Runtime 已加载 ${inventory.tools.length}`
-              : `${inventory.installed.length} installed · ${inventory.tools.length} runtime loaded`
-            : language === 'zh'
-              ? '等待读取 BushServer 工具清单'
-              : 'Waiting for the BushServer tool inventory'}
-        </span>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={loading}
-          onClick={() => void onRefresh()}
-        >
-          {loading ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-          {language === 'zh' ? '刷新' : 'Refresh'}
-        </button>
-      </div>
-      {error && <div className="runtime-tool-inventory-error">{error}</div>}
-      {inventory && (
-        <div className="runtime-tool-inventory-groups">
-          <RuntimeToolNameGroup
-            title={visibleTitle}
-            names={visibleNames}
-            emptyText={language === 'zh' ? '没有可见工具快照' : 'No visible tool snapshot'}
-          />
-          <RuntimeToolNameGroup
-            title={language === 'zh' ? '按需发现插件' : 'Discoverable plugins'}
-            names={inventory.discoverablePlugins}
-            emptyText={language === 'zh' ? '无' : 'None'}
-          />
-          <RuntimeToolNameGroup
-            title={language === 'zh' ? '最近请求动态加入' : 'Added in latest request'}
-            names={inventory.turnAdded}
-            emptyText={
-              inventory.modelVisibleSource === 'none'
-                ? language === 'zh'
-                  ? '尚无 provider 快照'
-                  : 'No provider snapshot yet'
-                : language === 'zh'
-                  ? '无'
-                  : 'None'
-            }
-          />
-          <RuntimeToolNameGroup
-            title={language === 'zh' ? '本轮条件过滤' : 'Conditionally filtered'}
-            names={inventory.conditional.map((item) => item.name)}
-            emptyText={
-              inventory.modelVisibleSource === 'none'
-                ? language === 'zh'
-                  ? '尚无 provider 快照'
-                  : 'No provider snapshot yet'
-                : language === 'zh'
-                  ? '无'
-                  : 'None'
-            }
-          />
-          <RuntimeToolNameGroup
-            title={language === 'zh' ? '禁用工具' : 'Disabled tools'}
-            names={inventory.disabled}
-            emptyText={language === 'zh' ? '无' : 'None'}
-          />
-          <RuntimeToolNameGroup
-            title={language === 'zh' ? '内部 Guard 事件（不是工具）' : 'Internal guard events (not tools)'}
-            names={inventory.internalGuardEvents.map((item) => item.name)}
-            emptyText={language === 'zh' ? '无' : 'None'}
-            internal
-          />
-        </div>
-      )}
-      {inventory?.modelVisibleSnapshot && (
-        <div className="runtime-tool-inventory-source">
-          <span>{language === 'zh' ? '快照来源' : 'Snapshot source'}</span>
-          <code>
-            {inventory.modelVisibleSnapshot.provider || 'provider'} /{' '}
-            {inventory.modelVisibleSnapshot.model || 'model'} · loop{' '}
-            {inventory.modelVisibleSnapshot.loopIndex ?? '-'}
-          </code>
-        </div>
-      )}
-      {inventory && inventory.loadErrors.length > 0 && (
-        <div className="runtime-tool-inventory-error">
-          {language === 'zh'
-            ? `${inventory.loadErrors.length} 个工具包加载错误，详见后端日志。`
-            : `${inventory.loadErrors.length} tool package load errors; see backend logs.`}
-        </div>
-      )}
-    </SettingsCard>
-  );
-}
-
-function RuntimeToolNameGroup({
-  title,
-  names,
-  emptyText,
-  internal = false,
-}: {
-  title: string;
-  names: string[];
-  emptyText: string;
-  internal?: boolean;
-}) {
-  return (
-    <div className={`runtime-tool-group${internal ? ' internal' : ''}`}>
-      <strong>{title}</strong>
-      <div className="runtime-tool-chips">
-        {names.length > 0 ? (
-          names.map((name) => <code key={name}>{name}</code>)
-        ) : (
-          <span>{emptyText}</span>
-        )}
-      </div>
-    </div>
   );
 }
 

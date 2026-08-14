@@ -98,6 +98,17 @@ assert.match(bubbleSource, /guidance-retry-button/);
 assert.match(bubbleSource, /onRetryGuidance\(message\)/);
 assert.match(bubbleSource, /等待本轮完成后/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
+assert.doesNotMatch(
+  bubbleSource,
+  /visibleLoopHistory\.length > 0 && \(\s*<AssistantLoopHistoryBlock/,
+);
+
+const summarySource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chat', 'ConversationWorkSummary.tsx'),
+  'utf8',
+);
+assert.match(summarySource, /data-testid="work-summary-history"/);
+assert.match(summarySource, /<AssistantLoopHistoryBlock/);
 
 const hookTranspiled = ts.transpileModule(hookSource, {
   compilerOptions: {
@@ -113,16 +124,35 @@ vm.runInNewContext(hookTranspiled.outputText, {
   Date,
   Map,
   Set,
+  window: { setTimeout, clearTimeout },
 });
 const {
   appendAssistantDelta,
   appendAssistantTextAfterToolBoundary,
   appendToolExecution,
   applyAssistantSegmentBoundary,
+  createAssistantStreamDeltaBuffer,
   mergeFinalStreamMessages,
+  normalizeChatMessagesForDisplay,
   optimisticGuidanceMessage,
   reconcileOptimisticGuidance,
 } = hookModule.exports;
+
+const streamedAtBoundary = [];
+const boundaryBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  streamedAtBoundary.push(delta);
+});
+boundaryBuffer.push('先说明我要读取配置。');
+boundaryBuffer.flushToolBoundary();
+assert.equal(streamedAtBoundary.join(''), '先说明我要读取配置。');
+boundaryBuffer.push('工具完成后继续解释。');
+assert.equal(streamedAtBoundary.join(''), '先说明我要读取配置。');
+boundaryBuffer.flushToolBoundary();
+assert.equal(
+  streamedAtBoundary.join(''),
+  '先说明我要读取配置。工具完成后继续解释。',
+);
+boundaryBuffer.dispose();
 
 const sessionId = 'session-1';
 const initialAssistantId = 'assistant-local';
@@ -211,6 +241,31 @@ state = appendToolExecution(state, sessionId, initialAssistantId, {
 });
 assert.equal(state[sessionId][1].toolExecutions, undefined);
 assert.equal(state[sessionId][3].toolExecutions[0].id, 'tool-segment-2');
+assert.equal(
+  state[sessionId][3].toolExecutions[0].contentOffset,
+  state[sessionId][3].content.length,
+);
+assert.equal(state[sessionId][3].toolExecutions[0].contentOffsetExplicit, true);
+
+state = appendAssistantDelta(
+  state,
+  sessionId,
+  initialAssistantId,
+  '工具完成后继续说明。',
+  {
+    messageId: 'assistant-segment-2',
+    assistantSegmentIndex: 2,
+    turnId: 'turn-1',
+  },
+);
+assert.equal(
+  state[sessionId][3].toolExecutions[0].contentOffset,
+  '第二轮继续'.length,
+);
+assert.equal(
+  state[sessionId][3].content,
+  '第二轮继续\n\n工具完成后继续说明。',
+);
 
 assert.equal(
   appendAssistantTextAfterToolBoundary(
@@ -282,6 +337,112 @@ assert.deepEqual(
   ],
 );
 assert.equal(state[sessionId][3].toolExecutions[0].id, 'tool-segment-2');
+
+const loopSessionId = 'loop-history-session';
+const loopTurnId = 'loop-history-turn';
+const archivedLoopMessages = [1, 2, 3].map((index) => ({
+  id: `persisted-loop-${index}`,
+  messageId: `persisted-loop-${index}`,
+  role: 'assistant',
+  content: `历史 loop ${index}`,
+  turnId: loopTurnId,
+  status: 'superseded',
+  loopIndex: index,
+  sequence: index,
+  metadata: {
+    transcript_kind: 'assistant_loop',
+    assistant_segment_index: index,
+  },
+}));
+const temporaryLoopMessage = {
+  id: 'temporary-loop-4',
+  role: 'assistant',
+  content: '当前 loop 4',
+  turnId: loopTurnId,
+  status: 'superseded',
+  loopIndex: 4,
+  sequence: 4,
+  metadata: {
+    transcript_kind: 'assistant_loop',
+    assistant_segment_index: 4,
+  },
+  loopHistory: archivedLoopMessages,
+};
+const loopState = mergeFinalStreamMessages(
+  { [loopSessionId]: [temporaryLoopMessage] },
+  loopSessionId,
+  [{
+    id: 'persisted-final-loop-answer',
+    messageId: 'persisted-final-loop-answer',
+    role: 'assistant',
+    content: '最终答案',
+    turnId: loopTurnId,
+    status: 'complete',
+    metadata: {
+      transcript_kind: 'assistant_final',
+      assistant_segment_index: 5,
+    },
+  }],
+  {
+    turnId: loopTurnId,
+    temporaryMessageIds: [temporaryLoopMessage.id],
+  },
+);
+
+assert.match(hookSource, /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/);
+assert.doesNotMatch(
+  hookSource,
+  /onToolExecution: \(execution\) => \{\s*void streamBuffer\.flushAllStreaming\(\)\.then/,
+);
+assert.deepEqual(
+  plain(loopState[loopSessionId][0].loopHistory.map((message) => message.content)),
+  ['历史 loop 1', '历史 loop 2', '历史 loop 3', '当前 loop 4'],
+);
+
+const reloadedLoopState = normalizeChatMessagesForDisplay([
+  {
+    id: 'persisted-user-reload',
+    role: 'user',
+    content: '历史重载',
+    turnId: loopTurnId,
+    messageIndex: 0,
+  },
+  ...[1, 2].map((index) => ({
+    id: `persisted-segment-${index}`,
+    messageId: `persisted-segment-${index}`,
+    role: 'assistant',
+    content: `历史 message ${index}`,
+    turnId: loopTurnId,
+    status: 'complete',
+    messageIndex: index,
+    metadata: {
+      transcript_kind: 'assistant_segment',
+      history_visibility: 'ephemeral',
+      assistant_segment_index: index,
+    },
+  })),
+  {
+    id: 'persisted-final-reload',
+    messageId: 'persisted-final-reload',
+    role: 'assistant',
+    content: '历史最终回答',
+    turnId: loopTurnId,
+    status: 'complete',
+    messageIndex: 3,
+    metadata: {
+      transcript_kind: 'assistant_final',
+      assistant_segment_index: 3,
+    },
+  },
+]);
+assert.deepEqual(
+  plain(reloadedLoopState.map((message) => [message.role, message.content])),
+  [['user', '历史重载'], ['assistant', '历史最终回答']],
+);
+assert.deepEqual(
+  plain(reloadedLoopState[1].loopHistory.map((message) => message.content)),
+  ['历史 message 1', '历史 message 2'],
+);
 
 console.log('turn guidance contract tests passed');
 

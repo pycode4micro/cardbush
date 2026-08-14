@@ -21,6 +21,11 @@ export default defineConfig({
               test: /node_modules[\\/](lucide-react|react-virtuoso)[\\/]/,
               priority: 20,
             },
+            {
+              name: 'chat-runtime',
+              test: /src[\\/](backend|hooks)[\\/]/,
+              priority: 10,
+            },
           ],
         },
       },

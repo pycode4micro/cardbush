@@ -57,7 +57,6 @@ import {
   compareToolExecutionOrder,
   isToolRunning,
   isToolRunningInContext,
-  looksLikeFileChangeExecution,
   ToolExecutionBlock,
   toolExecutionFinishedAt,
   type ConversationChangeReport,
@@ -485,11 +484,7 @@ function MessageBubbleView({
   const renderActiveTranscript = activeTranscriptMessages.length > 1;
   const toolExecutions =
     message.role === 'assistant'
-      ? visibleTopLevelToolExecutions(
-          allToolExecutions,
-          loopHistory,
-          isActiveAssistantTurn,
-        )
+      ? visibleTopLevelToolExecutions(allToolExecutions, isActiveAssistantTurn)
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
   const showAssistantProgress =
@@ -560,15 +555,6 @@ function MessageBubbleView({
           ) : isActiveAssistantTurn ? (
             <AssistantThinkingProcessLine language={language} />
           ) : null}
-          {visibleLoopHistory.length > 0 && (
-            <AssistantLoopHistoryBlock
-              history={visibleLoopHistory}
-              archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
-              language={language}
-              onRevertChangeReport={onRevertChangeReport}
-              onOpenScene={onOpenScene}
-            />
-          )}
           {taskPlan && !archiveTaskPlanInHistory && (
             <TaskPlanBlock plan={taskPlan} language={language} />
           )}
@@ -915,26 +901,9 @@ function groupExecutionsByContentOffset(
 
 function visibleTopLevelToolExecutions(
   executions: ChatToolExecution[],
-  loopHistory: ChatMessage[],
   active: boolean,
 ) {
-  if (active || loopHistory.length === 0) {
-    return executions;
-  }
-  const loopToolIds = new Set(
-    loopHistory.flatMap((message) =>
-      (message.toolExecutions ?? []).map((execution) => execution.id),
-    ),
-  );
-  return executions.filter((execution) => {
-    if (looksLikeFileChangeExecution(execution)) {
-      return true;
-    }
-    if (loopToolIds.has(execution.id)) {
-      return false;
-    }
-    return !isToolRunning(execution);
-  });
+  return active ? executions : [];
 }
 
 function isFinalAssistantDisplayMessage(message: ChatMessage) {
@@ -1303,21 +1272,21 @@ function nearestOffset(offset: number, before: number, after: number) {
   return offset - before <= after - offset ? before : after;
 }
 
-function AssistantLoopHistoryBlock({
+export function AssistantLoopHistoryBlock({
   history,
   archivedPlan,
   language,
-  onRevertChangeReport,
-  onOpenScene,
+  onRevertChangeReport = async () => undefined,
+  onOpenScene = () => undefined,
 }: {
   history: ChatMessage[];
   archivedPlan?: NonNullable<ChatMessage['taskPlan']>;
   language: AppLanguage;
-  onRevertChangeReport: (
+  onRevertChangeReport?: (
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenScene: (scene: CardlingScene) => void;
+  onOpenScene?: (scene: CardlingScene) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
@@ -1344,11 +1313,13 @@ function AssistantLoopHistoryBlock({
     <div
       ref={blockRef}
       className={`assistant-loop-history ${expanded ? 'expanded' : ''}`}
+      data-testid="assistant-loop-history"
     >
       <button
         className="assistant-loop-history-summary"
         type="button"
         aria-expanded={expanded}
+        data-testid="assistant-loop-history-toggle"
         onClick={toggleExpanded}
       >
         <Clock3 size={15} />
@@ -1357,7 +1328,10 @@ function AssistantLoopHistoryBlock({
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
       {expanded && (
-        <div className="assistant-loop-history-details">
+        <div
+          className="assistant-loop-history-details"
+          data-testid="assistant-loop-history-details"
+        >
           {archivedPlan && (
             <div className="assistant-loop-history-plan">
               <TaskPlanBlock plan={archivedPlan} language={language} />
@@ -1405,7 +1379,10 @@ function AssistantLoopHistoryItem({
   const timestamp = formatLoopHistoryTimestamp(message, language);
 
   return (
-    <section className="assistant-loop-history-item">
+    <section
+      className="assistant-loop-history-item"
+      data-testid="assistant-loop-history-item"
+    >
       <header>
         <strong>{title}</strong>
         {timestamp && <span>{timestamp}</span>}

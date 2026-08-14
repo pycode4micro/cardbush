@@ -898,16 +898,15 @@ export function useCardbushChat(
           },
           onExecution: (update) => {
             if (update.reason === 'turn_guidance_pending') {
-              void streamBuffer.flushAllStreaming().then(() => {
-                setMessagesByConversation((current) =>
-                  applyAssistantSegmentBoundary(
-                    current,
-                    sessionId,
-                    assistantId,
-                    update,
-                  ),
-                );
-              });
+              streamBuffer.flushToolBoundary();
+              setMessagesByConversation((current) =>
+                applyAssistantSegmentBoundary(
+                  current,
+                  sessionId,
+                  assistantId,
+                  update,
+                ),
+              );
             }
           },
           onAssistantRevision: (revision) => {
@@ -924,11 +923,10 @@ export function useCardbushChat(
             );
           },
           onToolExecution: (execution) => {
-            void streamBuffer.flushAllStreaming().then(() => {
-              setMessagesByConversation((current) =>
-                appendToolExecution(current, sessionId, assistantId, execution),
-              );
-            });
+            streamBuffer.flushToolBoundary();
+            setMessagesByConversation((current) =>
+              appendToolExecution(current, sessionId, assistantId, execution),
+            );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
@@ -1197,16 +1195,15 @@ export function useCardbushChat(
           },
           onExecution: (update) => {
             if (update.reason === 'turn_guidance_pending') {
-              void streamBuffer.flushAllStreaming().then(() => {
-                setMessagesByConversation((current) =>
-                  applyAssistantSegmentBoundary(
-                    current,
-                    sessionId,
-                    tempAssistant.id,
-                    update,
-                  ),
-                );
-              });
+              streamBuffer.flushToolBoundary();
+              setMessagesByConversation((current) =>
+                applyAssistantSegmentBoundary(
+                  current,
+                  sessionId,
+                  tempAssistant.id,
+                  update,
+                ),
+              );
             }
           },
           onAssistantRevision: (revision) => {
@@ -1223,11 +1220,10 @@ export function useCardbushChat(
             );
           },
           onToolExecution: (execution) => {
-            void streamBuffer.flushAllStreaming().then(() => {
-              setMessagesByConversation((current) =>
-                appendToolExecution(current, sessionId, tempAssistant.id, execution),
-              );
-            });
+            streamBuffer.flushToolBoundary();
+            setMessagesByConversation((current) =>
+              appendToolExecution(current, sessionId, tempAssistant.id, execution),
+            );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
@@ -2289,7 +2285,7 @@ type StreamReadySegment = {
   atomic: boolean;
 };
 
-function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
+export function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
   let pending = '';
   const ready: StreamReadySegment[] = [];
   let timer: number | undefined;
@@ -2397,6 +2393,18 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
     return waitForDrain();
   };
 
+  const flushToolBoundary = () => {
+    clearTimer();
+    forceReleasePending();
+    while (ready.length > 0) {
+      const segment = ready.shift();
+      if (segment?.text) {
+        emit(segment.text);
+      }
+    }
+    resolveDrainWaiters();
+  };
+
   return {
     push(delta: string) {
       if (!delta) {
@@ -2411,6 +2419,9 @@ function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
     },
     flushAllStreaming() {
       return flushAllStreaming();
+    },
+    flushToolBoundary() {
+      flushToolBoundary();
     },
     reset(_nextEmitted = '') {
       clearTimer();
@@ -2464,6 +2475,11 @@ function createSegmentedAssistantStreamBuffers(
       return Promise.all(
         [...buffers.values()].map((buffer) => buffer.flushAllStreaming()),
       ).then(() => undefined);
+    },
+    flushToolBoundary() {
+      for (const buffer of buffers.values()) {
+        buffer.flushToolBoundary();
+      }
     },
     dispose() {
       for (const buffer of buffers.values()) buffer.dispose();
@@ -3234,6 +3250,7 @@ export function appendToolExecution(
       const nextExecution = {
         ...execution,
         contentOffset,
+        contentOffsetExplicit: true,
       };
       const nextExecutions =
         index >= 0
@@ -3913,20 +3930,24 @@ function collectLoopHistoryFromReplaced(
     finalMessages,
     (message) => message.role === 'assistant',
   )];
-  return replacedMessages
+  const replacedAssistants = replacedMessages
     .filter((message) => message.role === 'assistant')
-    .filter((message) => !finalIds.has(message.id))
-    .filter(hasVisibleLoopHistory)
-    .filter(
-      (message) =>
-        !isTemporaryAssistantCoveredByBackendTranscript(
-          message,
-          finalMessages,
-          temporaryIds,
-        ) &&
-        !isRedundantTemporaryAssistant(message, finalAssistant, temporaryIds),
-    )
-    .map(snapshotLoopHistoryMessage);
+    .filter((message) => !finalIds.has(message.id));
+  const candidates = replacedAssistants.flatMap((message) => [
+    ...(message.loopHistory ?? []),
+    ...(
+      hasVisibleLoopHistory(message) &&
+      !isTemporaryAssistantCoveredByBackendTranscript(
+        message,
+        finalMessages,
+        temporaryIds,
+      ) &&
+      !isRedundantTemporaryAssistant(message, finalAssistant, temporaryIds)
+        ? [message]
+        : []
+    ),
+  ]);
+  return mergeLoopHistoryMessages([], candidates);
 }
 
 function isTemporaryAssistantCoveredByBackendTranscript(
@@ -3942,16 +3963,49 @@ function isTemporaryAssistantCoveredByBackendTranscript(
     if (candidate.role !== 'assistant' || turnTranscriptKey(candidate) !== turnKey) {
       return false;
     }
-    if (isSupersededLoopAssistant(candidate)) {
+    if (backendLoopMessageMatchesTemporary(candidate, message, temporaryIds)) {
       return true;
     }
     return (candidate.loopHistory ?? []).some(
-      (item) =>
-        !temporaryIds.has(item.id) &&
-        turnTranscriptKey(item) === turnKey &&
-        isSupersededLoopAssistant(item),
+      (item) => backendLoopMessageMatchesTemporary(item, message, temporaryIds),
     );
   });
+}
+
+function backendLoopMessageMatchesTemporary(
+  candidate: ChatMessage,
+  temporary: ChatMessage,
+  temporaryIds: Set<string>,
+) {
+  if (
+    temporaryIds.has(candidate.id) ||
+    !isSupersededLoopAssistant(candidate) ||
+    turnTranscriptKey(candidate) !== turnTranscriptKey(temporary)
+  ) {
+    return false;
+  }
+  if (messageIdentityMatches(candidate, temporary)) {
+    return true;
+  }
+  const candidateSegment = optionalFiniteNumber(
+    candidate.metadata?.assistant_segment_index,
+  );
+  const temporarySegment = optionalFiniteNumber(
+    temporary.metadata?.assistant_segment_index,
+  );
+  if (candidateSegment != null && temporarySegment != null) {
+    return candidateSegment === temporarySegment;
+  }
+  const candidateLoop = numericOrderValue(candidate.loopIndex);
+  const temporaryLoop = numericOrderValue(temporary.loopIndex);
+  if (candidateLoop != null && temporaryLoop != null) {
+    return candidateLoop === temporaryLoop;
+  }
+  const candidateContent = normalizeLoopContent(candidate.content);
+  return Boolean(
+    candidateContent &&
+    candidateContent === normalizeLoopContent(temporary.content),
+  );
 }
 
 function attachLoopHistoryToFinalAssistant(
@@ -4394,10 +4448,18 @@ function isSupersededLoopAssistant(message: ChatMessage) {
     .trim()
     .toLowerCase();
   const transcriptKind = assistantTranscriptKind(message);
+  const historyVisibility = String(
+    message.metadata?.history_visibility ?? message.metadata?.historyVisibility ?? '',
+  )
+    .trim()
+    .toLowerCase();
   return (
     message.role === 'assistant' &&
-    status === 'superseded' &&
-    (!transcriptKind || transcriptKind === 'assistant_loop')
+    (
+      transcriptKind === 'assistant_loop' ||
+      (transcriptKind === 'assistant_segment' && historyVisibility === 'ephemeral') ||
+      (status === 'superseded' && !transcriptKind)
+    )
   );
 }
 
@@ -4431,13 +4493,29 @@ function mergeLoopHistoryMessages(
   incoming: ChatMessage[],
 ) {
   const byKey = new Map<string, ChatMessage>();
-  for (const message of [...existing, ...incoming]) {
+  for (const message of flattenLoopHistoryMessages([...existing, ...incoming])) {
     if (!hasVisibleLoopHistory(message)) {
       continue;
     }
     byKey.set(loopHistoryMessageKey(message), snapshotLoopHistoryMessage(message));
   }
   return sortMessagesByTranscriptOrder(Array.from(byKey.values()));
+}
+
+function flattenLoopHistoryMessages(messages: ChatMessage[]) {
+  const flattened: ChatMessage[] = [];
+  const visiting = new Set<ChatMessage>();
+  const visit = (message: ChatMessage) => {
+    if (visiting.has(message)) return;
+    visiting.add(message);
+    for (const nested of message.loopHistory ?? []) {
+      visit(nested);
+    }
+    flattened.push(message);
+    visiting.delete(message);
+  };
+  for (const message of messages) visit(message);
+  return flattened;
 }
 
 function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {

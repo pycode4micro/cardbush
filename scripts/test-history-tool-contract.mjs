@@ -86,6 +86,7 @@ const apiSource = fs.readFileSync(
 );
 assert.match(apiSource, /root\.tool_executions \?\? root\.toolExecutions/);
 assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(parsedMessages, toolExecutions\)/);
+assert.match(apiSource, /options\.includeSuperseded !== false \? '\?include_superseded=true'/);
 
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
@@ -94,6 +95,14 @@ const bubbleSource = fs.readFileSync(
 assert.match(
   bubbleSource,
   /function assistantTurnCompletedAt[\s\S]*?message\.createdAt,[\s\S]*?\]\);/,
+);
+assert.match(
+  bubbleSource,
+  /function visibleTopLevelToolExecutions\([\s\S]*?return active \? executions : \[\];[\s\S]*?\n}/,
+);
+assert.doesNotMatch(
+  bubbleSource,
+  /if \(active \|\| loopHistory\.length === 0\)/,
 );
 
 console.log('history tool association and timestamp contract tests passed');
