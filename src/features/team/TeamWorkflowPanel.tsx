@@ -370,6 +370,9 @@ function NodeDeck({
           {workflow.nodes.map((candidate, index) => (
             <button
               aria-label={`${zh ? '切换到' : 'Switch to'} ${candidate.title}`}
+              aria-current={candidate.id === node.id ? 'step' : undefined}
+              aria-posinset={index + 1}
+              aria-setsize={workflow.nodes.length}
               className={`team-agent-marker${candidate.id === node.id ? ' active' : ''}`}
               key={candidate.id}
               type="button"

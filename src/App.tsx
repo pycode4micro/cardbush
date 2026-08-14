@@ -41,7 +41,6 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import {
   Component,
   type CSSProperties,
@@ -95,7 +94,6 @@ import {
   MessageListFooter,
   absoluteBottomScrollTop,
   isMessageTailVisible,
-  isScrollerNearVisualBottom,
   lastAssistantMessage,
   manualScrollDetachHoldMs,
   scrollBottomLockTolerance,
@@ -306,10 +304,21 @@ const defaultThinkingAccentColor = '#9dbce8';
 const thinkingEventName = 'cardbush:thinking';
 
 function scrollDebug(label: string, data: Record<string, unknown>) {
+  const entry = {
+    at: new Date().toISOString(),
+    label,
+    ...data,
+  };
+  const buffer = window.__cardbushScrollDebug ?? [];
+  buffer.push(entry);
+  if (buffer.length > 300) {
+    buffer.splice(0, buffer.length - 300);
+  }
+  window.__cardbushScrollDebug = buffer;
+  console.debug('[cardbush:scroll]', entry);
   void window.cardbushDesktop
     ?.writeDebugLog?.('scroll', {
-      label,
-      ...data,
+      ...entry,
     })
     .catch(() => undefined);
 }
@@ -3393,7 +3402,6 @@ function ChatPanel({
     [currentTurnChangeReports],
   );
   const showWelcome = !loading && renderMessages.length === 0;
-  const listRef = useRef<VirtuosoHandle>(null);
   const listScrollerRef = useRef<HTMLElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
@@ -3437,6 +3445,10 @@ function ChatPanel({
     ids: [],
   });
   const streamScrollFrameRef = useRef<number | null>(null);
+  const outerResizeFollowFrameRef = useRef<number | null>(null);
+  const scrollTraceSequenceRef = useRef(0);
+  const activeScrollTraceIdRef = useRef('');
+  const scrollTraceObserveUntilRef = useRef(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
   const [shadowThreadOpen, setShadowThreadOpen] = useState(false);
@@ -3626,7 +3638,6 @@ function ChatPanel({
   }, []);
   const [composerDockHeight, setComposerDockHeight] = useState(0);
   const [quickContextBottomInset, setQuickContextBottomInset] = useState(0);
-  const [chatScrollbarGutter, setChatScrollbarGutter] = useState(0);
   const [activeScene, setActiveScene] = useState<CardlingScene | null>(null);
   const [availableScene, setAvailableScene] = useState<CardlingScene | null>(null);
   const [activeSceneInitialAutoPlay, setActiveSceneInitialAutoPlay] = useState(false);
@@ -3635,8 +3646,6 @@ function ChatPanel({
   const dismissedSceneKeysRef = useRef(new Set<string>());
   const autoPlayedSceneKeysRef = useRef(new Set<string>());
   const streamStatusHeight = 0;
-  const virtuosoComponents = useMemo(() => ({ Footer: MessageListFooter }), []);
-
   useEffect(() => {
     if (!osModeEnabled) {
       setOsSystemSurface(null);
@@ -3783,6 +3792,62 @@ function ChatPanel({
     };
   }, [composerDockHeight, streamStatusHeight]);
 
+  const captureScrollGeometry = useCallback(
+    (label: string, extra: Record<string, unknown> = {}) => {
+      const scroller = listScrollerRef.current;
+      const chatBody = chatBodyRef.current;
+      const frame = chatBody?.querySelector('.chat-content-frame');
+      const footer = scroller?.querySelector('.message-list-footer');
+      const dock = composerDockRef.current;
+      const button = scrollBottomButtonRef.current;
+      const rect = (element: Element | null | undefined) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const value = element.getBoundingClientRect();
+        return {
+          x: Math.round(value.x),
+          y: Math.round(value.y),
+          width: Math.round(value.width),
+          height: Math.round(value.height),
+          bottom: Math.round(value.bottom),
+          right: Math.round(value.right),
+        };
+      };
+      const metrics = scroller ? readBottomMetrics(scroller) : null;
+      scrollDebug(label, {
+        traceId:
+          Date.now() <= scrollTraceObserveUntilRef.current
+            ? activeScrollTraceIdRef.current || null
+            : null,
+        conversationId: activeConversationId,
+        sending,
+        showScrollBottom: showScrollBottomRef.current,
+        autoFollow: autoFollowStreamRef.current,
+        userDetached: userDetachedFromBottomRef.current,
+        atBottom: atBottomRef.current,
+        composerDockHeight,
+        scrollTop: scroller ? Math.round(scroller.scrollTop) : null,
+        scrollHeight: scroller?.scrollHeight ?? null,
+        clientHeight: scroller?.clientHeight ?? null,
+        offsetWidth: scroller?.offsetWidth ?? null,
+        clientWidth: scroller?.clientWidth ?? null,
+        absoluteBottomDistance: metrics
+          ? Math.round(metrics.absoluteBottomDistance)
+          : null,
+        visualBottomDistance: metrics
+          ? Math.round(metrics.visualBottomDistance)
+          : null,
+        scrollerRect: rect(scroller),
+        chatBodyRect: rect(chatBody),
+        frameRect: rect(frame),
+        composerRect: rect(dock),
+        footerRect: rect(footer),
+        buttonRect: rect(button),
+        ...extra,
+      });
+    },
+    [activeConversationId, composerDockHeight, readBottomMetrics, sending],
+  );
+
   const isLatestMessageTailVisible = useCallback(
     (scroller: HTMLElement, tolerance = 36) => {
       const latestMessage = renderMessages[renderMessages.length - 1];
@@ -3790,12 +3855,12 @@ function ChatPanel({
         return true;
       }
       return isMessageTailVisible(scroller, latestMessage.id, {
-        composerDockHeight,
+        composerDockHeight: quickContextBottomInset,
         streamStatusHeight,
         tolerance,
       });
     },
-    [composerDockHeight, renderMessages, streamStatusHeight],
+    [quickContextBottomInset, renderMessages, streamStatusHeight],
   );
 
   const shouldShowScrollBottomForMetrics = useCallback(
@@ -3817,15 +3882,6 @@ function ChatPanel({
     },
     [readBottomMetrics, shouldShowScrollBottomForMetrics],
   );
-
-  const updateChatScrollbarGutter = useCallback((scroller: HTMLElement | null) => {
-    const nextGutter = scroller
-      ? Math.max(0, Math.ceil(scroller.offsetWidth - scroller.clientWidth))
-      : 0;
-    setChatScrollbarGutter((current) =>
-      current === nextGutter ? current : nextGutter,
-    );
-  }, []);
 
   const nativeWheelEvent = useCallback(
     (event: WheelEvent<HTMLElement> | globalThis.WheelEvent) =>
@@ -4013,7 +4069,7 @@ function ChatPanel({
   );
 
   const focusSubmittedUserMessage = useCallback(
-    (index: number, messageId: string) => {
+    (_index: number, messageId: string) => {
       pendingSubmittedUserFocusRef.current = false;
       programmaticScrollUntilRef.current = Date.now() + 1200;
       manualScrollDetachUntilRef.current = 0;
@@ -4021,16 +4077,9 @@ function ChatPanel({
       userDetachedFromBottomRef.current = false;
       setScrollBottomVisible(false);
       window.requestAnimationFrame(() => {
-        listRef.current?.scrollToIndex({
-          index,
-          align: 'start',
-          behavior: 'auto',
-        });
+        positionMessageAtReadingAnchor(messageId);
         window.requestAnimationFrame(() => {
           positionMessageAtReadingAnchor(messageId);
-          window.requestAnimationFrame(() => {
-            positionMessageAtReadingAnchor(messageId);
-          });
         });
       });
     },
@@ -4052,7 +4101,7 @@ function ChatPanel({
       const scrollerRect = scroller.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
       const visibleBottom =
-        scrollerRect.bottom - Math.max(0, composerDockHeight) - streamStatusHeight - 18;
+        scrollerRect.bottom - Math.max(0, quickContextBottomInset) - streamStatusHeight - 18;
       if (itemRect.bottom <= visibleBottom) {
         return;
       }
@@ -4062,7 +4111,7 @@ function ChatPanel({
         behavior: 'auto',
       });
     },
-    [composerDockHeight, streamStatusHeight],
+    [quickContextBottomInset, streamStatusHeight],
   );
 
   const cancelScheduledStreamFollow = useCallback(() => {
@@ -4074,7 +4123,7 @@ function ChatPanel({
   }, []);
 
   const scheduleActiveAssistantFollow = useCallback(
-    (messageId: string, index: number, reason = 'stream') => {
+    (messageId: string, _index: number, reason = 'stream') => {
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
@@ -4092,19 +4141,7 @@ function ChatPanel({
         const item = scroller?.querySelector(
           `[data-message-id="${cssEscape(messageId)}"]`,
         );
-        const nearBottom = scroller
-          ? isScrollerNearVisualBottom(
-              scroller,
-              composerDockHeight,
-              streamStatusHeight,
-            )
-          : false;
-        if (index >= 0 && !nearBottom && !(item instanceof HTMLElement)) {
-          listRef.current?.scrollToIndex({
-            index,
-            align: 'end',
-            behavior: 'auto',
-          });
+        if (!(item instanceof HTMLElement)) {
           window.requestAnimationFrame(() => {
             if (
               autoFollowStreamRef.current &&
@@ -4272,6 +4309,7 @@ function ChatPanel({
   );
 
   const markUserDetachedFromBottom = useCallback((reason = 'user-scroll') => {
+    captureScrollGeometry('trace-detach', { reason });
     lastWheelLockRef.current = null;
     programmaticScrollUntilRef.current = 0;
     manualScrollDetachUntilRef.current = Date.now() + manualScrollDetachHoldMs;
@@ -4299,6 +4337,7 @@ function ChatPanel({
     });
   }, [
     cancelScheduledStreamFollow,
+    captureScrollGeometry,
     sending,
     setScrollBottomVisible,
     shouldShowScrollBottomForScroller,
@@ -4310,6 +4349,12 @@ function ChatPanel({
         return;
       }
       lastWheelEventAtRef.current = Date.now();
+      captureScrollGeometry('trace-wheel-input', {
+        surface: 'list',
+        deltaX: Math.round(event.deltaX),
+        deltaY: Math.round(event.deltaY),
+        deltaMode: event.deltaMode,
+      });
       if (event.deltaY < 0) {
         if (releaseWheelBottomFreeze('react-list', event)) {
           markWheelHandled(event);
@@ -4325,6 +4370,7 @@ function ChatPanel({
     },
     [
       lockWheelDownAtBottom,
+      captureScrollGeometry,
       markUserDetachedFromBottom,
       markWheelHandled,
       releaseWheelBottomFreeze,
@@ -4338,6 +4384,12 @@ function ChatPanel({
         return;
       }
       lastWheelEventAtRef.current = Date.now();
+      captureScrollGeometry('trace-wheel-input', {
+        surface: 'scroll-bottom-button',
+        deltaX: Math.round(event.deltaX),
+        deltaY: Math.round(event.deltaY),
+        deltaMode: event.deltaMode,
+      });
       if (event.deltaY < 0) {
         if (releaseWheelBottomFreeze('react-scroll-bottom-hotzone', event)) {
           markWheelHandled(event);
@@ -4353,6 +4405,7 @@ function ChatPanel({
     },
     [
       lockWheelDownAtBottom,
+      captureScrollGeometry,
       markUserDetachedFromBottom,
       markWheelHandled,
       releaseWheelBottomFreeze,
@@ -4545,7 +4598,7 @@ function ChatPanel({
       }
       const activeTailVisible = activeAssistant
         ? isMessageTailVisible(scroller, activeAssistant.message.id, {
-            composerDockHeight,
+            composerDockHeight: quickContextBottomInset,
             streamStatusHeight,
             tolerance: 36,
           })
@@ -4566,8 +4619,8 @@ function ChatPanel({
     },
     [
       activeTurnId,
-      composerDockHeight,
       lockStreamFollow,
+      quickContextBottomInset,
       readBottomMetrics,
       renderMessages,
       sending,
@@ -4627,11 +4680,23 @@ function ChatPanel({
       const scrollDelta = scroller.scrollTop - previousScrollTop;
       lastScrollTopRef.current = scroller.scrollTop;
       const metrics = readBottomMetrics(scroller);
+      atBottomRef.current = metrics.visualAtBottom;
       const now = Date.now();
       const recentLock = lastWheelLockRef.current;
       const recentWheel = now - lastWheelEventAtRef.current <= 250;
       const scrollbarDragging =
         scrollbarDragActiveRef.current || now < scrollbarDragUntilRef.current;
+      if (Date.now() <= scrollTraceObserveUntilRef.current) {
+        captureScrollGeometry('trace-scroll-event', {
+          scrollDelta: Math.round(scrollDelta),
+          recentWheel,
+          scrollbarDragging,
+          programmaticRemainingMs: Math.max(
+            0,
+            programmaticScrollUntilRef.current - now,
+          ),
+        });
+      }
       const likelyUserScrollWithoutWheel =
         sending &&
         scrollDelta > 0.5 &&
@@ -4738,6 +4803,7 @@ function ChatPanel({
     [
       maybeLockStreamFollowFromScroll,
       cancelScheduledStreamFollow,
+      captureScrollGeometry,
       lockStreamFollow,
       readBottomMetrics,
       sending,
@@ -4747,44 +4813,208 @@ function ChatPanel({
   );
 
   useEffect(() => {
+    const chatBody = chatBodyRef.current;
     if (loading || showWelcome) {
       setComposerDockHeight(0);
       setQuickContextBottomInset(0);
+      chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-surface-center-x');
+      chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       return undefined;
     }
     const dock = composerDockRef.current;
     if (!dock) {
       setComposerDockHeight(0);
       setQuickContextBottomInset(0);
+      chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-surface-center-x');
+      chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       return undefined;
     }
+    let lastMeasurement = '';
     const updateHeight = () => {
       const dockRect = dock.getBoundingClientRect();
       const firstVisibleElement = dock.firstElementChild;
       const visibleTop = firstVisibleElement instanceof HTMLElement
         ? firstVisibleElement.getBoundingClientRect().top
         : dockRect.top;
-      setComposerDockHeight(Math.ceil(dockRect.height));
-      setQuickContextBottomInset(Math.ceil(Math.max(0, dockRect.bottom - visibleTop)));
+      const nextDockHeight = Math.ceil(dockRect.height);
+      const nextBottomInset = Math.ceil(Math.max(0, dockRect.bottom - visibleTop));
+      const composerSurface = dock.querySelector<HTMLElement>(
+        '.composer-surface, .interaction-card, .composer-stack',
+      );
+      if (chatBody && composerSurface) {
+        const chatBodyRect = chatBody.getBoundingClientRect();
+        const surfaceRect = composerSurface.getBoundingClientRect();
+        chatBody.style.setProperty(
+          '--composer-surface-top',
+          `${Math.max(0, surfaceRect.top - chatBodyRect.top)}px`,
+        );
+        chatBody.style.setProperty(
+          '--composer-surface-center-x',
+          `${surfaceRect.left + surfaceRect.width / 2 - chatBodyRect.left}px`,
+        );
+      }
+      const scroller = listScrollerRef.current;
+      if (chatBody && scroller) {
+        const scrollbarInset = Math.max(0, scroller.offsetWidth - scroller.clientWidth);
+        chatBody.style.setProperty(
+          '--message-list-scrollbar-inset',
+          `${scrollbarInset}px`,
+        );
+      }
+      const measurement = `${nextDockHeight}:${nextBottomInset}:${Math.round(dockRect.width)}`;
+      if (measurement !== lastMeasurement) {
+        lastMeasurement = measurement;
+        captureScrollGeometry('trace-composer-measure', {
+          nextDockHeight,
+          nextBottomInset,
+          measuredDockWidth: Math.round(dockRect.width),
+        });
+      }
+      setComposerDockHeight(nextDockHeight);
+      setQuickContextBottomInset(nextBottomInset);
     };
     updateHeight();
     const observer = new ResizeObserver(updateHeight);
     observer.observe(dock);
+    if (chatBody) {
+      observer.observe(chatBody);
+    }
+    if (listScrollerRef.current) {
+      observer.observe(listScrollerRef.current);
+    }
     if (dock.firstElementChild instanceof HTMLElement) {
       observer.observe(dock.firstElementChild);
+    }
+    const composerSurface = dock.querySelector<HTMLElement>(
+      '.composer-surface, .interaction-card, .composer-stack',
+    );
+    if (composerSurface) {
+      observer.observe(composerSurface);
     }
     const mutationObserver = new MutationObserver(updateHeight);
     mutationObserver.observe(dock, { childList: true });
     return () => {
       observer.disconnect();
       mutationObserver.disconnect();
+      chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-surface-center-x');
+      chatBody?.style.removeProperty('--message-list-scrollbar-inset');
     };
-  }, [loading, pendingInteraction, showWelcome]);
+  }, [captureScrollGeometry, loading, pendingInteraction, showWelcome]);
+
+  useEffect(() => {
+    if (loading || showWelcome) return undefined;
+    const chatBody = chatBodyRef.current;
+    const chatPanel = chatBody?.closest('.chat-panel');
+    const mainStage = chatBody?.closest('.main-stage');
+    const frame = chatBody?.querySelector('.chat-content-frame');
+    const scroller = listScrollerRef.current;
+    const content = scroller?.querySelector('.message-list-content');
+    const footer = scroller?.querySelector('.message-list-footer');
+    const dock = composerDockRef.current;
+    const dockContent = dock?.firstElementChild;
+    const observed = [
+      mainStage,
+      chatPanel,
+      chatBody,
+      frame,
+      scroller,
+      content,
+      footer,
+      dock,
+      dockContent,
+    ].filter(
+      (element): element is Element => element instanceof Element,
+    );
+    if (observed.length === 0) return undefined;
+    let lastSignature = '';
+    const observer = new ResizeObserver((entries) => {
+      const signature = entries
+        .map((entry) => {
+          const target = entry.target as HTMLElement;
+          return `${target.className}:${Math.round(entry.contentRect.width)}x${Math.round(entry.contentRect.height)}`;
+        })
+        .sort()
+        .join('|');
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      const beforeScrollTop = scroller?.scrollTop ?? null;
+      const beforeScrollHeight = scroller?.scrollHeight ?? null;
+      const beforeBottom = scroller
+        ? absoluteBottomScrollTop(scroller) - scroller.scrollTop
+        : null;
+      captureScrollGeometry('trace-outer-resize', {
+        entries: signature,
+        beforeScrollTop: beforeScrollTop == null ? null : Math.round(beforeScrollTop),
+        beforeScrollHeight,
+        beforeBottom: beforeBottom == null ? null : Math.round(beforeBottom),
+      });
+      if (
+        !scroller ||
+        scroller.dataset.cardbushPreserveScroll === '1' ||
+        scrollbarDragActiveRef.current ||
+        Date.now() < scrollbarDragUntilRef.current ||
+        Date.now() < manualScrollDetachUntilRef.current ||
+        userDetachedFromBottomRef.current ||
+        !autoFollowStreamRef.current
+      ) {
+        return;
+      }
+      if (outerResizeFollowFrameRef.current != null) {
+        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
+      }
+      outerResizeFollowFrameRef.current = window.requestAnimationFrame(() => {
+        outerResizeFollowFrameRef.current = null;
+        if (
+          scroller.dataset.cardbushPreserveScroll === '1' ||
+          scrollbarDragActiveRef.current ||
+          Date.now() < scrollbarDragUntilRef.current ||
+          Date.now() < manualScrollDetachUntilRef.current ||
+          userDetachedFromBottomRef.current ||
+          !autoFollowStreamRef.current
+        ) {
+          captureScrollGeometry('trace-outer-resize-follow-abort');
+          return;
+        }
+        const scrollTopBeforeCorrection = scroller.scrollTop;
+        const targetScrollTop = absoluteBottomScrollTop(scroller);
+        if (Math.abs(targetScrollTop - scrollTopBeforeCorrection) > 0.5) {
+          scroller.scrollTop = targetScrollTop;
+        }
+        lastScrollTopRef.current = scroller.scrollTop;
+        atBottomRef.current = true;
+        setScrollBottomVisible(false);
+        captureScrollGeometry('trace-outer-resize-follow', {
+          scrollTopBeforeCorrection: Math.round(scrollTopBeforeCorrection),
+          targetScrollTop: Math.round(targetScrollTop),
+          correction: Math.round(targetScrollTop - scrollTopBeforeCorrection),
+        });
+      });
+    });
+    observed.forEach((element) => observer.observe(element));
+    return () => {
+      observer.disconnect();
+      if (outerResizeFollowFrameRef.current != null) {
+        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
+        outerResizeFollowFrameRef.current = null;
+      }
+    };
+  }, [
+    captureScrollGeometry,
+    loading,
+    setScrollBottomVisible,
+    showWelcome,
+  ]);
 
   useEffect(() => {
     return () => {
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
+      }
+      if (outerResizeFollowFrameRef.current != null) {
+        window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
       }
       listScrollerWheelCleanupRef.current?.();
       listScrollerWheelCleanupRef.current = null;
@@ -5001,32 +5231,19 @@ function ChatPanel({
     }
     scroller.scrollTop = visualBottomScrollTop(
       scroller,
-      composerDockHeight,
+      quickContextBottomInset,
       streamStatusHeight,
     );
   }, [composerDockHeight, streamStatusHeight]);
 
-  const scrollToBottom = useCallback(() => {
-    if (messages.length === 0) {
-      return;
-    }
-    programmaticScrollUntilRef.current = Date.now() + 1400;
-    manualScrollDetachUntilRef.current = 0;
-    autoFollowStreamRef.current = true;
-    userDetachedFromBottomRef.current = false;
-    pendingSubmittedUserFocusRef.current = false;
-    atBottomRef.current = true;
-    setScrollBottomVisible(false);
-    lastWheelLockRef.current = null;
-    forceListToVisualBottom();
-    window.requestAnimationFrame(() => {
-      forceListToVisualBottom();
-    });
-  }, [forceListToVisualBottom, messages.length, setScrollBottomVisible]);
-
   const jumpToLatestMessage = useCallback(
     (_reason: string) => {
-      programmaticScrollUntilRef.current = Date.now() + 1400;
+      cancelScheduledStreamFollow();
+      scrollTraceSequenceRef.current += 1;
+      activeScrollTraceIdRef.current = `${Date.now().toString(36)}-${scrollTraceSequenceRef.current}`;
+      scrollTraceObserveUntilRef.current = Date.now() + 3000;
+      captureScrollGeometry('trace-jump-start', { reason: _reason });
+      programmaticScrollUntilRef.current = Date.now() + 500;
       manualScrollDetachUntilRef.current = 0;
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
@@ -5034,20 +5251,38 @@ function ChatPanel({
       atBottomRef.current = true;
       lastWheelLockRef.current = null;
       setScrollBottomVisible(false);
-      listRef.current?.scrollToIndex({
-        index: 'LAST',
-        align: 'end',
-        behavior: 'auto',
-      });
-      window.requestAnimationFrame(() => {
+
+      forceListToVisualBottom();
+      streamScrollFrameRef.current = window.requestAnimationFrame(() => {
+        streamScrollFrameRef.current = null;
+        if (userDetachedFromBottomRef.current) {
+          captureScrollGeometry('trace-jump-abort', {
+            reason: 'user-detached',
+          });
+          return;
+        }
         forceListToVisualBottom();
-        window.requestAnimationFrame(() => {
-          forceListToVisualBottom();
+        atBottomRef.current = true;
+        setScrollBottomVisible(false);
+        captureScrollGeometry('trace-jump-complete', {
+          strategy: 'native-message-list',
         });
       });
     },
-    [forceListToVisualBottom, setScrollBottomVisible],
+    [
+      cancelScheduledStreamFollow,
+      captureScrollGeometry,
+      forceListToVisualBottom,
+      setScrollBottomVisible,
+    ],
   );
+
+  const scrollToBottom = useCallback(() => {
+    if (messages.length === 0) {
+      return;
+    }
+    jumpToLatestMessage('scroll-bottom-button');
+  }, [jumpToLatestMessage, messages.length]);
 
   useEffect(() => {
     if (loading || showWelcome || messages.length === 0) {
@@ -5082,15 +5317,9 @@ function ChatPanel({
       const nextScroller = ref instanceof HTMLElement ? ref : null;
       listScrollerRef.current = nextScroller;
       if (!nextScroller) {
-        updateChatScrollbarGutter(null);
         return;
       }
       lastScrollTopRef.current = nextScroller.scrollTop;
-      updateChatScrollbarGutter(nextScroller);
-      const resizeObserver = new ResizeObserver(() => {
-        updateChatScrollbarGutter(nextScroller);
-      });
-      resizeObserver.observe(nextScroller);
       const handleNativeWheel = (event: globalThis.WheelEvent) => {
         if (event.defaultPrevented || wheelAlreadyHandled(event)) {
           return;
@@ -5109,7 +5338,6 @@ function ChatPanel({
         passive: false,
       });
       listScrollerWheelCleanupRef.current = () => {
-        resizeObserver.disconnect();
         nextScroller.removeEventListener('wheel', handleNativeWheel, {
           capture: true,
         });
@@ -5119,7 +5347,6 @@ function ChatPanel({
       lockNativeWheelDownAtBottom,
       markWheelHandled,
       releaseWheelBottomFreeze,
-      updateChatScrollbarGutter,
       wheelAlreadyHandled,
     ],
   );
@@ -5204,8 +5431,6 @@ function ChatPanel({
     '--composer-dock-height': `${composerDockHeight}px`,
     '--quick-context-bottom-inset': `${quickContextBottomInset}px`,
     '--stream-status-height': `${streamStatusHeight}px`,
-    '--chat-scrollbar-gutter': `${chatScrollbarGutter}px`,
-    '--chat-scrollbar-gutter-half': `${chatScrollbarGutter / 2}px`,
   } as CSSProperties;
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const [workSummaryMode, setWorkSummaryMode] = useState<'summary' | 'a2a'>('summary');
@@ -5441,107 +5666,47 @@ function ChatPanel({
             onCancel={onCancel}
           />
         ) : (
-          <Virtuoso
+          <div
             key={activeConversationId.trim() || 'new-session'}
-            ref={listRef}
             className="message-list"
-            style={{ height: '100%' }}
-            data={renderMessages}
-            components={virtuosoComponents}
-            computeItemKey={(_index, message) => message.id}
-            followOutput={false}
-            initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
-            scrollerRef={setListScrollerRef}
+            ref={setListScrollerRef}
             onWheelCapture={handleListWheelCapture}
             onPointerDownCapture={handleListPointerDownCapture}
             onTouchStartCapture={() => markUserDetachedFromBottom('touch')}
-            atBottomStateChange={(atBottom) => {
-              const now = Date.now();
-              const scrollbarDragging =
-                scrollbarDragActiveRef.current || now < scrollbarDragUntilRef.current;
-              const scroller = listScrollerRef.current;
-              const metrics = scroller ? readBottomMetrics(scroller) : null;
-              const shouldShow = scroller && metrics
-                ? shouldShowScrollBottomForMetrics(scroller, metrics)
-                : false;
-              const effectiveAtBottom =
-                atBottom || Boolean(metrics?.visualNearBottom);
-              atBottomRef.current = atBottom;
-              if (
-                userDetachedFromBottomRef.current &&
-                now < manualScrollDetachUntilRef.current &&
-                !metrics?.absoluteAtBottom
-              ) {
-                setScrollBottomVisible(shouldShow);
-                return;
-              }
-              if (scrollbarDragging) {
-                setScrollBottomVisible(shouldShow);
-                return;
-              }
-              if (effectiveAtBottom) {
-                if (
-                  userDetachedFromBottomRef.current &&
-                  shouldShow &&
-                  (now < manualScrollDetachUntilRef.current ||
-                    !metrics?.absoluteAtBottom)
-                ) {
-                  setScrollBottomVisible(true);
-                  return;
-                }
-                lockStreamFollow('virtuoso-bottom');
-                return;
-              }
-              if (
-                autoFollowStreamRef.current ||
-                now < programmaticScrollUntilRef.current
-              ) {
-                setScrollBottomVisible(false);
-                return;
-              }
-              setScrollBottomVisible(userDetachedFromBottomRef.current && shouldShow);
-            }}
             onScrollCapture={handleListScrollCapture}
-            itemContent={(index, message) => (
-              <div
-                className={`message-list-item ${index === 0 ? 'first' : ''}`}
-                data-message-id={message.id}
-                data-message-role={message.role}
-              >
-                <MessageFileReferenceScope workspaceRoot={activeProjectDir}>
-                  <MessageBubble
-                    key={message.id}
-                    message={message}
-                    language={language}
-                    sending={sending}
-                    activeTurnId={activeTurnId}
-                    activeAssistantMessageId={
-                      activeAssistantForRender?.message.id ?? ''
-                    }
-                    onRegenerate={onRegenerate}
-                    onEditUserMessage={onEditUserMessage}
-                    onGuideMessage={onGuideMessage}
-                    onRetryGuidance={onRetryGuidance}
-                    onRevertChangeReport={onRevertChangeReport}
-                    onOpenScene={openScene}
-                  />
-                </MessageFileReferenceScope>
-              </div>
-            )}
-          />
+          >
+            <div className="message-list-content">
+              {renderMessages.map((message, index) => (
+                <div
+                  key={message.id}
+                  className={`message-list-item ${index === 0 ? 'first' : ''}`}
+                  data-message-id={message.id}
+                  data-message-role={message.role}
+                >
+                  <MessageFileReferenceScope workspaceRoot={activeProjectDir}>
+                    <MessageBubble
+                      key={message.id}
+                      message={message}
+                      language={language}
+                      sending={sending}
+                      activeTurnId={activeTurnId}
+                      activeAssistantMessageId={
+                        activeAssistantForRender?.message.id ?? ''
+                      }
+                      onRegenerate={onRegenerate}
+                      onEditUserMessage={onEditUserMessage}
+                      onGuideMessage={onGuideMessage}
+                      onRetryGuidance={onRetryGuidance}
+                      onRevertChangeReport={onRevertChangeReport}
+                      onOpenScene={openScene}
+                    />
+                  </MessageFileReferenceScope>
+                </div>
+              ))}
+            </div>
+            <MessageListFooter />
+          </div>
         )}
-        <button
-          ref={setScrollBottomRef}
-          className={`scroll-bottom ${
-            loading || showWelcome || !showScrollBottom ? 'hidden' : ''
-          }`}
-          type="button"
-          aria-label="scroll bottom"
-          onWheelCapture={handleScrollBottomWheelCapture}
-          onClick={scrollToBottom}
-        >
-          <ArrowDown size={22} />
-        </button>
         {activeScene && (
           <CardlingSceneHost
             scene={activeScene}
@@ -5691,6 +5856,18 @@ function ChatPanel({
           </div>
         )}
         </div>
+        <button
+          ref={setScrollBottomRef}
+          className={`scroll-bottom ${
+            loading || showWelcome || !showScrollBottom ? 'hidden' : ''
+          }`}
+          type="button"
+          aria-label="scroll bottom"
+          onWheelCapture={handleScrollBottomWheelCapture}
+          onClick={scrollToBottom}
+        >
+          <ArrowDown size={22} />
+        </button>
       </div>
       {consoleMode &&
         ((consoleMode === 'git' && gitAvailable) ||

@@ -2649,12 +2649,13 @@ function BotSettingsPanel({
               className="settings-json-editor"
               spellCheck={false}
               value={selectedDraft}
-              onChange={(event) =>
+              onChange={(event) => {
+                const value = event.currentTarget.value;
                 setConfigDraftByPlatform((current) => ({
                   ...current,
-                  [selectedPlatform]: event.currentTarget.value,
-                }))
-              }
+                  [selectedPlatform]: value,
+                }));
+              }}
             />
             <div className="settings-actions">
               <button

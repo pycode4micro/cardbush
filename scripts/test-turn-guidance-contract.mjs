@@ -98,9 +98,10 @@ assert.match(bubbleSource, /guidance-retry-button/);
 assert.match(bubbleSource, /onRetryGuidance\(message\)/);
 assert.match(bubbleSource, /等待本轮完成后/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
-assert.doesNotMatch(
+assert.match(
   bubbleSource,
   /visibleLoopHistory\.length > 0 && \(\s*<AssistantLoopHistoryBlock/,
+  'Intermediate assistant messages must be included inside the processed disclosure',
 );
 
 const summarySource = fs.readFileSync(
@@ -443,6 +444,18 @@ assert.deepEqual(
   plain(reloadedLoopState[1].loopHistory.map((message) => message.content)),
   ['历史 message 1', '历史 message 2'],
 );
+
+const displayed = normalizeChatMessagesForDisplay(state[sessionId]);
+assert.deepEqual(
+  plain(displayed.map((message) => [message.role, message.content])),
+  [
+    ['user', '原始问题'],
+    ['user', '请补充风险说明'],
+    ['assistant', '第二轮继续'],
+  ],
+);
+assert.equal(displayed[2].loopHistory[0].content, '第一轮');
+assert.equal(displayed[2].loopHistory[0].metadata.assistant_segment_index, 1);
 
 console.log('turn guidance contract tests passed');
 

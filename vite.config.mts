@@ -23,7 +23,7 @@ export default defineConfig({
             },
             {
               name: 'chat-runtime',
-              test: /src[\\/](backend|hooks)[\\/]/,
+              test: /[\\/]src[\\/](backend|hooks)[\\/]/,
               priority: 10,
             },
           ],

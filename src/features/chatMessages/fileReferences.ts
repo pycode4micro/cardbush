@@ -14,21 +14,18 @@ const windowsFilePattern = /[a-z]:[\\/](?:[^<>:"|?*\r\n`]+[\\/])*[^<>:"|?*\r\n`]
 
 export function localFileReference(
   value: string,
-  workspaceRoot = '',
+  _workspaceRoot = '',
 ): LocalFileReference | null {
   const cleaned = cleanFileReferenceValue(value);
   if (!cleaned || !looksLikeFilePath(cleaned)) {
     return null;
   }
   const withoutLocation = cleaned.replace(trailingLocationPattern, '');
-  const resolvedPath = isAbsoluteLocalPath(withoutLocation)
-    ? withoutLocation
-    : resolveRelativeFilePath(workspaceRoot, withoutLocation);
-  if (!resolvedPath) {
+  if (!isAbsoluteLocalPath(withoutLocation)) {
     return null;
   }
   return {
-    path: resolvedPath,
+    path: withoutLocation,
     label: basename(withoutLocation),
   };
 }
@@ -42,13 +39,14 @@ export function localFileReferenceFromHref(href: string) {
     return '';
   }
   try {
-    return decodeURIComponent(href.slice(localFileReferenceScheme.length));
+    const path = decodeURIComponent(href.slice(localFileReferenceScheme.length));
+    return isAbsoluteLocalPath(path) ? path : '';
   } catch {
     return '';
   }
 }
 
-export function linkifyLocalFileReferences(content: string, workspaceRoot = '') {
+export function linkifyLocalFileReferences(content: string, _workspaceRoot = '') {
   return content
     .split(/(```[\s\S]*?```)/g)
     .map((fencedBlock, fencedIndex) => {
@@ -61,14 +59,14 @@ export function linkifyLocalFileReferences(content: string, workspaceRoot = '') 
           if (protectedIndex % 2 === 1) {
             return protectedBlock;
           }
-          return linkifyTextSegment(protectedBlock, workspaceRoot);
+          return linkifyTextSegment(protectedBlock);
         })
         .join('');
     })
     .join('');
 }
 
-function linkifyTextSegment(value: string, workspaceRoot: string) {
+function linkifyTextSegment(value: string) {
   const matches = [
     ...value.matchAll(windowsFilePattern),
     ...value.matchAll(relativeFilePattern),
@@ -86,7 +84,7 @@ function linkifyTextSegment(value: string, workspaceRoot: string) {
     if (isInsideBareWebUrl(value, index)) {
       continue;
     }
-    const reference = localFileReference(match[0], workspaceRoot);
+    const reference = localFileReference(match[0]);
     if (!reference) {
       continue;
     }
@@ -143,15 +141,6 @@ function looksLikeFilePath(value: string) {
     return false;
   }
   return isAbsoluteLocalPath(withoutLocation) || /[\\/]/.test(withoutLocation);
-}
-
-function resolveRelativeFilePath(workspaceRoot: string, value: string) {
-  const root = stripWrappingQuotes(workspaceRoot.trim()).replace(/[\\/]+$/, '');
-  if (!root) {
-    return '';
-  }
-  const relative = value.replace(/^\.[\\/]/, '').replaceAll('/', '\\');
-  return `${root}\\${relative}`;
 }
 
 function escapeMarkdownLabel(value: string) {

@@ -7,6 +7,7 @@ import type {
 
 declare global {
   interface Window {
+    __cardbushScrollDebug?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
       rendererReady: () => Promise<void>;
       minimize: () => Promise<void>;

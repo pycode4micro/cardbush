@@ -342,21 +342,6 @@
   padding: 10px 0;
 }
 
-.team-agent-track::before {
-  position: absolute;
-  top: 10px;
-  bottom: 10px;
-  left: 0;
-  width: 7px;
-  content: "";
-  opacity: 1;
-  background: repeating-linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--text-soft) 42%, transparent) 0 2px,
-    transparent 2px 9px
-  );
-}
-
 .team-agent-marker {
   position: relative;
   width: 44px;

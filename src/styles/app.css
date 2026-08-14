@@ -636,7 +636,7 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .section-header:hover .section-action:not(:disabled),
-.section-header:focus-within .section-action:not(:disabled),
+.section-header:has(.section-action:focus-visible) .section-action:not(:disabled),
 .section-header-wrap:has(.sidebar-menu) .section-action:not(:disabled) {
   opacity: 1;
   pointer-events: auto;
@@ -900,8 +900,9 @@ body.sidebar-resizing .sidebar-resizer {
 .row-more,
 .conversation-more {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
 }
 
 .row-new-chat {
@@ -913,14 +914,17 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .project-row:hover .row-new-chat,
+.project-row:has(.row-new-chat:focus-visible) .row-new-chat,
 .project-row:has(.sidebar-menu) .row-new-chat {
   opacity: 1;
   pointer-events: auto;
 }
 
 .project-row:hover .row-more,
+.project-row:has(.row-more:focus-visible) .row-more,
 .project-row:has(.sidebar-menu) .row-more,
 .conversation-row:hover .conversation-more,
+.conversation-row:has(.conversation-more:focus-visible) .conversation-more,
 .conversation-row:has(.sidebar-menu) .conversation-more {
   opacity: 1;
   pointer-events: auto;
@@ -1175,37 +1179,41 @@ body.sidebar-resizing .sidebar-resizer {
 
 .right-inspector-resizer {
   position: absolute;
-  z-index: 3;
+  z-index: 20;
   top: 0;
   bottom: 0;
-  left: -5px;
-  width: 10px;
-  cursor: col-resize;
+  left: -4px;
+  width: 8px;
+  cursor: ew-resize;
   touch-action: none;
+  user-select: none;
 }
 
 .right-inspector-resizer::after {
   content: '';
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 4px;
-  width: 2px;
-  background: transparent;
-  transition: background 120ms ease;
+  top: 12px;
+  bottom: 12px;
+  left: 3px;
+  width: 1px;
+  opacity: 0;
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 999px;
+  transition: opacity 100ms ease;
 }
 
 .right-inspector-resizer:hover::after,
 body.right-inspector-resizing .right-inspector-resizer::after {
-  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  opacity: 0.46;
 }
 
 body.right-inspector-resizing {
-  cursor: col-resize;
+  cursor: ew-resize;
   user-select: none;
 }
 
-body.right-inspector-resizing .right-inspector {
+body.right-inspector-resizing .right-inspector,
+body.right-inspector-resizing .right-inspector-resizer {
   transition: none;
 }
 
@@ -3167,6 +3175,8 @@ body.right-inspector-resizing .right-inspector {
 .message-list {
   height: 100%;
   min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
@@ -3174,7 +3184,7 @@ body.right-inspector-resizing .right-inspector {
   transition: padding-right 180ms cubic-bezier(0.2, 0.72, 0.25, 1);
 }
 
-.message-list [data-testid="virtuoso-item-list"] {
+.message-list-content {
   padding: 30px 26px 0;
   overflow-anchor: none;
 }
@@ -3189,7 +3199,7 @@ body.right-inspector-resizing .right-inspector {
 
 .message-list-footer {
   height: calc(
-    var(--composer-dock-height, 0px) +
+    var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) +
     var(--stream-status-height, 0px) +
     28px
   );
@@ -4923,7 +4933,6 @@ body.right-inspector-resizing .right-inspector {
   align-items: baseline;
   gap: 4px;
   color: #64a9ff;
-  border-bottom: 1px dotted color-mix(in srgb, #64a9ff 84%, transparent);
   text-decoration: none;
   vertical-align: baseline;
   cursor: pointer;
@@ -4932,7 +4941,6 @@ body.right-inspector-resizing .right-inspector {
 .local-file-reference:hover,
 .local-file-reference:focus-visible {
   color: #8bc0ff;
-  border-bottom-style: solid;
 }
 
 .local-file-reference svg {
@@ -5135,9 +5143,58 @@ body.right-inspector-resizing .right-inspector {
   font-weight: 700;
 }
 
-.assistant-run-header div {
+.assistant-run-divider {
   height: 1px;
   background: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.assistant-completed-disclosure {
+  margin: 0 0 8px;
+  overflow-anchor: none;
+}
+
+.assistant-completed-summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(24px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+  padding: 0;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.app .assistant-completed-summary:active {
+  transform: none;
+}
+
+.assistant-completed-summary span {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.assistant-completed-summary svg {
+  opacity: 0.58;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+.assistant-completed-summary:hover svg,
+.assistant-completed-summary:focus-visible svg {
+  opacity: 0.9;
+}
+
+.assistant-completed-summary svg.expanded {
+  transform: rotate(180deg);
+}
+
+.assistant-completed-content {
+  display: grid;
+  gap: 7px;
+  padding-top: 8px;
 }
 
 @keyframes assistant-status-sweep {
@@ -5324,10 +5381,18 @@ body.right-inspector-resizing .right-inspector {
   margin-top: 16px;
   overflow: hidden;
   overflow-anchor: none;
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
-  border-radius: 8px;
+  color: var(--text-soft);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 28%, transparent);
+  border-radius: 0;
+  opacity: 0.78;
+  transition: opacity 140ms ease;
+}
+
+.assistant-loop-history:hover,
+.assistant-loop-history:focus-within {
+  opacity: 1;
 }
 
 .assistant-loop-history-summary {
@@ -5353,31 +5418,9 @@ body.right-inspector-resizing .right-inspector {
   white-space: nowrap;
 }
 
-.assistant-loop-history-summary em {
-  color: var(--text-soft);
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 700;
-}
-
 .assistant-loop-history-summary svg {
   flex: 0 0 auto;
   opacity: 0.78;
-}
-
-.assistant-loop-history-summary svg:last-child {
-  opacity: 0;
-  transition: opacity 140ms ease, transform 140ms ease;
-}
-
-.assistant-loop-history:hover .assistant-loop-history-summary svg:last-child,
-.assistant-loop-history:focus-within .assistant-loop-history-summary svg:last-child,
-.assistant-loop-history.expanded .assistant-loop-history-summary svg:last-child {
-  opacity: 0.78;
-}
-
-.assistant-loop-history-summary svg.expanded {
-  transform: rotate(180deg);
 }
 
 .assistant-loop-history-details {
@@ -6713,12 +6756,19 @@ body.right-inspector-resizing .right-inspector {
 }
 
 .scroll-bottom {
+  --scroll-bottom-size: 40px;
+  --scroll-bottom-gap: 10px;
   position: absolute;
-  left: calc(50% - var(--chat-scrollbar-gutter-half, 0px));
+  left: var(--composer-surface-center-x, 50%);
+  top: calc(
+    var(--composer-surface-top, 100%) -
+    var(--scroll-bottom-size) -
+    var(--scroll-bottom-gap)
+  );
   right: auto;
-  bottom: max(84px, calc(var(--composer-dock-height, 0px) - 58px));
-  width: 96px;
-  height: 96px;
+  bottom: auto;
+  width: var(--scroll-bottom-size);
+  height: var(--scroll-bottom-size);
   padding: 0;
   color: var(--accent);
   background: transparent;
@@ -6737,7 +6787,7 @@ body.right-inspector-resizing .right-inspector {
   content: "";
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: 1px;
   width: 38px;
   height: 38px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -6752,7 +6802,7 @@ body.right-inspector-resizing .right-inspector {
 .scroll-bottom svg {
   position: absolute;
   left: 50%;
-  bottom: 20px;
+  bottom: 9px;
   z-index: 1;
   pointer-events: none;
   transform: translateX(-50%);
@@ -6762,7 +6812,7 @@ body.right-inspector-resizing .right-inspector {
 .scroll-bottom:focus-visible {
   color: var(--accent);
   opacity: 1;
-  transform: translateX(-50%) translateY(-1px);
+  transform: translate(-50%, -1px);
 }
 
 .scroll-bottom:hover::before,
@@ -6776,7 +6826,7 @@ body.right-inspector-resizing .right-inspector {
 .scroll-bottom.hidden {
   pointer-events: none;
   opacity: 0;
-  transform: translateX(-50%) translateY(6px);
+  transform: translate(-50%, 6px);
 }
 
 .composer-dock {
@@ -7824,7 +7874,7 @@ body.right-inspector-resizing .right-inspector {
 }
 
 .chat-panel:not(.os-chat-panel) .composer-dock {
-  right: var(--chat-scrollbar-gutter, 0px);
+  right: var(--message-list-scrollbar-inset, 0px);
 }
 
 .composer-dock.action-only {
@@ -14366,7 +14416,7 @@ body.right-inspector-resizing .right-inspector {
 .app.has-custom-background .scroll-bottom.hidden {
   pointer-events: none;
   opacity: 0;
-  transform: translateX(-50%) translateY(6px);
+  transform: translateY(6px);
 }
 
 .app.has-custom-background .scroll-bottom::before {
@@ -16650,6 +16700,17 @@ body.right-inspector-resizing .right-inspector {
     color: var(--text-soft);
     -webkit-text-fill-color: var(--text-soft);
   }
+
+  /* These spinners communicate live execution state rather than decoration.
+     Keep a slower, steady rotation when the OS reduces motion so they do not
+     become indistinguishable from a stalled task. */
+  .assistant-thinking-process svg,
+  .processing-context-tab > svg {
+    animation-name: cardbush-spin !important;
+    animation-duration: 1.8s !important;
+    animation-timing-function: linear !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 .modal-backdrop {
@@ -17452,13 +17513,13 @@ body.right-inspector-resizing .right-inspector {
     flex-basis: var(--sidebar-width);
   }
 
-  .message-list [data-testid="virtuoso-item-list"] {
+  .message-list-content {
     padding: 16px 12px 0;
   }
 
   .message-list-footer {
     height: calc(
-      var(--composer-dock-height, 0px) +
+      var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) +
       var(--stream-status-height, 0px) +
       20px
     );

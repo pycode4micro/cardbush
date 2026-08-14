@@ -344,7 +344,7 @@ export function useCardbushChat(
       setMessagesLoading(true);
       try {
         const [result, workspaceChanges] = await Promise.all([
-          fetchSessionMessages(activeConversationId),
+          fetchSessionMessages(activeConversationId, { includeSuperseded: true }),
           requestContext.workspaceChangesAvailable === true
             ? fetchSessionWorkspaceChanges(activeConversationId).catch(() => [])
             : Promise.resolve([]),
@@ -589,7 +589,7 @@ export function useCardbushChat(
     }
     try {
       const [result, workspaceChanges] = await Promise.all([
-        fetchSessionMessages(sessionId),
+        fetchSessionMessages(sessionId, { includeSuperseded: true }),
         requestContext.workspaceChangesAvailable === true
           ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
           : Promise.resolve([]),
@@ -1002,7 +1002,9 @@ export function useCardbushChat(
           await finalSnapshotPromise;
         }
         await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
-        const loadedMessages = await fetchMessages(sessionId).catch(() => null);
+        const loadedMessages = await fetchMessages(sessionId, {
+          includeSuperseded: true,
+        }).catch(() => null);
         if (loadedMessages && loadedMessages.length > 0) {
           setMessagesByConversation((current) => ({
             ...current,
@@ -1026,7 +1028,9 @@ export function useCardbushChat(
             return;
           }
           const turnId = activeTurnIdsRef.current[sessionId];
-          const loadedMessages = await fetchMessages(sessionId).catch(() => null);
+          const loadedMessages = await fetchMessages(sessionId, {
+            includeSuperseded: true,
+          }).catch(() => null);
           if (loadedMessages && loadedMessages.length > 0) {
             setMessagesByConversation((current) => ({
               ...current,
@@ -1301,7 +1305,9 @@ export function useCardbushChat(
         }
 
         await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
-        const loadedMessages = await fetchMessages(sessionId).catch(() => finalSnapshot);
+        const loadedMessages = await fetchMessages(sessionId, {
+          includeSuperseded: true,
+        }).catch(() => finalSnapshot);
         if (loadedMessages && loadedMessages.length > 0) {
           setMessagesByConversation((current) => ({
             ...current,
@@ -1367,7 +1373,9 @@ export function useCardbushChat(
       let messageId = persistedChatMessageId(sourceUserMessage);
       let refreshFailed = false;
       if (!messageId) {
-        const loadedMessages = await fetchMessages(conversationId).catch((caught) => {
+        const loadedMessages = await fetchMessages(conversationId, {
+          includeSuperseded: true,
+        }).catch((caught) => {
           refreshFailed = true;
           setError(`刷新会话消息失败: ${errorMessage(caught)}`);
           return [] as ChatMessage[];
@@ -1520,7 +1528,9 @@ export function useCardbushChat(
       let messageId = persistedChatMessageId(editSourceMessage);
       let refreshFailed = false;
       if (!messageId) {
-        const loadedMessages = await fetchMessages(conversationId).catch((caught) => {
+        const loadedMessages = await fetchMessages(conversationId, {
+          includeSuperseded: true,
+        }).catch((caught) => {
           refreshFailed = true;
           setError(`刷新会话消息失败: ${errorMessage(caught)}`);
           return [] as ChatMessage[];
@@ -3808,10 +3818,102 @@ function preserveLocalAssistantTimingMetadata(
 }
 
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  if (isStableVisibleTranscript(messages)) {
+  const hasIntermediateSegments = hasIntermediateAssistantSegments(messages);
+  if (isStableVisibleTranscript(messages) && !hasIntermediateSegments) {
     return messages;
   }
-  return dedupeVisibleTranscriptMessages(collapseLoopTranscriptMessages(messages));
+  return dedupeVisibleTranscriptMessages(
+    collapseIntermediateAssistantSegments(
+      collapseLoopTranscriptMessages(messages),
+    ),
+  );
+}
+
+function hasIntermediateAssistantSegments(messages: ChatMessage[]) {
+  const finalByTurn = finalAssistantSegmentsByTurn(messages);
+  return messages.some((message) => {
+    const final = finalByTurn.get(turnTranscriptKey(message));
+    return Boolean(final && shouldArchiveAssistantSegment(message, final));
+  });
+}
+
+function collapseIntermediateAssistantSegments(messages: ChatMessage[]) {
+  const finalByTurn = finalAssistantSegmentsByTurn(messages);
+  if (finalByTurn.size === 0) {
+    return messages;
+  }
+  const historyByFinalId = new Map<string, ChatMessage[]>();
+  const visible: ChatMessage[] = [];
+  for (const message of messages) {
+    const final = finalByTurn.get(turnTranscriptKey(message));
+    if (!final || !shouldArchiveAssistantSegment(message, final)) {
+      visible.push(message);
+      continue;
+    }
+    historyByFinalId.set(final.id, [
+      ...(historyByFinalId.get(final.id) ?? []),
+      snapshotLoopHistoryMessage(message),
+    ]);
+  }
+  return visible.map((message) => {
+    const history = historyByFinalId.get(message.id);
+    if (!history?.length) {
+      return message;
+    }
+    return {
+      ...message,
+      loopHistory: mergeLoopHistoryMessages(message.loopHistory ?? [], history),
+    };
+  });
+}
+
+function finalAssistantSegmentsByTurn(messages: ChatMessage[]) {
+  const byTurn = new Map<string, ChatMessage>();
+  for (const message of messages) {
+    if (message.role !== 'assistant' || !isAssistantFinalTranscript(message)) {
+      continue;
+    }
+    const turnKey = turnTranscriptKey(message);
+    const current = byTurn.get(turnKey);
+    if (!current || compareAssistantSegments(current, message) <= 0) {
+      byTurn.set(turnKey, message);
+    }
+  }
+  return byTurn;
+}
+
+function shouldArchiveAssistantSegment(
+  message: ChatMessage,
+  final: ChatMessage,
+) {
+  if (message.role !== 'assistant' || message.id === final.id) {
+    return false;
+  }
+  if (turnTranscriptKey(message) !== turnTranscriptKey(final)) {
+    return false;
+  }
+  // Older histories do not always carry transcript_kind or
+  // assistant_segment_index. Once a later final assistant message exists for
+  // the same turn, every other assistant message in that turn is process
+  // history. Segment metadata remains useful for ordering, but must not decide
+  // whether the process text is left outside the “processed” disclosure.
+  return true;
+}
+
+function compareAssistantSegments(left: ChatMessage, right: ChatMessage) {
+  const leftSegment = assistantSegmentIndex(left);
+  const rightSegment = assistantSegmentIndex(right);
+  if (leftSegment != null && rightSegment != null && leftSegment !== rightSegment) {
+    return leftSegment - rightSegment;
+  }
+  return compareTranscriptOrder(left, right);
+}
+
+function assistantSegmentIndex(message: ChatMessage) {
+  return optionalFiniteNumber(
+    message.metadata?.assistant_segment_index ??
+      message.metadata?.assistantSegmentIndex,
+  );
 }
 
 function isStableVisibleTranscript(messages: ChatMessage[]) {

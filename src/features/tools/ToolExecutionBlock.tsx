@@ -1,5 +1,5 @@
 import { Check, ChevronDown, Clipboard, LoaderCircle, Network, Play, RefreshCw, Sparkles, Terminal, WrapText } from 'lucide-react';
-import { useCallback, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
 import { dispatchSubagent, type SubagentDispatchResult } from '../../backend/api';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
@@ -18,6 +18,12 @@ import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
 import { displayToolName, isToolRunning, isToolRunningInContext, runningToolLabel, compareToolExecutionOrder } from './toolExecutionState';
+import {
+  defaultToolExecutionExpanded,
+  readToolExecutionDisclosure,
+  toolExecutionDisclosureId,
+  writeToolExecutionDisclosure,
+} from './toolExecutionDisclosure';
 import { toolChangeReportFromExecutions, type ConversationChangeReport } from './toolChangeReports';
 import { compactToolOutput, toolDisplayOutput, toolOutputNeedsCollapse } from './toolOutput';
 import { asRecord } from './toolPayload';
@@ -39,7 +45,15 @@ export function ToolExecutionBlock({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const disclosureId = useMemo(
+    () => toolExecutionDisclosureId(message, executions),
+    [executions, message],
+  );
+  const storedDisclosure = () =>
+    readToolExecutionDisclosure(browserStorage(), disclosureId);
+  const [expanded, setExpanded] = useState(() =>
+    defaultToolExecutionExpanded(active, storedDisclosure()),
+  );
   const blockRef = useRef<HTMLDivElement>(null);
   const running = executions.some((execution) => isToolRunningInContext(execution, active));
   const failedCount = executions.filter((execution) =>
@@ -47,20 +61,30 @@ export function ToolExecutionBlock({
   ).length;
   const tone = running ? 'neutral' : toolExecutionToneInContext(executions, active);
   const changeReport = toolChangeReportFromExecutions(executions);
+  const messageChangeReport: ConversationChangeReport | null = changeReport
+    ? {
+        ...changeReport,
+        id: `${message.id}:${message.turnId ?? ''}`,
+        messageId: message.id,
+        turnId: message.turnId,
+        createdAt: message.createdAt,
+      }
+    : null;
+  useEffect(() => {
+    setExpanded(defaultToolExecutionExpanded(active, storedDisclosure()));
+  }, [active, disclosureId]);
+
   const toggleExpanded = useCallback(() => {
     preserveScrollPositionForToggle(blockRef.current, () => {
-      setExpanded((value) => !value);
+      setExpanded((value) => {
+        const next = !value;
+        writeToolExecutionDisclosure(browserStorage(), disclosureId, next);
+        return next;
+      });
     });
-  }, []);
+  }, [disclosureId]);
 
-  if (changeReport) {
-    const messageChangeReport: ConversationChangeReport = {
-      ...changeReport,
-      id: `${message.id}:${message.turnId ?? ''}`,
-      messageId: message.id,
-      turnId: message.turnId,
-      createdAt: message.createdAt,
-    };
+  if (messageChangeReport) {
     return (
       <ToolChangeBlock
         report={messageChangeReport}
@@ -72,7 +96,7 @@ export function ToolExecutionBlock({
     );
   }
 
-  const summary = running
+  const runSummary = running
     ? runningToolLabel(executions, language)
     : failedCount > 0
       ? language === 'zh'
@@ -81,6 +105,12 @@ export function ToolExecutionBlock({
       : language === 'zh'
         ? `已运行 ${executions.length} 条命令`
         : `Ran ${executions.length} tools`;
+  const historySummary = !active && !running
+    ? language === 'zh'
+      ? `历史执行记录 · ${runSummary}`
+      : `Execution history · ${runSummary}`
+    : runSummary;
+  const summary = historySummary;
 
   return (
     <div
@@ -112,6 +142,14 @@ export function ToolExecutionBlock({
       )}
     </div>
   );
+}
+
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 function isSubagentDispatchRejectionExecution(execution: ChatToolExecution) {

@@ -512,6 +512,7 @@ export function ChatSidebar({
         <SectionHeader
           title={language === 'zh' ? '项目' : 'Projects'}
           action={<FolderOpen size={14} />}
+          actionLabel={language === 'zh' ? '添加项目' : 'Add project'}
           expanded={expandedSections.has('projects')}
           onToggle={() => toggleSection('projects')}
           onAction={onAddProject}
@@ -588,6 +589,7 @@ export function ChatSidebar({
           <SectionHeader
             title={language === 'zh' ? '对话' : 'Conversations'}
             action={<MoreHorizontal size={14} />}
+            actionLabel={language === 'zh' ? '对话操作' : 'Conversation actions'}
             expanded={expandedSections.has('conversations')}
             onToggle={() => toggleSection('conversations')}
             onAction={() =>
@@ -734,6 +736,7 @@ function NavRow({
 function SectionHeader({
   title,
   action,
+  actionLabel,
   expanded = true,
   onToggle,
   onAction,
@@ -741,6 +744,7 @@ function SectionHeader({
 }: {
   title: string;
   action: React.ReactNode;
+  actionLabel: string;
   expanded?: boolean;
   onToggle?: () => void;
   onAction?: () => void;
@@ -773,10 +777,14 @@ function SectionHeader({
         className="section-action"
         data-sidebar-menu-trigger="true"
         type="button"
+        aria-label={actionLabel}
+        title={actionLabel}
         onClick={(event) => {
           event.stopPropagation();
           onAction?.();
+          event.currentTarget.blur();
         }}
+        onKeyDown={(event) => event.stopPropagation()}
         disabled={!onAction}
       >
         {action}
@@ -1037,11 +1045,14 @@ function ConversationRow({
         className="conversation-more"
         data-sidebar-menu-trigger="true"
         type="button"
-        aria-label="conversation options"
+        aria-label={language === 'zh' ? '对话操作' : 'Conversation options'}
+        title={language === 'zh' ? '对话操作' : 'Conversation options'}
         onClick={(event) => {
           event.stopPropagation();
           onMenuToggle();
+          event.currentTarget.blur();
         }}
+        onKeyDown={(event) => event.stopPropagation()}
         onContextMenu={(event) => {
           event.stopPropagation();
           onContextMenu?.(event, menuOptions);

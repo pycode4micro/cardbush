@@ -65,9 +65,9 @@ export function visualBottomScrollTop(
   _composerDockHeight: number,
   _streamStatusHeight: number,
 ) {
-  // The Virtuoso footer already reserves the composer/status gap. Keeping a
-  // second "visual bottom" above the real scroll bottom makes wheel and
-  // follow-state guards fight each other near the tail.
+  // The footer reserves the composer/status gap inside the native list.
+  // Keeping a second "visual bottom" above the real scroll bottom would make
+  // wheel and follow-state guards fight each other near the tail.
   return absoluteBottomScrollTop(scroller);
 }
 

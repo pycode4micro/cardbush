@@ -62,6 +62,12 @@ import {
   type ConversationChangeReport,
 } from '../tools';
 import { asRecord } from '../tools/toolPayload';
+import {
+  assistantMessageDisclosureId,
+  defaultToolExecutionExpanded,
+  readToolExecutionDisclosure,
+  writeToolExecutionDisclosure,
+} from '../tools/toolExecutionDisclosure';
 
 export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
 
@@ -119,63 +125,63 @@ const LazyMarkdownContent = lazy(async () => {
     workspaceRoot: string;
   }) {
     return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ href, children, ...props }) => {
-            const directReference = href
-              ? localFileReference(href, workspaceRoot)
-              : null;
-            const localPath = href
-              ? localFileReferenceFromHref(href) || directReference?.path || ''
-              : '';
-            if (localPath) {
-              return (
-                <LocalFileReferenceLink path={localPath}>
-                  {children}
-                </LocalFileReferenceLink>
-              );
-            }
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children, ...props }) => {
+          const directReference = href
+            ? localFileReference(href, workspaceRoot)
+            : null;
+          const localPath = href
+            ? localFileReferenceFromHref(href) || directReference?.path || ''
+            : '';
+          if (localPath) {
             return (
-              <a
-                {...props}
-                href={href}
-                onClick={(event) => {
-                  if (!href || href.startsWith('#')) {
-                    return;
-                  }
-                  event.preventDefault();
-                  openInspector(href, href);
-                }}
-              >
+              <LocalFileReferenceLink path={localPath}>
                 {children}
-              </a>
+              </LocalFileReferenceLink>
             );
-          },
-          code: ({ children, className, ...props }) => {
-            const text = reactNodeText(children).trim();
-            const reference = !className
-              ? localFileReference(text, workspaceRoot)
-              : null;
-            if (reference) {
-              return (
-                <LocalFileReferenceLink path={reference.path}>
-                  {reference.label}
-                </LocalFileReferenceLink>
-              );
-            }
-            return <code {...props} className={className}>{children}</code>;
-          },
-          pre: ({ children, ...props }) => (
-            <MarkdownCodeBlock {...props}>{children}</MarkdownCodeBlock>
-          ),
-        }}
-      >
-        {linkifyLocalFileReferences(
-          normalizeMarkdownContentForDisplay(content),
-          workspaceRoot,
-        )}
-      </ReactMarkdown>
+          }
+          return (
+            <a
+              {...props}
+              href={href}
+              onClick={(event) => {
+                if (!href || href.startsWith('#')) {
+                  return;
+                }
+                event.preventDefault();
+                openInspector(href, href);
+              }}
+            >
+              {children}
+            </a>
+          );
+        },
+        code: ({ children, className, ...props }) => {
+          const text = reactNodeText(children).trim();
+          const reference = !className
+            ? localFileReference(text, workspaceRoot)
+            : null;
+          if (reference) {
+            return (
+              <LocalFileReferenceLink path={reference.path}>
+                {reference.label}
+              </LocalFileReferenceLink>
+            );
+          }
+          return <code {...props} className={className}>{children}</code>;
+        },
+        pre: ({ children, ...props }) => (
+          <MarkdownCodeBlock {...props}>{children}</MarkdownCodeBlock>
+        ),
+      }}
+    >
+      {linkifyLocalFileReferences(
+        normalizeMarkdownContentForDisplay(content),
+        workspaceRoot,
+      )}
+    </ReactMarkdown>
     );
   }
 
@@ -500,6 +506,9 @@ function MessageBubbleView({
   const archiveTaskPlanInHistory = Boolean(
     taskPlan && !taskPlan.active && visibleLoopHistory.length > 0,
   );
+  const finalAssistantRound =
+    !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
+  const hookSummary = agentHookSummaryFromMessage(message);
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
@@ -507,16 +516,107 @@ function MessageBubbleView({
       taskPlan ||
       renderActiveTranscript ||
       visibleLoopHistory.length > 0 ||
-      agentHookSummaryFromMessage(message),
+      hookSummary,
   );
   if (!showAssistantProgress && !hasAssistantBody) {
     return null;
   }
+  const assistantBody = (
+    <>
+      <AgentHookSummaryBadge message={message} language={language} />
+      {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
+      {renderActiveTranscript ? (
+        <AssistantActiveTranscript
+          messages={activeTranscriptMessages}
+          language={language}
+          active={isActiveAssistantTurn}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      ) : toolExecutions.length > 0 ? (
+        <AssistantMessageContent
+          content={text}
+          executions={toolExecutions}
+          language={language}
+          message={message}
+          active={isActiveAssistantTurn}
+          showThinkingPlaceholder={isActiveAssistantTurn}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      ) : text ? (
+        <>
+          <MarkdownContent content={text} />
+          {isActiveAssistantTurn && (
+            <AssistantThinkingProcessLine language={language} />
+          )}
+        </>
+      ) : isActiveAssistantTurn ? (
+        <AssistantThinkingProcessLine language={language} />
+      ) : null}
+      {visibleLoopHistory.length > 0 && (
+        <AssistantLoopHistoryBlock
+          history={visibleLoopHistory}
+          archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
+          language={language}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      )}
+      {taskPlan && !archiveTaskPlanInHistory && (
+        <TaskPlanBlock plan={taskPlan} language={language} />
+      )}
+    </>
+  );
+  const finalProcessBody = (
+    <>
+      <AgentHookSummaryBadge message={message} language={language} />
+      {toolExecutions.length > 0 && (
+        <AssistantMessageContent
+          content=""
+          executions={toolExecutions}
+          language={language}
+          message={message}
+          active={false}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      )}
+      {visibleLoopHistory.length > 0 && (
+        <AssistantLoopHistoryBlock
+          history={visibleLoopHistory}
+          archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
+          language={language}
+          onRevertChangeReport={onRevertChangeReport}
+          onOpenScene={onOpenScene}
+        />
+      )}
+      {taskPlan && !archiveTaskPlanInHistory && (
+        <TaskPlanBlock plan={taskPlan} language={language} />
+      )}
+    </>
+  );
+  const hasFinalProcessBody = Boolean(
+    hookSummary ||
+      toolExecutions.length > 0 ||
+      visibleLoopHistory.length > 0 ||
+      taskPlan,
+  );
+  const finalAnswerBody = (
+    <>
+      <MessageImageStrip paths={imagePaths} />
+      {text && (
+        <MarkdownContent
+          content={assistantTextWithoutToolNarration(text, toolExecutions)}
+        />
+      )}
+    </>
+  );
   return (
     <>
       <div className="message-row assistant">
         <div className="assistant-bubble">
-          {showAssistantProgress && (
+          {showAssistantProgress && isActiveAssistantTurn && (
             <AssistantRunHeader
               executions={assistantProgressExecutions}
               isActive={isActiveAssistantTurn}
@@ -524,39 +624,37 @@ function MessageBubbleView({
               language={language}
             />
           )}
-          <AgentHookSummaryBadge message={message} language={language} />
-          {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
-          {renderActiveTranscript ? (
-            <AssistantActiveTranscript
-              messages={activeTranscriptMessages}
-              language={language}
-              active={isActiveAssistantTurn}
-              onRevertChangeReport={onRevertChangeReport}
-              onOpenScene={onOpenScene}
-            />
-          ) : toolExecutions.length > 0 ? (
-            <AssistantMessageContent
-              content={text}
-              executions={toolExecutions}
-              language={language}
-              message={message}
-              active={isActiveAssistantTurn}
-              showThinkingPlaceholder={isActiveAssistantTurn}
-              onRevertChangeReport={onRevertChangeReport}
-              onOpenScene={onOpenScene}
-            />
-          ) : text ? (
+          {isActiveAssistantTurn ? (
+            assistantBody
+          ) : finalAssistantRound ? (
             <>
-              <MarkdownContent content={text} />
-              {isActiveAssistantTurn && (
-                <AssistantThinkingProcessLine language={language} />
-              )}
+              {showAssistantProgress &&
+                (hasFinalProcessBody ? (
+                  <AssistantCompletedDisclosure
+                    executions={assistantProgressExecutions}
+                    message={message}
+                    language={language}
+                  >
+                    {finalProcessBody}
+                  </AssistantCompletedDisclosure>
+                ) : (
+                  <AssistantRunHeader
+                    executions={assistantProgressExecutions}
+                    isActive={false}
+                    message={message}
+                    language={language}
+                  />
+                ))}
+              {finalAnswerBody}
             </>
-          ) : isActiveAssistantTurn ? (
-            <AssistantThinkingProcessLine language={language} />
-          ) : null}
-          {taskPlan && !archiveTaskPlanInHistory && (
-            <TaskPlanBlock plan={taskPlan} language={language} />
+          ) : (
+            <AssistantCompletedDisclosure
+              executions={assistantProgressExecutions}
+              message={message}
+              language={language}
+            >
+              {assistantBody}
+            </AssistantCompletedDisclosure>
           )}
         </div>
         <div className="message-actions">
@@ -811,6 +909,15 @@ function AssistantMessageContent({
   );
 }
 
+function assistantTextWithoutToolNarration(
+  content: string,
+  executions: ChatToolExecution[],
+) {
+  return executions.some(hasExplicitToolContentOffset)
+    ? content
+    : normalizeExecutionNarrationForDisplay(content, executions.length);
+}
+
 function AssistantThinkingProcessLine({ language }: { language: AppLanguage }) {
   return (
     <div className="assistant-thinking-process">
@@ -975,10 +1082,82 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
   return (
     <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
       <span className="assistant-run-label">{label}</span>
-      <div />
+      <div className="assistant-run-divider" />
     </div>
   );
 });
+
+function AssistantCompletedDisclosure({
+  executions,
+  message,
+  language,
+  children,
+}: {
+  executions: ChatToolExecution[];
+  message: ChatMessage;
+  language: AppLanguage;
+  children: ReactNode;
+}) {
+  const disclosureId = assistantMessageDisclosureId(message);
+  const [expanded, setExpanded] = useState(() =>
+    defaultToolExecutionExpanded(
+      false,
+      readToolExecutionDisclosure(browserStorage(), disclosureId),
+    ),
+  );
+  const blockRef = useRef<HTMLDivElement>(null);
+  const label = assistantProgressLabel({
+    executions,
+    isActive: false,
+    message,
+    now: Date.now(),
+    language,
+  });
+
+  useEffect(() => {
+    setExpanded(
+      defaultToolExecutionExpanded(
+        false,
+        readToolExecutionDisclosure(browserStorage(), disclosureId),
+      ),
+    );
+  }, [disclosureId]);
+
+  const toggleExpanded = useCallback(() => {
+    const opening = !expanded;
+    preserveScrollPositionForToggle(blockRef.current, () => {
+      writeToolExecutionDisclosure(browserStorage(), disclosureId, opening);
+      setExpanded(opening);
+    });
+  }, [disclosureId, expanded]);
+
+  return (
+    <div
+      ref={blockRef}
+      className={`assistant-completed-disclosure ${expanded ? 'expanded' : ''}`}
+    >
+      <button
+        type="button"
+        className="assistant-completed-summary"
+        aria-expanded={expanded}
+        onClick={toggleExpanded}
+      >
+        <span>{label}</span>
+        <i className="assistant-run-divider" />
+        <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
+      </button>
+      {expanded && <div className="assistant-completed-content">{children}</div>}
+    </div>
+  );
+}
+
+function browserStorage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 function assistantProgressLabel({
   executions,
@@ -1288,8 +1467,6 @@ export function AssistantLoopHistoryBlock({
   ) => Promise<void>;
   onOpenScene?: (scene: CardlingScene) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const blockRef = useRef<HTMLDivElement>(null);
   const visibleHistory = history.filter(hasVisibleLoopHistoryMessage);
   const toolCount = visibleHistory.reduce(
     (total, item) => total + (item.toolExecutions?.length ?? 0),
@@ -1299,57 +1476,35 @@ export function AssistantLoopHistoryBlock({
     language === 'zh'
       ? `历史执行 ${visibleHistory.length} 条${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}`
       : `Loop history ${visibleHistory.length}${toolCount > 0 ? ` · ${toolCount} tools` : ''}`;
-  const toggleExpanded = useCallback(() => {
-    preserveScrollPositionForToggle(blockRef.current, () => {
-      setExpanded((value) => !value);
-    });
-  }, []);
 
   if (visibleHistory.length === 0) {
     return null;
   }
 
   return (
-    <div
-      ref={blockRef}
-      className={`assistant-loop-history ${expanded ? 'expanded' : ''}`}
-      data-testid="assistant-loop-history"
-    >
-      <button
-        className="assistant-loop-history-summary"
-        type="button"
-        aria-expanded={expanded}
-        data-testid="assistant-loop-history-toggle"
-        onClick={toggleExpanded}
-      >
+    <div className="assistant-loop-history">
+      <div className="assistant-loop-history-summary">
         <Clock3 size={15} />
         <span>{summary}</span>
-        <em>{expanded ? (language === 'zh' ? '收起' : 'Hide') : language === 'zh' ? '展开' : 'Show'}</em>
-        <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
-      </button>
-      {expanded && (
-        <div
-          className="assistant-loop-history-details"
-          data-testid="assistant-loop-history-details"
-        >
-          {archivedPlan && (
-            <div className="assistant-loop-history-plan">
-              <TaskPlanBlock plan={archivedPlan} language={language} />
-            </div>
-          )}
-          {visibleHistory.map((historyMessage, index) => (
-            <AssistantLoopHistoryItem
-              // eslint-disable-next-line react/no-array-index-key
-              key={`${historyMessage.id}-${index}`}
-              index={index}
-              message={historyMessage}
-              language={language}
-              onRevertChangeReport={onRevertChangeReport}
-              onOpenScene={onOpenScene}
-            />
-          ))}
-        </div>
-      )}
+      </div>
+      <div className="assistant-loop-history-details">
+        {archivedPlan && (
+          <div className="assistant-loop-history-plan">
+            <TaskPlanBlock plan={archivedPlan} language={language} />
+          </div>
+        )}
+        {visibleHistory.map((historyMessage, index) => (
+          <AssistantLoopHistoryItem
+            // eslint-disable-next-line react/no-array-index-key
+            key={`${historyMessage.id}-${index}`}
+            index={index}
+            message={historyMessage}
+            language={language}
+            onRevertChangeReport={onRevertChangeReport}
+            onOpenScene={onOpenScene}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -12,7 +12,7 @@ export function preserveScrollPositionForToggle(
   const messageItem = element.closest('[data-message-id]') as HTMLElement | null;
   const anchorElement =
     (element.querySelector(
-      '.tool-execution-summary, .tool-change-header, .assistant-loop-history-summary',
+      '.assistant-completed-summary, .tool-execution-summary, .tool-change-header, .assistant-loop-history-summary',
     ) as HTMLElement | null) ?? element;
   const scrollerRect = scroller?.getBoundingClientRect();
   const beforeTop = anchorElement.getBoundingClientRect().top;
@@ -28,58 +28,47 @@ export function preserveScrollPositionForToggle(
   if (!scroller) {
     return;
   }
-  let frame = 0;
-  let maxDelta = 0;
-  let finalDelta = 0;
-  const restore = () => {
-    const target = anchorElement.isConnected
-      ? anchorElement
-      : element.isConnected
-        ? element
-        : null;
-    if (!target) {
-      scroller.style.overflowAnchor = previousOverflowAnchor;
-      delete scroller.dataset.cardbushPreserveScroll;
-      return;
-    }
-    const nextScrollerRect = scroller.getBoundingClientRect();
-    const nextTop = target.getBoundingClientRect().top;
-    const nextOffset = nextTop - nextScrollerRect.top;
-    const delta = nextOffset - beforeOffset;
-    maxDelta = Math.max(maxDelta, Math.abs(delta));
-    finalDelta = delta;
-    if (Math.abs(delta) > 0.5) {
-      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-      const nextScrollTop = Math.max(
-        0,
-        Math.min(maxScrollTop, scroller.scrollTop + delta),
-      );
-      scroller.scrollTop = nextScrollTop;
-    }
-    frame += 1;
-    if (frame < 12) {
-      window.requestAnimationFrame(restore);
-      return;
-    }
+  const target = anchorElement.isConnected
+    ? anchorElement
+    : element.isConnected
+      ? element
+      : null;
+  if (!target) {
     scroller.style.overflowAnchor = previousOverflowAnchor;
     delete scroller.dataset.cardbushPreserveScroll;
-    if (maxDelta > 24) {
-      const nextMessageTop = messageItem?.getBoundingClientRect().top ?? nextTop;
-      void window.cardbushDesktop
-        ?.writeDebugLog?.('scroll', {
-          label: 'toggle-anchor-restore',
-          beforeScrollTop: Math.round(beforeScrollTop),
-          afterScrollTop: Math.round(scroller.scrollTop),
-          beforeTop: Math.round(beforeTop),
-          beforeOffset: Math.round(beforeOffset),
-          beforeMessageTop: Math.round(beforeMessageTop),
-          nextMessageTop: Math.round(nextMessageTop),
-          finalDelta: Math.round(finalDelta),
-          maxDelta: Math.round(maxDelta),
-          frames: frame,
-        })
-        .catch(() => undefined);
-    }
-  };
-  restore();
+    return;
+  }
+  const nextScrollerRect = scroller.getBoundingClientRect();
+  const nextTop = target.getBoundingClientRect().top;
+  const nextOffset = nextTop - nextScrollerRect.top;
+  const delta = nextOffset - beforeOffset;
+  if (Math.abs(delta) > 0.5) {
+    const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    scroller.scrollTop = Math.max(
+      0,
+      Math.min(maxScrollTop, scroller.scrollTop + delta),
+    );
+  }
+  const nextMessageTop = messageItem?.getBoundingClientRect().top ?? nextTop;
+  if (Math.abs(delta) > 24) {
+    void window.cardbushDesktop
+      ?.writeDebugLog?.('scroll', {
+        label: 'toggle-anchor-restore',
+        beforeScrollTop: Math.round(beforeScrollTop),
+        afterScrollTop: Math.round(scroller.scrollTop),
+        beforeTop: Math.round(beforeTop),
+        beforeOffset: Math.round(beforeOffset),
+        beforeMessageTop: Math.round(beforeMessageTop),
+        nextMessageTop: Math.round(nextMessageTop),
+        finalDelta: Math.round(delta),
+        frames: 0,
+      })
+      .catch(() => undefined);
+  }
+  // Keep observers from interpreting the synchronous correction as user input,
+  // but never write the scroll position again on later frames.
+  window.requestAnimationFrame(() => {
+    scroller.style.overflowAnchor = previousOverflowAnchor;
+    delete scroller.dataset.cardbushPreserveScroll;
+  });
 }
