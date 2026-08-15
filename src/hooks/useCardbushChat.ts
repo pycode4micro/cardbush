@@ -7,6 +7,8 @@ import {
   deleteConversationApi,
   editMessage,
   fetchConversations,
+  fetchExperimentalGoalA2AStatus,
+  fetchExperimentalGoals,
   fetchMessages,
   fetchPendingInteraction,
   fetchSessionContextWindowUsage,
@@ -23,8 +25,11 @@ import {
   stopTurn,
   streamChat,
   updateConversation,
+  updateExperimentalGoal,
   type SceneStreamEvent,
   type TeamWorkflowStreamEvent,
+  type ExperimentalGoal,
+  type SessionLatestTurn,
 } from '../backend/api';
 import type {
   AssistantRevision,
@@ -41,7 +46,6 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
-  CapabilityCandidatesUpdate,
   TerminalRuntime,
   TeamFlowActionType,
   TeamFlowActionOption,
@@ -54,6 +58,11 @@ import type {
 } from '../types';
 import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
+import {
+  applyGoalToolUpdate,
+  goalToolUpdateFromExecution,
+  isGoalSelfCheckMessage,
+} from '../shared/goalState';
 
 export type QueuedChatMessage = {
   id: string;
@@ -105,8 +114,16 @@ export function useCardbushChat(
   >({});
   const [contextWindowUsageByConversation, setContextWindowUsageByConversation] =
     useState<Record<string, RuntimeContextWindowUsage>>({});
-  const [capabilityCandidatesByConversation, setCapabilityCandidatesByConversation] =
-    useState<Record<string, CapabilityCandidatesUpdate>>({});
+  const [goalByConversation, setGoalByConversation] = useState<
+    Record<string, ExperimentalGoal | null>
+  >({});
+  const [goalAvailable, setGoalAvailable] = useState(false);
+  const [goalLatestTurnByConversation, setGoalLatestTurnByConversation] = useState<
+    Record<string, SessionLatestTurn | undefined>
+  >({});
+  const [goalCancellingByConversation, setGoalCancellingByConversation] = useState<
+    Record<string, boolean>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingInteraction, setPendingInteraction] =
@@ -427,9 +444,80 @@ export function useCardbushChat(
   const activeContextWindowUsage = activeConversationId
     ? contextWindowUsageByConversation[activeConversationId]
     : undefined;
-  const activeCapabilityCandidates = activeConversationId
-    ? capabilityCandidatesByConversation[activeConversationId]
+  const activeGoal = activeConversationId
+    ? goalByConversation[activeConversationId] ?? null
+    : null;
+  const activeGoalCancelling = activeConversationId
+    ? goalCancellingByConversation[activeConversationId] === true
+    : false;
+  const activeGoalLatestTurn = activeConversationId
+    ? goalLatestTurnByConversation[activeConversationId]
     : undefined;
+  const activeGoalWaiting =
+    activeGoal?.status === 'active' &&
+    !sending &&
+    (!activeGoalLatestTurn || !isRunningSessionTurn(activeGoalLatestTurn));
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchExperimentalGoalA2AStatus()
+      .then((status) => {
+        if (!cancelled) {
+          setGoalAvailable(status.enabled === true);
+          if (status.enabled !== true) {
+            setGoalByConversation({});
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setGoalAvailable(false);
+          setGoalByConversation({});
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const refreshGoal = useCallback(async (sessionId: string) => {
+    const normalized = sessionId.trim();
+    if (!normalized || !goalAvailable) {
+      return null;
+    }
+    try {
+      const goals = await fetchExperimentalGoals(normalized);
+      const current = currentExperimentalGoal(goals) ?? null;
+      setGoalByConversation((state) => ({ ...state, [normalized]: current }));
+      return current;
+    } catch {
+      // Preserve the last confirmed state across transient sidecar failures.
+      return null;
+    }
+  }, [goalAvailable]);
+
+  const applyGoalExecution = useCallback((
+    sessionId: string,
+    execution: ChatToolExecution,
+  ) => {
+    const update = goalToolUpdateFromExecution(execution);
+    if (!update) {
+      return;
+    }
+    setGoalByConversation((state) => {
+      const current = state[sessionId];
+      const next = applyGoalToolUpdate(current, update);
+      return next === current ? state : { ...state, [sessionId]: next };
+    });
+  }, []);
+
+  useEffect(() => {
+    const sessionId = activeConversationId.trim();
+    if (!sessionId || !goalAvailable) {
+      return;
+    }
+    void refreshGoal(sessionId);
+  }, [activeConversationId, goalAvailable, refreshGoal]);
 
   const mergeContextWindowUsage = useCallback(
     (sessionId: string, usage: RuntimeContextWindowUsage) => {
@@ -440,20 +528,6 @@ export function useCardbushChat(
       setContextWindowUsageByConversation((current) => ({
         ...current,
         [normalized]: { ...usage, sessionId: normalized },
-      }));
-    },
-    [],
-  );
-
-  const mergeCapabilityCandidates = useCallback(
-    (sessionId: string, update: CapabilityCandidatesUpdate) => {
-      const normalized = (update.sessionId || sessionId).trim();
-      if (!normalized) {
-        return;
-      }
-      setCapabilityCandidatesByConversation((current) => ({
-        ...current,
-        [normalized]: { ...update, sessionId: normalized },
       }));
     },
     [],
@@ -615,6 +689,7 @@ export function useCardbushChat(
           .catch(() => undefined);
       }
       await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
+      await refreshGoal(sessionId);
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
         setError(null);
@@ -634,6 +709,7 @@ export function useCardbushChat(
     activeConversationId,
     loadTeamFlow,
     mergeContextWindowUsage,
+    refreshGoal,
     reloadConversations,
     persistAutoConversationTitle,
     requestContext.contextWindowUsageAvailable,
@@ -683,6 +759,102 @@ export function useCardbushChat(
       cancelled = true;
     };
   }, [activeConversationId]);
+
+  useEffect(() => {
+    const sessionId = activeConversationId.trim();
+    const goalId = activeGoal?.goalId.trim() ?? '';
+    if (
+      !goalAvailable ||
+      !sessionId ||
+      !goalId ||
+      activeGoal?.status !== 'active'
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const schedule = (delay = goalPollingDelayMs()) => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => void poll(), delay);
+    };
+
+    const poll = async () => {
+      try {
+        const [sessionRequest, goalsRequest, interactionRequest] =
+          await Promise.allSettled([
+            fetchSessionMessages(sessionId, { includeSuperseded: true }),
+            fetchExperimentalGoals(sessionId),
+            fetchPendingInteraction(sessionId),
+          ]);
+        if (cancelled) return;
+
+        if (sessionRequest.status === 'fulfilled') {
+          const sessionResult = sessionRequest.value;
+          setMessagesByConversation((current) => ({
+            ...current,
+            [sessionId]: mergePolledMessagesPreservingLocalState(
+              current[sessionId] ?? [],
+              sessionResult.messages,
+            ),
+          }));
+          setGoalLatestTurnByConversation((current) => ({
+            ...current,
+            [sessionId]: sessionResult.latestTurn,
+          }));
+          if (
+            sessionResult.latestTurn &&
+            isRunningSessionTurn(sessionResult.latestTurn)
+          ) {
+            markSessionRunning(sessionId, sessionResult.latestTurn.turnId);
+          } else if (!controllersRef.current[sessionId]) {
+            clearSessionRunning(sessionId);
+          }
+        }
+
+        if (goalsRequest.status === 'fulfilled') {
+          const goals = goalsRequest.value;
+          const latestGoal =
+            goals.find((item) => item.goalId === goalId) ??
+            currentExperimentalGoal(goals) ??
+            null;
+          setGoalByConversation((current) => ({
+            ...current,
+            [sessionId]: latestGoal,
+          }));
+        }
+
+        if (interactionRequest.status === 'fulfilled') {
+          const interaction = interactionRequest.value;
+          setPendingInteraction((current) =>
+            !current || current.sessionId === sessionId ? interaction : current,
+          );
+        }
+      } finally {
+        schedule();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (timer) window.clearTimeout(timer);
+      schedule(document.visibilityState === 'visible' ? 0 : goalPollingDelayMs());
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    schedule(goalPollingDelayMs());
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [
+    activeConversationId,
+    activeGoal?.goalId,
+    activeGoal?.status,
+    clearSessionRunning,
+    goalAvailable,
+    markSessionRunning,
+  ]);
 
   useEffect(() => {
     if (requestContext.teamModeEnabled !== true) {
@@ -838,11 +1010,6 @@ export function useCardbushChat(
       );
       persistAutoConversationTitle(conversation, titleSource);
       markSessionRunning(sessionId);
-      setCapabilityCandidatesByConversation((current) => {
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
       setError(null);
       const controller = new AbortController();
       const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
@@ -881,6 +1048,7 @@ export function useCardbushChat(
           signal: controller.signal,
           onStart: (start) => {
             markSessionRunning(sessionId, start.turnId);
+            void refreshGoal(sessionId);
             setMessagesByConversation((current) =>
               assignTurnToLocalMessages(current, sessionId, start.turnId, [
                 userMessage.id,
@@ -913,6 +1081,10 @@ export function useCardbushChat(
             if (revision.channel && revision.channel !== 'assistant') {
               return;
             }
+            // A revision is a hard assistant-segment boundary. Drain any token
+            // text already received for the prior segment before resetting its
+            // animation buffer, otherwise a short pre-tool sentence can vanish.
+            streamBuffer.flushToolBoundary();
             streamBuffer.reset({
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
@@ -924,15 +1096,13 @@ export function useCardbushChat(
           },
           onToolExecution: (execution) => {
             streamBuffer.flushToolBoundary();
+            applyGoalExecution(sessionId, execution);
             setMessagesByConversation((current) =>
               appendToolExecution(current, sessionId, assistantId, execution),
             );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
-          },
-          onCapabilityCandidates: (update) => {
-            mergeCapabilityCandidates(sessionId, update);
           },
           onTaskPlanUpdate: (update) => {
             setMessagesByConversation((current) =>
@@ -1014,6 +1184,7 @@ export function useCardbushChat(
             ),
           }));
         }
+        await refreshGoal(sessionId);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (!controller.signal.aborted) {
@@ -1064,16 +1235,17 @@ export function useCardbushChat(
     },
     [
       activeConversation,
+      applyGoalExecution,
       clearSessionRunning,
       dequeueMessageForConversation,
       enqueueMessage,
       isSessionSending,
       loadTeamFlow,
       markSessionRunning,
-      mergeCapabilityCandidates,
       mergeTeamFlowStreamEvent,
       mergeContextWindowUsage,
       reloadConversations,
+      refreshGoal,
       managedModelConfigs,
       messagesByConversation,
       persistAutoConversationTitle,
@@ -1124,7 +1296,6 @@ export function useCardbushChat(
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
           onContextWindowUsage: (usage: RuntimeContextWindowUsage) => void;
-          onCapabilityCandidates: (update: CapabilityCandidatesUpdate) => void;
           onTaskPlanUpdate: (update: TaskPlanStreamUpdate) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
           onFinalAssistantText: (text: string, chunk: AssistantStreamChunk) => void;
@@ -1149,11 +1320,6 @@ export function useCardbushChat(
       let finalSnapshotPromise: Promise<void> | null = null;
       controllersRef.current[sessionId] = controller;
       markSessionRunning(sessionId);
-      setCapabilityCandidatesByConversation((current) => {
-        const next = { ...current };
-        delete next[sessionId];
-        return next;
-      });
       setError(null);
       setMessagesByConversation((current) => ({
         ...current,
@@ -1171,6 +1337,7 @@ export function useCardbushChat(
         await stream(controller, {
           onStart: (start) => {
             markSessionRunning(sessionId, start.turnId);
+            void refreshGoal(sessionId);
             const startedAt = new Date().toISOString();
             setMessagesByConversation((current) => ({
               ...current,
@@ -1214,6 +1381,7 @@ export function useCardbushChat(
             if (revision.channel && revision.channel !== 'assistant') {
               return;
             }
+            streamBuffer.flushToolBoundary();
             streamBuffer.reset({
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
@@ -1225,15 +1393,13 @@ export function useCardbushChat(
           },
           onToolExecution: (execution) => {
             streamBuffer.flushToolBoundary();
+            applyGoalExecution(sessionId, execution);
             setMessagesByConversation((current) =>
               appendToolExecution(current, sessionId, tempAssistant.id, execution),
             );
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
-          },
-          onCapabilityCandidates: (update) => {
-            mergeCapabilityCandidates(sessionId, update);
           },
           onTaskPlanUpdate: (update) => {
             setMessagesByConversation((current) =>
@@ -1317,6 +1483,7 @@ export function useCardbushChat(
             ),
           }));
         }
+        await refreshGoal(sessionId);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (!controller.signal.aborted && !isPendingInteractionConflictError(caught)) {
@@ -1339,12 +1506,13 @@ export function useCardbushChat(
     },
     [
       clearSessionRunning,
+      applyGoalExecution,
       loadTeamFlow,
       markSessionRunning,
-      mergeCapabilityCandidates,
       mergeContextWindowUsage,
       mergeTeamFlowStreamEvent,
       reloadConversations,
+      refreshGoal,
     ],
   );
 
@@ -2057,6 +2225,84 @@ export function useCardbushChat(
     }
   }, [activeConversationId, pendingInteraction]);
 
+  const cancelActiveGoal = useCallback(async () => {
+    const sessionId = activeConversationId.trim();
+    const goal = sessionId ? goalByConversation[sessionId] : null;
+    if (!sessionId || !goal || goal.status !== 'active') {
+      return;
+    }
+    setGoalCancellingByConversation((current) => ({
+      ...current,
+      [sessionId]: true,
+    }));
+    try {
+      const latestTurn = (
+        await fetchSessionMessages(sessionId, {
+          includeSuperseded: true,
+        }).catch(() => null)
+      )?.latestTurn ?? goalLatestTurnByConversation[sessionId];
+      if (latestTurn && isRunningSessionTurn(latestTurn)) {
+        await stopTurn(latestTurn.turnId).catch((caught) => {
+          if (
+            !isBushServerHttpError(caught, 404) &&
+            !isBushServerHttpError(caught, 409) &&
+            !isBushServerHttpError(caught, 410)
+          ) {
+            throw caught;
+          }
+        });
+      }
+
+      let latestGoal = goal;
+      try {
+        latestGoal = await updateExperimentalGoal({
+          goalId: goal.goalId,
+          status: 'cancelled',
+          statusReason: '用户主动取消',
+          expectedRevision: goal.revision,
+        });
+      } catch (caught) {
+        if (!isBushServerHttpError(caught, 409)) throw caught;
+        const refreshed = currentExperimentalGoal(
+          await fetchExperimentalGoals(sessionId),
+        );
+        if (!refreshed || refreshed.status !== 'active') {
+          latestGoal = refreshed ?? goal;
+        } else {
+          latestGoal = await updateExperimentalGoal({
+            goalId: refreshed.goalId,
+            status: 'cancelled',
+            statusReason: '用户主动取消',
+            expectedRevision: refreshed.revision,
+          });
+        }
+      }
+      setGoalByConversation((current) => ({
+        ...current,
+        [sessionId]: latestGoal,
+      }));
+      clearSessionRunning(sessionId);
+      setPendingInteraction((current) =>
+        current?.sessionId === sessionId ? null : current,
+      );
+      setError(null);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      await refreshGoal(sessionId);
+    } finally {
+      setGoalCancellingByConversation((current) => ({
+        ...current,
+        [sessionId]: false,
+      }));
+    }
+  }, [
+    activeConversationId,
+    clearSessionRunning,
+    goalByConversation,
+    goalLatestTurnByConversation,
+    refreshGoal,
+  ]);
+
   const cancelSending = useCallback(async (conversationId?: string) => {
     const sessionId = (conversationId ?? activeConversationId).trim();
     if (!sessionId) {
@@ -2090,7 +2336,11 @@ export function useCardbushChat(
     activeTeamFlowLoading,
     activeTeamFlowAction,
     activeContextWindowUsage,
-    activeCapabilityCandidates,
+    goalAvailable,
+    activeGoal,
+    activeGoalCancelling,
+    activeGoalWaiting,
+    cancelActiveGoal,
     queuedMessages: activeQueuedMessages,
     queuedMessageCount: activeQueuedMessages.length,
     queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
@@ -3052,7 +3302,7 @@ function nextLocalLoopIndex(message: ChatMessage) {
   return maxLoopIndex + 1;
 }
 
-function applyAssistantRevision(
+export function applyAssistantRevision(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
   assistantId: string,
@@ -3065,6 +3315,9 @@ function applyAssistantRevision(
     return current;
   }
   const nextContent = revision.content ?? '';
+  if (revision.reason === 'tool_preamble' && !nextContent.trim()) {
+    return current;
+  }
   const route: AssistantStreamRoute = {
     messageId: revision.messageId ?? '',
     assistantSegmentIndex: revision.assistantSegmentIndex,
@@ -3117,7 +3370,7 @@ function applyAssistantRevision(
             revision.reason === 'assistant_final'
               ? 'assistant_final'
               : revision.reason === 'tool_preamble'
-                ? 'assistant_loop'
+                ? 'assistant_segment'
                 : routed.metadata?.transcript_kind,
         },
       };
@@ -3818,15 +4071,85 @@ function preserveLocalAssistantTimingMetadata(
 }
 
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  const hasIntermediateSegments = hasIntermediateAssistantSegments(messages);
-  if (isStableVisibleTranscript(messages) && !hasIntermediateSegments) {
-    return messages;
+  const visibleMessages = messages.filter((message) => !isGoalSelfCheckMessage(message));
+  const hasIntermediateSegments = hasIntermediateAssistantSegments(visibleMessages);
+  if (isStableVisibleTranscript(visibleMessages) && !hasIntermediateSegments) {
+    return visibleMessages;
   }
   return dedupeVisibleTranscriptMessages(
     collapseIntermediateAssistantSegments(
-      collapseLoopTranscriptMessages(messages),
+      collapseLoopTranscriptMessages(visibleMessages),
     ),
   );
+}
+
+function mergePolledMessagesPreservingLocalState(
+  existing: ChatMessage[],
+  loaded: ChatMessage[],
+) {
+  if (loaded.length === 0) {
+    return existing;
+  }
+  const hydrated = mergeLoadedMessagesPreservingLocalState(existing, loaded);
+  return collapseLoopTranscriptMessages([...existing, ...hydrated]);
+}
+
+/**
+ * While a turn is running, present every assistant segment as one continuous
+ * transcript. Persisted/final normalization still owns the completed state;
+ * this projection exists only for the active turn and therefore disappears as
+ * soon as the terminal `done` event clears `sending`.
+ */
+export function normalizeActiveTurnTranscriptForDisplay(
+  messages: ChatMessage[],
+  activeTurnId: string,
+) {
+  const turnId = activeTurnId.trim();
+  if (!turnId) {
+    return messages;
+  }
+  const activeAssistantIndex = findLastIndex(
+    messages,
+    (message) =>
+      message.role === 'assistant' && chatMessageTurnId(message) === turnId,
+  );
+  if (activeAssistantIndex < 0) {
+    return messages;
+  }
+  const activeAssistant = messages[activeAssistantIndex];
+  const siblingIndexes = messages
+    .map((message, index) => ({ message, index }))
+    .filter(
+      ({ message, index }) =>
+        index !== activeAssistantIndex &&
+        message.role === 'assistant' &&
+        chatMessageTurnId(message) === turnId &&
+        hasVisibleLoopHistory(message),
+    );
+  if (siblingIndexes.length === 0) {
+    return messages;
+  }
+  const siblingIndexSet = new Set(siblingIndexes.map(({ index }) => index));
+  const siblingMessages = siblingIndexes.map(({ message }) =>
+    snapshotLoopHistoryMessage(message),
+  );
+  const inheritedPlan = [...siblingMessages]
+    .reverse()
+    .find((message) => message.taskPlan)?.taskPlan;
+  const mergedAssistant: ChatMessage = {
+    ...activeAssistant,
+    taskPlan: activeAssistant.taskPlan ?? inheritedPlan,
+    loopHistory: mergeLoopHistoryMessages(
+      activeAssistant.loopHistory ?? [],
+      siblingMessages,
+    ),
+  };
+  return messages.flatMap((message, index) => {
+    if (siblingIndexSet.has(index)) {
+      return [];
+    }
+    return [index === activeAssistantIndex ? mergedAssistant : message];
+  });
 }
 
 function hasIntermediateAssistantSegments(messages: ChatMessage[]) {
@@ -5021,6 +5344,20 @@ function mergeLayerNodeList(nodes: TeamFlowNode[], attached: TeamFlowNode[]) {
     byId.set(node.id, { ...(byId.get(node.id) ?? node), ...node });
   }
   return Array.from(byId.values());
+}
+
+function currentExperimentalGoal(goals: ExperimentalGoal[]) {
+  return goals.find((goal) => goal.status === 'active') ?? goals[0];
+}
+
+function isRunningSessionTurn(turn: SessionLatestTurn) {
+  return ['queued', 'pending', 'running', 'active', 'streaming'].includes(
+    turn.status.trim().toLowerCase(),
+  );
+}
+
+function goalPollingDelayMs() {
+  return document.visibilityState === 'hidden' ? 7_000 : 2_000;
 }
 
 function isNotFoundLikeError(error: unknown) {

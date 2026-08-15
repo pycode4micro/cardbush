@@ -85,6 +85,11 @@ assert.match(hookSource, /caught\.code === 'turn_guidance_closed'/);
 assert.match(hookSource, /caught\.code === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
+assert.equal(
+  (hookSource.match(/streamBuffer\.flushToolBoundary\(\);\s*streamBuffer\.reset\(/g) ?? []).length,
+  2,
+  'both send paths must drain token text before an assistant revision resets the buffer',
+);
 
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
@@ -98,10 +103,10 @@ assert.match(bubbleSource, /guidance-retry-button/);
 assert.match(bubbleSource, /onRetryGuidance\(message\)/);
 assert.match(bubbleSource, /等待本轮完成后/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
-assert.match(
+assert.doesNotMatch(
   bubbleSource,
-  /visibleLoopHistory\.length > 0 && \(\s*<AssistantLoopHistoryBlock/,
-  'Intermediate assistant messages must be included inside the processed disclosure',
+  /finalProcessBody/,
+  'Terminal assistant replies must clear loop details from the conversation surface',
 );
 
 const summarySource = fs.readFileSync(
@@ -121,7 +126,15 @@ const hookModule = { exports: {} };
 vm.runInNewContext(hookTranspiled.outputText, {
   module: hookModule,
   exports: hookModule.exports,
-  require: () => ({}),
+  require: (specifier) => specifier.endsWith('/goalState')
+    ? {
+        applyGoalToolUpdate: () => null,
+        goalToolUpdateFromExecution: () => null,
+        isGoalSelfCheckMessage: (message) =>
+          message?.role === 'user' &&
+          message?.metadata?.runtime_user_label === 'goal_self_check',
+      }
+    : {},
   Date,
   Map,
   Set,
@@ -131,13 +144,29 @@ const {
   appendAssistantDelta,
   appendAssistantTextAfterToolBoundary,
   appendToolExecution,
+  applyAssistantRevision,
   applyAssistantSegmentBoundary,
   createAssistantStreamDeltaBuffer,
   mergeFinalStreamMessages,
+  normalizeActiveTurnTranscriptForDisplay,
   normalizeChatMessagesForDisplay,
   optimisticGuidanceMessage,
   reconcileOptimisticGuidance,
 } = hookModule.exports;
+
+assert.deepEqual(
+  plain(normalizeChatMessagesForDisplay([
+    {
+      id: 'runtime-goal-check',
+      role: 'user',
+      content: 'call update_goal',
+      metadata: { runtime_user_label: 'goal_self_check' },
+    },
+    { id: 'assistant-final', role: 'assistant', content: 'done' },
+  ])),
+  [{ id: 'assistant-final', role: 'assistant', content: 'done' }],
+  'runtime goal self-check prompts must not be rendered as real user messages',
+);
 
 const streamedAtBoundary = [];
 const boundaryBuffer = createAssistantStreamDeltaBuffer((delta) => {
@@ -456,6 +485,123 @@ assert.deepEqual(
 );
 assert.equal(displayed[2].loopHistory[0].content, '第一轮');
 assert.equal(displayed[2].loopHistory[0].metadata.assistant_segment_index, 1);
+
+let revisionState = {
+  'revision-session': [{
+    id: 'revision-assistant',
+    role: 'assistant',
+    content: '先读取入口文件。',
+    turnId: 'revision-turn',
+    status: 'streaming',
+    toolExecutions: [{
+      id: 'revision-tool-1',
+      name: 'read_file',
+      state: 'completed',
+      summary: '入口文件读取完成',
+      output: 'ok',
+      success: true,
+      durationMs: 4,
+      createdAt: '2026-08-14T00:00:01Z',
+      contentOffset: '先读取入口文件。'.length,
+      metadata: {},
+    }],
+  }],
+};
+revisionState = applyAssistantRevision(
+  revisionState,
+  'revision-session',
+  'revision-assistant',
+  {
+    action: 'replace',
+    reason: 'tool_preamble',
+    turnId: 'revision-turn',
+    content: '继续检查样式文件。',
+  },
+);
+revisionState = appendToolExecution(
+  revisionState,
+  'revision-session',
+  'revision-assistant',
+  {
+    id: 'revision-tool-2',
+    name: 'read_file',
+    state: 'completed',
+    summary: '样式文件读取完成',
+    output: 'ok',
+    success: true,
+    durationMs: 5,
+    createdAt: '2026-08-14T00:00:02Z',
+    contentOffset: 0,
+    metadata: {},
+  },
+);
+revisionState = applyAssistantRevision(
+  revisionState,
+  'revision-session',
+  'revision-assistant',
+  {
+    action: 'replace',
+    reason: 'tool_preamble',
+    turnId: 'revision-turn',
+    content: '最后执行验证。',
+  },
+);
+assert.deepEqual(
+  plain(revisionState['revision-session'][0].loopHistory.map((message) => message.content)),
+  ['先读取入口文件。', '继续检查样式文件。'],
+  'every pre-tool assistant segment must remain visible until the terminal turn',
+);
+assert.equal(revisionState['revision-session'][0].loopHistory[0].toolExecutions[0].id, 'revision-tool-1');
+assert.equal(revisionState['revision-session'][0].loopHistory[1].toolExecutions[0].id, 'revision-tool-2');
+assert.equal(revisionState['revision-session'][0].metadata.transcript_kind, 'assistant_segment');
+
+const beforeEmptyPreamble = revisionState;
+revisionState = applyAssistantRevision(
+  revisionState,
+  'revision-session',
+  'revision-assistant',
+  {
+    action: 'replace',
+    reason: 'tool_preamble',
+    turnId: 'revision-turn',
+    content: '',
+  },
+);
+assert.equal(
+  revisionState,
+  beforeEmptyPreamble,
+  'an empty bookkeeping preamble must not erase visible assistant text',
+);
+
+const activeProjection = normalizeActiveTurnTranscriptForDisplay([
+  {
+    id: 'active-segment-1',
+    role: 'assistant',
+    content: '第一段惯性回复',
+    turnId: 'active-turn',
+    taskPlan: {
+      protocol: 'bush.task_plan.v1',
+      planId: 'active-plan',
+      sessionId: 'active-session',
+      nodes: [{ step: '执行第一步', status: 'in_progress' }],
+      explanation: '',
+      active: true,
+    },
+  },
+  {
+    id: 'active-segment-2',
+    role: 'assistant',
+    content: '第二段惯性回复',
+    turnId: 'active-turn',
+  },
+], 'active-turn');
+assert.equal(activeProjection.length, 1);
+assert.equal(activeProjection[0].content, '第二段惯性回复');
+assert.deepEqual(
+  plain(activeProjection[0].loopHistory.map((message) => message.content)),
+  ['第一段惯性回复'],
+);
+assert.equal(activeProjection[0].taskPlan.planId, 'active-plan');
 
 console.log('turn guidance contract tests passed');
 

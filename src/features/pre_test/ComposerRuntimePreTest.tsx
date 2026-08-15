@@ -1,6 +1,7 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 
-import type { AppLanguage, PendingInteraction } from '../../types';
+import type { ExperimentalGoal } from '../../backend/api';
+import type { AppLanguage, PendingInteraction, TaskPlanSnapshot } from '../../types';
 import {
   ShadowTemporaryChat,
   type ShadowChatEntry,
@@ -49,6 +50,33 @@ const changeSummaryFixture: ConversationChangeSummary = {
   fileCount: 3,
   additions: 99,
   deletions: 27,
+};
+
+const taskPlanFixture: TaskPlanSnapshot = {
+  protocol: 'bush.task_plan.v1',
+  planId: 'pre-test-plan',
+  sessionId: 'pre-test-session',
+  explanation: '按事件顺序保留本轮文本与工具执行。',
+  active: true,
+  nodes: [
+    { id: 'plan-1', step: '确认活动回合事件结构', status: 'completed' },
+    { id: 'plan-2', step: '保留中间 assistant 与工具结果', status: 'in_progress' },
+    { id: 'plan-3', step: '终轮后归档过程记录', status: 'pending' },
+  ],
+};
+
+const goalFixture: ExperimentalGoal = {
+  protocol: 'bush.goal.v1',
+  goalId: 'pre-test-goal',
+  sessionId: 'pre-test-session',
+  objective: '修复 loop 过程覆盖并保持完整执行顺序',
+  status: 'active',
+  statusReason: '',
+  consumedTokens: 4200,
+  linkedA2ATaskIds: [],
+  revision: 2,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
 };
 
 const permissionFixture: PendingInteraction = {
@@ -167,6 +195,17 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
               <ComposerRuntimeRail
                 language={language}
                 running
+                taskPlan={taskPlanFixture}
+                goal={goalFixture}
+                goalRounds={[
+                  {
+                    goalId: goalFixture.goalId,
+                    sessionId: goalFixture.sessionId,
+                    decision: 'continue',
+                    status: 'active',
+                    reason: '仍需验证第二轮工具返回后的文本是否保留。',
+                  },
+                ]}
                 thinkingNotice={showThinking ? thinkingFixture : null}
                 thinkingOpen={thinkingOpen}
                 changeReports={showChanges ? changeReportsFixture : []}

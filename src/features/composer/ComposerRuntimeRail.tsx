@@ -1,7 +1,24 @@
-import { Brain, Code2, LoaderCircle, PanelRightOpen, Puzzle, X } from 'lucide-react';
+import {
+  Brain,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  Code2,
+  ListChecks,
+  LoaderCircle,
+  PanelRightOpen,
+  Target,
+  X,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { AppLanguage, CapabilityCandidatesUpdate } from '../../types';
+import type { ExperimentalGoal } from '../../backend/api';
+import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
+import type { GoalToolUpdate } from '../../shared/goalState';
+import type {
+  AppLanguage,
+  TaskPlanSnapshot,
+} from '../../types';
 import type {
   ConversationChangeReport,
   ConversationChangeSummary,
@@ -19,36 +36,70 @@ export type ThinkingNotice = {
 export function ComposerRuntimeRail({
   language,
   running,
+  taskPlan,
+  goal,
+  goalRounds = [],
+  goalCancelling = false,
+  goalWaiting = false,
   thinkingNotice,
   thinkingOpen,
   changeReports,
   changeSummary,
-  capabilityCandidates,
   onToggleThinking,
   onCloseThinking,
+  onCancelGoal,
   onOpenChangeReview,
 }: {
   language: AppLanguage;
   running: boolean;
+  taskPlan?: TaskPlanSnapshot;
+  goal?: ExperimentalGoal | null;
+  goalRounds?: GoalToolUpdate[];
+  goalCancelling?: boolean;
+  goalWaiting?: boolean;
   thinkingNotice: ThinkingNotice | null;
   thinkingOpen: boolean;
   changeReports: ConversationChangeReport[];
   changeSummary: ConversationChangeSummary | null;
-  capabilityCandidates?: CapabilityCandidatesUpdate;
   onToggleThinking: () => void;
   onCloseThinking: () => void;
+  onCancelGoal?: () => Promise<void>;
   onOpenChangeReview: () => void;
 }) {
+  const [processingOpen, setProcessingOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
-  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
+  const hasProcessing = running || Boolean(goal);
+  const activePanel = processingOpen
+    ? 'processing'
+    : thinkingOpen
+      ? 'thinking'
+      : changesOpen
+        ? 'changes'
+        : null;
+  const [renderedPanel, setRenderedPanel] = useState(activePanel);
+  const panelPresence = useSoftPanelPresence(Boolean(activePanel), 180);
   const changedFiles = useMemo(
     () => mergeChangedFiles(changeReports),
     [changeReports],
   );
-  const expanded = thinkingOpen || changesOpen || capabilitiesOpen;
+  const expanded = panelPresence.mounted;
+  const completedPlanSteps = taskPlan?.nodes.filter((node) => node.status === 'completed').length ?? 0;
+  const processingSummary = runtimeProcessingSummary({
+    language,
+    taskPlan,
+    completedPlanSteps,
+    goal,
+    goalWaiting,
+  });
   const changedLineCount = changeSummary
     ? changeSummary.additions + changeSummary.deletions
     : 0;
+
+  useEffect(() => {
+    if (activePanel) {
+      setRenderedPanel(activePanel);
+    }
+  }, [activePanel]);
 
   useEffect(() => {
     if (!changeSummary) {
@@ -57,14 +108,127 @@ export function ComposerRuntimeRail({
   }, [changeSummary]);
 
   useEffect(() => {
-    if (!capabilityCandidates) {
-      setCapabilitiesOpen(false);
+    if (!hasProcessing) {
+      setProcessingOpen(false);
     }
-  }, [capabilityCandidates]);
+  }, [hasProcessing]);
 
   return (
-    <div className={`composer-runtime-rail ${expanded ? 'expanded' : ''}`}>
-      {thinkingOpen && thinkingNotice && (
+    <div className={`composer-runtime-rail ${expanded ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}>
+      {panelPresence.mounted && renderedPanel === 'processing' && hasProcessing && (
+        <section
+          className="runtime-context-panel processing-context-panel"
+          aria-label={language === 'zh' ? '处理详情' : 'Working details'}
+        >
+          <header>
+            <span>
+              {running
+                ? <LoaderCircle size={14} className="spin" />
+                : <Target size={14} />}
+              <strong>
+                {running
+                  ? language === 'zh' ? '处理中' : 'Working'
+                  : language === 'zh' ? '目标状态' : 'Goal status'}
+              </strong>
+            </span>
+            <button
+              type="button"
+              title={language === 'zh' ? '收起' : 'Collapse'}
+              onClick={() => setProcessingOpen(false)}
+            >
+              <X size={14} />
+            </button>
+          </header>
+          <div className="processing-context-content">
+            {goal && (
+              <section className={`runtime-goal-detail ${goal.status}`}>
+                <div className="runtime-detail-heading">
+                  <Target size={14} />
+                  <strong>{language === 'zh' ? '目标' : 'Goal'}</strong>
+                  <span>
+                    {goal.status === 'active' && goalWaiting
+                      ? language === 'zh' ? '等待后端继续' : 'Waiting for backend'
+                      : goalStatusLabel(goal.status, language)}
+                  </span>
+                  {goal.status === 'active' && onCancelGoal && (
+                    <button
+                      className="runtime-goal-cancel"
+                      type="button"
+                      disabled={goalCancelling}
+                      onClick={() => void onCancelGoal()}
+                    >
+                      {goalCancelling
+                        ? language === 'zh' ? '取消中' : 'Cancelling'
+                        : language === 'zh' ? '取消目标' : 'Cancel goal'}
+                    </button>
+                  )}
+                </div>
+                <p>{goal.objective}</p>
+                {goal.statusReason && (
+                  <p className="runtime-goal-reason">{goal.statusReason}</p>
+                )}
+                <small className="runtime-goal-tokens">
+                  {goalTokenLabel(goal, language)}
+                </small>
+                {goalRounds.length > 0 && (
+                  <ol className="runtime-goal-rounds">
+                    {goalRounds.map((round, index) => (
+                      <li key={`${round.goalId || 'goal'}:${index}:${round.decision}`}>
+                        {round.decision === 'complete' ? (
+                          <CheckCircle2 size={13} />
+                        ) : round.decision === 'blocked' ? (
+                          <Circle size={13} />
+                        ) : (
+                          <LoaderCircle size={13} />
+                        )}
+                        <span>
+                          <strong>
+                            {language === 'zh' ? `第 ${index + 1} 轮` : `Round ${index + 1}`}
+                          </strong>
+                          <small>{goalDecisionLabel(round.decision, language)}</small>
+                          {round.reason && <em>{round.reason}</em>}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            )}
+            {taskPlan && (
+              <section className="runtime-plan-detail">
+                <div className="runtime-detail-heading">
+                  <ListChecks size={14} />
+                  <strong>{language === 'zh' ? '计划' : 'Plan'}</strong>
+                  <span>{completedPlanSteps}/{taskPlan.nodes.length}</span>
+                </div>
+                {taskPlan.explanation && <p>{taskPlan.explanation}</p>}
+                <ol>
+                  {taskPlan.nodes.map((node, index) => (
+                    <li className={node.status} key={`${index}:${node.step}`}>
+                      {node.status === 'completed' ? (
+                        <CheckCircle2 size={13} />
+                      ) : node.status === 'in_progress' ? (
+                        <LoaderCircle size={13} />
+                      ) : (
+                        <Clock3 size={13} />
+                      )}
+                      <span>{node.step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+            {!goal && !taskPlan && (
+              <p className="runtime-processing-empty">
+                {language === 'zh'
+                  ? '模型正在生成下一步，计划或目标进度会在收到后显示。'
+                  : 'The model is preparing the next step. Plan or goal progress will appear here.'}
+              </p>
+            )}
+          </div>
+        </section>
+      )}
+      {panelPresence.mounted && renderedPanel === 'thinking' && thinkingNotice && (
         <section className="runtime-context-panel thinking-context-panel" aria-label="Thinking">
           <header>
             <span><Brain size={14} /><strong>{language === 'zh' ? '思考中' : 'Thinking'}</strong></span>
@@ -75,7 +239,7 @@ export function ComposerRuntimeRail({
           <div className="thinking-context-content">{thinkingNotice.content}</div>
         </section>
       )}
-      {changesOpen && changeSummary && (
+      {panelPresence.mounted && renderedPanel === 'changes' && changeSummary && (
         <section
           className="runtime-context-panel change-context-panel"
           aria-label={language === 'zh' ? '文件更改' : 'File changes'}
@@ -125,61 +289,30 @@ export function ComposerRuntimeRail({
           </div>
         </section>
       )}
-      {capabilitiesOpen && capabilityCandidates && (
-        <section
-          className="runtime-context-panel capability-context-panel"
-          aria-label={language === 'zh' ? '候选能力' : 'Capability candidates'}
-        >
-          <header>
-            <span>
-              <Puzzle size={14} />
-              <strong>{language === 'zh' ? '候选能力' : 'Capability candidates'}</strong>
-            </span>
-            <button
-              type="button"
-              title={language === 'zh' ? '收起' : 'Collapse'}
-              onClick={() => setCapabilitiesOpen(false)}
-            >
-              <X size={14} />
-            </button>
-          </header>
-          <div className="capability-context-content">
-            <p>
-              {language === 'zh'
-                ? '本地检索建议，仅供 Agent 自主选择，不代表已装载或必须使用。'
-                : 'Local retrieval hints only. The agent decides whether to load or use them.'}
-            </p>
-            {capabilityCandidates.skills.length > 0 && (
-              <div className="capability-candidate-group">
-                <strong>Skills</strong>
-                {capabilityCandidates.skills.map((candidate) => (
-                  <span key={`skill:${candidate.name}`} title={candidate.description}>
-                    {candidate.name}
-                  </span>
-                ))}
-              </div>
-            )}
-            {capabilityCandidates.tools.length > 0 && (
-              <div className="capability-candidate-group">
-                <strong>Tools</strong>
-                {capabilityCandidates.tools.map((candidate) => (
-                  <span key={`tool:${candidate.name}`} title={candidate.description}>
-                    {candidate.name}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
       <div className="composer-runtime-tabs">
-        {running && !thinkingNotice && (
-          <div className="runtime-context-tab processing-context-tab" role="status">
+        {hasProcessing && (
+          <button
+            className={`runtime-context-tab processing-context-tab ${processingOpen ? 'open' : ''}`}
+            type="button"
+            role="status"
+            aria-expanded={processingOpen}
+            title={processingSummary}
+            onClick={() => {
+              if (thinkingOpen) onCloseThinking();
+              setChangesOpen(false);
+              setProcessingOpen((current) => !current);
+            }}
+          >
             <LoaderCircle size={13} />
             <span>
-              <strong>{language === 'zh' ? '处理中' : 'Working'}</strong>
+              <strong>
+                {running
+                  ? language === 'zh' ? '处理中' : 'Working'
+                  : language === 'zh' ? '目标' : 'Goal'}
+              </strong>
+              {processingSummary && <small>{processingSummary}</small>}
             </span>
-          </div>
+          </button>
         )}
         {thinkingNotice && (
           <button
@@ -188,8 +321,8 @@ export function ComposerRuntimeRail({
             title={thinkingNotice.preview}
             aria-expanded={thinkingOpen}
             onClick={() => {
+              setProcessingOpen(false);
               setChangesOpen(false);
-              setCapabilitiesOpen(false);
               onToggleThinking();
             }}
           >
@@ -205,10 +338,10 @@ export function ComposerRuntimeRail({
             title={language === 'zh' ? '查看本轮文件更改' : 'View file changes from this turn'}
             aria-expanded={changesOpen}
             onClick={() => {
+              setProcessingOpen(false);
               if (thinkingOpen) {
                 onCloseThinking();
               }
-              setCapabilitiesOpen(false);
               setChangesOpen((current) => !current);
             }}
           >
@@ -226,32 +359,61 @@ export function ComposerRuntimeRail({
             </span>
           </button>
         )}
-        {capabilityCandidates && (
-          <button
-            className={`runtime-context-tab capability-context-tab ${capabilitiesOpen ? 'open' : ''}`}
-            type="button"
-            title={language === 'zh' ? '查看本轮候选 Skill 和 Tool' : 'View candidate Skills and Tools'}
-            aria-expanded={capabilitiesOpen}
-            onClick={() => {
-              if (thinkingOpen) {
-                onCloseThinking();
-              }
-              setChangesOpen(false);
-              setCapabilitiesOpen((current) => !current);
-            }}
-          >
-            <Puzzle size={12} />
-            <span>
-              <strong>{language === 'zh' ? '能力建议' : 'Capabilities'}</strong>
-              <small>
-                {capabilityCandidates.skills.length} Skills · {capabilityCandidates.tools.length} Tools
-              </small>
-            </span>
-          </button>
-        )}
       </div>
     </div>
   );
+}
+
+function runtimeProcessingSummary({
+  language,
+  taskPlan,
+  completedPlanSteps,
+  goal,
+  goalWaiting,
+}: {
+  language: AppLanguage;
+  taskPlan?: TaskPlanSnapshot;
+  completedPlanSteps: number;
+  goal?: ExperimentalGoal | null;
+  goalWaiting?: boolean;
+}) {
+  const parts: string[] = [];
+  if (taskPlan) {
+    parts.push(
+      language === 'zh'
+        ? `计划 ${completedPlanSteps}/${taskPlan.nodes.length}`
+        : `Plan ${completedPlanSteps}/${taskPlan.nodes.length}`,
+    );
+  }
+  if (goal?.objective) {
+    parts.push(`${language === 'zh' ? '目标' : 'Goal'}：${goal.objective}`);
+    parts.push(
+      goal.status === 'active' && goalWaiting
+        ? language === 'zh' ? '等待后端继续' : 'Waiting for backend'
+        : goalStatusLabel(goal.status, language),
+    );
+  }
+  return parts.join(' · ');
+}
+
+function goalTokenLabel(goal: ExperimentalGoal, language: AppLanguage) {
+  const prefix = language === 'zh' ? 'Token' : 'Tokens';
+  return goal.tokenBudget == null
+    ? `${prefix}：${goal.consumedTokens}`
+    : `${prefix}：${goal.consumedTokens} / ${goal.tokenBudget}`;
+}
+
+function goalStatusLabel(status: ExperimentalGoal['status'], language: AppLanguage) {
+  const labels = language === 'zh'
+    ? { active: '进行中', complete: '已完成', blocked: '已阻塞', cancelled: '已取消' }
+    : { active: 'Active', complete: 'Complete', blocked: 'Blocked', cancelled: 'Cancelled' };
+  return labels[status];
+}
+
+function goalDecisionLabel(decision: GoalToolUpdate['decision'], language: AppLanguage) {
+  if (decision === 'continue') return language === 'zh' ? '继续执行' : 'Continue';
+  if (decision === 'complete') return language === 'zh' ? '确认完成' : 'Complete';
+  return language === 'zh' ? '确认阻塞' : 'Blocked';
 }
 
 function mergeChangedFiles(reports: ConversationChangeReport[]): ToolFileChange[] {

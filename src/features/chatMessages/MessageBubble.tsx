@@ -513,7 +513,7 @@ function MessageBubbleView({
     text.trim() ||
       imagePaths.length > 0 ||
       toolExecutions.length > 0 ||
-      taskPlan ||
+      (!isActiveAssistantTurn && taskPlan) ||
       renderActiveTranscript ||
       visibleLoopHistory.length > 0 ||
       hookSummary,
@@ -563,54 +563,20 @@ function MessageBubbleView({
           onOpenScene={onOpenScene}
         />
       )}
-      {taskPlan && !archiveTaskPlanInHistory && (
+      {taskPlan && !isActiveAssistantTurn && !archiveTaskPlanInHistory && (
         <TaskPlanBlock plan={taskPlan} language={language} />
       )}
     </>
-  );
-  const finalProcessBody = (
-    <>
-      <AgentHookSummaryBadge message={message} language={language} />
-      {toolExecutions.length > 0 && (
-        <AssistantMessageContent
-          content=""
-          executions={toolExecutions}
-          language={language}
-          message={message}
-          active={false}
-          onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
-        />
-      )}
-      {visibleLoopHistory.length > 0 && (
-        <AssistantLoopHistoryBlock
-          history={visibleLoopHistory}
-          archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
-          language={language}
-          onRevertChangeReport={onRevertChangeReport}
-          onOpenScene={onOpenScene}
-        />
-      )}
-      {taskPlan && !archiveTaskPlanInHistory && (
-        <TaskPlanBlock plan={taskPlan} language={language} />
-      )}
-    </>
-  );
-  const hasFinalProcessBody = Boolean(
-    hookSummary ||
-      toolExecutions.length > 0 ||
-      visibleLoopHistory.length > 0 ||
-      taskPlan,
   );
   const finalAnswerBody = (
-    <>
+    <div className="assistant-final-answer">
       <MessageImageStrip paths={imagePaths} />
       {text && (
         <MarkdownContent
           content={assistantTextWithoutToolNarration(text, toolExecutions)}
         />
       )}
-    </>
+    </div>
   );
   return (
     <>
@@ -628,23 +594,14 @@ function MessageBubbleView({
             assistantBody
           ) : finalAssistantRound ? (
             <>
-              {showAssistantProgress &&
-                (hasFinalProcessBody ? (
-                  <AssistantCompletedDisclosure
-                    executions={assistantProgressExecutions}
-                    message={message}
-                    language={language}
-                  >
-                    {finalProcessBody}
-                  </AssistantCompletedDisclosure>
-                ) : (
-                  <AssistantRunHeader
-                    executions={assistantProgressExecutions}
-                    isActive={false}
-                    message={message}
-                    language={language}
-                  />
-                ))}
+              {showAssistantProgress && (
+                <AssistantRunHeader
+                  executions={assistantProgressExecutions}
+                  isActive={false}
+                  message={message}
+                  language={language}
+                />
+              )}
               {finalAnswerBody}
             </>
           ) : (
@@ -797,7 +754,7 @@ function AssistantActiveTranscript({
         return (
           <section
             // eslint-disable-next-line react/no-array-index-key
-            key={`${segment.id}-${index}`}
+            key={segment.id}
             className="assistant-active-transcript-segment"
           >
             <MessageImageStrip paths={imagePaths} />
@@ -1175,7 +1132,13 @@ function assistantProgressLabel({
   const elapsedMs = assistantTurnElapsedMs(message, executions, isActive, now);
   const duration = formatCompactDuration(elapsedMs);
   if (language === 'zh') {
+    if (isActive) {
+      return duration ? `处理中 ${duration}` : '处理中';
+    }
     return duration ? `已处理 ${duration}` : '已处理';
+  }
+  if (isActive) {
+    return duration ? `Working ${duration}` : 'Working';
   }
   return duration ? `Processed ${duration}` : 'Processed';
 }

@@ -79,10 +79,12 @@ import {
   streamShadowConversationMessage,
   type SessionShareLinkResult,
   type ShadowConversationRecord,
+  type ExperimentalGoal,
 } from './backend/api';
 import { standardImageInputToolDefaultName } from './backend/toolVisibility';
 import {
   normalizeChatMessagesForDisplay,
+  normalizeActiveTurnTranscriptForDisplay,
   useCardbushChat,
   type QueuedChatMessage,
 } from './hooks/useCardbushChat';
@@ -169,6 +171,7 @@ import {
   summarizeChangeReports,
   type ConversationChangeReport,
 } from './features/tools';
+import { goalToolUpdateFromExecution } from './shared/goalState';
 import { CardlingSceneHost } from './features/cardling/CardlingSceneHost';
 import {
   OPEN_INSPECTOR_EVENT,
@@ -209,7 +212,6 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
-  CapabilityCandidatesUpdate,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -1916,6 +1918,10 @@ function CardbushApp() {
                     : projectContexts[projectContextKey(activeProjectDir)] ?? ''
                 }
                 messages={chat.activeMessages}
+                activeGoal={chat.activeGoal}
+                goalAvailable={chat.goalAvailable}
+                goalCancelling={chat.activeGoalCancelling}
+                goalWaiting={chat.activeGoalWaiting}
                 changeReports={
                   changeReportsByConversation[chat.activeConversationId] ?? []
                 }
@@ -1949,7 +1955,6 @@ function CardbushApp() {
                   (config) => config.id === chat.selectedModel,
                 )?.maxContextTokens}
                 contextWindowUsage={chat.activeContextWindowUsage}
-                capabilityCandidates={chat.activeCapabilityCandidates}
                 availableModels={availableModels}
                 referencePlanAvailable={backendCapabilities.taskPlan}
                 referencePlanMode={chat.referencePlanMode}
@@ -1992,6 +1997,7 @@ function CardbushApp() {
                 }}
                 onReplyInteraction={chat.replyToInteraction}
                 onCancelInteraction={chat.cancelPendingInteraction}
+                onCancelGoal={chat.cancelActiveGoal}
                 onCancel={chat.cancelSending}
                 onClearError={chat.clearError}
                 onClearNotice={chat.clearNotice}
@@ -3226,6 +3232,10 @@ function ChatPanel({
   activeProjectDir,
   projectContext,
   messages,
+  activeGoal,
+  goalAvailable,
+  goalCancelling,
+  goalWaiting,
   changeReports,
   skills,
   disabledSkillNames,
@@ -3251,7 +3261,6 @@ function ChatPanel({
   selectedModelConfig,
   contextWindowMaxTokens,
   contextWindowUsage,
-  capabilityCandidates,
   availableModels,
   referencePlanAvailable,
   referencePlanMode,
@@ -3284,6 +3293,7 @@ function ChatPanel({
   onOpenChangeReview,
   onReplyInteraction,
   onCancelInteraction,
+  onCancelGoal,
   onCancel,
   onClearError,
   onClearNotice,
@@ -3306,6 +3316,10 @@ function ChatPanel({
   activeProjectDir?: string;
   projectContext: string;
   messages: ChatMessage[];
+  activeGoal: ExperimentalGoal | null;
+  goalAvailable: boolean;
+  goalCancelling: boolean;
+  goalWaiting: boolean;
   changeReports: ConversationChangeReport[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
@@ -3331,7 +3345,6 @@ function ChatPanel({
   selectedModelConfig?: ManagedModelConfig;
   contextWindowMaxTokens?: number;
   contextWindowUsage?: RuntimeContextWindowUsage;
-  capabilityCandidates?: CapabilityCandidatesUpdate;
   availableModels: ManagedModelConfig[];
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
@@ -3376,16 +3389,19 @@ function ChatPanel({
   onOpenChangeReview: () => void;
   onReplyInteraction: (reply: string | InteractionReplyAnswer[]) => Promise<void>;
   onCancelInteraction: () => Promise<void>;
+  onCancelGoal: () => Promise<void>;
   onCancel: () => Promise<void>;
   onClearError: () => void;
   onClearNotice: () => void;
   draft: string;
   onDraftChange: (value: string) => void;
 }) {
-  const renderMessages = useMemo(
-    () => normalizeChatMessagesForDisplay(messages),
-    [messages],
-  );
+  const renderMessages = useMemo(() => {
+    const normalized = normalizeChatMessagesForDisplay(messages);
+    return sending
+      ? normalizeActiveTurnTranscriptForDisplay(normalized, activeTurnId)
+      : normalized;
+  }, [activeTurnId, messages, sending]);
   const currentTurnChangeReports = useMemo(() => {
     if (changeReports.length === 0) return [];
     const active = activeTurnId.trim();
@@ -3401,6 +3417,35 @@ function ChatPanel({
     () => summarizeChangeReports(currentTurnChangeReports),
     [currentTurnChangeReports],
   );
+  const activeRuntimeAssistant = useMemo(
+    () => sending
+      ? streamingAssistantMessage(renderMessages, activeTurnId)?.message ?? null
+      : null,
+    [activeTurnId, renderMessages, sending],
+  );
+  const activeTaskPlan = useMemo(() => {
+    if (!activeRuntimeAssistant) return undefined;
+    if (activeRuntimeAssistant.taskPlan) return activeRuntimeAssistant.taskPlan;
+    return [...(activeRuntimeAssistant.loopHistory ?? [])]
+      .reverse()
+      .find((message) => message.taskPlan)?.taskPlan;
+  }, [activeRuntimeAssistant]);
+  const activeGoalRounds = useMemo(() => {
+    if (!activeRuntimeAssistant) return [];
+    const transcript = [
+      ...(activeRuntimeAssistant.loopHistory ?? []),
+      activeRuntimeAssistant,
+    ];
+    const seen = new Set<string>();
+    return transcript.flatMap((message) => message.toolExecutions ?? [])
+      .map((execution) => ({ execution, update: goalToolUpdateFromExecution(execution) }))
+      .filter(({ execution, update }) => {
+        if (!update || seen.has(execution.id)) return false;
+        seen.add(execution.id);
+        return true;
+      })
+      .map(({ update }) => update!);
+  }, [activeRuntimeAssistant]);
   const showWelcome = !loading && renderMessages.length === 0;
   const listScrollerRef = useRef<HTMLElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
@@ -5438,16 +5483,38 @@ function ChatPanel({
   const showWorkSummary = workSummaryVisible && !inspectorOpen;
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
   useEffect(() => {
+    if (!showWorkSummary || windowMaximized) {
+      return undefined;
+    }
+    const closeRestoredSummary = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (
+        target.closest('.conversation-work-summary') ||
+        target.closest('[data-work-summary-toggle]')
+      ) {
+        return;
+      }
+      setWorkSummaryVisible(false);
+    };
+    const closeRestoredSummaryWithKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setWorkSummaryVisible(false);
+      }
+    };
+    document.addEventListener('pointerdown', closeRestoredSummary);
+    document.addEventListener('keydown', closeRestoredSummaryWithKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', closeRestoredSummary);
+      document.removeEventListener('keydown', closeRestoredSummaryWithKeyboard);
+    };
+  }, [showWorkSummary, windowMaximized]);
+  useEffect(() => {
     setWorkSummaryVisible(false);
     setWorkSummaryMode('summary');
   }, [activeConversationId]);
-  const openGoalManager = useCallback(() => {
-    onCloseInspector();
-    setWorkSummaryMode('a2a');
-    setWorkSummaryModeRequestId((current) => current + 1);
-    setWorkSummaryVisible(true);
-  }, [onCloseInspector]);
-
   if (isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
   }
@@ -5633,6 +5700,7 @@ function ChatPanel({
             queuedMessages={queuedMessages}
             selectedModel={selectedModel}
             availableModels={availableModels}
+            goalAvailable={goalAvailable}
             referencePlanAvailable={referencePlanAvailable}
             referencePlanMode={referencePlanMode}
             permissionMode={permissionMode}
@@ -5645,7 +5713,6 @@ function ChatPanel({
             onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
-            onOpenGoal={openGoalManager}
             activeProjectDir={activeProjectDir}
             projectContext={projectContext}
             skills={skills}
@@ -5747,7 +5814,7 @@ function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && (
           <div
             className={`composer-dock${
-              sending || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || capabilityCandidates || shadowThreadOpen
+              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || shadowThreadOpen
                 ? ' runtime-attached'
                 : ''
             }${shadowThreadOpen ? ' shadow-active' : ''}`}
@@ -5757,20 +5824,25 @@ function ChatPanel({
               '--thinking-accent': thinkingAccentColor,
             } as CSSProperties}
           >
-            {(sending || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || capabilityCandidates) && (
+            {(sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary) && (
               <ComposerRuntimeRail
                 language={language}
-                running={sending}
+                running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
+                taskPlan={activeTaskPlan}
+                goal={activeGoal}
+                goalRounds={activeGoalRounds}
+                goalCancelling={goalCancelling}
+                goalWaiting={goalWaiting}
                 thinkingNotice={thinkingVisible ? thinkingNotice : null}
                 thinkingOpen={thinkingOpen}
                 changeReports={currentTurnChangeReports}
                 changeSummary={currentTurnChangeSummary}
-                capabilityCandidates={capabilityCandidates}
                 onToggleThinking={() => {
                   setShadowThreadOpen(false);
                   setThinkingOpen((current) => !current);
                 }}
                 onCloseThinking={() => setThinkingOpen(false)}
+                onCancelGoal={onCancelGoal}
                 onOpenChangeReview={onOpenChangeReview}
               />
             )}
@@ -5801,6 +5873,7 @@ function ChatPanel({
               queuedMessages={queuedMessages}
               selectedModel={selectedModel}
               availableModels={availableModels}
+              goalAvailable={goalAvailable}
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
               permissionMode={permissionMode}
@@ -5843,7 +5916,6 @@ function ChatPanel({
               onSaveProjectContext={onSaveProjectContext}
               onConfigureModels={onConfigureModels}
               onCreateConversation={onCreateConversation}
-              onOpenGoal={openGoalManager}
               onOpenTerminalConsole={
                 terminalAvailable ? () => toggleConsole('terminal') : undefined
               }
@@ -5915,6 +5987,7 @@ function WelcomeComposer({
   queuedMessages,
   selectedModel,
   availableModels,
+  goalAvailable,
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
@@ -5937,7 +6010,6 @@ function WelcomeComposer({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
-  onOpenGoal,
   onSaveProjectContext,
   onEditQueuedMessage,
   onGuideQueuedMessage,
@@ -5956,6 +6028,7 @@ function WelcomeComposer({
   queuedMessages: QueuedChatMessage[];
   selectedModel: string;
   availableModels: ManagedModelConfig[];
+  goalAvailable: boolean;
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
@@ -5978,7 +6051,6 @@ function WelcomeComposer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
-  onOpenGoal?: () => void;
   onSaveProjectContext: (value: string) => Promise<string>;
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
@@ -6007,6 +6079,7 @@ function WelcomeComposer({
         queuedMessages={queuedMessages}
         selectedModel={selectedModel}
         availableModels={availableModels}
+        goalAvailable={goalAvailable}
         referencePlanAvailable={referencePlanAvailable}
         referencePlanMode={referencePlanMode}
         permissionMode={permissionMode}
@@ -6019,7 +6092,6 @@ function WelcomeComposer({
         onReasoningLevelChange={onReasoningLevelChange}
         onConfigureModels={onConfigureModels}
         onCreateConversation={onCreateConversation}
-        onOpenGoal={onOpenGoal}
         activeProjectDir={activeProjectDir}
         projectContext={projectContext}
         skills={skills}
@@ -6736,6 +6808,7 @@ function TopBar({
         <button
           className={`topbar-inspector-action ${workSummaryVisible ? 'active' : ''}`}
           type="button"
+          data-work-summary-toggle
           onClick={onToggleWorkSummary}
           title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
         >

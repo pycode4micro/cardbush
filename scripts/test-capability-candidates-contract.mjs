@@ -73,6 +73,22 @@ const malformed = plain(capabilityCandidatesFromPayload({
 assert.deepEqual(malformed.skills, []);
 assert.deepEqual(malformed.tools, []);
 
+const runtimeRailSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'composer', 'ComposerRuntimeRail.tsx'),
+  'utf8',
+);
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
+const chatHookSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
+  'utf8',
+);
+assert.doesNotMatch(runtimeRailSource, /capabilityCandidates|能力建议|候选能力/);
+assert.doesNotMatch(appSource, /activeCapabilityCandidates|capabilityCandidates/);
+assert.doesNotMatch(chatHookSource, /capabilityCandidatesByConversation/);
+
 console.log('capability candidates contract tests passed');
 
 function plain(value) {

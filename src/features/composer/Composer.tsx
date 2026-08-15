@@ -195,6 +195,7 @@ export function Composer({
   queuedMessages = [],
   selectedModel,
   availableModels,
+  goalAvailable = false,
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
@@ -222,7 +223,6 @@ export function Composer({
   onRemoveQueuedMessage,
   onConfigureModels,
   onCreateConversation,
-  onOpenGoal,
   onOpenTerminalConsole,
   onToggleSkill,
   onVisualInputEnabledChange,
@@ -244,6 +244,7 @@ export function Composer({
   queuedMessages?: ComposerQueuedMessage[];
   selectedModel: string;
   availableModels: ManagedModelConfig[];
+  goalAvailable?: boolean;
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
@@ -271,7 +272,6 @@ export function Composer({
   onRemoveQueuedMessage?: (queuedId: string) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
-  onOpenGoal?: () => void;
   onOpenTerminalConsole?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
@@ -556,7 +556,8 @@ export function Composer({
   }
 
   const slashCommands = useMemo<ComposerCommandItem[]>(
-    () => [
+    () => {
+      const commands: ComposerCommandItem[] = [
         {
           id: '/model',
           title: language === 'zh' ? '模型管理' : 'Model management',
@@ -573,10 +574,10 @@ export function Composer({
           title: language === 'zh' ? '目标' : 'Goal',
           subtitle:
             language === 'zh'
-              ? '打开当前会话的目标管理'
-              : 'Open goal management for this session',
+              ? '填入命令，通过对话创建或管理目标'
+              : 'Insert the command to create or manage a goal in chat',
           icon: <ListChecks size={16} />,
-          run: () => onOpenGoal?.(),
+          value: '/goal ',
           searchText: '/goal 目标 goal',
         },
         {
@@ -604,12 +605,16 @@ export function Composer({
           run: () => onCreateConversation?.(),
           searchText: '/new 新会话 new conversation',
         },
-      ],
+      ];
+      return goalAvailable
+        ? commands
+        : commands.filter((command) => command.id !== '/goal');
+    },
     [
+      goalAvailable,
       language,
       onConfigureModels,
       onCreateConversation,
-      onOpenGoal,
     ],
   );
 
@@ -655,7 +660,7 @@ export function Composer({
   );
   const modelLabel =
     selectedModelConfig
-      ? `${selectedModelConfig.provider} · ${selectedModelConfig.modelName}`
+      ? `${selectedModelConfig.modelName} · ${selectedModelConfig.provider}`
       : language === 'zh' ? '待配置' : 'Configure';
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);

@@ -26,9 +26,28 @@ assert.match(slashBlock, /模型管理/);
 assert.match(slashBlock, /目标/);
 assert.match(slashBlock, /技能/);
 assert.match(slashBlock, /新会话/);
+const goalCommandBlock = slashBlock.match(
+  /id:\s*'\/goal'[\s\S]*?searchText:\s*'\/goal 目标 goal'/,
+)?.[0] ?? '';
+assert.ok(goalCommandBlock, 'the /goal quick action is missing');
+assert.match(
+  goalCommandBlock,
+  /value:\s*'\/goal '/,
+  'selecting /goal must insert it into the composer instead of opening a panel',
+);
+assert.doesNotMatch(
+  goalCommandBlock,
+  /run:/,
+  'the /goal quick action must not bypass the conversation',
+);
 assert.doesNotMatch(slashBlock, /title:\s*['"`]\//);
 assert.doesNotMatch(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.doesNotMatch(source, /mentionMatch|mentionCommands|输入 @|Type @/);
+assert.match(
+  source,
+  /`\$\{selectedModelConfig\.modelName\} · \$\{selectedModelConfig\.provider\}`/,
+  'the compact model label must place the provider name last',
+);
 
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {

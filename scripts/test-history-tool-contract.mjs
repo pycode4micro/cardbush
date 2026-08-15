@@ -220,8 +220,13 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /finalAssistantRound \? \([\s\S]*?\{finalProcessBody\}[\s\S]*?<\/AssistantCompletedDisclosure>[\s\S]*?\{finalAnswerBody\}/,
-  'The final assistant answer must remain outside the processed disclosure',
+  /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
+  'The terminal turn must keep only the processed header and final answer in chat',
+);
+assert.doesNotMatch(
+  bubbleSource,
+  /finalProcessBody/,
+  'Loop details must move to the work summary after the terminal turn',
 );
 assert.match(
   bubbleSource,

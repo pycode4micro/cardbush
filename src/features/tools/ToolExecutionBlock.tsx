@@ -27,6 +27,8 @@ import {
 import { toolChangeReportFromExecutions, type ConversationChangeReport } from './toolChangeReports';
 import { compactToolOutput, toolDisplayOutput, toolOutputNeedsCollapse } from './toolOutput';
 import { asRecord } from './toolPayload';
+import { goalToolUpdateFromExecution } from '../../shared/goalState';
+import { GoalUpdateNotice } from './GoalUpdateNotice';
 export function ToolExecutionBlock({
   executions,
   language,
@@ -438,6 +440,7 @@ function ToolExecutionDetail({
   const scene = cardlingSceneFromToolExecution(execution, message);
   const duration = formatDuration(execution.durationMs);
   const summary = execution.summary.trim();
+  const goalUpdate = goalToolUpdateFromExecution(execution);
   const actionEnvelope = toolActionEnvelopeFromExecution(execution);
   const output = toolDisplayOutput(execution, actionEnvelope);
   const childExecutions = subagentChildToolExecutions(execution);
@@ -475,7 +478,8 @@ function ToolExecutionDetail({
           {duration ? `${status} · ${duration}` : status}
         </span>
       </header>
-      {summary && <code>$ {summary}</code>}
+      {summary && !goalUpdate && <code>$ {summary}</code>}
+      {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
       <WorkerProfileBadge info={workerInfo} />
       {actionEnvelope && (
@@ -514,7 +518,7 @@ function ToolExecutionDetail({
         language={language}
         isFailed={(child) => isToolFailedInContext(child, active)}
       />
-      {output.trim() && (
+      {output.trim() && !goalUpdate && (
         <>
           <pre
             className={`tool-execution-output ${outputExpanded ? 'expanded' : ''} ${

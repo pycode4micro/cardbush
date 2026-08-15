@@ -9,6 +9,8 @@ const presence = read('src', 'hooks', 'useSoftPanelPresence.ts');
 const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
 const summary = read('src', 'features', 'chat', 'ConversationWorkSummary.tsx');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
+const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
+const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 
 assert.match(css, /--panel-motion-duration:\s*240ms/);
 assert.match(css, /--panel-motion-ease:/);
@@ -27,11 +29,22 @@ assert.match(presence, /prefers-reduced-motion/);
 assert.match(app, /sidebarPresence\.mounted/);
 assert.match(app, /inspectorPresence\.mounted/);
 assert.match(app, /workSummaryPresence\.mounted/);
+assert.match(app, /!showWorkSummary \|\| windowMaximized/);
+assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
+assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);
+assert.match(app, /data-work-summary-toggle/);
 assert.match(app, /retainedInspectorContent/);
 assert.match(app, /sidebarPreviewWidth/);
 assert.match(app, /onResizeEnd=\{\(width, shouldCollapse\)/);
 assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
+assert.match(
+  summary,
+  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"/,
+  'Summary hierarchy must keep outputs first, tool activity second, and history last',
+);
+assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?width:\s*336px/);
+assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?border-radius:\s*22px/);
 assert.match(sidebarResizer, /requestAnimationFrame/);
 assert.match(sidebarResizer, /writePreviewWidth\(latest\.scope, latest\.pendingWidth\)/);
 assert.match(sidebarResizer, /nextWidth < collapseSidebarWidthThreshold/);
@@ -39,6 +52,23 @@ assert.match(sidebarResizer, /shouldCollapseNow[\s\S]*?endResize\(\);[\s\S]*?onR
 assert.doesNotMatch(
   sidebarResizer,
   /handlePointerMove[\s\S]*?onWidthChange\(nextWidth\)/,
+);
+assert.match(runtimeRail, /useSoftPanelPresence\(Boolean\(activePanel\), 180\)/);
+assert.match(runtimeRail, /panelPresence\.mounted/);
+assert.match(runtimeRail, /context-visible/);
+assert.doesNotMatch(css, /\.composer-runtime-rail\.expanded \.composer-runtime-tabs\s*\{\s*visibility:\s*hidden/);
+assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
+assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
+assert.match(messageBubble, /key=\{segment\.id\}/);
+assert.doesNotMatch(messageBubble, /key=\{`\$\{segment\.id\}-\$\{index\}`\}/);
+assert.match(
+  css,
+  /\.window-restored \.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateY\(-8px\)/,
+);
+assert.match(
+  css,
+  /\.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateX\(14px\)/,
+  'Maximized summary must keep the existing right-side exit motion',
 );
 
 console.log('soft panel motion contract tests passed');

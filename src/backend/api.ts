@@ -102,6 +102,7 @@ export interface ExperimentalGoalA2AStatus {
   mode: string;
   goalProtocol: string;
   a2aProtocolVersion: string;
+  mergedIntoCore: boolean;
 }
 
 export type ExperimentalGoalStatus =
@@ -544,6 +545,17 @@ export interface SessionMessagesResult {
   messages: ChatMessage[];
   toolExecutions: ChatToolExecution[];
   workspaceContext?: WorkspaceContext;
+  latestTurn?: SessionLatestTurn;
+}
+
+export interface SessionLatestTurn {
+  turnId: string;
+  turnSequence?: number;
+  status: string;
+  stopped: boolean;
+  stopReason: string;
+  finalDecision: string;
+  finalReason: string;
 }
 
 function url(path: string) {
@@ -756,6 +768,8 @@ export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoal
     a2aProtocolVersion: String(
       payload.a2a_protocol_version ?? payload.a2aProtocolVersion ?? '',
     ),
+    mergedIntoCore:
+      payload.merged_into_core === true || payload.mergedIntoCore === true,
   };
 }
 
@@ -1366,6 +1380,9 @@ export async function fetchSessionMessages(
   const workspaceContext = workspaceContextFromPayload(
     asRecord(payload).workspace_context ?? asRecord(payload).workspaceContext,
   );
+  const latestTurn = sessionLatestTurnFromPayload(
+    root.latest_turn ?? root.latestTurn,
+  );
   return {
     conversation: {
       ...conversation,
@@ -1375,6 +1392,25 @@ export async function fetchSessionMessages(
     messages: attachHistoryToolExecutions(parsedMessages, toolExecutions),
     toolExecutions,
     workspaceContext,
+    ...(latestTurn ? { latestTurn } : {}),
+  };
+}
+
+function sessionLatestTurnFromPayload(value: unknown): SessionLatestTurn | undefined {
+  const item = asRecord(value);
+  const turnId = String(item.turn_id ?? item.turnId ?? '').trim();
+  if (!turnId) {
+    return undefined;
+  }
+  const turnSequence = optionalNumber(item.turn_sequence ?? item.turnSequence);
+  return {
+    turnId,
+    ...(turnSequence != null ? { turnSequence } : {}),
+    status: String(item.status ?? '').trim().toLowerCase(),
+    stopped: item.stopped === true,
+    stopReason: String(item.stop_reason ?? item.stopReason ?? ''),
+    finalDecision: String(item.final_decision ?? item.finalDecision ?? ''),
+    finalReason: String(item.final_reason ?? item.finalReason ?? ''),
   };
 }
 

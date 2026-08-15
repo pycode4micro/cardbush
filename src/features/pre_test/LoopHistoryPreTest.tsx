@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 
 import {
   mergeFinalStreamMessages,
+  normalizeActiveTurnTranscriptForDisplay,
   normalizeChatMessagesForDisplay,
 } from '../../hooks/useCardbushChat';
 import type {
@@ -29,13 +30,15 @@ export function isLoopHistoryPreTestEnabled() {
 export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
   const fixture = useMemo(buildMergedFixture, []);
   const messages = fixture.messages;
+  const activeMessages = fixture.activeMessages;
   const assistantMessage = [...messages]
     .reverse()
     .find((message) => message.role === 'assistant');
   const historyCount = assistantMessage?.loopHistory?.length ?? 0;
   const expectedHistoryCount = 4;
   const passed = historyCount === expectedHistoryCount &&
-    fixture.streamHistoryCount === expectedHistoryCount;
+    fixture.streamHistoryCount === expectedHistoryCount &&
+    fixture.activeHistoryCount === 2;
 
   return (
     <div className="chat-panel loop-history-pre-test">
@@ -49,8 +52,8 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
           </small>
         </span>
         <output className={passed ? 'passed' : 'failed'} data-testid="loop-history-result">
-          {passed ? 'PASS' : 'FAIL'} · reload {historyCount}/{expectedHistoryCount} · stream{' '}
-          {fixture.streamHistoryCount}/{expectedHistoryCount}
+          {passed ? 'PASS' : 'FAIL'} · active {fixture.activeHistoryCount}/2 · reload{' '}
+          {historyCount}/{expectedHistoryCount} · stream {fixture.streamHistoryCount}/{expectedHistoryCount}
         </output>
       </header>
       <main className="loop-history-pre-test-stage">
@@ -69,6 +72,22 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
         <MessageFileReferenceScope workspaceRoot="C:\\workspace\\cardbush-electron">
           <div className="loop-history-pre-test-layout">
             <div className="message-list loop-history-pre-test-messages">
+              {activeMessages.map((message) => (
+                <MessageBubble
+                  key={`active:${message.id}`}
+                  message={message}
+                  language={language}
+                  sending
+                  activeTurnId="pre-test-active-turn"
+                  activeAssistantMessageId="pre-test-active-3"
+                  onRegenerate={async () => undefined}
+                  onEditUserMessage={async () => undefined}
+                  onGuideMessage={async () => undefined}
+                  onRetryGuidance={async () => undefined}
+                  onRevertChangeReport={async () => undefined}
+                  onOpenScene={() => undefined}
+                />
+              ))}
               {messages.map((message) => (
                 <MessageBubble
                   key={message.id}
@@ -111,6 +130,39 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
 }
 
 function buildMergedFixture() {
+  const activeMessages = normalizeActiveTurnTranscriptForDisplay([
+    {
+      ...historyMessage(
+        1,
+        '我先读取入口文件，确认事件绑定。',
+        toolExecution(1, 'read_file', '入口文件读取完成'),
+        'assistant_segment',
+      ),
+      id: 'pre-test-active-1',
+      turnId: 'pre-test-active-turn',
+    },
+    {
+      ...historyMessage(
+        2,
+        '入口已经确认，接着检查样式与历史合并。',
+        toolExecution(2, 'search_file_content', '合并路径定位完成'),
+        'assistant_segment',
+      ),
+      id: 'pre-test-active-2',
+      turnId: 'pre-test-active-turn',
+    },
+    {
+      id: 'pre-test-active-3',
+      role: 'assistant',
+      turnId: 'pre-test-active-turn',
+      content: '两次工具结果都已返回，现在运行最终验证。',
+      status: 'streaming',
+      metadata: {
+        transcript_kind: 'assistant_segment',
+        assistant_segment_index: 3,
+      },
+    },
+  ], 'pre-test-active-turn');
   const archivedSteps = [
     historyMessage(
       1,
@@ -199,6 +251,9 @@ function buildMergedFixture() {
     finalMessage,
   ]);
   return {
+    activeMessages,
+    activeHistoryCount: activeMessages.find((message) => message.role === 'assistant')
+      ?.loopHistory?.length ?? 0,
     messages: reloadedMessages,
     streamHistoryCount: streamAssistant?.loopHistory?.length ?? 0,
   };
