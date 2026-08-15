@@ -12,6 +12,11 @@ import {
   Edit3,
   Eye,
   EyeOff,
+  File as FileIcon,
+  FileArchive,
+  FileCode2,
+  FileSpreadsheet,
+  FileText,
   GitBranch,
   KeyRound,
   ListChecks,
@@ -20,6 +25,7 @@ import {
   Paperclip,
   Pause,
   Plus,
+  Presentation,
   Puzzle,
   SlidersHorizontal,
   Sparkles,
@@ -55,6 +61,7 @@ import type {
   SkillSummary,
 } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages';
+import { openInspector } from '../inspector/inspectorEvents';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import { quickPayloadText, type QuickLoadPayload } from './quickLoad';
@@ -64,6 +71,13 @@ type ComposerImageAttachment = {
   path: string;
   name: string;
   previewUrl: string;
+};
+
+type ComposerFileAttachment = {
+  id: string;
+  path: string;
+  name: string;
+  size?: number;
 };
 
 type ImagePreview = {
@@ -148,6 +162,70 @@ function imageAttachmentFromPath(pathValue: string): ComposerImageAttachment {
   };
 }
 
+function fileAttachmentFromPath(
+  pathValue: string,
+  metadata?: { name?: string; size?: number },
+): ComposerFileAttachment {
+  return {
+    id: `file-${crypto.randomUUID()}`,
+    path: pathValue,
+    name: metadata?.name?.trim() || basename(pathValue),
+    size: Number.isFinite(metadata?.size) ? metadata?.size : undefined,
+  };
+}
+
+function fileExtension(value: string) {
+  const extension = basename(value).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '';
+  return extension.slice(0, 5);
+}
+
+function fileIconKind(extension: string) {
+  if (/^(?:xls|xlsx|xlsm|csv|tsv|ods)$/.test(extension)) return 'sheet';
+  if (/^(?:ppt|pptx|pps|ppsx|odp|key)$/.test(extension)) return 'slides';
+  if (/^(?:zip|rar|7z|tar|gz|bz2|xz)$/.test(extension)) return 'archive';
+  if (/^(?:js|jsx|ts|tsx|py|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|html|css|scss|json|xml|yaml|yml|toml|sql|sh|ps1)$/.test(extension)) return 'code';
+  if (/^(?:doc|docx|odt|rtf|txt|md|pdf)$/.test(extension)) return 'document';
+  return 'file';
+}
+
+function ComposerFileIcon({ name }: { name: string }) {
+  const extension = fileExtension(name);
+  const kind = fileIconKind(extension);
+  const icon = kind === 'sheet'
+    ? <FileSpreadsheet size={22} />
+    : kind === 'slides'
+      ? <Presentation size={22} />
+      : kind === 'archive'
+        ? <FileArchive size={22} />
+        : kind === 'code'
+          ? <FileCode2 size={22} />
+          : kind === 'document'
+            ? <FileText size={22} />
+            : <FileIcon size={22} />;
+  return (
+    <span className={`composer-file-icon ${kind}`} aria-hidden="true">
+      {icon}
+      <em>{extension ? extension.toUpperCase() : 'FILE'}</em>
+    </span>
+  );
+}
+
+function formatFileSize(size?: number) {
+  if (!Number.isFinite(size) || size == null || size < 0) {
+    return '—';
+  }
+  if (size < 1024) return `${size} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = size / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
+
 function composerPopoverAnchorFromTrigger(
   trigger: HTMLElement,
   menu: Exclude<ComposerMenu, null>,
@@ -208,6 +286,7 @@ export function Composer({
   onReasoningLevelChange,
   onSend,
   onCancel,
+  cancelEnabled = true,
   skills = [],
   disabledSkillNames,
   visualInputAvailable,
@@ -257,6 +336,7 @@ export function Composer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
+  cancelEnabled?: boolean;
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
   visualInputAvailable: boolean;
@@ -287,11 +367,25 @@ export function Composer({
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
+  const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
-  const hasContent = draft.trim().length > 0 || imageAttachments.length > 0;
+  const [cancelReady, setCancelReady] = useState(false);
+  const hasContent =
+    draft.trim().length > 0 ||
+    imageAttachments.length > 0 ||
+    fileAttachments.length > 0;
+
+  useEffect(() => {
+    if (!sending || !cancelEnabled) {
+      setCancelReady(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setCancelReady(true), 600);
+    return () => window.clearTimeout(timer);
+  }, [cancelEnabled, sending]);
 
   useEffect(() => {
     if (!gitAvailable && activeMenu === 'git') {
@@ -320,7 +414,7 @@ export function Composer({
 
   useEffect(() => {
     resizeComposerTextarea();
-  }, [compact, draft, imageAttachments.length, resizeComposerTextarea]);
+  }, [compact, draft, fileAttachments.length, imageAttachments.length, resizeComposerTextarea]);
 
   useEffect(() => {
     const handleResize = () => resizeComposerTextarea();
@@ -361,22 +455,28 @@ export function Composer({
     activeMenu,
     commandState,
     draft,
+    fileAttachments.length,
     imageAttachments.length,
     updatePopoverMaxHeight,
   ]);
 
   async function submit() {
     if (sending && !hasContent) {
+      if (!cancelReady) {
+        return;
+      }
       await onCancel();
       return;
     }
     if (!hasContent) {
       return;
     }
-    const imagePaths = imageAttachments.map((item) => `@${item.path}`);
-    const value = [...imagePaths, draft.trimEnd()].filter(Boolean).join('\n');
+    const attachmentPaths = [...imageAttachments, ...fileAttachments]
+      .map((item) => `@${item.path}`);
+    const value = [...attachmentPaths, draft.trimEnd()].filter(Boolean).join('\n');
     onDraftChange('');
     setImageAttachments([]);
+    setFileAttachments([]);
     await onSend(value);
   }
 
@@ -395,10 +495,52 @@ export function Composer({
   }
 
   function loadPayload(payload: QuickLoadPayload) {
+    if (payload.kind === 'file' && payload.value.trim()) {
+      const pathValue = payload.value.trim();
+      if (isImagePath(pathValue)) {
+        setImageAttachments((current) => [
+          ...current,
+          imageAttachmentFromPath(pathValue),
+        ]);
+      } else {
+        void addFileAttachments([pathValue]);
+      }
+      setActiveMenu(null);
+      setPopoverAnchor(null);
+      setCommandState(null);
+      return;
+    }
     onQuickLoad?.(payload);
     setActiveMenu(null);
     setPopoverAnchor(null);
     setCommandState(null);
+  }
+
+  async function addFileAttachments(paths: string[]) {
+    const uniquePaths = [...new Set(paths.map((value) => value.trim()).filter(Boolean))];
+    if (uniquePaths.length === 0) {
+      return;
+    }
+    const inspected = await window.cardbushDesktop
+      ?.inspectAttachments?.(uniquePaths)
+      .catch(() => []);
+    const metadataByPath = new Map(
+      (inspected ?? []).map((item) => [item.path.toLowerCase(), item]),
+    );
+    setFileAttachments((current) => {
+      const existing = new Set(current.map((item) => item.path.toLowerCase()));
+      return [
+        ...current,
+        ...uniquePaths
+          .filter((pathValue) => !existing.has(pathValue.toLowerCase()))
+          .map((pathValue) =>
+            fileAttachmentFromPath(
+              pathValue,
+              metadataByPath.get(pathValue.toLowerCase()),
+            ),
+          ),
+      ];
+    });
   }
 
   useEffect(() => {
@@ -475,8 +617,7 @@ export function Composer({
     }
     const otherPaths = paths.filter((pathValue) => !isImagePath(pathValue));
     if (otherPaths.length > 0) {
-      const next = otherPaths.map((value) => `@${value}`).join('\n');
-      onDraftChange(draft.trim() ? `${draft.trimEnd()}\n${next}` : next);
+      await addFileAttachments(otherPaths);
     }
   }
 
@@ -869,6 +1010,39 @@ export function Composer({
             ))}
           </div>
         )}
+        {fileAttachments.length > 0 && (
+          <div className="composer-file-strip">
+            {fileAttachments.map((file) => (
+              <article className="composer-file-attachment" key={file.id}>
+                <button
+                  className="composer-file-preview"
+                  type="button"
+                  title={language === 'zh' ? `只读预览 ${file.name}` : `Preview ${file.name} read-only`}
+                  onClick={() => openInspector(file.path, file.name)}
+                >
+                  <ComposerFileIcon name={file.name} />
+                  <span className="composer-file-meta">
+                    <strong>{file.name}</strong>
+                    <small>{formatFileSize(file.size)}</small>
+                  </span>
+                </button>
+                <button
+                  className="composer-file-remove"
+                  type="button"
+                  aria-label={language === 'zh' ? `移除文件 ${file.name}` : `Remove ${file.name}`}
+                  title={language === 'zh' ? '移除文件' : 'Remove file'}
+                  onClick={() =>
+                    setFileAttachments((current) =>
+                      current.filter((item) => item.id !== file.id),
+                    )
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           data-os-primary-input={osMode ? 'true' : undefined}
@@ -912,6 +1086,9 @@ export function Composer({
               }
             }
             if (event.key === 'Enter' && !event.shiftKey) {
+              if (event.repeat || event.nativeEvent.isComposing) {
+                return;
+              }
               event.preventDefault();
               void submit();
             }
@@ -1008,6 +1185,7 @@ export function Composer({
             <button
               className={`send-button ${sending && hasContent ? 'queue' : ''}`}
               type="button"
+              disabled={sending && !hasContent && !cancelReady}
               title={
                 sending && hasContent
                   ? language === 'zh'
@@ -1017,7 +1195,11 @@ export function Composer({
               }
               onClick={() => void submit()}
             >
-              {sending && !hasContent ? <Pause size={17} /> : <ArrowUp size={18} />}
+              {sending && !hasContent ? (
+                cancelReady ? <Pause size={17} /> : <LoaderCircle size={17} />
+              ) : (
+                <ArrowUp size={18} />
+              )}
             </button>
           </div>
         </div>

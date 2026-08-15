@@ -6,7 +6,13 @@ import {
   Clipboard,
   Clock3,
   Edit3,
+  File as FileIcon,
+  FileArchive,
+  FileCode2,
+  FileSpreadsheet,
+  FileText,
   LoaderCircle,
+  Presentation,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -30,8 +36,19 @@ import {
   useState,
 } from 'react';
 
-import { basename, fileUrl } from '../../shared/localPaths';
-import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
+import {
+  basename,
+  fileUrl,
+  isAbsoluteLocalPath,
+  isImagePath,
+  stripWrappingQuotes,
+} from '../../shared/localPaths';
+import type {
+  AppLanguage,
+  ChatAttachment,
+  ChatMessage,
+  ChatToolExecution,
+} from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
 import {
@@ -72,6 +89,17 @@ import {
 export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
 
 type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
+
+type UserMessageDeliveryState = 'pending' | 'failed';
+
+function userMessageDeliveryState(message: ChatMessage): UserMessageDeliveryState | null {
+  const metadata = message.metadata ?? {};
+  if (metadata.turn_guidance === true) {
+    return null;
+  }
+  const delivery = String(metadata.message_delivery ?? '').trim().toLowerCase();
+  return delivery === 'pending' || delivery === 'failed' ? delivery : null;
+}
 
 function guidanceDeliveryState(message: ChatMessage): GuidanceDeliveryState | null {
   const metadata = message.metadata ?? {};
@@ -259,6 +287,7 @@ function MessageBubbleView({
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
+  onRetryMessage = async () => undefined,
   onRetryGuidance,
   onRevertChangeReport,
   onOpenScene,
@@ -275,6 +304,7 @@ function MessageBubbleView({
     guidance: string,
     mode: GuidanceMode,
   ) => Promise<void>;
+  onRetryMessage?: (message: ChatMessage) => Promise<void>;
   onRetryGuidance: (message: ChatMessage) => Promise<void>;
   onRevertChangeReport: (
     report: ConversationChangeReport,
@@ -282,7 +312,26 @@ function MessageBubbleView({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const { imagePaths, text } = splitMessageImages(message.content);
+  const contentParts = splitMessageImages(message.content);
+  const userContentParts =
+    message.role === 'user'
+      ? splitUserFileAttachments(contentParts.text)
+      : { text: contentParts.text, paths: [] };
+  const attachedImagePaths = (message.attachments ?? [])
+    .filter((attachment) => attachment.type === 'image')
+    .map((attachment) => attachment.path?.trim() ?? '')
+    .filter(Boolean);
+  const parsedImagePaths = userContentParts.paths.filter(isImagePath);
+  const imagePaths = uniqueAttachmentPaths([
+    ...contentParts.imagePaths,
+    ...attachedImagePaths,
+    ...parsedImagePaths,
+  ]);
+  const text = userContentParts.text;
+  const fileAttachments = userMessageFileAttachments(
+    message.attachments ?? [],
+    userContentParts.paths.filter((pathValue) => !isImagePath(pathValue)),
+  );
   const allToolExecutions = message.toolExecutions ?? [];
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(text);
@@ -306,6 +355,8 @@ function MessageBubbleView({
     isActiveAssistantTurn;
   const guidanceDelivery =
     message.role === 'user' ? guidanceDeliveryState(message) : null;
+  const messageDelivery =
+    message.role === 'user' ? userMessageDeliveryState(message) : null;
 
   useEffect(() => {
     setEditing(false);
@@ -342,7 +393,10 @@ function MessageBubbleView({
       return;
     }
     const nextContent = [
-      ...imagePaths.map((pathValue) => `@${pathValue}`),
+      ...uniqueAttachmentPaths([
+        ...imagePaths,
+        ...fileAttachments.map((attachment) => attachment.path ?? ''),
+      ]).map((pathValue) => `@${pathValue}`),
       editText.trim(),
     ]
       .filter(Boolean)
@@ -390,6 +444,10 @@ function MessageBubbleView({
         <div className="message-row user">
           <div className="user-edit-card">
             <MessageImageStrip paths={imagePaths} />
+            <MessageFileAttachmentStrip
+              attachments={fileAttachments}
+              language={language}
+            />
             <textarea
               value={editText}
               autoFocus
@@ -417,7 +475,12 @@ function MessageBubbleView({
               <button
                 className="primary-button"
                 type="button"
-                disabled={submittingEdit || (!editText.trim() && imagePaths.length === 0)}
+                disabled={
+                  submittingEdit ||
+                  (!editText.trim() &&
+                    imagePaths.length === 0 &&
+                    fileAttachments.length === 0)
+                }
                 onClick={() => void submitEdit()}
               >
                 {submittingEdit ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
@@ -433,6 +496,10 @@ function MessageBubbleView({
       <div className="message-row user">
         <div className="user-bubble">
           <MessageImageStrip paths={imagePaths} />
+          <MessageFileAttachmentStrip
+            attachments={fileAttachments}
+            language={language}
+          />
           {text && <MarkdownContent content={text} />}
           {guidanceDelivery && (
             <div
@@ -457,12 +524,40 @@ function MessageBubbleView({
               )}
             </div>
           )}
+          {messageDelivery && (
+            <div
+              className={`message-delivery-status ${messageDelivery}`}
+              role="status"
+              aria-live="polite"
+            >
+              {messageDelivery === 'pending' ? (
+                <LoaderCircle size={12} />
+              ) : (
+                <X size={12} />
+              )}
+              <span>
+                {messageDelivery === 'pending'
+                  ? language === 'zh' ? '发送中' : 'Sending'
+                  : language === 'zh' ? '发送失败' : 'Failed to send'}
+              </span>
+              {messageDelivery === 'failed' && (
+                <button
+                  type="button"
+                  className="message-retry-button"
+                  onClick={() => void onRetryMessage(message)}
+                >
+                  <RefreshCw size={11} />
+                  {language === 'zh' ? '重试' : 'Retry'}
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <div className="message-actions">
           <button
             type="button"
             title={language === 'zh' ? '复制' : 'Copy'}
-            onClick={() => void copyText(message.content).catch(() => undefined)}
+            onClick={() => void copyText(text).catch(() => undefined)}
           >
             <Clipboard size={14} />
           </button>
@@ -1727,6 +1822,209 @@ function GuidanceDialog({
           </button>
         </footer>
       </form>
+    </div>
+  );
+}
+
+function splitUserFileAttachments(content: string) {
+  const paths: string[] = [];
+  const lines = content.split(/\r?\n/);
+  const keptLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const directPath = trimmed.startsWith('@')
+      ? stripWrappingQuotes(trimmed.slice(1).trim())
+      : '';
+    if (directPath && isAbsoluteLocalPath(directPath)) {
+      paths.push(directPath);
+      continue;
+    }
+    keptLines.push(line);
+  }
+
+  let attachmentHeaderIndex = -1;
+  for (let index = keptLines.length - 1; index >= 0; index -= 1) {
+    if (keptLines[index].trim().toLowerCase() === 'attached files (absolute paths):') {
+      attachmentHeaderIndex = index;
+      break;
+    }
+  }
+  if (attachmentHeaderIndex >= 0) {
+    const suffixPaths: string[] = [];
+    let validSuffix = true;
+    for (const line of keptLines.slice(attachmentHeaderIndex + 1)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const candidate = stripWrappingQuotes(trimmed.replace(/^[-*]\s+/, ''));
+      if (!isAbsoluteLocalPath(candidate)) {
+        validSuffix = false;
+        break;
+      }
+      suffixPaths.push(candidate);
+    }
+    if (validSuffix && suffixPaths.length > 0) {
+      paths.push(...suffixPaths);
+      keptLines.splice(attachmentHeaderIndex);
+    }
+  }
+
+  return {
+    text: keptLines.join('\n').trim(),
+    paths: uniqueAttachmentPaths(paths),
+  };
+}
+
+function uniqueAttachmentPaths(paths: string[]) {
+  const seen = new Set<string>();
+  return paths.filter((pathValue) => {
+    const normalized = pathValue.trim();
+    if (!normalized) return false;
+    const key = normalized.replace(/\\/g, '/').toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function userMessageFileAttachments(
+  attachments: ChatAttachment[],
+  parsedPaths: string[],
+) {
+  const byPath = new Map<string, ChatAttachment>();
+  for (const attachment of attachments) {
+    const pathValue = attachment.path?.trim() ?? '';
+    if (!pathValue || attachment.type === 'image' || isImagePath(pathValue)) {
+      continue;
+    }
+    byPath.set(pathValue.replace(/\\/g, '/').toLowerCase(), attachment);
+  }
+  for (const pathValue of parsedPaths) {
+    const key = pathValue.replace(/\\/g, '/').toLowerCase();
+    if (!byPath.has(key)) {
+      byPath.set(key, {
+        id: `file-${key}`,
+        name: basename(pathValue),
+        path: pathValue,
+        type: 'document',
+      });
+    }
+  }
+  return Array.from(byPath.values());
+}
+
+function messageFileExtension(value: string) {
+  return (basename(value).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '').slice(0, 5);
+}
+
+function messageFileIconKind(extension: string) {
+  if (/^(?:xls|xlsx|xlsm|csv|tsv|ods)$/.test(extension)) return 'sheet';
+  if (/^(?:ppt|pptx|pps|ppsx|odp|key)$/.test(extension)) return 'slides';
+  if (/^(?:zip|rar|7z|tar|gz|bz2|xz)$/.test(extension)) return 'archive';
+  if (/^(?:js|jsx|ts|tsx|py|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|html|css|scss|json|xml|yaml|yml|toml|sql|sh|ps1)$/.test(extension)) return 'code';
+  if (/^(?:doc|docx|odt|rtf|txt|md|pdf)$/.test(extension)) return 'document';
+  return 'file';
+}
+
+function MessageFileIcon({ name }: { name: string }) {
+  const extension = messageFileExtension(name);
+  const kind = messageFileIconKind(extension);
+  const icon = kind === 'sheet'
+    ? <FileSpreadsheet size={22} />
+    : kind === 'slides'
+      ? <Presentation size={22} />
+      : kind === 'archive'
+        ? <FileArchive size={22} />
+        : kind === 'code'
+          ? <FileCode2 size={22} />
+          : kind === 'document'
+            ? <FileText size={22} />
+            : <FileIcon size={22} />;
+  return (
+    <span className={`message-file-icon ${kind}`} aria-hidden="true">
+      {icon}
+      <em>{extension ? extension.toUpperCase() : 'FILE'}</em>
+    </span>
+  );
+}
+
+function formatMessageFileSize(size?: number) {
+  if (!Number.isFinite(size) || size == null || size < 0) return '—';
+  if (size < 1024) return `${size} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = size / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function MessageFileAttachmentStrip({
+  attachments,
+  language,
+}: {
+  attachments: ChatAttachment[];
+  language: AppLanguage;
+}) {
+  const [metadata, setMetadata] = useState<Record<string, { name: string; size: number }>>({});
+  const attachmentKey = attachments
+    .map((attachment) => `${attachment.path ?? ''}:${attachment.size ?? ''}`)
+    .join('|');
+
+  useEffect(() => {
+    const missingPaths = attachments
+      .filter((attachment) => attachment.path && !Number.isFinite(attachment.size))
+      .map((attachment) => attachment.path as string)
+      .filter((pathValue) => metadata[pathValue] == null);
+    if (missingPaths.length === 0 || !window.cardbushDesktop?.inspectAttachments) {
+      return;
+    }
+    let cancelled = false;
+    void window.cardbushDesktop.inspectAttachments(missingPaths).then((items) => {
+      if (cancelled) return;
+      setMetadata((current) => {
+        const next = { ...current };
+        for (const item of items) {
+          next[item.path] = { name: item.name, size: item.size };
+        }
+        return next;
+      });
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentKey]);
+
+  if (attachments.length === 0) return null;
+  return (
+    <div className="message-file-strip">
+      {attachments.map((attachment) => {
+        const pathValue = attachment.path?.trim() ?? '';
+        const inspected = metadata[pathValue];
+        const name = inspected?.name || attachment.name || basename(pathValue);
+        const size = inspected?.size ?? attachment.size;
+        return (
+          <button
+            className="message-file-attachment"
+            type="button"
+            key={attachment.id || pathValue}
+            title={pathValue}
+            disabled={!pathValue}
+            onClick={() => openInspector(pathValue, name)}
+          >
+            <MessageFileIcon name={name} />
+            <span className="message-file-meta">
+              <strong>{name}</strong>
+              <small>
+                {formatMessageFileSize(size)} · {language === 'zh' ? '只读' : 'Read only'}
+              </small>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

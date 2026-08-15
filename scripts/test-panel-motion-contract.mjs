@@ -40,8 +40,15 @@ assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
 assert.match(
   summary,
-  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"/,
-  'Summary hierarchy must keep outputs first, tool activity second, and history last',
+  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"[\s\S]*?className="work-summary-section work-summary-a2a-section"/,
+  'Summary hierarchy must keep outputs first, tool activity second, history next, and A2A last',
+);
+assert.doesNotMatch(summary, /ShadowCloneIcon|ShadowTemporaryChat|work-summary-modes/);
+assert.match(summary, /className="work-summary-a2a-toggle"[\s\S]*?aria-expanded=\{a2aExpanded\}/);
+assert.doesNotMatch(
+  css,
+  /work-summary-hidden\) \.composer-shadow-chat-host\s*\{\s*display:\s*none/,
+  'Removing Shadow from the summary must not hide the standalone composer Shadow chat',
 );
 assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?width:\s*336px/);
 assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?border-radius:\s*22px/);

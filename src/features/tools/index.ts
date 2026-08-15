@@ -13,11 +13,13 @@ export {
 } from './toolOutput';
 export {
   changeReportsFromMessages,
+  groupChangeReportsByTurn,
   looksLikeFileChangeExecution,
   serializeToolChangeReport,
   summarizeChangeReports,
   toolChangeReportFromExecutions,
   type ConversationChangeReport,
+  type ConversationChangeReviewGroup,
   type ConversationChangeSummary,
   type ToolFileChange,
   type ToolChangeReport,

@@ -13,6 +13,26 @@ const composerPath = path.join(
   'Composer.tsx',
 );
 const source = fs.readFileSync(composerPath, 'utf8');
+const mainSource = fs.readFileSync(
+  path.join(process.cwd(), 'electron', 'main.ts'),
+  'utf8',
+);
+const preloadSource = fs.readFileSync(
+  path.join(process.cwd(), 'electron', 'preload.ts'),
+  'utf8',
+);
+const stylesSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'styles', 'app.css'),
+  'utf8',
+);
+const chatHookSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
+  'utf8',
+);
+const messageBubbleSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
+  'utf8',
+);
 const slashBlock = source.match(
   /const slashCommands[\s\S]*?const commandItems/,
 )?.[0] ?? '';
@@ -48,6 +68,63 @@ assert.match(
   /`\$\{selectedModelConfig\.modelName\} · \$\{selectedModelConfig\.provider\}`/,
   'the compact model label must place the provider name last',
 );
+assert.match(source, /const \[fileAttachments, setFileAttachments\] = useState/);
+assert.match(
+  source,
+  /const attachmentPaths = \[\.\.\.imageAttachments, \.\.\.fileAttachments\][\s\S]*?\.map\(\(item\) => `@\$\{item\.path\}`\)/,
+  'Attachment paths must retain the existing hidden backend transport format',
+);
+assert.doesNotMatch(
+  source,
+  /otherPaths\.map\(\(value\) => `@\$\{value\}`\)/,
+  'Selecting files must not insert @ commands into the visible draft',
+);
+assert.match(
+  source,
+  /className="composer-file-preview"[\s\S]*?openInspector\(file\.path, file\.name\)/,
+  'File cards must open the existing right-side read-only inspector',
+);
+assert.match(source, /<ComposerFileIcon name=\{file\.name\} \/>/);
+assert.match(source, /<small>\{formatFileSize\(file\.size\)\}<\/small>/);
+assert.match(mainSource, /ipcMain\.handle\('files:inspect-attachments'/);
+assert.match(mainSource, /size:\s*stats\.size/);
+assert.match(preloadSource, /inspectAttachments:[\s\S]*?files:inspect-attachments/);
+assert.match(stylesSource, /\.composer-file-attachment\s*\{/);
+assert.match(stylesSource, /\.composer-file-meta small\s*\{[\s\S]*?color:\s*var\(--text-soft\)/);
+assert.match(
+  chatHookSource,
+  /const userMessage:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:/,
+  'The optimistic user bubble must not expose hidden @ attachment paths',
+);
+assert.match(chatHookSource, /userInput:\s*outbound\.userInput/);
+assert.match(messageBubbleSource, /function MessageFileAttachmentStrip/);
+assert.match(messageBubbleSource, /splitUserFileAttachments/);
+assert.match(
+  messageBubbleSource,
+  /openInspector\(pathValue, name\)/,
+  'Sent file cards must open the right-side read-only inspector',
+);
+assert.match(stylesSource, /\.message-file-attachment\s*\{/);
+assert.match(
+  source,
+  /event\.repeat\s*\|\|\s*event\.nativeEvent\.isComposing/,
+  'Enter submission must ignore key repeat and IME composition events',
+);
+assert.match(
+  source,
+  /if\s*\(!cancelReady\)/,
+  'The send control must not cancel a request before backend acceptance or during the double-click guard',
+);
+assert.match(
+  source,
+  /disabled=\{sending\s*&&\s*!hasContent\s*&&\s*!cancelReady\}/,
+  'The pre-start send control must remain a disabled waiting state',
+);
+assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);
+assert.match(messageBubbleSource, /message-delivery-status/);
+assert.match(messageBubbleSource, /onRetryMessage\(message\)/);
+assert.match(chatHookSource, /let streamStarted = false/);
+assert.match(chatHookSource, /markOptimisticChatRequestFailed\(/);
 
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {

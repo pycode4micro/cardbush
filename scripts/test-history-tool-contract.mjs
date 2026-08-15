@@ -263,4 +263,84 @@ assert.match(
   'Disclosure anchoring must perform one synchronous correction and only clean up later',
 );
 
+const changeReportSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'tools', 'toolChangeReports.ts'),
+  'utf8',
+);
+const changeReportTranspiled = ts.transpileModule(changeReportSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const changeReportModule = { exports: {} };
+vm.runInNewContext(changeReportTranspiled.outputText, {
+  module: changeReportModule,
+  exports: changeReportModule.exports,
+  require: () => ({
+    displayToolName: (value) => value,
+    isToolRunning: () => false,
+  }),
+  Map,
+  Set,
+  Number,
+});
+const { changeReportsFromMessages, groupChangeReportsByTurn } = changeReportModule.exports;
+const changeExecution = (id, pathValue) => ({
+  id,
+  name: 'apply_patch',
+  state: 'completed',
+  summary: '',
+  output: '',
+  success: true,
+  durationMs: 10,
+  createdAt: '2026-08-15T08:00:00Z',
+  contentOffset: 0,
+  metadata: {
+    kind: 'file_change',
+    files: [{ path: pathValue, additions: 1, deletions: 0, diff: '+changed' }],
+  },
+});
+const reviewReports = changeReportsFromMessages([
+  { id: 'user-a', role: 'user', content: '第一轮', turnId: 'turn-a' },
+  {
+    id: 'assistant-a',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-a',
+    toolExecutions: [changeExecution('change-a', 'src/style.css')],
+  },
+  { id: 'user-b', role: 'user', content: '第二轮', turnId: 'turn-b' },
+  {
+    id: 'assistant-b1',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-b',
+    toolExecutions: [changeExecution('change-b1', 'src/style.css')],
+  },
+  {
+    id: 'assistant-b2',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-b',
+    toolExecutions: [changeExecution('change-b2', 'SRC\\STYLE.CSS')],
+  },
+]);
+assert.equal(reviewReports[0].userPrompt, '第一轮');
+assert.equal(reviewReports[1].userPrompt, '第二轮');
+const reviewGroups = groupChangeReportsByTurn(reviewReports);
+assert.equal(reviewGroups.length, 2, 'Change history must group reports by conversation turn');
+assert.equal(reviewGroups[0].id, 'turn:turn-b', 'The latest turn must appear first');
+assert.equal(reviewGroups[0].items.length, 2, 'Reports from the same turn stay inside one group');
+assert.equal(reviewGroups[0].uniqueFileCount, 1, 'Path casing and separators must not inflate file totals');
+
+const sidebarReviewSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
+  'utf8',
+);
+assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(reports\)/);
+assert.match(sidebarReviewSource, /new Set\(reviewGroups\[0\] \? \[reviewGroups\[0\]\.id\]/);
+assert.match(sidebarReviewSource, /className="change-review-group-toggle"[\s\S]*?aria-expanded=\{expanded\}/);
+assert.match(stylesSource, /\.change-review-group-files\s*\{/);
+
 console.log('history tool association and timestamp contract tests passed');

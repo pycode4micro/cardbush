@@ -44,7 +44,11 @@ import type {
 import { sectionLabels } from '../appSections';
 import { conversationProjectDir } from '../conversationWorkspace';
 import { copyText } from '../messageFeedback';
-import { ToolFileChangeView, type ConversationChangeReport } from '../tools';
+import {
+  groupChangeReportsByTurn,
+  ToolFileChangeView,
+  type ConversationChangeReport,
+} from '../tools';
 export type ProjectAction =
   | 'pin'
   | 'open'
@@ -1179,17 +1183,15 @@ export function ConversationChangeDialog({
   onRevertAll: () => Promise<void>;
   embedded?: boolean;
 }) {
+  const reviewGroups = useMemo(() => groupChangeReportsByTurn(reports), [reports]);
   const reviewItems = useMemo(
-    () => reports.flatMap((report, reportIndex) =>
-      report.files.map((file, fileIndex) => ({
-        key: `${report.id}:${file.path}:${fileIndex}`,
-        report,
-        reportIndex,
-        file,
-      }))),
-    [reports],
+    () => reviewGroups.flatMap((group) => group.items),
+    [reviewGroups],
   );
   const [selectedKey, setSelectedKey] = useState(reviewItems[0]?.key ?? '');
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
+    () => new Set(reviewGroups[0] ? [reviewGroups[0].id] : []),
+  );
   const [fileNavWidth, setFileNavWidth] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.review_file_nav_width') ?? '');
     return Number.isFinite(stored) ? Math.min(420, Math.max(150, stored)) : 210;
@@ -1225,14 +1227,27 @@ export function ConversationChangeDialog({
       setSelectedKey(reviewItems[0]?.key ?? '');
     }
   }, [reviewItems, selectedKey]);
+  const newestGroupId = reviewGroups[0]?.id ?? '';
+  useEffect(() => {
+    const availableIds = new Set(reviewGroups.map((group) => group.id));
+    setExpandedGroupIds((current) => {
+      const next = new Set([...current].filter((id) => availableIds.has(id)));
+      if (newestGroupId) next.add(newestGroupId);
+      return next;
+    });
+  }, [newestGroupId, reviewGroups]);
   const totals = reports.reduce(
     (sum, report) => ({
-      files: sum.files + report.fileCount,
       additions: sum.additions + report.additions,
       deletions: sum.deletions + report.deletions,
     }),
-    { files: 0, additions: 0, deletions: 0 },
+    { additions: 0, deletions: 0 },
   );
+  const uniqueFileCount = new Set(
+    reviewItems
+      .map((item) => item.file.path.trim().replaceAll('\\', '/').toLowerCase())
+      .filter(Boolean),
+  ).size;
   const allBusy = revertingChangeId === `conversation:${conversation.id}`;
   const allReverted = reports.every((report) => revertedChangeIds.has(report.id));
   const dialog = (
@@ -1250,8 +1265,8 @@ export function ConversationChangeDialog({
           <Code2 size={16} />
           <span>
             {language === 'zh'
-              ? `${reports.length} 组修改，${totals.files} 个文件`
-              : `${reports.length} change set(s), ${totals.files} file(s)`}
+              ? `${reviewGroups.length} 轮修改，${uniqueFileCount} 个文件 · ${reviewItems.length} 次变更`
+              : `${reviewGroups.length} turn(s), ${uniqueFileCount} file(s) · ${reviewItems.length} change record(s)`}
           </span>
           {totals.additions > 0 && <b className="diff-count add">+{totals.additions}</b>}
           {totals.deletions > 0 && <b className="diff-count del">-{totals.deletions}</b>}
@@ -1282,8 +1297,8 @@ export function ConversationChangeDialog({
                     <strong title={selectedItem.file.path}>{selectedItem.file.path}</strong>
                     <span>
                       {language === 'zh'
-                        ? `修改 ${selectedItem.reportIndex + 1} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`
-                        : `Change ${selectedItem.reportIndex + 1} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`}
+                        ? `第 ${selectedItem.turnIndex} 轮 · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`
+                        : `Turn ${selectedItem.turnIndex} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`}
                     </span>
                   </div>
                   <button
@@ -1323,27 +1338,66 @@ export function ConversationChangeDialog({
           />
           <aside className="change-review-file-nav">
             <header>
-              <strong>{language === 'zh' ? '文件' : 'Files'}</strong>
-              <span>{reviewItems.length}</span>
+              <strong>{language === 'zh' ? '按轮次查看' : 'By turn'}</strong>
+              <span>{reviewGroups.length}</span>
             </header>
-            <div>
-              {reviewItems.map((item) => (
-                <button
-                  key={item.key}
-                  className={item.key === selectedItem?.key ? 'active' : ''}
-                  type="button"
-                  title={item.file.path}
-                  onClick={() => setSelectedKey(item.key)}
-                >
-                  <Code2 size={13} />
-                  <span>
-                    <strong>{basename(item.file.path)}</strong>
-                    <small>{item.file.path}</small>
-                  </span>
-                  <b className="diff-count add">+{item.file.additions}</b>
-                  <b className="diff-count del">-{item.file.deletions}</b>
-                </button>
-              ))}
+            <div className="change-review-file-groups">
+              {reviewGroups.map((group) => {
+                const expanded = expandedGroupIds.has(group.id);
+                return (
+                  <section className="change-review-file-group" key={group.id}>
+                    <button
+                      className="change-review-group-toggle"
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() => setExpandedGroupIds((current) => {
+                        const next = new Set(current);
+                        if (expanded) next.delete(group.id);
+                        else next.add(group.id);
+                        return next;
+                      })}
+                    >
+                      <ChevronDown size={13} className={expanded ? 'expanded' : ''} />
+                      <span>
+                        <strong>
+                          {language === 'zh'
+                            ? `第 ${group.turnIndex} 轮`
+                            : `Turn ${group.turnIndex}`}
+                        </strong>
+                        <small title={group.userPrompt || undefined}>
+                          {group.userPrompt || formatChangeTimestamp(group.createdAt, language)}
+                        </small>
+                      </span>
+                      <em>
+                        {language === 'zh'
+                          ? `${group.uniqueFileCount} 个文件`
+                          : `${group.uniqueFileCount} file(s)`}
+                      </em>
+                    </button>
+                    {expanded && (
+                      <div className="change-review-group-files">
+                        {group.items.map((item) => (
+                          <button
+                            key={item.key}
+                            className={`change-review-file-item${item.key === selectedItem?.key ? ' active' : ''}`}
+                            type="button"
+                            title={item.file.path}
+                            onClick={() => setSelectedKey(item.key)}
+                          >
+                            <Code2 size={13} />
+                            <span>
+                              <strong>{basename(item.file.path)}</strong>
+                              <small>{item.file.path}</small>
+                            </span>
+                            <b className="diff-count add">+{item.file.additions}</b>
+                            <b className="diff-count del">-{item.file.deletions}</b>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
             </div>
           </aside>
         </div>

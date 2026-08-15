@@ -1,14 +1,14 @@
 import {
   CheckCircle2,
+  ChevronDown,
   Clock3,
   FileCode2,
   FileOutput,
   LoaderCircle,
   Wrench,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import type { AppLanguage, ChatMessage } from '../../types';
 import { AssistantLoopHistoryBlock } from '../chatMessages';
 import {
@@ -17,52 +17,24 @@ import {
   summarizeChangeReports,
   type ConversationChangeReport,
 } from '../tools';
-import {
-  ShadowTemporaryChat,
-  type ShadowChatEntry,
-} from './ShadowTemporaryChat';
 import { ExperimentalA2APanel } from './ExperimentalA2APanel';
-
-type WorkSummaryMode = 'summary' | 'a2a';
 
 export function ConversationWorkSummary({
   language,
   sessionId,
   messages,
   changeReports,
-  shadowAvailable,
-  shadowOpen,
-  shadowAgentName,
-  shadowEntries,
-  shadowBusy,
-  shadowError,
-  shadowAccentColor,
-  onToggleShadow,
-  onCloseShadow,
   onOpenChangeReview,
-  requestedMode = 'summary',
-  modeRequestId = 0,
   softVisible = true,
 }: {
   language: AppLanguage;
   sessionId: string;
   messages: ChatMessage[];
   changeReports: ConversationChangeReport[];
-  shadowAvailable: boolean;
-  shadowOpen: boolean;
-  shadowAgentName: string;
-  shadowEntries: ShadowChatEntry[];
-  shadowBusy: boolean;
-  shadowError?: string;
-  shadowAccentColor: string;
-  onToggleShadow: () => void;
-  onCloseShadow: () => void;
   onOpenChangeReview: () => void;
-  requestedMode?: WorkSummaryMode;
-  modeRequestId?: number;
   softVisible?: boolean;
 }) {
-  const [mode, setMode] = useState<WorkSummaryMode>('summary');
+  const [a2aExpanded, setA2aExpanded] = useState(false);
   const executions = useMemo(
     () => messages
       .flatMap((message) => [
@@ -107,78 +79,27 @@ export function ConversationWorkSummary({
   }, [changeReports]);
 
   useEffect(() => {
-    setMode('summary');
+    setA2aExpanded(false);
   }, [sessionId]);
-
-  useEffect(() => {
-    if (!shadowOpen) setMode(requestedMode);
-  }, [modeRequestId, requestedMode, shadowOpen]);
-
-  useEffect(() => {
-    if (shadowOpen) setMode('summary');
-  }, [shadowOpen]);
-
-  const handleShadow = () => {
-    setMode('summary');
-    onToggleShadow();
-  };
-
-  const handleA2A = () => {
-    if (shadowOpen) onCloseShadow();
-    setMode((current) => current === 'a2a' ? 'summary' : 'a2a');
-  };
 
   return (
     <aside
-      className={`conversation-work-summary soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}${shadowOpen ? ' shadow-mode' : ''}`}
+      className={`conversation-work-summary soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       aria-hidden={!softVisible}
-      style={{ '--shadow-accent': shadowAccentColor } as CSSProperties}
     >
-      <nav className="work-summary-modes" aria-label={language === 'zh' ? '辅助会话' : 'Assistant channels'}>
-        <button
-          className={shadowOpen ? 'active shadow' : ''}
-          type="button"
-          disabled={!shadowAvailable}
-          title={language === 'zh' ? 'Shadow 临时会话' : 'Shadow temporary chat'}
-          onClick={handleShadow}
-        >
-          <ShadowCloneIcon size={16} />
-          <span>Shadow</span>
-        </button>
-        <button
-          className={mode === 'a2a' ? 'active' : ''}
-          type="button"
-          title={language === 'zh' ? 'A2A 协作 Agent' : 'A2A peer agent'}
-          onClick={handleA2A}
-        >
-          <img className="a2a-official-icon" src="./a2a-icon.svg" alt="" aria-hidden="true" />
-          <span>A2A</span>
-        </button>
-      </nav>
-
       <div className="work-summary-content">
-        {shadowOpen ? (
-          <div className="work-summary-shadow-chat">
-            <ShadowTemporaryChat
-              language={language}
-              agentName={shadowAgentName}
-              entries={shadowEntries}
-              busy={shadowBusy}
-              error={shadowError}
-              open
-              accentColor={shadowAccentColor}
-              onClose={onCloseShadow}
-            />
-            <p className="work-summary-input-hint">
-              {language === 'zh' ? '使用下方输入框继续临时会话' : 'Continue in the composer below'}
-            </p>
-          </div>
-        ) : mode === 'a2a' ? (
-          <ExperimentalA2APanel language={language} />
-        ) : (
-          <section className="work-summary-overview">
-            <header>
-              <h2>{language === 'zh' ? '工作摘要' : 'Work summary'}</h2>
+        <section className="work-summary-overview">
+            <header className="work-summary-header">
+              <div>
+                <span className="work-summary-kicker">
+                  {language === 'zh' ? '当前对话' : 'Current conversation'}
+                </span>
+                <h2>{language === 'zh' ? '工作摘要' : 'Work summary'}</h2>
+              </div>
+              <div className="work-summary-metrics">
+                <span>{changeSummary?.fileCount ?? 0} {language === 'zh' ? '文件' : 'files'}</span>
+                <span>{executions.length} {language === 'zh' ? '工具' : 'tools'}</span>
+              </div>
             </header>
 
             <div className="work-summary-section outputs">
@@ -256,8 +177,28 @@ export function ConversationWorkSummary({
                 </div>
               </div>
             )}
-          </section>
-        )}
+
+            <div className="work-summary-section work-summary-a2a-section">
+              <button
+                className="work-summary-a2a-toggle"
+                type="button"
+                aria-expanded={a2aExpanded}
+                onClick={() => setA2aExpanded((current) => !current)}
+              >
+                <img className="a2a-official-icon" src="./a2a-icon.svg" alt="" aria-hidden="true" />
+                <span>
+                  <strong>{language === 'zh' ? 'A2A 协作' : 'A2A collaboration'}</strong>
+                  <small>{language === 'zh' ? '连接并派发远端 Agent 任务' : 'Connect and dispatch remote agent tasks'}</small>
+                </span>
+                <ChevronDown size={14} className={a2aExpanded ? 'expanded' : ''} />
+              </button>
+              {a2aExpanded && (
+                <div className="work-summary-a2a-body">
+                  <ExperimentalA2APanel language={language} />
+                </div>
+              )}
+            </div>
+        </section>
       </div>
     </aside>
   );

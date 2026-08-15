@@ -148,11 +148,53 @@ const {
   applyAssistantSegmentBoundary,
   createAssistantStreamDeltaBuffer,
   mergeFinalStreamMessages,
+  markOptimisticChatRequestAccepted,
+  markOptimisticChatRequestFailed,
   normalizeActiveTurnTranscriptForDisplay,
   normalizeChatMessagesForDisplay,
   optimisticGuidanceMessage,
   reconcileOptimisticGuidance,
 } = hookModule.exports;
+
+const optimisticChatState = {
+  'chat-session': [
+    {
+      id: 'chat-user-local',
+      role: 'user',
+      content: '还在吗',
+      status: 'pending',
+      metadata: { message_delivery: 'pending' },
+    },
+    {
+      id: 'chat-assistant-local',
+      role: 'assistant',
+      content: '',
+      metadata: { optimistic_request_id: 'chat-user-local' },
+    },
+  ],
+};
+const acceptedChatState = markOptimisticChatRequestAccepted(
+  optimisticChatState,
+  'chat-session',
+  'chat-user-local',
+);
+assert.equal(acceptedChatState['chat-session'][0].status, 'sent');
+assert.equal(
+  acceptedChatState['chat-session'][0].metadata.message_delivery,
+  'accepted',
+);
+const failedChatState = markOptimisticChatRequestFailed(
+  optimisticChatState,
+  'chat-session',
+  'chat-user-local',
+  'chat-assistant-local',
+);
+assert.equal(failedChatState['chat-session'].length, 1);
+assert.equal(failedChatState['chat-session'][0].status, 'failed');
+assert.equal(
+  failedChatState['chat-session'][0].metadata.message_delivery,
+  'failed',
+);
 
 assert.deepEqual(
   plain(normalizeChatMessagesForDisplay([

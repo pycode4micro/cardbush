@@ -161,6 +161,12 @@ const desktopApi = {
       rawCount: number;
     }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
+  inspectAttachments: (paths: string[]) =>
+    ipcRenderer.invoke('files:inspect-attachments', paths) as Promise<Array<{
+      path: string;
+      name: string;
+      size: number;
+    }>>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,

@@ -28,12 +28,32 @@ export type ConversationChangeReport = ToolChangeReport & {
   messageId: string;
   turnId?: string;
   createdAt?: string;
+  userMessageId?: string;
+  userPrompt?: string;
+  turnIndex?: number;
 };
 
 export type ConversationChangeSummary = {
   fileCount: number;
   additions: number;
   deletions: number;
+};
+
+export type ConversationChangeReviewItem = {
+  key: string;
+  report: ConversationChangeReport;
+  reportIndex: number;
+  turnIndex: number;
+  file: ToolFileChange;
+};
+
+export type ConversationChangeReviewGroup = {
+  id: string;
+  turnIndex: number;
+  userPrompt: string;
+  createdAt?: string;
+  uniqueFileCount: number;
+  items: ConversationChangeReviewItem[];
 };
 
 export type SerializedToolFileChange = {
@@ -94,21 +114,92 @@ export function toolChangeReportFromExecutions(
 }
 
 export function changeReportsFromMessages(messages: ChatMessage[]): ConversationChangeReport[] {
-  return messages.flatMap((message, index) => {
+  const reports: ConversationChangeReport[] = [];
+  const userTurnByTurnId = new Map<
+    string,
+    { messageId: string; prompt: string; turnIndex: number }
+  >();
+  let latestUserTurn: { messageId: string; prompt: string; turnIndex: number } | undefined;
+  let userTurnIndex = 0;
+
+  messages.forEach((message, index) => {
+    if (message.role === 'user') {
+      userTurnIndex += 1;
+      latestUserTurn = {
+        messageId: message.id,
+        prompt: message.content.trim(),
+        turnIndex: userTurnIndex,
+      };
+      const userTurnId = message.turnId?.trim() ?? '';
+      if (userTurnId && !userTurnByTurnId.has(userTurnId)) {
+        userTurnByTurnId.set(userTurnId, latestUserTurn);
+      }
+    }
     const report = toolChangeReportFromExecutions(message.toolExecutions ?? []);
     if (!report) {
-      return [];
+      return;
     }
-    return [
-      {
-        ...report,
-        id: `${message.id || index}:${message.turnId ?? ''}`,
-        messageId: message.id,
-        turnId: message.turnId,
-        createdAt: message.createdAt,
-      },
-    ];
+    const turnId = message.turnId?.trim() ?? '';
+    const userTurn = (turnId ? userTurnByTurnId.get(turnId) : undefined) ?? latestUserTurn;
+    reports.push({
+      ...report,
+      id: `${message.id || index}:${message.turnId ?? ''}`,
+      messageId: message.id,
+      turnId: message.turnId,
+      createdAt: message.createdAt,
+      userMessageId: userTurn?.messageId,
+      userPrompt: userTurn?.prompt,
+      turnIndex: userTurn?.turnIndex,
+    });
   });
+  return reports;
+}
+
+export function groupChangeReportsByTurn(
+  reports: ConversationChangeReport[],
+): ConversationChangeReviewGroup[] {
+  const grouped = new Map<
+    string,
+    Omit<ConversationChangeReviewGroup, 'uniqueFileCount'> & { paths: Set<string> }
+  >();
+  reports.forEach((report, reportIndex) => {
+    const turnId = report.turnId?.trim() ?? '';
+    const groupId = turnId ? `turn:${turnId}` : `report:${report.id}`;
+    const turnIndex = report.turnIndex ?? reportIndex + 1;
+    let group = grouped.get(groupId);
+    if (!group) {
+      group = {
+        id: groupId,
+        turnIndex,
+        userPrompt: report.userPrompt?.trim() ?? '',
+        createdAt: report.createdAt,
+        paths: new Set<string>(),
+        items: [],
+      };
+      grouped.set(groupId, group);
+    }
+    if (!group.userPrompt && report.userPrompt?.trim()) {
+      group.userPrompt = report.userPrompt.trim();
+    }
+    group.createdAt = report.createdAt ?? group.createdAt;
+    report.files.forEach((file, fileIndex) => {
+      const normalizedPath = normalizeChangeFilePath(file.path);
+      if (normalizedPath) group.paths.add(normalizedPath);
+      group.items.push({
+        key: `${report.id}:${file.path}:${fileIndex}`,
+        report,
+        reportIndex,
+        turnIndex: group.turnIndex,
+        file,
+      });
+    });
+  });
+  return Array.from(grouped.values())
+    .map(({ paths, ...group }) => ({
+      ...group,
+      uniqueFileCount: paths.size || group.items.length,
+    }))
+    .reverse();
 }
 
 export function summarizeChangeReports(
@@ -126,7 +217,7 @@ export function summarizeChangeReports(
     deletions += report.deletions;
     fallbackFileCount += report.fileCount;
     for (const file of report.files) {
-      const normalizedPath = file.path.trim().replaceAll('\\', '/').toLowerCase();
+      const normalizedPath = normalizeChangeFilePath(file.path);
       if (normalizedPath) {
         paths.add(normalizedPath);
       }
@@ -137,6 +228,10 @@ export function summarizeChangeReports(
     additions,
     deletions,
   };
+}
+
+function normalizeChangeFilePath(value: string) {
+  return value.trim().replaceAll('\\', '/').toLowerCase();
 }
 
 export function serializeToolChangeReport(report: ToolChangeReport): SerializedToolFileChange[] {

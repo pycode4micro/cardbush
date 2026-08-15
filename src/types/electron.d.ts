@@ -130,6 +130,11 @@ declare global {
         rawCount: number;
       }>;
       pickAttachments: () => Promise<string[]>;
+      inspectAttachments: (paths: string[]) => Promise<Array<{
+        path: string;
+        name: string;
+        size: number;
+      }>>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;
       pickBackgroundImage: () => Promise<string | null>;

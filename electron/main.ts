@@ -1430,6 +1430,26 @@ ipcMain.handle('dialog:pick-attachments', async () => {
   return result.canceled ? [] : result.filePaths;
 });
 
+ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => {
+  const uniquePaths = [...new Set(
+    (Array.isArray(targetPaths) ? targetPaths : [])
+      .map((targetPath) => normalizeShellPath(String(targetPath ?? '')))
+      .filter(Boolean),
+  )].slice(0, 32);
+  const inspected = await Promise.all(uniquePaths.map(async (targetPath) => {
+    const stats = await fs.promises.stat(targetPath).catch(() => null);
+    if (!stats?.isFile()) {
+      return null;
+    }
+    return {
+      path: targetPath,
+      name: path.basename(targetPath),
+      size: stats.size,
+    };
+  }));
+  return inspected.filter((item) => item != null);
+});
+
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
     title: 'Open project',

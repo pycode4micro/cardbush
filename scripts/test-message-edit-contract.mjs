@@ -22,7 +22,16 @@ const hookSource = fs.readFileSync(
   'utf8',
 );
 assert.match(hookSource, /const editUserMessageAndRegenerate = useCallback/);
-assert.match(hookSource, /editMessage\(\{\s*sessionId:\s*conversationId,\s*messageId,\s*content,/);
+assert.match(
+  hookSource,
+  /editMessage\(\{\s*sessionId:\s*conversationId,\s*messageId,\s*content:\s*outbound\.userInput,/,
+  'Update and rerun must send clean text separately from attachment paths',
+);
+assert.match(
+  hookSource,
+  /const editedUser:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:\s*chatAttachmentsFromOutbound\(outbound\)/,
+  'The edited optimistic bubble must keep attachment cards without exposing @ paths',
+);
 
 const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),

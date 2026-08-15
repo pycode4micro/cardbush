@@ -111,14 +111,6 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                 sessionId={sessionId}
                 messages={messages}
                 changeReports={[]}
-                shadowAvailable={false}
-                shadowOpen={false}
-                shadowAgentName="Shadow Agent"
-                shadowEntries={[]}
-                shadowBusy={false}
-                shadowAccentColor="#7f9fff"
-                onToggleShadow={() => undefined}
-                onCloseShadow={() => undefined}
                 onOpenChangeReview={() => undefined}
               />
             </div>

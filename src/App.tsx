@@ -1977,6 +1977,7 @@ function CardbushApp() {
                 onCreateSessionShareLink={chat.createSessionShareLink}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
+                onRetryMessage={chat.retryFailedUserMessage}
                 onRegenerate={chat.regenerateAssistantMessage}
                 onEditUserMessage={chat.editUserMessageAndRegenerate}
                 onGuideMessage={chat.sendTurnGuidance}
@@ -3283,6 +3284,7 @@ function ChatPanel({
   onCreateSessionShareLink,
   onRefreshActiveSession,
   onSend,
+  onRetryMessage,
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
@@ -3369,6 +3371,7 @@ function ChatPanel({
   ) => Promise<SessionShareLinkResult>;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void>;
+  onRetryMessage: (message: ChatMessage) => Promise<void>;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
   onGuideMessage: (
@@ -5478,8 +5481,6 @@ function ChatPanel({
     '--stream-status-height': `${streamStatusHeight}px`,
   } as CSSProperties;
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
-  const [workSummaryMode, setWorkSummaryMode] = useState<'summary' | 'a2a'>('summary');
-  const [workSummaryModeRequestId, setWorkSummaryModeRequestId] = useState(0);
   const showWorkSummary = workSummaryVisible && !inspectorOpen;
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
   useEffect(() => {
@@ -5513,7 +5514,6 @@ function ChatPanel({
   }, [showWorkSummary, windowMaximized]);
   useEffect(() => {
     setWorkSummaryVisible(false);
-    setWorkSummaryMode('summary');
   }, [activeConversationId]);
   if (isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
@@ -5572,13 +5572,7 @@ function ChatPanel({
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
           onToggleWorkSummary={() => {
-            setWorkSummaryVisible((current) => {
-              if (!current) {
-                setWorkSummaryMode('summary');
-                setWorkSummaryModeRequestId((request) => request + 1);
-              }
-              return !current;
-            });
+            setWorkSummaryVisible((current) => !current);
           }}
           onOpenReview={onOpenChangeReview}
           onRevealSidebar={onRevealSidebar}
@@ -5659,18 +5653,7 @@ function ChatPanel({
             sessionId={activeConversationId}
             messages={renderMessages}
             changeReports={changeReports}
-            shadowAvailable={shadowCanActivate}
-            shadowOpen={shadowThreadOpen}
-            shadowAgentName={shadowConversation?.agentName || 'Shadow Agent'}
-            shadowEntries={shadowEntries}
-            shadowBusy={shadowReplying}
-            shadowError={shadowError}
-            shadowAccentColor={shadowAccentColor}
-            onToggleShadow={() => void toggleShadowThread()}
-            onCloseShadow={closeShadowThread}
             onOpenChangeReview={onOpenChangeReview}
-            requestedMode={workSummaryMode}
-            modeRequestId={workSummaryModeRequestId}
             softVisible={workSummaryPresence.visible}
           />
         )}
@@ -5695,6 +5678,7 @@ function ChatPanel({
             draft={draft}
             onDraftChange={onDraftChange}
             sending={sending}
+            cancelEnabled={Boolean(activeTurnId)}
             queuedMessageCount={queuedMessageCount}
             queuedMessagePreview={queuedMessagePreview}
             queuedMessages={queuedMessages}
@@ -5763,6 +5747,7 @@ function ChatPanel({
                       onRegenerate={onRegenerate}
                       onEditUserMessage={onEditUserMessage}
                       onGuideMessage={onGuideMessage}
+                      onRetryMessage={onRetryMessage}
                       onRetryGuidance={onRetryGuidance}
                       onRevertChangeReport={onRevertChangeReport}
                       onOpenScene={openScene}
@@ -5868,6 +5853,7 @@ function ChatPanel({
               draft={shadowThreadOpen ? shadowDraft : draft}
               onDraftChange={shadowThreadOpen ? setShadowDraft : onDraftChange}
               sending={shadowThreadOpen ? shadowReplying : sending}
+              cancelEnabled={shadowThreadOpen ? shadowReplying : Boolean(activeTurnId)}
               queuedMessageCount={queuedMessageCount}
               queuedMessagePreview={queuedMessagePreview}
               queuedMessages={queuedMessages}
@@ -5982,6 +5968,7 @@ function WelcomeComposer({
   draft,
   onDraftChange,
   sending,
+  cancelEnabled,
   queuedMessageCount,
   queuedMessagePreview,
   queuedMessages,
@@ -6023,6 +6010,7 @@ function WelcomeComposer({
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
+  cancelEnabled: boolean;
   queuedMessageCount: number;
   queuedMessagePreview: string;
   queuedMessages: QueuedChatMessage[];
@@ -6074,6 +6062,7 @@ function WelcomeComposer({
         draft={draft}
         onDraftChange={onDraftChange}
         sending={sending}
+        cancelEnabled={cancelEnabled}
         queuedMessageCount={queuedMessageCount}
         queuedMessagePreview={queuedMessagePreview}
         queuedMessages={queuedMessages}

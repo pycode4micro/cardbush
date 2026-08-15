@@ -34,6 +34,7 @@ import {
 import type {
   AssistantRevision,
   AssistantStreamChunk,
+  ChatAttachment,
   ChatMessage,
   ConversationSummary,
   ManagedModelConfig,
@@ -56,7 +57,12 @@ import type {
   TaskPlanStreamUpdate,
   StreamExecutionUpdate,
 } from '../types';
-import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
+import {
+  basename,
+  isAbsoluteLocalPath,
+  isImagePath,
+  stripWrappingQuotes,
+} from '../shared/localPaths';
 import { truncateText } from '../shared/text';
 import {
   applyGoalToolUpdate,
@@ -956,17 +962,22 @@ export function useCardbushChat(
         return;
       }
       const outbound = splitStreamAttachmentMentions(trimmed);
+      const optimisticAttachments = chatAttachmentsFromOutbound(outbound);
       const attachments = streamAttachmentsForVision(
         outbound,
         requestContext.standardImageInputEnabled === true,
       );
+      const visibleUserInput =
+        outbound.displayInput ||
+        optimisticAttachments.map((attachment) => attachment.name).join(', ') ||
+        outbound.userInput;
       const conversation =
         queuedConversation ??
         activeConversation ??
-        (await startConversation(undefined, conversationTitleFromUserText(trimmed)));
+        (await startConversation(undefined, conversationTitleFromUserText(visibleUserInput)));
       const sessionId = conversation.id;
       const previousMessages = messagesByConversation[sessionId] ?? [];
-      const titleSource = firstUserTitleSource(previousMessages, trimmed);
+      const titleSource = firstUserTitleSource(previousMessages, visibleUserInput);
       if (isSessionSending(sessionId)) {
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
@@ -985,12 +996,20 @@ export function useCardbushChat(
         setError('请先在设置中配置模型');
         return;
       }
+      const userMessageId = `user-${crypto.randomUUID()}`;
       const userMessage: ChatMessage = {
-        id: `user-${crypto.randomUUID()}`,
+        id: userMessageId,
+        clientMessageId: userMessageId,
         role: 'user',
-        content: trimmed,
+        content: outbound.displayInput,
         conversationId: sessionId,
         createdAt: new Date().toISOString(),
+        attachments:
+          optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
+        status: 'pending',
+        metadata: {
+          message_delivery: 'pending',
+        },
       };
       const assistantId = `assistant-${crypto.randomUUID()}`;
       const assistantMessage: ChatMessage = {
@@ -999,6 +1018,9 @@ export function useCardbushChat(
         content: '',
         conversationId: sessionId,
         createdAt: new Date().toISOString(),
+        metadata: {
+          optimistic_request_id: userMessage.id,
+        },
       };
 
       setMessagesByConversation((current) => ({
@@ -1006,7 +1028,12 @@ export function useCardbushChat(
         [sessionId]: [...(current[sessionId] ?? []), userMessage, assistantMessage],
       }));
       setConversations((current) =>
-        upsertConversationPreview(current, conversation, trimmed, titleSource),
+        upsertConversationPreview(
+          current,
+          conversation,
+          visibleUserInput,
+          titleSource,
+        ),
       );
       persistAutoConversationTitle(conversation, titleSource);
       markSessionRunning(sessionId);
@@ -1019,6 +1046,7 @@ export function useCardbushChat(
       });
       controllersRef.current[sessionId] = controller;
       let finalSnapshotPromise: Promise<void> | null = null;
+      let streamStarted = false;
 
       try {
         await streamChat({
@@ -1047,18 +1075,23 @@ export function useCardbushChat(
           files: attachments.files,
           signal: controller.signal,
           onStart: (start) => {
+            streamStarted = true;
             markSessionRunning(sessionId, start.turnId);
             void refreshGoal(sessionId);
             setMessagesByConversation((current) =>
-              assignTurnToLocalMessages(current, sessionId, start.turnId, [
+              markOptimisticChatRequestAccepted(
+                assignTurnToLocalMessages(current, sessionId, start.turnId, [
+                  userMessage.id,
+                  assistantId,
+                ], {
+                  messageId: start.messageId ?? '',
+                  assistantSegmentIndex: start.assistantSegmentIndex,
+                  turnId: start.turnId,
+                  createdAt: start.createdAt,
+                }),
+                sessionId,
                 userMessage.id,
-                assistantId,
-              ], {
-                messageId: start.messageId ?? '',
-                assistantSegmentIndex: start.assistantSegmentIndex,
-                turnId: start.turnId,
-                createdAt: start.createdAt,
-              }),
+              ),
             );
           },
           onDelta: (delta, chunk) => {
@@ -1187,17 +1220,37 @@ export function useCardbushChat(
         await refreshGoal(sessionId);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
-        if (!controller.signal.aborted) {
-          if (isPendingInteractionConflictError(caught)) {
-            setMessagesByConversation((current) => ({
-              ...current,
-              [sessionId]: (current[sessionId] ?? []).filter(
-                (item) => item.id !== userMessage.id && item.id !== assistantId,
-              ),
-            }));
-            setError(null);
-            return;
+        if (isPendingInteractionConflictError(caught)) {
+          setMessagesByConversation((current) => ({
+            ...current,
+            [sessionId]: (current[sessionId] ?? []).filter(
+              (item) => item.id !== userMessage.id && item.id !== assistantId,
+            ),
+          }));
+          setError(null);
+          return;
+        }
+        if (!streamStarted) {
+          setMessagesByConversation((current) =>
+            markOptimisticChatRequestFailed(
+              current,
+              sessionId,
+              userMessage.id,
+              assistantId,
+            ),
+          );
+          if (!controller.signal.aborted) {
+            setError(errorMessage(caught));
           }
+          console.warn('[cardbush:chat] request ended before SSE start', {
+            sessionId,
+            clientMessageId: userMessage.id,
+            aborted: controller.signal.aborted,
+            error: errorMessage(caught),
+          });
+          return;
+        }
+        if (!controller.signal.aborted) {
           const turnId = activeTurnIdsRef.current[sessionId];
           const loadedMessages = await fetchMessages(sessionId, {
             includeSuperseded: true,
@@ -1264,6 +1317,50 @@ export function useCardbushChat(
       selectedModel,
       skills,
       startConversation,
+    ],
+  );
+
+  const retryFailedUserMessage = useCallback(
+    async (message: ChatMessage) => {
+      if (String(message.metadata?.message_delivery ?? '').trim() !== 'failed') {
+        return;
+      }
+      const sessionId =
+        message.conversationId?.trim() || activeConversationId.trim();
+      if (!sessionId || isSessionSending(sessionId)) {
+        return;
+      }
+      const conversation =
+        conversations.find((item) => item.id === sessionId) ??
+        (activeConversation?.id === sessionId ? activeConversation : undefined);
+      if (!conversation) {
+        setError('未找到原会话，无法重试消息');
+        return;
+      }
+      const attachmentMentions = (message.attachments ?? [])
+        .map((attachment) => attachment.path?.trim() ?? '')
+        .filter(Boolean)
+        .map((pathValue) => `@${pathValue}`);
+      const retryText = [...attachmentMentions, message.content.trim()]
+        .filter(Boolean)
+        .join('\n');
+      if (!retryText) {
+        return;
+      }
+      setMessagesByConversation((current) => ({
+        ...current,
+        [sessionId]: (current[sessionId] ?? []).filter(
+          (candidate) => candidate.id !== message.id,
+        ),
+      }));
+      await sendMessage(retryText, conversation);
+    },
+    [
+      activeConversation,
+      activeConversationId,
+      conversations,
+      isSessionSending,
+      sendMessage,
     ],
   );
 
@@ -1729,10 +1826,11 @@ export function useCardbushChat(
       const createdAt = new Date().toISOString();
       const editedUser: ChatMessage = {
         ...editSourceMessage,
-        content,
+        content: outbound.displayInput,
         conversationId,
         turnId: undefined,
         createdAt,
+        attachments: chatAttachmentsFromOutbound(outbound),
       };
       const tempAssistant: ChatMessage = {
         id: `assistant-edit-${crypto.randomUUID()}`,
@@ -1767,7 +1865,7 @@ export function useCardbushChat(
           editMessage({
             sessionId: conversationId,
             messageId,
-            content,
+            content: outbound.userInput,
             model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
@@ -2367,6 +2465,7 @@ export function useCardbushChat(
     loadTeamFlow,
     submitTeamFlowAction,
     sendMessage,
+    retryFailedUserMessage,
     regenerateAssistantMessage,
     editUserMessageAndRegenerate,
     sendTurnGuidance,
@@ -2378,6 +2477,53 @@ export function useCardbushChat(
     cancelSending,
     clearError,
     clearNotice,
+  };
+}
+
+export function markOptimisticChatRequestAccepted(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  userMessageId: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? []).map((message) =>
+      message.id === userMessageId
+        ? {
+            ...message,
+            status: 'sent',
+            metadata: {
+              ...(message.metadata ?? {}),
+              message_delivery: 'accepted',
+            },
+          }
+        : message,
+    ),
+  };
+}
+
+export function markOptimisticChatRequestFailed(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  userMessageId: string,
+  assistantMessageId: string,
+) {
+  return {
+    ...current,
+    [sessionId]: (current[sessionId] ?? [])
+      .filter((message) => message.id !== assistantMessageId)
+      .map((message) =>
+        message.id === userMessageId
+          ? {
+              ...message,
+              status: 'failed',
+              metadata: {
+                ...(message.metadata ?? {}),
+                message_delivery: 'failed',
+              },
+            }
+          : message,
+      ),
   };
 }
 
@@ -3716,6 +3862,7 @@ function mergeMessages(
     );
     byId.set(message.id, {
       ...message,
+      attachments: message.attachments ?? existing?.attachments,
       taskPlan: message.taskPlan ?? existing?.taskPlan,
       toolExecutions: nextToolExecutions,
       loopHistory: nextLoopHistory.length > 0 ? nextLoopHistory : undefined,
@@ -3770,6 +3917,7 @@ export function mergeFinalStreamMessages(
     return {
       ...message,
       createdAt: existingMessage?.createdAt ?? message.createdAt,
+      attachments: message.attachments ?? existingMessage?.attachments,
       metadata: mergeFinalAssistantTimingMetadata(
         message,
         existingMessage,
@@ -4003,6 +4151,7 @@ function mergeLoadedMessagesPreservingLocalState(
     return {
       ...message,
       metadata: preserveLocalAssistantTimingMetadata(message, source),
+      attachments: message.attachments ?? source.attachments,
       taskPlan: message.taskPlan ?? source.taskPlan,
       toolExecutions: mergeToolExecutionLists(
         message.toolExecutions ?? [],
@@ -5183,6 +5332,7 @@ function splitStreamAttachmentMentions(content: string) {
   }
   const userInput = textLines.join('\n').trim();
   return {
+    displayInput: userInput,
     userInput:
       userInput ||
       (images.length > 0 || files.length > 0
@@ -5191,6 +5341,25 @@ function splitStreamAttachmentMentions(content: string) {
     images,
     files,
   };
+}
+
+function chatAttachmentsFromOutbound(
+  outbound: ReturnType<typeof splitStreamAttachmentMentions>,
+): ChatAttachment[] {
+  return [
+    ...outbound.images.map((image) => ({
+      id: `attachment-${crypto.randomUUID()}`,
+      name: basename(image.path),
+      path: image.path,
+      type: 'image' as const,
+    })),
+    ...outbound.files.map((pathValue) => ({
+      id: `attachment-${crypto.randomUUID()}`,
+      name: basename(pathValue),
+      path: pathValue,
+      type: 'document' as const,
+    })),
+  ];
 }
 
 function streamAttachmentsForVision(

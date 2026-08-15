@@ -351,6 +351,8 @@ export interface ChatAttachment {
   id: string;
   name: string;
   type: 'image' | 'video' | 'document';
+  path?: string;
+  size?: number;
 }
 
 export interface ChatToolExecution {

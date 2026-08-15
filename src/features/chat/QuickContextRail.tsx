@@ -69,6 +69,7 @@ export function QuickContextRail({
     messageId: string;
     top: number;
   } | null>(null);
+  const [visibleUserMessageId, setVisibleUserMessageId] = useState('');
   const railRef = useRef<HTMLElement>(null);
   const detailRequestRef = useRef<AbortController | null>(null);
   const railTurns = useMemo(
@@ -82,6 +83,48 @@ export function QuickContextRail({
   const hoveredTurn = hoveredTurnPreview
     ? railTurns.find((message) => message.id === hoveredTurnPreview.messageId) ?? null
     : null;
+
+  useEffect(() => {
+    const chatBody = railRef.current?.closest('.chat-body');
+    const scroller = chatBody?.querySelector<HTMLElement>('.message-list');
+    if (!scroller) {
+      setVisibleUserMessageId(lastUserMessage?.id ?? '');
+      return undefined;
+    }
+
+    let frame = 0;
+    const updateVisibleTurn = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const scrollerRect = scroller.getBoundingClientRect();
+        const readingAnchor =
+          scrollerRect.top + Math.min(180, Math.max(72, scrollerRect.height * 0.28));
+        const userItems = Array.from(
+          scroller.querySelectorAll<HTMLElement>('[data-message-role="user"]'),
+        );
+        let currentId = userItems[0]?.dataset.messageId ?? lastUserMessage?.id ?? '';
+        for (const item of userItems) {
+          if (item.getBoundingClientRect().top > readingAnchor) break;
+          currentId = item.dataset.messageId ?? currentId;
+        }
+        setVisibleUserMessageId((current) => current === currentId ? current : currentId);
+      });
+    };
+
+    const content = scroller.querySelector<HTMLElement>('.message-list-content');
+    const resizeObserver = new ResizeObserver(updateVisibleTurn);
+    resizeObserver.observe(scroller);
+    if (content) resizeObserver.observe(content);
+    scroller.addEventListener('scroll', updateVisibleTurn, { passive: true });
+    window.addEventListener('resize', updateVisibleTurn);
+    updateVisibleTurn();
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      scroller.removeEventListener('scroll', updateVisibleTurn);
+      window.removeEventListener('resize', updateVisibleTurn);
+    };
+  }, [lastUserMessage?.id, userSignature]);
 
   const query = draft.trim() || lastUserMessage?.content.trim() || '';
   const querySource: 'draft' | 'latest' = draft.trim() ? 'draft' : 'latest';
@@ -283,12 +326,19 @@ export function QuickContextRail({
       <div className="quick-context-handle">
         <span className="quick-context-ticks">
           {railTurns.map((message) => {
-            const isCurrentTurn = message.id === lastUserMessage?.id;
+            const isCurrentTurn = message.id === (
+              visibleUserMessageId || lastUserMessage?.id
+            );
+            const isMatchedTurn =
+              panelView !== 'closed' &&
+              !isCurrentTurn &&
+              matchedTurnIds.has(message.id);
             return (
               <button
                 key={message.id}
                 type="button"
-                className={`quick-context-tick${!isCurrentTurn && matchedTurnIds.has(message.id) ? ' matched' : ''}`}
+                className={`quick-context-tick${isCurrentTurn ? ' current' : ''}${isMatchedTurn ? ' matched' : ''}`}
+                aria-current={isCurrentTurn ? 'true' : undefined}
                 aria-label={compactText(message.content, 120)}
                 onPointerEnter={(event) => {
                   const railRect = railRef.current?.getBoundingClientRect();

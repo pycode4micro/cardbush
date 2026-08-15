@@ -4,6 +4,10 @@ import path from 'node:path';
 
 const appSource = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf8');
 const styles = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
+const quickContextSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
+  'utf8',
+);
 
 assert.doesNotMatch(
   appSource,
@@ -121,6 +125,36 @@ assert.match(
   styles,
   /\.scroll-bottom\s*\{[\s\S]*?--composer-surface-center-x[\s\S]*?--composer-surface-top/,
   'The bottom control must align to the measured composer surface',
+);
+assert.match(
+  quickContextSource,
+  /querySelectorAll<HTMLElement>\('\[data-message-role="user"\]'\)[\s\S]*?readingAnchor[\s\S]*?setVisibleUserMessageId/,
+  'The context rail must derive its current turn from user messages at the viewport reading anchor',
+);
+assert.match(
+  quickContextSource,
+  /resizeObserver\.observe\(content\)/,
+  'The context rail must follow streamed content height changes',
+);
+assert.match(
+  quickContextSource,
+  /scroller\.addEventListener\('scroll', updateVisibleTurn/,
+  'The context rail must follow viewport scrolling',
+);
+assert.match(
+  quickContextSource,
+  /panelView !== 'closed'[\s\S]*?className=\{`quick-context-tick\$\{isCurrentTurn \? ' current'/,
+  'Closed rails must reserve emphasis for the visible user turn',
+);
+assert.match(styles, /\.quick-context-tick\.current::before\s*\{/);
+const currentTickRule = styles.match(
+  /\.quick-context-tick\.current::before\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.match(currentTickRule, /background:/);
+assert.doesNotMatch(
+  currentTickRule,
+  /(?:width|height|box-shadow)\s*:/,
+  'The visible turn must differ by color only, without a larger or glowing tick',
 );
 
 console.log('chat scroll contract tests passed');
