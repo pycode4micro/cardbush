@@ -148,9 +148,11 @@ const LazyMarkdownContent = lazy(async () => {
   function MarkdownRenderer({
     content,
     workspaceRoot,
+    language,
   }: {
     content: string;
     workspaceRoot: string;
+    language: AppLanguage;
   }) {
     return (
     <ReactMarkdown
@@ -201,7 +203,7 @@ const LazyMarkdownContent = lazy(async () => {
           return <code {...props} className={className}>{children}</code>;
         },
         pre: ({ children, ...props }) => (
-          <MarkdownCodeBlock {...props}>{children}</MarkdownCodeBlock>
+          <MarkdownCodeBlock {...props} language={language}>{children}</MarkdownCodeBlock>
         ),
       }}
     >
@@ -234,8 +236,9 @@ export function MessageFileReferenceScope({
 
 function MarkdownCodeBlock({
   children,
+  language,
   ...props
-}: HTMLAttributes<HTMLPreElement>) {
+}: HTMLAttributes<HTMLPreElement> & { language: AppLanguage }) {
   const [wrapped, setWrapped] = useState(false);
   const text = reactNodeText(children);
   return (
@@ -244,19 +247,27 @@ function MarkdownCodeBlock({
         <button
           type="button"
           aria-pressed={wrapped}
-          title={wrapped ? '取消换行' : '换行显示'}
+          title={
+            wrapped
+              ? language === 'zh' ? '取消换行' : 'Disable wrapping'
+              : language === 'zh' ? '换行显示' : 'Wrap lines'
+          }
           onClick={() => setWrapped((value) => !value)}
         >
           <WrapText size={12} />
-          <span>{wrapped ? '不换行' : '换行'}</span>
+          <span>
+            {wrapped
+              ? language === 'zh' ? '不换行' : 'No wrap'
+              : language === 'zh' ? '换行' : 'Wrap'}
+          </span>
         </button>
         <button
           type="button"
-          title="复制"
+          title={language === 'zh' ? '复制' : 'Copy'}
           onClick={() => void copyText(text).catch(() => undefined)}
         >
           <Clipboard size={12} />
-          <span>复制</span>
+          <span>{language === 'zh' ? '复制' : 'Copy'}</span>
         </button>
       </div>
       <pre {...props}>{children}</pre>
@@ -443,7 +454,7 @@ function MessageBubbleView({
       return (
         <div className="message-row user">
           <div className="user-edit-card">
-            <MessageImageStrip paths={imagePaths} />
+            <MessageImageStrip paths={imagePaths} language={language} />
             <MessageFileAttachmentStrip
               attachments={fileAttachments}
               language={language}
@@ -495,12 +506,12 @@ function MessageBubbleView({
     return (
       <div className="message-row user">
         <div className="user-bubble">
-          <MessageImageStrip paths={imagePaths} />
+          <MessageImageStrip paths={imagePaths} language={language} />
           <MessageFileAttachmentStrip
             attachments={fileAttachments}
             language={language}
           />
-          {text && <MarkdownContent content={text} />}
+          {text && <MarkdownContent content={text} language={language} />}
           {guidanceDelivery && (
             <div
               className={`guidance-delivery-status ${guidanceDelivery}`}
@@ -619,7 +630,9 @@ function MessageBubbleView({
   const assistantBody = (
     <>
       <AgentHookSummaryBadge message={message} language={language} />
-      {!renderActiveTranscript && <MessageImageStrip paths={imagePaths} />}
+      {!renderActiveTranscript && (
+        <MessageImageStrip paths={imagePaths} language={language} />
+      )}
       {renderActiveTranscript ? (
         <AssistantActiveTranscript
           messages={activeTranscriptMessages}
@@ -641,7 +654,7 @@ function MessageBubbleView({
         />
       ) : text ? (
         <>
-          <MarkdownContent content={text} />
+          <MarkdownContent content={text} language={language} />
           {isActiveAssistantTurn && (
             <AssistantThinkingProcessLine language={language} />
           )}
@@ -665,10 +678,11 @@ function MessageBubbleView({
   );
   const finalAnswerBody = (
     <div className="assistant-final-answer">
-      <MessageImageStrip paths={imagePaths} />
+      <MessageImageStrip paths={imagePaths} language={language} />
       {text && (
         <MarkdownContent
           content={assistantTextWithoutToolNarration(text, toolExecutions)}
+          language={language}
         />
       )}
     </div>
@@ -852,7 +866,7 @@ function AssistantActiveTranscript({
             key={segment.id}
             className="assistant-active-transcript-segment"
           >
-            <MessageImageStrip paths={imagePaths} />
+            <MessageImageStrip paths={imagePaths} language={language} />
             {executions.length > 0 ? (
               <AssistantMessageContent
                 content={text}
@@ -866,7 +880,7 @@ function AssistantActiveTranscript({
               />
             ) : text ? (
               <>
-                <MarkdownContent content={text} />
+                <MarkdownContent content={text} language={language} />
                 {showThinkingPlaceholder && isLastSegment && (
                   <AssistantThinkingProcessLine language={language} />
                 )}
@@ -921,7 +935,11 @@ function AssistantMessageContent({
     const segment = displayContent.slice(cursor, group.offset);
     if (segment.trim()) {
       blocks.push(
-        <MarkdownContent key={`text-before-${groupKey || index}`} content={segment.trim()} />,
+        <MarkdownContent
+          key={`text-before-${groupKey || index}`}
+          content={segment.trim()}
+          language={language}
+        />,
       );
     }
     blocks.push(
@@ -940,7 +958,9 @@ function AssistantMessageContent({
 
   const tail = displayContent.slice(cursor);
   if (tail.trim()) {
-    blocks.push(<MarkdownContent key="text-tail" content={tail.trim()} />);
+    blocks.push(
+      <MarkdownContent key="text-tail" content={tail.trim()} language={language} />,
+    );
   }
   if (
     showThinkingPlaceholder &&
@@ -1600,7 +1620,7 @@ function AssistantLoopHistoryItem({
         <strong>{title}</strong>
         {timestamp && <span>{timestamp}</span>}
       </header>
-      <MessageImageStrip paths={imagePaths} />
+      <MessageImageStrip paths={imagePaths} language={language} />
       {executions.length > 0 ? (
         <AssistantMessageContent
           content={text}
@@ -1612,7 +1632,7 @@ function AssistantLoopHistoryItem({
           onOpenScene={onOpenScene}
         />
       ) : text ? (
-        <MarkdownContent content={text} />
+        <MarkdownContent content={text} language={language} />
       ) : null}
     </section>
   );
@@ -2029,7 +2049,13 @@ function MessageFileAttachmentStrip({
   );
 }
 
-function MessageImageStrip({ paths }: { paths: string[] }) {
+function MessageImageStrip({
+  paths,
+  language,
+}: {
+  paths: string[];
+  language: AppLanguage;
+}) {
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   if (paths.length === 0) {
     return null;
@@ -2056,6 +2082,7 @@ function MessageImageStrip({ paths }: { paths: string[] }) {
       {preview && (
         <ImagePreviewDialog
           image={preview}
+          language={language}
           onClose={() => setPreview(null)}
         />
       )}
@@ -2065,9 +2092,11 @@ function MessageImageStrip({ paths }: { paths: string[] }) {
 
 export function ImagePreviewDialog({
   image,
+  language,
   onClose,
 }: {
   image: ImagePreview;
+  language: AppLanguage;
   onClose: () => void;
 }) {
   return (
@@ -2081,7 +2110,11 @@ export function ImagePreviewDialog({
       >
         <header>
           <strong title={image.path ?? image.name}>{image.name}</strong>
-          <button type="button" onClick={onClose} aria-label="close preview">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
+          >
             <X size={16} />
           </button>
         </header>
@@ -2093,11 +2126,21 @@ export function ImagePreviewDialog({
   );
 }
 
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+const MarkdownContent = memo(function MarkdownContent({
+  content,
+  language,
+}: {
+  content: string;
+  language: AppLanguage;
+}) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   return (
     <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
-      <LazyMarkdownContent content={content} workspaceRoot={workspaceRoot} />
+      <LazyMarkdownContent
+        content={content}
+        workspaceRoot={workspaceRoot}
+        language={language}
+      />
     </Suspense>
   );
 });

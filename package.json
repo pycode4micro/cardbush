@@ -1,6 +1,6 @@
 {
   "name": "cardbush-electron",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "main": "dist-electron/main.js",
   "engines": {
@@ -22,6 +22,8 @@
     "test:turn-guidance": "node scripts/test-turn-guidance-contract.mjs",
     "test:composer-actions": "node scripts/test-composer-quick-actions-contract.mjs",
     "test:panel-motion": "node scripts/test-panel-motion-contract.mjs",
+    "test:settings-layout": "node scripts/test-settings-layout-contract.mjs",
+    "test:release-cleanup": "node scripts/test-release-cleanup-contract.mjs",
     "test:office-preview": "node scripts/test-office-preview-contract.mjs",
     "test:model-selection": "node scripts/test-model-selection-contract.mjs",
     "test:message-edit": "node scripts/test-message-edit-contract.mjs",
@@ -33,7 +35,8 @@
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
     "test:project-roots": "node scripts/test-project-root-contract.mjs",
     "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "test:all": "node scripts/run-release-checks.mjs"
   },
   "dependencies": {
     "@jvmr/pptx-to-html": "^1.1.1",

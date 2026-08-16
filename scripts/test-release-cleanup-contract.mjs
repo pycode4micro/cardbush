@@ -1,0 +1,87 @@
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const read = (path) => readFileSync(resolve(root, path), 'utf8');
+const app = read('src/App.tsx');
+const chat = read('src/hooks/useCardbushChat.ts');
+const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');
+const api = read('src/backend/api.ts');
+const packageJson = JSON.parse(read('package.json'));
+const readme = read('README.md');
+const readmeZh = read('README.zh-CN.md');
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+assert(packageJson.version === '1.0.0-rc.1', 'desktop version must be 1.0.0-rc.1');
+assert(packageJson.scripts['test:all'], 'test:all release gate is required');
+assert(
+  (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3,
+  'all pre-test entry points must be development-only',
+);
+assert(
+  app.includes("window.localStorage.getItem('cardbush_scroll_debug') !== 'true'"),
+  'scroll diagnostics must require an explicit production opt-in',
+);
+assert(
+  app.includes("<BackendLoading language={language} />") &&
+    app.includes("Connecting to backend service..."),
+  'backend loading state must support both UI languages',
+);
+assert(
+  !app.includes('title="Git 控制台"') && !app.includes('title="终端控制台"'),
+  'console titles must not be Chinese-only',
+);
+assert(
+  app.includes("language === 'zh' ? '缓存' : 'Cache'") &&
+    app.includes("language === 'zh' ? '最小化' : 'Minimize'"),
+  'window frame actions must support both UI languages',
+);
+assert(
+  messageBubble.includes("language === 'zh' ? '复制' : 'Copy'"),
+  'markdown copy action must support both UI languages',
+);
+assert(
+  chat.includes('language?: AppLanguage') && chat.includes('const localize = useCallback'),
+  'chat lifecycle errors must receive the active UI language',
+);
+assert(
+  !/setError\((?:`|')\p{Script=Han}/u.test(chat),
+  'chat errors must not be Chinese-only literals',
+);
+assert(
+  !/setNotice\((?:`|')\p{Script=Han}/u.test(chat),
+  'chat notices must not be Chinese-only literals',
+);
+assert(
+  chat.includes('Unable to connect to BushServer') &&
+    chat.includes('无法连接 BushServer'),
+  'network connection failures must support both UI languages',
+);
+assert(
+  api.includes('function localizedClientMessage') &&
+    !/throw new Error\('.*\p{Script=Han}/u.test(api),
+  'API validation errors must use localizedClientMessage',
+);
+assert(!readme.includes('C:\\Users\\'), 'README must not contain a developer-specific path');
+assert(readme.includes('1.0.0-rc.1') && readmeZh.includes('1.0.0-rc.1'), 'both READMEs must describe the RC version');
+assert(readme.includes('README.zh-CN.md'), 'English README must link to the Chinese README');
+assert(readmeZh.includes('README.md'), 'Chinese README must link to the English README');
+
+if (process.argv.includes('--dist')) {
+  const assetsDir = resolve(root, 'dist/assets');
+  assert(existsSync(assetsDir), 'dist/assets is missing; run the production build first');
+  const productionJavaScript = readdirSync(assetsDir)
+    .filter((name) => name.endsWith('.js'))
+    .map((name) => readFileSync(resolve(assetsDir, name), 'utf8'))
+    .join('\n');
+  assert(
+    !productionJavaScript.includes('cardbush_pre_test'),
+    'production bundle still contains the pre-test activation key',
+  );
+}
+
+console.log(`release cleanup contract tests passed${process.argv.includes('--dist') ? ' (production bundle)' : ''}`);

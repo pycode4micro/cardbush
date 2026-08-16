@@ -113,7 +113,14 @@ export async function sendSceneUserEvent(
   },
 ): Promise<Record<string, unknown>> {
   if (!scene.sessionId?.trim()) {
-    throw new Error('Scene 暂无 session_id，无法回传后端');
+    const english =
+      typeof document !== 'undefined' &&
+      document.documentElement.lang.toLowerCase().startsWith('en');
+    throw new Error(
+      english
+        ? 'The scene has no session_id and cannot send data to the backend'
+        : 'Scene 暂无 session_id，无法回传后端',
+    );
   }
   return sendSceneEvent({
     sessionId: scene.sessionId,

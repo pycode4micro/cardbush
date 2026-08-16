@@ -32,6 +32,7 @@ import {
   type SessionLatestTurn,
 } from '../backend/api';
 import type {
+  AppLanguage,
   AssistantRevision,
   AssistantStreamChunk,
   ChatAttachment,
@@ -81,6 +82,7 @@ export function useCardbushChat(
   managedModelConfigs: ManagedModelConfig[] = [],
   availableModels: ManagedModelConfig[] = [],
   requestContext: {
+    language?: AppLanguage;
     projectContexts?: Record<string, string>;
     disabledSkillNames?: Set<string>;
     disabledToolNames?: Set<string>;
@@ -98,6 +100,12 @@ export function useCardbushChat(
     workspaceChangesAvailable?: boolean;
   } = {},
 ) {
+  const languageRef = useRef<AppLanguage>(requestContext.language ?? 'zh');
+  languageRef.current = requestContext.language ?? 'zh';
+  const localize = useCallback(
+    (zh: string, en: string) => (languageRef.current === 'zh' ? zh : en),
+    [],
+  );
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [messagesByConversation, setMessagesByConversation] = useState<
@@ -993,7 +1001,7 @@ export function useCardbushChat(
         requestContext.teamModeEnabled === true,
       );
       if (!selectedModel.trim()) {
-        setError('请先在设置中配置模型');
+        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
       const userMessageId = `user-${crypto.randomUUID()}`;
@@ -1334,7 +1342,7 @@ export function useCardbushChat(
         conversations.find((item) => item.id === sessionId) ??
         (activeConversation?.id === sessionId ? activeConversation : undefined);
       if (!conversation) {
-        setError('未找到原会话，无法重试消息');
+        setError(localize('未找到原会话，无法重试消息', 'The original conversation was not found, so the message cannot be retried'));
         return;
       }
       const attachmentMentions = (message.attachments ?? [])
@@ -1622,11 +1630,11 @@ export function useCardbushChat(
       const conversation =
         conversations.find((item) => item.id === conversationId) ?? activeConversation;
       if (!conversation || !conversationId) {
-        setError('这条回复缺少会话信息，无法重新生成');
+        setError(localize('这条回复缺少会话信息，无法重新生成', 'This response is missing conversation information and cannot be regenerated'));
         return;
       }
       if (!selectedModel.trim()) {
-        setError('请先在设置中配置模型');
+        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
       const messages = messagesByConversation[conversationId] ?? activeMessages;
@@ -1642,7 +1650,10 @@ export function useCardbushChat(
           includeSuperseded: true,
         }).catch((caught) => {
           refreshFailed = true;
-          setError(`刷新会话消息失败: ${errorMessage(caught)}`);
+          setError(localize(
+            `刷新会话消息失败: ${errorMessage(caught)}`,
+            `Failed to refresh conversation messages: ${errorMessage(caught)}`,
+          ));
           return [] as ChatMessage[];
         });
         if (loadedMessages.length > 0) {
@@ -1664,7 +1675,10 @@ export function useCardbushChat(
         return;
       }
       if (!sourceUserMessage || !messageId) {
-        setError('未定位到可编辑的用户消息，无法重新生成。请编辑上一条用户消息重跑。');
+        setError(localize(
+          '未定位到可编辑的用户消息，无法重新生成。请编辑上一条用户消息重跑。',
+          'No editable user message was found. Edit the previous user message and run it again.',
+        ));
         return;
       }
       const userIndex = messages.findIndex((item) =>
@@ -1781,7 +1795,7 @@ export function useCardbushChat(
         return;
       }
       if (!selectedModel.trim()) {
-        setError('请先在设置中配置模型');
+        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
       const messages = messagesByConversation[conversationId] ?? activeMessages;
@@ -1797,7 +1811,10 @@ export function useCardbushChat(
           includeSuperseded: true,
         }).catch((caught) => {
           refreshFailed = true;
-          setError(`刷新会话消息失败: ${errorMessage(caught)}`);
+          setError(localize(
+            `刷新会话消息失败: ${errorMessage(caught)}`,
+            `Failed to refresh conversation messages: ${errorMessage(caught)}`,
+          ));
           return [] as ChatMessage[];
         });
         if (loadedMessages.length > 0) {
@@ -1820,7 +1837,10 @@ export function useCardbushChat(
       }
       if (!editSourceMessage || !messageId) {
         await sendMessage(content, conversation);
-        setNotice('未定位到原消息，已作为新提问发送。');
+        setNotice(localize(
+          '未定位到原消息，已作为新提问发送。',
+          'The original message was not found, so this was sent as a new request.',
+        ));
         return;
       }
       const createdAt = new Date().toISOString();
@@ -1939,7 +1959,7 @@ export function useCardbushChat(
         return;
       }
       if (!conversationId || !turnId || !active || active !== turnId) {
-        setError('当前回复尚未准备好插入引导，请稍后再试');
+        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
         return;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
@@ -1995,7 +2015,10 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(`引导发送失败: ${errorMessage(caught)}`);
+        setError(localize(
+          `引导发送失败: ${errorMessage(caught)}`,
+          `Failed to send guidance: ${errorMessage(caught)}`,
+        ));
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -2025,7 +2048,7 @@ export function useCardbushChat(
       }
       const active = activeTurnIdsRef.current[conversationId]?.trim() ?? '';
       if (!isSessionSending(conversationId) || !conversationId || !active) {
-        setError('当前回复尚未准备好插入引导，请稍后再试');
+        setError(localize('当前回复尚未准备好插入引导，请稍后再试', 'This response is not ready for guidance yet. Try again shortly.'));
         return;
       }
       const clientMessageId = `guidance-${crypto.randomUUID()}`;
@@ -2080,7 +2103,10 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(`引导发送失败: ${errorMessage(caught)}`);
+        setError(localize(
+          `引导发送失败: ${errorMessage(caught)}`,
+          `Failed to send guidance: ${errorMessage(caught)}`,
+        ));
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -2163,7 +2189,10 @@ export function useCardbushChat(
         setMessagesByConversation((current) =>
           markOptimisticGuidanceFailed(current, conversationId, clientMessageId),
         );
-        setError(`引导发送失败: ${errorMessage(caught)}`);
+        setError(localize(
+          `引导发送失败: ${errorMessage(caught)}`,
+          `Failed to send guidance: ${errorMessage(caught)}`,
+        ));
       } finally {
         guidanceRequestIdsRef.current.delete(clientMessageId);
       }
@@ -2251,7 +2280,10 @@ export function useCardbushChat(
             setPendingInteraction(recovered);
           }
           setError(null);
-          setNotice('当前会话正在等待权限确认。');
+          setNotice(localize(
+            '当前会话正在等待权限确认。',
+            'This conversation is waiting for permission confirmation.',
+          ));
           return;
         }
         if (
@@ -2264,7 +2296,11 @@ export function useCardbushChat(
             : null;
           setPendingInteraction(recovered);
           setError(null);
-          setNotice(expired ? '权限申请已过期，未授予权限。' : '权限申请已不存在。');
+          setNotice(
+            expired
+              ? localize('权限申请已过期，未授予权限。', 'The permission request expired without being granted.')
+              : localize('权限申请已不存在。', 'The permission request no longer exists.'),
+          );
           return;
         }
         if (isInteractionGoneError(caught)) {
@@ -2298,7 +2334,10 @@ export function useCardbushChat(
           setPendingInteraction(recovered);
         }
         setError(null);
-        setNotice('当前会话正在等待权限确认。');
+        setNotice(localize(
+          '当前会话正在等待权限确认。',
+          'This conversation is waiting for permission confirmation.',
+        ));
         return;
       }
       if (
@@ -2311,7 +2350,11 @@ export function useCardbushChat(
           : null;
         setPendingInteraction(recovered);
         setError(null);
-        setNotice(expired ? '权限申请已过期，未授予权限。' : '权限申请已不存在。');
+        setNotice(
+          expired
+            ? localize('权限申请已过期，未授予权限。', 'The permission request expired without being granted.')
+            : localize('权限申请已不存在。', 'The permission request no longer exists.'),
+        );
         return;
       }
       if (isInteractionGoneError(caught)) {
@@ -2356,7 +2399,7 @@ export function useCardbushChat(
         latestGoal = await updateExperimentalGoal({
           goalId: goal.goalId,
           status: 'cancelled',
-          statusReason: '用户主动取消',
+          statusReason: localize('用户主动取消', 'Cancelled by user'),
           expectedRevision: goal.revision,
         });
       } catch (caught) {
@@ -2370,7 +2413,7 @@ export function useCardbushChat(
           latestGoal = await updateExperimentalGoal({
             goalId: refreshed.goalId,
             status: 'cancelled',
-            statusReason: '用户主动取消',
+            statusReason: localize('用户主动取消', 'Cancelled by user'),
             expectedRevision: refreshed.revision,
           });
         }
@@ -5540,5 +5583,14 @@ function isInteractionGoneError(error: unknown) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  const english =
+    typeof document !== 'undefined' &&
+    document.documentElement.lang.toLowerCase().startsWith('en');
+  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+    return english
+      ? 'Unable to connect to BushServer. Check that the backend is running.'
+      : '无法连接 BushServer，请检查后端是否正在运行。';
+  }
+  return message;
 }

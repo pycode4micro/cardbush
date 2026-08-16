@@ -905,6 +905,7 @@ export function Composer({
       {previewImage && (
         <ImagePreviewDialog
           image={previewImage}
+          language={language}
           onClose={() => setPreviewImage(null)}
         />
       )}

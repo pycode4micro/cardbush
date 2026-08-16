@@ -306,6 +306,15 @@ const defaultThinkingAccentColor = '#9dbce8';
 const thinkingEventName = 'cardbush:thinking';
 
 function scrollDebug(label: string, data: Record<string, unknown>) {
+  if (!import.meta.env.DEV) {
+    try {
+      if (window.localStorage.getItem('cardbush_scroll_debug') !== 'true') {
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
   const entry = {
     at: new Date().toISOString(),
     label,
@@ -513,6 +522,10 @@ function CardbushApp() {
     applyThemeBackground();
     void window.cardbushDesktop?.setWindowTheme?.(theme).catch(() => undefined);
   }, [applyThemeBackground, theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+  }, [language]);
 
   useEffect(() => {
     const receiveThinking = (event: Event) => {
@@ -726,6 +739,7 @@ function CardbushApp() {
     };
   }, []);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
+    language,
     projectContexts,
     disabledSkillNames,
     disabledToolNames: effectiveDisabledToolNames,
@@ -1773,6 +1787,7 @@ function CardbushApp() {
     >
       {(section !== 'os' || settingsOpen) && (
         <WindowFrame
+          language={language}
           onOpenBotSettings={() => openSettings('bots')}
           onOpenCacheSettings={() => openSettings('cache')}
         />
@@ -2938,9 +2953,11 @@ function cachedBackgroundFileName(value: string) {
 }
 
 function WindowFrame({
+  language,
   onOpenBotSettings,
   onOpenCacheSettings,
 }: {
+  language: AppLanguage;
   onOpenBotSettings: () => void;
   onOpenCacheSettings: () => void;
 }) {
@@ -2978,14 +2995,21 @@ function WindowFrame({
         type="button"
         onClick={onOpenCacheSettings}
       >
-        缓存
+        {language === 'zh' ? '缓存' : 'Cache'}
       </button>
       <div className="window-spacer" />
-      <WindowButton label="minimize" onClick={() => window.cardbushDesktop?.minimize()}>
+      <WindowButton
+        label={language === 'zh' ? '最小化' : 'Minimize'}
+        onClick={() => window.cardbushDesktop?.minimize()}
+      >
         <span className="window-glyph minimize" aria-hidden="true" />
       </WindowButton>
       <WindowButton
-        label={maximized ? 'restore' : 'maximize'}
+        label={
+          maximized
+            ? language === 'zh' ? '还原窗口' : 'Restore'
+            : language === 'zh' ? '最大化' : 'Maximize'
+        }
         onClick={() => void toggleMaximize()}
       >
         <span
@@ -2994,7 +3018,7 @@ function WindowFrame({
         />
       </WindowButton>
       <WindowButton
-        label="close"
+        label={language === 'zh' ? '关闭' : 'Close'}
         danger
         onClick={() => window.cardbushDesktop?.closeToTray()}
       >
@@ -5515,15 +5539,15 @@ function ChatPanel({
   useEffect(() => {
     setWorkSummaryVisible(false);
   }, [activeConversationId]);
-  if (isComposerRuntimePreTestEnabled()) {
+  if (import.meta.env.DEV && isComposerRuntimePreTestEnabled()) {
     return <ComposerRuntimePreTest language={language} />;
   }
 
-  if (isLoopHistoryPreTestEnabled()) {
+  if (import.meta.env.DEV && isLoopHistoryPreTestEnabled()) {
     return <LoopHistoryPreTest language={language} />;
   }
 
-  if (isQuickContextPreTestEnabled()) {
+  if (import.meta.env.DEV && isQuickContextPreTestEnabled()) {
     return <QuickContextPreTest language={language} />;
   }
 
@@ -5668,7 +5692,7 @@ function ChatPanel({
         )}
         <div className="chat-content-frame">
         {loading ? (
-          <BackendLoading />
+          <BackendLoading language={language} />
         ) : showWelcome ? (
           <WelcomeComposer
             key={activeConversationId || 'new-session'}
@@ -5942,7 +5966,7 @@ function ChatPanel({
   );
 }
 
-function BackendLoading() {
+function BackendLoading({ language }: { language: AppLanguage }) {
   return (
     <div className="loading-view">
       <div className="loading-brand" aria-label="cardbush">
@@ -5956,7 +5980,7 @@ function BackendLoading() {
         <span />
         <span />
       </div>
-      <p>正在连接后端服务...</p>
+      <p>{language === 'zh' ? '正在连接后端服务...' : 'Connecting to backend service...'}</p>
     </div>
   );
 }
@@ -6879,7 +6903,7 @@ function TopBar({
           className={`topbar-square ${activeConsole === 'git' ? 'active' : ''}`}
           type="button"
           onClick={onToggleGit}
-          title="Git 控制台"
+          title={language === 'zh' ? 'Git 控制台' : 'Git console'}
         >
           <GitBranch size={16} />
         </button>
@@ -6891,7 +6915,7 @@ function TopBar({
           }`}
           type="button"
           onClick={onToggleTerminal}
-          title="终端控制台"
+          title={language === 'zh' ? '终端控制台' : 'Terminal console'}
         >
           <Terminal size={16} />
         </button>

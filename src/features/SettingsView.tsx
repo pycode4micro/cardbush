@@ -144,6 +144,43 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   about: { zh: '关于', en: 'About' },
 };
 
+const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
+  profile: { zh: '统一应用主题、语言、背景与字体。', en: 'Manage the app theme, language, background, and typography.' },
+  os: { zh: '配置桌面模式、开机启动和手柄操作。', en: 'Configure desktop mode, startup behavior, and controller input.' },
+  runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
+  proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
+  bots: { zh: '连接并管理外部消息平台。', en: 'Connect and manage external messaging platforms.' },
+  subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
+  mcp: { zh: '配置 MCP 服务及其连接状态。', en: 'Configure MCP servers and their connection status.' },
+  cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
+  models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
+  diagnostics: { zh: '检查后端、鉴权与模型请求配置。', en: 'Inspect backend, authentication, and model request settings.' },
+  mobile: { zh: '配置手机端访问和局域网连接。', en: 'Configure mobile access and local-network connectivity.' },
+  about: { zh: '查看版本、服务地址和项目链接。', en: 'View version, service endpoints, and project links.' },
+};
+
+const settingsNavigationGroups: Array<{
+  label: { zh: string; en: string };
+  sections: VisibleSettingsSection[];
+}> = [
+  {
+    label: { zh: '常规', en: 'General' },
+    sections: ['profile', 'os', 'runtime'],
+  },
+  {
+    label: { zh: '智能与扩展', en: 'AI & extensions' },
+    sections: ['models', 'subagents', 'mcp'],
+  },
+  {
+    label: { zh: '连接', en: 'Connections' },
+    sections: ['proxy', 'bots', 'mobile'],
+  },
+  {
+    label: { zh: '系统', en: 'System' },
+    sections: ['cache', 'diagnostics', 'about'],
+  },
+];
+
 const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
   profile: Settings,
   os: MonitorCog,
@@ -773,14 +810,22 @@ export function SettingsView({
             label="HTTP_PROXY"
             value={settings.proxy.httpProxy}
             disabled={settings.proxy.mode !== 'manual'}
-            placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
+            placeholder={
+              language === 'zh'
+                ? '127.0.0.1:7890 或 http://127.0.0.1:7890'
+                : '127.0.0.1:7890 or http://127.0.0.1:7890'
+            }
             onChange={(value) => updateProxy({ httpProxy: value })}
           />
           <SettingsInput
             label="HTTPS_PROXY"
             value={settings.proxy.httpsProxy}
             disabled={settings.proxy.mode !== 'manual'}
-            placeholder="127.0.0.1:7890 或 http://127.0.0.1:7890"
+            placeholder={
+              language === 'zh'
+                ? '127.0.0.1:7890 或 http://127.0.0.1:7890'
+                : '127.0.0.1:7890 or http://127.0.0.1:7890'
+            }
             onChange={(value) => updateProxy({ httpsProxy: value })}
           />
           <SettingsInput
@@ -924,6 +969,7 @@ export function SettingsView({
     }
     return <AboutSettingsPanel language={language} />;
   })();
+  const SectionIcon = settingsIcons[section];
 
   return (
     <>
@@ -933,30 +979,39 @@ export function SettingsView({
           <ArrowLeft size={18} />
           {language === 'zh' ? '返回应用' : 'Back to app'}
         </button>
-        {visibleSettingsSections.map((id) => {
-          const Icon = settingsIcons[id];
-          return (
-            <button
-              key={id}
-              className={`settings-nav ${section === id ? 'active' : ''}`}
-              type="button"
-              onClick={() => setSection(id)}
-            >
-              <Icon size={18} />
-              {settingsLabels[id][language]}
-            </button>
-          );
-        })}
+        <nav className="settings-navigation" aria-label={language === 'zh' ? '设置分类' : 'Settings sections'}>
+          {settingsNavigationGroups.map((group) => (
+            <div className="settings-nav-group" key={group.label.en}>
+              <span className="settings-nav-group-label">{group.label[language]}</span>
+              {group.sections.map((id) => {
+                const Icon = settingsIcons[id];
+                return (
+                  <button
+                    key={id}
+                    className={`settings-nav ${section === id ? 'active' : ''}`}
+                    type="button"
+                    aria-current={section === id ? 'page' : undefined}
+                    onClick={() => setSection(id)}
+                  >
+                    <Icon size={18} />
+                    <span>{settingsLabels[id][language]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </nav>
       </aside>
       <SidebarResizer language={language} onWidthChange={onSidebarWidthChange} />
       <section className="settings-content">
         <div className="settings-track">
-          <h2>{settingsLabels[section][language]}</h2>
-          <p>
-            {language === 'zh'
-              ? '配置 cardbush 的外观、网络、模型和连接能力。'
-              : 'Configure cardbush appearance, network, models, and connection features.'}
-          </p>
+          <header className="settings-page-header">
+            <span className="settings-page-icon"><SectionIcon size={20} /></span>
+            <div>
+              <h2>{settingsLabels[section][language]}</h2>
+              <p>{settingsDescriptions[section][language]}</p>
+            </div>
+          </header>
           {content}
         </div>
       </section>
@@ -3548,7 +3603,7 @@ function SettingsCard({
         <h3>{title}</h3>
         {subtitle && <p>{subtitle}</p>}
       </div>
-      {children}
+      <div className="settings-card-body">{children}</div>
     </section>
   );
 }

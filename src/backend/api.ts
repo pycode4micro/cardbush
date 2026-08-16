@@ -79,6 +79,13 @@ export const llmEndpoint = import.meta.env.VITE_LLM_ENDPOINT?.trim() || '';
 export const backendBearerTokenStorageKey = 'cardbush_backend_bearer_token';
 export const backendLocalRequestKeyStorageKey = 'cardbush_backend_local_request_key';
 
+function localizedClientMessage(zh: string, en: string): string {
+  if (typeof document !== 'undefined' && document.documentElement.lang.toLowerCase().startsWith('en')) {
+    return en;
+  }
+  return zh;
+}
+
 export interface SessionShareLinkResult {
   code: string;
   sessionId: string;
@@ -890,7 +897,7 @@ export async function saveMcpServerConfig(
 ): Promise<McpServerConfig> {
   const normalized = input.id.trim();
   if (!normalized) {
-    throw new Error('MCP server id 为空');
+    throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
   }
   const payload = await readJson<unknown>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
@@ -908,7 +915,7 @@ export async function setMcpServerEnabled(
 ): Promise<McpServerConfig> {
   const normalized = serverId.trim();
   if (!normalized) {
-    throw new Error('MCP server id 为空');
+    throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
   }
   const payload = await readJson<unknown>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`),
@@ -922,7 +929,7 @@ export async function deleteMcpServerConfig(
 ): Promise<Record<string, unknown>> {
   const normalized = serverId.trim();
   if (!normalized) {
-    throw new Error('MCP server id 为空');
+    throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
   }
   return readJson<Record<string, unknown>>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
@@ -1451,7 +1458,7 @@ export async function updateConversation({
 }): Promise<ConversationSummary> {
   const normalized = sessionId.trim();
   if (!normalized) {
-    throw new Error('会话 ID 为空');
+    throw new Error(localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'));
   }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalized)}`),
@@ -1497,7 +1504,7 @@ export async function createSessionShareLink({
 }): Promise<SessionShareLinkResult> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    throw new Error('会话 ID 为空');
+    throw new Error(localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'));
   }
   const normalizedPlatform = platform?.trim().toLowerCase();
   const endpoint = url(
@@ -1512,7 +1519,7 @@ export async function createSessionShareLink({
   });
   const result = shareLinkFromPayload(payload);
   if (!result.code.trim()) {
-    throw new Error('Bot 绑定码为空');
+    throw new Error(localizedClientMessage('Bot 绑定码为空', 'Bot link code is empty'));
   }
   return result;
 }
@@ -1653,7 +1660,7 @@ export async function sendSceneEvent({
   const normalizedSessionId = sessionId.trim();
   const normalizedSceneId = sceneId.trim();
   if (!normalizedSessionId || !normalizedSceneId) {
-    throw new Error('Scene 缺少 session_id 或 scene_id');
+    throw new Error(localizedClientMessage('Scene 缺少 session_id 或 scene_id', 'Scene is missing session_id or scene_id'));
   }
   return readJson<Record<string, unknown>>(
     url(
@@ -1718,7 +1725,7 @@ export async function createShadowConversation({
 }): Promise<ShadowConversationRecord> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    throw new Error('Shadow 需要一个已建立的会话');
+    throw new Error(localizedClientMessage('Shadow 需要一个已建立的会话', 'Shadow requires an existing conversation'));
   }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/shadow-conversations`),
@@ -2054,7 +2061,7 @@ export async function stopWorkflowRun(runId: string): Promise<Record<string, unk
 export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
   const normalized = sessionId.trim();
   if (!normalized) {
-    throw new Error('Team Flow session_id 为空');
+    throw new Error(localizedClientMessage('Team Flow session_id 为空', 'Team Flow session_id is empty'));
   }
   const payload = await readJson<unknown>(
     url(`/v1/team-flows/${encodeURIComponent(normalized)}`),
@@ -2065,7 +2072,7 @@ export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
 export async function fetchTeamFlowGraph(sessionId: string): Promise<TeamFlowGraph> {
   const normalized = sessionId.trim();
   if (!normalized) {
-    throw new Error('Team Flow session_id 为空');
+    throw new Error(localizedClientMessage('Team Flow session_id 为空', 'Team Flow session_id is empty'));
   }
   const payload = await readJson<unknown>(
     url(`/v1/team-flows/${encodeURIComponent(normalized)}/graph`),
@@ -2078,7 +2085,7 @@ export async function sendTeamFlowAction(
 ): Promise<TeamFlowState> {
   const flowId = request.flowId.trim();
   if (!flowId) {
-    throw new Error('Team Flow id 为空');
+    throw new Error(localizedClientMessage('Team Flow ID 为空', 'Team Flow ID is empty'));
   }
   const text = request.text?.trim() ?? '';
   const payload = await readJson<unknown>(
@@ -2141,7 +2148,7 @@ export async function dispatchSubagent({
 }: SubagentDispatchRequest): Promise<SubagentDispatchResult> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
-    throw new Error('会话 ID 为空');
+    throw new Error(localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'));
   }
   const normalizedWriteScope = Array.isArray(writeScope)
     ? writeScope.map((item) => item.trim()).filter(Boolean)
@@ -2188,7 +2195,7 @@ export async function fetchSkills(): Promise<SkillSummary[]> {
 export async function fetchSkillDetail(skillName: string): Promise<SkillDetail> {
   const normalized = skillName.trim();
   if (!normalized) {
-    throw new Error('Skill 名称为空');
+    throw new Error(localizedClientMessage('Skill 名称为空', 'Skill name is empty'));
   }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/skills/${encodeURIComponent(normalized)}`),
@@ -2253,7 +2260,7 @@ export async function replyInteraction({
 }) {
   const normalized = interactionId.trim();
   if (!normalized) {
-    throw new Error('交互 ID 为空');
+    throw new Error(localizedClientMessage('交互 ID 为空', 'Interaction ID is empty'));
   }
   const normalizedAnswers = answers
     ?.map((answer) => ({
@@ -2273,7 +2280,7 @@ export async function replyInteraction({
     );
   const trimmedRawText = rawText?.trim() ?? '';
   if ((normalizedAnswers?.length ?? 0) === 0 && !trimmedRawText) {
-    throw new Error('交互回答为空');
+    throw new Error(localizedClientMessage('交互回答为空', 'Interaction reply is empty'));
   }
   await readJson<Record<string, unknown>>(
     url(`/v1/interactions/${encodeURIComponent(normalized)}/reply`),
@@ -2334,7 +2341,7 @@ export async function regenerateTurn(request: RegenerateTurnRequest) {
   const sessionId = request.sessionId.trim();
   const turnId = request.turnId.trim();
   if (!sessionId || !turnId) {
-    throw new Error('会话或 turn_id 为空');
+    throw new Error(localizedClientMessage('会话或 turn_id 为空', 'Conversation ID or turn_id is empty'));
   }
   await streamEndpoint({
     endpoint: url(
@@ -2351,10 +2358,10 @@ export async function editMessage(request: EditMessageRequest) {
   const messageId = request.messageId.trim();
   const content = request.content.trim();
   if (!sessionId || !messageId) {
-    throw new Error('会话或 message_id 为空');
+    throw new Error(localizedClientMessage('会话或 message_id 为空', 'Conversation ID or message_id is empty'));
   }
   if (!content) {
-    throw new Error('消息内容为空');
+    throw new Error(localizedClientMessage('消息内容为空', 'Message content is empty'));
   }
   await streamEndpoint({
     endpoint: url(
@@ -2376,7 +2383,7 @@ export async function sendGuidance(request: SendGuidanceRequest) {
   const turnId = request.turnId.trim();
   const guidance = request.guidance.trim();
   if (!sessionId || !turnId || !guidance) {
-    throw new Error('会话、turn_id 或引导内容为空');
+    throw new Error(localizedClientMessage('会话、turn_id 或引导内容为空', 'Conversation ID, turn_id, or guidance is empty'));
   }
   const body: Record<string, unknown> = {
     session_id: sessionId,
@@ -5353,7 +5360,10 @@ function formatHttpError(statusCode: number, body: string) {
   const withDiagnostic = (message: string) =>
     diagnostic ? `${message} (${diagnostic})` : message;
   if (statusCode === 403) {
-    return withDiagnostic(`BushServer 拒绝访问${detail ? `: ${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`);
+    return withDiagnostic(localizedClientMessage(
+      `BushServer 拒绝访问${detail ? `：${detail}` : ''}。请检查本地 secret 文件或 BUSH_API_AUTH_TOKEN 是否与 BushServer 启动配置一致。`,
+      `BushServer denied access${detail ? `: ${detail}` : ''}. Check that the local secret file or BUSH_API_AUTH_TOKEN matches the BushServer startup configuration.`,
+    ));
   }
   const serviceError = normalizedServiceError(detail, statusCode);
   if (serviceError) {
@@ -5416,8 +5426,10 @@ function normalizedServiceError(detail: string, statusCode?: number) {
     return '';
   }
   const requestId = text.match(/Request\s*id\s*:\s*([\w-]+)/i)?.[1] ?? '';
-  const serviceName = isUpstreamModelError ? '上游模型服务' : 'BushServer';
-  return `${serviceName}暂时不可用（500），请稍后重试${requestId ? `。请求 ID：${requestId}` : ''}`;
+  return localizedClientMessage(
+    `${isUpstreamModelError ? '上游模型服务' : 'BushServer'}暂时不可用（500），请稍后重试${requestId ? `。请求 ID：${requestId}` : ''}`,
+    `${isUpstreamModelError ? 'The upstream model service' : 'BushServer'} is temporarily unavailable (500). Try again later${requestId ? `. Request ID: ${requestId}` : ''}.`,
+  );
 }
 
 function extractErrorDetail(body: string) {

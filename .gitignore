@@ -4,3 +4,5 @@ dist-electron/
 logs/
 tmp/
 *.log
+.codex-video-frames-*/
+.codex-video-sheet-*.png

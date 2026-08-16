@@ -1,70 +1,115 @@
-# cardbush-electron
+# CardBush Desktop
 
-CardBush 的 Electron 桌面端。前端负责桌面 UI、项目/会话管理、本地能力入口和后端能力发现；核心运行时、模型调用、Skills、Tools、权限与任务委派由 BushServer 提供。
+[简体中文](README.zh-CN.md)
 
-## 当前能力
+CardBush Desktop is the Electron client for BushServer. The desktop app owns the UI, projects, conversations, local desktop integration, and backend capability discovery. BushServer owns model access, agent orchestration, Skills, Tools, permissions, persistence, and task delegation.
 
-- 对话流式渲染：支持 SSE token、工具输出、交互请求、停止、重跑和用户消息编辑后重跑。
-- 会话与项目：支持本地生成 session id、新会话默认标题、发送首条消息后自动标题、项目会话、侧边栏运行状态。
-- Composer：支持附件、项目上下文、终端环境、权限模式、复杂任务、视觉能力开关、Skills、Git 分支和 Tokens 的渐进式菜单。
-- 设置页：支持外观、代理、模型管理、最大上下文窗口、终端环境、Bot 连接、缓存维护和连接诊断。
-- 后端托管 Agent 能力：本地子任务是否委派由主 Agent 决定；前端只展示运行状态，不提供本地子代理注册或 Profiles 路由。
-- 外部 MCP：支持配置 stdio、SSE、HTTP 类 MCP 服务，由后端加载工具；前端只负责配置、校验、启停和展示状态。
-- 本地体验：启动加载页、内置桌面窗口、图片附件缩略图、长文本块换行/复制、工具输出折叠和复制。
+## Release status
 
-## 开发启动
+The current frontend baseline is `1.0.0-rc.1`.
+
+- Product functionality is frozen for the RC packaging phase.
+- The source build and frontend contracts are ready for internal validation.
+- The unified Windows installer is not available yet. Electron-managed BushServer startup, runtime version negotiation, and installer packaging are the remaining delivery work.
+- RC changes should be limited to release engineering, compatibility, security, data-loss prevention, and blocking bug fixes.
+
+## Current capabilities
+
+- SSE chat streaming, reasoning and tool output, stop, regenerate, message edit, and turn guidance.
+- Project-scoped conversations, persisted history, running-state indicators, and workspace change review.
+- Composer attachments, local file references, image input, permission modes, terminal runtime selection, Skills, Tools, and model selection.
+- Read-only local previews for text, images, Word, Excel, and PowerPoint files.
+- Settings for appearance, language, proxy, models, MCP, Bots, runtime diagnostics, and local maintenance.
+- Team workflow and backend-managed subagent status surfaces.
+
+## Requirements
+
+- Windows development environment
+- Node.js `>=22.12.0`
+- npm `>=10`
+- A compatible BushServer checkout or service
+
+End users of the future installer will not need Node.js or Python. These requirements apply only to source development while unified packaging is in progress.
+
+## Development setup
+
+Install dependencies and start the Vite, TypeScript, and Electron development processes:
 
 ```powershell
 npm install
 npm run dev
 ```
 
-如果 Electron 安装后缺少 binary 或 `path.txt`，运行：
+If Electron was installed without its binary or `path.txt`, repair it with:
 
 ```powershell
 npm run fix:electron
 ```
 
-构建后直接打开桌面端：
+Build and open the desktop app from source:
 
 ```powershell
 npm run gui
 ```
 
-## 验证与构建
+## BushServer connection
 
-```powershell
-npm run typecheck
-npm run build
-```
-
-可选的前端专项检查：
-
-```powershell
-npm run test:path-metadata
-npm run test:markdown
-npm run test:tool-visibility
-```
-
-## 后端连接
-
-默认连接 BushServer：
-
-```text
-http://127.0.0.1:51717
-```
-
-可通过环境变量覆盖：
+Development builds use `http://127.0.0.1:51717` by default. Override it before building with:
 
 ```powershell
 $env:VITE_BACKEND_BASE_URL='http://127.0.0.1:51717'
 ```
 
-应用内也提供代理和认证相关设置。前端应优先读取 `/v1/capabilities` 动态决定功能是否可用，不要硬编码接口存在性。
+Port `51717` is only the development default. The packaged RC will let the Electron main process select an available localhost port, start the bundled BushServer process, and inject the runtime endpoint into the renderer.
 
-## 关键后端接口
+The frontend treats `GET /v1/capabilities` as the source of truth for optional features. The packaging integration will additionally require `GET /readyz` for service version and compatibility negotiation.
 
-基础能力：
+## Validation
+
+Run the complete frontend release gate:
+
+```powershell
+npm run test:all
+```
+
+It runs every `test:*` contract except itself, both TypeScript checks, the production build, and a final production-bundle cleanup check.
+
+For faster iteration:
+
+```powershell
+npm run typecheck
+npm run build
+npm run test:release-cleanup
+```
+
+## Runtime data and diagnostics
+
+The unified installer will follow this Windows layout:
+
+```text
+%LOCALAPPDATA%\CardBush\
+├─ server-data\
+├─ logs\
+└─ crash\
+
+%APPDATA%\CardBush\
+└─ config\
+```
+
+Large runtime data, logs, caches, and crash reports belong in `%LOCALAPPDATA%`. Only small roaming user configuration belongs in `%APPDATA%`.
+
+Scroll diagnostics are disabled in production unless `cardbush_scroll_debug` is explicitly set to `true` in local storage for a temporary diagnostic session.
+
+## Frontend/backend boundary
+
+- The frontend does not choose or register the main Agent profile.
+- BushServer decides task delegation and owns the agent runtime.
+- BushServer loads and manages MCP servers; the frontend edits configuration and displays state.
+- Project mode sends the selected workspace path to BushServer; the frontend does not synthesize project context.
+- Local resource paths are sent through request metadata and remain subject to backend permission boundaries.
+- Runtime feature visibility comes from `/v1/capabilities`, not provider names or guessed endpoint availability.
+
+The current frontend endpoints include:
 
 - `GET /healthz`
 - `GET /v1/capabilities`
@@ -74,48 +119,45 @@ $env:VITE_BACKEND_BASE_URL='http://127.0.0.1:51717'
 - `POST /v1/turns/{turn_id}/stop`
 - `GET /v1/skills`
 - `GET /v1/model-configs`
-
-Team Flow 与子任务状态：
-
 - `GET /v1/team-flows/{session_id}`
 - `GET /v1/team-flows/{session_id}/graph`
-- `POST /v1/team-flows/{session_id}/actions`
-- `GET /v1/subagents`
-
-MCP 服务配置：
-
+- `POST /v1/team-flows/{flow_id}/actions`
+- `GET /v1/subagents/capabilities`
+- `GET /v1/subagents/runtime`
+- `POST /v1/sessions/{session_id}/subagents/dispatch`
 - `GET /v1/mcp/servers`
-- `POST /v1/mcp/servers/validate`
-- `PUT /v1/mcp/servers/{server_id}`
-- `POST /v1/mcp/servers/{server_id}/enable`
-- `POST /v1/mcp/servers/{server_id}/disable`
-- `DELETE /v1/mcp/servers/{server_id}`
 
-## 前后端职责边界
+## Troubleshooting
 
-- 前端不选择主 Agent Profile，也不通过 Profile 控制路由、工具或执行阶段。
-- 前端不注册或切换本地子代理；主 Agent 根据任务和后端策略决定是否委派。
-- 远程 Agent 能力通过 MCP 等后端托管协议接入，不与本地子任务配置耦合。
-- 前端不启动 MCP 进程、不直接连接 MCP SSE/HTTP 服务；MCP 加载、工具发现、鉴权和生命周期由 BushServer 处理。
-- 终端环境以 `/v1/capabilities` 返回的 `terminal_runtime.available/default` 为准；未选择时使用后端默认值。
-- 前端不自行生成项目结构上下文；项目模式下把工作区路径传给后端，由 BushServer 生成上下文快照。
-- 图片路径会通过 request metadata 传递 allowed paths；视觉模型输入需要显式开启 `standard_image_input_enabled`。
-- 会话标题展示不会直接暴露 `local-*`、`weixin:*`、`cardbush-*` 等内部 session id；新会话默认显示为 `新会话`。
+### The desktop app cannot reach BushServer
 
-## 目录
+1. Confirm BushServer is running.
+2. Open the connection diagnostics in Settings.
+3. Verify `/healthz` and `/v1/capabilities` on the configured development endpoint.
+4. Check proxy bypass rules include `127.0.0.1`, `localhost`, and `::1`.
+5. Review the frontend and BushServer logs before restarting either process.
 
-```text
-electron/   Electron main/preload 入口
-src/        React 前端和后端 API 封装
-scripts/    安装修复、开发端口和本地检查脚本
-public/     启动页和运行时静态资源
-docs/       项目文档
-```
+### A feature is missing
 
-## 说明
+Check `/v1/capabilities`. The UI intentionally hides or disables optional features that the connected backend does not declare.
 
-本项目从原 `cardbush/electron` 拆出，当前独立路径：
+### Electron fails to start after installation
+
+For source development, run `npm run fix:electron`. Packaged-build failures should be reported with the application version, backend version, Windows version, and logs from `%LOCALAPPDATA%\CardBush\logs`.
+
+## Repository layout
 
 ```text
-C:\Users\wfang\Desktop\cardbush-electron
+electron/   Electron main process, preload bridge, and local desktop capabilities
+src/        React UI, feature modules, and BushServer API client
+scripts/    Development helpers and release contract checks
+public/     Runtime static assets
+docs/       Frontend/backend contracts and implementation checklists
 ```
+
+## Security notes
+
+- Electron renderer processes use context isolation, sandboxing, and no Node.js integration.
+- The packaged BushServer must bind only to localhost and require a per-installation local request secret for API and SSE requests.
+- Credentials and local request secrets must not be written to logs or passed in process command-line arguments.
+- Do not attach `.env` files, credentials, raw logs, or user conversation databases to bug reports.
