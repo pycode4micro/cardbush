@@ -6,12 +6,12 @@ CardBush Desktop is the Electron client for BushServer. The desktop app owns the
 
 ## Release status
 
-The current frontend baseline is `1.0.0-rc.1`.
+The current frontend development baseline is `1.0.0-dev`.
 
-- Product functionality is frozen for the RC packaging phase.
-- The source build and frontend contracts are ready for internal validation.
+- Product functionality and delivery readiness are still under internal validation.
+- The source build and frontend contracts are ready for continued integration testing.
 - The unified Windows installer is not available yet. Electron-managed BushServer startup, runtime version negotiation, and installer packaging are the remaining delivery work.
-- RC changes should be limited to release engineering, compatibility, security, data-loss prevention, and blocking bug fixes.
+- The RC version and release freeze will be decided after integrated packaging validation.
 
 ## Current capabilities
 
@@ -19,7 +19,7 @@ The current frontend baseline is `1.0.0-rc.1`.
 - Project-scoped conversations, persisted history, running-state indicators, and workspace change review.
 - Composer attachments, local file references, image input, permission modes, terminal runtime selection, Skills, Tools, and model selection.
 - Read-only local previews for text, images, Word, Excel, and PowerPoint files.
-- Settings for appearance, language, proxy, models, MCP, Bots, runtime diagnostics, and local maintenance.
+- Personalization with cumulative token/activity statistics, plus appearance, language, proxy, models, MCP, Bots, runtime diagnostics, and local maintenance.
 - Team workflow and backend-managed subagent status surfaces.
 
 ## Requirements

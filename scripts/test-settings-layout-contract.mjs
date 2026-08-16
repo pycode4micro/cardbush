@@ -37,6 +37,15 @@ assert.match(settings, /className="settings-navigation"/);
 assert.match(settings, /aria-current=\{section === id \? 'page' : undefined\}/);
 assert.match(settings, /className="settings-page-header"/);
 assert.match(settings, /className="settings-card-body"/);
+assert.match(settings, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
+assert.match(
+  settings,
+  /<UsageStatisticsPanel[\s\S]*?<SettingsCard[\s\S]*?title=\{language === 'zh' \? '外观' : 'Appearance'\}/,
+  'Personalization must show cumulative usage before appearance settings',
+);
+assert.match(settings, /className="usage-heatmap-grid"/);
+assert.match(css, /\.usage-stat-grid\s*\{/);
+assert.match(css, /\.usage-heatmap-grid\s*\{/);
 assert.match(css, /\.settings-card-body\s*\{/);
 assert.match(css, /\.settings-radio:has\(input:checked\)/);
 assert.match(css, /\.settings-switch input:checked::after/);

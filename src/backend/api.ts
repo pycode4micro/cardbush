@@ -48,6 +48,7 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  SessionTokenUsage,
   CapabilityCandidatesUpdate,
   TerminalRuntime,
 } from '../types';
@@ -1953,6 +1954,38 @@ export async function fetchSessionContextWindowUsage(
     { signal },
   );
   return contextWindowUsageFromPayload(payload, normalizedSessionId);
+}
+
+export async function fetchSessionTokenUsage(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<SessionTokenUsage> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error('session_id is required');
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/usage`),
+    { signal },
+  );
+  const usage = asRecord(payload.usage);
+  const promptTokens = optionalNumber(usage.prompt_tokens ?? usage.promptTokens) ?? 0;
+  const completionTokens = optionalNumber(
+    usage.completion_tokens ?? usage.completionTokens,
+  ) ?? 0;
+  return {
+    sessionId: String(payload.session_id ?? payload.sessionId ?? normalizedSessionId),
+    promptTokens,
+    completionTokens,
+    totalTokens: optionalNumber(usage.total_tokens ?? usage.totalTokens)
+      ?? promptTokens + completionTokens,
+    promptCacheHitTokens: optionalNumber(
+      usage.prompt_cache_hit_tokens ?? usage.promptCacheHitTokens,
+    ) ?? 0,
+    promptCacheMissTokens: optionalNumber(
+      usage.prompt_cache_miss_tokens ?? usage.promptCacheMissTokens,
+    ) ?? 0,
+  };
 }
 
 export async function fetchSessionWorkspaceChanges(

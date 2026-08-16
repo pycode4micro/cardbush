@@ -16,7 +16,7 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-assert(packageJson.version === '1.0.0-rc.1', 'desktop version must be 1.0.0-rc.1');
+assert(packageJson.version === '1.0.0-dev', 'desktop version must be 1.0.0-dev');
 assert(packageJson.scripts['test:all'], 'test:all release gate is required');
 assert(
   (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3,
@@ -67,7 +67,7 @@ assert(
   'API validation errors must use localizedClientMessage',
 );
 assert(!readme.includes('C:\\Users\\'), 'README must not contain a developer-specific path');
-assert(readme.includes('1.0.0-rc.1') && readmeZh.includes('1.0.0-rc.1'), 'both READMEs must describe the RC version');
+assert(readme.includes('1.0.0-dev') && readmeZh.includes('1.0.0-dev'), 'both READMEs must describe the development version');
 assert(readme.includes('README.zh-CN.md'), 'English README must link to the Chinese README');
 assert(readmeZh.includes('README.md'), 'Chinese README must link to the English README');
 

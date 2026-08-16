@@ -355,6 +355,15 @@ export interface ChatAttachment {
   size?: number;
 }
 
+export interface SessionTokenUsage {
+  sessionId: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  promptCacheHitTokens: number;
+  promptCacheMissTokens: number;
+}
+
 export interface ChatToolExecution {
   id: string;
   name: string;

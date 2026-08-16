@@ -64,6 +64,10 @@ import { BotPlatformIcon } from '../components/BotPlatformIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
 import { SubagentsPanel } from './SubagentsPanel';
+import {
+  loadCumulativeUsageStatistics,
+  type CumulativeUsageStatistics,
+} from './settings/usageActivity';
 import type {
   AppLanguage,
   AppLanguageMode,
@@ -77,6 +81,7 @@ import type {
   CompanionMotionMode,
   CompanionSettings,
   CompanionSize,
+  ConversationSummary,
   LightThemeStyle,
   ManagedModelConfig,
   McpServerConfig,
@@ -130,7 +135,7 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
 ];
 
 const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
-  profile: { zh: '外观', en: 'Appearance' },
+  profile: { zh: '个性化', en: 'Personalization' },
   os: { zh: '桌面 OS', en: 'Desktop OS' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
@@ -145,7 +150,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
 };
 
 const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
-  profile: { zh: '统一应用主题、语言、背景与字体。', en: 'Manage the app theme, language, background, and typography.' },
+  profile: { zh: '查看累计使用量，并统一管理主题、语言、背景与字体。', en: 'Review cumulative usage and manage theme, language, background, and typography.' },
   os: { zh: '配置桌面模式、开机启动和手柄操作。', en: 'Configure desktop mode, startup behavior, and controller input.' },
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
@@ -262,6 +267,7 @@ export function SettingsView({
   selectedModel,
   availableModels,
   backendCapabilities,
+  conversations,
   initialSection,
   onBack,
   onThemePreferenceChange,
@@ -283,6 +289,7 @@ export function SettingsView({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
+  conversations: ConversationSummary[];
   initialSection: SettingsSection;
   onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
@@ -535,6 +542,7 @@ export function SettingsView({
           settings={settings}
           reasoningStreamAvailable={backendCapabilities.reasoningStream}
           backgroundImageSource={backgroundImageSource}
+          conversations={conversations}
           onThemePreferenceChange={onThemePreferenceChange}
           onLightThemeStyleChange={onLightThemeStyleChange}
           onLanguageModeChange={onLanguageModeChange}
@@ -1030,6 +1038,7 @@ function SettingsProfilePanel({
   settings,
   reasoningStreamAvailable,
   backgroundImageSource,
+  conversations,
   onThemePreferenceChange,
   onLightThemeStyleChange,
   onLanguageModeChange,
@@ -1047,6 +1056,7 @@ function SettingsProfilePanel({
   settings: AppSettingsState;
   reasoningStreamAvailable: boolean;
   backgroundImageSource: string;
+  conversations: ConversationSummary[];
   onThemePreferenceChange: (value: ThemePreference) => void;
   onLightThemeStyleChange: (value: LightThemeStyle) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
@@ -1068,14 +1078,16 @@ function SettingsProfilePanel({
     : undefined;
 
   return (
-    <SettingsCard
-      title={language === 'zh' ? '外观' : 'Appearance'}
-      subtitle={
-        language === 'zh'
-          ? '配置主题、语言和全局字体。'
-          : 'Configure theme, language, and global font.'
-      }
-    >
+    <div className="settings-stack personalization-settings-stack">
+      <UsageStatisticsPanel language={language} conversations={conversations} />
+      <SettingsCard
+        title={language === 'zh' ? '外观' : 'Appearance'}
+        subtitle={
+          language === 'zh'
+            ? '配置主题、语言、背景和全局字体。'
+            : 'Configure theme, language, background, and global font.'
+        }
+      >
       <SettingsGroupTitle>
         {language === 'zh' ? '显示模式' : 'Display mode'}
       </SettingsGroupTitle>
@@ -1312,6 +1324,132 @@ function SettingsProfilePanel({
           {language === 'zh' ? '恢复默认字体' : 'Reset default font'}
         </button>
       </div>
+      </SettingsCard>
+    </div>
+  );
+}
+
+function UsageStatisticsPanel({
+  language,
+  conversations,
+}: {
+  language: AppLanguage;
+  conversations: ConversationSummary[];
+}) {
+  const [statistics, setStatistics] = useState<CumulativeUsageStatistics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const refreshKey = conversations
+    .map((conversation) => `${conversation.id}:${conversation.updatedAt}`)
+    .join('|');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    void loadCumulativeUsageStatistics(conversations)
+      .then((result) => {
+        if (active) setStatistics(result);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [refreshKey]);
+
+  const heatmap = useMemo(
+    () => usageHeatmap(statistics?.activity ?? [], language),
+    [language, statistics?.activity],
+  );
+  const stats = statistics ?? emptyCumulativeUsageStatistics;
+  const numberLocale = language === 'zh' ? 'zh-CN' : 'en-US';
+  const statItems = [
+    {
+      label: language === 'zh' ? '累计 Token' : 'Total tokens',
+      value: formatUsageNumber(stats.totalTokens, numberLocale),
+      exact: stats.totalTokens,
+    },
+    {
+      label: language === 'zh' ? '输入 Token' : 'Input tokens',
+      value: formatUsageNumber(stats.promptTokens, numberLocale),
+      exact: stats.promptTokens,
+    },
+    {
+      label: language === 'zh' ? '输出 Token' : 'Output tokens',
+      value: formatUsageNumber(stats.completionTokens, numberLocale),
+      exact: stats.completionTokens,
+    },
+    {
+      label: language === 'zh' ? '活跃天数' : 'Active days',
+      value: new Intl.NumberFormat(numberLocale).format(stats.activeDays),
+      exact: stats.activeDays,
+    },
+  ];
+
+  return (
+    <SettingsCard
+      title={language === 'zh' ? '累计使用量' : 'Cumulative usage'}
+      subtitle={
+        language === 'zh'
+          ? '汇总全部本地会话的真实 Token 用量与最近一年的对话活跃度。'
+          : 'Summarizes real token usage across local conversations and chat activity over the past year.'
+      }
+    >
+      <div className="usage-stat-grid" aria-busy={loading}>
+        {statItems.map((item) => (
+          <div className="usage-stat" key={item.label} title={new Intl.NumberFormat(numberLocale).format(item.exact)}>
+            <span>{item.label}</span>
+            <strong>{loading ? '—' : item.value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="usage-activity-header">
+        <div>
+          <strong>{language === 'zh' ? '使用活跃度' : 'Usage activity'}</strong>
+          <span>
+            {language === 'zh'
+              ? `${stats.conversationCount} 个会话 · 最长连续 ${stats.longestStreak} 天`
+              : `${stats.conversationCount} conversations · ${stats.longestStreak}-day longest streak`}
+          </span>
+        </div>
+        {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
+      </div>
+      <div className="usage-heatmap-scroll" aria-label={language === 'zh' ? '最近一年使用活跃度' : 'Usage activity in the past year'}>
+        <div className="usage-heatmap-frame">
+          <div className="usage-month-labels" aria-hidden="true">
+            {heatmap.monthLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}
+          </div>
+          <div className="usage-weekday-labels" aria-hidden="true">
+            <span>{language === 'zh' ? '一' : 'M'}</span>
+            <span>{language === 'zh' ? '三' : 'W'}</span>
+            <span>{language === 'zh' ? '五' : 'F'}</span>
+          </div>
+          <div className="usage-heatmap-grid">
+            {heatmap.days.map((day) => (
+              <span
+                className={`usage-heatmap-cell level-${day.level}${day.future ? ' future' : ''}`}
+                key={day.date}
+                title={day.future ? '' : usageDayTitle(day.date, day.interactions, language)}
+                aria-hidden="true"
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="usage-legend">
+        <span>{language === 'zh' ? '少' : 'Less'}</span>
+        {[0, 1, 2, 3, 4].map((level) => (
+          <i className={`usage-heatmap-cell level-${level}`} key={level} />
+        ))}
+        <span>{language === 'zh' ? '多' : 'More'}</span>
+      </div>
+      {!loading && stats.failedSessionCount > 0 && (
+        <p className="usage-partial-note">
+          {language === 'zh'
+            ? `${stats.failedSessionCount} 个会话暂时无法读取，当前统计为可用数据。`
+            : `${stats.failedSessionCount} conversations could not be read; available data is shown.`}
+        </p>
+      )}
     </SettingsCard>
   );
 }
@@ -3586,6 +3724,85 @@ function botLoginStatusText(status: WeixinLoginStatus, language: AppLanguage) {
     failed: { zh: '失败', en: 'Failed' },
   };
   return labels[status][language];
+}
+
+const emptyCumulativeUsageStatistics: CumulativeUsageStatistics = {
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+  promptCacheHitTokens: 0,
+  promptCacheMissTokens: 0,
+  conversationCount: 0,
+  activeDays: 0,
+  longestStreak: 0,
+  activity: [],
+  failedSessionCount: 0,
+};
+
+function formatUsageNumber(value: number, locale: string) {
+  return new Intl.NumberFormat(locale, {
+    notation: value >= 10_000 ? 'compact' : 'standard',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function usageHeatmap(
+  activity: Array<{ date: string; interactions: number }>,
+  language: AppLanguage,
+) {
+  const activityByDate = new Map(activity.map((day) => [day.date, day.interactions]));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = new Date(today);
+  start.setDate(start.getDate() - start.getDay() - (52 * 7));
+  const visibleCounts = activity
+    .filter((day) => day.date >= localDayKey(start) && day.date <= localDayKey(today))
+    .map((day) => day.interactions);
+  const maximum = Math.max(1, ...visibleCounts);
+  const days = Array.from({ length: 53 * 7 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const dateKey = localDayKey(date);
+    const interactions = activityByDate.get(dateKey) ?? 0;
+    return {
+      date: dateKey,
+      interactions,
+      future: date > today,
+      level: interactions === 0 ? 0 : Math.max(1, Math.ceil((interactions / maximum) * 4)),
+    };
+  });
+  const formatter = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'short',
+  });
+  const monthLabels = Array.from({ length: 53 }, (_, weekIndex) => {
+    const weekStart = new Date(start);
+    weekStart.setDate(start.getDate() + weekIndex * 7);
+    const previousWeek = new Date(weekStart);
+    previousWeek.setDate(weekStart.getDate() - 7);
+    return weekIndex === 0 || weekStart.getMonth() !== previousWeek.getMonth()
+      ? formatter.format(weekStart)
+      : '';
+  });
+  return { days, monthLabels };
+}
+
+function localDayKey(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function usageDayTitle(date: string, interactions: number, language: AppLanguage) {
+  const formatted = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(`${date}T00:00:00`));
+  return language === 'zh'
+    ? `${formatted} · ${interactions} 次对话`
+    : `${formatted} · ${interactions} chat interactions`;
 }
 
 function SettingsCard({

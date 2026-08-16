@@ -1805,6 +1805,7 @@ function CardbushApp() {
             selectedModel={chat.selectedModel}
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
+            conversations={chat.conversations}
             initialSection={settingsInitialSection}
             onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
