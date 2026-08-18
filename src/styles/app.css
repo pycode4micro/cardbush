@@ -4697,6 +4697,40 @@ body.right-inspector-resizing .right-inspector-resizer {
   margin-bottom: 0;
 }
 
+.user-command-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text));
+}
+
+.user-command-heading.has-content {
+  margin-bottom: 7px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.user-command-heading > svg {
+  flex: 0 0 auto;
+}
+
+.user-command-heading strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.user-command-token {
+  margin-left: auto;
+  padding: 2px 6px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
 .assistant-bubble ul,
 .assistant-bubble ol,
 .user-bubble ul,

@@ -42,7 +42,7 @@ assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
   ['/model', '/goal', '/skill', '/new'],
 );
-assert.match(slashBlock, /模型管理/);
+assert.match(slashBlock, /模型切换/);
 assert.match(slashBlock, /目标/);
 assert.match(slashBlock, /技能/);
 assert.match(slashBlock, /新会话/);
@@ -50,6 +50,7 @@ const goalCommandBlock = slashBlock.match(
   /id:\s*'\/goal'[\s\S]*?searchText:\s*'\/goal 目标 goal'/,
 )?.[0] ?? '';
 assert.ok(goalCommandBlock, 'the /goal quick action is missing');
+assert.match(goalCommandBlock, /icon:\s*<Target/);
 assert.match(
   goalCommandBlock,
   /value:\s*'\/goal '/,
@@ -60,6 +61,15 @@ assert.doesNotMatch(
   /run:/,
   'the /goal quick action must not bypass the conversation',
 );
+const modelCommandBlock = slashBlock.match(
+  /id:\s*'\/model'[\s\S]*?searchText:\s*'\/model 模型切换 switch model'/,
+)?.[0] ?? '';
+assert.ok(modelCommandBlock, 'the /model quick action is missing');
+assert.match(modelCommandBlock, /icon:\s*<Box/);
+assert.match(modelCommandBlock, /setActiveMenu\('models'\)/);
+assert.doesNotMatch(modelCommandBlock, /onConfigureModels/);
+assert.match(messageBubbleSource, /userGoalCommandPresentation/);
+assert.match(messageBubbleSource, /<Target size=\{14\}/);
 assert.doesNotMatch(slashBlock, /title:\s*['"`]\//);
 assert.doesNotMatch(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.doesNotMatch(source, /mentionMatch|mentionCommands|输入 @|Type @/);

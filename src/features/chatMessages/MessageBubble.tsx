@@ -16,6 +16,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Target,
   ThumbsDown,
   ThumbsUp,
   WrapText,
@@ -131,6 +132,17 @@ function guidanceDeliveryLabel(
     sent: language === 'zh' ? '已作为引导发送' : 'Sent as guidance',
   } satisfies Record<GuidanceDeliveryState, string>;
   return labels[state];
+}
+
+function userGoalCommandPresentation(text: string, language: AppLanguage) {
+  const match = text.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    label: language === 'zh' ? '目标' : 'Goal',
+    content: (match[1] ?? '').trim(),
+  };
 }
 
 type ImagePreview = {
@@ -339,6 +351,8 @@ function MessageBubbleView({
     ...parsedImagePaths,
   ]);
   const text = userContentParts.text;
+  const goalCommand =
+    message.role === 'user' ? userGoalCommandPresentation(text, language) : null;
   const fileAttachments = userMessageFileAttachments(
     message.attachments ?? [],
     userContentParts.paths.filter((pathValue) => !isImagePath(pathValue)),
@@ -511,7 +525,16 @@ function MessageBubbleView({
             attachments={fileAttachments}
             language={language}
           />
-          {text && <MarkdownContent content={text} language={language} />}
+          {goalCommand && (
+            <div className={`user-command-heading goal${goalCommand.content ? ' has-content' : ''}`}>
+              <Target size={14} />
+              <strong>{goalCommand.label}</strong>
+              <span className="user-command-token">/goal</span>
+            </div>
+          )}
+          {(goalCommand?.content ?? text) && (
+            <MarkdownContent content={goalCommand?.content ?? text} language={language} />
+          )}
           {guidanceDelivery && (
             <div
               className={`guidance-delivery-status ${guidanceDelivery}`}

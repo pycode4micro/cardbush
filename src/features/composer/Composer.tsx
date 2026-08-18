@@ -1,7 +1,7 @@
 import {
   ArrowRight,
   ArrowUp,
-  Bot,
+  Box,
   BookOpen,
   Brain,
   Check,
@@ -29,6 +29,7 @@ import {
   Puzzle,
   SlidersHorizontal,
   Sparkles,
+  Target,
   Terminal,
   Trash2,
   Unlock,
@@ -701,14 +702,17 @@ export function Composer({
       const commands: ComposerCommandItem[] = [
         {
           id: '/model',
-          title: language === 'zh' ? '模型管理' : 'Model management',
+          title: language === 'zh' ? '模型切换' : 'Switch model',
           subtitle:
             language === 'zh'
-              ? '打开模型配置、切换与管理'
-              : 'Open model configuration and management',
-          icon: <Bot size={16} />,
-          run: onConfigureModels,
-          searchText: '/model 模型管理 model management',
+              ? '选择当前会话使用的模型'
+              : 'Choose the model used by this conversation',
+          icon: <Box size={16} />,
+          run: () => {
+            setPopoverAnchor(null);
+            setActiveMenu('models');
+          },
+          searchText: '/model 模型切换 switch model',
         },
         {
           id: '/goal',
@@ -717,7 +721,7 @@ export function Composer({
             language === 'zh'
               ? '填入命令，通过对话创建或管理目标'
               : 'Insert the command to create or manage a goal in chat',
-          icon: <ListChecks size={16} />,
+          icon: <Target size={16} />,
           value: '/goal ',
           searchText: '/goal 目标 goal',
         },
@@ -754,7 +758,6 @@ export function Composer({
     [
       goalAvailable,
       language,
-      onConfigureModels,
       onCreateConversation,
     ],
   );
@@ -1744,7 +1747,7 @@ function ComposerPopover({
               type="button"
               onClick={onConfigureModels}
             >
-              <Bot size={15} />
+              <Box size={15} />
               <span>{language === 'zh' ? '待配置，前往模型设置' : 'Configure models'}</span>
               <ArrowRight size={15} />
             </button>
@@ -1928,7 +1931,7 @@ function ModelLogoMark({
 }) {
   const logo = modelLogoFor(model);
   if (!logo) {
-    return <Bot className="model-logo-fallback" size={size} />;
+    return <Box className="model-logo-fallback" size={size} />;
   }
   return (
     <img
