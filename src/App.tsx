@@ -113,6 +113,7 @@ import {
 } from './features/chatMessages';
 import { QuickContextRail } from './features/chat/QuickContextRail';
 import { ConversationWorkSummary } from './features/chat/ConversationWorkSummary';
+import { WorkSummaryInspector } from './features/chat/WorkSummaryInspector';
 import {
   ShadowTemporaryChat,
   type ShadowChatEntry,
@@ -178,6 +179,10 @@ import {
   type InspectorOpenDetail,
 } from './features/inspector/inspectorEvents';
 import {
+  OPEN_WORK_SUMMARY_INSPECTOR_EVENT,
+  type WorkSummaryInspectorDetail,
+} from './features/subagents/subagentObservabilityEvents';
+import {
   OsSystemSurface,
   type OsApplication,
   type OsSystemSurfaceMode,
@@ -223,6 +228,7 @@ import type {
   ThemePreference,
   ThemeMode,
 } from './types';
+import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from './types';
 
 const LazySettingsView = lazy(async () => {
   const module = await import('./features/SettingsView');
@@ -868,6 +874,8 @@ function CardbushApp() {
     () => new Set(),
   );
   const [inspectorTarget, setInspectorTarget] = useState<InspectorOpenDetail | null>(null);
+  const [workSummaryInspector, setWorkSummaryInspector] =
+    useState<WorkSummaryInspectorDetail | null>(null);
   const [inspectorSummaryOpen, setInspectorSummaryOpen] = useState(false);
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
@@ -899,30 +907,49 @@ function CardbushApp() {
     [changeReportsByConversation, changeReviewConversationId],
   );
   const inspectorOpen = Boolean(
-    (changeReviewConversation && changeReviewReports.length > 0) || inspectorTarget,
+    (changeReviewConversation && changeReviewReports.length > 0) ||
+      inspectorTarget ||
+      workSummaryInspector,
   );
   const [retainedInspectorContent, setRetainedInspectorContent] = useState<{
     target: InspectorOpenDetail | null;
+    workSummary: WorkSummaryInspectorDetail | null;
     conversation: ConversationSummary | null;
     reports: ConversationChangeReport[];
-  }>({ target: null, conversation: null, reports: [] });
+  }>({ target: null, workSummary: null, conversation: null, reports: [] });
   useEffect(() => {
     if (!inspectorOpen) return;
     setRetainedInspectorContent({
       target: inspectorTarget,
+      workSummary: workSummaryInspector,
       conversation: changeReviewConversation,
       reports: changeReviewReports,
     });
-  }, [changeReviewConversation, changeReviewReports, inspectorOpen, inspectorTarget]);
+  }, [
+    changeReviewConversation,
+    changeReviewReports,
+    inspectorOpen,
+    inspectorTarget,
+    workSummaryInspector,
+  ]);
   const displayedInspectorTarget = inspectorTarget ?? (
-    changeReviewConversation ? null : retainedInspectorContent.target
+    changeReviewConversation || workSummaryInspector
+      ? null
+      : retainedInspectorContent.target
   );
   const displayedReviewConversation = changeReviewConversation ?? (
-    inspectorTarget ? null : retainedInspectorContent.conversation
+    inspectorTarget || workSummaryInspector
+      ? null
+      : retainedInspectorContent.conversation
   );
   const displayedReviewReports = changeReviewConversation
     ? changeReviewReports
     : retainedInspectorContent.reports;
+  const displayedWorkSummaryInspector = workSummaryInspector ?? (
+    changeReviewConversation || inspectorTarget
+      ? null
+      : retainedInspectorContent.workSummary
+  );
   const sidebarPresence = useSoftPanelPresence(
     section !== 'os' && !sidebarCollapsed,
   );
@@ -943,6 +970,7 @@ function CardbushApp() {
       const detail = (event as CustomEvent<InspectorOpenDetail>).detail;
       if (!detail?.target?.trim()) return;
       setInspectorTarget(detail);
+      setWorkSummaryInspector(null);
       setChangeReviewConversationId('');
       setInspectorSummaryOpen(false);
     };
@@ -950,6 +978,7 @@ function CardbushApp() {
     const removeDesktopListener = window.cardbushDesktop?.onOpenInspectorRequest?.((detail) => {
       if (!detail?.target?.trim()) return;
       setInspectorTarget(detail);
+      setWorkSummaryInspector(null);
       setChangeReviewConversationId('');
       setInspectorSummaryOpen(false);
     });
@@ -957,6 +986,25 @@ function CardbushApp() {
       window.removeEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
       removeDesktopListener?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const handleOpenWorkSummaryInspector = (event: Event) => {
+      const detail = (event as CustomEvent<WorkSummaryInspectorDetail>).detail;
+      if (!detail?.sessionId?.trim()) return;
+      setWorkSummaryInspector(detail);
+      setInspectorTarget(null);
+      setChangeReviewConversationId('');
+      setInspectorSummaryOpen(false);
+    };
+    window.addEventListener(
+      OPEN_WORK_SUMMARY_INSPECTOR_EVENT,
+      handleOpenWorkSummaryInspector,
+    );
+    return () => window.removeEventListener(
+      OPEN_WORK_SUMMARY_INSPECTOR_EVENT,
+      handleOpenWorkSummaryInspector,
+    );
   }, []);
 
   useEffect(() => {
@@ -1877,6 +1925,7 @@ function CardbushApp() {
                 onRenameConversation={chat.renameConversation}
                 onOpenConversationChanges={(conversationId) => {
                   setInspectorTarget(null);
+                  setWorkSummaryInspector(null);
                   setChangeReviewConversationId(conversationId);
                   setChangeReviewNotice('');
                 }}
@@ -1921,6 +1970,7 @@ function CardbushApp() {
                 inspectorOpen={inspectorOpen}
                 onCloseInspector={() => {
                   setInspectorTarget(null);
+                  setWorkSummaryInspector(null);
                   setChangeReviewConversationId('');
                   setInspectorSummaryOpen(false);
                 }}
@@ -1946,6 +1996,11 @@ function CardbushApp() {
                 visualInputAvailable={visualInputAvailable}
                 visualInputEnabled={visualInputEnabled}
                 contextSearchAvailable={backendCapabilities.sessionContextSearch}
+                subagentObservabilityAvailable={
+                  backendCapabilities.subagentObservability &&
+                  backendCapabilities.subagentObservabilityProtocol ===
+                    SUBAGENT_DISPATCH_EVENT_PROTOCOL
+                }
                 shadowAvailable={
                   section === 'chat' && backendCapabilities.shadowConversationActivation
                 }
@@ -2009,6 +2064,7 @@ function CardbushApp() {
                 onOpenChangeReview={() => {
                   if (!chat.activeConversationId) return;
                   setInspectorTarget(null);
+                  setWorkSummaryInspector(null);
                   setChangeReviewConversationId(chat.activeConversationId);
                   setChangeReviewNotice('');
                 }}
@@ -2061,17 +2117,25 @@ function CardbushApp() {
                 <strong>
                   {displayedReviewConversation
                     ? (language === 'zh' ? '审查' : 'Review')
+                    : displayedWorkSummaryInspector
+                      ? displayedWorkSummaryInspector.title || (
+                          displayedWorkSummaryInspector.kind === 'turn-history'
+                            ? language === 'zh' ? '回合详情' : 'Turn details'
+                            : language === 'zh' ? '子任务详情' : 'Subagent task'
+                        )
                     : displayedInspectorTarget?.title || basename(displayedInspectorTarget?.target ?? '')}
                 </strong>
-                <button
-                  type="button"
-                  className={inspectorSummaryOpen ? 'active' : ''}
-                  onClick={() => setInspectorSummaryOpen((current) => !current)}
-                  title={language === 'zh' ? '摘要' : 'Summary'}
-                >
-                  <Clipboard size={15} />
-                  <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
-                </button>
+                {!displayedWorkSummaryInspector && (
+                  <button
+                    type="button"
+                    className={inspectorSummaryOpen ? 'active' : ''}
+                    onClick={() => setInspectorSummaryOpen((current) => !current)}
+                    title={language === 'zh' ? '摘要' : 'Summary'}
+                  >
+                    <Clipboard size={15} />
+                    <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
+                  </button>
+                )}
                 {displayedInspectorTarget && (
                   <button
                     type="button"
@@ -2085,6 +2149,7 @@ function CardbushApp() {
                   type="button"
                   onClick={() => {
                     setInspectorTarget(null);
+                    setWorkSummaryInspector(null);
                     setChangeReviewConversationId('');
                     setChangeReviewNotice('');
                   }}
@@ -2093,7 +2158,7 @@ function CardbushApp() {
                   <PanelRightClose size={16} />
                 </button>
               </header>
-              {inspectorSummaryOpen && (
+              {!displayedWorkSummaryInspector && inspectorSummaryOpen && (
                 <div className="right-inspector-summary">
                   {displayedReviewConversation
                     ? (() => {
@@ -2136,6 +2201,14 @@ function CardbushApp() {
                   <InspectorWebview
                     key={displayedInspectorTarget.target}
                     source={inspectorSource(displayedInspectorTarget.target)}
+                    language={language}
+                  />
+                ) : displayedWorkSummaryInspector ? (
+                  <WorkSummaryInspector
+                    detail={displayedWorkSummaryInspector}
+                    messages={chat.messagesByConversation[
+                      displayedWorkSummaryInspector.sessionId
+                    ] ?? []}
                     language={language}
                   />
                 ) : null}
@@ -3268,6 +3341,7 @@ function ChatPanel({
   visualInputAvailable,
   visualInputEnabled,
   contextSearchAvailable,
+  subagentObservabilityAvailable,
   shadowAvailable,
   shadowAccentColor,
   thinkingNotice,
@@ -3353,6 +3427,7 @@ function ChatPanel({
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
   contextSearchAvailable: boolean;
+  subagentObservabilityAvailable: boolean;
   shadowAvailable: boolean;
   shadowAccentColor: string;
   thinkingNotice: ThinkingNotice | null;
@@ -3430,6 +3505,22 @@ function ChatPanel({
       ? normalizeActiveTurnTranscriptForDisplay(normalized, activeTurnId)
       : normalized;
   }, [activeTurnId, messages, sending]);
+  const [refreshError, setRefreshError] = useState('');
+  const refreshBackendWithFeedback = useCallback(async (
+    options?: { silent?: boolean },
+  ) => {
+    try {
+      await onRefreshActiveSession(options);
+      setRefreshError('');
+    } catch (caught) {
+      setRefreshError(
+        language === 'zh'
+          ? '无法连接 BushServer，请检查后端是否正在运行。'
+          : 'Unable to connect to BushServer. Check whether the backend is running.',
+      );
+      throw caught;
+    }
+  }, [language, onRefreshActiveSession]);
   const currentTurnChangeReports = useMemo(() => {
     if (changeReports.length === 0) return [];
     const active = activeTurnId.trim();
@@ -5590,16 +5681,19 @@ function ChatPanel({
           onCreateSessionShareLink={
             botHandoffAvailable ? onCreateSessionShareLink : undefined
           }
-          onRefreshActiveSession={onRefreshActiveSession}
+          onRefreshActiveSession={refreshBackendWithFeedback}
+          conversationContentAvailable={renderMessages.length > 0}
           activeConsole={consoleMode}
           onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
           onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
-          onToggleWorkSummary={() => {
-            setWorkSummaryVisible((current) => !current);
-          }}
-          onOpenReview={onOpenChangeReview}
+          onToggleWorkSummary={renderMessages.length > 0
+            ? () => {
+                setWorkSummaryVisible((current) => !current);
+              }
+            : undefined}
+          onOpenReview={changeReports.length > 0 ? onOpenChangeReview : undefined}
           onRevealSidebar={onRevealSidebar}
         />
       )}
@@ -5649,22 +5743,28 @@ function ChatPanel({
         />
       )}
       {notice && (
-        <div className="notice-banner" role="status" aria-live="polite">
-          <CheckCircle2 size={16} />
-          <span>{notice}</span>
-          <button type="button" onClick={onClearNotice}>
-            <X size={16} />
-          </button>
-        </div>
+        <RuntimeStatusBanner
+          language={language}
+          tone="notice"
+          message={notice}
+          onDismiss={onClearNotice}
+        />
       )}
-      {error && (
-        <div className="error-banner">
-          <AlertCircle size={16} />
-          <span>{error}</span>
-          <button type="button" onClick={onClearError}>
-            <X size={16} />
-          </button>
-        </div>
+      {(error || refreshError) && (
+        <RuntimeStatusBanner
+          language={language}
+          tone="error"
+          message={error || refreshError}
+          actionLabel={language === 'zh' ? '重试' : 'Retry'}
+          onAction={async () => {
+            await refreshBackendWithFeedback({ silent: false });
+            onClearError();
+          }}
+          onDismiss={() => {
+            setRefreshError('');
+            onClearError();
+          }}
+        />
       )}
       <div
         className="chat-body"
@@ -5679,6 +5779,7 @@ function ChatPanel({
             messages={renderMessages}
             changeReports={changeReports}
             onOpenChangeReview={onOpenChangeReview}
+            subagentObservabilityAvailable={subagentObservabilityAvailable}
             softVisible={workSummaryPresence.visible}
           />
         )}
@@ -5982,6 +6083,68 @@ function BackendLoading({ language }: { language: AppLanguage }) {
         <span />
       </div>
       <p>{language === 'zh' ? '正在连接后端服务...' : 'Connecting to backend service...'}</p>
+    </div>
+  );
+}
+
+function RuntimeStatusBanner({
+  language,
+  tone,
+  message,
+  actionLabel,
+  onAction,
+  onDismiss,
+}: {
+  language: AppLanguage;
+  tone: 'notice' | 'error';
+  message: string;
+  actionLabel?: string;
+  onAction?: () => Promise<void>;
+  onDismiss: () => void;
+}) {
+  const [actionState, setActionState] = useState<'idle' | 'running' | 'failed'>('idle');
+  const runAction = useCallback(async () => {
+    if (!onAction || actionState === 'running') return;
+    setActionState('running');
+    try {
+      await onAction();
+      setActionState('idle');
+    } catch {
+      setActionState('failed');
+    }
+  }, [actionState, onAction]);
+  const statusLabel = actionState === 'failed'
+    ? language === 'zh' ? '重试失败' : 'Retry failed'
+    : actionLabel;
+
+  return (
+    <div
+      className={`runtime-status-banner ${tone === 'error' ? 'error-banner' : 'notice-banner'}`}
+      role={tone === 'error' ? 'alert' : 'status'}
+      aria-live={tone === 'error' ? 'assertive' : 'polite'}
+    >
+      {tone === 'error' ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
+      <span className="runtime-status-message">{message}</span>
+      {onAction && actionLabel && (
+        <button
+          className="runtime-status-action"
+          type="button"
+          disabled={actionState === 'running'}
+          onClick={() => void runAction()}
+        >
+          {actionState === 'running' && <LoaderCircle size={14} />}
+          {statusLabel}
+        </button>
+      )}
+      <button
+        className="runtime-status-dismiss"
+        type="button"
+        aria-label={language === 'zh' ? '关闭提示' : 'Dismiss notification'}
+        title={language === 'zh' ? '关闭' : 'Dismiss'}
+        onClick={onDismiss}
+      >
+        <X size={16} />
+      </button>
     </div>
   );
 }
@@ -6728,6 +6891,7 @@ function TopBar({
   botShareLabel,
   language,
   activeConversationId,
+  conversationContentAvailable = false,
   botHandoffAvailable,
   onCreateSessionShareLink,
   onRefreshActiveSession,
@@ -6745,6 +6909,7 @@ function TopBar({
   botShareLabel: string;
   language: AppLanguage;
   activeConversationId?: string;
+  conversationContentAvailable?: boolean;
   botHandoffAvailable: boolean;
   onCreateSessionShareLink?: (
     request: SessionShareLinkRequest,
@@ -6761,9 +6926,9 @@ function TopBar({
 }) {
   const [botMenuOpen, setBotMenuOpen] = useState(false);
   const [botHistoryRefreshing, setBotHistoryRefreshing] = useState(false);
-  const [botHistoryRefreshFailed, setBotHistoryRefreshFailed] = useState(false);
   const botShareRef = useRef<HTMLDivElement>(null);
   const botShareEnabled = Boolean(
+    conversationContentAvailable &&
     activeConversationId?.trim() &&
       onCreateSessionShareLink &&
       onRefreshActiveSession,
@@ -6800,11 +6965,10 @@ function TopBar({
       return;
     }
     setBotHistoryRefreshing(true);
-    setBotHistoryRefreshFailed(false);
     try {
       await onRefreshActiveSession({ silent: true });
     } catch {
-      setBotHistoryRefreshFailed(true);
+      // The shared runtime status banner owns the visible failure state.
     } finally {
       setBotHistoryRefreshing(false);
     }
@@ -6830,20 +6994,18 @@ function TopBar({
           <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
         </button>
       )}
-      {onOpenReview && (
+      {onOpenReview && reviewAvailable && (
         <button
           className="topbar-inspector-action"
           type="button"
-          disabled={!reviewAvailable}
           onClick={onOpenReview}
-          title={reviewAvailable
-            ? (language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right')
-            : (language === 'zh' ? '当前会话没有可审查的修改' : 'No changes to review')}
+          title={language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right'}
         >
           <PanelRightOpen size={15} />
           <span>{language === 'zh' ? '审查' : 'Review'}</span>
         </button>
       )}
+      {conversationContentAvailable && activeConversationId?.trim() && (
       <div className="bot-share-wrap" ref={botShareRef}>
         <button
           className="topbar-native-menu"
@@ -6882,20 +7044,15 @@ function TopBar({
             />
           )}
       </div>
+      )}
       <button
-        className={`topbar-square native-refresh-square ${botHistoryRefreshFailed ? 'failed' : ''}`}
+        className="topbar-square native-refresh-square"
         type="button"
         disabled={!onRefreshActiveSession || botHistoryRefreshing}
         onClick={() => void refreshBotHistory()}
-        title={
-          botHistoryRefreshFailed
-            ? language === 'zh'
-              ? '刷新后端内容失败'
-              : 'Failed to refresh backend content'
-            : language === 'zh'
-              ? '重新连接后端并刷新会话'
-              : 'Reconnect backend and refresh sessions'
-        }
+        title={language === 'zh'
+          ? '重新连接后端并刷新会话'
+          : 'Reconnect backend and refresh sessions'}
       >
         {botHistoryRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
       </button>

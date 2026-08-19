@@ -32,6 +32,24 @@ assert(
   'backend loading state must support both UI languages',
 );
 assert(
+  app.includes('function RuntimeStatusBanner(') &&
+    app.includes("actionLabel={language === 'zh' ? '重试' : 'Retry'}") &&
+    app.includes('await refreshBackendWithFeedback({ silent: false })'),
+  'runtime errors must expose an inline localized retry action',
+);
+assert(
+  app.includes('onToggleWorkSummary={renderMessages.length > 0') &&
+    app.includes('onOpenReview={changeReports.length > 0 ? onOpenChangeReview : undefined}') &&
+    app.includes('{conversationContentAvailable && activeConversationId?.trim() && ('),
+  'conversation-only topbar actions must stay hidden on the welcome screen',
+);
+assert(
+  app.includes('const [refreshError, setRefreshError]') &&
+    app.includes('onRefreshActiveSession={refreshBackendWithFeedback}') &&
+    app.includes('{(error || refreshError) && ('),
+  'backend refresh failures must use the shared retryable runtime status banner',
+);
+assert(
   !app.includes('title="Git 控制台"') && !app.includes('title="终端控制台"'),
   'console titles must not be Chinese-only',
 );

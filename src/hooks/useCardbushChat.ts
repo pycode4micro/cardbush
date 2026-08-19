@@ -57,7 +57,9 @@ import type {
   TeamFlowStreamEvent,
   TaskPlanStreamUpdate,
   StreamExecutionUpdate,
+  SubagentDispatchEvent,
 } from '../types';
+import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   basename,
   isAbsoluteLocalPath,
@@ -1193,6 +1195,12 @@ export function useCardbushChat(
           onTeamFlowEvent: (event) => {
             mergeTeamFlowStreamEvent(sessionId, event);
           },
+          onSubagentDispatch: (event) => {
+            emitSubagentDispatch({
+              ...event,
+              parentSessionId: event.parentSessionId || sessionId,
+            });
+          },
           onThinking: (event) => {
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
               detail: { ...event, sessionId },
@@ -1406,6 +1414,7 @@ export function useCardbushChat(
           onFinalAssistantText: (text: string, chunk: AssistantStreamChunk) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
           onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
+          onSubagentDispatch: (event: SubagentDispatchEvent) => void;
           onThinking: (event: import('../types').ThinkingStreamEvent) => void;
           onWorkflowEvent: (event: TeamWorkflowStreamEvent) => void;
           onSceneEvent: (event: SceneStreamEvent) => void;
@@ -1554,6 +1563,12 @@ export function useCardbushChat(
           },
           onTeamFlowEvent: (event) => {
             mergeTeamFlowStreamEvent(sessionId, event);
+          },
+          onSubagentDispatch: (event) => {
+            emitSubagentDispatch({
+              ...event,
+              parentSessionId: event.parentSessionId || sessionId,
+            });
           },
           onThinking: (event) => {
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {

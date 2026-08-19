@@ -33,6 +33,7 @@
     "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",
     "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
+    "test:subagent-observability": "node scripts/test-subagent-observability-contract.mjs",
     "test:project-roots": "node scripts/test-project-root-contract.mjs",
     "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",

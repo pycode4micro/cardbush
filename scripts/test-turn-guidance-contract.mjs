@@ -113,8 +113,13 @@ const summarySource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chat', 'ConversationWorkSummary.tsx'),
   'utf8',
 );
+const workSummaryInspectorSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chat', 'WorkSummaryInspector.tsx'),
+  'utf8',
+);
 assert.match(summarySource, /data-testid="work-summary-history"/);
-assert.match(summarySource, /<AssistantLoopHistoryBlock/);
+assert.match(summarySource, /openWorkSummaryInspector/);
+assert.match(workSummaryInspectorSource, /<AssistantLoopHistoryBlock/);
 
 const hookTranspiled = ts.transpileModule(hookSource, {
   compilerOptions: {

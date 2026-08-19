@@ -1,23 +1,52 @@
 import {
+  Bot,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Clock3,
   FileCode2,
   FileOutput,
   LoaderCircle,
   Wrench,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { AppLanguage, ChatMessage } from '../../types';
-import { AssistantLoopHistoryBlock } from '../chatMessages';
+import {
+  fetchSubagentCompletions,
+  fetchSubagentTask,
+  fetchSubagentTasks,
+} from '../../backend/api';
+import type {
+  AppLanguage,
+  ChatMessage,
+  SubagentDispatchEvent,
+  SubagentTaskSnapshot,
+} from '../../types';
 import {
   displayToolName,
   isToolRunning,
   summarizeChangeReports,
   type ConversationChangeReport,
 } from '../tools';
+import {
+  openWorkSummaryInspector,
+  SUBAGENT_DISPATCH_UI_EVENT,
+} from '../subagents/subagentObservabilityEvents';
 import { ExperimentalA2APanel } from './ExperimentalA2APanel';
+
+const historyTurnPageSize = 3;
+const subagentTaskPageSize = 3;
+
+export interface WorkSummaryHistoryTurn {
+  id: string;
+  turnId: string;
+  turnSequence?: number;
+  message: ChatMessage;
+  history: ChatMessage[];
+  prompt: string;
+  toolCount: number;
+  order: number;
+}
 
 export function ConversationWorkSummary({
   language,
@@ -25,6 +54,7 @@ export function ConversationWorkSummary({
   messages,
   changeReports,
   onOpenChangeReview,
+  subagentObservabilityAvailable = false,
   softVisible = true,
 }: {
   language: AppLanguage;
@@ -32,9 +62,13 @@ export function ConversationWorkSummary({
   messages: ChatMessage[];
   changeReports: ConversationChangeReport[];
   onOpenChangeReview: () => void;
+  subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
 }) {
   const [a2aExpanded, setA2aExpanded] = useState(false);
+  const [visibleHistoryTurnCount, setVisibleHistoryTurnCount] = useState(historyTurnPageSize);
+  const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
+  const subagentTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
   const executions = useMemo(
     () => messages
       .flatMap((message) => [
@@ -47,18 +81,17 @@ export function ConversationWorkSummary({
       .reverse(),
     [messages],
   );
-  const historyGroups = useMemo(
-    () => messages
-      .filter((message) => message.role === 'assistant' && (message.loopHistory?.length ?? 0) > 0)
-      .map((message) => ({
-        message,
-        history: message.loopHistory ?? [],
-      })),
-    [messages],
-  );
+  const historyGroups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
   const historyCount = useMemo(
     () => historyGroups.reduce((total, group) => total + group.history.length, 0),
     [historyGroups],
+  );
+  const visibleHistoryGroups = historyGroups.slice(0, visibleHistoryTurnCount);
+  const remainingHistoryTurnCount = Math.max(0, historyGroups.length - visibleHistoryGroups.length);
+  const visibleSubagentTasks = subagentTasks.slice(0, visibleSubagentTaskCount);
+  const remainingSubagentTaskCount = Math.max(
+    0,
+    subagentTasks.length - visibleSubagentTasks.length,
   );
   const changeSummary = useMemo(
     () => summarizeChangeReports(changeReports),
@@ -80,6 +113,8 @@ export function ConversationWorkSummary({
 
   useEffect(() => {
     setA2aExpanded(false);
+    setVisibleHistoryTurnCount(historyTurnPageSize);
+    setVisibleSubagentTaskCount(subagentTaskPageSize);
   }, [sessionId]);
 
   return (
@@ -156,25 +191,124 @@ export function ConversationWorkSummary({
               )}
             </div>
 
+            {subagentTasks.length > 0 && (
+              <div className="work-summary-section work-summary-subagents" data-testid="work-summary-subagents">
+                <div className="work-summary-section-title">
+                  <Bot size={14} />
+                  <strong>{language === 'zh' ? '子 Agent 派发' : 'Subagent dispatches'}</strong>
+                  <span>{subagentTasks.length}</span>
+                </div>
+                <div className="work-summary-subagent-list">
+                  {visibleSubagentTasks.map((task) => (
+                    <button
+                      className="work-summary-subagent-task"
+                      type="button"
+                      key={subagentTaskIdentity(task)}
+                      onClick={() => openWorkSummaryInspector({
+                        kind: 'subagent-task',
+                        sessionId,
+                        task,
+                        title: subagentTaskTitle(task, language),
+                      })}
+                    >
+                      <span className={`work-summary-subagent-state ${subagentTaskTone(task)}`}>
+                        {subagentTaskActive(task)
+                          ? <LoaderCircle className="spin" size={13} />
+                          : <CheckCircle2 size={13} />}
+                      </span>
+                      <span className="work-summary-subagent-main">
+                        <strong>{subagentTaskTitle(task, language)}</strong>
+                        <small title={task.requestPrompt || task.errorMessage}>
+                          {task.requestPrompt || task.errorMessage || subagentTaskStatusLabel(task, language)}
+                        </small>
+                      </span>
+                      <span className={`work-summary-subagent-status ${subagentTaskTone(task)}`}>
+                        {subagentTaskStatusLabel(task, language)}
+                      </span>
+                      <ChevronRight size={14} />
+                    </button>
+                  ))}
+                </div>
+                {remainingSubagentTaskCount > 0 && (
+                  <button
+                    className="work-summary-history-more"
+                    type="button"
+                    onClick={() => setVisibleSubagentTaskCount(
+                      (current) => current + subagentTaskPageSize,
+                    )}
+                  >
+                    {language === 'zh'
+                      ? `显示更早的 ${Math.min(subagentTaskPageSize, remainingSubagentTaskCount)} 个子任务`
+                      : `Show ${Math.min(subagentTaskPageSize, remainingSubagentTaskCount)} earlier tasks`}
+                    <ChevronDown size={13} />
+                  </button>
+                )}
+              </div>
+            )}
+
             {historyCount > 0 && (
               <div className="work-summary-section work-summary-history" data-testid="work-summary-history">
                 <div className="work-summary-section-title">
                   <Clock3 size={14} />
                   <strong>{language === 'zh' ? '历史记录' : 'History'}</strong>
-                  <span>{historyCount}</span>
+                  <span>
+                    {historyGroups.length} {language === 'zh' ? '回合' : 'turns'}
+                  </span>
+                  <button
+                    className="work-summary-history-all"
+                    type="button"
+                    onClick={() => openWorkSummaryInspector({
+                      kind: 'turn-history',
+                      sessionId,
+                      title: language === 'zh' ? '全部回合详情' : 'All turn details',
+                    })}
+                  >
+                    {language === 'zh' ? '全部详情' : 'All details'}
+                    <ChevronRight size={13} />
+                  </button>
                 </div>
                 <div className="work-summary-history-list">
-                  {historyGroups.map(({ message, history }) => (
-                    <AssistantLoopHistoryBlock
-                      key={message.id}
-                      history={history}
-                      archivedPlan={message.taskPlan && !message.taskPlan.active
-                        ? message.taskPlan
-                        : undefined}
-                      language={language}
-                    />
+                  {visibleHistoryGroups.map((group) => (
+                    <button
+                      className="work-summary-history-turn"
+                      type="button"
+                      key={group.id}
+                      onClick={() => openWorkSummaryInspector({
+                        kind: 'turn-history',
+                        sessionId,
+                        turnId: group.turnId || group.id,
+                        title: historyTurnLabel(group, language),
+                      })}
+                    >
+                      <span className="work-summary-history-turn-main">
+                        <strong>{historyTurnLabel(group, language)}</strong>
+                        <small title={group.prompt}>
+                          {group.prompt || (language === 'zh' ? '查看该回合的完整执行记录' : 'View the complete execution record')}
+                        </small>
+                      </span>
+                      <span className="work-summary-history-turn-meta">
+                        <small>{historyTurnTimestamp(group.message, language)}</small>
+                        <em>
+                          {group.history.length} {language === 'zh' ? '段' : 'steps'}
+                          {group.toolCount > 0 ? ` · ${group.toolCount} ${language === 'zh' ? '工具' : 'tools'}` : ''}
+                        </em>
+                      </span>
+                      <ChevronRight size={14} />
+                    </button>
                   ))}
                 </div>
+                {remainingHistoryTurnCount > 0 && (
+                  <button
+                    className="work-summary-history-more"
+                    type="button"
+                    onClick={() => setVisibleHistoryTurnCount((current) => current + historyTurnPageSize)}
+                  >
+                    {language === 'zh'
+                      ? `显示更早的 ${Math.min(historyTurnPageSize, remainingHistoryTurnCount)} 个回合`
+                      : `Show ${Math.min(historyTurnPageSize, remainingHistoryTurnCount)} earlier turns`}
+                    <ChevronDown size={13} />
+                  </button>
+                )}
               </div>
             )}
 
@@ -202,4 +336,320 @@ export function ConversationWorkSummary({
       </div>
     </aside>
   );
+}
+
+export function groupWorkSummaryHistoryByTurn(
+  messages: ChatMessage[],
+): WorkSummaryHistoryTurn[] {
+  const promptsByTurn = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role !== 'user') continue;
+    const prompt = historyPromptPreview(message.content);
+    const turnId = message.turnId?.trim();
+    if (turnId && prompt && !promptsByTurn.has(turnId)) {
+      promptsByTurn.set(turnId, prompt);
+    }
+  }
+
+  const grouped = new Map<string, WorkSummaryHistoryTurn>();
+  let nearbyPrompt = '';
+  messages.forEach((message, order) => {
+    if (message.role === 'user') {
+      nearbyPrompt = historyPromptPreview(message.content) || nearbyPrompt;
+      return;
+    }
+    if (message.role !== 'assistant' || (message.loopHistory?.length ?? 0) === 0) return;
+    const turnId = message.turnId?.trim() ?? '';
+    const id = turnId || message.id;
+    const history = message.loopHistory ?? [];
+    const existing = grouped.get(id);
+    if (existing) {
+      existing.history = mergeHistoryMessages(existing.history, history);
+      existing.toolCount = existing.history.reduce(
+        (total, item) => total + (item.toolExecutions?.length ?? 0),
+        0,
+      );
+      existing.message = message;
+      existing.order = order;
+      return;
+    }
+    grouped.set(id, {
+      id,
+      turnId,
+      turnSequence: historyTurnSequence(message),
+      message,
+      history: mergeHistoryMessages([], history),
+      prompt: (turnId && promptsByTurn.get(turnId)) || nearbyPrompt,
+      toolCount: history.reduce(
+        (total, item) => total + (item.toolExecutions?.length ?? 0),
+        0,
+      ),
+      order,
+    });
+  });
+
+  return [...grouped.values()].sort((left, right) => {
+    const leftSequence = left.turnSequence ?? left.order;
+    const rightSequence = right.turnSequence ?? right.order;
+    return rightSequence - leftSequence || right.order - left.order;
+  });
+}
+
+function mergeHistoryMessages(current: ChatMessage[], incoming: ChatMessage[]) {
+  const seen = new Set<string>();
+  return [...current, ...incoming].filter((message, index) => {
+    const key = message.messageId?.trim() || message.id.trim() || `${message.turnId ?? ''}:${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function historyPromptPreview(content: string) {
+  return content
+    .replace(/Attached files \(absolute paths\):[\s\S]*$/i, '')
+    .replace(/[`*_>#-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 96);
+}
+
+function historyTurnSequence(message: ChatMessage) {
+  const value = Number(
+    message.turnSequence ??
+      message.metadata?.turn_sequence ??
+      message.metadata?.turnSequence,
+  );
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+export function historyTurnLabel(
+  group: WorkSummaryHistoryTurn | undefined,
+  language: AppLanguage,
+) {
+  if (!group) return language === 'zh' ? '回合详情' : 'Turn details';
+  const sequence = group.turnSequence;
+  if (sequence != null) {
+    return language === 'zh' ? `第 ${sequence} 回合` : `Turn ${sequence}`;
+  }
+  return language === 'zh' ? '对话回合' : 'Conversation turn';
+}
+
+export function historyTurnTimestamp(message: ChatMessage, language: AppLanguage) {
+  const source = message.createdAt || String(
+    message.metadata?.cardbush_turn_completed_at ??
+      message.metadata?.turn_completed_at ??
+      '',
+  );
+  const parsed = new Date(source);
+  if (!Number.isFinite(parsed.getTime())) return '';
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function useSubagentTaskFeed(sessionId: string, available: boolean) {
+  const [tasks, setTasks] = useState<SubagentTaskSnapshot[]>([]);
+  const hasActiveTasks = tasks.some(subagentTaskActive);
+
+  const mergeTasks = useCallback((incoming: SubagentTaskSnapshot[]) => {
+    setTasks((current) => mergeSubagentTasks(current, incoming));
+  }, []);
+
+  const refresh = useCallback((signal?: AbortSignal) => {
+    const normalized = sessionId.trim();
+    if (!available || !normalized) return Promise.resolve();
+    return Promise.all([
+      fetchSubagentTasks(normalized, { limit: 100, signal }),
+      fetchSubagentCompletions(normalized, { limit: 100, signal }).catch(() => []),
+    ]).then(([snapshots, completions]) => {
+      if (signal?.aborted) return;
+      mergeTasks([...snapshots, ...completions.map((event) => event.task)]);
+    });
+  }, [available, mergeTasks, sessionId]);
+
+  useEffect(() => {
+    setTasks([]);
+    if (!available || !sessionId.trim()) return undefined;
+    const controller = new AbortController();
+    void refresh(controller.signal).catch(() => undefined);
+
+    const receiveDispatch = (rawEvent: Event) => {
+      const event = (rawEvent as CustomEvent<SubagentDispatchEvent>).detail;
+      if (!event || event.parentSessionId.trim() !== sessionId.trim()) return;
+      const provisional = subagentTaskFromDispatchEvent(event);
+      mergeTasks([provisional]);
+      if (event.taskId) {
+        void fetchSubagentTask(event.taskId, controller.signal)
+          .then((task) => mergeTasks([task]))
+          .catch(() => undefined);
+      }
+    };
+    const refreshVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh(controller.signal).catch(() => undefined);
+      }
+    };
+    window.addEventListener(SUBAGENT_DISPATCH_UI_EVENT, receiveDispatch);
+    window.addEventListener('focus', refreshVisible);
+    document.addEventListener('visibilitychange', refreshVisible);
+    return () => {
+      controller.abort();
+      window.removeEventListener(SUBAGENT_DISPATCH_UI_EVENT, receiveDispatch);
+      window.removeEventListener('focus', refreshVisible);
+      document.removeEventListener('visibilitychange', refreshVisible);
+    };
+  }, [available, mergeTasks, refresh, sessionId]);
+
+  useEffect(() => {
+    const normalized = sessionId.trim();
+    if (!available || !normalized) return undefined;
+    const controller = new AbortController();
+    const refreshTaskFeed = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refresh(controller.signal).catch(() => undefined);
+    };
+    const timer = window.setInterval(refreshTaskFeed, hasActiveTasks ? 2500 : 10000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [available, hasActiveTasks, refresh, sessionId]);
+
+  return tasks;
+}
+
+function subagentTaskFromDispatchEvent(event: SubagentDispatchEvent): SubagentTaskSnapshot {
+  return {
+    protocol: event.protocol,
+    taskId: event.taskId,
+    toolCallId: event.toolCallId,
+    parentSessionId: event.parentSessionId,
+    parentTurnId: event.parentTurnId,
+    childSessionId: event.childSessionId,
+    agentName: event.agentName,
+    status: event.status || event.phase,
+    terminal: event.terminal,
+    accepted: event.accepted,
+    errorMessage: event.errorCode,
+    reviewStatus: event.reviewStatus,
+    contractState: event.contractState,
+    detailEndpoint: event.detailEndpoint,
+    report: {},
+    review: {},
+    contractEvaluation: {},
+    executionContract: {},
+    workerProposal: {},
+    mergePlan: {},
+    usage: {},
+    raw: event.raw,
+  };
+}
+
+function mergeSubagentTasks(
+  current: SubagentTaskSnapshot[],
+  incoming: SubagentTaskSnapshot[],
+) {
+  const next = [...current];
+  for (const task of incoming) {
+    const existingIndex = next.findIndex((candidate) => subagentTaskMatches(candidate, task));
+    if (existingIndex < 0) {
+      next.push(task);
+      continue;
+    }
+    const existing = next[existingIndex];
+    const incomingIsNewer = subagentTaskIsNewer(existing, task);
+    const preferred = incomingIsNewer ? task : existing;
+    const fallback = incomingIsNewer ? existing : task;
+    next[existingIndex] = {
+      ...fallback,
+      ...preferred,
+      taskId: preferred.taskId || fallback.taskId,
+      toolCallId: preferred.toolCallId || fallback.toolCallId,
+      requestPrompt: preferred.requestPrompt || fallback.requestPrompt,
+      responsePrompt: preferred.responsePrompt || fallback.responsePrompt,
+      errorMessage: preferred.errorMessage || fallback.errorMessage,
+      raw: { ...fallback.raw, ...preferred.raw },
+    };
+  }
+  return next.sort((left, right) => subagentTaskTime(right) - subagentTaskTime(left));
+}
+
+function subagentTaskIsNewer(
+  existing: SubagentTaskSnapshot,
+  incoming: SubagentTaskSnapshot,
+) {
+  const existingTime = subagentTaskTime(existing);
+  const incomingTime = subagentTaskTime(incoming);
+  if (existingTime > 0 && incomingTime > 0 && incomingTime !== existingTime) {
+    return incomingTime > existingTime;
+  }
+  if (existing.terminal && !incoming.terminal) return false;
+  if (!existing.terminal && incoming.terminal) return true;
+  return true;
+}
+
+function subagentTaskMatches(left: SubagentTaskSnapshot, right: SubagentTaskSnapshot) {
+  return Boolean(
+    (left.taskId && right.taskId && left.taskId === right.taskId) ||
+      (left.toolCallId && right.toolCallId && left.toolCallId === right.toolCallId),
+  );
+}
+
+function subagentTaskIdentity(task: SubagentTaskSnapshot) {
+  return task.taskId || task.toolCallId || `${task.parentTurnId}:${task.status}`;
+}
+
+function subagentTaskTime(task: SubagentTaskSnapshot) {
+  const parsed = Date.parse(task.updatedAt || task.createdAt || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function subagentTaskActive(task: SubagentTaskSnapshot) {
+  return ['dispatching', 'submitted', 'running', 'stop_requested'].includes(
+    task.status.trim().toLowerCase(),
+  );
+}
+
+function subagentTaskTone(task: SubagentTaskSnapshot) {
+  const status = task.status.trim().toLowerCase();
+  if (['failed', 'blocked', 'interrupted', 'stopped'].includes(status)) return 'failed';
+  if (['result_ready', 'completed'].includes(status) && task.reviewStatus !== 'accepted') {
+    return 'review';
+  }
+  if (task.reviewStatus === 'accepted') return 'complete';
+  return 'running';
+}
+
+function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
+  if (task.agentName?.trim()) return task.agentName.trim();
+  if (task.taskId?.trim()) {
+    const compact = task.taskId.trim().replace(/^subagent[_:-]?/i, '').slice(0, 8);
+    return language === 'zh' ? `子任务 ${compact}` : `Task ${compact}`;
+  }
+  return language === 'zh' ? '正在派发子 Agent' : 'Dispatching subagent';
+}
+
+function subagentTaskStatusLabel(task: SubagentTaskSnapshot, language: AppLanguage) {
+  const status = task.status.trim().toLowerCase();
+  if (status === 'dispatching') return language === 'zh' ? '派发中' : 'Dispatching';
+  if (['submitted', 'running', 'stop_requested'].includes(status)) {
+    return language === 'zh' ? '运行中' : 'Running';
+  }
+  if (status === 'result_ready') {
+    return task.reviewStatus === 'accepted'
+      ? language === 'zh' ? '父级已接受' : 'Accepted by parent'
+      : language === 'zh' ? '待父级审查' : 'Awaiting parent review';
+  }
+  if (status === 'completed') return language === 'zh' ? '待父级审查' : 'Awaiting parent review';
+  if (status === 'interrupted') {
+    return language === 'zh' ? '服务异常退出' : 'Service interrupted';
+  }
+  if (['failed', 'blocked', 'stopped'].includes(status)) {
+    return language === 'zh' ? '未完成' : 'Not completed';
+  }
+  return status || (language === 'zh' ? '等待状态' : 'Pending status');
 }

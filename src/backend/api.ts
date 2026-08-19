@@ -35,9 +35,12 @@ import type {
   ThinkingStreamEvent,
   TaskPlanStreamUpdate,
   SubagentCapabilities,
+  SubagentCompletionEvent,
+  SubagentDispatchEvent,
   SubagentListItem,
   SubagentRuntimeResult,
   SubagentSupervisorSnapshot,
+  SubagentTaskSnapshot,
   SubagentValidationStatus,
   StreamStart,
   WorkspaceContext,
@@ -52,6 +55,7 @@ import type {
   CapabilityCandidatesUpdate,
   TerminalRuntime,
 } from '../types';
+import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from '../types';
 import {
   applyDisabledToolsToMetadata,
   standardImageInputToolDefaultName,
@@ -232,6 +236,7 @@ export interface ChatStreamRequest {
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
@@ -270,6 +275,7 @@ export interface ControlStreamRequest {
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
@@ -305,6 +311,7 @@ export interface SendGuidanceRequest {
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
+  onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
@@ -428,6 +435,8 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   settingsSync: false,
   mcpServers: false,
   subagents: false,
+  subagentObservability: false,
+  subagentObservabilityProtocol: '',
   subagentFrontendConfiguration: false,
   remoteAgentsViaMcp: false,
   teamMode: false,
@@ -2167,6 +2176,60 @@ export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
   };
 }
 
+export async function fetchSubagentTasks(
+  sessionId: string,
+  options?: { activeOnly?: boolean; limit?: number; signal?: AbortSignal },
+): Promise<SubagentTaskSnapshot[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return [];
+  const endpoint = new URL(url('/v1/subagent-tasks'));
+  endpoint.searchParams.set('session_id', normalizedSessionId);
+  if (options?.activeOnly) endpoint.searchParams.set('active_only', 'true');
+  endpoint.searchParams.set('limit', String(Math.max(1, options?.limit ?? 100)));
+  const payload = await readJson<Record<string, unknown>>(endpoint.toString(), {
+    signal: options?.signal,
+  });
+  return arrayFrom(payload.items)
+    .map(subagentTaskFromPayload)
+    .filter((task) => Boolean(task.taskId));
+}
+
+export async function fetchSubagentTask(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<SubagentTaskSnapshot> {
+  const normalizedTaskId = taskId.trim();
+  if (!normalizedTaskId) {
+    throw new Error(localizedClientMessage('子任务 ID 为空', 'Subagent task ID is empty'));
+  }
+  const payload = await readJson<Record<string, unknown>>(
+    url(`/v1/subagent-tasks/${encodeURIComponent(normalizedTaskId)}`),
+    { signal },
+  );
+  return subagentTaskFromPayload(payload);
+}
+
+export async function fetchSubagentCompletions(
+  sessionId: string,
+  options?: { deliveryState?: string; limit?: number; signal?: AbortSignal },
+): Promise<SubagentCompletionEvent[]> {
+  const normalizedSessionId = sessionId.trim();
+  if (!normalizedSessionId) return [];
+  const endpoint = new URL(
+    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/subagent-completions`),
+  );
+  if (options?.deliveryState?.trim()) {
+    endpoint.searchParams.set('delivery_state', options.deliveryState.trim());
+  }
+  endpoint.searchParams.set('limit', String(Math.max(1, options?.limit ?? 100)));
+  const payload = await readJson<Record<string, unknown>>(endpoint.toString(), {
+    signal: options?.signal,
+  });
+  return arrayFrom(payload.items)
+    .map(subagentCompletionFromPayload)
+    .filter((event) => Boolean(event.eventId || event.task.taskId));
+}
+
 export async function dispatchSubagent({
   sessionId,
   turnId,
@@ -2492,6 +2555,7 @@ async function streamEndpoint({
     | 'onFinalAssistantText'
     | 'onMessages'
     | 'onTeamFlowEvent'
+    | 'onSubagentDispatch'
     | 'onThinking'
     | 'onContextWindowUsage'
     | 'onCapabilityCandidates'
@@ -2887,6 +2951,7 @@ function handleStreamEvent(
     | 'onMessages'
     | 'onAssistantRevision'
     | 'onTeamFlowEvent'
+    | 'onSubagentDispatch'
     | 'onThinking'
     | 'onContextWindowUsage'
     | 'onCapabilityCandidates'
@@ -2962,6 +3027,14 @@ function handleStreamEvent(
 
   if (eventName === 'capability_candidates') {
     request.onCapabilityCandidates?.(capabilityCandidatesFromPayload(decoded));
+    return;
+  }
+
+  if (eventName === 'subagent_dispatch') {
+    const event = subagentDispatchEventFromPayload(decoded);
+    if (event.protocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL) {
+      request.onSubagentDispatch?.(event);
+    }
     return;
   }
 
@@ -3657,6 +3730,9 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       features.standard_image_input_tool_config ??
       features.standardImageInputToolConfig,
   );
+  const subagentObservability = asRecord(
+    root.subagent_observability ?? root.subagentObservability,
+  );
   return {
     chatStream: capabilityBoolean(features, endpoints, 'chatStream', ['chat_stream']),
     sessions: capabilityBoolean(features, endpoints, 'sessions', ['session_history']),
@@ -3735,6 +3811,13 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       'mcp',
     ]),
     subagents: capabilityBoolean(features, endpoints, 'subagents'),
+    subagentObservability: typeof subagentObservability.available === 'boolean'
+      ? subagentObservability.available
+      : capabilityBoolean(features, endpoints, 'subagentObservability', [
+          'subagent_observability',
+          'subagent_dispatch_observability',
+        ]),
+    subagentObservabilityProtocol: String(subagentObservability.protocol ?? ''),
     subagentFrontendConfiguration: capabilityBoolean(
       features,
       endpoints,
@@ -5300,6 +5383,97 @@ function subagentDispatchResultFromPayload(
     message: optionalString(item.message),
     reason: optionalString(item.reason),
     supervisor: subagentSupervisorFromPayload(item.supervisor),
+    raw: item,
+  };
+}
+
+function subagentDispatchEventFromPayload(value: unknown): SubagentDispatchEvent {
+  const item = asRecord(value);
+  const rawPhase = String(item.phase ?? '').trim().toLowerCase();
+  const phase: SubagentDispatchEvent['phase'] = rawPhase === 'dispatched'
+    ? 'dispatched'
+    : rawPhase === 'failed'
+      ? 'failed'
+      : 'dispatching';
+  const accepted = typeof item.accepted === 'boolean' ? item.accepted : undefined;
+  return {
+    protocol: String(item.protocol ?? ''),
+    phase,
+    status: String(item.status ?? phase),
+    terminal: item.terminal === true || phase === 'failed',
+    accepted,
+    taskId: optionalString(item.task_id ?? item.taskId),
+    toolCallId: String(item.tool_call_id ?? item.toolCallId ?? ''),
+    parentSessionId: String(item.parent_session_id ?? item.parentSessionId ?? ''),
+    parentTurnId: String(item.parent_turn_id ?? item.parentTurnId ?? ''),
+    childSessionId: optionalString(item.child_session_id ?? item.childSessionId),
+    agentName: optionalString(item.agent_name ?? item.agentName),
+    autonomyLevel: optionalString(item.autonomy_level ?? item.autonomyLevel),
+    taskType: optionalString(item.task_type ?? item.taskType),
+    reviewStatus: optionalString(item.review_status ?? item.reviewStatus),
+    contractState: optionalString(item.contract_state ?? item.contractState),
+    errorCode: optionalString(item.error_code ?? item.errorCode),
+    detailEndpoint: optionalString(item.detail_endpoint ?? item.detailEndpoint),
+    taskListEndpoint: optionalString(item.task_list_endpoint ?? item.taskListEndpoint),
+    completionEndpoint: optionalString(
+      item.completion_endpoint ?? item.completionEndpoint,
+    ),
+    raw: item,
+  };
+}
+
+function subagentTaskFromPayload(value: unknown): SubagentTaskSnapshot {
+  const item = asRecord(value);
+  const contractEvaluation = asRecord(
+    item.contract_evaluation ?? item.contractEvaluation,
+  );
+  const status = String(item.status ?? '').trim().toLowerCase() || 'submitted';
+  const active = ['dispatching', 'submitted', 'running', 'stop_requested'].includes(status);
+  const acceptedValue = item.accepted ?? contractEvaluation.accepted;
+  return {
+    protocol: String(item.protocol ?? ''),
+    taskId: optionalString(item.task_id ?? item.taskId),
+    toolCallId: optionalString(item.tool_call_id ?? item.toolCallId),
+    parentSessionId: String(item.parent_session_id ?? item.parentSessionId ?? ''),
+    parentTurnId: String(item.parent_turn_id ?? item.parentTurnId ?? ''),
+    childSessionId: optionalString(item.child_session_id ?? item.childSessionId),
+    agentName: optionalString(item.agent_name ?? item.agentName),
+    requestPrompt: optionalString(item.request_prompt ?? item.requestPrompt),
+    responsePrompt: optionalString(item.response_prompt ?? item.responsePrompt),
+    status,
+    terminal: typeof item.terminal === 'boolean' ? item.terminal : !active,
+    accepted: typeof acceptedValue === 'boolean' ? acceptedValue : undefined,
+    errorMessage: optionalString(item.error_message ?? item.errorMessage),
+    reviewStatus: optionalString(item.review_status ?? item.reviewStatus),
+    reportOutcome: optionalString(item.report_outcome ?? item.reportOutcome),
+    contractState: optionalString(
+      item.contract_state ?? item.contractState ?? contractEvaluation.state,
+    ),
+    createdAt: optionalString(item.created_at ?? item.createdAt),
+    updatedAt: optionalString(item.updated_at ?? item.updatedAt),
+    startedAt: optionalString(item.started_at ?? item.startedAt),
+    completedAt: optionalString(item.completed_at ?? item.completedAt),
+    detailEndpoint: optionalString(item.detail_endpoint ?? item.detailEndpoint),
+    report: asRecord(item.report),
+    review: asRecord(item.review),
+    contractEvaluation,
+    executionContract: asRecord(item.execution_contract ?? item.executionContract),
+    workerProposal: asRecord(item.worker_proposal ?? item.workerProposal),
+    mergePlan: asRecord(item.merge_plan ?? item.mergePlan),
+    usage: asRecord(item.usage),
+    raw: item,
+  };
+}
+
+function subagentCompletionFromPayload(value: unknown): SubagentCompletionEvent {
+  const item = asRecord(value);
+  return {
+    eventId: String(item.event_id ?? item.eventId ?? ''),
+    deliveryState: String(item.delivery_state ?? item.deliveryState ?? ''),
+    claimedByTurnId: optionalString(item.claimed_by_turn_id ?? item.claimedByTurnId),
+    createdAt: optionalString(item.created_at ?? item.createdAt),
+    updatedAt: optionalString(item.updated_at ?? item.updatedAt),
+    task: subagentTaskFromPayload(item.task),
     raw: item,
   };
 }

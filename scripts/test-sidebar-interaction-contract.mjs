@@ -35,6 +35,11 @@ assert.match(
   /\.section-header:has\(\.section-action:focus-visible\)/,
   'Keyboard focus must continue to reveal the section action',
 );
+assert.match(
+  stylesSource,
+  /\.nav-row:focus-visible,[\s\S]*?outline:\s*2px solid color-mix\(in srgb, var\(--accent\) 34%, transparent\)/,
+  'Primary navigation must use the shared theme focus ring instead of the browser default outline',
+);
 assert.match(sidebarSource, /aria-label=\{actionLabel\}/);
 assert.match(
   stylesSource,
@@ -70,6 +75,11 @@ assert.match(
   stylesSource,
   /\.right-inspector-resizer\s*\{[\s\S]*?left:\s*-4px;[\s\S]*?width:\s*8px;[\s\S]*?cursor:\s*ew-resize;/,
   'Right inspector resize hit area must align with the left sidebar resize handle',
+);
+assert.doesNotMatch(
+  stylesSource,
+  /\.window-frame[^}]*cursor:\s*ew-resize/,
+  'The internal split-resizer treatment must not replace native window resizing',
 );
 
 console.log('sidebar interaction contract tests passed');

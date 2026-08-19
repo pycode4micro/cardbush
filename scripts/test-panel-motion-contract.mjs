@@ -8,6 +8,7 @@ const css = read('src', 'styles', 'app.css');
 const presence = read('src', 'hooks', 'useSoftPanelPresence.ts');
 const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
 const summary = read('src', 'features', 'chat', 'ConversationWorkSummary.tsx');
+const workSummaryInspector = read('src', 'features', 'chat', 'WorkSummaryInspector.tsx');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
@@ -20,6 +21,13 @@ assert.match(css, /\.right-inspector\.soft-panel-hidden/);
 assert.match(css, /\.conversation-work-summary\.soft-panel-hidden/);
 assert.match(css, /body\.sidebar-resizing \.sidebar[\s\S]*transition:\s*none/);
 assert.match(css, /body\.right-inspector-resizing \.right-inspector[\s\S]*transition:\s*none/);
+assert.match(css, /--chat-inline-gutter:\s*clamp\(12px,\s*3vw,\s*36px\)/);
+assert.doesNotMatch(css, /--chat-track-width:\s*(787|672)px/);
+assert.match(
+  css,
+  /@media \(max-width:\s*980px\)[\s\S]*?\.right-inspector\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?max-width:\s*calc\(100% - 48px\)/,
+  'Narrow windows must overlay the inspector instead of squeezing the chat stage',
+);
 assert.match(css, /\.scene-body\.inspector-collapsed[\s\S]*42px/);
 assert.doesNotMatch(css, /\.scene-inspector\.collapsed\s*\{\s*display:\s*none/);
 
@@ -38,6 +46,17 @@ assert.match(app, /sidebarPreviewWidth/);
 assert.match(app, /onResizeEnd=\{\(width, shouldCollapse\)/);
 assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
+assert.match(summary, /const historyTurnPageSize = 3/);
+assert.match(summary, /groupWorkSummaryHistoryByTurn\(messages\)/);
+assert.match(summary, /historyGroups\.slice\(0, visibleHistoryTurnCount\)/);
+assert.match(summary, /setVisibleHistoryTurnCount\(\(current\) => current \+ historyTurnPageSize\)/);
+assert.match(summary, /kind: 'turn-history'/);
+assert.match(summary, /openWorkSummaryInspector/);
+assert.match(summary, /className="work-summary-history-turn"/);
+assert.match(css, /\.work-summary-history-turn\s*\{/);
+assert.match(workSummaryInspector, /<AssistantLoopHistoryBlock/);
+assert.match(app, /<WorkSummaryInspector/);
+assert.match(css, /\.work-summary-inspector\s*\{/);
 assert.match(
   summary,
   /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"[\s\S]*?className="work-summary-section work-summary-a2a-section"/,

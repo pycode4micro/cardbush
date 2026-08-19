@@ -107,6 +107,8 @@ export interface BackendCapabilities {
   settingsSync: boolean;
   mcpServers: boolean;
   subagents: boolean;
+  subagentObservability: boolean;
+  subagentObservabilityProtocol: string;
   subagentFrontendConfiguration: boolean;
   remoteAgentsViaMcp: boolean;
   teamMode: boolean;
@@ -747,6 +749,75 @@ export interface SubagentRuntimeResult {
   items: SubagentRuntimeItem[];
   usage: Record<string, unknown>;
   supervisor?: SubagentSupervisorSnapshot;
+}
+
+export const SUBAGENT_DISPATCH_EVENT_PROTOCOL = 'bushserver.subagent_dispatch_event.v1';
+
+export type SubagentDispatchPhase = 'dispatching' | 'dispatched' | 'failed';
+
+export interface SubagentDispatchEvent {
+  protocol: string;
+  phase: SubagentDispatchPhase;
+  status: string;
+  terminal: boolean;
+  accepted?: boolean;
+  taskId?: string;
+  toolCallId: string;
+  parentSessionId: string;
+  parentTurnId: string;
+  childSessionId?: string;
+  agentName?: string;
+  autonomyLevel?: string;
+  taskType?: string;
+  reviewStatus?: string;
+  contractState?: string;
+  errorCode?: string;
+  detailEndpoint?: string;
+  taskListEndpoint?: string;
+  completionEndpoint?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface SubagentTaskSnapshot {
+  protocol: string;
+  taskId?: string;
+  toolCallId?: string;
+  parentSessionId: string;
+  parentTurnId: string;
+  childSessionId?: string;
+  agentName?: string;
+  requestPrompt?: string;
+  responsePrompt?: string;
+  status: string;
+  terminal: boolean;
+  accepted?: boolean;
+  errorMessage?: string;
+  reviewStatus?: string;
+  reportOutcome?: string;
+  contractState?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  detailEndpoint?: string;
+  report: Record<string, unknown>;
+  review: Record<string, unknown>;
+  contractEvaluation: Record<string, unknown>;
+  executionContract: Record<string, unknown>;
+  workerProposal: Record<string, unknown>;
+  mergePlan: Record<string, unknown>;
+  usage: Record<string, unknown>;
+  raw: Record<string, unknown>;
+}
+
+export interface SubagentCompletionEvent {
+  eventId: string;
+  deliveryState: string;
+  claimedByTurnId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  task: SubagentTaskSnapshot;
+  raw: Record<string, unknown>;
 }
 
 export interface AutomationTask {
