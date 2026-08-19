@@ -11232,18 +11232,21 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-weight: 700;
 }
 
-.tool-install-dialog {
+.skill-detail-dialog.tool-install-dialog {
   width: min(620px, calc(100vw - 56px));
   height: auto;
   max-height: calc(100vh - 96px);
 }
 
 .tool-install-form {
+  min-height: 0;
   display: grid;
   gap: 14px;
   padding: 8px 14px 14px;
+  overflow-y: auto;
 }
 
+.tool-install-action-field,
 .tool-install-form label:not(.tool-install-check) {
   display: grid;
   gap: 6px;
@@ -11251,7 +11254,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-size: 12px;
 }
 
-.tool-install-form select,
 .tool-install-form input[type="text"],
 .tool-install-form label:not(.tool-install-check) > input {
   width: 100%;
@@ -11262,6 +11264,46 @@ body.right-inspector-resizing .right-inspector-resizer {
   border: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
   border-radius: 9px;
   outline: 0;
+}
+
+.tool-install-action-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  border-radius: 10px;
+}
+
+.tool-install-action-options button {
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  overflow: hidden;
+  color: var(--text-soft);
+  background: transparent;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-install-action-options button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.tool-install-action-options button.active {
+  color: var(--text);
+  background: var(--surface-strong);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 92%, transparent);
+}
+
+.tool-install-action-options button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  outline-offset: 1px;
 }
 
 .tool-install-check {
@@ -11277,7 +11319,18 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .tool-install-footer {
+  flex: 0 0 auto;
   border-top: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
+}
+
+@media (max-width: 620px) {
+  .tool-install-action-options {
+    grid-template-columns: 1fr;
+  }
+
+  .tool-install-action-options button {
+    text-align: left;
+  }
 }
 
 @container (max-width: 760px) {
@@ -15826,6 +15879,132 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-style: normal;
 }
 
+.runtime-asset-reset-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.runtime-asset-category-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.runtime-asset-category-grid label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.runtime-asset-category-grid label:has(input:checked) {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+.runtime-asset-category-grid label.disabled { cursor: not-allowed; opacity: 0.5; }
+.runtime-asset-category-grid input { margin: 2px 0 0; accent-color: var(--accent); }
+.runtime-asset-category-grid span { min-width: 0; display: grid; gap: 4px; }
+.runtime-asset-category-grid strong { color: var(--text); font-size: 12.5px; }
+.runtime-asset-category-grid small { color: var(--text-soft); font-size: 10.5px; line-height: 1.4; }
+
+.runtime-asset-reset-warning {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 10px 11px;
+  color: color-mix(in srgb, var(--danger) 84%, var(--text));
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent);
+  border-radius: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.runtime-asset-reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.runtime-asset-reset-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.runtime-asset-reset-error > p { flex: 1; margin: 0; }
+.runtime-asset-service-logs { color: var(--text-soft); }
+.runtime-asset-service-logs summary { cursor: pointer; font-size: 11px; }
+.runtime-asset-service-logs pre {
+  max-height: 240px;
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow: auto;
+  color: var(--text-soft);
+  background: color-mix(in srgb, black 18%, transparent);
+  border-radius: 8px;
+  font: 9.5px/1.5 var(--mono-font-family);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.runtime-asset-reset-result {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 11px;
+}
+
+.runtime-asset-reset-result > strong { color: var(--text); font-size: 12.5px; }
+.runtime-asset-reset-result > div { display: grid; gap: 6px; }
+.runtime-asset-reset-result span { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-mid); }
+.runtime-asset-reset-result b { color: var(--text); font-size: 11.5px; }
+.runtime-asset-reset-result small { color: var(--text-soft); font-size: 10.5px; text-align: right; }
+
+.runtime-asset-restart-required {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  color: #d8a63b;
+  background: color-mix(in srgb, #d8a63b 9%, transparent);
+  border: 1px solid color-mix(in srgb, #d8a63b 27%, transparent);
+  border-radius: 12px;
+}
+
+.runtime-asset-restart-required > span { min-width: 0; display: grid; gap: 3px; }
+.runtime-asset-restart-required strong { color: var(--text); font-size: 12.5px; }
+.runtime-asset-restart-required small { color: var(--text-soft); font-size: 11px; line-height: 1.45; }
+
+.runtime-asset-paths {
+  color: var(--text-soft);
+  border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+
+.runtime-asset-paths summary { padding: 10px 0 2px; cursor: pointer; font-size: 11px; }
+.runtime-asset-paths > div { display: grid; gap: 4px; padding: 8px 0; }
+.runtime-asset-paths strong { color: var(--text-mid); font-size: 11px; }
+.runtime-asset-paths code { overflow: hidden; color: var(--text-soft); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .runtime-asset-category-grid { grid-template-columns: 1fr; }
+  .runtime-asset-restart-required { grid-template-columns: 22px minmax(0, 1fr); }
+  .runtime-asset-restart-required > button { grid-column: 1 / -1; width: 100%; }
+}
+
 .settings-radio,
 .settings-switch {
   min-height: 54px;
@@ -16624,7 +16803,12 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .model-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 190px) 92px 30px;
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(150px, 180px)
+    minmax(150px, 180px)
+    92px
+    30px;
   align-items: center;
   min-height: 58px;
   padding: 8px 12px;

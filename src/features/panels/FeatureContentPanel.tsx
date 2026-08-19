@@ -311,6 +311,11 @@ function ToolInstallDialog({ language, busy, onInstall, onClose }: { language: A
   const [action, setAction] = useState<'install' | 'install_from_seed' | 'register'>('install');
   const [value, setValue] = useState('');
   const [replace, setReplace] = useState(false);
+  const actionOptions = [
+    { value: 'install', label: language === 'zh' ? '本地工具包' : 'Local package' },
+    { value: 'install_from_seed', label: language === 'zh' ? '内置种子' : 'Bundled seed' },
+    { value: 'register', label: language === 'zh' ? '已有工具包' : 'Existing package' },
+  ] as const;
   const needsPath = action === 'install';
   const ready = value.trim().length > 0;
   return (
@@ -319,7 +324,23 @@ function ToolInstallDialog({ language, busy, onInstall, onClose }: { language: A
         <header><PackagePlus size={18} /><strong>{language === 'zh' ? '添加工具' : 'Add tool'}</strong><button type="button" onClick={onClose}><X size={16} /></button></header>
         <p>{language === 'zh' ? '安装本地工具包、从内置种子安装，或注册已经存在的工具包。声明为核心的工具包会被后端拒绝。' : 'Install a local package, install from bundled seeds, or register an existing package. Packages declaring themselves as core are rejected by the backend.'}</p>
         <div className="tool-install-form">
-          <label><span>{language === 'zh' ? '操作' : 'Action'}</span><select value={action} onChange={(event) => setAction(event.currentTarget.value as typeof action)}><option value="install">{language === 'zh' ? '安装本地工具包' : 'Install local package'}</option><option value="install_from_seed">{language === 'zh' ? '从内置种子安装' : 'Install bundled seed'}</option><option value="register">{language === 'zh' ? '注册已有工具包' : 'Register existing package'}</option></select></label>
+          <div className="tool-install-action-field">
+            <span>{language === 'zh' ? '操作' : 'Action'}</span>
+            <div className="tool-install-action-options" role="radiogroup" aria-label={language === 'zh' ? '工具安装方式' : 'Tool installation method'}>
+              {actionOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={action === option.value}
+                  className={action === option.value ? 'active' : ''}
+                  onClick={() => setAction(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <label><span>{needsPath ? (language === 'zh' ? '工具包目录或 tool.json 路径' : 'Package directory or tool.json path') : (language === 'zh' ? '工具名称' : 'Tool name')}</span><input value={value} onChange={(event) => setValue(event.currentTarget.value)} placeholder={needsPath ? 'C:\\path\\to\\tool-package' : 'tool_name'} /></label>
           {action !== 'register' && <label className="tool-install-check"><input type="checkbox" checked={replace} onChange={(event) => setReplace(event.currentTarget.checked)} /><span>{language === 'zh' ? '替换同名工具包' : 'Replace package with the same name'}</span></label>}
         </div>

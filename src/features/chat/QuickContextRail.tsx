@@ -65,15 +65,18 @@ export function QuickContextRail({
   const [remoteTurnMessages, setRemoteTurnMessages] = useState<ChatMessage[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [railCapacity, setRailCapacity] = useState(72);
+  const [railWindowStart, setRailWindowStart] = useState(0);
   const [hoveredTurnPreview, setHoveredTurnPreview] = useState<{
     messageId: string;
     top: number;
   } | null>(null);
   const [visibleUserMessageId, setVisibleUserMessageId] = useState('');
   const railRef = useRef<HTMLElement>(null);
+  const railHandleRef = useRef<HTMLDivElement>(null);
   const detailRequestRef = useRef<AbortController | null>(null);
   const railTurns = useMemo(
-    () => messages.filter((message) => message.role === 'user').slice(-120),
+    () => messages.filter((message) => message.role === 'user'),
     [userSignature],
   );
   const matchedTurnIds = useMemo(
@@ -83,6 +86,52 @@ export function QuickContextRail({
   const hoveredTurn = hoveredTurnPreview
     ? railTurns.find((message) => message.id === hoveredTurnPreview.messageId) ?? null
     : null;
+  const currentRailIndex = railTurns.findIndex((message) => message.id === (
+    visibleUserMessageId || lastUserMessage?.id
+  ));
+  const maxRailWindowStart = Math.max(0, railTurns.length - railCapacity);
+  const visibleRailTurns = railTurns.slice(
+    Math.min(railWindowStart, maxRailWindowStart),
+    Math.min(railWindowStart, maxRailWindowStart) + railCapacity,
+  );
+
+  useEffect(() => {
+    const handle = railHandleRef.current;
+    if (!handle) return undefined;
+    const updateCapacity = () => {
+      const availableHeight = Math.max(0, handle.clientHeight - 20);
+      const nextCapacity = Math.max(8, Math.min(96, Math.floor(availableHeight / 9)));
+      setRailCapacity((current) => current === nextCapacity ? current : nextCapacity);
+    };
+    const resizeObserver = new ResizeObserver(updateCapacity);
+    resizeObserver.observe(handle);
+    updateCapacity();
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    setRailWindowStart((current) => {
+      const maxStart = Math.max(0, railTurns.length - railCapacity);
+      if (currentRailIndex < 0) return Math.min(current, maxStart);
+      const edgeBuffer = Math.min(6, Math.floor(railCapacity * 0.12));
+      if (currentRailIndex < current + edgeBuffer) {
+        return Math.max(0, currentRailIndex - edgeBuffer);
+      }
+      if (currentRailIndex >= current + railCapacity - edgeBuffer) {
+        return Math.min(maxStart, currentRailIndex - railCapacity + edgeBuffer + 1);
+      }
+      return Math.min(current, maxStart);
+    });
+  }, [currentRailIndex, railCapacity, railTurns.length]);
+
+  const scrollRailWindow = (direction: number) => {
+    if (railTurns.length <= railCapacity || direction === 0) return;
+    const step = Math.max(1, Math.round(railCapacity * 0.08));
+    setRailWindowStart((current) => Math.min(
+      Math.max(0, railTurns.length - railCapacity),
+      Math.max(0, current + Math.sign(direction) * step),
+    ));
+  };
 
   useEffect(() => {
     const chatBody = railRef.current?.closest('.chat-body');
@@ -323,9 +372,16 @@ export function QuickContextRail({
       className={`quick-context-rail${searching ? ' searching' : ''}${panelView !== 'closed' ? ' panel-open' : ''}`}
       aria-label={language === 'zh' ? '快速上下文' : 'Quick context'}
     >
-      <div className="quick-context-handle">
-        <span className="quick-context-ticks">
-          {railTurns.map((message) => {
+      <div ref={railHandleRef} className="quick-context-handle">
+        <span
+          className="quick-context-ticks"
+          onWheel={(event) => {
+            if (railTurns.length <= railCapacity) return;
+            event.preventDefault();
+            scrollRailWindow(event.deltaY);
+          }}
+        >
+          {visibleRailTurns.map((message) => {
             const isCurrentTurn = message.id === (
               visibleUserMessageId || lastUserMessage?.id
             );

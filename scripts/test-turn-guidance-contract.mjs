@@ -376,7 +376,14 @@ state = mergeFinalStreamMessages(
       content: '第一轮',
       turnId: 'turn-1',
       messageIndex: 1,
-      metadata: { assistant_segment_index: 1, transcript_kind: 'assistant_segment' },
+      metadata: {
+        assistant_segment_index: 1,
+        transcript_kind: 'assistant_segment',
+        segment_complete: true,
+        segment_boundary: 'turn_guidance',
+        sealed_by_client_message_id: 'client-guidance-1',
+        next_assistant_segment_index: 2,
+      },
     },
     {
       id: 'msg-guidance-1',
@@ -526,12 +533,13 @@ assert.deepEqual(
   plain(displayed.map((message) => [message.role, message.content])),
   [
     ['user', '原始问题'],
+    ['assistant', '第一轮'],
     ['user', '请补充风险说明'],
     ['assistant', '第二轮继续'],
   ],
 );
-assert.equal(displayed[2].loopHistory[0].content, '第一轮');
-assert.equal(displayed[2].loopHistory[0].metadata.assistant_segment_index, 1);
+assert.equal(displayed[1].metadata.segment_boundary, 'turn_guidance');
+assert.equal(displayed[3].loopHistory, undefined);
 
 let revisionState = {
   'revision-session': [{
@@ -649,6 +657,45 @@ assert.deepEqual(
   ['第一段惯性回复'],
 );
 assert.equal(activeProjection[0].taskPlan.planId, 'active-plan');
+
+const activeGuidanceProjection = normalizeActiveTurnTranscriptForDisplay([
+  {
+    id: 'active-guidance-segment-1',
+    role: 'assistant',
+    content: '引导前的回复',
+    turnId: 'active-guidance-turn',
+    metadata: {
+      assistant_segment_index: 1,
+      segment_complete: true,
+      segment_boundary: 'turn_guidance',
+      next_assistant_segment_index: 2,
+    },
+    loopHistory: [{ id: 'loop-1', role: 'assistant', content: '已完成的过程' }],
+  },
+  {
+    id: 'active-guidance-user',
+    role: 'user',
+    content: '改为回答工具列表',
+    turnId: 'active-guidance-turn',
+    metadata: { turn_guidance: true },
+  },
+  {
+    id: 'active-guidance-segment-2',
+    role: 'assistant',
+    content: '引导后的回复',
+    turnId: 'active-guidance-turn',
+    metadata: { assistant_segment_index: 2 },
+  },
+], 'active-guidance-turn');
+assert.deepEqual(
+  plain(activeGuidanceProjection.map((message) => [message.role, message.content])),
+  [
+    ['assistant', '引导前的回复'],
+    ['user', '改为回答工具列表'],
+    ['assistant', '引导后的回复'],
+  ],
+  'a guidance boundary must remain a visible assistant/user/assistant sequence while streaming',
+);
 
 console.log('turn guidance contract tests passed');
 

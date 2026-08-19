@@ -52,6 +52,16 @@ const settingsSource = fs.readFileSync(
 );
 assert.match(settingsSource, /selected=\{selectedModel === config\.id\}/);
 assert.match(settingsSource, /onUseModel\(config\.id\)/);
+assert.match(settingsSource, /最大输出 token（可选）/);
+assert.match(settingsSource, /onSaveCompletionTokens/);
+
+const apiSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'api.ts'),
+  'utf8',
+);
+assert.match(apiSource, /max_completion_tokens: item\.maxCompletionTokens/);
+assert.match(apiSource, /body\.max_completion_tokens = Math\.floor\(config\.maxCompletionTokens\)/);
+assert.match(apiSource, /reasoning-budget-exhausted-before-action/);
 
 const composerSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),

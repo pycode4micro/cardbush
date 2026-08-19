@@ -67,9 +67,11 @@ import {
   closeShadowConversation,
   createShadowConversation,
   fetchBackendCapabilities,
+  fetchBackendReadiness,
   fetchModelConfigs,
   fetchProjectContext,
   fetchRuntimeToolInventory,
+  fetchSkills,
   fetchSessionScene,
   fetchSessionScenes,
   isBushServerHttpError,
@@ -217,6 +219,7 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  RuntimeAssetCategory,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -784,6 +787,40 @@ function CardbushApp() {
     () => new Set(Object.keys(chat.runningByConversation)),
     [chat.runningByConversation],
   );
+  const reloadRuntimeAssetConfiguration = useCallback(async (
+    categories: RuntimeAssetCategory[],
+  ) => {
+    const readiness = await fetchBackendReadiness();
+    if (String(readiness.status ?? '').trim().toLowerCase() !== 'ready') {
+      throw new Error(
+        language === 'zh'
+          ? 'BushServer 尚未就绪，请完成重启后再验证。'
+          : 'BushServer is not ready. Finish restarting it before verification.',
+      );
+    }
+    const [capabilities, inventory] = await Promise.all([
+      fetchBackendCapabilities(),
+      fetchRuntimeToolInventory(),
+      fetchSkills(),
+    ]);
+    setBackendCapabilities(capabilities);
+    if (categories.includes('skills')) {
+      const next = new Set<string>();
+      setDisabledSkillNames(next);
+      persistDisabledSkillNames(next);
+    }
+    if (categories.includes('tools')) {
+      const protectedNames = new Set(
+        inventory.installed
+          .filter((tool) => tool.injection.core)
+          .map((tool) => tool.name),
+      );
+      const next = new Set<string>();
+      setProtectedCoreToolNames(protectedNames);
+      setDisabledToolNames(next);
+      persistDisabledToolNames(next);
+    }
+  }, [language]);
 
   useEffect(() => {
     activeConversationForThinkingRef.current = chat.activeConversationId;
@@ -1853,6 +1890,7 @@ function CardbushApp() {
             selectedModel={chat.selectedModel}
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
+            runtimeBusy={runningConversationIds.size > 0}
             conversations={chat.conversations}
             initialSection={settingsInitialSection}
             onBack={() => setSettingsOpen(false)}
@@ -1867,6 +1905,7 @@ function CardbushApp() {
             onUseModel={chat.setSelectedModel}
             onSidebarWidthChange={setSidebarWidth}
             onConversationHistoryCleared={() => chat.reloadConversations()}
+            onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
           />
         </Suspense>
       ) : (
@@ -2683,6 +2722,7 @@ function readManagedModelConfigs() {
         modelName,
         baseUrl: '',
         maxContextTokens: undefined,
+        maxCompletionTokens: undefined,
       }));
     }
     return decoded
@@ -2703,6 +2743,12 @@ function readManagedModelConfigs() {
             item.context_window_tokens ??
             item.maxInputTokens ??
             item.max_input_tokens,
+        ),
+        maxCompletionTokens: normalizeMaxCompletionTokens(
+          item.maxCompletionTokens ??
+            item.max_completion_tokens ??
+            item.maxOutputTokens ??
+            item.max_output_tokens,
         ),
       }));
   } catch {
@@ -2915,6 +2961,9 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
     const apiKey = raw.apiKey.trim();
     const baseUrl = raw.baseUrl.trim();
     const maxContextTokens = normalizeMaxContextTokens(raw.maxContextTokens);
+    const maxCompletionTokens = normalizeMaxCompletionTokens(
+      raw.maxCompletionTokens,
+    );
     if (!provider || !modelName) {
       continue;
     }
@@ -2940,6 +2989,7 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
       modelName,
       baseUrl,
       ...(maxContextTokens ? { maxContextTokens } : {}),
+      ...(maxCompletionTokens ? { maxCompletionTokens } : {}),
     });
   }
   return result;
@@ -3137,6 +3187,11 @@ function SettingsLoading({ language }: { language: AppLanguage }) {
       </section>
     </main>
   );
+}
+
+function normalizeMaxCompletionTokens(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
 function FeaturePanelLoading({ language }: { language: AppLanguage }) {

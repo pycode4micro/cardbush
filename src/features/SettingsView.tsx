@@ -16,6 +16,7 @@ import {
   Monitor,
   MonitorCog,
   Network,
+  PackageOpen,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -39,6 +40,7 @@ import {
 import {
   backendBaseUrl,
   backendRequestHeaders,
+  RUNTIME_ASSET_RESET_PROTOCOL,
   clearConversationHistory,
   clearLogsCache,
   controlBotService,
@@ -49,8 +51,13 @@ import {
   fetchBotServiceLogs,
   fetchBotStatus,
   fetchMcpServers,
+  fetchRuntimeAssetResetPlan,
+  fetchRuntimeMaintenanceLogs,
+  fetchSubagentRuntime,
   fetchWeixinLoginStatus,
   llmEndpoint,
+  isBushServerHttpError,
+  resetRuntimeAssets,
   saveBotConfig,
   saveMcpServerConfig,
   setMcpServerEnabled,
@@ -87,6 +94,9 @@ import type {
   McpServerConfig,
   McpServerValidationResult,
   McpTransport,
+  RuntimeAssetCategory,
+  RuntimeAssetResetPlan,
+  RuntimeAssetResetResult,
   SettingsSection,
   ThemePreference,
   WeixinLoginStartResult,
@@ -95,6 +105,7 @@ import type {
 } from '../types';
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
+const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const customProviderValue = '__custom_provider__';
 const defaultMaxContextTokens = 256_000;
 const suggestedProviders = [
@@ -267,6 +278,7 @@ export function SettingsView({
   selectedModel,
   availableModels,
   backendCapabilities,
+  runtimeBusy,
   conversations,
   initialSection,
   onBack,
@@ -278,6 +290,7 @@ export function SettingsView({
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
+  onRuntimeAssetsReloaded,
 }: {
   themePreference: ThemePreference;
   lightThemeStyle: LightThemeStyle;
@@ -289,6 +302,7 @@ export function SettingsView({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
+  runtimeBusy: boolean;
   conversations: ConversationSummary[];
   initialSection: SettingsSection;
   onBack: () => void;
@@ -300,6 +314,7 @@ export function SettingsView({
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -314,6 +329,7 @@ export function SettingsView({
   const [maxContextTokens, setMaxContextTokens] = useState(
     String(defaultMaxContextTokens),
   );
+  const [maxCompletionTokens, setMaxCompletionTokens] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
   const providerOptions = useMemo(
@@ -383,12 +399,21 @@ export function SettingsView({
                 ? { maxContextTokens: normalizeMaxContextTokens(maxContextTokens) }
                 : {}
             ),
+            ...(
+              normalizeMaxCompletionTokens(maxCompletionTokens)
+                ? {
+                    maxCompletionTokens:
+                      normalizeMaxCompletionTokens(maxCompletionTokens),
+                  }
+                : {}
+            ),
           },
         ],
       }));
       setProviderSelection(provider);
       setModelName('');
       setMaxContextTokens(String(defaultMaxContextTokens));
+      setMaxCompletionTokens('');
       notify(language === 'zh' ? '模型配置已添加' : 'Model configuration added');
     },
     [
@@ -397,6 +422,7 @@ export function SettingsView({
       customProvider,
       language,
       maxContextTokens,
+      maxCompletionTokens,
       modelName,
       notify,
       providerSelection,
@@ -445,6 +471,40 @@ export function SettingsView({
         language === 'zh'
           ? '最大上下文 token 已更新'
           : 'Max context tokens updated',
+      );
+    },
+    [language, notify, updateSettings],
+  );
+
+  const updateModelCompletionTokens = useCallback(
+    (id: string, value: string) => {
+      const trimmed = value.trim();
+      const normalized = normalizeMaxCompletionTokens(trimmed);
+      if (trimmed && !normalized) {
+        notify(
+          language === 'zh'
+            ? '最大输出 token 必须是大于 0 的数字'
+            : 'Max output tokens must be a number greater than 0',
+        );
+        return;
+      }
+      updateSettings((current) => ({
+        ...current,
+        managedModelConfigs: current.managedModelConfigs.map((item) => {
+          if (item.id !== id) {
+            return item;
+          }
+          if (!trimmed) {
+            const { maxCompletionTokens: _removed, ...withoutCompletionTokens } = item;
+            return withoutCompletionTokens;
+          }
+          return { ...item, maxCompletionTokens: normalized };
+        }),
+      }));
+      notify(
+        language === 'zh'
+          ? '最大输出 token 已更新'
+          : 'Max output tokens updated',
       );
     },
     [language, notify, updateSettings],
@@ -883,6 +943,7 @@ export function SettingsView({
           modelName={modelName}
           baseUrl={baseUrl}
           maxContextTokens={maxContextTokens}
+          maxCompletionTokens={maxCompletionTokens}
           showApiKey={showApiKey}
           onProviderSelectionChange={setProviderSelection}
           onCustomProviderChange={setCustomProvider}
@@ -890,11 +951,13 @@ export function SettingsView({
           onModelNameChange={setModelName}
           onBaseUrlChange={setBaseUrl}
           onMaxContextTokensChange={setMaxContextTokens}
+          onMaxCompletionTokensChange={setMaxCompletionTokens}
           onShowApiKeyChange={setShowApiKey}
           onAddModelConfig={addModelConfig}
           onResetModels={resetModels}
           onRemoveModelConfig={removeModelConfig}
           onUpdateModelContextTokens={updateModelContextTokens}
+          onUpdateModelCompletionTokens={updateModelCompletionTokens}
           onUseModel={useModel}
         />
       );
@@ -959,6 +1022,8 @@ export function SettingsView({
           capabilities={backendCapabilities}
           onNotify={notify}
           onConversationHistoryCleared={onConversationHistoryCleared}
+          runtimeBusy={runtimeBusy}
+          onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
         />
       );
     }
@@ -1465,6 +1530,7 @@ function ModelsSettingsPanel({
   modelName,
   baseUrl,
   maxContextTokens,
+  maxCompletionTokens,
   showApiKey,
   onProviderSelectionChange,
   onCustomProviderChange,
@@ -1472,11 +1538,13 @@ function ModelsSettingsPanel({
   onModelNameChange,
   onBaseUrlChange,
   onMaxContextTokensChange,
+  onMaxCompletionTokensChange,
   onShowApiKeyChange,
   onAddModelConfig,
   onResetModels,
   onRemoveModelConfig,
   onUpdateModelContextTokens,
+  onUpdateModelCompletionTokens,
   onUseModel,
 }: {
   language: AppLanguage;
@@ -1489,6 +1557,7 @@ function ModelsSettingsPanel({
   modelName: string;
   baseUrl: string;
   maxContextTokens: string;
+  maxCompletionTokens: string;
   showApiKey: boolean;
   onProviderSelectionChange: (value: string) => void;
   onCustomProviderChange: (value: string) => void;
@@ -1496,11 +1565,13 @@ function ModelsSettingsPanel({
   onModelNameChange: (value: string) => void;
   onBaseUrlChange: (value: string) => void;
   onMaxContextTokensChange: (value: string) => void;
+  onMaxCompletionTokensChange: (value: string) => void;
   onShowApiKeyChange: (value: boolean) => void;
   onAddModelConfig: (event?: FormEvent) => void;
   onResetModels: () => void;
   onRemoveModelConfig: (id: string) => void;
   onUpdateModelContextTokens: (id: string, value: string) => void;
+  onUpdateModelCompletionTokens: (id: string, value: string) => void;
   onUseModel: (model: string) => void;
 }) {
   const grouped = groupModelConfigs(settings.managedModelConfigs);
@@ -1709,6 +1780,16 @@ function ModelsSettingsPanel({
               placeholder={String(defaultMaxContextTokens)}
               onChange={onMaxContextTokensChange}
             />
+            <SettingsInput
+              label={
+                language === 'zh'
+                  ? '最大输出 token（可选）'
+                  : 'Max output tokens (optional)'
+              }
+              value={maxCompletionTokens}
+              placeholder={language === 'zh' ? '供应商默认' : 'Provider default'}
+              onChange={onMaxCompletionTokensChange}
+            />
           </div>
           <div className="settings-actions">
             <button className="primary-button" type="submit">
@@ -1762,6 +1843,9 @@ function ModelsSettingsPanel({
                     onSaveContextTokens={(value) =>
                       onUpdateModelContextTokens(config.id, value)
                     }
+                    onSaveCompletionTokens={(value) =>
+                      onUpdateModelCompletionTokens(config.id, value)
+                    }
                   />
                 ))}
               </section>
@@ -1778,11 +1862,15 @@ function CacheMaintenancePanel({
   capabilities,
   onNotify,
   onConversationHistoryCleared,
+  runtimeBusy,
+  onRuntimeAssetsReloaded,
 }: {
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
+  runtimeBusy: boolean;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
   const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | ''>('');
   const [result, setResult] = useState<MaintenanceClearResult | null>(null);
@@ -1956,8 +2044,394 @@ function CacheMaintenancePanel({
           </div>
         )}
       </SettingsCard>
+      <RuntimeAssetResetCard
+        language={language}
+        capabilities={capabilities}
+        runtimeBusy={runtimeBusy}
+        onNotify={onNotify}
+        onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
+      />
     </div>
   );
+}
+
+const runtimeAssetCategoryOrder: RuntimeAssetCategory[] = ['prompts', 'skills', 'tools'];
+
+function RuntimeAssetResetCard({
+  language,
+  capabilities,
+  runtimeBusy,
+  onNotify,
+  onRuntimeAssetsReloaded,
+}: {
+  language: AppLanguage;
+  capabilities: BackendCapabilities;
+  runtimeBusy: boolean;
+  onNotify: (message: string) => void;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
+}) {
+  const available = capabilities.maintenanceRuntimeAssetsReset &&
+    capabilities.runtimeAssetResetProtocol === RUNTIME_ASSET_RESET_PROTOCOL;
+  const supportedCategories = capabilities.runtimeAssetResetCategories.length > 0
+    ? capabilities.runtimeAssetResetCategories
+    : runtimeAssetCategoryOrder;
+  const [selected, setSelected] = useState<Set<RuntimeAssetCategory>>(
+    () => new Set(runtimeAssetCategoryOrder),
+  );
+  const [plan, setPlan] = useState<RuntimeAssetResetPlan | null>(null);
+  const [result, setResult] = useState<RuntimeAssetResetResult | null>(
+    readPendingRuntimeAssetReset,
+  );
+  const [activeChildTasks, setActiveChildTasks] = useState(0);
+  const [busy, setBusy] = useState<'inspect' | 'reset' | 'verify' | ''>('');
+  const [error, setError] = useState('');
+  const [restartVerified, setRestartVerified] = useState(false);
+  const [serviceLogs, setServiceLogs] = useState<{
+    chain: unknown[];
+    toolFailures: unknown[];
+  } | null>(null);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const refreshInspection = useCallback(async () => {
+    if (!available) return;
+    setBusy('inspect');
+    try {
+      const [nextPlan, runtime] = await Promise.all([
+        fetchRuntimeAssetResetPlan(),
+        capabilities.subagents
+          ? fetchSubagentRuntime().catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      setPlan(nextPlan);
+      setActiveChildTasks(runtime?.activeTasks.length ?? 0);
+      setError('');
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy('');
+    }
+  }, [available, capabilities.subagents]);
+
+  useEffect(() => {
+    void refreshInspection();
+  }, [refreshInspection]);
+
+  useEffect(() => {
+    setSelected((current) => new Set(
+      [...current].filter((category) => supportedCategories.includes(category)),
+    ));
+  }, [supportedCategories.join('|')]);
+
+  const selectedCategories = runtimeAssetCategoryOrder.filter(
+    (category) => selected.has(category) && supportedCategories.includes(category),
+  );
+  const runtimeActive = runtimeBusy || activeChildTasks > 0;
+  const requiresRestart = Boolean(result?.restartRequired && !restartVerified);
+
+  const toggleCategory = (category: RuntimeAssetCategory) => {
+    if (busy || requiresRestart) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  };
+
+  const runReset = useCallback(async () => {
+    if (!available || busy || selectedCategories.length === 0 || runtimeActive) return;
+    setError('');
+    if (capabilities.subagents) {
+      try {
+        const runtime = await fetchSubagentRuntime();
+        setActiveChildTasks(runtime.activeTasks.length);
+        if (runtime.activeTasks.length > 0) {
+          setError(language === 'zh'
+            ? '仍有子 Agent 任务在运行，请等待或停止任务后再重置。'
+            : 'Subagent tasks are still active. Wait for or stop them before resetting.');
+          return;
+        }
+      } catch {
+        // The reset endpoint remains the final authority for runtime-idle checks.
+      }
+    }
+    const confirmed = window.confirm(
+      language === 'zh'
+        ? `确定恢复 ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join('、')} 吗？\n\n所选类别中的本地修改、运行时自定义包、过期文件和工具启用覆盖将被永久移除。`
+        : `Restore ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join(', ')}?\n\nLocal edits, runtime-only packages, stale files, and tool enable overrides in the selected categories will be permanently removed.`,
+    );
+    if (!confirmed) return;
+    setBusy('reset');
+    try {
+      const next = await resetRuntimeAssets(selectedCategories);
+      setResult(next);
+      setRestartVerified(false);
+      persistPendingRuntimeAssetReset(next.restartRequired ? next : null);
+      onNotify(next.changed
+        ? language === 'zh' ? '内置配置已恢复，重启 BushServer 后生效' : 'Bundled assets restored; restart BushServer to apply'
+        : language === 'zh' ? '配置已与内置版本一致' : 'Runtime assets already match the bundled version');
+    } catch (caught) {
+      if (
+        isBushServerHttpError(caught, 409) &&
+        caught.code === 'runtime_asset_reset_requires_idle_runtime'
+      ) {
+        setError(language === 'zh'
+          ? '检测到主 Agent 或子 Agent 正在运行。请先结束所有任务，再重新手动执行重置。'
+          : 'A parent or child turn is active. Stop all tasks, then start the reset again manually.');
+      } else if (
+        isBushServerHttpError(caught, 409) &&
+        caught.code === 'runtime_asset_reset_confirmation_required'
+      ) {
+        setError(language === 'zh'
+          ? '后端未收到有效确认，本次没有执行任何重置。'
+          : 'The backend did not receive valid confirmation. Nothing was reset.');
+      } else {
+        setError(errorMessage(caught));
+      }
+    } finally {
+      setBusy('');
+    }
+  }, [
+    available,
+    busy,
+    capabilities.subagents,
+    language,
+    onNotify,
+    runtimeActive,
+    selectedCategories,
+  ]);
+
+  const verifyRestart = useCallback(async () => {
+    if (!result?.restartRequired || busy) return;
+    setBusy('verify');
+    setError('');
+    try {
+      await onRuntimeAssetsReloaded?.(result.selectedCategories);
+      setRestartVerified(true);
+      persistPendingRuntimeAssetReset(null);
+      await refreshInspection();
+      onNotify(language === 'zh'
+        ? 'BushServer 已就绪，配置能力已重新加载'
+        : 'BushServer is ready and runtime capabilities were reloaded');
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy('');
+    }
+  }, [busy, language, onNotify, onRuntimeAssetsReloaded, refreshInspection, result]);
+
+  const loadServiceLogs = useCallback(async () => {
+    if (loadingLogs) return;
+    setLoadingLogs(true);
+    try {
+      setServiceLogs(await fetchRuntimeMaintenanceLogs());
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [loadingLogs]);
+
+  return (
+    <SettingsCard
+      title={language === 'zh' ? '恢复内置配置包' : 'Restore bundled runtime assets'}
+      subtitle={language === 'zh'
+        ? '将 Prompts、Skills 或 Tools 精确恢复为当前 BushServer 随附的内置版本。这是破坏性维护操作。'
+        : 'Restore Prompts, Skills, or Tools exactly to the versions bundled with the current BushServer build. This is destructive maintenance.'}
+    >
+      <div className="runtime-asset-reset-panel">
+        <div className="runtime-asset-category-grid">
+          {runtimeAssetCategoryOrder.map((category) => {
+            const supported = supportedCategories.includes(category);
+            return (
+              <label key={category} className={!supported ? 'disabled' : ''}>
+                <input
+                  type="checkbox"
+                  checked={supported && selected.has(category)}
+                  disabled={!available || !supported || Boolean(busy) || requiresRestart}
+                  onChange={() => toggleCategory(category)}
+                />
+                <span>
+                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
+                  <small>{runtimeAssetCategoryDescription(category, language)}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="runtime-asset-reset-warning">
+          <AlertCircle size={17} />
+          <span>{language === 'zh'
+            ? '会删除所选类别中的本地编辑、运行时安装包、过期文件和工具启用覆盖。项目文件与对话历史不受影响。'
+            : 'Removes local edits, runtime-installed packages, stale files, and tool enable overrides in selected categories. Project files and conversations are not affected.'}</span>
+        </div>
+
+        {runtimeActive && (
+          <p className="bot-settings-error">
+            {language === 'zh'
+              ? `运行时正忙${activeChildTasks > 0 ? `（${activeChildTasks} 个子任务）` : ''}，重置已禁用。`
+              : `The runtime is busy${activeChildTasks > 0 ? ` (${activeChildTasks} child tasks)` : ''}; reset is disabled.`}
+          </p>
+        )}
+        {!available && (
+          <p className="bot-settings-error">
+            {language === 'zh'
+              ? '当前 BushServer 未声明 runtime asset reset 能力。'
+              : 'The current BushServer does not advertise runtime asset reset.'}
+          </p>
+        )}
+        {error && (
+          <div className="runtime-asset-reset-error">
+            <p className="bot-settings-error">{error}</p>
+            <button className="secondary-button" type="button" onClick={() => void loadServiceLogs()}>
+              {loadingLogs ? <LoaderCircle size={14} /> : <Clipboard size={14} />}
+              {language === 'zh' ? '查看服务日志' : 'View service logs'}
+            </button>
+          </div>
+        )}
+
+        {serviceLogs && (
+          <details className="runtime-asset-service-logs" open>
+            <summary>{language === 'zh' ? '最近服务日志' : 'Recent service logs'}</summary>
+            <pre>{JSON.stringify(serviceLogs, null, 2)}</pre>
+          </details>
+        )}
+
+        <div className="runtime-asset-reset-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!available || Boolean(busy) || runtimeActive || requiresRestart || selectedCategories.length === 0}
+            onClick={() => void runReset()}
+          >
+            {busy === 'reset' ? <LoaderCircle size={14} /> : <PackageOpen size={14} />}
+            {language === 'zh' ? '恢复所选配置' : 'Restore selected assets'}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!available || Boolean(busy)}
+            onClick={() => void refreshInspection()}
+          >
+            {busy === 'inspect' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+            {language === 'zh' ? '检查状态' : 'Inspect status'}
+          </button>
+        </div>
+
+        {result && <RuntimeAssetResetResultView result={result} language={language} />}
+
+        {requiresRestart && (
+          <div className="runtime-asset-restart-required" role="alert">
+            <RotateCcw size={18} />
+            <span>
+              <strong>{language === 'zh' ? '必须重启 BushServer' : 'BushServer restart required'}</strong>
+              <small>{language === 'zh'
+                ? '配置已经写入，但尚未激活。请先在服务管理器或运行后端的终端中重启 BushServer，然后再验证。'
+                : 'Assets were written but are not active yet. Restart BushServer in its service manager or terminal, then verify.'}</small>
+            </span>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy === 'verify' || !onRuntimeAssetsReloaded}
+              onClick={() => void verifyRestart()}
+            >
+              {busy === 'verify' ? <LoaderCircle size={14} /> : <Check size={14} />}
+              {language === 'zh' ? '我已重启，验证并加载' : 'Restarted — verify and reload'}
+            </button>
+          </div>
+        )}
+
+        {plan && (
+          <details className="runtime-asset-paths">
+            <summary>{language === 'zh' ? '查看内置来源与运行时路径' : 'View bundled source and runtime paths'}</summary>
+            {runtimeAssetCategoryOrder.map((category) => {
+              const location = plan.categories[category];
+              if (!location) return null;
+              return (
+                <div key={category}>
+                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
+                  <code title={location.sourcePath}>{location.sourcePath}</code>
+                  <code title={location.targetPath}>{location.targetPath}</code>
+                </div>
+              );
+            })}
+          </details>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
+function RuntimeAssetResetResultView({
+  result,
+  language,
+}: {
+  result: RuntimeAssetResetResult;
+  language: AppLanguage;
+}) {
+  return (
+    <div className="runtime-asset-reset-result">
+      <strong>{result.changed
+        ? language === 'zh' ? '恢复结果' : 'Restore result'
+        : language === 'zh' ? '已经是内置版本' : 'Already matches bundled assets'}</strong>
+      <div>
+        {result.selectedCategories.map((category) => {
+          const item = result.categories[category];
+          if (!item) return null;
+          return (
+            <span key={category}>
+              <b>{runtimeAssetCategoryLabel(category, language)}</b>
+              <small>
+                {language === 'zh'
+                  ? `恢复 ${item.restoredFileCount} · 删除 ${item.removedRuntimeFileCount} · 内置 ${item.seedFileCount}`
+                  : `restored ${item.restoredFileCount} · removed ${item.removedRuntimeFileCount} · bundled ${item.seedFileCount}`}
+              </small>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function runtimeAssetCategoryLabel(category: RuntimeAssetCategory, language: AppLanguage) {
+  const labels = {
+    prompts: { zh: 'Prompts', en: 'Prompts' },
+    skills: { zh: 'Skills', en: 'Skills' },
+    tools: { zh: 'Tools', en: 'Tools' },
+  } as const;
+  return labels[category][language];
+}
+
+function runtimeAssetCategoryDescription(category: RuntimeAssetCategory, language: AppLanguage) {
+  const descriptions = {
+    prompts: { zh: '系统提示词与内置模板', en: 'System prompts and bundled templates' },
+    skills: { zh: '内置技能包及其文件', en: 'Bundled skill packages and files' },
+    tools: { zh: '工具包、配置与启用覆盖', en: 'Tool packages, configuration, and enable overrides' },
+  } as const;
+  return descriptions[category][language];
+}
+
+function readPendingRuntimeAssetReset(): RuntimeAssetResetResult | null {
+  try {
+    const raw = window.localStorage.getItem(pendingRuntimeAssetResetStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RuntimeAssetResetResult;
+    return parsed?.restartRequired === true && Array.isArray(parsed.selectedCategories)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistPendingRuntimeAssetReset(result: RuntimeAssetResetResult | null) {
+  if (!result) {
+    window.localStorage.removeItem(pendingRuntimeAssetResetStorageKey);
+    return;
+  }
+  window.localStorage.setItem(pendingRuntimeAssetResetStorageKey, JSON.stringify(result));
 }
 
 function DiagnosticsPanel({
@@ -3998,6 +4472,7 @@ function ModelConfigRow({
   onUse,
   onDelete,
   onSaveContextTokens,
+  onSaveCompletionTokens,
 }: {
   config: ManagedModelConfig;
   language: AppLanguage;
@@ -4005,6 +4480,7 @@ function ModelConfigRow({
   onUse: () => void;
   onDelete: () => void;
   onSaveContextTokens: (value: string) => void;
+  onSaveCompletionTokens: (value: string) => void;
 }) {
   const [contextDraft, setContextDraft] = useState(
     contextTokenDraftValue(config.maxContextTokens),
@@ -4014,10 +4490,25 @@ function ModelConfigRow({
   const hasInvalidContext =
     trimmedContextDraft.length > 0 && !normalizeMaxContextTokens(trimmedContextDraft);
   const contextDraftChanged = contextDraft !== savedContextDraft;
+  const [completionDraft, setCompletionDraft] = useState(
+    completionTokenDraftValue(config.maxCompletionTokens),
+  );
+  const savedCompletionDraft = completionTokenDraftValue(
+    config.maxCompletionTokens,
+  );
+  const trimmedCompletionDraft = completionDraft.trim();
+  const hasInvalidCompletion =
+    trimmedCompletionDraft.length > 0 &&
+    !normalizeMaxCompletionTokens(trimmedCompletionDraft);
+  const completionDraftChanged = completionDraft !== savedCompletionDraft;
 
   useEffect(() => {
     setContextDraft(savedContextDraft);
   }, [savedContextDraft]);
+
+  useEffect(() => {
+    setCompletionDraft(savedCompletionDraft);
+  }, [savedCompletionDraft]);
 
   return (
     <div className="model-row">
@@ -4059,6 +4550,39 @@ function ModelConfigRow({
           </button>
         </div>
         {hasInvalidContext && (
+          <small>
+            {language === 'zh' ? '请输入正整数' : 'Use a positive integer'}
+          </small>
+        )}
+      </label>
+      <label className="model-context-editor">
+        <span>{language === 'zh' ? '输出' : 'Output'}</span>
+        <div className="model-context-controls">
+          <input
+            aria-label={
+              language === 'zh'
+                ? `${config.modelName} 最大输出 token`
+                : `${config.modelName} max output tokens`
+            }
+            inputMode="numeric"
+            min={1}
+            placeholder={language === 'zh' ? '供应商默认' : 'provider default'}
+            type="number"
+            value={completionDraft}
+            onChange={(event) => setCompletionDraft(event.currentTarget.value)}
+          />
+          <button
+            className="icon-button model-context-save"
+            type="button"
+            aria-label={language === 'zh' ? '保存输出上限' : 'Save output limit'}
+            title={language === 'zh' ? '保存输出上限' : 'Save output limit'}
+            disabled={!completionDraftChanged || hasInvalidCompletion}
+            onClick={() => onSaveCompletionTokens(completionDraft)}
+          >
+            <Check size={14} />
+          </button>
+        </div>
+        {hasInvalidCompletion && (
           <small>
             {language === 'zh' ? '请输入正整数' : 'Use a positive integer'}
           </small>
@@ -4439,6 +4963,11 @@ function normalizeMaxContextTokens(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
+function normalizeMaxCompletionTokens(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
 function formatContextTokens(value: number | undefined, language: AppLanguage) {
   if (!value || value <= 0) {
     return language === 'zh' ? '未填写' : 'not filled';
@@ -4448,6 +4977,10 @@ function formatContextTokens(value: number | undefined, language: AppLanguage) {
 
 function contextTokenDraftValue(value: number | undefined) {
   return String(value && value > 0 ? Math.floor(value) : defaultMaxContextTokens);
+}
+
+function completionTokenDraftValue(value: number | undefined) {
+  return String(value && value > 0 ? Math.floor(value) : '');
 }
 
 function newModelConfigId() {

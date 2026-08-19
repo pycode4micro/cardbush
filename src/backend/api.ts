@@ -51,6 +51,9 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  RuntimeAssetCategory,
+  RuntimeAssetResetPlan,
+  RuntimeAssetResetResult,
   SessionTokenUsage,
   CapabilityCandidatesUpdate,
   TerminalRuntime,
@@ -81,6 +84,7 @@ const conversationListMaxVisible = 160;
 export const backendBaseUrl =
   import.meta.env.VITE_BACKEND_BASE_URL?.trim() || 'http://127.0.0.1:51717';
 export const llmEndpoint = import.meta.env.VITE_LLM_ENDPOINT?.trim() || '';
+export const RUNTIME_ASSET_RESET_PROTOCOL = 'bushserver.runtime_asset_reset.v1';
 export const backendBearerTokenStorageKey = 'cardbush_backend_bearer_token';
 export const backendLocalRequestKeyStorageKey = 'cardbush_backend_local_request_key';
 
@@ -421,6 +425,9 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   runtimeInspection: true,
   maintenanceConversationHistoryClear: false,
   maintenanceLogsCacheClear: false,
+  maintenanceRuntimeAssetsReset: false,
+  runtimeAssetResetProtocol: '',
+  runtimeAssetResetCategories: [],
   botControl: false,
   sessionShareLinks: false,
   messageEditRegenerate: false,
@@ -700,12 +707,13 @@ export function isBushServerHttpError(
 }
 
 async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(await headersFor(input, init?.body != null));
+  new Headers(init?.headers).forEach((value, key) => {
+    headers.set(key, value);
+  });
   const response = await fetch(input, {
     ...init,
-    headers: {
-      ...(await headersFor(input, init?.body != null)),
-      ...init?.headers,
-    },
+    headers,
   });
   if (!response.ok) {
     const body = await response.text();
@@ -726,6 +734,10 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
     throw new Error(formatHttpError(response.status, await response.text()));
   }
   return backendCapabilitiesFromPayload(await response.json());
+}
+
+export async function fetchBackendReadiness(): Promise<Record<string, unknown>> {
+  return readJson<Record<string, unknown>>(url('/readyz'));
 }
 
 export async function fetchRuntimeToolInventory(filters?: {
@@ -881,6 +893,7 @@ export async function saveModelConfigs(request: {
         ...(item.apiKey.trim() ? { api_key: item.apiKey } : {}),
         base_url: item.baseUrl,
         max_context_tokens: item.maxContextTokens,
+        max_completion_tokens: item.maxCompletionTokens,
       })),
     }),
   });
@@ -1048,6 +1061,12 @@ function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | n
       item.maxInputTokens ??
       item.max_input_tokens,
   );
+  const maxCompletionTokens = positiveNumber(
+    item.maxCompletionTokens ??
+      item.max_completion_tokens ??
+      item.maxOutputTokens ??
+      item.max_output_tokens,
+  );
   return {
     id: String(item.id ?? ''),
     provider,
@@ -1060,6 +1079,7 @@ function managedModelConfigFromPayload(payload: unknown): ManagedModelConfig | n
     modelName,
     baseUrl: String(item.baseUrl ?? item.base_url ?? item.llm_base_url ?? ''),
     ...(maxContextTokens ? { maxContextTokens } : {}),
+    ...(maxCompletionTokens ? { maxCompletionTokens } : {}),
   };
 }
 
@@ -1655,6 +1675,45 @@ export async function clearLogsCache(): Promise<MaintenanceClearResult> {
     },
   );
   return maintenanceClearResultFromPayload(payload);
+}
+
+export async function fetchRuntimeAssetResetPlan(): Promise<RuntimeAssetResetPlan> {
+  const payload = await readJson<Record<string, unknown>>(
+    url('/v1/maintenance/runtime-assets'),
+  );
+  const plan = runtimeAssetResetPlanFromPayload(payload);
+  assertRuntimeAssetResetProtocol(plan.protocol);
+  return plan;
+}
+
+export async function resetRuntimeAssets(
+  categories: RuntimeAssetCategory[],
+): Promise<RuntimeAssetResetResult> {
+  const payload = await readJson<Record<string, unknown>>(
+    url('/v1/maintenance/runtime-assets/reset'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categories, confirm: true }),
+    },
+  );
+  const result = runtimeAssetResetResultFromPayload(payload);
+  assertRuntimeAssetResetProtocol(result.protocol);
+  return result;
+}
+
+export async function fetchRuntimeMaintenanceLogs(): Promise<{
+  chain: unknown[];
+  toolFailures: unknown[];
+}> {
+  const [chain, toolFailures] = await Promise.all([
+    readJson<Record<string, unknown>>(url('/v1/chain/logs?limit=50')),
+    readJson<Record<string, unknown>>(url('/v1/tools/failures?limit=50')),
+  ]);
+  return {
+    chain: arrayFrom(chain.items),
+    toolFailures: arrayFrom(toolFailures.items),
+  };
 }
 
 export async function sendSceneEvent({
@@ -2724,6 +2783,9 @@ function controlStreamBody(request: ControlStreamRequest) {
       metadata.max_input_tokens = Math.floor(config.maxContextTokens);
       metadata.context_window_tokens = Math.floor(config.maxContextTokens);
     }
+    if (config.maxCompletionTokens && config.maxCompletionTokens > 0) {
+      body.max_completion_tokens = Math.floor(config.maxCompletionTokens);
+    }
     putIfNotEmpty(metadata, 'selected_model', config.modelName);
     putIfNotEmpty(metadata, 'selected_provider', config.provider);
     putIfNotEmpty(metadata, 'selected_model_alias', request.model);
@@ -2788,6 +2850,9 @@ function chatStreamBody(request: ChatStreamRequest) {
       body.max_input_tokens = Math.floor(config.maxContextTokens);
       metadata.max_input_tokens = Math.floor(config.maxContextTokens);
       metadata.context_window_tokens = Math.floor(config.maxContextTokens);
+    }
+    if (config.maxCompletionTokens && config.maxCompletionTokens > 0) {
+      body.max_completion_tokens = Math.floor(config.maxCompletionTokens);
     }
     putIfNotEmpty(metadata, 'selected_model', config.modelName);
     putIfNotEmpty(metadata, 'selected_provider', config.provider);
@@ -3733,6 +3798,9 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
   const subagentObservability = asRecord(
     root.subagent_observability ?? root.subagentObservability,
   );
+  const runtimeAssetReset = asRecord(
+    root.runtime_asset_reset ?? root.runtimeAssetReset,
+  );
   return {
     chatStream: capabilityBoolean(features, endpoints, 'chatStream', ['chat_stream']),
     sessions: capabilityBoolean(features, endpoints, 'sessions', ['session_history']),
@@ -3763,6 +3831,13 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       'maintenanceLogsCacheClear',
       ['maintenance_logs_cache_clear'],
     ),
+    maintenanceRuntimeAssetsReset: typeof runtimeAssetReset.available === 'boolean'
+      ? runtimeAssetReset.available
+      : capabilityBoolean(features, endpoints, 'maintenanceRuntimeAssetsReset', [
+          'maintenance_runtime_assets_reset',
+        ]),
+    runtimeAssetResetProtocol: String(runtimeAssetReset.protocol ?? ''),
+    runtimeAssetResetCategories: runtimeAssetCategories(runtimeAssetReset.categories),
     botControl: capabilityBoolean(features, endpoints, 'botControl', ['bot_control']),
     sessionShareLinks: capabilityBoolean(features, endpoints, 'sessionShareLinks', [
       'session_share_links',
@@ -5387,6 +5462,82 @@ function subagentDispatchResultFromPayload(
   };
 }
 
+function runtimeAssetResetPlanFromPayload(
+  payload: Record<string, unknown>,
+): RuntimeAssetResetPlan {
+  const categories = asRecord(payload.categories);
+  return {
+    protocol: String(payload.protocol ?? ''),
+    categories: Object.fromEntries(
+      runtimeAssetCategories(Object.keys(categories)).map((category) => {
+        const item = asRecord(categories[category]);
+        return [category, {
+          sourcePath: String(item.source_path ?? item.sourcePath ?? ''),
+          targetPath: String(item.target_path ?? item.targetPath ?? ''),
+        }];
+      }),
+    ),
+    requiresConfirmation: payload.requires_confirmation === true,
+    requiresIdleRuntime: payload.requires_idle_runtime === true,
+    destructive: payload.destructive === true,
+    restartRequiredAfterChange: payload.restart_required_after_change === true,
+  };
+}
+
+function runtimeAssetResetResultFromPayload(
+  payload: Record<string, unknown>,
+): RuntimeAssetResetResult {
+  const categories = asRecord(payload.categories);
+  return {
+    protocol: String(payload.protocol ?? ''),
+    selectedCategories: runtimeAssetCategories(
+      payload.selected_categories ?? payload.selectedCategories,
+    ),
+    categories: Object.fromEntries(
+      runtimeAssetCategories(Object.keys(categories)).map((category) => {
+        const item = asRecord(categories[category]);
+        return [category, {
+          changed: item.changed === true,
+          sourcePath: String(item.source_path ?? item.sourcePath ?? ''),
+          targetPath: String(item.target_path ?? item.targetPath ?? ''),
+          seedFileCount: finiteNumber(item.seed_file_count ?? item.seedFileCount),
+          restoredFileCount: finiteNumber(
+            item.restored_file_count ?? item.restoredFileCount,
+          ),
+          removedRuntimeFileCount: finiteNumber(
+            item.removed_runtime_file_count ?? item.removedRuntimeFileCount,
+          ),
+        }];
+      }),
+    ),
+    changed: payload.changed === true,
+    restartRequired: payload.restart_required === true,
+    effectiveAfter: String(payload.effective_after ?? payload.effectiveAfter ?? ''),
+  };
+}
+
+function runtimeAssetCategories(value: unknown): RuntimeAssetCategory[] {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => String(item ?? '').trim().toLowerCase())
+    .filter((item): item is RuntimeAssetCategory => (
+      item === 'prompts' || item === 'skills' || item === 'tools'
+    ));
+}
+
+function assertRuntimeAssetResetProtocol(protocol: string) {
+  if (protocol === RUNTIME_ASSET_RESET_PROTOCOL) return;
+  throw new Error(localizedClientMessage(
+    `配置重置协议不兼容：${protocol || 'missing'}`,
+    `Incompatible runtime asset reset protocol: ${protocol || 'missing'}`,
+  ));
+}
+
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function subagentDispatchEventFromPayload(value: unknown): SubagentDispatchEvent {
   const item = asRecord(value);
   const rawPhase = String(item.phase ?? '').trim().toLowerCase();
@@ -5601,6 +5752,19 @@ function structuredErrorDetail(body: string) {
 
 function streamErrorMessage(decoded: Record<string, unknown>) {
   const structured = asRecord(decoded.detail);
+  const stopDetails = asRecord(decoded.stop_details ?? decoded.stopDetails);
+  const limitReason = optionalString(
+    decoded.limit_reason ??
+      decoded.limitReason ??
+      stopDetails.limit_reason ??
+      stopDetails.limitReason,
+  );
+  if (limitReason === 'reasoning-budget-exhausted-before-action') {
+    return localizedClientMessage(
+      '模型的输出预算已在思考阶段耗尽，尚未生成正文或执行工具。请提高该模型的最大输出 token，或降低推理强度后重试。',
+      'The model exhausted its output budget while reasoning, before producing text or using a tool. Increase this model’s max output tokens or lower the reasoning level, then retry.',
+    );
+  }
   const detail =
     errorDetailText(decoded.message) ||
     errorDetailText(decoded.detail) ||

@@ -93,6 +93,9 @@ export interface BackendCapabilities {
   runtimeInspection: boolean;
   maintenanceConversationHistoryClear: boolean;
   maintenanceLogsCacheClear: boolean;
+  maintenanceRuntimeAssetsReset: boolean;
+  runtimeAssetResetProtocol: string;
+  runtimeAssetResetCategories: RuntimeAssetCategory[];
   botControl: boolean;
   sessionShareLinks: boolean;
   messageEditRegenerate: boolean;
@@ -184,6 +187,7 @@ export interface ManagedModelConfig {
   modelName: string;
   baseUrl: string;
   maxContextTokens?: number;
+  maxCompletionTokens?: number;
 }
 
 export interface McpServerConfig {
@@ -355,6 +359,38 @@ export interface ChatAttachment {
   type: 'image' | 'video' | 'document';
   path?: string;
   size?: number;
+}
+
+export type RuntimeAssetCategory = 'prompts' | 'skills' | 'tools';
+
+export interface RuntimeAssetLocation {
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface RuntimeAssetResetPlan {
+  protocol: string;
+  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetLocation>>;
+  requiresConfirmation: boolean;
+  requiresIdleRuntime: boolean;
+  destructive: boolean;
+  restartRequiredAfterChange: boolean;
+}
+
+export interface RuntimeAssetResetCategoryResult extends RuntimeAssetLocation {
+  changed: boolean;
+  seedFileCount: number;
+  restoredFileCount: number;
+  removedRuntimeFileCount: number;
+}
+
+export interface RuntimeAssetResetResult {
+  protocol: string;
+  selectedCategories: RuntimeAssetCategory[];
+  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetResetCategoryResult>>;
+  changed: boolean;
+  restartRequired: boolean;
+  effectiveAfter: string;
 }
 
 export interface SessionTokenUsage {

@@ -4331,6 +4331,7 @@ export function normalizeActiveTurnTranscriptForDisplay(
         index !== activeAssistantIndex &&
         message.role === 'assistant' &&
         chatMessageTurnId(message) === turnId &&
+        !isGuidanceSealedAssistantSegment(message) &&
         hasVisibleLoopHistory(message),
     );
   if (siblingIndexes.length === 0) {
@@ -4422,12 +4423,28 @@ function shouldArchiveAssistantSegment(
   if (turnTranscriptKey(message) !== turnTranscriptKey(final)) {
     return false;
   }
+  if (isGuidanceSealedAssistantSegment(message)) {
+    return false;
+  }
   // Older histories do not always carry transcript_kind or
   // assistant_segment_index. Once a later final assistant message exists for
   // the same turn, every other assistant message in that turn is process
-  // history. Segment metadata remains useful for ordering, but must not decide
-  // whether the process text is left outside the “processed” disclosure.
+  // history. A turn-guidance boundary is different: it seals a user-visible
+  // assistant reply before the queued guidance and must remain in the chat.
   return true;
+}
+
+function isGuidanceSealedAssistantSegment(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.segment_boundary === 'turn_guidance' ||
+    metadata.segmentBoundary === 'turn_guidance' ||
+    String(
+      metadata.sealed_by_client_message_id ??
+        metadata.sealedByClientMessageId ??
+        '',
+    ).trim().length > 0
+  );
 }
 
 function compareAssistantSegments(left: ChatMessage, right: ChatMessage) {
@@ -4564,7 +4581,24 @@ function collectLoopHistoryFromReplaced(
   )];
   const replacedAssistants = replacedMessages
     .filter((message) => message.role === 'assistant')
-    .filter((message) => !finalIds.has(message.id));
+    .filter((message) => !finalIds.has(message.id))
+    .filter(
+      (message) =>
+        !isGuidanceSealedAssistantSegment(message) ||
+        !finalMessages.some(
+          (candidate) =>
+            candidate.role === 'assistant' &&
+            isGuidanceSealedAssistantSegment(candidate) &&
+            turnTranscriptKey(candidate) === turnTranscriptKey(message) &&
+            (
+              messageIdentityMatches(candidate, message) ||
+              (
+                assistantSegmentIndex(candidate) != null &&
+                assistantSegmentIndex(candidate) === assistantSegmentIndex(message)
+              )
+            ),
+        ),
+    );
   const candidates = replacedAssistants.flatMap((message) => [
     ...(message.loopHistory ?? []),
     ...(

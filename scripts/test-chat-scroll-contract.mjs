@@ -141,6 +141,36 @@ assert.match(
   /scroller\.addEventListener\('scroll', updateVisibleTurn/,
   'The context rail must follow viewport scrolling',
 );
+assert.doesNotMatch(
+  quickContextSource,
+  /filter\(\(message\) => message\.role === 'user'\)\.slice\(/,
+  'The context rail must not discard older loaded user turns',
+);
+assert.match(
+  quickContextSource,
+  /Math\.max\(8, Math\.min\(96, Math\.floor\(availableHeight \/ 9\)\)\)/,
+  'The context rail must cap rendered ticks to the available physical height',
+);
+assert.match(
+  quickContextSource,
+  /visibleRailTurns = railTurns\.slice\([\s\S]*?railWindowStart[\s\S]*?railCapacity/,
+  'The context rail must render a bounded logical window without moving the rail container',
+);
+assert.match(
+  quickContextSource,
+  /onWheel=\{\(event\)[\s\S]*?scrollRailWindow\(event\.deltaY\)/,
+  'Dense context rails must support windowed wheel navigation',
+);
+const contextTickTrackRule = styles.match(
+  /\.quick-context-ticks\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.match(contextTickTrackRule, /top:\s*50%/);
+assert.match(contextTickTrackRule, /transform:\s*translateY\(-50%\)/);
+assert.doesNotMatch(
+  contextTickTrackRule,
+  /overflow-y:\s*auto/,
+  'The tick track must retain its original centered geometry instead of becoming a scroll container',
+);
 assert.match(
   quickContextSource,
   /panelView !== 'closed'[\s\S]*?className=\{`quick-context-tick\$\{isCurrentTurn \? ' current'/,

@@ -12,6 +12,8 @@ const workSummaryInspector = read('src', 'features', 'chat', 'WorkSummaryInspect
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
+const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
+const theme = read('src', 'styles', 'theme.css');
 
 assert.match(css, /--panel-motion-duration:\s*240ms/);
 assert.match(css, /--panel-motion-ease:/);
@@ -96,5 +98,18 @@ assert.match(
   /\.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateX\(14px\)/,
   'Maximized summary must keep the existing right-side exit motion',
 );
+assert.match(featureContent, /className="tool-install-action-options"[\s\S]*?role="radiogroup"/);
+assert.doesNotMatch(
+  featureContent,
+  /tool-install-form[\s\S]{0,300}<select/,
+  'Short fixed action lists must not depend on an OS-native popup menu',
+);
+assert.match(
+  css,
+  /\.skill-detail-dialog\.tool-install-dialog\s*\{[\s\S]*?height:\s*auto;/,
+  'Compact tool installation dialogs must override the fixed detail-dialog height',
+);
+assert.match(theme, /\.app\.theme-dark select,[\s\S]*?color-scheme:\s*dark/);
+assert.match(theme, /\.app select option,[\s\S]*?background-color:\s*var\(--surface-strong\)/);
 
 console.log('soft panel motion contract tests passed');

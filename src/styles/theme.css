@@ -84,6 +84,38 @@ select {
   font: inherit;
 }
 
+.app input,
+.app textarea,
+.app select,
+.app select option,
+.app select optgroup {
+  color-scheme: light;
+}
+
+.app.theme-dark input,
+.app.theme-dark textarea,
+.app.theme-dark select,
+.app.theme-dark select option,
+.app.theme-dark select optgroup {
+  color-scheme: dark;
+}
+
+.app select option,
+.app select optgroup {
+  color: var(--text);
+  background-color: var(--surface-strong);
+}
+
+.app select option:disabled {
+  color: var(--text-soft);
+}
+
+.app select:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  outline: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  outline-offset: 1px;
+}
+
 button {
   border: 0;
 }
