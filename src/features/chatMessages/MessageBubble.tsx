@@ -33,6 +33,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
 } from 'react';
@@ -63,7 +64,6 @@ import {
 } from './fileReferences';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import {
-  COPY_FEEDBACK_EVENT,
   copyText,
   readAssistantFeedback,
   recordAssistantFeedback,
@@ -73,12 +73,15 @@ import { splitMessageImages } from '../messageImages';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import {
   compareToolExecutionOrder,
-  isToolRunning,
   isToolRunningInContext,
   ToolExecutionBlock,
   toolExecutionFinishedAt,
   type ConversationChangeReport,
 } from '../tools';
+import {
+  toolChangeReportFromExecutions,
+  type ToolChangeReport,
+} from '../tools/toolChangeReports';
 import { asRecord } from '../tools/toolPayload';
 import {
   assistantMessageDisclosureId,
@@ -138,6 +141,7 @@ function userGoalCommandPresentation(
   message: ChatMessage,
   text: string,
   language: AppLanguage,
+  currentGoalObjective = '',
 ) {
   const match = text.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
   if (match) {
@@ -147,7 +151,11 @@ function userGoalCommandPresentation(
       commandToken: '/goal',
     };
   }
-  if (!messageHasGoalContext(message)) {
+  const matchesCurrentGoal = Boolean(
+    currentGoalObjective.trim() &&
+    normalizeGoalObjective(text) === normalizeGoalObjective(currentGoalObjective),
+  );
+  if (!messageHasGoalContext(message) && !matchesCurrentGoal) {
     return null;
   }
   return {
@@ -155,6 +163,10 @@ function userGoalCommandPresentation(
     content: text,
     commandToken: '',
   };
+}
+
+function normalizeGoalObjective(value: string) {
+  return value.trim().replace(/\s+/g, ' ');
 }
 
 function messageHasGoalContext(message: ChatMessage) {
@@ -340,6 +352,9 @@ function MarkdownCodeBlock({
 }: HTMLAttributes<HTMLPreElement> & { language: AppLanguage }) {
   const [wrapped, setWrapped] = useState(false);
   const text = reactNodeText(children);
+  if (!text.trim()) {
+    return null;
+  }
   return (
     <div className={`markdown-code-block ${wrapped ? 'wrapped' : ''}`}>
       <div className="markdown-code-actions">
@@ -394,12 +409,14 @@ function MessageBubbleView({
   sending,
   activeTurnId,
   activeAssistantMessageId,
+  goalObjective = '',
   onRegenerate,
   onEditUserMessage,
   onGuideMessage,
   onRetryMessage = async () => undefined,
   onRetryGuidance,
   onRevertChangeReport,
+  onOpenChangeReview,
   onOpenScene,
 }: {
   message: ChatMessage;
@@ -407,6 +424,7 @@ function MessageBubbleView({
   sending: boolean;
   activeTurnId: string;
   activeAssistantMessageId: string;
+  goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
   onGuideMessage: (
@@ -420,6 +438,7 @@ function MessageBubbleView({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
+  onOpenChangeReview?: () => void;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const contentParts = splitMessageImages(message.content);
@@ -444,7 +463,7 @@ function MessageBubbleView({
   const text = legacyGoalCommandText ?? userContentParts.text;
   const goalCommand =
     message.role === 'user'
-      ? userGoalCommandPresentation(message, text, language)
+      ? userGoalCommandPresentation(message, text, language, goalObjective)
       : null;
   const visibleAttachments = legacyGoalCommandText
     ? (message.attachments ?? []).filter(
@@ -741,6 +760,9 @@ function MessageBubbleView({
   );
   const finalAssistantRound =
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
+  const completedChangeReport = finalAssistantRound
+    ? completedAssistantChangeReport(message)
+    : null;
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
   const hasAssistantBody = Boolean(
@@ -841,6 +863,13 @@ function MessageBubbleView({
                 />
               )}
               {finalAnswerBody}
+              {completedChangeReport && (
+                <AssistantChangedFilesSummary
+                  report={completedChangeReport}
+                  language={language}
+                  onOpenReview={onOpenChangeReview}
+                />
+              )}
             </>
           ) : (
             <AssistantCompletedDisclosure
@@ -937,6 +966,133 @@ function MessageBubbleView({
       )}
     </>
   );
+}
+
+function completedAssistantChangeReport(message: ChatMessage) {
+  const executions = new Map<string, ChatToolExecution>();
+  const collect = (candidate: ChatMessage) => {
+    for (const nested of candidate.loopHistory ?? []) {
+      collect(nested);
+    }
+    for (const execution of candidate.toolExecutions ?? []) {
+      executions.set(execution.id, execution);
+    }
+  };
+  collect(message);
+  const report = toolChangeReportFromExecutions(Array.from(executions.values()));
+  return report?.files.length ? report : null;
+}
+
+function AssistantChangedFilesSummary({
+  report,
+  language,
+  onOpenReview,
+}: {
+  report: ToolChangeReport;
+  language: AppLanguage;
+  onOpenReview?: () => void;
+}) {
+  const workspaceRoot = useContext(FileReferenceWorkspaceContext);
+  const [expanded, setExpanded] = useState(false);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const listId = useId();
+  const collapsedCount = 3;
+  const visibleFiles = expanded ? report.files : report.files.slice(0, collapsedCount);
+  const remaining = Math.max(0, report.files.length - collapsedCount);
+
+  function toggleExpanded() {
+    preserveScrollPositionForToggle(sectionRef.current, () => {
+      setExpanded((current) => !current);
+    });
+  }
+
+  return (
+    <section ref={sectionRef} className="assistant-changed-files-summary">
+      <header>
+        <span className="assistant-changed-files-title">
+          <FileCode2 size={15} />
+          <strong>
+            {language === 'zh'
+              ? `已编辑 ${report.files.length} 个文件`
+              : `Edited ${report.files.length} file${report.files.length === 1 ? '' : 's'}`}
+          </strong>
+        </span>
+        <span className="assistant-changed-files-actions">
+          <span className="assistant-changed-files-totals">
+            {report.additions > 0 && <em className="additions">+{report.additions}</em>}
+            {report.deletions > 0 && <em className="deletions">-{report.deletions}</em>}
+          </span>
+          {onOpenReview && (
+            <button
+              className="assistant-changed-files-review"
+              type="button"
+              onClick={onOpenReview}
+            >
+              {language === 'zh' ? '审查' : 'Review'}
+            </button>
+          )}
+        </span>
+      </header>
+      <div className="assistant-changed-files-list" id={listId}>
+        {visibleFiles.map((file) => (
+          <button
+            key={file.path}
+            className="assistant-changed-file"
+            type="button"
+            title={
+              language === 'zh'
+                ? `在右侧打开：${file.path}`
+                : `Open in inspector: ${file.path}`
+            }
+            onClick={() => {
+              const target = resolveChangedFilePath(file.path, workspaceRoot);
+              openInspector(target, basename(file.path));
+            }}
+          >
+            <span className="assistant-changed-file-name">
+              <FileCode2 size={13} aria-hidden="true" />
+              <span>{basename(file.path)}</span>
+            </span>
+            <small>
+              {file.additions > 0 && <em className="additions">+{file.additions}</em>}
+              {file.deletions > 0 && <em className="deletions">-{file.deletions}</em>}
+            </small>
+          </button>
+        ))}
+        {remaining > 0 && (
+          <button
+            className="assistant-changed-files-more"
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={listId}
+            onClick={toggleExpanded}
+          >
+            <span>
+              {expanded
+                ? language === 'zh' ? '收起文件列表' : 'Show fewer files'
+                : language === 'zh'
+                  ? `展开其余 ${remaining} 个文件`
+                  : `Show ${remaining} more file${remaining === 1 ? '' : 's'}`}
+            </span>
+            <ChevronDown className={expanded ? 'expanded' : ''} size={13} />
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function resolveChangedFilePath(pathValue: string, workspaceRoot: string) {
+  const path = stripWrappingQuotes(pathValue.trim());
+  const root = stripWrappingQuotes(workspaceRoot.trim());
+  if (!path || !root || isAbsoluteLocalPath(path)) {
+    return path;
+  }
+  const separator = root.includes('\\') ? '\\' : '/';
+  const normalizedRelative = path
+    .replace(/^[.][\\/]/, '')
+    .replace(/[\\/]+/g, separator);
+  return `${root.replace(/[\\/]+$/, '')}${separator}${normalizedRelative}`;
 }
 
 function TaskPlanBlock({
@@ -2298,13 +2454,15 @@ const MarkdownContent = memo(function MarkdownContent({
 }) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   return (
-    <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
-      <LazyMarkdownContent
-        content={content}
-        workspaceRoot={workspaceRoot}
-        language={language}
-      />
-    </Suspense>
+    <div className="markdown-content">
+      <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
+        <LazyMarkdownContent
+          content={content}
+          workspaceRoot={workspaceRoot}
+          language={language}
+        />
+      </Suspense>
+    </div>
   );
 });
 

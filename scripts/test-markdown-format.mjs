@@ -13,6 +13,14 @@ const sourcePath = path.join(
   'markdownFormat.ts',
 );
 const source = fs.readFileSync(sourcePath, 'utf8');
+const messageBubbleSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
+  'utf8',
+);
+const appStyles = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'styles', 'app.css'),
+  'utf8',
+);
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -57,6 +65,11 @@ const cases = [
     input: '```html\n<div>ok</div>\n```',
     expected: '```html\n<div>ok</div>\n```',
   },
+  {
+    name: 'empty fenced code block is removed',
+    input: '部署清单\n\n```text\n   \n```\n\n下一段',
+    expected: '部署清单\n\n\n\n下一段',
+  },
 ];
 
 for (const testCase of cases) {
@@ -76,6 +89,27 @@ assert.equal(
 assert.equal(
   normalizeExecutionNarrationForDisplay(crowdedNarration, 1),
   crowdedNarration,
+);
+
+assert.match(
+  messageBubbleSource,
+  /<div className="markdown-content">/,
+  'rendered Markdown must have an isolated hierarchy scope',
+);
+assert.match(
+  appStyles,
+  /\.markdown-content li > ul,[\s\S]*?\.markdown-content li > ol[\s\S]*?border-left:/,
+  'nested Markdown lists must expose a visible hierarchy guide',
+);
+assert.match(
+  appStyles,
+  /\.markdown-content h3::before/,
+  'third-level Markdown headings must remain visually distinct',
+);
+assert.match(
+  appStyles,
+  /\.markdown-content blockquote/,
+  'Markdown callouts must have a distinct quoted hierarchy',
 );
 
 console.log(`markdown format tests passed (${cases.length})`);

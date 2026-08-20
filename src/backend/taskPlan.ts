@@ -1,6 +1,6 @@
 import type { TaskPlanSnapshot, TaskPlanStreamUpdate, TaskPlanStatus } from '../types';
 
-export const taskPlanProtocol = 'bush.task_plan.v1';
+const taskPlanProtocol = 'bush.task_plan.v1';
 
 const planKeys = new Set([
   'protocol',

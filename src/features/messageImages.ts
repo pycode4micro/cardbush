@@ -1,7 +1,5 @@
 import { isAbsoluteLocalPath, isImagePath, stripWrappingQuotes } from '../shared/localPaths';
 
-export { isImagePath, stripWrappingQuotes };
-
 export function splitMessageImages(content: string) {
   const imagePaths: string[] = [];
   const textLines: string[] = [];

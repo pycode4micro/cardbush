@@ -1,20 +1,12 @@
 import {
   AlertCircle,
   ArrowDown,
-  ArrowLeft,
-  ArrowRight,
   ArrowUp,
   Bot,
   CheckCircle2,
-  Check,
   ChevronDown,
-  Circle,
   Clipboard,
-  Clock3,
-  Edit3,
   ExternalLink,
-  Eye,
-  EyeOff,
   Folder,
   Gamepad2,
   GitBranch,
@@ -28,17 +20,11 @@ import {
   LayoutGrid,
   PanelRightClose,
   PanelRightOpen,
-  Play,
-  Plus,
   Puzzle,
   RefreshCw,
-  Search,
   Settings2,
-  Smartphone,
   Sparkles,
   Terminal,
-  Trash2,
-  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -111,7 +97,6 @@ import { sectionLabels } from './features/appSections';
 import {
   MessageBubble,
   MessageFileReferenceScope,
-  type GuidanceMode,
 } from './features/chatMessages';
 import { QuickContextRail } from './features/chat/QuickContextRail';
 import { ConversationWorkSummary } from './features/chat/ConversationWorkSummary';
@@ -197,7 +182,6 @@ import {
   latestCardlingSceneFromMessages,
   latestSessionSceneRecord,
   sceneAutoPlayEnabled,
-  sceneString,
   type CardlingScene,
 } from './features/cardling/scene';
 import type {
@@ -207,7 +191,6 @@ import type {
   AppSettingsState,
   BackendCapabilities,
   ChatMessage,
-  ChatToolExecution,
   CompanionMotionMode,
   CompanionSettings,
   CompanionSize,
@@ -2008,12 +1991,6 @@ function CardbushApp() {
                 onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
                 inspectorOpen={inspectorOpen}
-                onCloseInspector={() => {
-                  setInspectorTarget(null);
-                  setWorkSummaryInspector(null);
-                  setChangeReviewConversationId('');
-                  setInspectorSummaryOpen(false);
-                }}
                 windowMaximized={windowMaximized}
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
@@ -3007,10 +2984,6 @@ function normalizeMaxContextTokens(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
-function newModelConfigId() {
-  return `mm-${Date.now()}-${Math.floor(Math.random() * 9000) + 1000}`;
-}
-
 function stableModelConfigId(
   provider: string,
   modelName: string,
@@ -3381,7 +3354,6 @@ function ChatPanel({
   onExitOsMode,
   sidebarCollapsed,
   inspectorOpen,
-  onCloseInspector,
   windowMaximized,
   onRevealSidebar,
   activeConversationId,
@@ -3468,7 +3440,6 @@ function ChatPanel({
   onExitOsMode: () => void;
   sidebarCollapsed: boolean;
   inspectorOpen: boolean;
-  onCloseInspector: () => void;
   windowMaximized: boolean;
   onRevealSidebar: () => void;
   activeConversationId: string;
@@ -4310,7 +4281,7 @@ function ChatPanel({
   );
 
   const ensureMessageBottomVisible = useCallback(
-    (messageId: string, reason = 'stream') => {
+    (messageId: string) => {
       const scroller = listScrollerRef.current;
       if (!scroller) {
         return;
@@ -4346,7 +4317,7 @@ function ChatPanel({
   }, []);
 
   const scheduleActiveAssistantFollow = useCallback(
-    (messageId: string, _index: number, reason = 'stream') => {
+    (messageId: string, _index: number) => {
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
@@ -4371,12 +4342,12 @@ function ChatPanel({
               !userDetachedFromBottomRef.current &&
               Date.now() >= manualScrollDetachUntilRef.current
             ) {
-              ensureMessageBottomVisible(messageId, reason);
+              ensureMessageBottomVisible(messageId);
             }
           });
           return;
         }
-        ensureMessageBottomVisible(messageId, reason);
+        ensureMessageBottomVisible(messageId);
       });
     },
     [composerDockHeight, ensureMessageBottomVisible, streamStatusHeight],
@@ -4504,7 +4475,6 @@ function ChatPanel({
 
   const releaseWheelBottomFreeze = useCallback(
     (
-      source: string,
       event: WheelEvent<HTMLElement> | globalThis.WheelEvent,
     ) => {
       if (event.deltaY >= 0) {
@@ -4579,7 +4549,7 @@ function ChatPanel({
         deltaMode: event.deltaMode,
       });
       if (event.deltaY < 0) {
-        if (releaseWheelBottomFreeze('react-list', event)) {
+        if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
         }
         markUserDetachedFromBottom('wheel-up');
@@ -4614,7 +4584,7 @@ function ChatPanel({
         deltaMode: event.deltaMode,
       });
       if (event.deltaY < 0) {
-        if (releaseWheelBottomFreeze('react-scroll-bottom-hotzone', event)) {
+        if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
         }
         markUserDetachedFromBottom('wheel-up-hotzone');
@@ -4647,7 +4617,7 @@ function ChatPanel({
       }
       lastWheelEventAtRef.current = Date.now();
       if (event.deltaY < 0) {
-        if (releaseWheelBottomFreeze('react-chat-body', event)) {
+        if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
         }
         markUserDetachedFromBottom('wheel-up-body');
@@ -4677,7 +4647,7 @@ function ChatPanel({
         return;
       }
       lastWheelEventAtRef.current = Date.now();
-      if (releaseWheelBottomFreeze('native-chat-body', event)) {
+      if (releaseWheelBottomFreeze(event)) {
         markWheelHandled(event);
         return;
       }
@@ -5407,7 +5377,6 @@ function ChatPanel({
     scheduleActiveAssistantFollow(
       activeAssistant.message.id,
       activeAssistant.index,
-      'stream-update',
     );
   }, [
     activeTurnId,
@@ -5548,7 +5517,7 @@ function ChatPanel({
           return;
         }
         lastWheelEventAtRef.current = Date.now();
-        if (releaseWheelBottomFreeze('native-list', event)) {
+        if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
           return;
         }
@@ -5587,7 +5556,7 @@ function ChatPanel({
           return;
         }
         lastWheelEventAtRef.current = Date.now();
-        if (releaseWheelBottomFreeze('native-scroll-bottom-hotzone', event)) {
+        if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
           return;
         }
@@ -5929,12 +5898,14 @@ function ChatPanel({
                       activeAssistantMessageId={
                         activeAssistantForRender?.message.id ?? ''
                       }
+                      goalObjective={activeGoal?.objective ?? ''}
                       onRegenerate={onRegenerate}
                       onEditUserMessage={onEditUserMessage}
                       onGuideMessage={onGuideMessage}
                       onRetryMessage={onRetryMessage}
                       onRetryGuidance={onRetryGuidance}
                       onRevertChangeReport={onRevertChangeReport}
+                      onOpenChangeReview={onOpenChangeReview}
                       onOpenScene={openScene}
                     />
                   </MessageFileReferenceScope>
@@ -7206,12 +7177,6 @@ function TopBar({
   );
 }
 
-function asRecord(value: unknown) {
-  return value != null && typeof value === 'object'
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -7243,34 +7208,6 @@ function snapshotRevertFallbackAllowed(error: unknown) {
     error.statusCode === 404 ||
     error.statusCode === 405
   );
-}
-
-function displayableRuntimeLastError(value: unknown) {
-  const text = String(value ?? '').trim();
-  if (!text) {
-    return '';
-  }
-  if (
-    /Client error '404 Not Found'/i.test(text) &&
-    /\/v1\/turns\/[^/\s]+\/stop/i.test(text)
-  ) {
-    return '';
-  }
-  return text;
-}
-
-function optionalDisplayText(value: unknown) {
-  return String(value ?? '').trim();
-}
-
-function formatDuration(durationMs: number) {
-  if (durationMs <= 0) {
-    return '';
-  }
-  if (durationMs >= 1000) {
-    return `${(durationMs / 1000).toFixed(1)}s`;
-  }
-  return `${Math.round(durationMs)}ms`;
 }
 
 function InteractionCard({

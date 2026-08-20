@@ -65,7 +65,7 @@ import { ImagePreviewDialog } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
-import { quickPayloadText, type QuickLoadPayload } from './quickLoad';
+import type { QuickLoadPayload } from './quickLoad';
 
 type ComposerImageAttachment = {
   id: string;
@@ -810,13 +810,6 @@ export function Composer({
       : language === 'zh' ? '待配置' : 'Configure';
   const permissionLabel = permissionModeLabel(permissionMode, language);
   const permissionTitle = permissionModeDescription(permissionMode, language);
-  const referencePlanEnabled = referencePlanMode === 'auto';
-  const referencePlanLabel =
-    language === 'zh' ? '任务计划' : 'Task plan';
-  const referencePlanDescription =
-    language === 'zh'
-      ? '交付、Review 与核查任务可由模型维护分步进度并实时显示；它不替代实际执行与验收。'
-      : 'For delivery, review, and audit work, the model may maintain visible step progress; it does not replace execution or verification.';
   const firstQueuedMessage = queuedMessages[0] ?? null;
   const queuePreview =
     queuedMessagePreview.trim() || firstQueuedMessage?.text.trim() || '';
@@ -883,7 +876,6 @@ export function Composer({
               referencePlanMode={referencePlanMode}
               activeProjectDir={activeProjectDir}
               projectContext={projectContext}
-              onLoad={loadPayload}
               onToggleSkill={onToggleSkill}
               onVisualInputEnabledChange={onVisualInputEnabledChange}
               onSaveProjectContext={onSaveProjectContext}
@@ -1420,7 +1412,6 @@ function ComposerPopover({
   referencePlanMode,
   activeProjectDir,
   projectContext,
-  onLoad,
   onToggleSkill,
   onVisualInputEnabledChange,
   onSaveProjectContext,
@@ -1451,7 +1442,6 @@ function ComposerPopover({
   referencePlanMode: ReferencePlanMode;
   activeProjectDir?: string;
   projectContext: string;
-  onLoad: (payload: QuickLoadPayload) => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
   onSaveProjectContext?: (value: string) => Promise<string>;

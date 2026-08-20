@@ -541,6 +541,42 @@ assert.deepEqual(
 assert.equal(displayed[1].metadata.segment_boundary, 'turn_guidance');
 assert.equal(displayed[3].loopHistory, undefined);
 
+const rerunProjection = normalizeChatMessagesForDisplay([
+  {
+    id: 'rerun-user',
+    role: 'user',
+    content: '更新后的问题',
+    turnId: 'original-turn',
+    messageIndex: 0,
+  },
+  {
+    id: 'rerun-old-assistant',
+    role: 'assistant',
+    content: '旧的中断回复',
+    turnId: 'original-turn',
+    status: 'complete',
+    messageIndex: 1,
+    metadata: { __bush_superseded: true },
+  },
+  {
+    id: 'rerun-new-assistant',
+    role: 'assistant',
+    content: '重跑后的最终回复',
+    turnId: 'replacement-turn',
+    status: 'complete',
+    messageIndex: 2,
+    metadata: { transcript_kind: 'assistant_final' },
+  },
+]);
+assert.deepEqual(
+  plain(rerunProjection.map((message) => [message.role, message.content])),
+  [
+    ['user', '更新后的问题'],
+    ['assistant', '重跑后的最终回复'],
+  ],
+  'a persisted superseded rerun branch must not return to the visible transcript',
+);
+
 let revisionState = {
   'revision-session': [{
     id: 'revision-assistant',

@@ -1,7 +1,7 @@
 import type { ChatMessage, ChatToolExecution } from '../../types';
 import { displayToolName, isToolRunning } from './toolExecutionState';
 
-export type DiffLineKind = 'addition' | 'deletion' | 'context' | 'hunk';
+type DiffLineKind = 'addition' | 'deletion' | 'context' | 'hunk';
 
 export type DiffLine = {
   kind: DiffLineKind;
@@ -39,7 +39,7 @@ export type ConversationChangeSummary = {
   deletions: number;
 };
 
-export type ConversationChangeReviewItem = {
+type ConversationChangeReviewItem = {
   key: string;
   report: ConversationChangeReport;
   reportIndex: number;
@@ -244,7 +244,7 @@ export function serializeToolChangeReport(report: ToolChangeReport): SerializedT
     .filter((file) => file.path.trim() && (file.diff.trim() || file.lines.length > 0));
 }
 
-export function looksLikeFileChangeExecution(execution: ChatToolExecution) {
+function looksLikeFileChangeExecution(execution: ChatToolExecution) {
   if (String(execution.metadata.kind ?? '').trim() === 'file_change') {
     return true;
   }

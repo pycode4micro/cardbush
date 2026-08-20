@@ -1,7 +1,7 @@
 import type { ExperimentalGoal, ExperimentalGoalStatus } from '../backend/api';
 import type { ChatMessage, ChatToolExecution } from '../types';
 
-export type GoalDecision = 'continue' | 'complete' | 'blocked';
+type GoalDecision = 'continue' | 'complete' | 'blocked';
 
 export interface GoalToolUpdate {
   goalId: string;

@@ -2,7 +2,7 @@ import type { ChatMessage } from '../types';
 import { truncateText } from '../shared/text';
 
 export const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
-export const ASSISTANT_FEEDBACK_EVENT = 'cardbush-assistant-feedback';
+const ASSISTANT_FEEDBACK_EVENT = 'cardbush-assistant-feedback';
 
 const ASSISTANT_FEEDBACK_STORAGE_KEY = 'cardbush_assistant_feedback';
 

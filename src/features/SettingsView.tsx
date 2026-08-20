@@ -85,9 +85,6 @@ import type {
   BotPlatformOverview,
   BotServiceStatus,
   BotStatusResult,
-  CompanionMotionMode,
-  CompanionSettings,
-  CompanionSize,
   ConversationSummary,
   LightThemeStyle,
   ManagedModelConfig,
@@ -121,12 +118,6 @@ const defaultFontSettings = {
   displayName: '',
   filePath: '',
 };
-const defaultCompanionSettings: CompanionSettings = {
-  size: 'normal',
-  opacity: 0.95,
-  motion: 'full',
-};
-
 type VisibleSettingsSection = Exclude<SettingsSection, 'companion'>;
 type SettingsIconComponent = React.ComponentType<{ size?: number; className?: string }>;
 
@@ -4417,41 +4408,6 @@ function SettingsInput({
   );
 }
 
-function SettingsRange({
-  label,
-  value,
-  min,
-  max,
-  step,
-  suffix,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="settings-range">
-      <span>
-        <strong>{label}</strong>
-        <b>{value}{suffix ?? ''}</b>
-      </span>
-      <input
-        type="range"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-      />
-    </label>
-  );
-}
-
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="info-row">
@@ -4898,33 +4854,6 @@ function diagnosticSummary(probe: DiagnosticProbe) {
   return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
 }
 
-function normalizeCompanionSettings(
-  value?: Partial<CompanionSettings>,
-): CompanionSettings {
-  const size = normalizeCompanionSize(value?.size);
-  const motion = normalizeCompanionMotion(value?.motion);
-  const opacity = Number(value?.opacity);
-  return {
-    size,
-    motion,
-    opacity: Number.isFinite(opacity)
-      ? Math.max(0.55, Math.min(1, Math.round(opacity * 100) / 100))
-      : defaultCompanionSettings.opacity,
-  };
-}
-
-function normalizeCompanionSize(value?: string): CompanionSize {
-  return value === 'compact' || value === 'large' || value === 'normal'
-    ? value
-    : defaultCompanionSettings.size;
-}
-
-function normalizeCompanionMotion(value?: string): CompanionMotionMode {
-  return value === 'full' || value === 'reduced' || value === 'off'
-    ? value
-    : defaultCompanionSettings.motion;
-}
-
 function cssImageUrl(value: string) {
   return `url("${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
 }
@@ -4966,13 +4895,6 @@ function normalizeMaxContextTokens(value: unknown) {
 function normalizeMaxCompletionTokens(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
-}
-
-function formatContextTokens(value: number | undefined, language: AppLanguage) {
-  if (!value || value <= 0) {
-    return language === 'zh' ? '未填写' : 'not filled';
-  }
-  return new Intl.NumberFormat(language === 'zh' ? 'zh-CN' : 'en-US').format(value);
 }
 
 function contextTokenDraftValue(value: number | undefined) {

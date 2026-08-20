@@ -1,8 +1,8 @@
 import type { SessionSceneRecord } from '../../backend/api';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 
-export type CardlingScenePlacement = 'top' | 'right' | 'bottom' | 'left';
-export type CardlingSceneMood = 'explain' | 'ask' | 'confirm' | 'warn' | 'celebrate';
+type CardlingScenePlacement = 'top' | 'right' | 'bottom' | 'left';
+type CardlingSceneMood = 'explain' | 'ask' | 'confirm' | 'warn' | 'celebrate';
 
 export type CardlingSceneAnchor = {
   nodeId?: string;

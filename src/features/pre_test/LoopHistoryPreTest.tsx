@@ -155,6 +155,42 @@ function buildMergedFixture() {
       },
     },
   ], 'pre-test-active-turn');
+  const changedFileExecution = toolExecution(
+    3,
+    'write_file',
+    '已更新 loop 历史合并逻辑',
+  );
+  changedFileExecution.metadata = {
+    ...changedFileExecution.metadata,
+    kind: 'file_change',
+    files: [
+      {
+        path: 'src/hooks/useCardbushChat.ts',
+        additions: 18,
+        deletions: 4,
+        diff: '+merge\n-old',
+      },
+      {
+        path: 'src/features/chatMessages/MessageBubble.tsx',
+        additions: 12,
+        deletions: 2,
+        diff: '+render\n-old',
+      },
+      {
+        path: 'src/styles/app.css',
+        additions: 24,
+        deletions: 3,
+        diff: '+style\n-old',
+      },
+      {
+        path: 'scripts/test-history-tool-contract.mjs',
+        additions: 9,
+        deletions: 0,
+        diff: '+test',
+      },
+      { path: 'README.md', additions: 3, deletions: 1, diff: '+docs\n-old' },
+    ],
+  };
   const archivedSteps = [
     historyMessage(
       1,
@@ -171,7 +207,7 @@ function buildMergedFixture() {
     historyMessage(
       3,
       '修正嵌套历史的归一化逻辑，并保留稳定的执行顺序。',
-      toolExecution(3, 'write_file', '已更新 loop 历史合并逻辑'),
+      changedFileExecution,
       'assistant_loop',
     ),
   ];

@@ -33,6 +33,10 @@ const messageBubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
 const slashBlock = source.match(
   /const slashCommands[\s\S]*?const commandItems/,
 )?.[0] ?? '';
@@ -71,6 +75,8 @@ assert.doesNotMatch(modelCommandBlock, /onConfigureModels/);
 assert.match(messageBubbleSource, /userGoalCommandPresentation/);
 assert.match(messageBubbleSource, /<Target size=\{14\}/);
 assert.match(messageBubbleSource, /messageHasGoalContext\(message\)/);
+assert.match(messageBubbleSource, /normalizeGoalObjective\(currentGoalObjective\)/);
+assert.match(appSource, /goalObjective=\{activeGoal\?\.objective \?\? ''\}/);
 assert.match(messageBubbleSource, /metadata\.experimental_goal/);
 assert.match(messageBubbleSource, /metadata\.goal_auto_continuation === true/);
 assert.match(

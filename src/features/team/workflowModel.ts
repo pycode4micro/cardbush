@@ -1,4 +1,4 @@
-export const teamWorkflowProtocol = 'cardbush.team_workflow.v1';
+const teamWorkflowProtocol = 'cardbush.team_workflow.v1';
 
 export type TeamWorkflowNode = {
   id: string;
@@ -86,29 +86,6 @@ export function workflowToYaml(workflow: TeamWorkflow) {
     }
   }
   return `${lines.join('\n')}\n`;
-}
-
-export function workflowDepths(workflow: TeamWorkflow) {
-  const nodes = new Map(workflow.nodes.map((node) => [node.id, node]));
-  const memo = new Map<string, number>();
-  const visit = (id: string, path: Set<string>): number => {
-    if (memo.has(id)) return memo.get(id) ?? 0;
-    if (path.has(id)) return 0;
-    const node = nodes.get(id);
-    if (!node || node.dependsOn.length === 0) {
-      memo.set(id, 0);
-      return 0;
-    }
-    const nextPath = new Set(path).add(id);
-    const depth = Math.max(
-      0,
-      ...node.dependsOn.map((dependency) => visit(dependency, nextPath) + 1),
-    );
-    memo.set(id, depth);
-    return depth;
-  };
-  for (const node of workflow.nodes) visit(node.id, new Set());
-  return memo;
 }
 
 function normalizeWorkflow(value: unknown): TeamWorkflow | null {

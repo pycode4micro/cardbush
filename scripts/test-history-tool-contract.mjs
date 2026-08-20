@@ -92,6 +92,10 @@ const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
 const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
@@ -99,6 +103,37 @@ const chatHookSource = fs.readFileSync(
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
+);
+assert.match(bubbleSource, /AssistantChangedFilesSummary/);
+assert.match(bubbleSource, /completedAssistantChangeReport/);
+assert.match(
+  bubbleSource,
+  /className="assistant-changed-file"[\s\S]*?openInspector\(target, basename\(file\.path\)\)/,
+  'Changed file rows must open the read-only inspector',
+);
+assert.match(
+  bubbleSource,
+  /className="assistant-changed-files-more"[\s\S]*?aria-expanded=\{expanded\}/,
+  'Changed file overflow must expand progressively',
+);
+assert.match(
+  bubbleSource,
+  /className="assistant-changed-files-review"[\s\S]*?onClick=\{onOpenReview\}/,
+  'The final change summary must expose the conversation review panel',
+);
+assert.match(
+  appSource,
+  /onOpenChangeReview=\{onOpenChangeReview\}/,
+  'Chat messages must receive the existing right-side review action',
+);
+assert.match(
+  bubbleSource,
+  /function resolveChangedFilePath[\s\S]*?isAbsoluteLocalPath\(path\)/,
+  'Relative change paths must resolve against the active workspace',
+);
+assert.match(
+  stylesSource,
+  /\.assistant-changed-files-summary[\s\S]*?border-radius:\s*12px/,
 );
 assert.match(
   bubbleSource,
@@ -139,7 +174,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-process svg,[\s\S]*?\.processing-context-tab > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-process svg,[\s\S]*?\.processing-context-tab\.running > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
   'Functional execution spinners must remain visibly active when the OS reduces motion',
 );
 

@@ -24,8 +24,6 @@ import type {
   SkillSummary,
   TeamFlowActionType,
   TeamFlowActionOption,
-  TeamFlowEdge,
-  TeamFlowGraph,
   TeamFlowLayer,
   TeamFlowNode,
   TeamFlowState,
@@ -326,10 +324,6 @@ export interface ControlStreamRequest {
   onSceneEvent?: (event: SceneStreamEvent) => void;
 }
 
-export interface RegenerateTurnRequest extends ControlStreamRequest {
-  turnId: string;
-}
-
 export interface EditMessageRequest extends ControlStreamRequest {
   messageId: string;
   content: string;
@@ -386,7 +380,7 @@ export interface ShadowConversationStreamRequest {
   onDone?: (message: { id: string; content: string; createdAt: string }) => void;
 }
 
-export interface SessionContextSearchItem {
+interface SessionContextSearchItem {
   messageId: string;
   turnId: string;
   role: ChatMessage['role'];
@@ -545,7 +539,7 @@ export interface SubagentDispatchRequest {
   waitSeconds?: number;
 }
 
-export interface SubagentWriteLeaseResult {
+interface SubagentWriteLeaseResult {
   status?: string;
   policy?: string;
   scope: string[];
@@ -851,21 +845,6 @@ export async function fetchExperimentalGoals(sessionId: string): Promise<Experim
   if (sessionId.trim()) endpoint.searchParams.set('session_id', sessionId.trim());
   const payload = recordFromUnknown(await readJson<unknown>(endpoint.toString()));
   return arrayFrom(payload.items).map(experimentalGoalFromPayload).filter(Boolean);
-}
-
-export async function createExperimentalGoal(request: {
-  sessionId: string;
-  objective: string;
-  tokenBudget?: number;
-}): Promise<ExperimentalGoal> {
-  return experimentalGoalFromPayload(await readJson<unknown>(url('/v1/experimental/goals'), {
-    method: 'POST',
-    body: JSON.stringify({
-      session_id: request.sessionId,
-      objective: request.objective,
-      ...(request.tokenBudget ? { token_budget: request.tokenBudget } : {}),
-    }),
-  }));
 }
 
 export async function updateExperimentalGoal(request: {
@@ -2118,7 +2097,7 @@ export async function fetchSessionWorkspaceChanges(
     .map((item) => toolExecutionFromPayload(workspaceChangeToolPayload(item)));
 }
 
-export interface SendGuidanceResponse {
+interface SendGuidanceResponse {
   continuationQueued: boolean;
   willContinueAfterCurrentRound: boolean;
   guidance: {
@@ -2183,29 +2162,6 @@ export async function validateTeamWorkflow({
   };
 }
 
-export async function fetchWorkflowRun(runId: string): Promise<Record<string, unknown>> {
-  return readJson<Record<string, unknown>>(
-    url(`/v1/workflow-runs/${encodeURIComponent(runId.trim())}`),
-  );
-}
-
-export async function fetchSessionWorkflowRuns(
-  sessionId: string,
-  limit = 20,
-): Promise<Record<string, unknown>[]> {
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/workflow-runs?limit=${limit}`),
-  );
-  return arrayFrom(payload.items).map(asRecord);
-}
-
-export async function stopWorkflowRun(runId: string): Promise<Record<string, unknown>> {
-  return readJson<Record<string, unknown>>(
-    url(`/v1/workflow-runs/${encodeURIComponent(runId.trim())}/stop`),
-    { method: 'POST' },
-  );
-}
-
 export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
   const normalized = sessionId.trim();
   if (!normalized) {
@@ -2215,17 +2171,6 @@ export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
     url(`/v1/team-flows/${encodeURIComponent(normalized)}`),
   );
   return teamFlowStateFromPayload(payload, normalized);
-}
-
-export async function fetchTeamFlowGraph(sessionId: string): Promise<TeamFlowGraph> {
-  const normalized = sessionId.trim();
-  if (!normalized) {
-    throw new Error(localizedClientMessage('Team Flow session_id 为空', 'Team Flow session_id is empty'));
-  }
-  const payload = await readJson<unknown>(
-    url(`/v1/team-flows/${encodeURIComponent(normalized)}/graph`),
-  );
-  return teamFlowGraphFromPayload(payload, normalized);
 }
 
 export async function sendTeamFlowAction(
@@ -2555,22 +2500,6 @@ export async function streamTurnEvents(request: TurnEventStreamRequest) {
       ? { 'Last-Event-ID': request.lastEventId.trim() }
       : undefined,
     allowReplayReset: true,
-  });
-}
-
-export async function regenerateTurn(request: RegenerateTurnRequest) {
-  const sessionId = request.sessionId.trim();
-  const turnId = request.turnId.trim();
-  if (!sessionId || !turnId) {
-    throw new Error(localizedClientMessage('会话或 turn_id 为空', 'Conversation ID or turn_id is empty'));
-  }
-  await streamEndpoint({
-    endpoint: url(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/turns/${encodeURIComponent(turnId)}/regenerate`,
-    ),
-    method: 'POST',
-    body: controlStreamBody(request),
-    request,
   });
 }
 
@@ -3527,30 +3456,6 @@ function teamFlowStateFromPayload(
   };
 }
 
-function teamFlowGraphFromPayload(
-  payload: unknown,
-  fallbackSessionId = '',
-): TeamFlowGraph {
-  const root = asRecord(payload);
-  const flow = teamFlowStateFromPayload(
-    root.flow ?? root.team_flow ?? root.teamFlow ?? root.state ?? payload,
-    fallbackSessionId,
-  );
-  const nodes = mergeTeamFlowNodes([
-    ...arrayFrom(root.nodes).map((item, index) => teamFlowNodeFromPayload(item, index)),
-    ...flow.nodes,
-  ]);
-  const edges = arrayFrom(root.edges ?? root.links).map((item, index) =>
-    teamFlowEdgeFromPayload(item, index),
-  );
-  return {
-    flow,
-    nodes,
-    edges,
-    raw: root,
-  };
-}
-
 function teamFlowLayerFromPayload(payload: unknown, index = 0): TeamFlowLayer {
   const item = asRecord(payload);
   const layerIndex = optionalNumber(
@@ -3621,19 +3526,6 @@ function teamFlowNodeFromPayload(payload: unknown, index = 0): TeamFlowNode {
     validation: optionalString(
       item.validation ?? item.validation_contract ?? item.validationContract,
     ),
-    raw: item,
-  };
-}
-
-function teamFlowEdgeFromPayload(payload: unknown, index = 0): TeamFlowEdge {
-  const item = asRecord(payload);
-  const source = String(item.source ?? item.from ?? item.parent ?? '').trim();
-  const target = String(item.target ?? item.to ?? item.child ?? '').trim();
-  return {
-    id: String(item.id ?? `${source || 'source'}-${target || 'target'}-${index}`),
-    source,
-    target,
-    label: optionalString(item.label ?? item.title),
     raw: item,
   };
 }
@@ -4674,7 +4566,11 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   const clientMessageId = optionalString(
     value.client_message_id ?? value.clientMessageId ?? sourceMetadata?.client_message_id,
   );
-  const metadata = completedAt || clientMessageId
+  const backendSuperseded =
+    value.superseded === true ||
+    sourceMetadata?.__bush_superseded === true ||
+    sourceMetadata?.superseded === true;
+  const metadata = completedAt || clientMessageId || backendSuperseded
     ? {
         ...sourceMetadata,
         ...(completedAt
@@ -4684,6 +4580,7 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
             }
           : {}),
         ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+        ...(backendSuperseded ? { __bush_superseded: true } : {}),
       }
     : sourceMetadata;
   const conversationId = optionalString(

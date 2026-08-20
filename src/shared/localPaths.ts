@@ -15,10 +15,6 @@ export function stripWrappingQuotes(value: string) {
   return trimmed;
 }
 
-export function stripLooseWrappingQuotes(value: string) {
-  return value.replace(/^['"]|['"]$/g, '');
-}
-
 export function isImagePath(value: string) {
   return /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(stripWrappingQuotes(value.trim()));
 }
@@ -69,7 +65,7 @@ export function fileUrl(value: string) {
   return encodedLocalResourceUrl(normalized);
 }
 
-export function encodedLocalResourceUrl(value: string) {
+function encodedLocalResourceUrl(value: string) {
   const pathValue = value.replaceAll('\\', '/').replace(/^\/+/, '');
   const encodedPath = pathValue
     .split('/')

@@ -4745,7 +4745,10 @@ function preserveLocalAssistantTimingMetadata(
 }
 
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  const visibleMessages = messages.filter((message) => !isGoalSelfCheckMessage(message));
+  const visibleMessages = messages.filter(
+    (message) =>
+      !isGoalSelfCheckMessage(message) && !isBackendSupersededMessage(message),
+  );
   const hasIntermediateSegments = hasIntermediateAssistantSegments(visibleMessages);
   if (isStableVisibleTranscript(visibleMessages) && !hasIntermediateSegments) {
     return visibleMessages;
@@ -5167,6 +5170,15 @@ function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
   const loopHistoryByTurn = new Map<string, ChatMessage[]>();
   const visible: ChatMessage[] = [];
   for (const message of sorted) {
+    // The backend keeps edit/rerun branches for audit when
+    // include_superseded=true. They are not assistant loop segments and must
+    // never fall back into the visible transcript just because the replacement
+    // response belongs to a newly generated turn. Guidance segments are not
+    // marked with this persistence flag and continue through the normal
+    // turn-guidance projection below.
+    if (isBackendSupersededMessage(message)) {
+      continue;
+    }
     if (isSupersededLoopAssistant(message)) {
       const key = turnTranscriptKey(message);
       loopHistoryByTurn.set(key, [
@@ -5196,6 +5208,16 @@ function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
     };
   }
   return sortMessagesByTranscriptOrder(dedupeVisibleTranscriptMessages(visible));
+}
+
+function isBackendSupersededMessage(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.__bush_superseded === true ||
+    metadata.superseded === true ||
+    metadata.is_superseded === true ||
+    metadata.isSuperseded === true
+  );
 }
 
 function dedupeVisibleTranscriptMessages(messages: ChatMessage[]) {

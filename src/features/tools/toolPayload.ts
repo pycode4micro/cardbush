@@ -21,12 +21,6 @@ export function nonEmptyString(value: unknown) {
   return text || undefined;
 }
 
-export function stringArray(value: unknown) {
-  return Array.isArray(value)
-    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
-    : [];
-}
-
 export function stringArrayLoose(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -57,7 +51,7 @@ export function summarizeLooseValue(value: unknown): string {
   return String(value).trim();
 }
 
-export function summarizeRecord(value: Record<string, unknown>) {
+function summarizeRecord(value: Record<string, unknown>) {
   const entries = Object.entries(value).filter(([, raw]) => raw != null && raw !== '');
   if (entries.length === 0) {
     return '-';

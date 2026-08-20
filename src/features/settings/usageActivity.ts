@@ -1,7 +1,7 @@
 import { fetchMessages, fetchSessionTokenUsage } from '../../backend/api';
 import type { ChatMessage, ConversationSummary, SessionTokenUsage } from '../../types';
 
-export interface UsageActivityDay {
+interface UsageActivityDay {
   date: string;
   interactions: number;
 }
@@ -55,7 +55,7 @@ export async function loadCumulativeUsageStatistics(
   return aggregateCumulativeUsageStatistics(snapshots);
 }
 
-export function aggregateCumulativeUsageStatistics(
+function aggregateCumulativeUsageStatistics(
   snapshots: SessionUsageSnapshot[],
 ): CumulativeUsageStatistics {
   const activityByDate = new Map<string, number>();

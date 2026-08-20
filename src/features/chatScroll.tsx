@@ -44,18 +44,6 @@ export function lastAssistantMessage(messages: ChatMessage[]) {
   return null;
 }
 
-export function isScrollerNearVisualBottom(
-  scroller: HTMLElement,
-  composerDockHeight: number,
-  streamStatusHeight: number,
-) {
-  return (
-    visualBottomScrollTop(scroller, composerDockHeight, streamStatusHeight) -
-      scroller.scrollTop <=
-    scrollBottomLockTolerance
-  );
-}
-
 export function absoluteBottomScrollTop(scroller: HTMLElement) {
   return Math.max(0, scroller.scrollHeight - scroller.clientHeight);
 }

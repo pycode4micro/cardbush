@@ -46,7 +46,7 @@ const fileLikeExtensions = new Set([
 ]);
 
 export function normalizeMarkdownContentForDisplay(content: string) {
-  return content.replace(
+  const normalized = content.replace(
     /^([ \t]*)(`{3,}|~{3,})([^\r\n]*)$/gm,
     (line, indent: string, fence: string, rawInfo: string) => {
       const info = rawInfo.trim();
@@ -65,6 +65,10 @@ export function normalizeMarkdownContentForDisplay(content: string) {
 
       return line;
     },
+  );
+  return normalized.replace(
+    /^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*\1[ \t]*$/gm,
+    '',
   );
 }
 

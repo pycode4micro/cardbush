@@ -7,7 +7,7 @@ type IntlSegmenterConstructor = new (
   options?: { granularity?: 'grapheme' },
 ) => IntlSegmenter;
 
-export function textGraphemes(value: string) {
+function textGraphemes(value: string) {
   const Segmenter = (Intl as unknown as { Segmenter?: IntlSegmenterConstructor }).Segmenter;
   if (Segmenter) {
     return Array.from(

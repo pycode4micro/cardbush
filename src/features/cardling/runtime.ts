@@ -34,7 +34,7 @@ export type SceneOpenTarget = {
   label?: string;
 };
 
-export type SceneRuntimeNodeState = {
+type SceneRuntimeNodeState = {
   nodeId: string;
   label?: string;
   status?: string;
@@ -42,7 +42,7 @@ export type SceneRuntimeNodeState = {
   values: Record<string, string>;
 };
 
-export type SceneRuntimeEdgeState = {
+type SceneRuntimeEdgeState = {
   from: string;
   to: string;
   status?: string;
@@ -64,7 +64,7 @@ export type SceneRuntimeState = {
   updatedAt: string;
 };
 
-export type SceneHealthIssue = {
+type SceneHealthIssue = {
   code: string;
   message: string;
   severity: 'info' | 'warning' | 'error';

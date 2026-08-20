@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Clipboard, LoaderCircle, Network, Play, RefreshCw, Sparkles, Terminal, WrapText } from 'lucide-react';
+import { ChevronDown, Clipboard, LoaderCircle, Network, Play, RefreshCw, Sparkles, Terminal, WrapText } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
 import { dispatchSubagent, type SubagentDispatchResult } from '../../backend/api';
@@ -405,21 +405,6 @@ function stringArray(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
     : [];
-}
-
-function firstDefined(values: unknown[]) {
-  return values.find((value) => {
-    if (value == null || value === '') {
-      return false;
-    }
-    if (Array.isArray(value)) {
-      return value.length > 0;
-    }
-    if (typeof value === 'object') {
-      return Object.keys(asRecord(value)).length > 0;
-    }
-    return true;
-  });
 }
 
 function ToolExecutionDetail({

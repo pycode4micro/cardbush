@@ -1,5 +1,3 @@
-import type { LucideIcon } from 'lucide-react';
-
 export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'tools' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
@@ -22,12 +20,12 @@ export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
 export type ReferencePlanMode = 'off' | 'auto';
 export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
-export type ProxyMode = 'none' | 'system' | 'manual';
+type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type ReasoningLevel = 'low' | 'medium' | 'high' | 'max';
 export type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
-export type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
+type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
 export type CompanionSize = 'compact' | 'normal' | 'large';
 export type CompanionMotionMode = 'full' | 'reduced' | 'off';
 export type CompanionStatus =
@@ -52,23 +50,23 @@ export type WeixinLoginStatus =
   | 'expired'
   | 'failed';
 
-export interface ProxySettings {
+interface ProxySettings {
   mode: ProxyMode;
   httpProxy: string;
   httpsProxy: string;
   noProxy: string;
 }
 
-export interface BackendAuthSettings {
+interface BackendAuthSettings {
   bearerToken: string;
   localRequestKey: string;
 }
 
-export interface TerminalSettings {
+interface TerminalSettings {
   runtime: TerminalRuntime;
 }
 
-export interface OsSettings {
+interface OsSettings {
   launchAtLogin: boolean;
   startInOsMode: boolean;
   taskbarPlacement: 'top' | 'bottom';
@@ -230,13 +228,13 @@ export interface McpServerValidationResult {
   raw: Record<string, unknown>;
 }
 
-export interface AppFontSettings {
+interface AppFontSettings {
   family: string;
   displayName: string;
   filePath: string;
 }
 
-export interface UserProfile {
+interface UserProfile {
   name: string;
   membership: string;
   avatarEmoji: string;
@@ -249,15 +247,15 @@ export interface CompanionSettings {
   motion: CompanionMotionMode;
 }
 
-export interface BrowserSettings {
+interface BrowserSettings {
   privacyMode: boolean;
 }
 
-export interface ShadowUiSettings {
+interface ShadowUiSettings {
   accentColor: string;
 }
 
-export interface ThinkingUiSettings {
+interface ThinkingUiSettings {
   visible: boolean;
   accentColor: string;
 }
@@ -276,7 +274,7 @@ export interface ThinkingStreamEvent {
   createdAt: string;
 }
 
-export type RuntimeConnectionState =
+type RuntimeConnectionState =
   | 'retrying'
   | 'syncing'
   | 'recovered'
@@ -309,7 +307,7 @@ export interface CardlingDesktopState {
   miniChat: CardlingMiniChatState;
 }
 
-export interface CardlingMiniChatState {
+interface CardlingMiniChatState {
   title: string;
   lastUser: string;
   lastAssistant: string;
@@ -336,12 +334,6 @@ export interface AppSettingsState {
   companion: CompanionSettings;
   font: AppFontSettings;
   user: UserProfile;
-}
-
-export interface NavItem {
-  id: AppSection;
-  label: string;
-  icon: LucideIcon;
 }
 
 export interface ConversationSummary {
@@ -382,7 +374,7 @@ export interface ChatAttachment {
 
 export type RuntimeAssetCategory = 'prompts' | 'skills' | 'tools';
 
-export interface RuntimeAssetLocation {
+interface RuntimeAssetLocation {
   sourcePath: string;
   targetPath: string;
 }
@@ -396,7 +388,7 @@ export interface RuntimeAssetResetPlan {
   restartRequiredAfterChange: boolean;
 }
 
-export interface RuntimeAssetResetCategoryResult extends RuntimeAssetLocation {
+interface RuntimeAssetResetCategoryResult extends RuntimeAssetLocation {
   changed: boolean;
   seedFileCount: number;
   restoredFileCount: number;
@@ -441,7 +433,7 @@ export interface ChatToolExecution {
   metadata: Record<string, unknown>;
 }
 
-export interface TaskPlanNode {
+interface TaskPlanNode {
   id?: string;
   step: string;
   status: TaskPlanStatus;
@@ -545,7 +537,7 @@ export interface TeamFlowActionOption {
   raw: Record<string, unknown>;
 }
 
-export type TeamFlowEventType =
+type TeamFlowEventType =
   | 'team_layer'
   | 'team_node'
   | 'team_action_required';
@@ -589,21 +581,6 @@ export interface TeamFlowState {
   nodes: TeamFlowNode[];
   suggestedActions: TeamFlowActionType[];
   actionOptions: TeamFlowActionOption[];
-  raw: Record<string, unknown>;
-}
-
-export interface TeamFlowEdge {
-  id: string;
-  source: string;
-  target: string;
-  label?: string;
-  raw: Record<string, unknown>;
-}
-
-export interface TeamFlowGraph {
-  flow: TeamFlowState;
-  nodes: TeamFlowNode[];
-  edges: TeamFlowEdge[];
   raw: Record<string, unknown>;
 }
 
@@ -771,11 +748,11 @@ export interface SubagentCapabilities {
   toolProfiles: string[];
 }
 
-export interface SubagentRuntimeItem extends SubagentListItem {
+interface SubagentRuntimeItem extends SubagentListItem {
   runtime: Record<string, unknown>;
 }
 
-export interface SubagentSupervisorLimits {
+interface SubagentSupervisorLimits {
   maxActiveTotal?: number;
   maxActivePerSession?: number;
   maxActivePerAgent?: number;
@@ -783,7 +760,7 @@ export interface SubagentSupervisorLimits {
   taskTtlSeconds?: number;
 }
 
-export interface SubagentSupervisorCounts {
+interface SubagentSupervisorCounts {
   totalActive?: number;
   sessionActive: Record<string, number>;
   agentActive: Record<string, number>;
@@ -808,7 +785,7 @@ export interface SubagentRuntimeResult {
 
 export const SUBAGENT_DISPATCH_EVENT_PROTOCOL = 'bushserver.subagent_dispatch_event.v1';
 
-export type SubagentDispatchPhase = 'dispatching' | 'dispatched' | 'failed';
+type SubagentDispatchPhase = 'dispatching' | 'dispatched' | 'failed';
 
 export interface SubagentDispatchEvent {
   protocol: string;
@@ -873,11 +850,4 @@ export interface SubagentCompletionEvent {
   updatedAt?: string;
   task: SubagentTaskSnapshot;
   raw: Record<string, unknown>;
-}
-
-export interface AutomationTask {
-  id: string;
-  title: string;
-  cadence: string;
-  enabled: boolean;
 }
