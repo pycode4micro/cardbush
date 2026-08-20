@@ -59,6 +59,15 @@ assert.match(hook, /isGoalSelfCheckMessage/);
 assert.match(hook, /goalPollingDelayMs\(\)/);
 assert.match(hook, /document\.visibilityState === 'hidden' \? 7_000 : 2_000/);
 assert.match(hook, /fetchSessionMessages\(sessionId, \{ includeSuperseded: true \}\)/);
+assert.match(api, /export async function streamTurnEvents/);
+assert.match(api, /\/v1\/turns\/\$\{encodeURIComponent\(turnId\)\}\/events/);
+assert.match(api, /Last-Event-ID/);
+assert.match(api, /onEventCursor/);
+assert.match(hook, /subscribeGoalTurn\(sessionId, sessionResult\.latestTurn\.turnId\)/);
+assert.match(hook, /ensureBackgroundTurnAssistant/);
+assert.match(hook, /streamTurnEvents\(\{/);
+assert.match(hook, /afterSequence: initialCursor\.sequence/);
+assert.match(hook, /lastEventId: initialCursor\.lastEventId/);
 assert.match(hook, /fetchPendingInteraction\(sessionId\)/);
 assert.match(hook, /mergePolledMessagesPreservingLocalState/);
 assert.match(hook, /if \(loaded\.length === 0\) \{\s*return existing;/);
@@ -89,6 +98,10 @@ assert.match(runtimeRail, /runtime-goal-rounds/);
 assert.match(runtimeRail, /goalTokenLabel/);
 assert.match(runtimeRail, /runtime-goal-cancel/);
 assert.match(runtimeRail, /等待后端继续/);
+assert.match(runtimeRail, /processing-context-tab \$\{running \? 'running' : 'settled'\}/);
+assert.match(runtimeRail, /running \? <LoaderCircle size=\{13\} \/> : <Target size=\{13\} \/>/);
+assert.match(runtimeRail, /goal\.status === 'active'/);
+assert.match(runtimeRail, /isLiveContinuation/);
 assert.match(runtimeRail, /目标/);
 assert.match(runtimeRail, /计划/);
 assert.match(composer, /commands\.filter\(\(command\) => command\.id !== '\/goal'\)/);
@@ -169,6 +182,12 @@ assert.equal(isGoalSelfCheckMessage({
   role: 'user',
   content: 'call update_goal',
   metadata: { runtime_user_label: 'goal_self_check' },
+}), true);
+assert.equal(isGoalSelfCheckMessage({
+  id: 'goal-auto-user',
+  role: 'user',
+  content: 'call update_goal',
+  metadata: { goal_auto_continuation: true },
 }), true);
 assert.equal(isGoalSelfCheckMessage({
   id: 'real-user',

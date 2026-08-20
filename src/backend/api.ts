@@ -51,6 +51,7 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  RuntimeConnectionUpdate,
   RuntimeAssetCategory,
   RuntimeAssetResetPlan,
   RuntimeAssetResetResult,
@@ -242,10 +243,47 @@ export interface ChatStreamRequest {
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
+  onConnectionState?: (update: RuntimeConnectionUpdate) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
   onSceneEvent?: (event: SceneStreamEvent) => void;
+}
+
+export type ChatStreamEventHandlers = Pick<
+  ChatStreamRequest,
+  | 'sessionId'
+  | 'signal'
+  | 'onStart'
+  | 'onDelta'
+  | 'onExecution'
+  | 'onAssistantRevision'
+  | 'onToolExecution'
+  | 'onTaskPlanUpdate'
+  | 'onInteractiveRequest'
+  | 'onFinalAssistantText'
+  | 'onMessages'
+  | 'onTeamFlowEvent'
+  | 'onSubagentDispatch'
+  | 'onThinking'
+  | 'onConnectionState'
+  | 'onContextWindowUsage'
+  | 'onCapabilityCandidates'
+  | 'onWorkflowEvent'
+  | 'onSceneEvent'
+> & {
+  onReplayReset?: (payload: Record<string, unknown>) => void;
+  onEventCursor?: (cursor: {
+    eventName: string;
+    eventId: string;
+    sequence: number;
+  }) => void;
+};
+
+export interface TurnEventStreamRequest extends ChatStreamEventHandlers {
+  turnId: string;
+  afterSequence?: number;
+  lastEventId?: string;
 }
 
 export interface ControlStreamRequest {
@@ -281,6 +319,7 @@ export interface ControlStreamRequest {
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
+  onConnectionState?: (update: RuntimeConnectionUpdate) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
@@ -317,6 +356,7 @@ export interface SendGuidanceRequest {
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
   onThinking?: (event: ThinkingStreamEvent) => void;
+  onConnectionState?: (update: RuntimeConnectionUpdate) => void;
   onContextWindowUsage?: (usage: RuntimeContextWindowUsage) => void;
   onCapabilityCandidates?: (update: CapabilityCandidatesUpdate) => void;
   onWorkflowEvent?: (event: TeamWorkflowStreamEvent) => void;
@@ -422,6 +462,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   interactiveRequests: false,
   permissionRequests: true,
   turnStop: true,
+  turnEventReplay: false,
   runtimeInspection: true,
   maintenanceConversationHistoryClear: false,
   maintenanceLogsCacheClear: false,
@@ -578,8 +619,11 @@ export interface SessionLatestTurn {
   status: string;
   stopped: boolean;
   stopReason: string;
+  stopScenario: string;
+  errorMessage: string;
   finalDecision: string;
   finalReason: string;
+  stopDetails?: Record<string, unknown>;
 }
 
 function url(path: string) {
@@ -1446,8 +1490,11 @@ function sessionLatestTurnFromPayload(value: unknown): SessionLatestTurn | undef
     status: String(item.status ?? '').trim().toLowerCase(),
     stopped: item.stopped === true,
     stopReason: String(item.stop_reason ?? item.stopReason ?? ''),
+    stopScenario: String(item.stop_scenario ?? item.stopScenario ?? ''),
+    errorMessage: String(item.error_message ?? item.errorMessage ?? ''),
     finalDecision: String(item.final_decision ?? item.finalDecision ?? ''),
     finalReason: String(item.final_reason ?? item.finalReason ?? ''),
+    stopDetails: asOptionalRecord(item.stop_details ?? item.stopDetails),
   };
 }
 
@@ -2492,6 +2539,25 @@ export async function streamChat(request: ChatStreamRequest) {
   });
 }
 
+export async function streamTurnEvents(request: TurnEventStreamRequest) {
+  const turnId = request.turnId.trim();
+  if (!turnId) {
+    throw new Error(localizedClientMessage('turn_id 为空', 'turn_id is empty'));
+  }
+  const afterSequence = Math.max(0, Math.floor(request.afterSequence ?? 0));
+  return streamEndpoint({
+    endpoint: url(
+      `/v1/turns/${encodeURIComponent(turnId)}/events?after_sequence=${afterSequence}`,
+    ),
+    method: 'GET',
+    request,
+    additionalHeaders: request.lastEventId?.trim()
+      ? { 'Last-Event-ID': request.lastEventId.trim() }
+      : undefined,
+    allowReplayReset: true,
+  });
+}
+
 export async function regenerateTurn(request: RegenerateTurnRequest) {
   const sessionId = request.sessionId.trim();
   const turnId = request.turnId.trim();
@@ -2596,31 +2662,15 @@ async function streamEndpoint({
   method,
   body,
   request,
+  additionalHeaders,
+  allowReplayReset = false,
 }: {
   endpoint: string;
   method: string;
-  body: Record<string, unknown>;
-  request: Pick<
-    ChatStreamRequest,
-    | 'sessionId'
-    | 'signal'
-    | 'onStart'
-    | 'onDelta'
-    | 'onExecution'
-    | 'onAssistantRevision'
-    | 'onToolExecution'
-    | 'onTaskPlanUpdate'
-    | 'onInteractiveRequest'
-    | 'onFinalAssistantText'
-    | 'onMessages'
-    | 'onTeamFlowEvent'
-    | 'onSubagentDispatch'
-    | 'onThinking'
-    | 'onContextWindowUsage'
-    | 'onCapabilityCandidates'
-    | 'onWorkflowEvent'
-    | 'onSceneEvent'
-  >;
+  body?: Record<string, unknown>;
+  request: ChatStreamEventHandlers;
+  additionalHeaders?: Record<string, string>;
+  allowReplayReset?: boolean;
 }) {
   const response = await fetch(endpoint, {
     method,
@@ -2628,8 +2678,9 @@ async function streamEndpoint({
     headers: {
       ...(await headersFor(endpoint, true)),
       accept: 'text/event-stream',
+      ...additionalHeaders,
     },
-    body: JSON.stringify(body),
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
   if (!response.ok || response.body == null) {
@@ -2648,10 +2699,13 @@ async function streamEndpoint({
   const decoder = new TextDecoder();
   let buffer = '';
   let eventName = 'message';
+  let eventId = '';
   let dataLines: string[] = [];
   let emittedAny = false;
   const seenStreamEvents = new Set<string>();
   let donePayload: Record<string, unknown> = {};
+  let sawDoneEvent = false;
+  let sawReplayReset = false;
 
   const flush = () => {
     if (dataLines.length === 0) {
@@ -2661,20 +2715,37 @@ async function streamEndpoint({
     const rawData = dataLines.join('\n');
     dataLines = [];
     const currentEvent = eventName;
+    const currentEventId = eventId;
     eventName = 'message';
-    const eventIdentity = streamEventIdentity(currentEvent, rawData);
+    eventId = '';
+    const eventIdentity = streamEventIdentity(currentEvent, rawData, currentEventId);
     if (eventIdentity && seenStreamEvents.has(eventIdentity)) {
       return;
     }
     if (eventIdentity) {
       seenStreamEvents.add(eventIdentity);
     }
+    const decodedForCursor = parseJson(rawData);
+    request.onEventCursor?.({
+      eventName: currentEvent,
+      eventId:
+        currentEventId ||
+        optionalString(decodedForCursor?.event_id ?? decodedForCursor?.eventId) ||
+        '',
+      sequence: optionalNumber(decodedForCursor?.sequence) ?? 0,
+    });
     const effect = handleStreamEvent(currentEvent, rawData, emittedAny, request);
     if (effect?.clearEmitted) {
       emittedAny = false;
     }
     if (effect?.donePayload) {
       donePayload = effect.donePayload;
+    }
+    if (currentEvent === 'done') {
+      sawDoneEvent = true;
+    }
+    if (currentEvent === 'replay_reset') {
+      sawReplayReset = true;
     }
     if (currentEvent === 'token') {
       emittedAny = true;
@@ -2692,6 +2763,8 @@ async function streamEndpoint({
         flush();
       } else if (line.startsWith('event:')) {
         eventName = line.slice(6).trim();
+      } else if (line.startsWith('id:')) {
+        eventId = line.slice(3).trim();
       } else if (line.startsWith('data:')) {
         const raw = line.slice(5);
         dataLines.push(raw.startsWith(' ') ? raw.slice(1) : raw);
@@ -2707,10 +2780,16 @@ async function streamEndpoint({
     dataLines.push(buffer.trim());
   }
   flush();
+  if (!sawDoneEvent && !(allowReplayReset && sawReplayReset)) {
+    throw new Error('SSE connection closed before the done event');
+  }
   return donePayload;
 }
 
-function streamEventIdentity(eventName: string, rawData: string) {
+function streamEventIdentity(eventName: string, rawData: string, sseEventId = '') {
+  if (sseEventId) {
+    return `event:${sseEventId}`;
+  }
   const payload = parseJson(rawData);
   if (!payload) {
     return '';
@@ -3003,29 +3082,15 @@ function handleStreamEvent(
   eventName: string,
   rawData: string,
   emittedAny: boolean,
-  request: Pick<
-    ChatStreamRequest,
-    | 'sessionId'
-    | 'onStart'
-    | 'onDelta'
-    | 'onExecution'
-    | 'onToolExecution'
-    | 'onTaskPlanUpdate'
-    | 'onInteractiveRequest'
-    | 'onFinalAssistantText'
-    | 'onMessages'
-    | 'onAssistantRevision'
-    | 'onTeamFlowEvent'
-    | 'onSubagentDispatch'
-    | 'onThinking'
-    | 'onContextWindowUsage'
-    | 'onCapabilityCandidates'
-    | 'onWorkflowEvent'
-    | 'onSceneEvent'
-  >,
+  request: ChatStreamEventHandlers,
 ): { clearEmitted?: boolean; donePayload?: Record<string, unknown> } | undefined {
   const decoded = parseJson(rawData);
   if (decoded == null) {
+    return;
+  }
+
+  if (eventName === 'replay_reset') {
+    request.onReplayReset?.(decoded);
     return;
   }
 
@@ -3082,6 +3147,17 @@ function handleStreamEvent(
       preview: delta,
       createdAt: String(decoded.created_at ?? new Date().toISOString()),
     });
+    return;
+  }
+
+  if (
+    eventName === 'connection_state' ||
+    eventName === 'provider_retry' ||
+    eventName === 'provider_recovered'
+  ) {
+    request.onConnectionState?.(
+      runtimeConnectionUpdateFromPayload(eventName, decoded, request.sessionId),
+    );
     return;
   }
 
@@ -3942,6 +4018,9 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
       'workspace_changes',
       'workspace_change_stream',
       'file_change_stream',
+    ]),
+    turnEventReplay: capabilityBoolean(features, endpoints, 'turnEventReplay', [
+      'turn_event_replay',
     ]),
     sessionContextSearch: capabilityBoolean(features, endpoints, 'sessionContextSearch', [
       'session_context_search',
@@ -5756,9 +5835,16 @@ function streamErrorMessage(decoded: Record<string, unknown>) {
   const limitReason = optionalString(
     decoded.limit_reason ??
       decoded.limitReason ??
+      decoded.stop_reason ??
+      decoded.stopReason ??
       stopDetails.limit_reason ??
-      stopDetails.limitReason,
+      stopDetails.limitReason ??
+      structured.code,
   );
+  const timeoutMessage = localizedLlmTimeoutMessage(limitReason);
+  if (timeoutMessage) {
+    return timeoutMessage;
+  }
   if (limitReason === 'reasoning-budget-exhausted-before-action') {
     return localizedClientMessage(
       '模型的输出预算已在思考阶段耗尽，尚未生成正文或执行工具。请提高该模型的最大输出 token，或降低推理强度后重试。',
@@ -5783,6 +5869,67 @@ function streamErrorMessage(decoded: Record<string, unknown>) {
     .filter(Boolean)
     .join(' · ');
   return diagnostic ? `${message} (${diagnostic})` : message;
+}
+
+function runtimeConnectionUpdateFromPayload(
+  eventName: string,
+  payload: Record<string, unknown>,
+  fallbackSessionId: string,
+): RuntimeConnectionUpdate {
+  const rawState = String(payload.state ?? payload.status ?? '').trim().toLowerCase();
+  const source = eventName.startsWith('provider_') || payload.source === 'provider'
+    ? 'provider'
+    : 'network';
+  const state: RuntimeConnectionUpdate['state'] =
+    eventName === 'provider_recovered' || rawState === 'recovered' || rawState === 'connected'
+      ? 'recovered'
+      : rawState === 'failed' || rawState === 'retry_exhausted'
+        ? 'failed'
+        : rawState === 'syncing'
+          ? 'syncing'
+          : 'retrying';
+  const attempt = optionalNumber(payload.attempt ?? payload.retry_attempt ?? payload.retryAttempt);
+  const nextRetryMs = optionalNumber(
+    payload.next_retry_ms ?? payload.nextRetryMs ?? payload.retry_after_ms ?? payload.retryAfterMs,
+  );
+  return {
+    state,
+    source,
+    sessionId: String(payload.session_id ?? payload.sessionId ?? fallbackSessionId),
+    turnId: optionalString(payload.turn_id ?? payload.turnId),
+    attempt,
+    nextRetryMs,
+    reason: optionalString(payload.reason ?? payload.error ?? payload.code),
+    message: optionalString(payload.message ?? payload.detail),
+    createdAt: String(payload.created_at ?? payload.createdAt ?? new Date().toISOString()),
+  };
+}
+
+function localizedLlmTimeoutMessage(reason?: string) {
+  const normalized = String(reason ?? '').trim().toLowerCase();
+  if (normalized === 'llm-first-activity-timeout') {
+    return localizedClientMessage(
+      '模型服务在首包等待上限内没有返回任何活动，本轮已停止。请检查服务商连接后重试。',
+      'The model provider returned no activity before the first-response deadline. This turn was stopped; check the provider connection and retry.',
+    );
+  }
+  if (normalized === 'llm-stream-idle-timeout') {
+    return localizedClientMessage(
+      '模型流在空闲等待上限内没有新活动，本轮已停止；此前收到的思考和正文进度已保留。',
+      'The model stream stayed idle past its activity deadline. This turn was stopped, and previously received reasoning and text were preserved.',
+    );
+  }
+  if (
+    normalized === 'llm-call-timeout' ||
+    normalized === 'llm-generation-timeout' ||
+    normalized === 'turn-runtime-timeout'
+  ) {
+    return localizedClientMessage(
+      '模型调用已达到本轮总时长上限并停止；已收到的进度已保留，可以重试或继续。',
+      'The model call reached its total duration limit and stopped. Received progress was preserved; retry or continue when ready.',
+    );
+  }
+  return '';
 }
 
 function normalizedServiceError(detail: string, statusCode?: number) {

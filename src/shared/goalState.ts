@@ -69,6 +69,9 @@ export function isGoalSelfCheckMessage(message: ChatMessage) {
     return false;
   }
   const metadata = message.metadata ?? {};
+  if (metadata.goal_auto_continuation === true || metadata.goalAutoContinuation === true) {
+    return true;
+  }
   const runtimeLabel = String(
     metadata.runtime_user_label ??
       metadata.runtimeUserLabel ??

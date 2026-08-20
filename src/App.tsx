@@ -219,6 +219,7 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  RuntimeConnectionUpdate,
   RuntimeAssetCategory,
   PendingInteraction,
   InteractionQuestion,
@@ -2051,6 +2052,7 @@ function CardbushApp() {
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
                 activeTurnId={chat.activeTurnId}
+                connectionRecovery={chat.activeConnectionRecovery}
                 queuedMessageCount={chat.queuedMessageCount}
                 queuedMessagePreview={chat.queuedMessagePreview}
                 queuedMessages={chat.queuedMessages}
@@ -3406,6 +3408,7 @@ function ChatPanel({
   loading,
   sending,
   activeTurnId,
+  connectionRecovery,
   queuedMessageCount,
   queuedMessagePreview,
   queuedMessages,
@@ -3492,6 +3495,7 @@ function ChatPanel({
   loading: boolean;
   sending: boolean;
   activeTurnId: string;
+  connectionRecovery?: RuntimeConnectionUpdate;
   queuedMessageCount: number;
   queuedMessagePreview: string;
   queuedMessages: QueuedChatMessage[];
@@ -5936,6 +5940,12 @@ function ChatPanel({
                   </MessageFileReferenceScope>
                 </div>
               ))}
+              {connectionRecovery && connectionRecovery.state !== 'recovered' && (
+                <ConversationConnectionNotice
+                  language={language}
+                  update={connectionRecovery}
+                />
+              )}
             </div>
             <MessageListFooter />
           </div>
@@ -6168,9 +6178,11 @@ function RuntimeStatusBanner({
       setActionState('failed');
     }
   }, [actionState, onAction]);
-  const statusLabel = actionState === 'failed'
-    ? language === 'zh' ? '重试失败' : 'Retry failed'
-    : actionLabel;
+  const statusLabel = actionState === 'running'
+    ? language === 'zh' ? '正在重试' : 'Retrying'
+    : actionState === 'failed'
+      ? language === 'zh' ? '重试失败' : 'Retry failed'
+      : actionLabel;
 
   return (
     <div
@@ -6200,6 +6212,63 @@ function RuntimeStatusBanner({
       >
         <X size={16} />
       </button>
+    </div>
+  );
+}
+
+function ConversationConnectionNotice({
+  language,
+  update,
+}: {
+  language: AppLanguage;
+  update: RuntimeConnectionUpdate;
+}) {
+  const isFailed = update.state === 'failed';
+  const isSyncing = update.state === 'syncing';
+  const attempt = update.attempt && update.attempt > 0
+    ? language === 'zh'
+      ? ` · 第 ${update.attempt} 次`
+      : ` · attempt ${update.attempt}`
+    : '';
+  const retryDelay = update.nextRetryMs && update.nextRetryMs > 0
+    ? language === 'zh'
+      ? `${Math.max(0.1, update.nextRetryMs / 1000).toFixed(1)} 秒后重试`
+      : `Retrying in ${Math.max(0.1, update.nextRetryMs / 1000).toFixed(1)}s`
+    : '';
+  const title = isFailed
+    ? update.source === 'provider'
+      ? language === 'zh'
+        ? '模型服务重试失败'
+        : 'Model provider retry failed.'
+      : language === 'zh'
+        ? '连接恢复失败，请检查 BushServer'
+        : 'Connection recovery failed. Check BushServer.'
+    : isSyncing
+      ? language === 'zh'
+        ? '连接已建立，正在同步运行状态'
+        : 'Connected. Synchronizing the running turn.'
+      : update.source === 'provider'
+        ? language === 'zh'
+          ? `模型服务异常，正在重试${attempt}`
+          : `Model provider issue. Retrying${attempt}`
+        : language === 'zh'
+          ? `连接异常，正在恢复${attempt}`
+          : `Connection interrupted. Recovering${attempt}`;
+  const detail = isFailed
+    ? update.message || update.reason || ''
+    : retryDelay;
+
+  return (
+    <div
+      className={`conversation-connection-notice ${isFailed ? 'failed' : 'working'}`}
+      role={isFailed ? 'alert' : 'status'}
+      aria-live={isFailed ? 'assertive' : 'polite'}
+    >
+      {isFailed ? <AlertCircle size={16} /> : <LoaderCircle size={16} />}
+      <div className="conversation-connection-copy">
+        <strong>{title}</strong>
+        {detail && <span>{detail}</span>}
+      </div>
     </div>
   );
 }

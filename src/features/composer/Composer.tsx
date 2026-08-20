@@ -374,6 +374,8 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
+  const goalDraft = composerGoalDraftPresentation(draft);
+  const composerInputValue = goalDraft?.content ?? draft;
   const hasContent =
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
@@ -1047,23 +1049,59 @@ export function Composer({
             ))}
           </div>
         )}
+        {goalDraft && (
+          <div className="composer-command-mode goal" role="status">
+            <Target size={15} />
+            <strong>{language === 'zh' ? '目标' : 'Goal'}</strong>
+            <button
+              type="button"
+              aria-label={language === 'zh' ? '退出目标模式' : 'Exit goal mode'}
+              title={language === 'zh' ? '退出目标模式' : 'Exit goal mode'}
+              onClick={() => {
+                onDraftChange(goalDraft.content);
+                focusComposer(goalDraft.content.length);
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           data-os-primary-input={osMode ? 'true' : undefined}
           autoFocus={autoFocus}
-          value={draft}
+          value={composerInputValue}
           onChange={(event) => {
             const next = event.target.value;
+            if (goalDraft) {
+              onDraftChange(`/goal${next ? ` ${next}` : ' '}`);
+              setCommandState(null);
+              return;
+            }
             onDraftChange(next);
             updateCommandFromTextarea(next, event.currentTarget.selectionStart);
           }}
-          onClick={(event) =>
-            updateCommandFromTextarea(draft, event.currentTarget.selectionStart)
-          }
-          onKeyUp={(event) =>
-            updateCommandFromTextarea(draft, event.currentTarget.selectionStart)
-          }
+          onClick={(event) => {
+            if (!goalDraft) {
+              updateCommandFromTextarea(draft, event.currentTarget.selectionStart);
+            }
+          }}
+          onKeyUp={(event) => {
+            if (!goalDraft) {
+              updateCommandFromTextarea(draft, event.currentTarget.selectionStart);
+            }
+          }}
           onKeyDown={(event) => {
+            if (
+              goalDraft &&
+              event.key === 'Backspace' &&
+              goalDraft.content.length === 0
+            ) {
+              event.preventDefault();
+              onDraftChange('');
+              setCommandState(null);
+              return;
+            }
             if (commandState) {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
@@ -1350,6 +1388,16 @@ export function detectComposerCommand(
     start,
     end: safeCaret,
     query: slashMatch[2] ?? '',
+  };
+}
+
+export function composerGoalDraftPresentation(value: string) {
+  const match = value.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    content: match[1] ?? '',
   };
 }
 

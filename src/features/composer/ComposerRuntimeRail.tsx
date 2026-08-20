@@ -117,7 +117,7 @@ export function ComposerRuntimeRail({
     <div className={`composer-runtime-rail ${expanded ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}>
       {panelPresence.mounted && renderedPanel === 'processing' && hasProcessing && (
         <section
-          className="runtime-context-panel processing-context-panel"
+          className={`runtime-context-panel processing-context-panel ${running ? 'running' : 'settled'}`}
           aria-label={language === 'zh' ? '处理详情' : 'Working details'}
         >
           <header>
@@ -172,24 +172,33 @@ export function ComposerRuntimeRail({
                 </small>
                 {goalRounds.length > 0 && (
                   <ol className="runtime-goal-rounds">
-                    {goalRounds.map((round, index) => (
-                      <li key={`${round.goalId || 'goal'}:${index}:${round.decision}`}>
-                        {round.decision === 'complete' ? (
-                          <CheckCircle2 size={13} />
-                        ) : round.decision === 'blocked' ? (
-                          <Circle size={13} />
-                        ) : (
-                          <LoaderCircle size={13} />
-                        )}
-                        <span>
-                          <strong>
-                            {language === 'zh' ? `第 ${index + 1} 轮` : `Round ${index + 1}`}
-                          </strong>
-                          <small>{goalDecisionLabel(round.decision, language)}</small>
-                          {round.reason && <em>{round.reason}</em>}
-                        </span>
-                      </li>
-                    ))}
+                    {goalRounds.map((round, index) => {
+                      const isLiveContinuation =
+                        round.decision === 'continue' &&
+                        goal.status === 'active' &&
+                        running &&
+                        index === goalRounds.length - 1;
+                      return (
+                        <li key={`${round.goalId || 'goal'}:${index}:${round.decision}`}>
+                          {round.decision === 'complete' ? (
+                            <CheckCircle2 size={13} />
+                          ) : round.decision === 'blocked' ? (
+                            <Circle size={13} />
+                          ) : isLiveContinuation ? (
+                            <LoaderCircle size={13} />
+                          ) : (
+                            <Clock3 size={13} />
+                          )}
+                          <span>
+                            <strong>
+                              {language === 'zh' ? `第 ${index + 1} 轮` : `Round ${index + 1}`}
+                            </strong>
+                            <small>{goalDecisionLabel(round.decision, language)}</small>
+                            {round.reason && <em>{round.reason}</em>}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ol>
                 )}
               </section>
@@ -207,7 +216,7 @@ export function ComposerRuntimeRail({
                     <li className={node.status} key={`${index}:${node.step}`}>
                       {node.status === 'completed' ? (
                         <CheckCircle2 size={13} />
-                      ) : node.status === 'in_progress' ? (
+                      ) : node.status === 'in_progress' && running ? (
                         <LoaderCircle size={13} />
                       ) : (
                         <Clock3 size={13} />
@@ -292,7 +301,7 @@ export function ComposerRuntimeRail({
       <div className="composer-runtime-tabs">
         {hasProcessing && (
           <button
-            className={`runtime-context-tab processing-context-tab ${processingOpen ? 'open' : ''}`}
+            className={`runtime-context-tab processing-context-tab ${running ? 'running' : 'settled'} ${processingOpen ? 'open' : ''}`}
             type="button"
             role="status"
             aria-expanded={processingOpen}
@@ -303,7 +312,7 @@ export function ComposerRuntimeRail({
               setProcessingOpen((current) => !current);
             }}
           >
-            <LoaderCircle size={13} />
+            {running ? <LoaderCircle size={13} /> : <Target size={13} />}
             <span>
               <strong>
                 {running

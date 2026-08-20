@@ -90,6 +90,7 @@ export interface BackendCapabilities {
   interactiveRequests: boolean;
   permissionRequests: boolean;
   turnStop: boolean;
+  turnEventReplay: boolean;
   runtimeInspection: boolean;
   maintenanceConversationHistoryClear: boolean;
   maintenanceLogsCacheClear: boolean;
@@ -272,6 +273,24 @@ export interface ThinkingStreamEvent {
   delta: string;
   content: string;
   preview: string;
+  createdAt: string;
+}
+
+export type RuntimeConnectionState =
+  | 'retrying'
+  | 'syncing'
+  | 'recovered'
+  | 'failed';
+
+export interface RuntimeConnectionUpdate {
+  state: RuntimeConnectionState;
+  source: 'network' | 'provider';
+  sessionId: string;
+  turnId?: string;
+  attempt?: number;
+  nextRetryMs?: number;
+  reason?: string;
+  message?: string;
   createdAt: string;
 }
 

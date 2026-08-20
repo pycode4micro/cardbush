@@ -24,6 +24,7 @@ import {
   sendTeamFlowAction,
   stopTurn,
   streamChat,
+  streamTurnEvents,
   updateConversation,
   updateExperimentalGoal,
   type SceneStreamEvent,
@@ -48,6 +49,7 @@ import type {
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
+  RuntimeConnectionUpdate,
   TerminalRuntime,
   TeamFlowActionType,
   TeamFlowActionOption,
@@ -142,6 +144,8 @@ export function useCardbushChat(
   >({});
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [connectionRecoveryByConversation, setConnectionRecoveryByConversation] =
+    useState<Record<string, RuntimeConnectionUpdate | undefined>>({});
   const [pendingInteraction, setPendingInteraction] =
     useState<PendingInteraction | null>(null);
   const [selectedModel, setSelectedModelState] = useState(() =>
@@ -160,6 +164,12 @@ export function useCardbushChat(
     ),
   );
   const controllersRef = useRef<Record<string, AbortController>>({});
+  const goalTurnControllersRef = useRef<
+    Record<string, { turnId: string; controller: AbortController }>
+  >({});
+  const goalTurnCursorRef = useRef<
+    Record<string, { sequence: number; lastEventId: string }>
+  >({});
   const activeTurnIdsRef = useRef<Record<string, string>>({});
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
@@ -180,6 +190,32 @@ export function useCardbushChat(
   const activeTurnId = activeConversationIdForState
     ? runningByConversation[activeConversationIdForState]?.activeTurnId ?? ''
     : '';
+  const activeConnectionRecovery = activeConversationIdForState
+    ? connectionRecoveryByConversation[activeConversationIdForState]
+    : undefined;
+
+  useEffect(() => () => {
+    for (const { controller } of Object.values(goalTurnControllersRef.current)) {
+      controller.abort();
+    }
+    goalTurnControllersRef.current = {};
+  }, []);
+
+  const applyConnectionRecoveryUpdate = useCallback((
+    fallbackSessionId: string,
+    update: RuntimeConnectionUpdate,
+  ) => {
+    const targetSessionId = update.sessionId.trim() || fallbackSessionId;
+    setConnectionRecoveryByConversation((current) => ({
+      ...current,
+      [targetSessionId]: update.state === 'recovered'
+        ? undefined
+        : {
+            ...update,
+            sessionId: targetSessionId,
+          },
+    }));
+  }, []);
 
   const enqueueMessage = useCallback((item: QueuedChatMessage) => {
     queuedMessagesRef.current = [...queuedMessagesRef.current, item];
@@ -668,6 +704,245 @@ export function useCardbushChat(
     [],
   );
 
+  const subscribeGoalTurn = useCallback((sessionId: string, turnId: string) => {
+    const normalizedSessionId = sessionId.trim();
+    const normalizedTurnId = turnId.trim();
+    if (!normalizedSessionId || !normalizedTurnId || controllersRef.current[normalizedSessionId]) {
+      return;
+    }
+    const current = goalTurnControllersRef.current[normalizedSessionId];
+    if (current?.turnId === normalizedTurnId) {
+      return;
+    }
+    current?.controller.abort();
+    const controller = new AbortController();
+    goalTurnControllersRef.current[normalizedSessionId] = {
+      turnId: normalizedTurnId,
+      controller,
+    };
+    const assistantId = `goal-turn-${normalizedTurnId}`;
+    const initialCursor = goalTurnCursorRef.current[normalizedTurnId] ?? {
+      sequence: 0,
+      lastEventId: '',
+    };
+    const ensureAssistant = (createdAt?: string) => {
+      setMessagesByConversation((state) =>
+        ensureBackgroundTurnAssistant(
+          state,
+          normalizedSessionId,
+          assistantId,
+          normalizedTurnId,
+          createdAt,
+        ),
+      );
+    };
+    const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
+      ensureAssistant(route.createdAt);
+      setMessagesByConversation((state) =>
+        appendAssistantDelta(
+          state,
+          normalizedSessionId,
+          assistantId,
+          delta,
+          route,
+        ),
+      );
+    });
+
+    markSessionRunning(normalizedSessionId, normalizedTurnId);
+    void streamTurnEvents({
+      sessionId: normalizedSessionId,
+      turnId: normalizedTurnId,
+      afterSequence: initialCursor.sequence,
+      lastEventId: initialCursor.lastEventId,
+      signal: controller.signal,
+      onEventCursor: (cursor) => {
+        const previous = goalTurnCursorRef.current[normalizedTurnId];
+        goalTurnCursorRef.current[normalizedTurnId] = {
+          sequence: Math.max(previous?.sequence ?? 0, cursor.sequence),
+          lastEventId: cursor.eventId || previous?.lastEventId || '',
+        };
+      },
+      onStart: (start) => {
+        ensureAssistant(start.createdAt);
+        markSessionRunning(normalizedSessionId, start.turnId || normalizedTurnId);
+      },
+      onDelta: (delta, chunk) => streamBuffer.push(delta, chunk),
+      onExecution: (update) => {
+        if (update.reason === 'turn_guidance_pending') {
+          streamBuffer.flushToolBoundary();
+          ensureAssistant();
+          setMessagesByConversation((state) =>
+            applyAssistantSegmentBoundary(
+              state,
+              normalizedSessionId,
+              assistantId,
+              update,
+            ),
+          );
+        }
+      },
+      onAssistantRevision: (revision) => {
+        if (revision.channel && revision.channel !== 'assistant') return;
+        streamBuffer.flushToolBoundary();
+        ensureAssistant();
+        streamBuffer.reset(
+          {
+            messageId: revision.messageId ?? '',
+            assistantSegmentIndex: revision.assistantSegmentIndex,
+            turnId: revision.turnId ?? normalizedTurnId,
+          },
+          revision.content ?? '',
+        );
+        setMessagesByConversation((state) =>
+          applyAssistantRevision(
+            state,
+            normalizedSessionId,
+            assistantId,
+            revision,
+          ),
+        );
+      },
+      onToolExecution: (execution) => {
+        streamBuffer.flushToolBoundary();
+        ensureAssistant();
+        applyGoalExecution(normalizedSessionId, execution);
+        setMessagesByConversation((state) =>
+          appendToolExecution(
+            state,
+            normalizedSessionId,
+            assistantId,
+            execution,
+          ),
+        );
+      },
+      onTaskPlanUpdate: (update) => {
+        ensureAssistant();
+        setMessagesByConversation((state) =>
+          applyTaskPlanUpdate(
+            state,
+            normalizedSessionId,
+            assistantId,
+            update,
+          ),
+        );
+      },
+      onInteractiveRequest: (interaction) => {
+        setPendingInteraction({
+          ...interaction,
+          sessionId: interaction.sessionId ?? normalizedSessionId,
+        });
+      },
+      onFinalAssistantText: (text, chunk) => {
+        ensureAssistant(chunk.createdAt);
+        void streamBuffer.flushRoute(chunk).then(() => {
+          setMessagesByConversation((state) =>
+            markLocalAssistantTurnCompleted(
+              state,
+              normalizedSessionId,
+              assistantId,
+              new Date().toISOString(),
+              chunk,
+              text,
+            ),
+          );
+        });
+      },
+      onMessages: (nextMessages, finalSnapshot) => {
+        void streamBuffer.flushAllStreaming().then(() => {
+          setMessagesByConversation((state) =>
+            finalSnapshot
+              ? mergeFinalStreamMessages(state, normalizedSessionId, nextMessages, {
+                  turnId: normalizedTurnId,
+                  temporaryMessageIds: [assistantId],
+                  toolSourceMessageId: assistantId,
+                })
+              : mergeMessages(state, normalizedSessionId, nextMessages),
+          );
+        });
+      },
+      onTeamFlowEvent: (event) => mergeTeamFlowStreamEvent(normalizedSessionId, event),
+      onSubagentDispatch: (event) => emitSubagentDispatch({
+        ...event,
+        parentSessionId: event.parentSessionId || normalizedSessionId,
+      }),
+      onThinking: (event) => {
+        window.dispatchEvent(new CustomEvent('cardbush:thinking', {
+          detail: { ...event, sessionId: normalizedSessionId },
+        }));
+      },
+      onConnectionState: (update) =>
+        applyConnectionRecoveryUpdate(normalizedSessionId, update),
+      onContextWindowUsage: (usage) =>
+        mergeContextWindowUsage(normalizedSessionId, usage),
+      onWorkflowEvent: (event) => {
+        window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
+          detail: { ...event, sessionId: event.sessionId || normalizedSessionId },
+        }));
+      },
+      onSceneEvent: (event) => {
+        window.dispatchEvent(new CustomEvent('cardbush:scene-event', {
+          detail: { ...event, sessionId: event.sessionId || normalizedSessionId },
+        }));
+      },
+      onReplayReset: () => {
+        delete goalTurnCursorRef.current[normalizedTurnId];
+      },
+    })
+      .catch((caught) => {
+        if (!controller.signal.aborted) {
+          console.warn('[cardbush:goal] turn event stream ended', {
+            sessionId: normalizedSessionId,
+            turnId: normalizedTurnId,
+            error: errorMessage(caught),
+          });
+        }
+      })
+      .finally(async () => {
+        await streamBuffer.flushAllStreaming();
+        streamBuffer.dispose();
+        const loaded = await fetchSessionMessages(normalizedSessionId, {
+          includeSuperseded: true,
+        }).catch(() => null);
+        if (loaded) {
+          setMessagesByConversation((state) => ({
+            ...state,
+            [normalizedSessionId]: mergeLoadedMessagesPreservingLocalState(
+              state[normalizedSessionId] ?? [],
+              loaded.messages,
+            ),
+          }));
+          setGoalLatestTurnByConversation((state) => ({
+            ...state,
+            [normalizedSessionId]: loaded.latestTurn,
+          }));
+        }
+        await refreshGoal(normalizedSessionId);
+        if (
+          goalTurnControllersRef.current[normalizedSessionId]?.controller === controller
+        ) {
+          delete goalTurnControllersRef.current[normalizedSessionId];
+          if (
+            loaded?.latestTurn &&
+            loaded.latestTurn.turnId === normalizedTurnId &&
+            isRunningSessionTurn(loaded.latestTurn)
+          ) {
+            markSessionRunning(normalizedSessionId, normalizedTurnId);
+          } else if (!controllersRef.current[normalizedSessionId]) {
+            clearSessionRunning(normalizedSessionId);
+          }
+        }
+      });
+  }, [
+    applyConnectionRecoveryUpdate,
+    applyGoalExecution,
+    clearSessionRunning,
+    markSessionRunning,
+    mergeContextWindowUsage,
+    mergeTeamFlowStreamEvent,
+    refreshGoal,
+  ]);
+
   const refreshActiveSession = useCallback(async (options?: { silent?: boolean }) => {
     const sessionId = activeConversationId.trim();
     if (!sessionId) {
@@ -824,6 +1099,7 @@ export function useCardbushChat(
             isRunningSessionTurn(sessionResult.latestTurn)
           ) {
             markSessionRunning(sessionId, sessionResult.latestTurn.turnId);
+            subscribeGoalTurn(sessionId, sessionResult.latestTurn.turnId);
           } else if (!controllersRef.current[sessionId]) {
             clearSessionRunning(sessionId);
           }
@@ -870,6 +1146,7 @@ export function useCardbushChat(
     clearSessionRunning,
     goalAvailable,
     markSessionRunning,
+    subscribeGoalTurn,
   ]);
 
   useEffect(() => {
@@ -965,6 +1242,111 @@ export function useCardbushChat(
     );
   }, []);
 
+  const recoverInterruptedSession = useCallback(async ({
+    sessionId,
+    turnId,
+    signal,
+    reason,
+  }: {
+    sessionId: string;
+    turnId?: string;
+    signal: AbortSignal;
+    reason: string;
+  }) => {
+    let failedAttempts = 0;
+    let syncPolls = 0;
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (!signal.aborted && Date.now() < deadline) {
+      const nextRetryMs = failedAttempts > 0
+        ? Math.min(800 * (2 ** (failedAttempts - 1)), 5000)
+        : syncPolls > 0
+          ? 2000
+          : 0;
+      setConnectionRecoveryByConversation((current) => ({
+        ...current,
+        [sessionId]: {
+          state: failedAttempts > 0 ? 'retrying' : syncPolls > 0 ? 'syncing' : 'retrying',
+          source: 'network',
+          sessionId,
+          turnId,
+          attempt: failedAttempts + 1,
+          nextRetryMs,
+          reason,
+          createdAt: new Date().toISOString(),
+        },
+      }));
+      if (nextRetryMs > 0) {
+        await waitForRecoveryDelay(nextRetryMs);
+      }
+      if (signal.aborted) {
+        return false;
+      }
+      try {
+        const sessionResult = await fetchSessionMessages(sessionId, {
+          includeSuperseded: true,
+        });
+        setMessagesByConversation((current) => ({
+          ...current,
+          [sessionId]: mergeLoadedMessagesPreservingLocalState(
+            current[sessionId] ?? [],
+            sessionResult.messages,
+          ),
+        }));
+        setGoalLatestTurnByConversation((current) => ({
+          ...current,
+          [sessionId]: sessionResult.latestTurn,
+        }));
+        failedAttempts = 0;
+        if (
+          sessionResult.latestTurn &&
+          isRunningSessionTurn(sessionResult.latestTurn)
+        ) {
+          markSessionRunning(sessionId, sessionResult.latestTurn.turnId);
+          syncPolls += 1;
+          setConnectionRecoveryByConversation((current) => ({
+            ...current,
+            [sessionId]: {
+              state: 'syncing',
+              source: 'network',
+              sessionId,
+              turnId: sessionResult.latestTurn?.turnId ?? turnId,
+              reason,
+              createdAt: new Date().toISOString(),
+            },
+          }));
+          continue;
+        }
+        setConnectionRecoveryByConversation((current) => ({
+          ...current,
+          [sessionId]: undefined,
+        }));
+        void reloadConversations().catch(() => undefined);
+        return true;
+      } catch {
+        failedAttempts += 1;
+        syncPolls = 0;
+        if (failedAttempts >= 5) {
+          break;
+        }
+      }
+    }
+    if (!signal.aborted) {
+      setConnectionRecoveryByConversation((current) => ({
+        ...current,
+        [sessionId]: {
+          state: 'failed',
+          source: 'network',
+          sessionId,
+          turnId,
+          attempt: Math.max(1, failedAttempts),
+          reason,
+          createdAt: new Date().toISOString(),
+        },
+      }));
+    }
+    return false;
+  }, [markSessionRunning, reloadConversations]);
+
   const sendMessage = useCallback(
     async (text: string, queuedConversation?: ConversationSummary) => {
       const trimmed = text.trim();
@@ -986,6 +1368,10 @@ export function useCardbushChat(
         activeConversation ??
         (await startConversation(undefined, conversationTitleFromUserText(visibleUserInput)));
       const sessionId = conversation.id;
+      setConnectionRecoveryByConversation((current) => ({
+        ...current,
+        [sessionId]: undefined,
+      }));
       const previousMessages = messagesByConversation[sessionId] ?? [];
       const titleSource = firstUserTitleSource(previousMessages, visibleUserInput);
       if (isSessionSending(sessionId)) {
@@ -1206,6 +1592,9 @@ export function useCardbushChat(
               detail: { ...event, sessionId },
             }));
           },
+          onConnectionState: (update) => {
+            applyConnectionRecoveryUpdate(sessionId, update);
+          },
           onWorkflowEvent: (event) => {
             window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
               detail: { ...event, sessionId: event.sessionId || sessionId },
@@ -1268,6 +1657,16 @@ export function useCardbushChat(
         }
         if (!controller.signal.aborted) {
           const turnId = activeTurnIdsRef.current[sessionId];
+          if (isNetworkTransportError(caught)) {
+            const recovered = await recoverInterruptedSession({
+              sessionId,
+              turnId,
+              signal: controller.signal,
+              reason: rawErrorMessage(caught),
+            });
+            setError(recovered ? null : errorMessage(caught));
+            return;
+          }
           const loadedMessages = await fetchMessages(sessionId, {
             includeSuperseded: true,
           }).catch(() => null);
@@ -1305,6 +1704,7 @@ export function useCardbushChat(
     [
       activeConversation,
       applyGoalExecution,
+      applyConnectionRecoveryUpdate,
       clearSessionRunning,
       dequeueMessageForConversation,
       enqueueMessage,
@@ -1315,6 +1715,7 @@ export function useCardbushChat(
       mergeContextWindowUsage,
       reloadConversations,
       refreshGoal,
+      recoverInterruptedSession,
       managedModelConfigs,
       messagesByConversation,
       persistAutoConversationTitle,
@@ -1416,6 +1817,7 @@ export function useCardbushChat(
           onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
           onSubagentDispatch: (event: SubagentDispatchEvent) => void;
           onThinking: (event: import('../types').ThinkingStreamEvent) => void;
+          onConnectionState: (update: RuntimeConnectionUpdate) => void;
           onWorkflowEvent: (event: TeamWorkflowStreamEvent) => void;
           onSceneEvent: (event: SceneStreamEvent) => void;
         },
@@ -1432,6 +1834,7 @@ export function useCardbushChat(
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
       const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
       let finalSnapshotPromise: Promise<void> | null = null;
+      let streamStarted = false;
       controllersRef.current[sessionId] = controller;
       markSessionRunning(sessionId);
       setError(null);
@@ -1450,6 +1853,7 @@ export function useCardbushChat(
       try {
         await stream(controller, {
           onStart: (start) => {
+            streamStarted = true;
             markSessionRunning(sessionId, start.turnId);
             void refreshGoal(sessionId);
             const startedAt = new Date().toISOString();
@@ -1575,6 +1979,9 @@ export function useCardbushChat(
               detail: { ...event, sessionId },
             }));
           },
+          onConnectionState: (update) => {
+            applyConnectionRecoveryUpdate(sessionId, update);
+          },
           onWorkflowEvent: (event) => {
             window.dispatchEvent(new CustomEvent('cardbush:workflow-event', {
               detail: { ...event, sessionId: event.sessionId || sessionId },
@@ -1606,6 +2013,20 @@ export function useCardbushChat(
         await refreshGoal(sessionId);
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
+        if (
+          streamStarted &&
+          !controller.signal.aborted &&
+          isNetworkTransportError(caught)
+        ) {
+          const recovered = await recoverInterruptedSession({
+            sessionId,
+            turnId: activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
+            signal: controller.signal,
+            reason: rawErrorMessage(caught),
+          });
+          setError(recovered ? null : errorMessage(caught));
+          return;
+        }
         if (!controller.signal.aborted && !isPendingInteractionConflictError(caught)) {
           setError(errorMessage(caught));
         } else if (isPendingInteractionConflictError(caught)) {
@@ -1626,6 +2047,7 @@ export function useCardbushChat(
     },
     [
       clearSessionRunning,
+      applyConnectionRecoveryUpdate,
       applyGoalExecution,
       loadTeamFlow,
       markSessionRunning,
@@ -1633,6 +2055,7 @@ export function useCardbushChat(
       mergeTeamFlowStreamEvent,
       reloadConversations,
       refreshGoal,
+      recoverInterruptedSession,
     ],
   );
 
@@ -2000,6 +2423,9 @@ export function useCardbushChat(
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
+          onConnectionState: (update) => {
+            applyConnectionRecoveryUpdate(conversationId, update);
+          },
         });
         setMessagesByConversation((current) =>
           reconcileOptimisticGuidance(
@@ -2041,6 +2467,7 @@ export function useCardbushChat(
     [
       activeConversation,
       activeConversationId,
+      applyConnectionRecoveryUpdate,
       conversations,
       isSessionSending,
       sendMessage,
@@ -2090,6 +2517,9 @@ export function useCardbushChat(
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
+          onConnectionState: (update) => {
+            applyConnectionRecoveryUpdate(conversationId, update);
+          },
         });
         setMessagesByConversation((current) =>
           reconcileOptimisticGuidance(
@@ -2128,6 +2558,7 @@ export function useCardbushChat(
     },
     [
       activeConversationId,
+      applyConnectionRecoveryUpdate,
       isSessionSending,
       removeQueuedMessage,
       requestContext.interactiveRequestsAvailable,
@@ -2174,6 +2605,9 @@ export function useCardbushChat(
           terminalRuntime: requestContext.terminalRuntime,
           interactiveRequestsEnabled:
             requestContext.interactiveRequestsAvailable === true,
+          onConnectionState: (update) => {
+            applyConnectionRecoveryUpdate(conversationId, update);
+          },
         });
         setMessagesByConversation((current) =>
           reconcileOptimisticGuidance(
@@ -2215,6 +2649,7 @@ export function useCardbushChat(
     [
       activeConversation,
       activeConversationId,
+      applyConnectionRecoveryUpdate,
       conversations,
       requestContext.interactiveRequestsAvailable,
       requestContext.terminalRuntime,
@@ -2501,6 +2936,7 @@ export function useCardbushChat(
     queuedMessageCount: activeQueuedMessages.length,
     queuedMessagePreview: activeQueuedMessages[0]?.text ?? '',
     pendingInteraction,
+    activeConnectionRecovery,
     error,
     notice,
     selectedModel,
@@ -3416,6 +3852,37 @@ function removeOptimisticGuidance(
       (message) =>
         message.id !== clientMessageId && message.clientMessageId !== clientMessageId,
     ),
+  };
+}
+
+function ensureBackgroundTurnAssistant(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  assistantId: string,
+  turnId: string,
+  createdAt?: string,
+) {
+  const messages = current[sessionId] ?? [];
+  if (messages.some((message) => message.id === assistantId)) {
+    return current;
+  }
+  return {
+    ...current,
+    [sessionId]: [
+      ...messages,
+      {
+        id: assistantId,
+        role: 'assistant' as const,
+        content: '',
+        conversationId: sessionId,
+        turnId,
+        createdAt: createdAt || new Date().toISOString(),
+        metadata: {
+          background_turn: true,
+          goal_auto_continuation: true,
+        },
+      },
+    ],
   };
 }
 
@@ -5473,6 +5940,9 @@ function streamAttachmentsForVision(
 
 function attachmentPathFromLine(value: string) {
   const trimmed = value.trim();
+  if (/^\/(?:model|goal|skill|new)(?:\s|$)/i.test(trimmed)) {
+    return '';
+  }
   const pathValue = stripWrappingQuotes(
     trimmed.startsWith('@') ? trimmed.slice(1).trim() : trimmed,
   );
@@ -5631,8 +6101,24 @@ function isInteractionGoneError(error: unknown) {
   );
 }
 
+function waitForRecoveryDelay(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, Math.max(0, delayMs));
+  });
+}
+
+function rawErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNetworkTransportError(error: unknown) {
+  return /failed to fetch|networkerror|load failed|fetch failed|\bterminated\b|econnreset|socket hang up|incomplete chunked encoding|sse connection closed/i.test(
+    rawErrorMessage(error),
+  );
+}
+
 function errorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = rawErrorMessage(error);
   const english =
     typeof document !== 'undefined' &&
     document.documentElement.lang.toLowerCase().startsWith('en');

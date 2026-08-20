@@ -70,6 +70,27 @@ assert.match(modelCommandBlock, /setActiveMenu\('models'\)/);
 assert.doesNotMatch(modelCommandBlock, /onConfigureModels/);
 assert.match(messageBubbleSource, /userGoalCommandPresentation/);
 assert.match(messageBubbleSource, /<Target size=\{14\}/);
+assert.match(messageBubbleSource, /messageHasGoalContext\(message\)/);
+assert.match(messageBubbleSource, /metadata\.experimental_goal/);
+assert.match(messageBubbleSource, /metadata\.goal_auto_continuation === true/);
+assert.match(
+  messageBubbleSource,
+  /goalCommand\.commandToken &&[\s\S]*?user-command-token/,
+  'goal turns must keep the target heading without showing a synthetic /goal token',
+);
+assert.match(messageBubbleSource, /legacyUserGoalCommandText/);
+assert.match(messageBubbleSource, /Please review the attached file\(s\)\./);
+assert.match(messageBubbleSource, /isGoalCommandAttachmentPath/);
+assert.match(source, /const goalDraft = composerGoalDraftPresentation\(draft\)/);
+assert.match(source, /className="composer-command-mode goal"/);
+assert.match(source, /<Target size=\{15\}/);
+assert.match(source, /value=\{composerInputValue\}/);
+assert.match(source, /onDraftChange\(`\/goal\$\{next \? ` \$\{next\}` : ' '\}`\)/);
+assert.match(
+  chatHookSource,
+  /\^\\\/\(\?:model\|goal\|skill\|new\)\(\?:\\s\|\$\)/,
+  'slash commands must not be parsed as POSIX file attachments',
+);
 assert.doesNotMatch(slashBlock, /title:\s*['"`]\//);
 assert.doesNotMatch(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.doesNotMatch(source, /mentionMatch|mentionCommands|输入 @|Type @/);
@@ -151,8 +172,15 @@ vm.runInNewContext(transpiled.outputText, {
   window: {},
   console,
 });
-const { detectComposerCommand } = module.exports;
+const { composerGoalDraftPresentation, detectComposerCommand } = module.exports;
 const detect = (value, caret = value.length) => plain(detectComposerCommand(value, caret));
+
+assert.deepEqual(plain(composerGoalDraftPresentation('/goal ')), { content: '' });
+assert.deepEqual(
+  plain(composerGoalDraftPresentation('/goal 完成发布验证')),
+  { content: '完成发布验证' },
+);
+assert.equal(composerGoalDraftPresentation('/goal/file'), null);
 
 assert.deepEqual(detect('/'), {
   mode: 'slash',

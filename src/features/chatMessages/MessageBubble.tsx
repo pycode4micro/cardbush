@@ -134,15 +134,102 @@ function guidanceDeliveryLabel(
   return labels[state];
 }
 
-function userGoalCommandPresentation(text: string, language: AppLanguage) {
+function userGoalCommandPresentation(
+  message: ChatMessage,
+  text: string,
+  language: AppLanguage,
+) {
   const match = text.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
-  if (!match) {
+  if (match) {
+    return {
+      label: language === 'zh' ? '目标' : 'Goal',
+      content: (match[1] ?? '').trim(),
+      commandToken: '/goal',
+    };
+  }
+  if (!messageHasGoalContext(message)) {
     return null;
   }
   return {
     label: language === 'zh' ? '目标' : 'Goal',
-    content: (match[1] ?? '').trim(),
+    content: text,
+    commandToken: '',
   };
+}
+
+function messageHasGoalContext(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  const goal = metadata.experimental_goal ?? metadata.experimentalGoal;
+  return (
+    Boolean(goal && typeof goal === 'object' && !Array.isArray(goal)) ||
+    metadata.goal_auto_continuation === true ||
+    metadata.goalAutoContinuation === true
+  );
+}
+
+function assistantTimeoutPresentation(
+  message: ChatMessage,
+  language: AppLanguage,
+) {
+  if (message.role !== 'assistant') {
+    return null;
+  }
+  const metadata = message.metadata ?? {};
+  const stopDetails = recordFromUnknown(
+    metadata.stop_details ?? metadata.stopDetails,
+  );
+  const reason = String(
+    metadata.limit_reason ??
+      metadata.limitReason ??
+      metadata.stop_reason ??
+      metadata.stopReason ??
+      stopDetails.limit_reason ??
+      stopDetails.limitReason ??
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  if (reason === 'llm-first-activity-timeout') {
+    return {
+      reason,
+      title: language === 'zh' ? '模型服务没有开始响应' : 'Model provider did not start responding',
+      detail:
+        language === 'zh'
+          ? '在首包等待上限内没有检测到流式活动。请检查服务商连接后重试。'
+          : 'No stream activity arrived before the first-response deadline. Check the provider connection and retry.',
+    };
+  }
+  if (reason === 'llm-stream-idle-timeout') {
+    return {
+      reason,
+      title: language === 'zh' ? '模型流长时间没有活动' : 'Model stream became idle',
+      detail:
+        language === 'zh'
+          ? '本轮已停止，此前收到的思考、正文和工具进度均已保留。'
+          : 'The turn stopped; previously received reasoning, text, and tool progress were preserved.',
+    };
+  }
+  if (
+    reason === 'llm-call-timeout' ||
+    reason === 'llm-generation-timeout' ||
+    reason === 'turn-runtime-timeout'
+  ) {
+    return {
+      reason,
+      title: language === 'zh' ? '模型调用达到总时长上限' : 'Model call reached its duration limit',
+      detail:
+        language === 'zh'
+          ? '本轮已停止，已收到的进度会保留在当前会话中。'
+          : 'The turn stopped, and received progress remains available in this conversation.',
+    };
+  }
+  return null;
+}
+
+function recordFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 type ImagePreview = {
@@ -350,12 +437,27 @@ function MessageBubbleView({
     ...attachedImagePaths,
     ...parsedImagePaths,
   ]);
-  const text = userContentParts.text;
+  const legacyGoalCommandText =
+    message.role === 'user'
+      ? legacyUserGoalCommandText(message.attachments ?? [], userContentParts.text)
+      : null;
+  const text = legacyGoalCommandText ?? userContentParts.text;
   const goalCommand =
-    message.role === 'user' ? userGoalCommandPresentation(text, language) : null;
+    message.role === 'user'
+      ? userGoalCommandPresentation(message, text, language)
+      : null;
+  const visibleAttachments = legacyGoalCommandText
+    ? (message.attachments ?? []).filter(
+        (attachment) => !isGoalCommandAttachmentPath(attachment.path ?? ''),
+      )
+    : message.attachments ?? [];
   const fileAttachments = userMessageFileAttachments(
-    message.attachments ?? [],
-    userContentParts.paths.filter((pathValue) => !isImagePath(pathValue)),
+    visibleAttachments,
+    userContentParts.paths.filter(
+      (pathValue) =>
+        !isImagePath(pathValue) &&
+        !(legacyGoalCommandText && isGoalCommandAttachmentPath(pathValue)),
+    ),
   );
   const allToolExecutions = message.toolExecutions ?? [];
   const [editing, setEditing] = useState(false);
@@ -529,7 +631,9 @@ function MessageBubbleView({
             <div className={`user-command-heading goal${goalCommand.content ? ' has-content' : ''}`}>
               <Target size={14} />
               <strong>{goalCommand.label}</strong>
-              <span className="user-command-token">/goal</span>
+              {goalCommand.commandToken && (
+                <span className="user-command-token">{goalCommand.commandToken}</span>
+              )}
             </div>
           )}
           {(goalCommand?.content ?? text) && (
@@ -637,6 +741,7 @@ function MessageBubbleView({
   );
   const finalAssistantRound =
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
+  const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
   const hasAssistantBody = Boolean(
     text.trim() ||
@@ -645,6 +750,7 @@ function MessageBubbleView({
       (!isActiveAssistantTurn && taskPlan) ||
       renderActiveTranscript ||
       visibleLoopHistory.length > 0 ||
+      timeoutPresentation ||
       hookSummary,
   );
   if (!showAssistantProgress && !hasAssistantBody) {
@@ -744,6 +850,19 @@ function MessageBubbleView({
             >
               {assistantBody}
             </AssistantCompletedDisclosure>
+          )}
+          {timeoutPresentation && (
+            <div
+              className="assistant-timeout-notice"
+              data-timeout-reason={timeoutPresentation.reason}
+              role="status"
+            >
+              <Clock3 size={15} />
+              <span>
+                <strong>{timeoutPresentation.title}</strong>
+                <small>{timeoutPresentation.detail}</small>
+              </span>
+            </div>
           )}
         </div>
         <div className="message-actions">
@@ -1916,6 +2035,27 @@ function splitUserFileAttachments(content: string) {
     text: keptLines.join('\n').trim(),
     paths: uniqueAttachmentPaths(paths),
   };
+}
+
+function legacyUserGoalCommandText(
+  attachments: ChatAttachment[],
+  content: string,
+) {
+  const normalizedContent = content.trim();
+  if (
+    normalizedContent &&
+    normalizedContent !== 'Please review the attached file(s).'
+  ) {
+    return null;
+  }
+  const candidates = attachments
+    .map((attachment) => attachment.path?.trim() ?? '')
+    .filter(isGoalCommandAttachmentPath);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function isGoalCommandAttachmentPath(value: string) {
+  return /^\/goal(?:\s|$)/i.test(value.trim());
 }
 
 function uniqueAttachmentPaths(paths: string[]) {
