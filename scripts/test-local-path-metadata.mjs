@@ -95,11 +95,21 @@ const {
 } = fileReferenceModule.exports;
 const absoluteDocument = 'C:\\Users\\wfang\\Documents\\report.docx';
 assert.equal(localFileReference(absoluteDocument)?.path, absoluteDocument);
+assert.equal(
+  localFileReference(absoluteDocument, 'D:\\proj\\cardbush')?.path,
+  absoluteDocument,
+  'Absolute paths outside the workspace must not be rewritten to the workspace drive',
+);
 assert.equal(localFileReference('/work/reports/report.xlsx')?.path, '/work/reports/report.xlsx');
 assert.equal(
-  localFileReference('src/App.tsx', 'D:\\proj\\cardbush'),
+  localFileReference('src/App.tsx', 'D:\\proj\\cardbush')?.path,
+  'D:\\proj\\cardbush\\src\\App.tsx',
+  'Workspace-relative paths must resolve against the authoritative workspace root',
+);
+assert.equal(
+  localFileReference('../outside/report.xlsx', 'D:\\proj\\cardbush'),
   null,
-  'Workspace-relative paths must remain plain Markdown text',
+  'Relative paths must not escape the authoritative workspace root',
 );
 assert.equal(
   localFileReferenceFromHref(localFileReferenceHref('src/App.tsx')),
@@ -110,8 +120,8 @@ const linkedReferences = linkifyLocalFileReferences(
   `Open src/App.tsx and ${absoluteDocument}`,
   'D:\\proj\\cardbush',
 );
-assert.ok(linkedReferences.includes('src/App.tsx'));
-assert.ok(!linkedReferences.includes('[App.tsx]'));
+assert.ok(linkedReferences.includes('[App.tsx](cardbush-local-file:'));
+assert.ok(linkedReferences.includes(encodeURIComponent('D:\\proj\\cardbush\\src\\App.tsx')));
 assert.ok(linkedReferences.includes('[report.docx](cardbush-local-file:'));
 
 const stylesSource = fs.readFileSync(
@@ -120,6 +130,28 @@ const stylesSource = fs.readFileSync(
 );
 const localFileStyle = stylesSource.match(/\.local-file-reference\s*\{([^}]*)\}/)?.[1] ?? '';
 assert.ok(!/border-bottom|text-decoration:\s*(?:underline|dotted|dashed)/.test(localFileStyle));
+const inlineCodeStyle = stylesSource.match(
+  /\.assistant-bubble :not\(pre\) > code,\s*\.user-bubble :not\(pre\) > code\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.match(inlineCodeStyle, /background:\s*transparent/);
+assert.match(inlineCodeStyle, /padding:\s*0/);
+assert.doesNotMatch(inlineCodeStyle, /color-mix/);
+
+const electronMainSource = fs.readFileSync(
+  path.join(process.cwd(), 'electron', 'main.ts'),
+  'utf8',
+);
+const fileContextMenuHandler = electronMainSource.match(
+  /ipcMain\.handle\('shell:file-context-menu',[\s\S]*?\n\}\);/,
+)?.[0] ?? '';
+assert.match(fileContextMenuHandler, /const fileExists = fs\.existsSync\(normalizedPath\)/);
+assert.match(fileContextMenuHandler, /文件不存在（无法打开）/);
+assert.match(fileContextMenuHandler, /label: '复制路径'/);
+assert.doesNotMatch(
+  fileContextMenuHandler,
+  /if \(!normalizedPath \|\| !fs\.existsSync\(normalizedPath\)\)/,
+  'Missing files must still open a context menu so their path can be copied',
+);
 
 console.log('local path metadata tests passed');
 

@@ -146,6 +146,12 @@ assert.match(
   /scroller\.addEventListener\('scroll', updateVisibleTurn/,
   'The context rail must follow viewport scrolling',
 );
+assert.match(
+  quickContextSource,
+  /const jumpToSelectedTurn = \(\) => \{[\s\S]*?data-message-id[\s\S]*?scroller\.scrollTo\([\s\S]*?behavior:/,
+  'Turn details must provide a real jump back to the source message',
+);
+assert.match(quickContextSource, /跳转到该轮/);
 assert.doesNotMatch(
   quickContextSource,
   /filter\(\(message\) => message\.role === 'user'\)\.slice\(/,

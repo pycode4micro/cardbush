@@ -32,6 +32,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -143,7 +144,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   proxy: { zh: '代理设置', en: 'Proxy' },
   bots: { zh: 'Bot 连接', en: 'Bot links' },
   subagents: { zh: '子任务运行态', en: 'Task runtime' },
-  mcp: { zh: 'MCP 服务器', en: 'MCP servers' },
+  mcp: { zh: '插件与 MCP', en: 'Plugins & MCP' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
   diagnostics: { zh: '连接诊断', en: 'Diagnostics' },
@@ -158,7 +159,7 @@ const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: str
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
   bots: { zh: '连接并管理外部消息平台。', en: 'Connect and manage external messaging platforms.' },
   subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
-  mcp: { zh: '配置 MCP 服务及其连接状态。', en: 'Configure MCP servers and their connection status.' },
+  mcp: { zh: '统一管理插件提供的连接和 MCP 服务。', en: 'Manage plugin-provided connections and MCP servers.' },
   cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
   models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
   diagnostics: { zh: '检查后端、鉴权与模型请求配置。', en: 'Inspect backend, authentication, and model request settings.' },
@@ -259,6 +260,8 @@ const botPlatformLabels: Record<BotPlatform, { zh: string; en: string }> = {
   discord: { zh: 'Discord', en: 'Discord' },
 };
 export function SettingsView({
+  active,
+  onReady,
   themePreference,
   lightThemeStyle,
   language,
@@ -283,6 +286,8 @@ export function SettingsView({
   onConversationHistoryCleared,
   onRuntimeAssetsReloaded,
 }: {
+  active: boolean;
+  onReady: () => void;
   themePreference: ThemePreference;
   lightThemeStyle: LightThemeStyle;
   language: AppLanguage;
@@ -327,6 +332,10 @@ export function SettingsView({
     () => collectProviderOptions(settings.managedModelConfigs),
     [settings.managedModelConfigs],
   );
+
+  useLayoutEffect(() => {
+    onReady();
+  }, [onReady]);
 
   useEffect(() => {
     setSection(visibleSettingsSection(initialSection));
@@ -1037,7 +1046,11 @@ export function SettingsView({
 
   return (
     <>
-    <main className="settings-shell">
+    <main
+      className={`settings-shell${active ? '' : ' settings-inactive'}`}
+      aria-hidden={!active}
+      inert={active ? undefined : true}
+    >
       <aside className="settings-sidebar">
         <button className="back-button" type="button" onClick={onBack}>
           <ArrowLeft size={18} />
@@ -1080,7 +1093,7 @@ export function SettingsView({
         </div>
       </section>
     </main>
-    {toast && <div className="settings-toast">{toast}</div>}
+    {active && toast && <div className="settings-toast">{toast}</div>}
     </>
   );
 }
@@ -1394,6 +1407,7 @@ function UsageStatisticsPanel({
 }) {
   const [statistics, setStatistics] = useState<CumulativeUsageStatistics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activityRange, setActivityRange] = useState<UsageHeatmapRange>('year');
   const refreshKey = conversations
     .map((conversation) => `${conversation.id}:${conversation.updatedAt}`)
     .join('|');
@@ -1414,8 +1428,8 @@ function UsageStatisticsPanel({
   }, [refreshKey]);
 
   const heatmap = useMemo(
-    () => usageHeatmap(statistics?.activity ?? [], language),
-    [language, statistics?.activity],
+    () => usageHeatmap(statistics?.activity ?? [], language, activityRange),
+    [activityRange, language, statistics?.activity],
   );
   const stats = statistics ?? emptyCumulativeUsageStatistics;
   const numberLocale = language === 'zh' ? 'zh-CN' : 'en-US';
@@ -1447,8 +1461,8 @@ function UsageStatisticsPanel({
       title={language === 'zh' ? '累计使用量' : 'Cumulative usage'}
       subtitle={
         language === 'zh'
-          ? '汇总全部本地会话的真实 Token 用量与最近一年的对话活跃度。'
-          : 'Summarizes real token usage across local conversations and chat activity over the past year.'
+          ? '汇总全部本地会话的真实 Token 用量，并按年、月或周查看对话活跃度。'
+          : 'Summarizes real token usage across local conversations with yearly, monthly, or weekly activity views.'
       }
     >
       <div className="usage-stat-grid" aria-busy={loading}>
@@ -1468,10 +1482,37 @@ function UsageStatisticsPanel({
               : `${stats.conversationCount} conversations · ${stats.longestStreak}-day longest streak`}
           </span>
         </div>
-        {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
+        <div className="usage-activity-actions">
+          <div
+            className="usage-range-switcher"
+            role="group"
+            aria-label={language === 'zh' ? '活跃度日期跨度' : 'Activity date range'}
+          >
+            {(['year', 'month', 'week'] as const).map((range) => (
+              <button
+                className={activityRange === range ? 'active' : ''}
+                type="button"
+                aria-pressed={activityRange === range}
+                key={range}
+                onClick={() => setActivityRange(range)}
+              >
+                {language === 'zh'
+                  ? { year: '年', month: '月', week: '周' }[range]
+                  : { year: 'Year', month: 'Month', week: 'Week' }[range]}
+              </button>
+            ))}
+          </div>
+          {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
+        </div>
       </div>
-      <div className="usage-heatmap-scroll" aria-label={language === 'zh' ? '最近一年使用活跃度' : 'Usage activity in the past year'}>
-        <div className="usage-heatmap-frame">
+      <div
+        className="usage-heatmap-scroll"
+        aria-label={language === 'zh' ? `最近${activityRange === 'year' ? '一年' : activityRange === 'month' ? '一月' : '一周'}使用活跃度` : `Usage activity for the current ${activityRange}`}
+      >
+        <div
+          className={`usage-heatmap-frame range-${activityRange}`}
+          style={{ '--usage-heatmap-columns': heatmap.weekCount } as CSSProperties}
+        >
           <div className="usage-month-labels" aria-hidden="true">
             {heatmap.monthLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}
           </div>
@@ -1491,13 +1532,6 @@ function UsageStatisticsPanel({
             ))}
           </div>
         </div>
-      </div>
-      <div className="usage-legend">
-        <span>{language === 'zh' ? '少' : 'Less'}</span>
-        {[0, 1, 2, 3, 4].map((level) => (
-          <i className={`usage-heatmap-cell level-${level}`} key={level} />
-        ))}
-        <span>{language === 'zh' ? '多' : 'More'}</span>
       </div>
       {!loading && stats.failedSessionCount > 0 && (
         <p className="usage-partial-note">
@@ -4211,20 +4245,44 @@ function formatUsageNumber(value: number, locale: string) {
   }).format(value);
 }
 
+type UsageHeatmapRange = 'year' | 'month' | 'week';
+
 function usageHeatmap(
   activity: Array<{ date: string; interactions: number }>,
   language: AppLanguage,
+  range: UsageHeatmapRange,
 ) {
   const activityByDate = new Map(activity.map((day) => [day.date, day.interactions]));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const start = new Date(today);
-  start.setDate(start.getDate() - start.getDay() - (52 * 7));
+  let start = new Date(today);
+  let end = new Date(today);
+  let selectedMonth = today.getMonth();
+
+  if (range === 'year') {
+    start.setDate(start.getDate() - start.getDay() - (52 * 7));
+    end = new Date(start);
+    end.setDate(start.getDate() + (53 * 7) - 1);
+  } else if (range === 'month') {
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    selectedMonth = monthStart.getMonth();
+    start = new Date(monthStart);
+    start.setDate(monthStart.getDate() - monthStart.getDay());
+    end = new Date(monthEnd);
+    end.setDate(monthEnd.getDate() + (6 - monthEnd.getDay()));
+  } else {
+    start.setDate(start.getDate() - start.getDay());
+    end = new Date(start);
+    end.setDate(start.getDate() + 6);
+  }
+
+  const weekCount = Math.floor((end.getTime() - start.getTime()) / 86_400_000 / 7) + 1;
   const visibleCounts = activity
-    .filter((day) => day.date >= localDayKey(start) && day.date <= localDayKey(today))
+    .filter((day) => day.date >= localDayKey(start) && day.date <= localDayKey(end))
     .map((day) => day.interactions);
   const maximum = Math.max(1, ...visibleCounts);
-  const days = Array.from({ length: 53 * 7 }, (_, index) => {
+  const days = Array.from({ length: weekCount * 7 }, (_, index) => {
     const date = new Date(start);
     date.setDate(start.getDate() + index);
     const dateKey = localDayKey(date);
@@ -4239,16 +4297,19 @@ function usageHeatmap(
   const formatter = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
     month: 'short',
   });
-  const monthLabels = Array.from({ length: 53 }, (_, weekIndex) => {
+  const monthLabels = Array.from({ length: weekCount }, (_, weekIndex) => {
     const weekStart = new Date(start);
     weekStart.setDate(start.getDate() + weekIndex * 7);
     const previousWeek = new Date(weekStart);
     previousWeek.setDate(weekStart.getDate() - 7);
+    if (range === 'month') {
+      return weekIndex === 0 ? formatter.format(new Date(today.getFullYear(), selectedMonth, 1)) : '';
+    }
     return weekIndex === 0 || weekStart.getMonth() !== previousWeek.getMonth()
       ? formatter.format(weekStart)
       : '';
   });
-  return { days, monthLabels };
+  return { days, monthLabels, weekCount };
 }
 
 function localDayKey(date: Date) {

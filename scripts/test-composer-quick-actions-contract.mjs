@@ -142,6 +142,20 @@ assert.match(
   'Sent file cards must open the right-side read-only inspector',
 );
 assert.match(stylesSource, /\.message-file-attachment\s*\{/);
+const sendButtonHoverRule = stylesSource.match(
+  /\.composer-actions \.send-button:hover\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.ok(sendButtonHoverRule, 'The send button hover rule is missing');
+assert.doesNotMatch(
+  sendButtonHoverRule,
+  /transform|translateY|\bscale\s*:/,
+  'Hovering the send button must not move it vertically or scale it',
+);
+assert.doesNotMatch(
+  stylesSource,
+  /\.composer-actions \.send-button:active\s*\{[^}]*transform/,
+  'Pressing the send button must not restore a hover translation and create a visible jump',
+);
 assert.match(
   source,
   /event\.repeat\s*\|\|\s*event\.nativeEvent\.isComposing/,
@@ -158,6 +172,10 @@ assert.match(
   'The pre-start send control must remain a disabled waiting state',
 );
 assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);
+assert.match(source, /停止生成/);
+assert.match(source, /<Square size=\{14\} fill="currentColor"/);
+assert.doesNotMatch(source, /<Pause\b/);
+assert.match(source, /aria-label=\{sendButtonLabel\}/);
 assert.match(messageBubbleSource, /message-delivery-status/);
 assert.match(messageBubbleSource, /onRetryMessage\(message\)/);
 assert.match(chatHookSource, /let streamStarted = false/);

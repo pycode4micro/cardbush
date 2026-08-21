@@ -56,6 +56,7 @@ import type {
 } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
+import { modelLogoFor } from '../composer/modelLogos';
 import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
@@ -450,6 +451,7 @@ function MessageBubbleView({
   sending,
   activeTurnId,
   activeAssistantMessageId,
+  selectedModel = '',
   goalObjective = '',
   onRegenerate,
   onEditUserMessage,
@@ -465,6 +467,7 @@ function MessageBubbleView({
   sending: boolean;
   activeTurnId: string;
   activeAssistantMessageId: string;
+  selectedModel?: string;
   goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -871,6 +874,7 @@ function MessageBubbleView({
           messages={activeTranscriptMessages}
           language={language}
           active={isActiveAssistantTurn}
+          selectedModel={selectedModel}
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />
@@ -881,6 +885,7 @@ function MessageBubbleView({
           language={language}
           message={message}
           active={isActiveAssistantTurn}
+          selectedModel={selectedModel}
           showThinkingPlaceholder={isActiveAssistantTurn}
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
@@ -889,11 +894,14 @@ function MessageBubbleView({
         <>
           <MarkdownContent content={text} language={language} />
           {isActiveAssistantTurn && (
-            <AssistantThinkingProcessLine language={language} />
+            <AssistantThinkingProcessLine
+              language={language}
+              model={selectedModel}
+            />
           )}
         </>
       ) : isActiveAssistantTurn ? (
-        <AssistantThinkingProcessLine language={language} />
+        <AssistantThinkingProcessLine language={language} model={selectedModel} />
       ) : null}
       {visibleLoopHistory.length > 0 && (
         <AssistantLoopHistoryBlock
@@ -927,7 +935,7 @@ function MessageBubbleView({
   );
   return (
     <>
-      <div className="message-row assistant">
+      <div className={`message-row assistant${isActiveAssistantTurn ? ' streaming' : ''}`}>
         <div className="assistant-bubble">
           {showAssistantProgress && isActiveAssistantTurn && (
             <AssistantRunHeader
@@ -1254,12 +1262,14 @@ function AssistantActiveTranscript({
   messages,
   language,
   active,
+  selectedModel,
   onRevertChangeReport,
   onOpenScene,
 }: {
   messages: ChatMessage[];
   language: AppLanguage;
   active: boolean;
+  selectedModel: string;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -1298,7 +1308,8 @@ function AssistantActiveTranscript({
                 executions={executions}
                 language={language}
                 message={segment}
-                active
+                active={active}
+                selectedModel={selectedModel}
                 showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
                 onRevertChangeReport={onRevertChangeReport}
                 onOpenScene={onOpenScene}
@@ -1307,7 +1318,10 @@ function AssistantActiveTranscript({
               <>
                 <MarkdownContent content={text} language={language} />
                 {showThinkingPlaceholder && isLastSegment && (
-                  <AssistantThinkingProcessLine language={language} />
+                  <AssistantThinkingProcessLine
+                    language={language}
+                    model={selectedModel}
+                  />
                 )}
               </>
             ) : null}
@@ -1331,6 +1345,7 @@ function AssistantMessageContent({
   language,
   message,
   active,
+  selectedModel = '',
   showThinkingPlaceholder = false,
   onRevertChangeReport,
   onOpenScene,
@@ -1340,6 +1355,7 @@ function AssistantMessageContent({
   language: AppLanguage;
   message: ChatMessage;
   active: boolean;
+  selectedModel?: string;
   showThinkingPlaceholder?: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
@@ -1395,6 +1411,7 @@ function AssistantMessageContent({
       <AssistantThinkingProcessLine
         key="thinking-placeholder"
         language={language}
+        model={selectedModel}
       />,
     );
   }
@@ -1415,10 +1432,29 @@ function assistantTextWithoutToolNarration(
     : normalizeExecutionNarrationForDisplay(content, executions.length);
 }
 
-function AssistantThinkingProcessLine({ language }: { language: AppLanguage }) {
+function AssistantThinkingProcessLine({
+  language,
+  model,
+}: {
+  language: AppLanguage;
+  model: string;
+}) {
+  const logo = modelLogoFor(model);
   return (
     <div className="assistant-thinking-process">
-      <LoaderCircle size={14} />
+      {logo ? (
+        <span
+          className={`assistant-thinking-model model-${logo.id}`}
+          title={logo.label}
+          aria-hidden="true"
+        >
+          <img src={logo.src} alt="" />
+        </span>
+      ) : (
+        <span className="assistant-thinking-model fallback" aria-hidden="true">
+          <LoaderCircle size={11} />
+        </span>
+      )}
       <span>{language === 'zh' ? '正在思考' : 'Thinking'}</span>
     </div>
   );
@@ -1544,7 +1580,15 @@ function hasAssistantProgressSource(
     metadata.completed_at,
     metadata.done_at,
     metadata.finished_at,
-  ].some((value) => typeof value === 'string' && value.trim());
+    metadata.cardbush_turn_duration_ms,
+    metadata.turn_duration_ms,
+    metadata.duration_ms,
+    metadata.elapsed_ms,
+  ].some(
+    (value) =>
+      (typeof value === 'string' && Boolean(value.trim())) ||
+      (typeof value === 'number' && Number.isFinite(value) && value >= 0),
+  );
 }
 
 const AssistantRunHeader = memo(function AssistantRunHeader({
@@ -1690,28 +1734,62 @@ function assistantTurnElapsedMs(
   now: number,
 ) {
   const metadata = message.metadata ?? {};
+  const persistedDurationMs = assistantDurationFromMetadata(metadata);
   const startedAt = earliestTimestamp([
     metadata.cardbush_turn_started_at,
+    metadata.cardbushTurnStartedAt,
     metadata.turn_started_at,
+    metadata.turnStartedAt,
     metadata.started_at,
+    metadata.startedAt,
     message.createdAt,
     ...executions.map((execution) => execution.createdAt),
   ]);
   if (isActive) {
-    return startedAt == null ? 0 : Math.max(0, now - startedAt);
+    return startedAt == null ? null : Math.max(0, now - startedAt);
+  }
+  if (persistedDurationMs != null) {
+    return persistedDurationMs;
   }
   const completedAt = latestTimestamp([
     metadata.cardbush_turn_completed_at,
+    metadata.cardbushTurnCompletedAt,
+    metadata.turn_completed_at,
+    metadata.turnCompletedAt,
     metadata.completed_at,
+    metadata.completedAt,
     metadata.done_at,
+    metadata.doneAt,
     metadata.finished_at,
+    metadata.finishedAt,
     message.createdAt,
     ...executions.map((execution) => toolExecutionFinishedAt(execution)),
   ]);
   if (startedAt != null && completedAt != null && completedAt >= startedAt) {
     return completedAt - startedAt;
   }
-  return executions.reduce((total, execution) => total + Math.max(0, execution.durationMs), 0);
+  const toolDurationMs = executions.reduce(
+    (total, execution) => total + Math.max(0, execution.durationMs),
+    0,
+  );
+  return toolDurationMs > 0 ? toolDurationMs : null;
+}
+
+function assistantDurationFromMetadata(metadata: Record<string, unknown>) {
+  for (const value of [
+    metadata.cardbush_turn_duration_ms,
+    metadata.cardbushTurnDurationMs,
+    metadata.turn_duration_ms,
+    metadata.turnDurationMs,
+    metadata.duration_ms,
+    metadata.durationMs,
+    metadata.elapsed_ms,
+    metadata.elapsedMs,
+  ]) {
+    const duration = Number(value);
+    if (Number.isFinite(duration) && duration >= 0) return duration;
+  }
+  return undefined;
 }
 
 function assistantTurnCompletedAt(
@@ -1776,10 +1854,11 @@ function parseTimestamp(value: unknown) {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
-function formatCompactDuration(durationMs: number) {
-  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+function formatCompactDuration(durationMs: number | null) {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
     return '';
   }
+  if (durationMs < 1000) return '<1s';
   const seconds = Math.max(1, Math.round(durationMs / 1000));
   if (seconds < 60) {
     return `${seconds}s`;

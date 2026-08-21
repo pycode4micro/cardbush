@@ -31,6 +31,7 @@
     "test:model-selection": "node scripts/test-model-selection-contract.mjs",
     "test:message-edit": "node scripts/test-message-edit-contract.mjs",
     "test:history-tools": "node scripts/test-history-tool-contract.mjs",
+    "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs",
     "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs",
     "test:sidebar-interaction": "node scripts/test-sidebar-interaction-contract.mjs",

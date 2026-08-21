@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronRight, Copy, Search, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Check, ChevronRight, Copy, Search, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -312,6 +312,16 @@ export function QuickContextRail({
     )
     : [];
   const selectedTurnMessages = remoteTurnMessages ?? localSelectedTurnMessages;
+  const selectedSourceMessage = selectedMatch
+    ? messages.find((message) => (
+      message.id === selectedMatch.message.id ||
+      message.messageId === selectedMatch.message.id ||
+      Boolean(selectedMatch.serverMessageId && (
+        message.id === selectedMatch.serverMessageId ||
+        message.messageId === selectedMatch.serverMessageId
+      ))
+    )) ?? null
+    : null;
   const assistantReply = selectedTurnMessages
     .filter((message) => message.role === 'assistant')
     .map((message) => message.content.trim())
@@ -353,6 +363,36 @@ export function QuickContextRail({
     await navigator.clipboard.writeText(assistantReply);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
+  };
+
+  const jumpToSelectedTurn = () => {
+    if (!selectedSourceMessage) return;
+    const scroller = railRef.current
+      ?.closest('.chat-body')
+      ?.querySelector<HTMLElement>('.message-list');
+    const item = scroller?.querySelector<HTMLElement>(
+      `[data-message-id="${selectorEscape(selectedSourceMessage.id)}"]`,
+    );
+    if (!scroller || !item) return;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    const readingAnchor = Math.min(180, Math.max(72, scroller.clientHeight * 0.22));
+    const targetTop = Math.max(
+      0,
+      Math.min(
+        scroller.scrollHeight - scroller.clientHeight,
+        scroller.scrollTop + itemRect.top - scrollerRect.top - readingAnchor,
+      ),
+    );
+    closePanel();
+    window.requestAnimationFrame(() => {
+      scroller.scrollTo({
+        top: targetTop,
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+          ? 'auto'
+          : 'smooth',
+      });
+    });
   };
 
   const selectRailTurn = (message: ChatMessage) => {
@@ -510,6 +550,14 @@ export function QuickContextRail({
               <footer>
                 <button
                   type="button"
+                  disabled={!selectedSourceMessage}
+                  onClick={jumpToSelectedTurn}
+                >
+                  <ArrowUpRight size={14} />
+                  {language === 'zh' ? '跳转到该轮' : 'Jump to turn'}
+                </button>
+                <button
+                  type="button"
                   disabled={!assistantReply}
                   onClick={() => void copyAssistantReply()}
                 >
@@ -530,6 +578,10 @@ export function QuickContextRail({
 function findNextUserMessageIndex(messages: ChatMessage[], startIndex: number) {
   const nextIndex = messages.findIndex((message, index) => index >= startIndex && message.role === 'user');
   return nextIndex < 0 ? messages.length : nextIndex;
+}
+
+function selectorEscape(value: string) {
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function turnMessagesFromWindow(messages: ChatMessage[], anchorMessageId: string) {

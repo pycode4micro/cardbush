@@ -23,12 +23,12 @@ import {
   LoaderCircle,
   Lock,
   Paperclip,
-  Pause,
   Plus,
   Presentation,
   Puzzle,
   SlidersHorizontal,
   Sparkles,
+  Square,
   Target,
   Terminal,
   Trash2,
@@ -381,6 +381,13 @@ export function Composer({
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
     fileAttachments.length > 0;
+  const sendButtonLabel = sending
+    ? hasContent
+      ? language === 'zh' ? '加入发送队列' : 'Queue message'
+      : cancelReady
+        ? language === 'zh' ? '停止生成' : 'Stop generating'
+        : language === 'zh' ? '等待任务启动' : 'Waiting for task to start'
+    : language === 'zh' ? '发送' : 'Send';
 
   useEffect(() => {
     if (!sending || !cancelEnabled) {
@@ -1221,17 +1228,12 @@ export function Composer({
               className={`send-button ${sending && hasContent ? 'queue' : ''}`}
               type="button"
               disabled={sending && !hasContent && !cancelReady}
-              title={
-                sending && hasContent
-                  ? language === 'zh'
-                    ? '加入发送队列'
-                    : 'Queue message'
-                  : undefined
-              }
+              title={sendButtonLabel}
+              aria-label={sendButtonLabel}
               onClick={() => void submit()}
             >
               {sending && !hasContent ? (
-                cancelReady ? <Pause size={17} /> : <LoaderCircle size={17} />
+                cancelReady ? <Square size={14} fill="currentColor" /> : <LoaderCircle size={17} />
               ) : (
                 <ArrowUp size={18} />
               )}

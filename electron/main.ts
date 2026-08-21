@@ -1830,21 +1830,28 @@ ipcMain.handle('shell:file-context-menu', (event, targetPath: string) => {
     return 'File menu is only available from the main CardBush window.';
   }
   const normalizedPath = normalizeShellPath(targetPath);
-  if (!normalizedPath || !fs.existsSync(normalizedPath)) {
-    return 'File does not exist.';
+  if (!normalizedPath) {
+    return 'Invalid path.';
   }
+  const fileExists = fs.existsSync(normalizedPath);
   const menu = Menu.buildFromTemplate([
+    ...(!fileExists
+      ? [{ label: '文件不存在（无法打开）', enabled: false } as const, { type: 'separator' } as const]
+      : []),
     {
       label: '在 CardBush 中打开',
+      enabled: fileExists,
       click: () => void openUiPreview(normalizedPath),
     },
     {
       label: '打开方式...',
+      enabled: fileExists,
       click: () => openFileWithChooser(normalizedPath),
     },
     { type: 'separator' },
     {
       label: '跳转到文件位置',
+      enabled: fileExists,
       click: () => shell.showItemInFolder(normalizedPath),
     },
     {

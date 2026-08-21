@@ -4552,6 +4552,20 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
   const turnId = optionalString(value.turn_id ?? value.turnId);
   const role = normalizeRole(value.role);
   const sourceMetadata = asOptionalRecord(value.metadata);
+  const startedAt = optionalString(
+    value.cardbush_turn_started_at ??
+      value.cardbushTurnStartedAt ??
+      value.turn_started_at ??
+      value.turnStartedAt ??
+      value.started_at ??
+      value.startedAt ??
+      sourceMetadata?.cardbush_turn_started_at ??
+      sourceMetadata?.cardbushTurnStartedAt ??
+      sourceMetadata?.turn_started_at ??
+      sourceMetadata?.turnStartedAt ??
+      sourceMetadata?.started_at ??
+      sourceMetadata?.startedAt,
+  );
   const completedAt = optionalString(
     value.cardbush_turn_completed_at ??
       value.cardbushTurnCompletedAt ??
@@ -4562,7 +4576,35 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
       value.done_at ??
       value.doneAt ??
       value.finished_at ??
-      value.finishedAt,
+      value.finishedAt ??
+      sourceMetadata?.cardbush_turn_completed_at ??
+      sourceMetadata?.cardbushTurnCompletedAt ??
+      sourceMetadata?.turn_completed_at ??
+      sourceMetadata?.turnCompletedAt ??
+      sourceMetadata?.completed_at ??
+      sourceMetadata?.completedAt ??
+      sourceMetadata?.done_at ??
+      sourceMetadata?.doneAt ??
+      sourceMetadata?.finished_at ??
+      sourceMetadata?.finishedAt,
+  );
+  const durationMs = optionalNumber(
+    value.cardbush_turn_duration_ms ??
+      value.cardbushTurnDurationMs ??
+      value.turn_duration_ms ??
+      value.turnDurationMs ??
+      value.duration_ms ??
+      value.durationMs ??
+      value.elapsed_ms ??
+      value.elapsedMs ??
+      sourceMetadata?.cardbush_turn_duration_ms ??
+      sourceMetadata?.cardbushTurnDurationMs ??
+      sourceMetadata?.turn_duration_ms ??
+      sourceMetadata?.turnDurationMs ??
+      sourceMetadata?.duration_ms ??
+      sourceMetadata?.durationMs ??
+      sourceMetadata?.elapsed_ms ??
+      sourceMetadata?.elapsedMs,
   );
   const clientMessageId = optionalString(
     value.client_message_id ?? value.clientMessageId ?? sourceMetadata?.client_message_id,
@@ -4571,13 +4613,25 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     value.superseded === true ||
     sourceMetadata?.__bush_superseded === true ||
     sourceMetadata?.superseded === true;
-  const metadata = completedAt || clientMessageId || backendSuperseded
+  const metadata = startedAt || completedAt || durationMs != null || clientMessageId || backendSuperseded
     ? {
         ...sourceMetadata,
+        ...(startedAt
+          ? {
+              cardbush_turn_started_at:
+                sourceMetadata?.cardbush_turn_started_at ?? startedAt,
+            }
+          : {}),
         ...(completedAt
           ? {
               cardbush_turn_completed_at:
                 sourceMetadata?.cardbush_turn_completed_at ?? completedAt,
+            }
+          : {}),
+        ...(durationMs != null
+          ? {
+              cardbush_turn_duration_ms:
+                sourceMetadata?.cardbush_turn_duration_ms ?? durationMs,
             }
           : {}),
         ...(clientMessageId ? { client_message_id: clientMessageId } : {}),

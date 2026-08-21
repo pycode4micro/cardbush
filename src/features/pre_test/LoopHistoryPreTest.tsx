@@ -80,6 +80,7 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                   sending
                   activeTurnId="pre-test-active-turn"
                   activeAssistantMessageId="pre-test-active-3"
+                  selectedModel="glm-5"
                   onRegenerate={async () => undefined}
                   onEditUserMessage={async () => undefined}
                   onGuideMessage={async () => undefined}

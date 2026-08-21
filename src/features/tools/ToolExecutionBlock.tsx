@@ -1,4 +1,14 @@
-import { ChevronDown, Clipboard, LoaderCircle, Network, Play, RefreshCw, Sparkles, Terminal, WrapText } from 'lucide-react';
+import {
+  ChevronDown,
+  Clipboard,
+  LoaderCircle,
+  Network,
+  Play,
+  RefreshCw,
+  Sparkles,
+  SquareTerminal,
+  WrapText,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
 import { dispatchSubagent, type SubagentDispatchResult } from '../../backend/api';
@@ -124,8 +134,10 @@ export function ToolExecutionBlock({
         type="button"
         onClick={toggleExpanded}
       >
-        <Terminal size={15} />
-        <span>{summary}</span>
+        <span className="tool-execution-mark" aria-hidden="true">
+          <SquareTerminal size={11} />
+        </span>
+        <span className="tool-execution-label">{summary}</span>
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
       {expanded && (

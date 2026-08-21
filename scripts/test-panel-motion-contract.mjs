@@ -15,6 +15,13 @@ const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx
 const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
 const theme = read('src', 'styles', 'theme.css');
 
+assert.match(messageBubble, /message-row assistant\$\{isActiveAssistantTurn \? ' streaming' : ''\}/);
+assert.match(
+  css,
+  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp\(132px,\s*22vh,\s*240px\)/,
+  'The active assistant must reserve reading space before streamed Markdown arrives',
+);
+
 assert.match(css, /--panel-motion-duration:\s*240ms/);
 assert.match(css, /--panel-motion-ease:/);
 assert.match(css, /\.soft-panel-hidden\s*\{/);
@@ -24,7 +31,17 @@ assert.match(css, /\.conversation-work-summary\.soft-panel-hidden/);
 assert.match(css, /body\.sidebar-resizing \.sidebar[\s\S]*transition:\s*none/);
 assert.match(css, /body\.right-inspector-resizing \.right-inspector[\s\S]*transition:\s*none/);
 assert.match(css, /--chat-inline-gutter:\s*clamp\(12px,\s*3vw,\s*36px\)/);
+assert.match(
+  css,
+  /--chat-track-width:\s*800px/,
+  'Messages, composer, runtime cards, and welcome content must share a slightly narrower reading track',
+);
 assert.doesNotMatch(css, /--chat-track-width:\s*(787|672)px/);
+assert.match(
+  css,
+  /\.error-banner,[\s\S]*?\.notice-banner\s*\{[\s\S]*?width:\s*min\(calc\(100% - 2 \* var\(--chat-inline-gutter\)\), var\(--chat-track-width\)\)/,
+  'Conversation notices must align with the shared chat track instead of using an independent width',
+);
 assert.match(
   css,
   /@media \(max-width:\s*980px\)[\s\S]*?\.right-inspector\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?max-width:\s*calc\(100% - 48px\)/,

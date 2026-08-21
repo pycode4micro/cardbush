@@ -85,9 +85,14 @@ assert.match(hookSource, /caught\.code === 'turn_guidance_closed'/);
 assert.match(hookSource, /caught\.code === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
+assert.match(hookSource, /const streamFlushIntervalMs = 80/);
+assert.match(hookSource, /const streamBaseCharChunkSize = 8/);
+assert.match(hookSource, /const streamMediumCharChunkSize = 16/);
+assert.match(hookSource, /const streamFastCharChunkSize = 28/);
+assert.match(hookSource, /const streamCatchUpCharChunkSize = 48/);
 assert.equal(
   (hookSource.match(
-    /streamBuffer\.flushToolBoundary\(\);[\s\S]{0,500}?streamBuffer\.reset\(route,/g,
+    /streamBuffer\.flushToolBoundary\(\);[\s\S]{0,1000}?streamBuffer\.reset\(route,/g,
   ) ?? []).length,
   3,
   'foreground, control, and Goal streams must drain token text before an assistant revision resets the buffer',
@@ -133,15 +138,24 @@ const hookModule = { exports: {} };
 vm.runInNewContext(hookTranspiled.outputText, {
   module: hookModule,
   exports: hookModule.exports,
-  require: (specifier) => specifier.endsWith('/goalState')
-    ? {
+  require: (specifier) => {
+    if (specifier.endsWith('/assistantTurnTiming')) {
+      return {
+        assistantTurnTimingFingerprint: () => '',
+        hydrateAssistantTurnTiming: (messages) => messages,
+        persistAssistantTurnTiming: () => undefined,
+      };
+    }
+    return specifier.endsWith('/goalState')
+      ? {
         applyGoalToolUpdate: () => null,
         goalToolUpdateFromExecution: () => null,
         isGoalSelfCheckMessage: (message) =>
           message?.role === 'user' &&
           message?.metadata?.runtime_user_label === 'goal_self_check',
       }
-    : {},
+      : {};
+  },
   Date,
   Map,
   Set,
@@ -232,6 +246,23 @@ assert.equal(
   '先说明我要读取配置。工具完成后继续解释。',
 );
 boundaryBuffer.dispose();
+
+const eagerStreamChunks = [];
+const eagerStreamBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  eagerStreamChunks.push(delta);
+});
+eagerStreamBuffer.push('这是一个足够长的首段内容，用来验证持续到达的 token 会尽早显示。');
+assert.equal(
+  eagerStreamChunks.length,
+  0,
+  'incoming token events must be batched instead of forcing immediate Markdown reflow',
+);
+await new Promise((resolve) => setTimeout(resolve, 130));
+assert.ok(
+  eagerStreamChunks.length > 0,
+  'a complete opening sentence must start rendering without waiting for a large buffer',
+);
+eagerStreamBuffer.dispose();
 
 const finalSnapshotChunks = [];
 const finalSnapshotBuffer = createAssistantStreamDeltaBuffer((delta) => {

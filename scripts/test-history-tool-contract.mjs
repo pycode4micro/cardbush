@@ -199,7 +199,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-process svg,[\s\S]*?\.processing-context-tab\.running > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-model\.fallback svg,[\s\S]*?\.processing-context-tab\.running > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
   'Functional execution spinners must remain visibly active when the OS reduces motion',
 );
 
@@ -281,7 +281,7 @@ assert.match(
 assert.match(
   bubbleSource,
   /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
-  'The terminal turn must keep only the processed header and final answer in chat',
+  'The terminal turn must keep the processed header and final answer in chat',
 );
 assert.doesNotMatch(
   bubbleSource,

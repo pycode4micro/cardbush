@@ -6,22 +6,18 @@ import {
   Clipboard,
   Code2,
   Edit3,
-  Flag,
   Folder,
   FolderOpen,
   LoaderCircle,
   MessageSquare,
-  MonitorCog,
   MoreHorizontal,
   Pin,
   Plus,
-  Puzzle,
   RefreshCw,
   RotateCcw,
   Search,
   Settings,
   Trash2,
-  Wrench,
   X,
 } from 'lucide-react';
 import type * as React from 'react';
@@ -62,6 +58,20 @@ export type ProjectAction =
   | 'remove';
 
 const sidebarMenuCloseEvent = 'cardbush-sidebar-menu-close';
+const pinnedConversationStorageKey = 'cardbush_pinned_conversation_ids';
+
+function readPinnedConversationIds() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(pinnedConversationStorageKey) ?? '[]');
+    return new Set(
+      Array.isArray(value)
+        ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
+        : [],
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
 
 type SidebarContextMenuItem = {
   key: string;
@@ -82,6 +92,8 @@ type SidebarContextMenuState = {
 
 type ConversationMenuOptions = {
   changeCount: number;
+  pinned: boolean;
+  onTogglePin: () => void;
   onOpenChanges?: () => void;
   onRename: () => void;
   onArchive: () => void;
@@ -147,10 +159,13 @@ export function ChatSidebar({
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['projects', 'conversations']),
+    () => new Set(['pinned', 'projects']),
   );
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
+  );
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<Set<string>>(
+    readPinnedConversationIds,
   );
   const sidebarRef = useRef<HTMLElement | null>(null);
   const visibleProjects = useMemo(
@@ -164,17 +179,22 @@ export function ChatSidebar({
       ),
     [archivedConversationIds, conversationItems],
   );
-  const isKnownProjectConversation = useCallback(
-    (conversation: ConversationSummary) => {
-      const projectDir = conversationProjectDir(conversation);
-      return Boolean(
-        projectDir &&
-          visibleProjects.some((project) => samePath(project.rootPath, projectDir)),
-      );
-    },
+  const pinnedProjects = useMemo(
+    () => visibleProjects.filter((project) => project.pinned),
     [visibleProjects],
   );
-
+  const regularProjects = useMemo(
+    () => visibleProjects.filter((project) => !project.pinned),
+    [visibleProjects],
+  );
+  const pinnedConversations = useMemo(
+    () => visibleConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
+    [pinnedConversationIds, visibleConversations],
+  );
+  const regularConversations = useMemo(
+    () => visibleConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
+    [pinnedConversationIds, visibleConversations],
+  );
   useEffect(() => {
     const active = visibleConversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -183,21 +203,12 @@ export function ChatSidebar({
       return;
     }
     const activeProjectDir = conversationProjectDir(active);
-    if (!activeProjectDir) {
-      setExpandedSections((current) =>
-        current.has('conversations') ? current : new Set(current).add('conversations'),
-      );
-      return;
-    }
+    if (!activeProjectDir) return;
     const project = visibleProjects.find((item) => samePath(item.rootPath, activeProjectDir));
-    if (!project) {
-      setExpandedSections((current) =>
-        current.has('conversations') ? current : new Set(current).add('conversations'),
-      );
-      return;
-    }
+    if (!project) return;
+    const targetSection = project.pinned ? 'pinned' : 'projects';
     setExpandedSections((current) =>
-      current.has('projects') ? current : new Set(current).add('projects'),
+      current.has(targetSection) ? current : new Set(current).add(targetSection),
     );
     setExpandedProjectIds((current) =>
       current.has(project.id) ? current : new Set(current).add(project.id),
@@ -207,6 +218,22 @@ export function ChatSidebar({
   const closeMenus = useCallback(() => {
     setOpenMenu(null);
     setContextMenu(null);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      pinnedConversationStorageKey,
+      JSON.stringify([...pinnedConversationIds]),
+    );
+  }, [pinnedConversationIds]);
+
+  const toggleConversationPin = useCallback((conversationId: string) => {
+    setPinnedConversationIds((current) => {
+      const next = new Set(current);
+      if (next.has(conversationId)) next.delete(conversationId);
+      else next.add(conversationId);
+      return next;
+    });
   }, []);
 
   const toggleInlineMenu = useCallback((id: string) => {
@@ -374,6 +401,14 @@ export function ChatSidebar({
         label: language === 'zh' ? '打开对话' : 'Open chat',
         onClick: () => onConversationChange(conversation.id),
       },
+      {
+        key: 'pin',
+        icon: <Pin size={15} />,
+        label: options.pinned
+          ? language === 'zh' ? '取消置顶' : 'Unpin chat'
+          : language === 'zh' ? '置顶对话' : 'Pin chat',
+        onClick: options.onTogglePin,
+      },
     ];
     if (options.changeCount > 0) {
       items.push({
@@ -413,6 +448,89 @@ export function ChatSidebar({
     return items;
   }
 
+  function renderProjectBlock(project: ProjectItem) {
+    return (
+      <ProjectBlock
+        key={project.id}
+        project={project}
+        conversations={regularConversations.filter((item) => {
+          const projectDir = conversationProjectDir(item);
+          return Boolean(projectDir && samePath(projectDir, project.rootPath));
+        })}
+        activeConversationId={activeConversationId}
+        runningConversationIds={runningConversationIds}
+        attentionByConversation={attentionByConversation}
+        menuOpen={openMenu === `project:${project.id}`}
+        language={language}
+        expanded={expandedProjectIds.has(project.id)}
+        onToggleExpanded={() => toggleProject(project.id)}
+        onContextMenu={(event) =>
+          openContextMenu(event, `project:${project.id}`, projectMenuItems(project))
+        }
+        onMenuToggle={() => toggleInlineMenu(`project:${project.id}`)}
+        onProjectAction={(action) => {
+          setOpenMenu(null);
+          onProjectAction(action, project);
+        }}
+        onConversationChange={onConversationChange}
+        onConversationMenuToggle={(conversationId) =>
+          toggleInlineMenu(`conversation:${conversationId}`)
+        }
+        onConversationArchive={toggleConversationArchive}
+        onDeleteConversation={onDeleteConversation}
+        onRenameConversation={onRenameConversation}
+        onConversationContextMenu={(event, conversation, options) =>
+          openContextMenu(
+            event,
+            `conversation:${conversation.id}`,
+            conversationMenuItems(conversation, options),
+          )
+        }
+        pinnedConversationIds={pinnedConversationIds}
+        onToggleConversationPin={toggleConversationPin}
+        changeReportsByConversation={changeReportsByConversation}
+        onOpenConversationChanges={onOpenConversationChanges}
+        openMenu={openMenu}
+      />
+    );
+  }
+
+  function renderStandaloneConversation(conversation: ConversationSummary) {
+    return (
+      <ConversationRow
+        key={conversation.id}
+        conversation={conversation}
+        active={conversation.id === activeConversationId}
+        running={runningConversationIds?.has(conversation.id) ?? false}
+        attention={attentionByConversation?.[conversation.id]}
+        pinned={pinnedConversationIds.has(conversation.id)}
+        menuOpen={openMenu === `conversation:${conversation.id}`}
+        language={language}
+        onMenuToggle={() => toggleInlineMenu(`conversation:${conversation.id}`)}
+        onTogglePin={() => toggleConversationPin(conversation.id)}
+        onArchive={() => toggleConversationArchive(conversation.id)}
+        onDelete={() => onDeleteConversation(conversation.id)}
+        changeReports={changeReportsByConversation[conversation.id] ?? []}
+        onOpenChanges={() => onOpenConversationChanges(conversation.id)}
+        onRename={() => {
+          const nextTitle = window.prompt(
+            language === 'zh' ? '重命名对话' : 'Rename chat',
+            conversation.title,
+          );
+          if (nextTitle?.trim()) onRenameConversation(conversation.id, nextTitle);
+        }}
+        onContextMenu={(event, options) =>
+          openContextMenu(
+            event,
+            `conversation:${conversation.id}`,
+            conversationMenuItems(conversation, options),
+          )
+        }
+        onClick={() => onConversationChange(conversation.id)}
+      />
+    );
+  }
+
   return (
     <aside
       className={`sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
@@ -421,7 +539,7 @@ export function ChatSidebar({
     >
       <nav className="sidebar-nav">
         <NavRow
-          icon={<Edit3 size={17} />}
+          icon={<Edit3 size={14} />}
           label={language === 'zh' ? '新会话' : 'New chat'}
           onClick={onCreateConversation}
           onContextMenu={(event) =>
@@ -436,24 +554,8 @@ export function ChatSidebar({
           }
         />
         <NavRow
-          active={section === 'os'}
-          icon={<MonitorCog size={17} />}
-          label={t('os')}
-          onClick={() => onSectionChange('os')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:os', [
-              {
-                key: 'open',
-                icon: <MonitorCog size={15} />,
-                label: language === 'zh' ? '进入 OS' : 'Open OS',
-                onClick: () => onSectionChange('os'),
-              },
-            ])
-          }
-        />
-        <NavRow
           active={section === 'search'}
-          icon={<Search size={17} />}
+          icon={<Search size={14} />}
           label={t('search')}
           onClick={() => onSectionChange('search')}
           onContextMenu={(event) =>
@@ -467,57 +569,26 @@ export function ChatSidebar({
             ])
           }
         />
-        <NavRow
-          active={section === 'skills'}
-          icon={<Puzzle size={17} />}
-          label={t('skills')}
-          onClick={() => onSectionChange('skills')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:skills', [
-              {
-                key: 'open',
-                icon: <Puzzle size={15} />,
-                label: language === 'zh' ? '打开技能' : 'Open skills',
-                onClick: () => onSectionChange('skills'),
-              },
-            ])
-          }
-        />
-        <NavRow
-          active={section === 'tools'}
-          icon={<Wrench size={17} />}
-          label={t('tools')}
-          onClick={() => onSectionChange('tools')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:tools', [
-              {
-                key: 'open',
-                icon: <Wrench size={15} />,
-                label: language === 'zh' ? '打开工具管理' : 'Open tool management',
-                onClick: () => onSectionChange('tools'),
-              },
-            ])
-          }
-        />
-        <NavRow
-          active={section === 'team'}
-          icon={<Flag size={17} />}
-          label={t('team')}
-          onClick={() => onSectionChange('team')}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:team', [
-              {
-                key: 'open',
-                icon: <Flag size={15} />,
-                label: language === 'zh' ? '打开 Team' : 'Open Team',
-                onClick: () => onSectionChange('team'),
-              },
-            ])
-          }
-        />
       </nav>
 
       <div className="sidebar-scroll">
+        <SectionHeader
+          title={language === 'zh' ? '置顶' : 'Pinned'}
+          action={<Pin size={14} />}
+          actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
+          expanded={expandedSections.has('pinned')}
+          onToggle={() => toggleSection('pinned')}
+        />
+        {expandedSections.has('pinned') && (
+          pinnedProjects.length > 0 || pinnedConversations.length > 0
+            ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
+            : (
+              <div className="sidebar-pinned-empty">
+                {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
+              </div>
+            )
+        )}
+
         <SectionHeader
           title={language === 'zh' ? '项目' : 'Projects'}
           action={<FolderOpen size={14} />}
@@ -545,146 +616,18 @@ export function ChatSidebar({
                 label: language === 'zh' ? '添加项目' : 'Add project',
                 onClick: onAddProject,
               },
+              {
+                key: 'restore-conversations',
+                icon: <Archive size={15} />,
+                label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
+                disabled: archivedConversationIds.size === 0,
+                onClick: () => setArchivedConversationIds(new Set()),
+              },
             ])
           }
         />
-        {expandedSections.has('projects') && visibleProjects.map((project) => (
-          <ProjectBlock
-            key={project.id}
-            project={project}
-            conversations={visibleConversations.filter(
-              (item) => {
-                const projectDir = conversationProjectDir(item);
-                return Boolean(projectDir && samePath(projectDir, project.rootPath));
-              },
-            )}
-            activeConversationId={activeConversationId}
-            runningConversationIds={runningConversationIds}
-            attentionByConversation={attentionByConversation}
-            menuOpen={openMenu === `project:${project.id}`}
-            language={language}
-            expanded={expandedProjectIds.has(project.id)}
-            onToggleExpanded={() => toggleProject(project.id)}
-            onContextMenu={(event) =>
-              openContextMenu(event, `project:${project.id}`, projectMenuItems(project))
-            }
-            onMenuToggle={() =>
-              toggleInlineMenu(`project:${project.id}`)
-            }
-            onProjectAction={(action) => {
-              setOpenMenu(null);
-              onProjectAction(action, project);
-            }}
-            onConversationChange={onConversationChange}
-            onConversationMenuToggle={(conversationId) =>
-              toggleInlineMenu(`conversation:${conversationId}`)
-            }
-            onConversationArchive={toggleConversationArchive}
-            onDeleteConversation={onDeleteConversation}
-            onRenameConversation={onRenameConversation}
-            onConversationContextMenu={(event, conversation, options) =>
-              openContextMenu(
-                event,
-                `conversation:${conversation.id}`,
-                conversationMenuItems(conversation, options),
-              )
-            }
-            changeReportsByConversation={changeReportsByConversation}
-            onOpenConversationChanges={onOpenConversationChanges}
-            openMenu={openMenu}
-          />
-        ))}
+        {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
 
-        <div className="section-header-wrap">
-          <SectionHeader
-            title={language === 'zh' ? '对话' : 'Conversations'}
-            action={<MoreHorizontal size={14} />}
-            actionLabel={language === 'zh' ? '对话操作' : 'Conversation actions'}
-            expanded={expandedSections.has('conversations')}
-            onToggle={() => toggleSection('conversations')}
-            onAction={() =>
-              toggleInlineMenu('section:conversations')
-            }
-            onContextMenu={(event) =>
-              openContextMenu(event, 'section:conversations', [
-                {
-                  key: 'toggle',
-                  icon: <ChevronDown size={15} />,
-                  label: expandedSections.has('conversations')
-                    ? language === 'zh'
-                      ? '收起对话'
-                      : 'Collapse conversations'
-                    : language === 'zh'
-                      ? '展开对话'
-                      : 'Expand conversations',
-                  onClick: () => toggleSection('conversations'),
-                },
-                {
-                  key: 'new-chat',
-                  icon: <Edit3 size={15} />,
-                  label: language === 'zh' ? '新建普通对话' : 'New chat',
-                  onClick: onCreateConversation,
-                },
-                {
-                  key: 'restore',
-                  icon: <Archive size={15} />,
-                  label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
-                  onClick: () => setArchivedConversationIds(new Set()),
-                },
-              ])
-            }
-          />
-          {openMenu === 'section:conversations' && (
-            <SidebarMenu>
-              <SidebarMenuButton icon={<Edit3 size={15} />} onClick={onCreateConversation}>
-                {language === 'zh' ? '新建普通对话' : 'New chat'}
-              </SidebarMenuButton>
-              <SidebarMenuButton
-                icon={<Archive size={15} />}
-                onClick={() => setArchivedConversationIds(new Set())}
-              >
-                {language === 'zh' ? '恢复归档对话' : 'Restore archived chats'}
-              </SidebarMenuButton>
-            </SidebarMenu>
-          )}
-        </div>
-        {expandedSections.has('conversations') && visibleConversations
-          .filter((item) => !isKnownProjectConversation(item))
-          .map((conversation) => (
-            <ConversationRow
-              key={conversation.id}
-              conversation={conversation}
-              active={conversation.id === activeConversationId}
-              running={runningConversationIds?.has(conversation.id) ?? false}
-              attention={attentionByConversation?.[conversation.id]}
-              menuOpen={openMenu === `conversation:${conversation.id}`}
-              language={language}
-              onMenuToggle={() =>
-                toggleInlineMenu(`conversation:${conversation.id}`)
-              }
-              onArchive={() => toggleConversationArchive(conversation.id)}
-              onDelete={() => onDeleteConversation(conversation.id)}
-              changeReports={changeReportsByConversation[conversation.id] ?? []}
-              onOpenChanges={() => onOpenConversationChanges(conversation.id)}
-              onRename={() => {
-                const nextTitle = window.prompt(
-                  language === 'zh' ? '重命名对话' : 'Rename chat',
-                  conversation.title,
-                );
-                if (nextTitle?.trim()) {
-                  onRenameConversation(conversation.id, nextTitle);
-                }
-              }}
-              onContextMenu={(event, options) =>
-                openContextMenu(
-                  event,
-                  `conversation:${conversation.id}`,
-                  conversationMenuItems(conversation, options),
-                )
-              }
-              onClick={() => onConversationChange(conversation.id)}
-            />
-          ))}
       </div>
 
       <button
@@ -738,7 +681,9 @@ function NavRow({
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
-      {icon}
+      <span className="nav-row-icon" aria-hidden="true">
+        {icon}
+      </span>
       <span>{label}</span>
     </button>
   );
@@ -824,6 +769,8 @@ function ProjectBlock({
   onDeleteConversation,
   onRenameConversation,
   onConversationContextMenu,
+  pinnedConversationIds,
+  onToggleConversationPin,
   changeReportsByConversation,
   onOpenConversationChanges,
 }: {
@@ -850,6 +797,8 @@ function ProjectBlock({
     conversation: ConversationSummary,
     options: ConversationMenuOptions,
   ) => void;
+  pinnedConversationIds: ReadonlySet<string>;
+  onToggleConversationPin: (conversationId: string) => void;
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
   onOpenConversationChanges: (conversationId: string) => void;
 }) {
@@ -868,7 +817,9 @@ function ProjectBlock({
           }
         }}
       >
-        <Folder size={17} />
+        <span className="project-row-icon" aria-hidden="true">
+          <Folder size={14} />
+        </span>
         <div className="project-title">
           <span>{project.title}</span>
         </div>
@@ -947,9 +898,11 @@ function ProjectBlock({
           running={runningConversationIds?.has(conversation.id) ?? false}
           attention={attentionByConversation?.[conversation.id]}
           nested
+          pinned={pinnedConversationIds.has(conversation.id)}
           menuOpen={openMenu === `conversation:${conversation.id}`}
           language={language}
           onMenuToggle={() => onConversationMenuToggle(conversation.id)}
+          onTogglePin={() => onToggleConversationPin(conversation.id)}
           onArchive={() => onConversationArchive(conversation.id)}
           onDelete={() => onDeleteConversation(conversation.id)}
           changeReports={changeReportsByConversation[conversation.id] ?? []}
@@ -992,9 +945,11 @@ function ConversationRow({
   running,
   attention,
   nested,
+  pinned,
   language,
   menuOpen,
   onMenuToggle,
+  onTogglePin,
   onArchive,
   onDelete,
   changeReports,
@@ -1008,9 +963,11 @@ function ConversationRow({
   running?: boolean;
   attention?: SessionAttentionState;
   nested?: boolean;
+  pinned: boolean;
   language: AppLanguage;
   menuOpen: boolean;
   onMenuToggle: () => void;
+  onTogglePin: () => void;
   onArchive: () => void;
   onDelete: () => void;
   changeReports?: ConversationChangeReport[];
@@ -1022,6 +979,8 @@ function ConversationRow({
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const menuOptions: ConversationMenuOptions = {
     changeCount,
+    pinned,
+    onTogglePin,
     onOpenChanges,
     onRename,
     onArchive,
@@ -1105,6 +1064,11 @@ function ConversationRow({
         <SidebarMenu>
           <SidebarMenuButton icon={<MessageSquare size={15} />} onClick={onClick}>
             {language === 'zh' ? '打开对话' : 'Open chat'}
+          </SidebarMenuButton>
+          <SidebarMenuButton icon={<Pin size={15} />} onClick={onTogglePin}>
+            {pinned
+              ? language === 'zh' ? '取消置顶' : 'Unpin chat'
+              : language === 'zh' ? '置顶对话' : 'Pin chat'}
           </SidebarMenuButton>
           {changeCount > 0 && (
             <SidebarMenuButton icon={<Code2 size={15} />} onClick={() => onOpenChanges?.()}>

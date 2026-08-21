@@ -6,6 +6,14 @@ const sidebarSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
 );
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
+const chatHookSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
+  'utf8',
+);
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
@@ -81,5 +89,90 @@ assert.doesNotMatch(
   /\.window-frame[^}]*cursor:\s*ew-resize/,
   'The internal split-resizer treatment must not replace native window resizing',
 );
+const windowGlyphRule = stylesSource.match(/\.window-glyph\s*\{([^}]*)\}/)?.[1] ?? '';
+assert.match(stylesSource, /\.window-button\s*\{\s*width:\s*40px;[\s\S]*?height:\s*29px/);
+assert.match(windowGlyphRule, /width:\s*10px/);
+assert.match(windowGlyphRule, /height:\s*10px/);
+assert.match(
+  stylesSource,
+  /\.window-button:hover\s*\{[\s\S]*?background:\s*color-mix\(in srgb, var\(--text\) 9%, transparent\)/,
+  'Native window controls must use a neutral Windows-style hover surface',
+);
+assert.match(stylesSource, /\.window-button\.danger:hover\s*\{[\s\S]*?background:\s*#c42b1c/);
+assert.match(
+  appSource,
+  /label=\{language === 'zh' \? '插件' : 'Plugins'\}[\s\S]*?插件管理[\s\S]*?工具管理[\s\S]*?技能管理/,
+  'The native title bar must group plugin, tool, and skill management together',
+);
+assert.match(
+  appSource,
+  /label="Beta"[\s\S]*?label="OS"[\s\S]*?label="Team"/,
+  'Experimental OS and Team surfaces must live under the Beta menu',
+);
+const windowFrameMenuBlock = appSource.match(
+  /function WindowFrameMenu\([\s\S]*?function WindowFrameMenuItem/,
+)?.[0] ?? '';
+assert.doesNotMatch(
+  windowFrameMenuBlock,
+  /<ChevronDown/,
+  'The title-bar menus must not show redundant expansion arrows',
+);
+assert.doesNotMatch(
+  sidebarSource,
+  /onSectionChange\('(os|skills|tools|team)'\)/,
+  'OS, Team, tools, and skills must not remain duplicated in primary sidebar navigation',
+);
+assert.match(sidebarSource, /title=\{language === 'zh' \? '置顶' : 'Pinned'\}/);
+assert.match(sidebarSource, /cardbush_pinned_conversation_ids/);
+assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
+assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversation\)/);
+assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶对话/);
+assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
+assert.doesNotMatch(
+  sidebarSource,
+  /title=\{language === 'zh' \? '对话' : 'Conversations'\}/,
+  'The standalone conversation section must be removed from the sidebar',
+);
+const sidebarIconRule = stylesSource.match(
+  /\.nav-row-icon,\s*\.project-row-icon\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.match(sidebarIconRule, /background:\s*transparent/);
+assert.match(sidebarIconRule, /border:\s*0/);
+assert.match(
+  stylesSource,
+  /--sidebar-tree-child:\s*calc\([\s\S]*?var\(--sidebar-tree-base\)[\s\S]*?var\(--sidebar-project-icon-size\)[\s\S]*?var\(--sidebar-tree-gap\)[\s\S]*?\)/,
+  'Nested conversation text must share the exact project-title alignment column',
+);
+assert.match(stylesSource, /\.project-row\s*\{[\s\S]*?gap:\s*var\(--sidebar-tree-gap\)/);
+assert.match(stylesSource, /\.conversation-row\.nested\s*\{[\s\S]*?padding-left:\s*var\(--sidebar-tree-child\)/);
+assert.match(appSource, /cardbush_recent_project_dir/);
+assert.match(
+  appSource,
+  /projectDir === undefined[\s\S]*?fallbackProjectDir \|\| undefined[\s\S]*?chat\.startConversation\(resolvedProjectDir\)/,
+  'New chat must default to the most recently used available project',
+);
+assert.match(appSource, /function WelcomeProjectSwitcher\(/);
+assert.match(appSource, /placeholder=\{language === 'zh' \? '搜索项目' : 'Search projects'\}/);
+assert.match(appSource, /不在项目中工作/);
+assert.match(
+  appSource,
+  /className="welcome-input-stack"[\s\S]*?<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  'The project context rail must be physically joined above the welcome composer',
+);
+assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
+assert.match(stylesSource, /\.welcome-project-switcher\s*\{/);
+assert.match(stylesSource, /\.welcome-input-stack\s*\{[\s\S]*?margin:\s*0 auto/);
+assert.match(
+  stylesSource,
+  /\.welcome-input-stack \.composer-surface,[\s\S]*?border-radius:\s*16px/,
+  'The inset project rail must join a fully rounded welcome composer',
+);
+assert.match(
+  stylesSource,
+  /\.welcome-project-switcher\s*\{[\s\S]*?width:\s*calc\(100% - 30px\)[\s\S]*?margin:\s*0 15px -1px[\s\S]*?border-radius:\s*16px 16px 0 0/,
+  'The project rail must be inset and visually joined to the welcome composer',
+);
+assert.match(appSource, /className="welcome-hero-logo" src="\.\/cardbush-logo\.png"/);
+assert.doesNotMatch(appSource, /<u>\{selectedProjectDir/);
 
 console.log('sidebar interaction contract tests passed');

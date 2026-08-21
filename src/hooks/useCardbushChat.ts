@@ -65,6 +65,11 @@ import type {
 } from '../types';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
+  assistantTurnTimingFingerprint,
+  hydrateAssistantTurnTiming,
+  persistAssistantTurnTiming,
+} from '../features/chatMessages/assistantTurnTiming';
+import {
   isCardbushForeground,
   persistSessionAttentionState,
   readSessionAttentionState,
@@ -211,6 +216,15 @@ export function useCardbushChat(
   const activeConnectionRecovery = activeConversationIdForState
     ? connectionRecoveryByConversation[activeConversationIdForState]
     : undefined;
+  const assistantTimingFingerprint = useMemo(
+    () => assistantTurnTimingFingerprint(messagesByConversation),
+    [messagesByConversation],
+  );
+
+  useEffect(() => {
+    if (!assistantTimingFingerprint) return;
+    persistAssistantTurnTiming(messagesByConversation);
+  }, [assistantTimingFingerprint]);
 
   const clearSessionAttention = useCallback((
     sessionId: string,
@@ -860,7 +874,6 @@ export function useCardbushChat(
         ),
       );
     });
-
     markSessionRunning(normalizedSessionId, normalizedTurnId);
     void streamTurnEvents({
       sessionId: normalizedSessionId,
@@ -1381,6 +1394,53 @@ export function useCardbushChat(
     void updateConversation({ sessionId: conversationId, title: nextTitle }).catch((caught) =>
       setError(errorMessage(caught)),
     );
+  }, []);
+
+  const setConversationProject = useCallback(async (
+    conversationId: string,
+    projectDir: string | null,
+  ) => {
+    const sessionId = conversationId.trim();
+    if (!sessionId) return;
+    const normalizedProjectDir = projectDir?.trim() || undefined;
+    const previous = conversationsRef.current.find((item) => item.id === sessionId);
+    setConversations((current) =>
+      current.map((item) => {
+        if (item.id !== sessionId) return item;
+        return {
+          ...item,
+          projectDir: normalizedProjectDir,
+          workspaceContext: undefined,
+        };
+      }),
+    );
+    try {
+      const synced = await updateConversation({
+        sessionId,
+        projectDir: normalizedProjectDir ?? null,
+      });
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === sessionId
+            ? {
+                ...item,
+                ...synced,
+                id: sessionId,
+                projectDir: synced.projectDir ?? normalizedProjectDir,
+              }
+            : item,
+        ),
+      );
+    } catch (caught) {
+      if (previous) {
+        const snapshot = previous;
+        setConversations((current) =>
+          current.map((item) => item.id === sessionId ? snapshot : item),
+        );
+      }
+      setError(errorMessage(caught));
+      throw caught;
+    }
   }, []);
 
   const recoverInterruptedSession = useCallback(async ({
@@ -3203,6 +3263,7 @@ export function useCardbushChat(
     startConversation,
     deleteConversation,
     renameConversation,
+    setConversationProject,
     reloadConversations,
     reloadSkills,
     loadSkillDetail,
@@ -3424,13 +3485,13 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
   );
 }
 
-const streamSentenceFlushThreshold = 50;
-const streamForceFlushThreshold = 140;
-const streamFlushIntervalMs = 40;
-const streamBaseCharChunkSize = 4;
-const streamMediumCharChunkSize = 8;
-const streamFastCharChunkSize = 14;
-const streamCatchUpCharChunkSize = 24;
+const streamSentenceFlushThreshold = 16;
+const streamForceFlushThreshold = 64;
+const streamFlushIntervalMs = 80;
+const streamBaseCharChunkSize = 8;
+const streamMediumCharChunkSize = 16;
+const streamFastCharChunkSize = 28;
+const streamCatchUpCharChunkSize = 48;
 
 type StreamReadySegment = {
   text: string;
@@ -3581,7 +3642,6 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
       }
       pending += delta;
       queueReady();
-      drainReadyChunk();
       if (pending || ready.length > 0) {
         schedule();
       }
@@ -3680,13 +3740,13 @@ function acceleratedCharacterChunkEnd(value: string, backlogLength: number) {
 }
 
 function streamCharacterChunkSize(backlogLength: number) {
-  if (backlogLength >= 900) {
+  if (backlogLength >= 720) {
     return streamCatchUpCharChunkSize;
   }
-  if (backlogLength >= 360) {
+  if (backlogLength >= 280) {
     return streamFastCharChunkSize;
   }
-  if (backlogLength >= 120) {
+  if (backlogLength >= 96) {
     return streamMediumCharChunkSize;
   }
   return streamBaseCharChunkSize;
@@ -5022,7 +5082,8 @@ function preserveLocalAssistantTimingMetadata(
 }
 
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  const visibleMessages = messages.filter(
+  const timedMessages = hydrateAssistantTurnTiming(messages);
+  const visibleMessages = timedMessages.filter(
     (message) =>
       !isGoalSelfCheckMessage(message) && !isBackendSupersededMessage(message),
   );

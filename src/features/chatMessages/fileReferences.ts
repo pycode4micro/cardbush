@@ -14,19 +14,22 @@ const windowsFilePattern = /[a-z]:[\\/](?:[^<>:"|?*\r\n`]+[\\/])*[^<>:"|?*\r\n`]
 
 export function localFileReference(
   value: string,
-  _workspaceRoot = '',
+  workspaceRoot = '',
 ): LocalFileReference | null {
   const cleaned = cleanFileReferenceValue(value);
   if (!cleaned || !looksLikeFilePath(cleaned)) {
     return null;
   }
   const withoutLocation = cleaned.replace(trailingLocationPattern, '');
-  if (!isAbsoluteLocalPath(withoutLocation)) {
+  const resolvedPath = isAbsoluteLocalPath(withoutLocation)
+    ? withoutLocation
+    : resolveWorkspaceRelativePath(withoutLocation, workspaceRoot);
+  if (!resolvedPath) {
     return null;
   }
   return {
-    path: withoutLocation,
-    label: basename(withoutLocation),
+    path: resolvedPath,
+    label: basename(resolvedPath),
   };
 }
 
@@ -46,7 +49,7 @@ export function localFileReferenceFromHref(href: string) {
   }
 }
 
-export function linkifyLocalFileReferences(content: string, _workspaceRoot = '') {
+export function linkifyLocalFileReferences(content: string, workspaceRoot = '') {
   return content
     .split(/(```[\s\S]*?```)/g)
     .map((fencedBlock, fencedIndex) => {
@@ -59,14 +62,14 @@ export function linkifyLocalFileReferences(content: string, _workspaceRoot = '')
           if (protectedIndex % 2 === 1) {
             return protectedBlock;
           }
-          return linkifyTextSegment(protectedBlock);
+          return linkifyTextSegment(protectedBlock, workspaceRoot);
         })
         .join('');
     })
     .join('');
 }
 
-function linkifyTextSegment(value: string) {
+function linkifyTextSegment(value: string, workspaceRoot: string) {
   const matches = [
     ...value.matchAll(windowsFilePattern),
     ...value.matchAll(relativeFilePattern),
@@ -84,7 +87,7 @@ function linkifyTextSegment(value: string) {
     if (isInsideBareWebUrl(value, index)) {
       continue;
     }
-    const reference = localFileReference(match[0]);
+    const reference = localFileReference(match[0], workspaceRoot);
     if (!reference) {
       continue;
     }
@@ -112,6 +115,31 @@ function cleanFileReferenceValue(value: string) {
   return localValue
     .replace(/[),.;，。；]+$/, '')
     .trim();
+}
+
+function resolveWorkspaceRelativePath(value: string, workspaceRoot: string) {
+  const rawRoot = stripWrappingQuotes(workspaceRoot.trim());
+  const root = rawRoot === '/' || /^[a-zA-Z]:[\\/]$/.test(rawRoot)
+    ? rawRoot
+    : rawRoot.replace(/[\\/]+$/, '');
+  if (!root || !isAbsoluteLocalPath(root)) {
+    return '';
+  }
+  const segments = value
+    .replace(/^[.][\\/]/, '')
+    .split(/[\\/]+/)
+    .filter((segment) => segment && segment !== '.');
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === '..' || segment.includes(':'))
+  ) {
+    return '';
+  }
+  const separator = root.includes('\\') ? '\\' : '/';
+  const prefix = root.endsWith('\\') || root.endsWith('/')
+    ? root
+    : `${root}${separator}`;
+  return `${prefix}${segments.join(separator)}`;
 }
 
 function localPathFromFileUrl(value: string) {

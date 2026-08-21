@@ -3,10 +3,12 @@ import {
   ArrowDown,
   ArrowUp,
   Bot,
+  Check,
   CheckCircle2,
   ChevronDown,
   Clipboard,
   ExternalLink,
+  Flag,
   Folder,
   Gamepad2,
   GitBranch,
@@ -20,11 +22,14 @@ import {
   LayoutGrid,
   PanelRightClose,
   PanelRightOpen,
+  Plug,
   Puzzle,
   RefreshCw,
+  Search,
   Settings2,
   Sparkles,
   Terminal,
+  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -135,6 +140,7 @@ import {
 } from './features/console';
 import {
   changeRootForConversation,
+  conversationProjectDir as conversationProjectRoot,
   conversationWorkspaceRoot,
 } from './features/conversationWorkspace';
 import {
@@ -217,8 +223,15 @@ import type {
 } from './types';
 import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from './types';
 
+let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
+
+function loadSettingsViewModule() {
+  settingsViewModulePromise ??= import('./features/SettingsView');
+  return settingsViewModulePromise;
+}
+
 const LazySettingsView = lazy(async () => {
-  const module = await import('./features/SettingsView');
+  const module = await loadSettingsViewModule();
   return { default: module.SettingsView };
 });
 
@@ -294,6 +307,7 @@ const defaultSidebarWidth = 272;
 const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
 const osConversationStorageKey = 'cardbush_os_conversation_id';
+const recentProjectStorageKey = 'cardbush_recent_project_dir';
 const defaultShadowAccentColor = '#a8d5b5';
 const defaultThinkingAccentColor = '#9dbce8';
 const thinkingEventName = 'cardbush:thinking';
@@ -451,9 +465,14 @@ function CardbushApp() {
   const [sidebarPreviewWidth, setSidebarPreviewWidth] = useState<number | null>(null);
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('profile');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
+  const [recentProjectDir, setRecentProjectDir] = useState(
+    () => window.localStorage.getItem(recentProjectStorageKey)?.trim() ?? '',
+  );
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [osWallpaperSource, setOsWallpaperSource] = useState('');
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
@@ -869,14 +888,30 @@ function CardbushApp() {
     modelConfigSyncReady,
   ]);
 
-  const fallbackProjectDir = useMemo(
-    () => projectItems.find((project) => !project.archived)?.rootPath.trim() || '',
-    [projectItems],
-  );
+  const fallbackProjectDir = useMemo(() => {
+    const available = projectItems.filter((project) => !project.archived);
+    return (
+      available.find((project) => samePath(project.rootPath, recentProjectDir))?.rootPath.trim() ||
+      available[0]?.rootPath.trim() ||
+      ''
+    );
+  }, [projectItems, recentProjectDir]);
+  const activeConversationProjectDir = conversationProjectRoot(chat.activeConversation);
   const conversationProjectDir = conversationWorkspaceRoot(chat.activeConversation);
   const activeProjectDir =
     conversationProjectDir ||
     (!chat.activeConversation ? fallbackProjectDir || undefined : undefined);
+
+  const rememberRecentProject = useCallback((projectDir: string) => {
+    const normalized = projectDir.trim();
+    if (!normalized) return;
+    setRecentProjectDir(normalized);
+    window.localStorage.setItem(recentProjectStorageKey, normalized);
+  }, []);
+
+  useEffect(() => {
+    if (activeConversationProjectDir) rememberRecentProject(activeConversationProjectDir);
+  }, [activeConversationProjectDir, rememberRecentProject]);
   const activeDraftKey = chat.activeConversationId.trim() || '__new__';
   const activeDraft = draftsByConversation[activeDraftKey] ?? '';
   const setActiveDraft = useCallback(
@@ -1338,12 +1373,26 @@ function CardbushApp() {
   }, [backendCapabilities.reasoningLevels, chat.setPermissionMode, chat.setReasoningLevel, section]);
 
   const createConversation = useCallback(
-    (projectDir?: string) => {
+    (projectDir?: string | null) => {
+      const resolvedProjectDir = projectDir === undefined
+        ? fallbackProjectDir || undefined
+        : projectDir?.trim() || undefined;
+      if (resolvedProjectDir) rememberRecentProject(resolvedProjectDir);
       setSection('chat');
-      void chat.startConversation(projectDir);
+      void chat.startConversation(resolvedProjectDir);
     },
-    [chat],
+    [chat, fallbackProjectDir, rememberRecentProject],
   );
+
+  const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
+    const normalized = projectDir?.trim() || null;
+    if (normalized) rememberRecentProject(normalized);
+    if (!chat.activeConversationId.trim()) {
+      createConversation(normalized);
+      return;
+    }
+    await chat.setConversationProject(chat.activeConversationId, normalized);
+  }, [chat, createConversation, rememberRecentProject]);
 
   const enterOsMode = useCallback(async () => {
     if (section !== 'os') {
@@ -1775,7 +1824,17 @@ function CardbushApp() {
 
   const openSettings = useCallback((targetSection: SettingsSection = 'profile') => {
     setSettingsInitialSection(targetSection);
+    setSettingsMounted(true);
     setSettingsOpen(true);
+  }, []);
+  const markSettingsReady = useCallback(() => setSettingsReady(true), []);
+  const settingsVisible = settingsOpen && settingsReady;
+
+  useEffect(() => {
+    const preloadTimer = window.setTimeout(() => {
+      void loadSettingsViewModule();
+    }, 0);
+    return () => window.clearTimeout(preloadTimer);
   }, []);
 
   useEffect(() => {
@@ -1881,11 +1940,30 @@ function CardbushApp() {
           language={language}
           onOpenBotSettings={() => openSettings('bots')}
           onOpenCacheSettings={() => openSettings('cache')}
+          onOpenPluginSettings={() => openSettings('mcp')}
+          onOpenTools={() => {
+            setSettingsOpen(false);
+            setSection('tools');
+          }}
+          onOpenSkills={() => {
+            setSettingsOpen(false);
+            setSection('skills');
+          }}
+          onOpenOs={() => {
+            setSettingsOpen(false);
+            void enterOsMode();
+          }}
+          onOpenTeam={() => {
+            setSettingsOpen(false);
+            setSection('team');
+          }}
         />
       )}
-      {settingsOpen ? (
-        <Suspense fallback={<SettingsLoading language={language} />}>
+      {settingsMounted && (
+        <Suspense fallback={null}>
           <LazySettingsView
+            active={settingsVisible}
+            onReady={markSettingsReady}
             themePreference={themePreference}
             lightThemeStyle={lightThemeStyle}
             language={language}
@@ -1914,17 +1992,19 @@ function CardbushApp() {
             onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
           />
         </Suspense>
-      ) : (
-        <main
-          className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''} ${section === 'os' ? 'os-desktop-shell' : ''}`}
-          style={section === 'os'
-            ? ({
-                '--os-background-filter': appSettings.os.backgroundContrast > 0
-                  ? `blur(${appSettings.os.backgroundContrast * 0.2}px)`
-                  : 'none',
-              } as CSSProperties)
-            : undefined}
-        >
+      )}
+      <main
+        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''} ${section === 'os' ? 'os-desktop-shell' : ''}`}
+        aria-hidden={settingsVisible}
+        inert={settingsVisible ? true : undefined}
+        style={section === 'os'
+          ? ({
+              '--os-background-filter': appSettings.os.backgroundContrast > 0
+                ? `blur(${appSettings.os.backgroundContrast * 0.2}px)`
+                : 'none',
+            } as CSSProperties)
+          : undefined}
+      >
           {section === 'os' && osWallpaperSource && (
             <>
               <img
@@ -2019,6 +2099,9 @@ function CardbushApp() {
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={section === 'os' ? undefined : activeProjectDir}
+                selectedProjectDir={section === 'os' ? '' : activeConversationProjectDir}
+                availableProjects={projectItems.filter((project) => !project.archived)}
+                onWelcomeProjectChange={changeWelcomeProject}
                 projectContext={
                   section === 'os'
                     ? ''
@@ -2265,8 +2348,7 @@ function CardbushApp() {
               </div>
             </aside>
           ) : null}
-        </main>
-      )}
+      </main>
       <CopyToastHost language={language} />
     </div>
   );
@@ -3087,12 +3169,24 @@ function WindowFrame({
   language,
   onOpenBotSettings,
   onOpenCacheSettings,
+  onOpenPluginSettings,
+  onOpenTools,
+  onOpenSkills,
+  onOpenOs,
+  onOpenTeam,
 }: {
   language: AppLanguage;
   onOpenBotSettings: () => void;
   onOpenCacheSettings: () => void;
+  onOpenPluginSettings: () => void;
+  onOpenTools: () => void;
+  onOpenSkills: () => void;
+  onOpenOs: () => void;
+  onOpenTeam: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
+  const [openMenu, setOpenMenu] = useState<'plugins' | 'beta' | null>(null);
+  const menuRootRef = useRef<HTMLDivElement | null>(null);
 
   const syncMaximized = useCallback(() => {
     void window.cardbushDesktop
@@ -3106,6 +3200,29 @@ function WindowFrame({
     window.addEventListener('resize', syncMaximized);
     return () => window.removeEventListener('resize', syncMaximized);
   }, [syncMaximized]);
+
+  useEffect(() => {
+    if (!openMenu) return undefined;
+    const closeFromPointer = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !menuRootRef.current?.contains(event.target)) {
+        setOpenMenu(null);
+      }
+    };
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpenMenu(null);
+    };
+    document.addEventListener('pointerdown', closeFromPointer);
+    document.addEventListener('keydown', closeFromKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromPointer);
+      document.removeEventListener('keydown', closeFromKeyboard);
+    };
+  }, [openMenu]);
+
+  const runMenuAction = useCallback((action: () => void) => {
+    setOpenMenu(null);
+    action();
+  }, []);
 
   async function toggleMaximize() {
     await window.cardbushDesktop?.toggleMaximize();
@@ -3128,6 +3245,45 @@ function WindowFrame({
       >
         {language === 'zh' ? '缓存' : 'Cache'}
       </button>
+      <div className="window-frame-menu-group no-drag" ref={menuRootRef}>
+        <WindowFrameMenu
+          label={language === 'zh' ? '插件' : 'Plugins'}
+          open={openMenu === 'plugins'}
+          onToggle={() => setOpenMenu((current) => current === 'plugins' ? null : 'plugins')}
+        >
+          <WindowFrameMenuItem
+            icon={<Plug size={14} />}
+            label={language === 'zh' ? '插件管理' : 'Plugin management'}
+            onClick={() => runMenuAction(onOpenPluginSettings)}
+          />
+          <WindowFrameMenuItem
+            icon={<Wrench size={14} />}
+            label={language === 'zh' ? '工具管理' : 'Tool management'}
+            onClick={() => runMenuAction(onOpenTools)}
+          />
+          <WindowFrameMenuItem
+            icon={<Puzzle size={14} />}
+            label={language === 'zh' ? '技能管理' : 'Skill management'}
+            onClick={() => runMenuAction(onOpenSkills)}
+          />
+        </WindowFrameMenu>
+        <WindowFrameMenu
+          label="Beta"
+          open={openMenu === 'beta'}
+          onToggle={() => setOpenMenu((current) => current === 'beta' ? null : 'beta')}
+        >
+          <WindowFrameMenuItem
+            icon={<MonitorCog size={14} />}
+            label="OS"
+            onClick={() => runMenuAction(onOpenOs)}
+          />
+          <WindowFrameMenuItem
+            icon={<Flag size={14} />}
+            label="Team"
+            onClick={() => runMenuAction(onOpenTeam)}
+          />
+        </WindowFrameMenu>
+      </div>
       <div className="window-spacer" />
       <WindowButton
         label={language === 'zh' ? '最小化' : 'Minimize'}
@@ -3159,6 +3315,53 @@ function WindowFrame({
   );
 }
 
+function WindowFrameMenu({
+  label,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="window-frame-menu">
+      <button
+        className="bot-chip window-frame-menu-trigger no-drag"
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span>{label}</span>
+      </button>
+      {open && (
+        <div className="window-frame-menu-popover no-drag" role="menu">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WindowFrameMenuItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" role="menuitem" onClick={onClick}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function WindowButton({
   label,
   danger,
@@ -3180,19 +3383,6 @@ function WindowButton({
     >
       {children}
     </button>
-  );
-}
-
-function SettingsLoading({ language }: { language: AppLanguage }) {
-  return (
-    <main className="settings-shell">
-      <section className="settings-content">
-        <div className="feature-content feature-loading">
-          <LoaderCircle size={18} />
-          <span>{language === 'zh' ? '正在加载设置...' : 'Loading settings...'}</span>
-        </div>
-      </section>
-    </main>
   );
 }
 
@@ -3390,6 +3580,9 @@ function ChatPanel({
   onRevealSidebar,
   activeConversationId,
   activeProjectDir,
+  selectedProjectDir,
+  availableProjects,
+  onWelcomeProjectChange,
   projectContext,
   messages,
   activeGoal,
@@ -3476,6 +3669,9 @@ function ChatPanel({
   onRevealSidebar: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
+  selectedProjectDir: string;
+  availableProjects: ProjectItem[];
+  onWelcomeProjectChange: (projectDir: string | null) => Promise<void>;
   projectContext: string;
   messages: ChatMessage[];
   activeGoal: ExperimentalGoal | null;
@@ -5894,6 +6090,9 @@ function ChatPanel({
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
             activeProjectDir={activeProjectDir}
+            selectedProjectDir={selectedProjectDir}
+            availableProjects={availableProjects}
+            onProjectChange={onWelcomeProjectChange}
             projectContext={projectContext}
             skills={skills}
             disabledSkillNames={disabledSkillNames}
@@ -5940,6 +6139,7 @@ function ChatPanel({
                       activeAssistantMessageId={
                         activeAssistantForRender?.message.id ?? ''
                       }
+                      selectedModel={selectedModelConfig?.modelName ?? selectedModel}
                       goalObjective={activeGoal?.objective ?? ''}
                       onRegenerate={onRegenerate}
                       onEditUserMessage={onEditUserMessage}
@@ -6307,6 +6507,9 @@ function WelcomeComposer({
   reasoningLevel,
   reasoningLevels,
   activeProjectDir,
+  selectedProjectDir,
+  availableProjects,
+  onProjectChange,
   projectContext,
   skills = [],
   disabledSkillNames,
@@ -6349,6 +6552,9 @@ function WelcomeComposer({
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
   activeProjectDir?: string;
+  selectedProjectDir: string;
+  availableProjects: ProjectItem[];
+  onProjectChange: (projectDir: string | null) => Promise<void>;
   projectContext: string;
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
@@ -6371,76 +6577,78 @@ function WelcomeComposer({
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
+  const welcomeComposer = (
+    <Composer
+      compact
+      osMode={osModeEnabled}
+      language={language}
+      draft={draft}
+      onDraftChange={onDraftChange}
+      sending={sending}
+      cancelEnabled={cancelEnabled}
+      queuedMessageCount={queuedMessageCount}
+      queuedMessagePreview={queuedMessagePreview}
+      queuedMessages={queuedMessages}
+      selectedModel={selectedModel}
+      availableModels={availableModels}
+      goalAvailable={goalAvailable}
+      referencePlanAvailable={referencePlanAvailable}
+      referencePlanMode={referencePlanMode}
+      permissionMode={permissionMode}
+      reasoningLevelAvailable={reasoningLevelAvailable}
+      reasoningLevel={reasoningLevel}
+      reasoningLevels={reasoningLevels}
+      onModelChange={onModelChange}
+      onReferencePlanModeChange={onReferencePlanModeChange}
+      onPermissionModeChange={onPermissionModeChange}
+      onReasoningLevelChange={onReasoningLevelChange}
+      onConfigureModels={onConfigureModels}
+      onCreateConversation={onCreateConversation}
+      activeProjectDir={activeProjectDir}
+      projectContext={projectContext}
+      skills={skills}
+      disabledSkillNames={disabledSkillNames}
+      visualInputAvailable={visualInputAvailable}
+      visualInputEnabled={visualInputEnabled}
+      gitAvailable={gitAvailable}
+      terminalAvailable={terminalAvailable}
+      onToggleSkill={onToggleSkill}
+      onVisualInputEnabledChange={onVisualInputEnabledChange}
+      onSaveProjectContext={onSaveProjectContext}
+      onEditQueuedMessage={onEditQueuedMessage}
+      onGuideQueuedMessage={onGuideQueuedMessage}
+      onRemoveQueuedMessage={onRemoveQueuedMessage}
+      onSend={onSend}
+      onCancel={onCancel}
+    />
+  );
+
   return (
     <div className={`welcome-composer ${osModeEnabled ? 'os-welcome-composer' : ''}`}>
       {!osModeEnabled && (
-        <h2>
-          {language === 'zh'
-            ? '要在 cardbush 中构建什么？'
-            : 'What do you want to build in cardbush?'}
-        </h2>
-      )}
-      <Composer
-        compact
-        osMode={osModeEnabled}
-        language={language}
-        draft={draft}
-        onDraftChange={onDraftChange}
-        sending={sending}
-        cancelEnabled={cancelEnabled}
-        queuedMessageCount={queuedMessageCount}
-        queuedMessagePreview={queuedMessagePreview}
-        queuedMessages={queuedMessages}
-        selectedModel={selectedModel}
-        availableModels={availableModels}
-        goalAvailable={goalAvailable}
-        referencePlanAvailable={referencePlanAvailable}
-        referencePlanMode={referencePlanMode}
-        permissionMode={permissionMode}
-        reasoningLevelAvailable={reasoningLevelAvailable}
-        reasoningLevel={reasoningLevel}
-        reasoningLevels={reasoningLevels}
-        onModelChange={onModelChange}
-        onReferencePlanModeChange={onReferencePlanModeChange}
-        onPermissionModeChange={onPermissionModeChange}
-        onReasoningLevelChange={onReasoningLevelChange}
-        onConfigureModels={onConfigureModels}
-        onCreateConversation={onCreateConversation}
-        activeProjectDir={activeProjectDir}
-        projectContext={projectContext}
-        skills={skills}
-        disabledSkillNames={disabledSkillNames}
-        visualInputAvailable={visualInputAvailable}
-        visualInputEnabled={visualInputEnabled}
-        gitAvailable={gitAvailable}
-        terminalAvailable={terminalAvailable}
-        onToggleSkill={onToggleSkill}
-        onVisualInputEnabledChange={onVisualInputEnabledChange}
-        onSaveProjectContext={onSaveProjectContext}
-        onEditQueuedMessage={onEditQueuedMessage}
-        onGuideQueuedMessage={onGuideQueuedMessage}
-        onRemoveQueuedMessage={onRemoveQueuedMessage}
-        onSend={onSend}
-        onCancel={onCancel}
-      />
-      {!osModeEnabled && (
-        <div className="prompt-starters">
-        <PromptStarter
-          icon={<Monitor size={14} />}
-          text={language === 'zh' ? '帮我控制浏览器打开一个网页，检查页面内容并总结结果' : 'Control the browser to open a page, inspect it, and summarize the result'}
-          onClick={onDraftChange}
-        />
-        <PromptStarter
-          icon={<GitBranch size={14} />}
-          text={language === 'zh' ? '和我讨论这个项目的设计，帮我拆解模块和下一步实现计划' : 'Discuss this project design with me and break down modules and next steps'}
-          onClick={onDraftChange}
-        />
-        <PromptStarter
-          icon={<Puzzle size={14} />}
-          text={language === 'zh' ? '告诉我如何使用 skill，并帮我选择适合当前任务的技能' : 'Show me how to use skills and choose the right one for this task'}
-          onClick={onDraftChange}
-        />
+        <div className="welcome-hero">
+          <span className="welcome-hero-mark" aria-hidden="true">
+            <img className="welcome-hero-logo" src="./cardbush-logo.png" alt="" />
+          </span>
+          <h2>
+            {language === 'zh'
+              ? `你想让我们在 ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'} 中构建什么？`
+              : `What do you want us to build in ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'}?`}
+          </h2>
         </div>
+      )}
+      {!osModeEnabled ? (
+        <div className="welcome-input-stack">
+          <WelcomeProjectSwitcher
+            language={language}
+            projects={availableProjects}
+            selectedProjectDir={selectedProjectDir}
+            onSelect={onProjectChange}
+          />
+          {welcomeComposer}
+        </div>
+      ) : (
+        welcomeComposer
       )}
       {osModeEnabled && osGamepadConnected && (
         <div className="os-controller-hint" aria-hidden="true">
@@ -6453,20 +6661,128 @@ function WelcomeComposer({
   );
 }
 
-function PromptStarter({
-  icon,
-  text,
-  onClick,
+function WelcomeProjectSwitcher({
+  language,
+  projects,
+  selectedProjectDir,
+  onSelect,
 }: {
-  icon: React.ReactNode;
-  text: string;
-  onClick: (value: string) => void;
+  language: AppLanguage;
+  projects: ProjectItem[];
+  selectedProjectDir: string;
+  onSelect: (projectDir: string | null) => Promise<void>;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectedProject = projects.find((project) =>
+    samePath(project.rootPath, selectedProjectDir),
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredProjects = projects.filter((project) =>
+    !normalizedQuery || `${project.title} ${project.rootPath}`.toLowerCase().includes(normalizedQuery),
+  );
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeFromPointer = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    const closeFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeFromPointer);
+    document.addEventListener('keydown', closeFromKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', closeFromPointer);
+      document.removeEventListener('keydown', closeFromKeyboard);
+    };
+  }, [open]);
+
+  async function selectProject(projectDir: string | null) {
+    setBusy(true);
+    try {
+      await onSelect(projectDir);
+      setOpen(false);
+      setQuery('');
+    } catch {
+      // The shared conversation error banner reports project update failures.
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <button className="prompt-starter" type="button" onClick={() => onClick(text)}>
-      {icon}
-      <span>{text}</span>
-    </button>
+    <div className="welcome-project-switcher" ref={rootRef}>
+      {open && (
+        <div className="welcome-project-menu" role="menu">
+          <label className="welcome-project-search">
+            <Search size={13} aria-hidden="true" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={language === 'zh' ? '搜索项目' : 'Search projects'}
+            />
+          </label>
+          <div className="welcome-project-options">
+            {filteredProjects.map((project) => {
+              const selected = samePath(project.rootPath, selectedProjectDir);
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  disabled={busy}
+                  onClick={() => void selectProject(project.rootPath)}
+                >
+                  <Folder size={14} />
+                  <span>{project.title}</span>
+                  {selected && <Check size={14} />}
+                </button>
+              );
+            })}
+            {filteredProjects.length === 0 && (
+              <div className="welcome-project-empty">
+                {language === 'zh' ? '没有匹配的项目' : 'No matching projects'}
+              </div>
+            )}
+          </div>
+          <div className="welcome-project-menu-footer">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={!selectedProject}
+              disabled={busy}
+              onClick={() => void selectProject(null)}
+            >
+              <X size={14} />
+              <span>{language === 'zh' ? '不在项目中工作' : 'Work without a project'}</span>
+              {!selectedProject && <Check size={14} />}
+            </button>
+          </div>
+        </div>
+      )}
+      <button
+        className="welcome-project-trigger"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        {busy ? <LoaderCircle className="spinning" size={14} /> : <Folder size={14} />}
+        <span>{selectedProject?.title || (language === 'zh' ? '不在项目中' : 'No project')}</span>
+      </button>
+      {selectedProject && (
+        <span className="welcome-project-context-meta" aria-label={language === 'zh' ? '本地项目' : 'Local project'}>
+          <Monitor size={13} aria-hidden="true" />
+          <span>{language === 'zh' ? '本地' : 'Local'}</span>
+        </span>
+      )}
+    </div>
   );
 }
 
