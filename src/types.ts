@@ -346,6 +346,17 @@ export interface ConversationSummary {
   workspaceContext?: WorkspaceContext;
 }
 
+export type SessionAttentionKind = 'completed' | 'waiting' | 'error';
+
+export interface SessionAttentionState {
+  sessionId: string;
+  kind: SessionAttentionKind;
+  title: string;
+  body: string;
+  turnId?: string;
+  updatedAt: string;
+}
+
 export interface WorkspaceContext {
   mode: 'task' | 'project';
   executionRoot: string;
@@ -367,7 +378,7 @@ export interface ProjectItem {
 export interface ChatAttachment {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'document';
+  type: 'image' | 'video' | 'audio' | 'document';
   path?: string;
   size?: number;
 }

@@ -1,6 +1,7 @@
 import type {
   AssistantRevision,
   BackendCapabilities,
+  ChatAttachment,
   ChatMessage,
   ChatToolExecution,
   ConversationSummary,
@@ -4598,6 +4599,7 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
         messageIndex: value.message_index ?? value.messageIndex ?? index,
       }),
   );
+  const attachments = messageAttachmentsFromPayload(value, sourceMetadata);
   return {
     id,
     messageId: optionalString(value.message_id ?? value.messageId),
@@ -4629,9 +4631,62 @@ function messageFromPayload(item: unknown, index = 0): ChatMessage {
     toolExecutions: toolExecutionsFromPayload(
       value.toolExecutions ?? value.tool_executions,
     ),
+    attachments: attachments.length > 0 ? attachments : undefined,
     taskPlan: taskPlanFromPayload(metadata?.active_task_plan, conversationId) ?? undefined,
     metadata,
   };
+}
+
+function messageAttachmentsFromPayload(
+  value: Record<string, unknown>,
+  metadata?: Record<string, unknown>,
+) {
+  const candidates: Array<{ source: unknown; forcedType?: ChatAttachment['type'] }> = [
+    { source: value.attachments ?? metadata?.attachments },
+    { source: value.images ?? metadata?.images, forcedType: 'image' },
+    { source: value.files ?? metadata?.files },
+  ];
+  const byPath = new Map<string, ChatAttachment>();
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate.source)) continue;
+    for (const item of candidate.source) {
+      const record = typeof item === 'string' ? {} : asRecord(item);
+      const pathValue = typeof item === 'string'
+        ? item.trim()
+        : String(record.path ?? record.file_path ?? record.filePath ?? record.url ?? '').trim();
+      if (!pathValue) continue;
+      const key = pathValue.replaceAll('\\', '/').toLowerCase();
+      if (byPath.has(key)) continue;
+      const name = String(record.name ?? record.filename ?? pathValue.split(/[\\/]/).pop() ?? '').trim();
+      const explicitType = String(record.type ?? record.kind ?? '').toLowerCase();
+      const type = candidate.forcedType ?? attachmentTypeFromPathAndHint(pathValue, explicitType);
+      const size = optionalNumber(record.size ?? record.byte_size ?? record.byteSize);
+      byPath.set(key, {
+        id: String(record.id ?? record.attachment_id ?? `attachment-${key}`),
+        name,
+        path: pathValue,
+        type,
+        ...(size != null ? { size } : {}),
+      });
+    }
+  }
+  return [...byPath.values()];
+}
+
+function attachmentTypeFromPathAndHint(
+  pathValue: string,
+  hint: string,
+): ChatAttachment['type'] {
+  if (hint === 'image' || /\.(?:png|jpe?g|webp|gif|bmp|ico)$/i.test(pathValue)) {
+    return 'image';
+  }
+  if (hint === 'video' || /\.(?:mp4|m4v|webm|ogv|mov)$/i.test(pathValue)) {
+    return 'video';
+  }
+  if (hint === 'audio' || /\.(?:mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i.test(pathValue)) {
+    return 'audio';
+  }
+  return 'document';
 }
 
 function permissionInteractionFromPayload(item: unknown): PendingInteraction | null {

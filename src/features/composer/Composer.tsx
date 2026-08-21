@@ -63,6 +63,7 @@ import type {
 } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
+import { SkillIcon } from '../skills/SkillIcon';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
@@ -1648,7 +1649,7 @@ function ComposerPopover({
                           type="button"
                           onClick={() => onToggleSkill(skill.name, !enabled)}
                         >
-                          <Brain size={14} />
+                          <SkillIcon skill={skill} compact />
                           <span>
                             <strong>{skill.name}</strong>
                             <small>
@@ -1735,7 +1736,7 @@ function ComposerPopover({
                     type="button"
                     onClick={() => onToggleSkill(skill.name, !enabled)}
                   >
-                    <Brain size={16} />
+                    <SkillIcon skill={skill} compact />
                     <span>
                       <strong>{skill.name}</strong>
                       <small>

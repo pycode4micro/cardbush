@@ -39,6 +39,11 @@ assert.match(presence, /prefers-reduced-motion/);
 assert.match(app, /sidebarPresence\.mounted/);
 assert.match(app, /inspectorPresence\.mounted/);
 assert.match(app, /workSummaryPresence\.mounted/);
+assert.doesNotMatch(
+  app,
+  /window\.innerWidth\s*<\s*1220[\s\S]{0,120}setSidebarCollapsed\(true\)/,
+  'Opening or resizing the inspector must squeeze the chat stage without automatically hiding the left sidebar',
+);
 assert.match(app, /!showWorkSummary \|\| windowMaximized/);
 assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
 assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);

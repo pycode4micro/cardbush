@@ -45,8 +45,13 @@ assert.match(
   'The bottom button must use the measured composer top instead of a hard-coded bottom offset',
 );
 assert.match(
+  appSource,
+  /--composer-content-top[\s\S]*?visibleTop - chatBodyRect\.top/,
+  'The bottom button must stay above the complete composer content, including runtime bars.',
+);
+assert.match(
   styles,
-  /\.scroll-bottom\s*\{[\s\S]*?left:\s*var\(--composer-surface-center-x, 50%\);[\s\S]*?top:\s*calc\([\s\S]*?var\(--composer-surface-top, 100%\)/,
+  /\.scroll-bottom\s*\{[\s\S]*?left:\s*var\(--composer-surface-center-x, 50%\);[\s\S]*?top:\s*calc\([\s\S]*?var\(--composer-content-top, var\(--composer-surface-top, 100%\)\)/,
 );
 assert.doesNotMatch(
   styles,
@@ -55,7 +60,7 @@ assert.doesNotMatch(
 );
 assert.match(
   styles,
-  /\.scroll-bottom\s*\{[\s\S]*?--scroll-bottom-size:\s*40px;[\s\S]*?width:\s*var\(--scroll-bottom-size\);[\s\S]*?height:\s*var\(--scroll-bottom-size\);/,
+  /\.scroll-bottom\s*\{[\s\S]*?--scroll-bottom-size:\s*30px;[\s\S]*?width:\s*var\(--scroll-bottom-size\);[\s\S]*?height:\s*var\(--scroll-bottom-size\);[\s\S]*?color:\s*var\(--text\);/,
   'The scroll button hit target must not be an oversized transparent moving hotzone',
 );
 for (const label of [
@@ -123,8 +128,8 @@ assert.match(
 );
 assert.match(
   styles,
-  /\.scroll-bottom\s*\{[\s\S]*?--composer-surface-center-x[\s\S]*?--composer-surface-top/,
-  'The bottom control must align to the measured composer surface',
+  /\.scroll-bottom\s*\{[\s\S]*?--composer-surface-center-x[\s\S]*?--composer-content-top/,
+  'The bottom control must align to the measured composer content boundary',
 );
 assert.match(
   quickContextSource,

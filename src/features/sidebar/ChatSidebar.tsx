@@ -1,5 +1,7 @@
 import {
   Archive,
+  CircleAlert,
+  CircleCheck,
   ChevronDown,
   Clipboard,
   Code2,
@@ -40,6 +42,7 @@ import type {
   AppSection,
   ConversationSummary,
   ProjectItem,
+  SessionAttentionState,
 } from '../../types';
 import { sectionLabels } from '../appSections';
 import { conversationProjectDir } from '../conversationWorkspace';
@@ -103,6 +106,7 @@ export function ChatSidebar({
   section,
   activeConversationId,
   runningConversationIds,
+  attentionByConversation,
   projects: projectItems,
   conversations: conversationItems,
   changeReportsByConversation,
@@ -121,6 +125,7 @@ export function ChatSidebar({
   section: AppSection;
   activeConversationId: string;
   runningConversationIds?: Set<string>;
+  attentionByConversation?: Record<string, SessionAttentionState>;
   projects: ProjectItem[];
   conversations: ConversationSummary[];
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
@@ -555,6 +560,7 @@ export function ChatSidebar({
             )}
             activeConversationId={activeConversationId}
             runningConversationIds={runningConversationIds}
+            attentionByConversation={attentionByConversation}
             menuOpen={openMenu === `project:${project.id}`}
             language={language}
             expanded={expandedProjectIds.has(project.id)}
@@ -650,6 +656,7 @@ export function ChatSidebar({
               conversation={conversation}
               active={conversation.id === activeConversationId}
               running={runningConversationIds?.has(conversation.id) ?? false}
+              attention={attentionByConversation?.[conversation.id]}
               menuOpen={openMenu === `conversation:${conversation.id}`}
               language={language}
               onMenuToggle={() =>
@@ -802,6 +809,7 @@ function ProjectBlock({
   conversations: projectConversations,
   activeConversationId,
   runningConversationIds,
+  attentionByConversation,
   language,
   expanded,
   menuOpen,
@@ -823,6 +831,7 @@ function ProjectBlock({
   conversations: ConversationSummary[];
   activeConversationId: string;
   runningConversationIds?: Set<string>;
+  attentionByConversation?: Record<string, SessionAttentionState>;
   language: AppLanguage;
   expanded: boolean;
   menuOpen: boolean;
@@ -936,6 +945,7 @@ function ProjectBlock({
           conversation={conversation}
           active={conversation.id === activeConversationId}
           running={runningConversationIds?.has(conversation.id) ?? false}
+          attention={attentionByConversation?.[conversation.id]}
           nested
           menuOpen={openMenu === `conversation:${conversation.id}`}
           language={language}
@@ -963,10 +973,24 @@ function ProjectBlock({
   );
 }
 
+function sessionAttentionLabel(
+  attention: SessionAttentionState,
+  language: AppLanguage,
+) {
+  if (attention.kind === 'waiting') {
+    return language === 'zh' ? '等待你的处理' : 'Waiting for your input';
+  }
+  if (attention.kind === 'error') {
+    return language === 'zh' ? '需要关注' : 'Needs attention';
+  }
+  return language === 'zh' ? '已完成，待查看' : 'Complete, not viewed';
+}
+
 function ConversationRow({
   conversation,
   active,
   running,
+  attention,
   nested,
   language,
   menuOpen,
@@ -982,6 +1006,7 @@ function ConversationRow({
   conversation: ConversationSummary;
   active: boolean;
   running?: boolean;
+  attention?: SessionAttentionState;
   nested?: boolean;
   language: AppLanguage;
   menuOpen: boolean;
@@ -1028,6 +1053,18 @@ function ConversationRow({
           <span />
           <span />
           <span />
+        </span>
+      )}
+      {!running && attention && (
+        <span
+          className={`conversation-attention-indicator ${attention.kind}`}
+          role="status"
+          aria-label={sessionAttentionLabel(attention, language)}
+          title={sessionAttentionLabel(attention, language)}
+        >
+          {attention.kind === 'completed'
+            ? <CircleCheck size={15} />
+            : <CircleAlert size={15} />}
         </span>
       )}
       {changeCount > 0 && (
@@ -1164,6 +1201,7 @@ export function ConversationChangeDialog({
   language,
   conversation,
   reports,
+  initialFilePath = '',
   notice,
   revertingChangeId,
   revertedChangeIds,
@@ -1175,6 +1213,7 @@ export function ConversationChangeDialog({
   language: AppLanguage;
   conversation: ConversationSummary;
   reports: ConversationChangeReport[];
+  initialFilePath?: string;
   notice: string;
   revertingChangeId: string;
   revertedChangeIds: ReadonlySet<string>;
@@ -1227,6 +1266,21 @@ export function ConversationChangeDialog({
       setSelectedKey(reviewItems[0]?.key ?? '');
     }
   }, [reviewItems, selectedKey]);
+  useEffect(() => {
+    const normalized = initialFilePath.trim().replaceAll('\\', '/').toLowerCase();
+    if (!normalized) return;
+    const item = reviewItems.find((candidate) =>
+      candidate.file.path.trim().replaceAll('\\', '/').toLowerCase() === normalized,
+    );
+    if (!item) return;
+    setSelectedKey(item.key);
+    const group = reviewGroups.find((candidate) =>
+      candidate.items.some((groupItem) => groupItem.key === item.key),
+    );
+    if (group) {
+      setExpandedGroupIds((current) => new Set(current).add(group.id));
+    }
+  }, [initialFilePath, reviewGroups, reviewItems]);
   const newestGroupId = reviewGroups[0]?.id ?? '';
   useEffect(() => {
     const availableIds = new Set(reviewGroups.map((group) => group.id));

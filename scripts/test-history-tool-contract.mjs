@@ -96,6 +96,21 @@ const appSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'App.tsx'),
   'utf8',
 );
+assert.match(
+  appSource,
+  /changeReportsFromMessages\(\s*normalizeChatMessagesForDisplay\(messages\)\s*,?\s*\)/m,
+  'Review availability must use the normalized transcript shown in the conversation.',
+);
+assert.match(
+  appSource,
+  /className="topbar-inspector-action"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
+  'The top-bar review button must not forward its React click event as a file path.',
+);
+assert.match(
+  appSource,
+  /typeof filePath === 'string' \? filePath\.trim\(\) : ''/,
+  'The review opener must reject non-string event payloads at its boundary.',
+);
 const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
@@ -108,8 +123,8 @@ assert.match(bubbleSource, /AssistantChangedFilesSummary/);
 assert.match(bubbleSource, /completedAssistantChangeReport/);
 assert.match(
   bubbleSource,
-  /className="assistant-changed-file"[\s\S]*?openInspector\(target, basename\(file\.path\)\)/,
-  'Changed file rows must open the read-only inspector',
+  /className="assistant-changed-file"[\s\S]*?onOpenReview\(file\.path\)/,
+  'Changed file rows must open the selected file in the diff review',
 );
 assert.match(
   bubbleSource,
@@ -118,8 +133,13 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /className="assistant-changed-files-review"[\s\S]*?onClick=\{onOpenReview\}/,
+  /className="assistant-changed-files-review"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
   'The final change summary must expose the conversation review panel',
+);
+assert.match(
+  bubbleSource,
+  /className="assistant-changed-files-revert"[\s\S]*?await onRevert\(\)/,
+  'The final change summary must expose the same safe revert action as review',
 );
 assert.match(
   appSource,
@@ -134,6 +154,11 @@ assert.match(
 assert.match(
   stylesSource,
   /\.assistant-changed-files-summary[\s\S]*?border-radius:\s*12px/,
+);
+assert.match(
+  stylesSource,
+  /\.assistant-changed-files-summary\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*none;/,
+  'The final change summary must align to the full conversation track',
 );
 assert.match(
   bubbleSource,
@@ -369,6 +394,27 @@ assert.equal(reviewGroups[0].id, 'turn:turn-b', 'The latest turn must appear fir
 assert.equal(reviewGroups[0].items.length, 2, 'Reports from the same turn stay inside one group');
 assert.equal(reviewGroups[0].uniqueFileCount, 1, 'Path casing and separators must not inflate file totals');
 
+const nestedReviewReports = changeReportsFromMessages([
+  { id: 'user-nested', role: 'user', content: '嵌套修改', turnId: 'turn-nested' },
+  {
+    id: 'assistant-final',
+    role: 'assistant',
+    content: '完成',
+    turnId: 'turn-nested',
+    loopHistory: [
+      {
+        id: 'assistant-process',
+        role: 'assistant',
+        content: '正在修改',
+        turnId: 'turn-nested',
+        toolExecutions: [changeExecution('change-nested', 'src/nested.css')],
+      },
+    ],
+  },
+]);
+assert.equal(nestedReviewReports.length, 1, 'Loop-history changes must reach conversation review');
+assert.equal(nestedReviewReports[0].files[0].path, 'src/nested.css');
+
 const sidebarReviewSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
@@ -376,6 +422,12 @@ const sidebarReviewSource = fs.readFileSync(
 assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(reports\)/);
 assert.match(sidebarReviewSource, /new Set\(reviewGroups\[0\] \? \[reviewGroups\[0\]\.id\]/);
 assert.match(sidebarReviewSource, /className="change-review-group-toggle"[\s\S]*?aria-expanded=\{expanded\}/);
+assert.match(sidebarReviewSource, /initialFilePath[\s\S]*?setSelectedKey\(item\.key\)/);
+assert.match(
+  appSource,
+  /if \(changeReviewReports\.length === 0\) return null;[\s\S]*?id: changeReviewConversationId/,
+  'review must remain mountable before a newly created conversation reaches the sidebar list',
+);
 assert.match(stylesSource, /\.change-review-group-files\s*\{/);
 
 console.log('history tool association and timestamp contract tests passed');

@@ -1,4 +1,4 @@
-import { ArrowLeft, Bot, Check, ChevronRight, Copy, Search, UserRound, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Copy, Search, X } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -12,6 +12,7 @@ import {
   fetchSessionMessageWindow,
   searchSessionContext,
 } from '../../backend/api';
+import { MarkdownContent } from '../chatMessages/MessageBubble';
 
 type IndexedUserTurn = {
   message: ChatMessage;
@@ -499,10 +500,9 @@ export function QuickContextRail({
                 {detailLoading && <span className="quick-context-list-loading" />}
                 {selectedTurnMessages.map((message) => (
                   <article className={`quick-context-message ${message.role}`} key={message.id}>
-                    <span>{message.role === 'user' ? <UserRound size={13} /> : <Bot size={13} />}</span>
                     <div>
                       <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
-                      <p>{message.content}</p>
+                      <MarkdownContent content={message.content} language={language} />
                     </div>
                   </article>
                 ))}

@@ -50,6 +50,8 @@ import type {
   ReferencePlanMode,
   RuntimeContextWindowUsage,
   RuntimeConnectionUpdate,
+  SessionAttentionKind,
+  SessionAttentionState,
   TerminalRuntime,
   TeamFlowActionType,
   TeamFlowActionOption,
@@ -63,9 +65,16 @@ import type {
 } from '../types';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
+  isCardbushForeground,
+  persistSessionAttentionState,
+  readSessionAttentionState,
+} from '../features/sessionAttention';
+import {
   basename,
   isAbsoluteLocalPath,
+  isAudioPath,
   isImagePath,
+  isVideoPath,
   stripWrappingQuotes,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
@@ -121,6 +130,9 @@ export function useCardbushChat(
   const [runningByConversation, setRunningByConversation] = useState<
     Record<string, { activeTurnId: string }>
   >({});
+  const [attentionByConversation, setAttentionByConversation] = useState<
+    Record<string, SessionAttentionState>
+  >(readSessionAttentionState);
   const [teamFlowsByConversation, setTeamFlowsByConversation] = useState<
     Record<string, TeamFlowState | null>
   >({});
@@ -171,6 +183,12 @@ export function useCardbushChat(
     Record<string, { sequence: number; lastEventId: string }>
   >({});
   const activeTurnIdsRef = useRef<Record<string, string>>({});
+  const activeConversationIdRef = useRef(activeConversationId);
+  const conversationsRef = useRef(conversations);
+  const attentionByConversationRef = useRef(attentionByConversation);
+  activeConversationIdRef.current = activeConversationId;
+  conversationsRef.current = conversations;
+  attentionByConversationRef.current = attentionByConversation;
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
@@ -193,6 +211,99 @@ export function useCardbushChat(
   const activeConnectionRecovery = activeConversationIdForState
     ? connectionRecoveryByConversation[activeConversationIdForState]
     : undefined;
+
+  const clearSessionAttention = useCallback((
+    sessionId: string,
+    expectedKind?: SessionAttentionKind,
+  ) => {
+    const normalized = sessionId.trim();
+    const currentAttention = attentionByConversationRef.current[normalized];
+    if (!normalized || !currentAttention || (expectedKind && currentAttention.kind !== expectedKind)) {
+      return;
+    }
+    const next = { ...attentionByConversationRef.current };
+    delete next[normalized];
+    attentionByConversationRef.current = next;
+    setAttentionByConversation(next);
+  }, []);
+
+  const markSessionAttention = useCallback((
+    sessionId: string,
+    kind: SessionAttentionKind,
+    body: string,
+    turnId = '',
+  ) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    if (
+      kind === 'completed' &&
+      activeConversationIdRef.current === normalized &&
+      isCardbushForeground()
+    ) {
+      clearSessionAttention(normalized, 'completed');
+      return;
+    }
+    const existing = attentionByConversationRef.current[normalized];
+    const normalizedTurnId = turnId.trim();
+    if (existing?.kind === kind && normalizedTurnId && existing.turnId === normalizedTurnId) {
+      return;
+    }
+    const conversation = conversationsRef.current.find((item) => item.id === normalized);
+    const title = conversation?.title?.trim() || localize('CardBush 会话', 'CardBush session');
+    const attention: SessionAttentionState = {
+      sessionId: normalized,
+      kind,
+      title,
+      body: body.trim() || (kind === 'waiting'
+        ? localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.')
+        : kind === 'error'
+          ? localize('任务遇到问题，点击查看详情。', 'The task needs attention. Click to view details.')
+          : localize('任务已完成，点击查看结果。', 'Task complete. Click to view the result.')),
+      turnId: normalizedTurnId || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    const next = {
+      ...attentionByConversationRef.current,
+      [normalized]: attention,
+    };
+    attentionByConversationRef.current = next;
+    setAttentionByConversation(next);
+    void window.cardbushDesktop?.notifySessionAttention?.(attention).catch(() => undefined);
+  }, [clearSessionAttention, localize]);
+
+  useEffect(() => {
+    persistSessionAttentionState(attentionByConversation);
+    void window.cardbushDesktop
+      ?.setSessionAttentionCount?.(Object.keys(attentionByConversation).length)
+      .catch(() => undefined);
+  }, [attentionByConversation]);
+
+  useEffect(() => {
+    if (loading || conversations.length === 0) return;
+    const knownIds = new Set(conversations.map((item) => item.id));
+    const staleIds = Object.keys(attentionByConversationRef.current).filter(
+      (sessionId) => !knownIds.has(sessionId),
+    );
+    if (staleIds.length === 0) return;
+    const next = { ...attentionByConversationRef.current };
+    for (const sessionId of staleIds) delete next[sessionId];
+    attentionByConversationRef.current = next;
+    setAttentionByConversation(next);
+  }, [conversations, loading]);
+
+  useEffect(() => {
+    const clearVisibleCompletion = () => {
+      if (!isCardbushForeground()) return;
+      clearSessionAttention(activeConversationIdRef.current, 'completed');
+    };
+    window.addEventListener('focus', clearVisibleCompletion);
+    document.addEventListener('visibilitychange', clearVisibleCompletion);
+    clearVisibleCompletion();
+    return () => {
+      window.removeEventListener('focus', clearVisibleCompletion);
+      document.removeEventListener('visibilitychange', clearVisibleCompletion);
+    };
+  }, [activeConversationId, clearSessionAttention]);
 
   useEffect(() => () => {
     for (const { controller } of Object.values(goalTurnControllersRef.current)) {
@@ -590,6 +701,7 @@ export function useCardbushChat(
     if (!normalized) {
       return;
     }
+    clearSessionAttention(normalized);
     sendingSessionsRef.current.add(normalized);
     if (turnId.trim()) {
       activeTurnIdsRef.current[normalized] = turnId.trim();
@@ -600,7 +712,7 @@ export function useCardbushChat(
         activeTurnId: turnId.trim() || current[normalized]?.activeTurnId || '',
       },
     }));
-  }, []);
+  }, [clearSessionAttention]);
 
   const clearSessionRunning = useCallback((sessionId: string) => {
     const normalized = sessionId.trim();
@@ -786,22 +898,24 @@ export function useCardbushChat(
         if (revision.channel && revision.channel !== 'assistant') return;
         streamBuffer.flushToolBoundary();
         ensureAssistant();
-        streamBuffer.reset(
-          {
-            messageId: revision.messageId ?? '',
-            assistantSegmentIndex: revision.assistantSegmentIndex,
-            turnId: revision.turnId ?? normalizedTurnId,
-          },
-          revision.content ?? '',
-        );
+        const route = {
+          messageId: revision.messageId ?? '',
+          assistantSegmentIndex: revision.assistantSegmentIndex,
+          turnId: revision.turnId ?? normalizedTurnId,
+        };
+        const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+        streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
         setMessagesByConversation((state) =>
           applyAssistantRevision(
             state,
             normalizedSessionId,
             assistantId,
-            revision,
+            animateFinal ? { ...revision, content: '' } : revision,
           ),
         );
+        if (animateFinal) {
+          void streamBuffer.completeRoute(revision.content ?? '', route);
+        }
       },
       onToolExecution: (execution) => {
         streamBuffer.flushToolBoundary();
@@ -832,10 +946,16 @@ export function useCardbushChat(
           ...interaction,
           sessionId: interaction.sessionId ?? normalizedSessionId,
         });
+        markSessionAttention(
+          normalizedSessionId,
+          'waiting',
+          localize('目标需要你的确认，点击继续处理。', 'The goal needs your input. Click to continue.'),
+          interaction.turnId ?? normalizedTurnId,
+        );
       },
       onFinalAssistantText: (text, chunk) => {
         ensureAssistant(chunk.createdAt);
-        void streamBuffer.flushRoute(chunk).then(() => {
+        void streamBuffer.completeRoute(text, chunk).then(() => {
           setMessagesByConversation((state) =>
             markLocalAssistantTurnCompleted(
               state,
@@ -917,7 +1037,8 @@ export function useCardbushChat(
             [normalizedSessionId]: loaded.latestTurn,
           }));
         }
-        await refreshGoal(normalizedSessionId);
+        const refreshedGoal = await refreshGoal(normalizedSessionId);
+        let turnStillRunning = false;
         if (
           goalTurnControllersRef.current[normalizedSessionId]?.controller === controller
         ) {
@@ -927,16 +1048,34 @@ export function useCardbushChat(
             loaded.latestTurn.turnId === normalizedTurnId &&
             isRunningSessionTurn(loaded.latestTurn)
           ) {
+            turnStillRunning = true;
             markSessionRunning(normalizedSessionId, normalizedTurnId);
           } else if (!controllersRef.current[normalizedSessionId]) {
             clearSessionRunning(normalizedSessionId);
           }
+        }
+        if (!turnStillRunning && refreshedGoal?.status === 'complete') {
+          markSessionAttention(
+            normalizedSessionId,
+            'completed',
+            truncateText(refreshedGoal.statusReason || refreshedGoal.objective, 180),
+            normalizedTurnId,
+          );
+        } else if (!turnStillRunning && refreshedGoal?.status === 'blocked') {
+          markSessionAttention(
+            normalizedSessionId,
+            'waiting',
+            truncateText(refreshedGoal.statusReason || refreshedGoal.objective, 180),
+            normalizedTurnId,
+          );
         }
       });
   }, [
     applyConnectionRecoveryUpdate,
     applyGoalExecution,
     clearSessionRunning,
+    localize,
+    markSessionAttention,
     markSessionRunning,
     mergeContextWindowUsage,
     mergeTeamFlowStreamEvent,
@@ -1163,8 +1302,9 @@ export function useCardbushChat(
         return;
       }
       setActiveConversationId(normalized);
+      clearSessionAttention(normalized, 'completed');
     },
-    [conversations],
+    [clearSessionAttention, conversations],
   );
 
   const startConversation = useCallback(async (projectDir?: string, initialTitle?: string) => {
@@ -1210,6 +1350,7 @@ export function useCardbushChat(
   }, []);
 
   const deleteConversation = useCallback((conversationId: string) => {
+    clearSessionAttention(conversationId);
     setConversations((current) => {
       const next = current.filter((item) => item.id !== conversationId);
       setActiveConversationId((active) =>
@@ -1225,7 +1366,7 @@ export function useCardbushChat(
     void deleteConversationApi(conversationId).catch((caught) =>
       setError(errorMessage(caught)),
     );
-  }, []);
+  }, [clearSessionAttention]);
 
   const renameConversation = useCallback((conversationId: string, title: string) => {
     const nextTitle = title.trim();
@@ -1442,6 +1583,7 @@ export function useCardbushChat(
       });
       controllersRef.current[sessionId] = controller;
       let finalSnapshotPromise: Promise<void> | null = null;
+      let finalAssistantText = '';
       let streamStarted = false;
 
       try {
@@ -1514,14 +1656,24 @@ export function useCardbushChat(
             // text already received for the prior segment before resetting its
             // animation buffer, otherwise a short pre-tool sentence can vanish.
             streamBuffer.flushToolBoundary();
-            streamBuffer.reset({
+            const route = {
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
               turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
-            }, revision.content ?? '');
+            };
+            const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+            streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
             setMessagesByConversation((current) =>
-              applyAssistantRevision(current, sessionId, assistantId, revision),
+              applyAssistantRevision(
+                current,
+                sessionId,
+                assistantId,
+                animateFinal ? { ...revision, content: '' } : revision,
+              ),
             );
+            if (animateFinal) {
+              finalSnapshotPromise = streamBuffer.completeRoute(revision.content ?? '', route);
+            }
           },
           onToolExecution: (execution) => {
             streamBuffer.flushToolBoundary();
@@ -1543,9 +1695,16 @@ export function useCardbushChat(
               ...interaction,
               sessionId: interaction.sessionId ?? sessionId,
             });
+            markSessionAttention(
+              sessionId,
+              'waiting',
+              localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
+              interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+            );
           },
           onFinalAssistantText: (text, chunk) => {
-            finalSnapshotPromise = streamBuffer.flushRoute(chunk).then(() => {
+            finalAssistantText = text;
+            finalSnapshotPromise = streamBuffer.completeRoute(text, chunk).then(() => {
               setMessagesByConversation((current) =>
                 markLocalAssistantTurnCompleted(
                   current,
@@ -1622,7 +1781,15 @@ export function useCardbushChat(
             ),
           }));
         }
-        await refreshGoal(sessionId);
+        const refreshedGoal = await refreshGoal(sessionId);
+        if (refreshedGoal?.status !== 'active') {
+          markSessionAttention(
+            sessionId,
+            'completed',
+            truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
+            activeTurnIdsRef.current[sessionId] ?? '',
+          );
+        }
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (isPendingInteractionConflictError(caught)) {
@@ -1646,6 +1813,12 @@ export function useCardbushChat(
           );
           if (!controller.signal.aborted) {
             setError(errorMessage(caught));
+            markSessionAttention(
+              sessionId,
+              'error',
+              errorMessage(caught),
+              activeTurnIdsRef.current[sessionId] ?? '',
+            );
           }
           console.warn('[cardbush:chat] request ended before SSE start', {
             sessionId,
@@ -1665,6 +1838,19 @@ export function useCardbushChat(
               reason: rawErrorMessage(caught),
             });
             setError(recovered ? null : errorMessage(caught));
+            if (recovered) {
+              const refreshedGoal = await refreshGoal(sessionId);
+              if (refreshedGoal?.status !== 'active') {
+                markSessionAttention(
+                  sessionId,
+                  'completed',
+                  truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
+                  turnId,
+                );
+              }
+            } else {
+              markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
+            }
             return;
           }
           const loadedMessages = await fetchMessages(sessionId, {
@@ -1682,8 +1868,15 @@ export function useCardbushChat(
           }
           if (loadedMessages && hasCompletedAssistantForTurn(loadedMessages, turnId)) {
             setError(null);
+            markSessionAttention(
+              sessionId,
+              'completed',
+              truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
+              turnId,
+            );
           } else {
             setError(errorMessage(caught));
+            markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
           }
         }
       } finally {
@@ -1710,6 +1903,8 @@ export function useCardbushChat(
       enqueueMessage,
       isSessionSending,
       loadTeamFlow,
+      localize,
+      markSessionAttention,
       markSessionRunning,
       mergeTeamFlowStreamEvent,
       mergeContextWindowUsage,
@@ -1834,6 +2029,7 @@ export function useCardbushChat(
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
       const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
       let finalSnapshotPromise: Promise<void> | null = null;
+      let finalAssistantText = '';
       let streamStarted = false;
       controllersRef.current[sessionId] = controller;
       markSessionRunning(sessionId);
@@ -1900,14 +2096,24 @@ export function useCardbushChat(
               return;
             }
             streamBuffer.flushToolBoundary();
-            streamBuffer.reset({
+            const route = {
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
               turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
-            }, revision.content ?? '');
+            };
+            const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+            streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
             setMessagesByConversation((current) =>
-              applyAssistantRevision(current, sessionId, tempAssistant.id, revision),
+              applyAssistantRevision(
+                current,
+                sessionId,
+                tempAssistant.id,
+                animateFinal ? { ...revision, content: '' } : revision,
+              ),
             );
+            if (animateFinal) {
+              finalSnapshotPromise = streamBuffer.completeRoute(revision.content ?? '', route);
+            }
           },
           onToolExecution: (execution) => {
             streamBuffer.flushToolBoundary();
@@ -1929,9 +2135,16 @@ export function useCardbushChat(
               ...interaction,
               sessionId: interaction.sessionId ?? sessionId,
             });
+            markSessionAttention(
+              sessionId,
+              'waiting',
+              localize('需要你的确认，点击继续处理。', 'Your input is required. Click to continue.'),
+              interaction.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
+            );
           },
           onFinalAssistantText: (text, chunk) => {
-            finalSnapshotPromise = streamBuffer.flushRoute(chunk).then(() => {
+            finalAssistantText = text;
+            finalSnapshotPromise = streamBuffer.completeRoute(text, chunk).then(() => {
               setMessagesByConversation((current) =>
                 markLocalAssistantTurnCompleted(
                   current,
@@ -2010,7 +2223,15 @@ export function useCardbushChat(
             ),
           }));
         }
-        await refreshGoal(sessionId);
+        const refreshedGoal = await refreshGoal(sessionId);
+        if (refreshedGoal?.status !== 'active') {
+          markSessionAttention(
+            sessionId,
+            'completed',
+            truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
+            activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId ?? '',
+          );
+        }
         void reloadConversations().catch(() => undefined);
       } catch (caught) {
         if (
@@ -2025,10 +2246,30 @@ export function useCardbushChat(
             reason: rawErrorMessage(caught),
           });
           setError(recovered ? null : errorMessage(caught));
+          const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
+          if (recovered) {
+            const refreshedGoal = await refreshGoal(sessionId);
+            if (refreshedGoal?.status !== 'active') {
+              markSessionAttention(
+                sessionId,
+                'completed',
+                truncateText(finalAssistantText.replace(/\s+/g, ' ').trim(), 180),
+                turnId,
+              );
+            }
+          } else {
+            markSessionAttention(sessionId, 'error', errorMessage(caught), turnId);
+          }
           return;
         }
         if (!controller.signal.aborted && !isPendingInteractionConflictError(caught)) {
           setError(errorMessage(caught));
+          markSessionAttention(
+            sessionId,
+            'error',
+            errorMessage(caught),
+            activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
+          );
         } else if (isPendingInteractionConflictError(caught)) {
           setError(null);
         }
@@ -2050,6 +2291,8 @@ export function useCardbushChat(
       applyConnectionRecoveryUpdate,
       applyGoalExecution,
       loadTeamFlow,
+      localize,
+      markSessionAttention,
       markSessionRunning,
       mergeContextWindowUsage,
       mergeTeamFlowStreamEvent,
@@ -2704,6 +2947,7 @@ export function useCardbushChat(
       if (!interaction) {
         return;
       }
+      const sessionId = interaction.sessionId?.trim() || activeConversationId.trim();
       try {
         if (typeof reply === 'string') {
           const text = reply.trim();
@@ -2718,10 +2962,9 @@ export function useCardbushChat(
           await replyInteraction({ interactionId: interaction.id, answers: reply });
         }
         setPendingInteraction(null);
+        clearSessionAttention(sessionId, 'waiting');
         setError(null);
       } catch (caught) {
-        const sessionId =
-          interaction.sessionId?.trim() || activeConversationId.trim();
         if (isBushServerHttpError(caught, 409)) {
           const recovered = sessionId
             ? await fetchPendingInteraction(sessionId).catch(() => null)
@@ -2745,6 +2988,7 @@ export function useCardbushChat(
             ? await fetchPendingInteraction(sessionId).catch(() => null)
             : null;
           setPendingInteraction(recovered);
+          if (!recovered) clearSessionAttention(sessionId, 'waiting');
           setError(null);
           setNotice(
             expired
@@ -2755,13 +2999,14 @@ export function useCardbushChat(
         }
         if (isInteractionGoneError(caught)) {
           setPendingInteraction(null);
+          clearSessionAttention(sessionId, 'waiting');
           setError(null);
           return;
         }
         setError(errorMessage(caught));
       }
     },
-    [activeConversationId, pendingInteraction],
+    [activeConversationId, clearSessionAttention, pendingInteraction],
   );
 
   const cancelPendingInteraction = useCallback(async () => {
@@ -2769,13 +3014,13 @@ export function useCardbushChat(
     if (!interaction) {
       return;
     }
+    const sessionId = interaction.sessionId?.trim() || activeConversationId.trim();
     try {
       await cancelInteraction(interaction.id);
       setPendingInteraction(null);
+      clearSessionAttention(sessionId, 'waiting');
       setError(null);
     } catch (caught) {
-      const sessionId =
-        interaction.sessionId?.trim() || activeConversationId.trim();
       if (isBushServerHttpError(caught, 409)) {
         const recovered = sessionId
           ? await fetchPendingInteraction(sessionId).catch(() => null)
@@ -2799,6 +3044,7 @@ export function useCardbushChat(
           ? await fetchPendingInteraction(sessionId).catch(() => null)
           : null;
         setPendingInteraction(recovered);
+        if (!recovered) clearSessionAttention(sessionId, 'waiting');
         setError(null);
         setNotice(
           expired
@@ -2809,12 +3055,13 @@ export function useCardbushChat(
       }
       if (isInteractionGoneError(caught)) {
         setPendingInteraction(null);
+        clearSessionAttention(sessionId, 'waiting');
         setError(null);
         return;
       }
       setError(errorMessage(caught));
     }
-  }, [activeConversationId, pendingInteraction]);
+  }, [activeConversationId, clearSessionAttention, pendingInteraction]);
 
   const cancelActiveGoal = useCallback(async () => {
     const sessionId = activeConversationId.trim();
@@ -2908,7 +3155,10 @@ export function useCardbushChat(
     }
   }, [activeConversationId, clearSessionRunning]);
 
-  const clearError = useCallback(() => setError(null), []);
+  const clearError = useCallback(() => {
+    setError(null);
+    clearSessionAttention(activeConversationIdRef.current, 'error');
+  }, [clearSessionAttention]);
   const clearNotice = useCallback(() => setNotice(null), []);
 
   return {
@@ -2923,6 +3173,8 @@ export function useCardbushChat(
     sending,
     activeTurnId,
     runningByConversation,
+    attentionByConversation,
+    clearSessionAttention,
     activeTeamFlow,
     activeTeamFlowLoading,
     activeTeamFlowAction,
@@ -3187,6 +3439,7 @@ type StreamReadySegment = {
 
 export function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
   let pending = '';
+  let emitted = '';
   const ready: StreamReadySegment[] = [];
   let timer: number | undefined;
   const drainWaiters: Array<() => void> = [];
@@ -3251,7 +3504,11 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
       return;
     }
     append(delta);
+    emitted += delta;
   };
+
+  const bufferedText = () =>
+    emitted + ready.map((segment) => segment.text).join('') + pending;
 
   const forceReleasePending = () => {
     if (!pending) {
@@ -3293,6 +3550,18 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
     return waitForDrain();
   };
 
+  const completeFinalSnapshot = (finalText: string) => {
+    const snapshot = finalText ?? '';
+    const buffered = bufferedText();
+    if (snapshot.startsWith(buffered)) {
+      pending += snapshot.slice(buffered.length);
+    } else if (snapshot.startsWith(emitted)) {
+      ready.length = 0;
+      pending = snapshot.slice(emitted.length);
+    }
+    return flushAllStreaming();
+  };
+
   const flushToolBoundary = () => {
     clearTimer();
     forceReleasePending();
@@ -3320,19 +3589,24 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
     flushAllStreaming() {
       return flushAllStreaming();
     },
+    completeFinalSnapshot(finalText: string) {
+      return completeFinalSnapshot(finalText);
+    },
     flushToolBoundary() {
       flushToolBoundary();
     },
-    reset(_nextEmitted = '') {
+    reset(nextEmitted = '') {
       clearTimer();
       ready.length = 0;
       pending = '';
+      emitted = nextEmitted;
       resolveDrainWaiters();
     },
     dispose() {
       clearTimer();
       ready.length = 0;
       pending = '';
+      emitted = '';
       resolveDrainWaiters();
     },
   };
@@ -3370,6 +3644,9 @@ function createSegmentedAssistantStreamBuffers(
     },
     flushRoute(route: AssistantStreamRoute) {
       return bufferFor(route).flushAllStreaming();
+    },
+    completeRoute(finalText: string, route: AssistantStreamRoute) {
+      return bufferFor(route).completeFinalSnapshot(finalText);
     },
     flushAllStreaming() {
       return Promise.all(
@@ -5938,7 +6215,11 @@ function chatAttachmentsFromOutbound(
       id: `attachment-${crypto.randomUUID()}`,
       name: basename(pathValue),
       path: pathValue,
-      type: 'document' as const,
+      type: isVideoPath(pathValue)
+        ? 'video' as const
+        : isAudioPath(pathValue)
+          ? 'audio' as const
+          : 'document' as const,
     })),
   ];
 }

@@ -1,12 +1,10 @@
 import {
   CheckCircle2,
   Circle,
-  Code2,
   Edit3,
   LoaderCircle,
   PackagePlus,
   Plus,
-  Puzzle,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -36,6 +34,7 @@ import {
   type RuntimeToolInventory,
   type RuntimeToolInventoryEntry,
 } from '../../backend/api';
+import { SkillIcon } from '../skills/SkillIcon';
 
 const LazyTeamPanel = lazy(async () => {
   const module = await import('../TeamPanel');
@@ -543,7 +542,7 @@ function SkillsPanel({
                 type="button"
                 onClick={() => void openDetail(skill)}
               >
-                <Code2 size={18} />
+                <SkillIcon skill={skill} />
                 <div>
                   <h3>{skill.name}</h3>
                   <p>{language === 'zh' ? skill.descriptionZh : skill.description}</p>
@@ -604,7 +603,7 @@ function SkillDetailDialog({
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section className="skill-detail-dialog" onMouseDown={(event) => event.stopPropagation()}>
         <header>
-          <Puzzle size={18} />
+          <SkillIcon skill={detail} compact />
           <strong>{detail.name}</strong>
           <button type="button" onClick={onClose}>
             <X size={16} />

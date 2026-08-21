@@ -121,6 +121,43 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
   >();
   let latestUserTurn: { messageId: string; prompt: string; turnIndex: number } | undefined;
   let userTurnIndex = 0;
+  let reportIndex = 0;
+  const seenExecutionIds = new Set<string>();
+
+  const appendMessageReport = (
+    message: ChatMessage,
+    fallbackIndex: number,
+  ) => {
+    for (const nested of message.loopHistory ?? []) {
+      appendMessageReport(nested, fallbackIndex);
+    }
+    const executions = (message.toolExecutions ?? []).filter((execution, index) => {
+      const identity = execution.id.trim() || [
+        message.turnId ?? '',
+        execution.name,
+        execution.createdAt,
+        execution.sequence ?? index,
+      ].join(':');
+      if (seenExecutionIds.has(identity)) return false;
+      seenExecutionIds.add(identity);
+      return true;
+    });
+    const report = toolChangeReportFromExecutions(executions);
+    if (!report) return;
+    const turnId = message.turnId?.trim() ?? '';
+    const userTurn = (turnId ? userTurnByTurnId.get(turnId) : undefined) ?? latestUserTurn;
+    reportIndex += 1;
+    reports.push({
+      ...report,
+      id: `${message.id || fallbackIndex}:${message.turnId ?? ''}:${reportIndex}`,
+      messageId: message.id,
+      turnId: message.turnId,
+      createdAt: message.createdAt,
+      userMessageId: userTurn?.messageId,
+      userPrompt: userTurn?.prompt,
+      turnIndex: userTurn?.turnIndex,
+    });
+  };
 
   messages.forEach((message, index) => {
     if (message.role === 'user') {
@@ -135,22 +172,7 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
         userTurnByTurnId.set(userTurnId, latestUserTurn);
       }
     }
-    const report = toolChangeReportFromExecutions(message.toolExecutions ?? []);
-    if (!report) {
-      return;
-    }
-    const turnId = message.turnId?.trim() ?? '';
-    const userTurn = (turnId ? userTurnByTurnId.get(turnId) : undefined) ?? latestUserTurn;
-    reports.push({
-      ...report,
-      id: `${message.id || index}:${message.turnId ?? ''}`,
-      messageId: message.id,
-      turnId: message.turnId,
-      createdAt: message.createdAt,
-      userMessageId: userTurn?.messageId,
-      userPrompt: userTurn?.prompt,
-      turnIndex: userTurn?.turnIndex,
-    });
+    appendMessageReport(message, index);
   });
   return reports;
 }

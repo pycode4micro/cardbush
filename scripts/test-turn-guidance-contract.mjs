@@ -86,9 +86,11 @@ assert.match(hookSource, /caught\.code === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
 assert.equal(
-  (hookSource.match(/streamBuffer\.flushToolBoundary\(\);\s*streamBuffer\.reset\(/g) ?? []).length,
-  2,
-  'both send paths must drain token text before an assistant revision resets the buffer',
+  (hookSource.match(
+    /streamBuffer\.flushToolBoundary\(\);[\s\S]{0,500}?streamBuffer\.reset\(route,/g,
+  ) ?? []).length,
+  3,
+  'foreground, control, and Goal streams must drain token text before an assistant revision resets the buffer',
 );
 
 const bubbleSource = fs.readFileSync(
@@ -230,6 +232,25 @@ assert.equal(
   '先说明我要读取配置。工具完成后继续解释。',
 );
 boundaryBuffer.dispose();
+
+const finalSnapshotChunks = [];
+const finalSnapshotBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  finalSnapshotChunks.push(delta);
+});
+const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端仍会分段加速呈现。'.repeat(24);
+const finalSnapshotDrain = finalSnapshotBuffer.completeFinalSnapshot(finalSnapshotText);
+assert.notEqual(
+  finalSnapshotChunks.join(''),
+  finalSnapshotText,
+  'a final-only snapshot must not appear as one instantaneous replacement',
+);
+await finalSnapshotDrain;
+assert.equal(finalSnapshotChunks.join(''), finalSnapshotText);
+assert.ok(
+  finalSnapshotChunks.length > 2,
+  'a final-only snapshot must use multiple accelerated rendering chunks',
+);
+finalSnapshotBuffer.dispose();
 
 const sessionId = 'session-1';
 const initialAssistantId = 'assistant-local';
@@ -474,6 +495,11 @@ const loopState = mergeFinalStreamMessages(
 );
 
 assert.match(hookSource, /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/);
+assert.match(
+  hookSource,
+  /onFinalAssistantText: \(text, chunk\) => \{[\s\S]{0,180}streamBuffer\.completeRoute\(text, chunk\)/,
+  'final assistant snapshots must pass through the animated stream buffer',
+);
 assert.doesNotMatch(
   hookSource,
   /onToolExecution: \(execution\) => \{\s*void streamBuffer\.flushAllStreaming\(\)\.then/,

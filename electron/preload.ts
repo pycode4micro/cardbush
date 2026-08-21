@@ -30,12 +30,31 @@ type CardlingDesktopAction =
   | 'openMain'
   | { type: 'miniChatSend'; text: string };
 
+type SessionAttentionPayload = {
+  sessionId: string;
+  title: string;
+  body: string;
+  kind: 'completed' | 'waiting' | 'error';
+};
+
 const desktopApi = {
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  notifySessionAttention: (payload: SessionAttentionPayload) =>
+    ipcRenderer.invoke('attention:notify-session', payload) as Promise<{ shown: boolean }>,
+  setSessionAttentionCount: (count: number) =>
+    ipcRenderer.invoke('attention:set-count', count) as Promise<void>,
+  onOpenSessionAttention: (callback: (payload: { sessionId: string }) => void) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { sessionId: string },
+    ) => callback(payload);
+    ipcRenderer.on('attention:open-session', listener);
+    return () => ipcRenderer.removeListener('attention:open-session', listener);
+  },
   writeDebugLog: (scope: string, payload: unknown) =>
     ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
   wallpaperAccent: () =>

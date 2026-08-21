@@ -17,6 +17,10 @@ const messageBubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
+const quickContextSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
+  'utf8',
+);
 const appStyles = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
@@ -97,19 +101,54 @@ assert.match(
   'rendered Markdown must have an isolated hierarchy scope',
 );
 assert.match(
+  quickContextSource,
+  /<MarkdownContent content=\{message\.content\} language=\{language\} \/>/,
+  'Quick-context turn details must reuse the conversation Markdown renderer.',
+);
+assert.doesNotMatch(
+  quickContextSource,
+  /<UserRound|<Bot/,
+  'Quick-context turn details must not prefix messages with role icons.',
+);
+assert.match(
   appStyles,
   /\.markdown-content li > ul,[\s\S]*?\.markdown-content li > ol[\s\S]*?border-left:/,
   'nested Markdown lists must expose a visible hierarchy guide',
 );
 assert.match(
   appStyles,
-  /\.markdown-content h3::before/,
-  'third-level Markdown headings must remain visually distinct',
+  /\.markdown-content h1\s*\{[\s\S]*?font-size:\s*19px/,
+  'assistant headings must stay compact instead of dominating the conversation',
+);
+assert.match(
+  messageBubbleSource,
+  /conclusionHeading[\s\S]*?markdown-conclusion-heading/,
+  'conclusion headings must receive a dedicated compact presentation',
+);
+assert.match(
+  appStyles,
+  /\.markdown-content h1\.markdown-conclusion-heading\s*\{[\s\S]*?font-size:\s*15\.5px;[\s\S]*?text-wrap:\s*pretty;/,
+  'long conclusions must avoid balanced wrapping and oversized heading typography',
 );
 assert.match(
   appStyles,
   /\.markdown-content blockquote/,
   'Markdown callouts must have a distinct quoted hierarchy',
+);
+assert.match(
+  messageBubbleSource,
+  /className="markdown-table-scroll"/,
+  'wide Markdown tables must scroll without widening the chat track',
+);
+assert.match(
+  messageBubbleSource,
+  /className="markdown-code-language"/,
+  'code blocks must expose a quiet language label',
+);
+assert.match(
+  appStyles,
+  /\.markdown-content h3::before\s*\{\s*display:\s*none;/,
+  'compact headings must not add a decorative rail beside ordinary sections',
 );
 
 console.log(`markdown format tests passed (${cases.length})`);

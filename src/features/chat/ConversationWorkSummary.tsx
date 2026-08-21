@@ -61,7 +61,7 @@ export function ConversationWorkSummary({
   sessionId: string;
   messages: ChatMessage[];
   changeReports: ConversationChangeReport[];
-  onOpenChangeReview: () => void;
+  onOpenChangeReview: (filePath?: string) => void;
   subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
 }) {
@@ -142,7 +142,7 @@ export function ConversationWorkSummary({
                 <FileOutput size={14} />
                 <strong>{language === 'zh' ? '最近产出' : 'Recent outputs'}</strong>
                 {changeSummary && (
-                  <button type="button" onClick={onOpenChangeReview}>
+                  <button type="button" onClick={() => onOpenChangeReview()}>
                     {changeSummary.fileCount}
                   </button>
                 )}
@@ -150,7 +150,11 @@ export function ConversationWorkSummary({
               {recentFiles.length > 0 ? (
                 <div className="work-summary-file-list">
                   {recentFiles.map((file) => (
-                    <button type="button" key={file.path} onClick={onOpenChangeReview}>
+                    <button
+                      type="button"
+                      key={file.path}
+                      onClick={() => onOpenChangeReview(file.path)}
+                    >
                       <FileCode2 size={14} />
                       <span title={file.path}>{file.path.replaceAll('\\', '/').split('/').pop()}</span>
                       <small>

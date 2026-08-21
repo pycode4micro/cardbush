@@ -4,6 +4,7 @@ import {
   clipboard,
   Menu,
   net,
+  Notification,
   protocol,
   Tray,
   dialog,
@@ -92,6 +93,7 @@ let cardlingDragState: {
   timeout: ReturnType<typeof setTimeout>;
 } | null = null;
 let lastCardlingState: CardlingDesktopState | null = null;
+let sessionAttentionCount = 0;
 const terminalSessions = new Map<
   string,
   {
@@ -248,7 +250,11 @@ function createWindow() {
   window.on('minimize', refreshWindowBackdrop);
   window.on('restore', refreshWindowBackdrop);
   window.on('show', refreshWindowBackdrop);
-  window.on('focus', refreshWindowBackdrop);
+  window.on('focus', () => {
+    refreshWindowBackdrop();
+    window.flashFrame(false);
+  });
+  applySessionAttentionBadge();
 
   startupRevealFallback = setTimeout(() => {
     if (!window.isDestroyed() && !window.isVisible()) {
@@ -1100,6 +1106,75 @@ function loadCardbushIcon(size: number) {
   );
 }
 
+function loadSessionAttentionOverlayIcon() {
+  return nativeImage.createFromDataURL(
+    'data:image/svg+xml;utf8,' +
+      encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="#d88933" stroke="#fff" stroke-width="3"/><path d="M9.5 16.5 14 21l8.5-10" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      ),
+  );
+}
+
+function applySessionAttentionBadge() {
+  const count = Math.max(0, Math.round(sessionAttentionCount));
+  if (process.platform === 'win32' && mainWindow != null && !mainWindow.isDestroyed()) {
+    mainWindow.setOverlayIcon(
+      count > 0 ? loadSessionAttentionOverlayIcon() : null,
+      count > 0 ? `${count} 个会话待处理` : '',
+    );
+  }
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setBadge(count > 0 ? String(count) : '');
+  } else if (process.platform !== 'win32') {
+    app.setBadgeCount(count);
+  }
+  if (tray != null && !tray.isDestroyed()) {
+    tray.setToolTip(count > 0 ? `cardbush · ${count} 个会话待处理` : 'cardbush');
+  }
+}
+
+function sanitizeSessionAttentionPayload(value: unknown) {
+  const payload = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : {};
+  const kind = String(payload.kind ?? '').trim().toLowerCase();
+  return {
+    sessionId: String(payload.sessionId ?? '').trim(),
+    title: String(payload.title ?? '').trim().slice(0, 120) || 'CardBush',
+    body: String(payload.body ?? '').trim().slice(0, 500) || '任务已完成，点击查看结果。',
+    kind: kind === 'waiting' || kind === 'error' ? kind : 'completed',
+  } as const;
+}
+
+function showSessionAttentionNotification(value: unknown) {
+  const payload = sanitizeSessionAttentionPayload(value);
+  if (!payload.sessionId) {
+    return { shown: false };
+  }
+  const shouldShow = mainWindow == null || mainWindow.isDestroyed() ||
+    !mainWindow.isVisible() || !mainWindow.isFocused();
+  if (!shouldShow || !Notification.isSupported()) {
+    return { shown: false };
+  }
+  const notification = new Notification({
+    title: payload.title,
+    body: payload.body,
+    icon: loadCardbushIcon(64),
+    silent: false,
+  });
+  notification.on('click', () => {
+    showMainWindow();
+    if (mainWindow != null && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('attention:open-session', {
+        sessionId: payload.sessionId,
+      });
+    }
+  });
+  notification.show();
+  mainWindow?.flashFrame(true);
+  return { shown: true };
+}
+
 function showMainWindow() {
   if (mainWindow == null || mainWindow.isDestroyed()) {
     createWindow();
@@ -1131,6 +1206,21 @@ ipcMain.handle('window:close-to-tray', () => {
 });
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+
+ipcMain.handle('attention:notify-session', (event, payload: unknown) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
+    return { shown: false };
+  }
+  return showSessionAttentionNotification(payload);
+});
+
+ipcMain.handle('attention:set-count', (event, count: number) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
+    return;
+  }
+  sessionAttentionCount = Math.max(0, Math.round(Number(count) || 0));
+  applySessionAttentionBadge();
+});
 
 ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
@@ -1783,6 +1873,9 @@ ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.cardbush.desktop');
+  }
   await applyProxySettings({
     mode: 'none',
     httpProxy: '',
@@ -1851,13 +1944,39 @@ function registerLocalFileProtocol() {
       if (!stats.isFile()) {
         return new Response('Not found', { status: 404 });
       }
-      const bytes = await fs.promises.readFile(normalizedPath);
       const contentType = contentTypeForPath(normalizedPath);
-      return new Response(new Uint8Array(bytes), {
+      const responseType = contentType === 'application/octet-stream'
+        ? contentTypeForBytes(await readFilePrefix(normalizedPath, 512))
+        : contentType;
+      const range = byteRangeFromHeader(request.headers.get('range'), stats.size);
+      if (range) {
+        const length = range.end - range.start + 1;
+        const bytes = Buffer.allocUnsafe(length);
+        const handle = await fs.promises.open(normalizedPath, 'r');
+        try {
+          await handle.read(bytes, 0, length, range.start);
+        } finally {
+          await handle.close();
+        }
+        return new Response(request.method === 'HEAD' ? null : new Uint8Array(bytes), {
+          status: 206,
+          headers: {
+            'content-type': responseType,
+            'content-length': String(length),
+            'content-range': `bytes ${range.start}-${range.end}/${stats.size}`,
+            'accept-ranges': 'bytes',
+            'cache-control': 'public, max-age=31536000, immutable',
+          },
+        });
+      }
+      const bytes = request.method === 'HEAD'
+        ? null
+        : await fs.promises.readFile(normalizedPath);
+      return new Response(bytes ? new Uint8Array(bytes) : null, {
         headers: {
-          'content-type': contentType === 'application/octet-stream'
-            ? contentTypeForBytes(bytes)
-            : contentType,
+          'content-type': responseType,
+          'content-length': String(stats.size),
+          'accept-ranges': 'bytes',
           'cache-control': 'public, max-age=31536000, immutable',
         },
       });
@@ -2023,7 +2142,7 @@ function audioMimeTypeForPath(filePath: string) {
   if (extension === '.mp3') {
     return 'audio/mpeg';
   }
-  if (extension === '.m4a' || extension === '.mp4') {
+  if (extension === '.m4a') {
     return 'audio/mp4';
   }
   if (extension === '.aac') {
@@ -2038,9 +2157,15 @@ function audioMimeTypeForPath(filePath: string) {
   if (extension === '.flac') {
     return 'audio/flac';
   }
-  if (extension === '.webm') {
-    return 'audio/webm';
-  }
+  return '';
+}
+
+function videoMimeTypeForPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.mp4' || extension === '.m4v') return 'video/mp4';
+  if (extension === '.webm') return 'video/webm';
+  if (extension === '.ogv') return 'video/ogg';
+  if (extension === '.mov') return 'video/quicktime';
   return '';
 }
 
@@ -2048,6 +2173,10 @@ function contentTypeForPath(filePath: string) {
   const imageMimeType = imageMimeTypeForPath(filePath);
   if (imageMimeType) {
     return imageMimeType;
+  }
+  const videoMimeType = videoMimeTypeForPath(filePath);
+  if (videoMimeType) {
+    return videoMimeType;
   }
   const audioMimeType = audioMimeTypeForPath(filePath);
   if (audioMimeType) {
@@ -2070,6 +2199,34 @@ function contentTypeForPath(filePath: string) {
     return 'image/svg+xml';
   }
   return 'application/octet-stream';
+}
+
+async function readFilePrefix(filePath: string, length: number) {
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const bytes = Buffer.alloc(length);
+    const result = await handle.read(bytes, 0, length, 0);
+    return bytes.subarray(0, result.bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function byteRangeFromHeader(value: string | null, size: number) {
+  if (!value || !Number.isFinite(size) || size <= 0) return null;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
+  if (!match || (!match[1] && !match[2])) return null;
+  let start = match[1] ? Number.parseInt(match[1], 10) : Number.NaN;
+  let end = match[2] ? Number.parseInt(match[2], 10) : Number.NaN;
+  if (!Number.isFinite(start)) {
+    const suffixLength = Math.min(size, end);
+    start = size - suffixLength;
+    end = size - 1;
+  } else {
+    end = Number.isFinite(end) ? Math.min(end, size - 1) : size - 1;
+  }
+  if (start < 0 || start >= size || end < start) return null;
+  return { start, end };
 }
 
 async function renderTextFilePreview(filePath: string, previewError = '') {

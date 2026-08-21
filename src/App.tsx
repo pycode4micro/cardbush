@@ -889,6 +889,7 @@ function CardbushApp() {
     [activeDraftKey],
   );
   const [changeReviewConversationId, setChangeReviewConversationId] = useState('');
+  const [changeReviewFilePath, setChangeReviewFilePath] = useState('');
   const [revertingChangeId, setRevertingChangeId] = useState('');
   const [changeReviewNotice, setChangeReviewNotice] = useState('');
   const [revertedChangeKeys, setRevertedChangeKeys] = useState<Set<string>>(
@@ -913,20 +914,42 @@ function CardbushApp() {
         Object.entries(chat.messagesByConversation)
           .map(([conversationId, messages]) => [
             conversationId,
-            changeReportsFromMessages(messages),
+            changeReportsFromMessages(
+              normalizeChatMessagesForDisplay(messages),
+            ),
           ] as const)
           .filter(([, reports]) => reports.length > 0),
       ) as Record<string, ConversationChangeReport[]>,
     [chat.messagesByConversation],
   );
-  const changeReviewConversation =
-    chat.conversations.find((item) => item.id === changeReviewConversationId) ?? null;
   const changeReviewReports = useMemo(
     () => changeReviewConversationId
       ? changeReportsByConversation[changeReviewConversationId] ?? []
       : [],
     [changeReportsByConversation, changeReviewConversationId],
   );
+  const changeReviewConversation = useMemo(() => {
+    if (!changeReviewConversationId) return null;
+    const listed = chat.conversations.find(
+      (item) => item.id === changeReviewConversationId,
+    );
+    if (listed) return listed;
+    const active = chat.activeConversation;
+    if (active?.id === changeReviewConversationId) return active;
+    if (changeReviewReports.length === 0) return null;
+    return {
+      id: changeReviewConversationId,
+      title: language === 'zh' ? '当前会话修改' : 'Current conversation changes',
+      preview: '',
+      updatedAt: new Date().toISOString(),
+    };
+  }, [
+    changeReviewConversationId,
+    changeReviewReports.length,
+    chat.activeConversation,
+    chat.conversations,
+    language,
+  ]);
   const inspectorOpen = Boolean(
     (changeReviewConversation && changeReviewReports.length > 0) ||
       inspectorTarget ||
@@ -975,16 +998,6 @@ function CardbushApp() {
     section !== 'os' && !sidebarCollapsed,
   );
   const inspectorPresence = useSoftPanelPresence(inspectorOpen);
-
-  useEffect(() => {
-    if (!inspectorOpen) return;
-    const preserveChatWidth = () => {
-      if (window.innerWidth < 1220) setSidebarCollapsed(true);
-    };
-    preserveChatWidth();
-    window.addEventListener('resize', preserveChatWidth);
-    return () => window.removeEventListener('resize', preserveChatWidth);
-  }, [inspectorOpen]);
 
   useEffect(() => {
     const handleOpenInspector = (event: Event) => {
@@ -1376,6 +1389,14 @@ function CardbushApp() {
     };
   }, [section]);
 
+  useEffect(() => window.cardbushDesktop?.onOpenSessionAttention?.(({ sessionId }) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    setSettingsOpen(false);
+    setSection('chat');
+    chat.openConversation(normalized);
+  }), [chat.openConversation]);
+
   useEffect(() => {
     if (osStartupHandledRef.current) {
       return;
@@ -1640,11 +1661,12 @@ function CardbushApp() {
       const reversibleReports = reports
         .map((report) => ({ report, files: serializeToolChangeReport(report) }))
         .filter((item) => item.files.length > 0);
-      const snapshotTurnIds = reports
-        .map((report) => report.turnId?.trim() ?? '')
-        .filter(Boolean);
+      const reportsWithSnapshot = reports.filter((report) => report.turnId?.trim());
+      const snapshotTurnIds = Array.from(new Set(
+        reportsWithSnapshot.map((report) => report.turnId!.trim()),
+      ));
       const usesRecoverySnapshots =
-        reports.length > 0 && snapshotTurnIds.length === reports.length;
+        reports.length > 0 && reportsWithSnapshot.length === reports.length;
       if (
         (!usesRecoverySnapshots && !root) ||
         (!usesRecoverySnapshots && reversibleReports.length === 0)
@@ -1925,6 +1947,7 @@ function CardbushApp() {
                 section={section}
                 activeConversationId={chat.activeConversationId}
                 runningConversationIds={runningConversationIds}
+                attentionByConversation={chat.attentionByConversation}
                 projects={projectItems}
                 conversations={chat.conversations}
                 changeReportsByConversation={changeReportsByConversation}
@@ -1949,6 +1972,7 @@ function CardbushApp() {
                 onOpenConversationChanges={(conversationId) => {
                   setInspectorTarget(null);
                   setWorkSummaryInspector(null);
+                  setChangeReviewFilePath('');
                   setChangeReviewConversationId(conversationId);
                   setChangeReviewNotice('');
                 }}
@@ -2079,10 +2103,13 @@ function CardbushApp() {
                     report,
                   )
                 }
-                onOpenChangeReview={() => {
+                onOpenChangeReview={(filePath) => {
                   if (!chat.activeConversationId) return;
                   setInspectorTarget(null);
                   setWorkSummaryInspector(null);
+                  setChangeReviewFilePath(
+                    typeof filePath === 'string' ? filePath.trim() : '',
+                  );
                   setChangeReviewConversationId(chat.activeConversationId);
                   setChangeReviewNotice('');
                 }}
@@ -2168,6 +2195,7 @@ function CardbushApp() {
                   onClick={() => {
                     setInspectorTarget(null);
                     setWorkSummaryInspector(null);
+                    setChangeReviewFilePath('');
                     setChangeReviewConversationId('');
                     setChangeReviewNotice('');
                   }}
@@ -2195,6 +2223,7 @@ function CardbushApp() {
                     language={language}
                     conversation={displayedReviewConversation}
                     reports={displayedReviewReports}
+                    initialFilePath={changeReviewFilePath}
                     notice={changeReviewNotice}
                     revertingChangeId={revertingChangeId}
                     revertedChangeIds={new Set(
@@ -2204,7 +2233,10 @@ function CardbushApp() {
                         )
                         .map((report) => report.id),
                     )}
-                    onClose={() => setChangeReviewConversationId('')}
+                    onClose={() => {
+                      setChangeReviewFilePath('');
+                      setChangeReviewConversationId('');
+                    }}
                     onRevert={(report) => revertChangeReport(displayedReviewConversation.id, report)}
                     onRevertAll={() => revertConversationReports(
                       displayedReviewConversation.id,
@@ -3519,7 +3551,7 @@ function ChatPanel({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenChangeReview: () => void;
+  onOpenChangeReview: (filePath?: string) => void;
   onReplyInteraction: (reply: string | InteractionReplyAnswer[]) => Promise<void>;
   onCancelInteraction: () => Promise<void>;
   onCancelGoal: () => Promise<void>;
@@ -5011,6 +5043,7 @@ function ChatPanel({
       setComposerDockHeight(0);
       setQuickContextBottomInset(0);
       chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       return undefined;
@@ -5020,6 +5053,7 @@ function ChatPanel({
       setComposerDockHeight(0);
       setQuickContextBottomInset(0);
       chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
       return undefined;
@@ -5033,6 +5067,13 @@ function ChatPanel({
         : dockRect.top;
       const nextDockHeight = Math.ceil(dockRect.height);
       const nextBottomInset = Math.ceil(Math.max(0, dockRect.bottom - visibleTop));
+      if (chatBody) {
+        const chatBodyRect = chatBody.getBoundingClientRect();
+        chatBody.style.setProperty(
+          '--composer-content-top',
+          `${Math.max(0, visibleTop - chatBodyRect.top)}px`,
+        );
+      }
       const composerSurface = dock.querySelector<HTMLElement>(
         '.composer-surface, .interaction-card, .composer-stack',
       );
@@ -5092,6 +5133,7 @@ function ChatPanel({
       observer.disconnect();
       mutationObserver.disconnect();
       chatBody?.style.removeProperty('--composer-surface-top');
+      chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
     };
@@ -6086,7 +6128,7 @@ function ChatPanel({
           onWheelCapture={handleScrollBottomWheelCapture}
           onClick={scrollToBottom}
         >
-          <ArrowDown size={22} />
+          <ArrowDown size={16} strokeWidth={1.8} />
         </button>
       </div>
       {consoleMode &&
@@ -7093,7 +7135,7 @@ function TopBar({
         <button
           className="topbar-inspector-action"
           type="button"
-          onClick={onOpenReview}
+          onClick={() => onOpenReview()}
           title={language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right'}
         >
           <PanelRightOpen size={15} />

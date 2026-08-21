@@ -126,6 +126,7 @@ button {
   --bg: #e1d4ba;
   --surface: #f1e6cf;
   --surface-strong: #f4ead5;
+  --surface-raised: #f8efdd;
   --border: #c5b392;
   --accent: #637b61;
   --accent-soft: #d4dbc7;
@@ -156,6 +157,7 @@ button {
   --bg: #f5f3ef;
   --surface: #ffffff;
   --surface-strong: #ffffff;
+  --surface-raised: #ffffff;
   --border: #e5e0d8;
   --accent: #7b9e87;
   --accent-soft: #ebf2ed;
@@ -171,6 +173,7 @@ button {
   --bg: #1a1a1a;
   --surface: #1c1b19;
   --surface-strong: #2b2b2b;
+  --surface-raised: #32312f;
   --border: #2a2926;
   --accent: #7b9e87;
   --accent-soft: #1a2820;

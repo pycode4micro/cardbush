@@ -46,6 +46,21 @@ assert.match(
 assert.match(settings, /className="usage-heatmap-grid"/);
 assert.match(css, /\.usage-stat-grid\s*\{/);
 assert.match(css, /\.usage-heatmap-grid\s*\{/);
+assert.match(
+  css,
+  /\.personalization-settings-stack\s*\{[\s\S]*?container-type:\s*inline-size/,
+  'Personalization layout must respond to its actual content width.',
+);
+assert.match(
+  css,
+  /--usage-heatmap-cell-size:\s*clamp\(7px,\s*1\.45cqi,\s*16px\)/,
+  'The usage heatmap must scale with the settings card instead of using fixed cells.',
+);
+assert.match(
+  css,
+  /@container personalization-settings \(max-width:\s*680px\)[\s\S]*?\.usage-stat-grid[\s\S]*?repeat\(2,/,
+  'Usage statistics must reflow when the settings content is narrow.',
+);
 assert.match(css, /\.settings-card-body\s*\{/);
 assert.match(css, /\.settings-radio:has\(input:checked\)/);
 assert.match(css, /\.settings-switch input:checked::after/);

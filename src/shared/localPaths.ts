@@ -16,7 +16,21 @@ export function stripWrappingQuotes(value: string) {
 }
 
 export function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp|gif|bmp|ico)$/i.test(stripWrappingQuotes(value.trim()));
+  return /\.(png|jpe?g|webp|gif|bmp|ico)(?:[?#].*)?$/i.test(
+    stripWrappingQuotes(value.trim()),
+  );
+}
+
+export function isVideoPath(value: string) {
+  return /\.(mp4|m4v|webm|ogv|mov)(?:[?#].*)?$/i.test(
+    stripWrappingQuotes(value.trim()),
+  );
+}
+
+export function isAudioPath(value: string) {
+  return /\.(mp3|m4a|aac|wav|ogg|oga|opus|flac)(?:[?#].*)?$/i.test(
+    stripWrappingQuotes(value.trim()),
+  );
 }
 
 export function isAbsoluteLocalPath(value: string) {

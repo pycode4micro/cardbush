@@ -14,6 +14,16 @@ declare global {
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
+      notifySessionAttention: (payload: {
+        sessionId: string;
+        title: string;
+        body: string;
+        kind: 'completed' | 'waiting' | 'error';
+      }) => Promise<{ shown: boolean }>;
+      setSessionAttentionCount: (count: number) => Promise<void>;
+      onOpenSessionAttention: (
+        callback: (payload: { sessionId: string }) => void,
+      ) => () => void;
       writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
       wallpaperAccent: () => Promise<{
         r: number;

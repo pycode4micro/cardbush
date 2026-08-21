@@ -266,7 +266,7 @@ export function ComposerRuntimeRail({
               <button
                 type="button"
                 title={language === 'zh' ? '完整审阅' : 'Open full review'}
-                onClick={onOpenChangeReview}
+                onClick={() => onOpenChangeReview()}
               >
                 <PanelRightOpen size={14} />
               </button>

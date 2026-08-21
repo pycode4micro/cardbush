@@ -19,6 +19,7 @@ import {
   Target,
   ThumbsDown,
   ThumbsUp,
+  Undo2,
   WrapText,
   X,
 } from 'lucide-react';
@@ -42,7 +43,9 @@ import {
   basename,
   fileUrl,
   isAbsoluteLocalPath,
+  isAudioPath,
   isImagePath,
+  isVideoPath,
   stripWrappingQuotes,
 } from '../../shared/localPaths';
 import type {
@@ -69,7 +72,7 @@ import {
   recordAssistantFeedback,
   type AssistantFeedbackRating,
 } from '../messageFeedback';
-import { splitMessageImages } from '../messageImages';
+import { splitMessageMedia } from '../messageImages';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import {
   compareToolExecutionOrder,
@@ -316,6 +319,27 @@ const LazyMarkdownContent = lazy(async () => {
         pre: ({ children, ...props }) => (
           <MarkdownCodeBlock {...props} language={language}>{children}</MarkdownCodeBlock>
         ),
+        h1: ({ children, className, ...props }) => {
+          const conclusionHeading = /^(?:结论|conclusion)\s*[:：]/i.test(
+            reactNodeText(children).trim(),
+          );
+          return (
+            <h1
+              {...props}
+              className={[
+                className,
+                conclusionHeading ? 'markdown-conclusion-heading' : '',
+              ].filter(Boolean).join(' ') || undefined}
+            >
+              {children}
+            </h1>
+          );
+        },
+        table: ({ children, ...props }) => (
+          <div className="markdown-table-scroll">
+            <table {...props}>{children}</table>
+          </div>
+        ),
       }}
     >
       {linkifyLocalFileReferences(
@@ -352,12 +376,14 @@ function MarkdownCodeBlock({
 }: HTMLAttributes<HTMLPreElement> & { language: AppLanguage }) {
   const [wrapped, setWrapped] = useState(false);
   const text = reactNodeText(children);
+  const codeLanguage = markdownCodeLanguage(children, language);
   if (!text.trim()) {
     return null;
   }
   return (
     <div className={`markdown-code-block ${wrapped ? 'wrapped' : ''}`}>
       <div className="markdown-code-actions">
+        <span className="markdown-code-language">{codeLanguage}</span>
         <button
           type="button"
           aria-pressed={wrapped}
@@ -387,6 +413,21 @@ function MarkdownCodeBlock({
       <pre {...props}>{children}</pre>
     </div>
   );
+}
+
+function markdownCodeLanguage(node: ReactNode, language: AppLanguage): string {
+  const nodes = Array.isArray(node) ? node : [node];
+  for (const candidate of nodes) {
+    if (!candidate || typeof candidate !== 'object' || !('props' in candidate)) continue;
+    const props = candidate.props as { className?: string };
+    const token = props.className?.match(/(?:^|\s)language-([^\s]+)/)?.[1]?.trim();
+    if (!token) continue;
+    if (/^(?:text|txt|plaintext)$/i.test(token)) {
+      return language === 'zh' ? '纯文本' : 'Plain text';
+    }
+    return token.toUpperCase();
+  }
+  return language === 'zh' ? '纯文本' : 'Plain text';
 }
 
 function reactNodeText(node: ReactNode): string {
@@ -438,10 +479,10 @@ function MessageBubbleView({
     report: ConversationChangeReport,
     message: ChatMessage,
   ) => Promise<void>;
-  onOpenChangeReview?: () => void;
+  onOpenChangeReview?: (filePath?: string) => void;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const contentParts = splitMessageImages(message.content);
+  const contentParts = splitMessageMedia(message.content);
   const userContentParts =
     message.role === 'user'
       ? splitUserFileAttachments(contentParts.text)
@@ -455,6 +496,24 @@ function MessageBubbleView({
     ...contentParts.imagePaths,
     ...attachedImagePaths,
     ...parsedImagePaths,
+  ]);
+  const videoPaths = uniqueAttachmentPaths([
+    ...contentParts.videoPaths,
+    ...(message.attachments ?? [])
+      .filter((attachment) =>
+        attachment.type === 'video' || isVideoPath(attachment.path ?? ''),
+      )
+      .map((attachment) => attachment.path?.trim() ?? '')
+      .filter(Boolean),
+  ]);
+  const audioPaths = uniqueAttachmentPaths([
+    ...contentParts.audioPaths,
+    ...(message.attachments ?? [])
+      .filter((attachment) =>
+        attachment.type === 'audio' || isAudioPath(attachment.path ?? ''),
+      )
+      .map((attachment) => attachment.path?.trim() ?? '')
+      .filter(Boolean),
   ]);
   const legacyGoalCommandText =
     message.role === 'user'
@@ -510,12 +569,12 @@ function MessageBubbleView({
     setGuidanceOpen(false);
     setAssistantFeedback(readAssistantFeedback(message.id));
     setFeedbackPulse(null);
-    setEditText(splitMessageImages(message.content).text);
+    setEditText(splitMessageMedia(message.content).text);
   }, [message.id]);
 
   useEffect(() => {
     if (!editing) {
-      setEditText(splitMessageImages(message.content).text);
+      setEditText(splitMessageMedia(message.content).text);
     }
   }, [editing, message.content]);
 
@@ -541,6 +600,8 @@ function MessageBubbleView({
     const nextContent = [
       ...uniqueAttachmentPaths([
         ...imagePaths,
+        ...videoPaths,
+        ...audioPaths,
         ...fileAttachments.map((attachment) => attachment.path ?? ''),
       ]).map((pathValue) => `@${pathValue}`),
       editText.trim(),
@@ -590,6 +651,11 @@ function MessageBubbleView({
         <div className="message-row user">
           <div className="user-edit-card">
             <MessageImageStrip paths={imagePaths} language={language} />
+            <MessageMediaStrip
+              videoPaths={videoPaths}
+              audioPaths={audioPaths}
+              language={language}
+            />
             <MessageFileAttachmentStrip
               attachments={fileAttachments}
               language={language}
@@ -625,6 +691,8 @@ function MessageBubbleView({
                   submittingEdit ||
                   (!editText.trim() &&
                     imagePaths.length === 0 &&
+                    videoPaths.length === 0 &&
+                    audioPaths.length === 0 &&
                     fileAttachments.length === 0)
                 }
                 onClick={() => void submitEdit()}
@@ -642,6 +710,11 @@ function MessageBubbleView({
       <div className="message-row user">
         <div className="user-bubble">
           <MessageImageStrip paths={imagePaths} language={language} />
+          <MessageMediaStrip
+            videoPaths={videoPaths}
+            audioPaths={audioPaths}
+            language={language}
+          />
           <MessageFileAttachmentStrip
             attachments={fileAttachments}
             language={language}
@@ -768,6 +841,8 @@ function MessageBubbleView({
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
+      videoPaths.length > 0 ||
+      audioPaths.length > 0 ||
       toolExecutions.length > 0 ||
       (!isActiveAssistantTurn && taskPlan) ||
       renderActiveTranscript ||
@@ -782,7 +857,14 @@ function MessageBubbleView({
     <>
       <AgentHookSummaryBadge message={message} language={language} />
       {!renderActiveTranscript && (
-        <MessageImageStrip paths={imagePaths} language={language} />
+        <>
+          <MessageImageStrip paths={imagePaths} language={language} />
+          <MessageMediaStrip
+            videoPaths={videoPaths}
+            audioPaths={audioPaths}
+            language={language}
+          />
+        </>
       )}
       {renderActiveTranscript ? (
         <AssistantActiveTranscript
@@ -830,6 +912,11 @@ function MessageBubbleView({
   const finalAnswerBody = (
     <div className="assistant-final-answer">
       <MessageImageStrip paths={imagePaths} language={language} />
+      <MessageMediaStrip
+        videoPaths={videoPaths}
+        audioPaths={audioPaths}
+        language={language}
+      />
       {text && (
         <MarkdownContent
           content={assistantTextWithoutToolNarration(text, toolExecutions)}
@@ -868,6 +955,16 @@ function MessageBubbleView({
                   report={completedChangeReport}
                   language={language}
                   onOpenReview={onOpenChangeReview}
+                  onRevert={() => onRevertChangeReport(
+                    {
+                      ...completedChangeReport,
+                      id: `${message.id}:completed-change-summary`,
+                      messageId: message.id,
+                      turnId: message.turnId,
+                      createdAt: message.createdAt,
+                    },
+                    message,
+                  )}
                 />
               )}
             </>
@@ -987,13 +1084,16 @@ function AssistantChangedFilesSummary({
   report,
   language,
   onOpenReview,
+  onRevert,
 }: {
   report: ToolChangeReport;
   language: AppLanguage;
-  onOpenReview?: () => void;
+  onOpenReview?: (filePath?: string) => void;
+  onRevert?: () => Promise<void>;
 }) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
   const [expanded, setExpanded] = useState(false);
+  const [reverting, setReverting] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
   const listId = useId();
   const collapsedCount = 3;
@@ -1022,11 +1122,29 @@ function AssistantChangedFilesSummary({
             {report.additions > 0 && <em className="additions">+{report.additions}</em>}
             {report.deletions > 0 && <em className="deletions">-{report.deletions}</em>}
           </span>
+          {onRevert && (
+            <button
+              className="assistant-changed-files-revert"
+              type="button"
+              disabled={reverting}
+              onClick={async () => {
+                setReverting(true);
+                try {
+                  await onRevert();
+                } finally {
+                  setReverting(false);
+                }
+              }}
+            >
+              {reverting ? <LoaderCircle size={12} /> : <Undo2 size={12} />}
+              {language === 'zh' ? '撤回' : 'Revert'}
+            </button>
+          )}
           {onOpenReview && (
             <button
               className="assistant-changed-files-review"
               type="button"
-              onClick={onOpenReview}
+              onClick={() => onOpenReview()}
             >
               {language === 'zh' ? '审查' : 'Review'}
             </button>
@@ -1045,6 +1163,10 @@ function AssistantChangedFilesSummary({
                 : `Open in inspector: ${file.path}`
             }
             onClick={() => {
+              if (onOpenReview) {
+                onOpenReview(file.path);
+                return;
+              }
               const target = resolveChangedFilePath(file.path, workspaceRoot);
               openInspector(target, basename(file.path));
             }}
@@ -1155,7 +1277,7 @@ function AssistantActiveTranscript({
   return (
     <div className="assistant-active-transcript">
       {visibleMessages.map((segment, index) => {
-        const { imagePaths, text } = splitMessageImages(segment.content);
+        const { imagePaths, videoPaths, audioPaths, text } = splitMessageMedia(segment.content);
         const executions = segment.toolExecutions ?? [];
         const isLastSegment = index === visibleMessages.length - 1;
         return (
@@ -1165,6 +1287,11 @@ function AssistantActiveTranscript({
             className="assistant-active-transcript-segment"
           >
             <MessageImageStrip paths={imagePaths} language={language} />
+            <MessageMediaStrip
+              videoPaths={videoPaths}
+              audioPaths={audioPaths}
+              language={language}
+            />
             {executions.length > 0 ? (
               <AssistantMessageContent
                 content={text}
@@ -1901,7 +2028,7 @@ function AssistantLoopHistoryItem({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const { imagePaths, text } = splitMessageImages(message.content);
+  const { imagePaths, videoPaths, audioPaths, text } = splitMessageMedia(message.content);
   const executions = message.toolExecutions ?? [];
   const title =
     language === 'zh'
@@ -1919,6 +2046,11 @@ function AssistantLoopHistoryItem({
         {timestamp && <span>{timestamp}</span>}
       </header>
       <MessageImageStrip paths={imagePaths} language={language} />
+      <MessageMediaStrip
+        videoPaths={videoPaths}
+        audioPaths={audioPaths}
+        language={language}
+      />
       {executions.length > 0 ? (
         <AssistantMessageContent
           content={text}
@@ -2233,7 +2365,15 @@ function userMessageFileAttachments(
   const byPath = new Map<string, ChatAttachment>();
   for (const attachment of attachments) {
     const pathValue = attachment.path?.trim() ?? '';
-    if (!pathValue || attachment.type === 'image' || isImagePath(pathValue)) {
+    if (
+      !pathValue ||
+      attachment.type === 'image' ||
+      attachment.type === 'video' ||
+      attachment.type === 'audio' ||
+      isImagePath(pathValue) ||
+      isVideoPath(pathValue) ||
+      isAudioPath(pathValue)
+    ) {
       continue;
     }
     byPath.set(pathValue.replace(/\\/g, '/').toLowerCase(), attachment);
@@ -2250,6 +2390,57 @@ function userMessageFileAttachments(
     }
   }
   return Array.from(byPath.values());
+}
+
+function MessageMediaStrip({
+  videoPaths,
+  audioPaths,
+  language,
+}: {
+  videoPaths: string[];
+  audioPaths: string[];
+  language: AppLanguage;
+}) {
+  if (videoPaths.length === 0 && audioPaths.length === 0) return null;
+  return (
+    <div className="message-media-strip">
+      {videoPaths.map((pathValue) => {
+        const name = basename(pathValue);
+        return (
+          <figure className="message-video-player" key={`video-${pathValue}`}>
+            <video
+              controls
+              playsInline
+              preload="metadata"
+              src={messageMediaSource(pathValue)}
+              aria-label={language === 'zh' ? `播放视频 ${name}` : `Play video ${name}`}
+            />
+            <figcaption title={pathValue}>{name}</figcaption>
+          </figure>
+        );
+      })}
+      {audioPaths.map((pathValue) => {
+        const name = basename(pathValue);
+        return (
+          <figure className="message-audio-player" key={`audio-${pathValue}`}>
+            <figcaption title={pathValue}>{name}</figcaption>
+            <audio
+              controls
+              preload="metadata"
+              src={messageMediaSource(pathValue)}
+              aria-label={language === 'zh' ? `播放音频 ${name}` : `Play audio ${name}`}
+            />
+          </figure>
+        );
+      })}
+    </div>
+  );
+}
+
+function messageMediaSource(pathValue: string) {
+  return /^(?:https?:|data:|blob:)/i.test(pathValue.trim())
+    ? pathValue.trim()
+    : fileUrl(pathValue);
 }
 
 function messageFileExtension(value: string) {
@@ -2383,7 +2574,7 @@ function MessageImageStrip({
     <>
       <div className="message-image-strip">
         {paths.map((pathValue, index) => {
-          const src = fileUrl(pathValue);
+          const src = messageMediaSource(pathValue);
           const name = basename(pathValue);
           return (
             <button
@@ -2445,7 +2636,7 @@ export function ImagePreviewDialog({
   );
 }
 
-const MarkdownContent = memo(function MarkdownContent({
+export const MarkdownContent = memo(function MarkdownContent({
   content,
   language,
 }: {
