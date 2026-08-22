@@ -239,6 +239,16 @@ function assistantTimeoutPresentation(
           : 'The turn stopped, and received progress remains available in this conversation.',
     };
   }
+  if (metadata.stopped === true || message.status === 'stopped') {
+    return {
+      reason: reason || 'user_stop',
+      title: language === 'zh' ? '本轮已停止' : 'Turn stopped',
+      detail:
+        language === 'zh'
+          ? '已经产生的回复、工具记录和文件变更仍保留在本次会话中，可以继续提出新的要求。'
+          : 'Existing response text, tool history, and file changes remain in this session so you can continue with a new request.',
+    };
+  }
   return null;
 }
 

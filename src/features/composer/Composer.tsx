@@ -270,6 +270,7 @@ export function Composer({
   draft,
   onDraftChange,
   sending,
+  stopping = false,
   queuedMessageCount = 0,
   queuedMessagePreview = '',
   queuedMessages = [],
@@ -320,6 +321,7 @@ export function Composer({
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
+  stopping?: boolean;
   queuedMessageCount?: number;
   queuedMessagePreview?: string;
   queuedMessages?: ComposerQueuedMessage[];
@@ -384,6 +386,8 @@ export function Composer({
   const sendButtonLabel = sending
     ? hasContent
       ? language === 'zh' ? '加入发送队列' : 'Queue message'
+      : stopping
+        ? language === 'zh' ? '正在停止' : 'Stopping'
       : cancelReady
         ? language === 'zh' ? '停止生成' : 'Stop generating'
         : language === 'zh' ? '等待任务启动' : 'Waiting for task to start'
@@ -1225,15 +1229,17 @@ export function Composer({
               </button>
             )}
             <button
-              className={`send-button ${sending && hasContent ? 'queue' : ''}`}
+              className={`send-button ${sending && hasContent ? 'queue' : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
-              disabled={sending && !hasContent && !cancelReady}
+              disabled={sending && !hasContent && (!cancelReady || stopping)}
               title={sendButtonLabel}
               aria-label={sendButtonLabel}
               onClick={() => void submit()}
             >
               {sending && !hasContent ? (
-                cancelReady ? <Square size={14} fill="currentColor" /> : <LoaderCircle size={17} />
+                cancelReady && !stopping
+                  ? <Square size={14} fill="currentColor" />
+                  : <LoaderCircle size={17} className="spin" />
               ) : (
                 <ArrowUp size={18} />
               )}
@@ -1387,12 +1393,12 @@ export function detectComposerCommand(
 }
 
 export function composerGoalDraftPresentation(value: string) {
-  const match = value.match(/^\/goal(?:[ \t]+([\s\S]*))?$/i);
+  const match = value.match(/^\/goal[ \t]+([\s\S]*)$/i);
   if (!match) {
     return null;
   }
   return {
-    content: match[1] ?? '',
+    content: match[1],
   };
 }
 

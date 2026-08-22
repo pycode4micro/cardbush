@@ -2,7 +2,9 @@ import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'rea
 
 const minimumInspectorWidth = 380;
 const maximumInspectorWidth = 900;
-const minimumMainStageWidth = 560;
+// Keep the conversation usable while still allowing wide document/review previews.
+// This value mirrors --conversation-pane-min-width in app.css.
+const minimumConversationPaneWidth = 440;
 
 type InspectorDragState = {
   startX: number;
@@ -117,12 +119,12 @@ function readCurrentInspectorWidth(scope: HTMLElement, fallbackWidth: number) {
 
 function readMaximumInspectorWidth(currentWidth: number) {
   const mainWidth = document.querySelector<HTMLElement>('.main-stage')
-    ?.getBoundingClientRect().width ?? minimumMainStageWidth;
+    ?.getBoundingClientRect().width ?? minimumConversationPaneWidth;
   return Math.min(
     maximumInspectorWidth,
     Math.max(
       minimumInspectorWidth,
-      mainWidth + currentWidth - minimumMainStageWidth,
+      mainWidth + currentWidth - minimumConversationPaneWidth,
     ),
   );
 }

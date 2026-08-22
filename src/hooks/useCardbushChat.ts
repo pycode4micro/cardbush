@@ -62,6 +62,7 @@ import type {
   TaskPlanStreamUpdate,
   StreamExecutionUpdate,
   SubagentDispatchEvent,
+  TurnTerminalSnapshot,
 } from '../types';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
@@ -133,7 +134,7 @@ export function useCardbushChat(
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [runningByConversation, setRunningByConversation] = useState<
-    Record<string, { activeTurnId: string }>
+    Record<string, { activeTurnId: string; stopping: boolean }>
   >({});
   const [attentionByConversation, setAttentionByConversation] = useState<
     Record<string, SessionAttentionState>
@@ -188,6 +189,8 @@ export function useCardbushChat(
     Record<string, { sequence: number; lastEventId: string }>
   >({});
   const activeTurnIdsRef = useRef<Record<string, string>>({});
+  const terminalTurnIdsRef = useRef<Set<string>>(new Set());
+  const stoppingRequestsRef = useRef<Set<string>>(new Set());
   const activeConversationIdRef = useRef(activeConversationId);
   const conversationsRef = useRef(conversations);
   const attentionByConversationRef = useRef(attentionByConversation);
@@ -213,6 +216,10 @@ export function useCardbushChat(
   const activeTurnId = activeConversationIdForState
     ? runningByConversation[activeConversationIdForState]?.activeTurnId ?? ''
     : '';
+  const stopping = Boolean(
+    activeConversationIdForState &&
+      runningByConversation[activeConversationIdForState]?.stopping,
+  );
   const activeConnectionRecovery = activeConversationIdForState
     ? connectionRecoveryByConversation[activeConversationIdForState]
     : undefined;
@@ -724,9 +731,23 @@ export function useCardbushChat(
       ...current,
       [normalized]: {
         activeTurnId: turnId.trim() || current[normalized]?.activeTurnId || '',
+        stopping: current[normalized]?.stopping ?? false,
       },
     }));
   }, [clearSessionAttention]);
+
+  const markSessionStopping = useCallback((sessionId: string, value: boolean) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    setRunningByConversation((current) => {
+      const running = current[normalized];
+      if (!running || running.stopping === value) return current;
+      return {
+        ...current,
+        [normalized]: { ...running, stopping: value },
+      };
+    });
+  }, []);
 
   const clearSessionRunning = useCallback((sessionId: string) => {
     const normalized = sessionId.trim();
@@ -734,6 +755,7 @@ export function useCardbushChat(
       return;
     }
     sendingSessionsRef.current.delete(normalized);
+    stoppingRequestsRef.current.delete(normalized);
     delete activeTurnIdsRef.current[normalized];
     setRunningByConversation((current) => {
       if (!(normalized in current)) {
@@ -1645,6 +1667,7 @@ export function useCardbushChat(
       let finalSnapshotPromise: Promise<void> | null = null;
       let finalAssistantText = '';
       let streamStarted = false;
+      let terminalSnapshot: TurnTerminalSnapshot | null = null;
 
       try {
         await streamChat({
@@ -1776,6 +1799,23 @@ export function useCardbushChat(
                 ),
               );
             });
+          },
+          onDone: (terminal) => {
+            terminalSnapshot = withTerminalTurnId(
+              terminal,
+              activeTurnIdsRef.current[sessionId],
+            );
+            if (terminalSnapshot.turnId) {
+              terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
+            }
+            setMessagesByConversation((current) =>
+              applyTurnTerminalSnapshot(
+                current,
+                sessionId,
+                assistantId,
+                terminalSnapshot!,
+              ),
+            );
           },
           onMessages: (nextMessages, finalSnapshot) => {
             if (finalSnapshot) {
@@ -1942,10 +1982,12 @@ export function useCardbushChat(
       } finally {
         await streamBuffer.flushAllStreaming();
         streamBuffer.dispose();
+        const terminalTurnId = activeTurnIdsRef.current[sessionId] ?? '';
         if (controllersRef.current[sessionId] === controller) {
           delete controllersRef.current[sessionId];
           clearSessionRunning(sessionId);
         }
+        if (terminalTurnId) terminalTurnIdsRef.current.delete(terminalTurnId);
         const nextQueued = dequeueMessageForConversation(sessionId);
         if (nextQueued) {
           window.setTimeout(() => {
@@ -2068,6 +2110,7 @@ export function useCardbushChat(
           onTaskPlanUpdate: (update: TaskPlanStreamUpdate) => void;
           onInteractiveRequest: (interaction: PendingInteraction) => void;
           onFinalAssistantText: (text: string, chunk: AssistantStreamChunk) => void;
+          onDone: (terminal: TurnTerminalSnapshot) => void;
           onMessages: (messages: ChatMessage[], finalSnapshot: boolean) => void;
           onTeamFlowEvent: (event: TeamFlowStreamEvent) => void;
           onSubagentDispatch: (event: SubagentDispatchEvent) => void;
@@ -2091,6 +2134,7 @@ export function useCardbushChat(
       let finalSnapshotPromise: Promise<void> | null = null;
       let finalAssistantText = '';
       let streamStarted = false;
+      let terminalSnapshot: TurnTerminalSnapshot | null = null;
       controllersRef.current[sessionId] = controller;
       markSessionRunning(sessionId);
       setError(null);
@@ -2217,6 +2261,23 @@ export function useCardbushChat(
               );
             });
           },
+          onDone: (terminal) => {
+            terminalSnapshot = withTerminalTurnId(
+              terminal,
+              activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
+            );
+            if (terminalSnapshot.turnId) {
+              terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
+            }
+            setMessagesByConversation((current) =>
+              applyTurnTerminalSnapshot(
+                current,
+                sessionId,
+                tempAssistant.id,
+                terminalSnapshot!,
+              ),
+            );
+          },
           onMessages: (nextMessages, finalSnapshotEvent) => {
             if (finalSnapshotEvent) {
               finalSnapshot = nextMessages;
@@ -2333,17 +2394,28 @@ export function useCardbushChat(
         } else if (isPendingInteractionConflictError(caught)) {
           setError(null);
         }
-        setMessagesByConversation((current) => ({
-          ...current,
-          [sessionId]: rollbackMessages,
-        }));
+        const terminalTurnId =
+          activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId ?? '';
+        const terminalAbort =
+          controller.signal.aborted &&
+          Boolean(terminalTurnId) &&
+          terminalTurnIdsRef.current.has(terminalTurnId);
+        if (!terminalAbort) {
+          setMessagesByConversation((current) => ({
+            ...current,
+            [sessionId]: rollbackMessages,
+          }));
+        }
       } finally {
         await streamBuffer.flushAllStreaming();
         streamBuffer.dispose();
+        const terminalTurnId =
+          activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId ?? '';
         if (controllersRef.current[sessionId] === controller) {
           delete controllersRef.current[sessionId];
           clearSessionRunning(sessionId);
         }
+        if (terminalTurnId) terminalTurnIdsRef.current.delete(terminalTurnId);
       }
     },
     [
@@ -3201,19 +3273,92 @@ export function useCardbushChat(
     refreshGoal,
   ]);
 
+  const reconcileTerminalTurn = useCallback(async (
+    sessionId: string,
+    turnId: string,
+    attempts: number,
+    initialDelayMs = 0,
+  ) => {
+    if (initialDelayMs > 0) {
+      await waitForRecoveryDelay(initialDelayMs);
+    }
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (!stoppingRequestsRef.current.has(sessionId)) return false;
+      const loaded = await fetchSessionMessages(sessionId, {
+        includeSuperseded: true,
+      }).catch(() => null);
+      const latestTurn = loaded?.latestTurn;
+      if (
+        loaded &&
+        latestTurn?.turnId === turnId &&
+        !isRunningSessionTurn(latestTurn)
+      ) {
+        const terminal = terminalSnapshotFromLatestTurn(latestTurn);
+        terminalTurnIdsRef.current.add(turnId);
+        setMessagesByConversation((current) => {
+          const withTerminal = applyTurnTerminalSnapshot(
+            current,
+            sessionId,
+            '',
+            terminal,
+          );
+          return {
+            ...withTerminal,
+            [sessionId]: mergeLoadedMessagesPreservingLocalState(
+              withTerminal[sessionId] ?? [],
+              loaded.messages,
+            ),
+          };
+        });
+        controllersRef.current[sessionId]?.abort();
+        return true;
+      }
+      if (attempt + 1 < attempts) {
+        await waitForRecoveryDelay(500);
+      }
+    }
+    return false;
+  }, []);
+
   const cancelSending = useCallback(async (conversationId?: string) => {
     const sessionId = (conversationId ?? activeConversationId).trim();
-    if (!sessionId) {
+    if (!sessionId || stoppingRequestsRef.current.has(sessionId)) {
       return;
     }
-    controllersRef.current[sessionId]?.abort();
     const turnId = activeTurnIdsRef.current[sessionId];
-    delete controllersRef.current[sessionId];
-    clearSessionRunning(sessionId);
-    if (turnId) {
-      await stopTurn(turnId).catch((caught) => setError(errorMessage(caught)));
+    if (!turnId) return;
+    stoppingRequestsRef.current.add(sessionId);
+    markSessionStopping(sessionId, true);
+    try {
+      const result = await stopTurn(turnId);
+      if (result.accepted) {
+        setError(null);
+        void reconcileTerminalTurn(sessionId, turnId, 20, 750);
+        return;
+      }
+      if (result.terminal || result.alreadyInactive) {
+        if (await reconcileTerminalTurn(sessionId, turnId, 1)) {
+          setError(null);
+          return;
+        }
+      }
+      stoppingRequestsRef.current.delete(sessionId);
+      markSessionStopping(sessionId, false);
+      setError(localize(
+        '停止请求未被后端受理，当前任务仍在运行。',
+        'The backend did not accept the stop request; the turn is still running.',
+      ));
+    } catch (caught) {
+      stoppingRequestsRef.current.delete(sessionId);
+      markSessionStopping(sessionId, false);
+      setError(errorMessage(caught));
     }
-  }, [activeConversationId, clearSessionRunning]);
+  }, [
+    activeConversationId,
+    localize,
+    markSessionStopping,
+    reconcileTerminalTurn,
+  ]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -3231,6 +3376,7 @@ export function useCardbushChat(
     loading,
     messagesLoading,
     sending,
+    stopping,
     activeTurnId,
     runningByConversation,
     attentionByConversation,
@@ -4472,6 +4618,74 @@ function markLocalAssistantTurnCompleted(
   };
 }
 
+function withTerminalTurnId(
+  terminal: TurnTerminalSnapshot,
+  fallbackTurnId?: string,
+): TurnTerminalSnapshot {
+  const turnId = terminal.turnId.trim() || fallbackTurnId?.trim() || '';
+  return turnId === terminal.turnId ? terminal : { ...terminal, turnId };
+}
+
+function terminalSnapshotFromLatestTurn(
+  turn: SessionLatestTurn,
+): TurnTerminalSnapshot {
+  return {
+    turnId: turn.turnId,
+    status: turn.status || (turn.stopped ? 'stopped' : 'completed'),
+    stopped: turn.stopped,
+    stopReason: turn.stopReason,
+    stopScenario: turn.stopScenario,
+    stopDetails: turn.stopDetails,
+    completedAt: turn.completedAt,
+    durationMs: turn.durationMs,
+    terminalEventSequence: turn.terminalEventSequence,
+    raw: {},
+  };
+}
+
+export function applyTurnTerminalSnapshot(
+  current: Record<string, ChatMessage[]>,
+  sessionId: string,
+  fallbackAssistantId: string,
+  terminal: TurnTerminalSnapshot,
+) {
+  const turnId = terminal.turnId.trim();
+  const completedAt = terminal.completedAt ?? new Date().toISOString();
+  const messages = current[sessionId] ?? [];
+  return {
+    ...current,
+    [sessionId]: messages.map((message) => {
+      const belongsToTurn = turnId && chatMessageTurnId(message) === turnId;
+      if (
+        message.role !== 'assistant' ||
+        (!belongsToTurn && message.id !== fallbackAssistantId)
+      ) {
+        return message;
+      }
+      return {
+        ...message,
+        status: terminal.stopped ? 'stopped' : 'complete',
+        metadata: {
+          ...(message.metadata ?? {}),
+          status: terminal.status,
+          stopped: terminal.stopped,
+          stop_reason: terminal.stopReason,
+          stop_scenario: terminal.stopScenario,
+          ...(terminal.stopDetails ? { stop_details: terminal.stopDetails } : {}),
+          ...(terminal.terminalEventSequence != null
+            ? { terminal_event_sequence: terminal.terminalEventSequence }
+            : {}),
+          cardbush_terminal_snapshot: true,
+          cardbush_terminal_stopped: terminal.stopped,
+          cardbush_turn_started_at:
+            message.metadata?.cardbush_turn_started_at ?? message.createdAt,
+          cardbush_turn_completed_at: completedAt,
+        },
+      };
+    }),
+  };
+}
+
 export function appendToolExecution(
   current: Record<string, ChatMessage[]>,
   sessionId: string,
@@ -5006,10 +5220,13 @@ function mergeLoadedMessagesPreservingLocalState(
   existing: ChatMessage[],
   loaded: ChatMessage[],
 ) {
-  if (existing.length === 0 || loaded.length === 0) {
+  if (existing.length === 0) {
     return collapseLoopTranscriptMessages(loaded);
   }
-  return collapseLoopTranscriptMessages(loaded.map((message) => {
+  if (loaded.length === 0) {
+    return collapseLoopTranscriptMessages(existing);
+  }
+  const merged = loaded.map((message) => {
     const source = findLocalMessageStateSource(existing, message);
     if (!source) {
       return message;
@@ -5028,7 +5245,24 @@ function mergeLoadedMessagesPreservingLocalState(
           ? message.loopHistory
           : source.loopHistory,
     };
-  }));
+  });
+  const retainedStoppedAssistants = existing.filter((message) =>
+    message.role === 'assistant' &&
+      message.metadata?.cardbush_terminal_stopped === true &&
+      !merged.some((candidate) =>
+        candidate.role === 'assistant' &&
+          messagesShareTranscriptPosition(candidate, message),
+      ),
+  );
+  for (const retained of retainedStoppedAssistants) {
+    const turnId = chatMessageTurnId(retained);
+    const lastTurnIndex = findLastIndex(
+      merged,
+      (candidate) => Boolean(turnId) && chatMessageTurnId(candidate) === turnId,
+    );
+    merged.splice(lastTurnIndex >= 0 ? lastTurnIndex + 1 : merged.length, 0, retained);
+  }
+  return collapseLoopTranscriptMessages(merged);
 }
 
 function mergeWorkspaceChangeExecutions(
@@ -5074,6 +5308,25 @@ function preserveLocalAssistantTimingMetadata(
   }
   return {
     ...(message.metadata ?? {}),
+    ...(source.metadata?.cardbush_terminal_snapshot === true
+      ? {
+          cardbush_terminal_snapshot: true,
+          cardbush_terminal_stopped:
+            message.metadata?.stopped === true ||
+            source.metadata?.cardbush_terminal_stopped === true,
+          status: message.metadata?.status ?? source.metadata?.status,
+          stopped: message.metadata?.stopped ?? source.metadata?.stopped,
+          stop_reason:
+            message.metadata?.stop_reason ?? source.metadata?.stop_reason,
+          stop_scenario:
+            message.metadata?.stop_scenario ?? source.metadata?.stop_scenario,
+          stop_details:
+            message.metadata?.stop_details ?? source.metadata?.stop_details,
+          terminal_event_sequence:
+            message.metadata?.terminal_event_sequence ??
+            source.metadata?.terminal_event_sequence,
+        }
+      : {}),
     cardbush_turn_started_at:
       message.metadata?.cardbush_turn_started_at ??
       source.metadata?.cardbush_turn_started_at ??

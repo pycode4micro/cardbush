@@ -57,6 +57,7 @@ import type {
   SessionTokenUsage,
   CapabilityCandidatesUpdate,
   TerminalRuntime,
+  TurnTerminalSnapshot,
 } from '../types';
 import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from '../types';
 import {
@@ -238,6 +239,7 @@ export interface ChatStreamRequest {
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
+  onDone?: (terminal: TurnTerminalSnapshot) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
@@ -261,6 +263,7 @@ export type ChatStreamEventHandlers = Pick<
   | 'onTaskPlanUpdate'
   | 'onInteractiveRequest'
   | 'onFinalAssistantText'
+  | 'onDone'
   | 'onMessages'
   | 'onTeamFlowEvent'
   | 'onSubagentDispatch'
@@ -314,6 +317,7 @@ export interface ControlStreamRequest {
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
+  onDone?: (terminal: TurnTerminalSnapshot) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
@@ -347,6 +351,7 @@ export interface SendGuidanceRequest {
   onTaskPlanUpdate?: (update: TaskPlanStreamUpdate) => void;
   onInteractiveRequest?: (interaction: PendingInteraction) => void;
   onFinalAssistantText?: (text: string, chunk: AssistantStreamChunk) => void;
+  onDone?: (terminal: TurnTerminalSnapshot) => void;
   onMessages?: (messages: ChatMessage[], finalSnapshot: boolean) => void;
   onTeamFlowEvent?: (event: TeamFlowStreamEvent) => void;
   onSubagentDispatch?: (event: SubagentDispatchEvent) => void;
@@ -619,6 +624,9 @@ export interface SessionLatestTurn {
   finalDecision: string;
   finalReason: string;
   stopDetails?: Record<string, unknown>;
+  completedAt?: string;
+  durationMs?: number;
+  terminalEventSequence?: number;
 }
 
 function url(path: string) {
@@ -1475,6 +1483,14 @@ function sessionLatestTurnFromPayload(value: unknown): SessionLatestTurn | undef
     finalDecision: String(item.final_decision ?? item.finalDecision ?? ''),
     finalReason: String(item.final_reason ?? item.finalReason ?? ''),
     stopDetails: asOptionalRecord(item.stop_details ?? item.stopDetails),
+    completedAt: optionalString(item.completed_at ?? item.completedAt),
+    durationMs: optionalNumber(item.duration_ms ?? item.durationMs),
+    terminalEventSequence: optionalNumber(
+      item.terminal_event_sequence ??
+        item.terminalEventSequence ??
+        item.last_event_sequence ??
+        item.lastEventSequence,
+    ),
   };
 }
 
@@ -2457,10 +2473,26 @@ export async function cancelInteraction(interactionId: string) {
   );
 }
 
-export async function stopTurn(turnId: string) {
+export interface StopTurnResult {
+  turnId: string;
+  accepted: boolean;
+  terminal: boolean;
+  alreadyInactive: boolean;
+  reason: string;
+  raw: Record<string, unknown>;
+}
+
+export async function stopTurn(turnId: string): Promise<StopTurnResult> {
   const normalized = turnId.trim();
   if (!normalized) {
-    return false;
+    return {
+      turnId: '',
+      accepted: false,
+      terminal: false,
+      alreadyInactive: false,
+      reason: 'turn_id_empty',
+      raw: {},
+    };
   }
   const endpoint = url(`/v1/turns/${encodeURIComponent(normalized)}/stop`);
   const response = await fetch(endpoint, {
@@ -2468,12 +2500,29 @@ export async function stopTurn(turnId: string) {
     headers: await headersFor(endpoint, true),
   });
   if (response.status === 404) {
-    return false;
+    return {
+      turnId: normalized,
+      accepted: false,
+      terminal: false,
+      alreadyInactive: false,
+      reason: 'turn_not_found',
+      raw: {},
+    };
   }
   if (!response.ok) {
     throw new Error(formatHttpError(response.status, await response.text()));
   }
-  return true;
+  const responseText = await response.text();
+  const payload = parseJson(responseText) ?? {};
+  const alreadyInactive = payload.already_inactive === true || payload.alreadyInactive === true;
+  return {
+    turnId: String(payload.turn_id ?? payload.turnId ?? normalized).trim() || normalized,
+    accepted: payload.accepted === true || payload.stopped === true,
+    terminal: payload.terminal === true || alreadyInactive,
+    alreadyInactive,
+    reason: String(payload.reason ?? '').trim(),
+    raw: payload,
+  };
 }
 
 export async function streamChat(request: ChatStreamRequest) {
@@ -2648,6 +2697,9 @@ async function streamEndpoint({
     const currentEventId = eventId;
     eventName = 'message';
     eventId = '';
+    if (sawDoneEvent) {
+      return;
+    }
     const eventIdentity = streamEventIdentity(currentEvent, rawData, currentEventId);
     if (eventIdentity && seenStreamEvents.has(eventIdentity)) {
       return;
@@ -2699,6 +2751,11 @@ async function streamEndpoint({
         const raw = line.slice(5);
         dataLines.push(raw.startsWith(' ') ? raw.slice(1) : raw);
       }
+    }
+
+    if (sawDoneEvent) {
+      await reader.cancel().catch(() => undefined);
+      break;
     }
 
     if (done) {
@@ -3230,13 +3287,16 @@ function handleStreamEvent(
 
   if (eventName === 'done') {
     const text = String(decoded.assistant_message ?? decoded.assistantMessage ?? '');
+    const terminal = turnTerminalSnapshotFromPayload(decoded);
     if (text && request.onFinalAssistantText) {
       request.onFinalAssistantText(text, assistantStreamChunkFromPayload(decoded));
+      request.onDone?.(terminal);
       return { donePayload: decoded };
     }
     if (text && !emittedAny) {
       request.onDelta?.(text, assistantStreamChunkFromPayload(decoded));
     }
+    request.onDone?.(terminal);
     return { donePayload: decoded };
   }
 
@@ -3244,6 +3304,31 @@ function handleStreamEvent(
   if (text != null) {
     request.onDelta?.(String(text), assistantStreamChunkFromPayload(decoded));
   }
+}
+
+function turnTerminalSnapshotFromPayload(
+  payload: Record<string, unknown>,
+): TurnTerminalSnapshot {
+  const stopped = payload.stopped === true;
+  const status = String(payload.status ?? '').trim().toLowerCase();
+  return {
+    turnId: String(payload.turn_id ?? payload.turnId ?? '').trim(),
+    status: status || (stopped ? 'stopped' : 'completed'),
+    stopped,
+    stopReason: String(payload.stop_reason ?? payload.stopReason ?? '').trim(),
+    stopScenario: String(payload.stop_scenario ?? payload.stopScenario ?? '').trim(),
+    stopDetails: asOptionalRecord(payload.stop_details ?? payload.stopDetails),
+    completedAt: optionalString(payload.completed_at ?? payload.completedAt),
+    durationMs: optionalNumber(payload.duration_ms ?? payload.durationMs),
+    terminalEventSequence: optionalNumber(
+      payload.terminal_event_sequence ??
+        payload.terminalEventSequence ??
+        payload.last_event_sequence ??
+        payload.lastEventSequence ??
+        payload.sequence,
+    ),
+    raw: payload,
+  };
 }
 
 function normalizeGuidanceMode(value: unknown): SendGuidanceRequest['mode'] {

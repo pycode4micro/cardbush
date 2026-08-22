@@ -43,6 +43,8 @@ type RuntimeRailItem = {
   title: string;
 };
 
+type RuntimeRailKind = RuntimeRailItem['kind'];
+
 type RuntimeQueuedMessage = {
   id: string;
   text: string;
@@ -52,6 +54,7 @@ type RuntimeQueuedMessage = {
 export function ComposerRuntimeRail({
   language,
   running,
+  stopping = false,
   taskPlan,
   goal,
   goalRounds = [],
@@ -74,6 +77,7 @@ export function ComposerRuntimeRail({
 }: {
   language: AppLanguage;
   running: boolean;
+  stopping?: boolean;
   taskPlan?: TaskPlanSnapshot;
   goal?: ExperimentalGoal | null;
   goalRounds?: GoalToolUpdate[];
@@ -134,13 +138,18 @@ export function ComposerRuntimeRail({
       items.push({
         kind: 'processing',
         label: running
-          ? language === 'zh' ? '处理中' : 'Working'
+          ? stopping
+            ? language === 'zh' ? '停止中' : 'Stopping'
+            : language === 'zh' ? '处理中' : 'Working'
           : goal
             ? language === 'zh' ? '目标' : 'Goal'
             : language === 'zh' ? '计划' : 'Plan',
-        summary:
-          processingSummary ||
-          (language === 'zh' ? '正在准备下一步' : 'Preparing the next step'),
+        summary: stopping
+          ? language === 'zh'
+            ? '正在等待后端确认并保存本轮执行轨迹'
+            : 'Waiting for the backend to confirm and preserve this turn'
+          : processingSummary ||
+            (language === 'zh' ? '正在准备下一步' : 'Preparing the next step'),
         title: processingSummary,
       });
     }
@@ -189,12 +198,23 @@ export function ComposerRuntimeRail({
     queuePreview,
     queuedMessageCount,
     running,
+    stopping,
     thinkingNotice,
   ]);
-  const railKinds = railItems.map((item) => item.kind).join(':');
-  const [screenIndex, setScreenIndex] = useState(0);
-  const currentRailItem = railItems.length > 0
-    ? railItems[screenIndex % railItems.length]
+  const railKindKey = railItems.map((item) => item.kind).join(':');
+  const availableRailKinds = useMemo<RuntimeRailKind[]>(
+    () => railKindKey
+      ? railKindKey.split(':') as RuntimeRailKind[]
+      : [],
+    [railKindKey],
+  );
+  const [screenKind, setScreenKind] = useState<RuntimeRailKind | null>(null);
+  const [rollingToKind, setRollingToKind] = useState<RuntimeRailKind | null>(null);
+  const [reelAnimating, setReelAnimating] = useState(false);
+  const currentRailItem =
+    railItems.find((item) => item.kind === screenKind) ?? railItems[0] ?? null;
+  const rollingRailItem = rollingToKind
+    ? railItems.find((item) => item.kind === rollingToKind) ?? null
     : null;
 
   useEffect(() => {
@@ -222,21 +242,49 @@ export function ComposerRuntimeRail({
   }, [queuedMessageCount]);
 
   useEffect(() => {
-    setScreenIndex((current) => railItems.length > 0 ? current % railItems.length : 0);
-  }, [railItems.length, railKinds]);
+    setScreenKind((current) =>
+      current && availableRailKinds.includes(current)
+        ? current
+        : availableRailKinds[0] ?? null,
+    );
+    if (rollingToKind && !availableRailKinds.includes(rollingToKind)) {
+      setReelAnimating(false);
+      setRollingToKind(null);
+    }
+  }, [availableRailKinds, rollingToKind]);
 
   useEffect(() => {
-    if (activePanel) {
-      const panelIndex = railItems.findIndex((item) => item.kind === activePanel);
-      if (panelIndex >= 0) setScreenIndex(panelIndex);
+    if (activePanel && availableRailKinds.includes(activePanel)) {
+      setReelAnimating(false);
+      setRollingToKind(null);
+      setScreenKind(activePanel);
       return undefined;
     }
-    if (railItems.length <= 1) return undefined;
-    const timer = window.setInterval(() => {
-      setScreenIndex((current) => (current + 1) % railItems.length);
-    }, 2600);
-    return () => window.clearInterval(timer);
-  }, [activePanel, railItems, railKinds]);
+    if (availableRailKinds.length <= 1 || rollingToKind) return undefined;
+    const timer = window.setTimeout(() => {
+      const currentIndex = screenKind ? availableRailKinds.indexOf(screenKind) : -1;
+      setRollingToKind(
+        availableRailKinds[(currentIndex + 1) % availableRailKinds.length],
+      );
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [activePanel, availableRailKinds, rollingToKind, screenKind]);
+
+  useEffect(() => {
+    if (!rollingToKind) return undefined;
+    const frame = window.requestAnimationFrame(() => setReelAnimating(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [rollingToKind]);
+
+  useEffect(() => {
+    if (!rollingToKind || !reelAnimating) return undefined;
+    const timer = window.setTimeout(() => {
+      setScreenKind(rollingToKind);
+      setReelAnimating(false);
+      setRollingToKind(null);
+    }, 420);
+    return () => window.clearTimeout(timer);
+  }, [reelAnimating, rollingToKind]);
 
   function toggleCurrentPanel(item: RuntimeRailItem) {
     if (item.kind === 'processing') {
@@ -517,42 +565,72 @@ export function ComposerRuntimeRail({
       <button
         className={`composer-runtime-screen ${currentRailItem.kind} ${
           currentRailItem.kind === activePanel ? 'open' : ''
-        } ${running ? 'running' : 'settled'}`}
+        } ${running ? 'running' : 'settled'} ${reelAnimating ? 'rolling' : ''}`}
         type="button"
         aria-expanded={currentRailItem.kind === activePanel}
         title={currentRailItem.title}
         onClick={() => toggleCurrentPanel(currentRailItem)}
       >
-        {currentRailItem.kind === 'processing' ? (
-          running ? <LoaderCircle size={13} /> : <Target size={13} />
-        ) : currentRailItem.kind === 'thinking' ? (
-          <Brain size={13} />
-        ) : currentRailItem.kind === 'changes' ? (
-          <Code2 size={13} />
-        ) : (
-          <Clock3 size={13} />
-        )}
         <span className="runtime-screen-viewport" aria-live="polite">
-          <span
-            className="runtime-screen-line"
-            key={`${currentRailItem.kind}:${screenIndex}`}
-          >
-            <strong>{currentRailItem.label}</strong>
-            <small>{currentRailItem.summary}</small>
-            {currentRailItem.kind === 'changes' && changeSummary && (
-              <span className="runtime-screen-diff">
-                {changeSummary.additions > 0 && (
-                  <b className="diff-count add">+{changeSummary.additions}</b>
-                )}
-                {changeSummary.deletions > 0 && (
-                  <b className="diff-count del">-{changeSummary.deletions}</b>
-                )}
-              </span>
+          <span className={`runtime-screen-track ${reelAnimating ? 'rolling' : ''}`}>
+            <RuntimeScreenLine
+              item={currentRailItem}
+              running={running}
+              changeSummary={changeSummary}
+            />
+            {rollingRailItem && (
+              <RuntimeScreenLine
+                item={rollingRailItem}
+                running={running}
+                changeSummary={changeSummary}
+                hidden
+              />
             )}
           </span>
         </span>
       </button>
     </div>
+  );
+}
+
+function RuntimeScreenLine({
+  item,
+  running,
+  changeSummary,
+  hidden = false,
+}: {
+  item: RuntimeRailItem;
+  running: boolean;
+  changeSummary: ConversationChangeSummary | null;
+  hidden?: boolean;
+}) {
+  return (
+    <span
+      className={`runtime-screen-line ${item.kind}`}
+      aria-hidden={hidden || undefined}
+    >
+      {item.kind === 'processing' ? (
+        running ? <LoaderCircle size={13} /> : <Target size={13} />
+      ) : item.kind === 'thinking' ? (
+        <Brain size={13} />
+      ) : item.kind === 'changes' ? (
+        <Code2 size={13} />
+      ) : (
+        <Clock3 size={13} />
+      )}
+      <strong>{item.label}</strong>
+      <small>{item.summary}</small>
+      {item.kind === 'changes' && changeSummary && (
+        <span className="runtime-screen-diff">
+          {changeSummary.additions > 0 && (
+            <b className="diff-count add">+{changeSummary.additions}</b>
+          )}
+          {changeSummary.deletions > 0 && (
+            <b className="diff-count del">-{changeSummary.deletions}</b>
+          )}
+        </span>
+      )}
+    </span>
   );
 }
 

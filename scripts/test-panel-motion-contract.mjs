@@ -10,6 +10,7 @@ const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
 const summary = read('src', 'features', 'chat', 'ConversationWorkSummary.tsx');
 const workSummaryInspector = read('src', 'features', 'chat', 'WorkSummaryInspector.tsx');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
+const rightInspectorResizer = read('src', 'components', 'RightInspectorResizer.tsx');
 const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
@@ -30,6 +31,28 @@ assert.match(css, /\.right-inspector\.soft-panel-hidden/);
 assert.match(css, /\.conversation-work-summary\.soft-panel-hidden/);
 assert.match(css, /body\.sidebar-resizing \.sidebar[\s\S]*transition:\s*none/);
 assert.match(css, /body\.right-inspector-resizing \.right-inspector[\s\S]*transition:\s*none/);
+assert.match(css, /--conversation-pane-min-width:\s*440px/);
+assert.match(
+  css,
+  /calc\(100% - var\(--layout-sidebar-space\) - var\(--conversation-pane-min-width\)\)/,
+  'The inspector width must preserve the shared conversation-pane minimum instead of a separate hard-coded limit',
+);
+assert.match(rightInspectorResizer, /const minimumConversationPaneWidth = 440/);
+assert.match(
+  rightInspectorResizer,
+  /mainWidth \+ currentWidth - minimumConversationPaneWidth/,
+  'Pointer resizing must use the same narrower conversation-pane limit as the flex layout',
+);
+assert.doesNotMatch(rightInspectorResizer, /minimumMainStageWidth\s*=\s*560/);
+assert.match(app, /const inspectorWidthRef = useRef\(inspectorWidth\)/);
+assert.match(app, /const rightEdgeDelta = nextLeft \+ nextOuterWidth/);
+assert.match(app, /const leftEdgeStayedPut = Math\.abs\(nextLeft - previousLeft\) <= 2/);
+assert.match(app, /Math\.sign\(innerWidthDelta\) !== Math\.sign\(rightEdgeDelta\)/);
+assert.match(app, /pendingWidthDelta \+= innerWidthDelta/);
+assert.match(app, /setInspectorWidth\(inspectorWidthRef\.current \+ widthDelta\)/);
+assert.match(app, /window\.addEventListener\('resize', resizeInspectorFromWindowRightEdge\)/);
+assert.match(app, /document\.body\.classList\.add\('window-right-edge-resizing'\)/);
+assert.match(css, /body\.window-right-edge-resizing \.right-inspector,[\s\S]*?transition:\s*none/);
 assert.match(css, /--chat-inline-gutter:\s*clamp\(12px,\s*3vw,\s*36px\)/);
 assert.match(
   css,
@@ -107,7 +130,24 @@ assert.match(runtimeRail, /useSoftPanelPresence\(Boolean\(activePanel\), 180\)/)
 assert.match(runtimeRail, /panelPresence\.mounted/);
 assert.match(runtimeRail, /context-visible/);
 assert.match(runtimeRail, /className="runtime-screen-viewport"/);
-assert.match(runtimeRail, /setInterval\([\s\S]*?2600/);
+assert.match(runtimeRail, /setTimeout\([\s\S]*?5000/);
+assert.match(runtimeRail, /setTimeout\([\s\S]*?420/);
+assert.match(runtimeRail, /requestAnimationFrame\(\(\) => setReelAnimating\(true\)\)/);
+assert.match(runtimeRail, /type RuntimeRailKind = RuntimeRailItem\['kind'\]/);
+assert.match(runtimeRail, /const \[screenKind, setScreenKind\] = useState<RuntimeRailKind \| null>\(null\)/);
+assert.match(runtimeRail, /railItems\.find\(\(item\) => item\.kind === screenKind\) \?\? railItems\[0\]/);
+assert.match(runtimeRail, /current && availableRailKinds\.includes\(current\)/);
+assert.match(runtimeRail, /\[activePanel, availableRailKinds, rollingToKind, screenKind\]/);
+assert.doesNotMatch(
+  runtimeRail,
+  /\[activePanel, railItems, railKinds\]/,
+  'Streaming label updates must not reset the runtime-screen rotation timer',
+);
+assert.doesNotMatch(
+  runtimeRail,
+  /screenIndex|setScreenIndex/,
+  'Runtime-screen selection must survive item insertion and removal by kind, not array index',
+);
 assert.equal(
   (runtimeRail.match(/className=\{`composer-runtime-screen/g) ?? []).length,
   1,
@@ -119,7 +159,24 @@ assert.match(runtimeRail, /queuedMessageCount > 0/);
 assert.match(runtimeRail, /renderedPanel === 'queue'/);
 assert.match(app, /currentTurnChangeSummary \|\| queuedMessageCount > 0/);
 assert.match(app, /queuedMessageCount=\{0\}/);
-assert.match(css, /@keyframes runtime-screen-roll/);
+assert.match(runtimeRail, /className=\{`runtime-screen-track \$\{reelAnimating \? 'rolling' : ''\}`\}/);
+assert.match(runtimeRail, /<RuntimeScreenLine[\s\S]*?<RuntimeScreenLine/);
+assert.doesNotMatch(css, /@keyframes runtime-screen-roll/);
+assert.match(
+  css,
+  /\.runtime-screen-track\.rolling[\s\S]*?translateY\(-30px\)[\s\S]*?420ms/,
+  'Runtime state changes must move through a continuous two-line reel',
+);
+assert.doesNotMatch(
+  css,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.runtime-screen-track\s*\{[\s\S]*?transition:\s*none !important/,
+  'The functional status reel must not turn back into an instant content swap when Windows reduces decorative motion',
+);
+assert.match(
+  css,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.runtime-screen-track\.rolling\s*\{[\s\S]*?transition-duration:\s*420ms !important/,
+  'The functional status reel must keep its hand-off duration when Windows reduces decorative motion',
+);
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(messageBubble, /key=\{segment\.id\}/);

@@ -942,8 +942,10 @@ function CardbushApp() {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
     return Number.isFinite(stored) ? Math.min(900, Math.max(380, stored)) : 620;
   });
+  const inspectorWidthRef = useRef(inspectorWidth);
   const setInspectorWidth = useCallback((width: number) => {
-    const next = Math.round(width);
+    const next = Math.min(900, Math.max(380, Math.round(width)));
+    inspectorWidthRef.current = next;
     setInspectorWidthState(next);
     window.localStorage.setItem('cardbush.inspector_width', String(next));
   }, []);
@@ -1037,6 +1039,64 @@ function CardbushApp() {
     section !== 'os' && !sidebarCollapsed,
   );
   const inspectorPresence = useSoftPanelPresence(inspectorOpen);
+
+  useEffect(() => {
+    let previousLeft = window.screenX;
+    let previousOuterWidth = window.outerWidth;
+    let previousInnerWidth = window.innerWidth;
+    let pendingWidthDelta = 0;
+    let animationFrame = 0;
+    let resizeSettleTimer = 0;
+
+    const resizeInspectorFromWindowRightEdge = () => {
+      const nextLeft = window.screenX;
+      const nextOuterWidth = window.outerWidth;
+      const nextInnerWidth = window.innerWidth;
+      const innerWidthDelta = nextInnerWidth - previousInnerWidth;
+      const rightEdgeDelta = nextLeft + nextOuterWidth - (
+        previousLeft + previousOuterWidth
+      );
+      const leftEdgeStayedPut = Math.abs(nextLeft - previousLeft) <= 2;
+
+      previousLeft = nextLeft;
+      previousOuterWidth = nextOuterWidth;
+      previousInnerWidth = nextInnerWidth;
+
+      if (
+        !inspectorOpen ||
+        innerWidthDelta === 0 ||
+        !leftEdgeStayedPut ||
+        Math.sign(innerWidthDelta) !== Math.sign(rightEdgeDelta)
+      ) {
+        return;
+      }
+
+      document.body.classList.add('window-right-edge-resizing');
+      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
+      resizeSettleTimer = window.setTimeout(() => {
+        resizeSettleTimer = 0;
+        document.body.classList.remove('window-right-edge-resizing');
+      }, 140);
+      pendingWidthDelta += innerWidthDelta;
+      if (animationFrame) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        const widthDelta = pendingWidthDelta;
+        pendingWidthDelta = 0;
+        if (widthDelta !== 0) {
+          setInspectorWidth(inspectorWidthRef.current + widthDelta);
+        }
+      });
+    };
+
+    window.addEventListener('resize', resizeInspectorFromWindowRightEdge);
+    return () => {
+      window.removeEventListener('resize', resizeInspectorFromWindowRightEdge);
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+      if (resizeSettleTimer) window.clearTimeout(resizeSettleTimer);
+      document.body.classList.remove('window-right-edge-resizing');
+    };
+  }, [inspectorOpen, setInspectorWidth]);
 
   useEffect(() => {
     const handleOpenInspector = (event: Event) => {
@@ -2138,6 +2198,7 @@ function CardbushApp() {
                 terminalRuntime={appSettings.terminal.runtime}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
+                stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}
                 connectionRecovery={chat.activeConnectionRecovery}
                 queuedMessageCount={chat.queuedMessageCount}
@@ -3596,6 +3657,7 @@ function ChatPanel({
   terminalRuntime,
   loading,
   sending,
+  stopping,
   activeTurnId,
   connectionRecovery,
   queuedMessageCount,
@@ -3684,6 +3746,7 @@ function ChatPanel({
   terminalRuntime: TerminalRuntime;
   loading: boolean;
   sending: boolean;
+  stopping: boolean;
   activeTurnId: string;
   connectionRecovery?: RuntimeConnectionUpdate;
   queuedMessageCount: number;
@@ -6065,6 +6128,7 @@ function ChatPanel({
             draft={draft}
             onDraftChange={onDraftChange}
             sending={sending}
+            stopping={stopping}
             cancelEnabled={Boolean(activeTurnId)}
             queuedMessageCount={queuedMessageCount}
             queuedMessagePreview={queuedMessagePreview}
@@ -6211,6 +6275,7 @@ function ChatPanel({
               <ComposerRuntimeRail
                 language={language}
                 running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
+                stopping={stopping}
                 taskPlan={activeTaskPlan}
                 goal={activeGoal}
                 goalRounds={activeGoalRounds}
@@ -6259,6 +6324,7 @@ function ChatPanel({
               draft={shadowThreadOpen ? shadowDraft : draft}
               onDraftChange={shadowThreadOpen ? setShadowDraft : onDraftChange}
               sending={shadowThreadOpen ? shadowReplying : sending}
+              stopping={shadowThreadOpen ? false : stopping}
               cancelEnabled={shadowThreadOpen ? shadowReplying : Boolean(activeTurnId)}
               queuedMessageCount={0}
               queuedMessagePreview=""
@@ -6490,6 +6556,7 @@ function WelcomeComposer({
   draft,
   onDraftChange,
   sending,
+  stopping,
   cancelEnabled,
   queuedMessageCount,
   queuedMessagePreview,
@@ -6535,6 +6602,7 @@ function WelcomeComposer({
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
+  stopping: boolean;
   cancelEnabled: boolean;
   queuedMessageCount: number;
   queuedMessagePreview: string;
@@ -6582,6 +6650,7 @@ function WelcomeComposer({
       draft={draft}
       onDraftChange={onDraftChange}
       sending={sending}
+      stopping={stopping}
       cancelEnabled={cancelEnabled}
       queuedMessageCount={queuedMessageCount}
       queuedMessagePreview={queuedMessagePreview}

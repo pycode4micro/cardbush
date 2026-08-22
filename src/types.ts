@@ -520,6 +520,19 @@ export interface AssistantStreamChunk {
   eventId?: string;
 }
 
+export interface TurnTerminalSnapshot {
+  turnId: string;
+  status: string;
+  stopped: boolean;
+  stopReason: string;
+  stopScenario: string;
+  stopDetails?: Record<string, unknown>;
+  completedAt?: string;
+  durationMs?: number;
+  terminalEventSequence?: number;
+  raw: Record<string, unknown>;
+}
+
 export interface StreamExecutionUpdate extends AssistantStreamChunk {
   kind: string;
   reason?: string;

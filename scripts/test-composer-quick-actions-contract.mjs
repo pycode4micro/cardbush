@@ -168,8 +168,8 @@ assert.match(
 );
 assert.match(
   source,
-  /disabled=\{sending\s*&&\s*!hasContent\s*&&\s*!cancelReady\}/,
-  'The pre-start send control must remain a disabled waiting state',
+  /disabled=\{sending\s*&&\s*!hasContent\s*&&\s*\(!cancelReady\s*\|\|\s*stopping\)\}/,
+  'The pre-start and accepted-stop send controls must remain disabled waiting states',
 );
 assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);
 assert.match(source, /停止生成/);
@@ -200,6 +200,11 @@ const { composerGoalDraftPresentation, detectComposerCommand } = module.exports;
 const detect = (value, caret = value.length) => plain(detectComposerCommand(value, caret));
 
 assert.deepEqual(plain(composerGoalDraftPresentation('/goal ')), { content: '' });
+assert.equal(
+  composerGoalDraftPresentation('/goal'),
+  null,
+  'Typing /goal must keep the command palette open until Tab, Enter, or click confirms it',
+);
 assert.deepEqual(
   plain(composerGoalDraftPresentation('/goal 完成发布验证')),
   { content: '完成发布验证' },
@@ -218,6 +223,17 @@ assert.deepEqual(detect('/model'), {
   end: 6,
   query: 'model',
 });
+assert.deepEqual(detect('/goal'), {
+  mode: 'slash',
+  start: 0,
+  end: 5,
+  query: 'goal',
+});
+assert.equal(
+  detect('/goal '),
+  null,
+  'The confirmed /goal command must leave command selection and enter goal drafting',
+);
 assert.deepEqual(detect('请处理 /go'), {
   mode: 'slash',
   start: 4,

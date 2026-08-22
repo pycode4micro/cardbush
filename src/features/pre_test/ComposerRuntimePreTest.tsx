@@ -243,6 +243,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 draft={shadowOpen ? shadowDraft : draft}
                 onDraftChange={shadowOpen ? setShadowDraft : setDraft}
                 sending={!shadowOpen}
+                goalAvailable
                 queuedMessageCount={0}
                 queuedMessagePreview=""
                 queuedMessages={[]}
