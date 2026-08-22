@@ -199,7 +199,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-model\.fallback svg,[\s\S]*?\.processing-context-tab\.running > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.assistant-thinking-model\.fallback svg,[\s\S]*?\.composer-runtime-screen\.processing\.running > svg[\s\S]*?animation-iteration-count:\s*infinite !important;/,
   'Functional execution spinners must remain visibly active when the OS reduces motion',
 );
 

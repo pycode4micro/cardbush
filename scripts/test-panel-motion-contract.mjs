@@ -106,7 +106,20 @@ assert.doesNotMatch(
 assert.match(runtimeRail, /useSoftPanelPresence\(Boolean\(activePanel\), 180\)/);
 assert.match(runtimeRail, /panelPresence\.mounted/);
 assert.match(runtimeRail, /context-visible/);
-assert.doesNotMatch(css, /\.composer-runtime-rail\.expanded \.composer-runtime-tabs\s*\{\s*visibility:\s*hidden/);
+assert.match(runtimeRail, /className="runtime-screen-viewport"/);
+assert.match(runtimeRail, /setInterval\([\s\S]*?2600/);
+assert.equal(
+  (runtimeRail.match(/className=\{`composer-runtime-screen/g) ?? []).length,
+  1,
+  'Runtime state must render through one unified horizontal screen',
+);
+assert.doesNotMatch(runtimeRail, /composer-runtime-tabs|runtime-context-tab/);
+assert.match(runtimeRail, /kind: 'processing' \| 'thinking' \| 'changes' \| 'queue'/);
+assert.match(runtimeRail, /queuedMessageCount > 0/);
+assert.match(runtimeRail, /renderedPanel === 'queue'/);
+assert.match(app, /currentTurnChangeSummary \|\| queuedMessageCount > 0/);
+assert.match(app, /queuedMessageCount=\{0\}/);
+assert.match(css, /@keyframes runtime-screen-roll/);
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(messageBubble, /key=\{segment\.id\}/);

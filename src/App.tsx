@@ -309,7 +309,6 @@ const maxSidebarWidth = 420;
 const osConversationStorageKey = 'cardbush_os_conversation_id';
 const recentProjectStorageKey = 'cardbush_recent_project_dir';
 const defaultShadowAccentColor = '#a8d5b5';
-const defaultThinkingAccentColor = '#9dbce8';
 const thinkingEventName = 'cardbush:thinking';
 
 function scrollDebug(label: string, data: Record<string, unknown>) {
@@ -341,6 +340,12 @@ function scrollDebug(label: string, data: Record<string, unknown>) {
     .catch(() => undefined);
 }
 
+function gentleAutoFollowScrollBehavior(): ScrollBehavior {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth';
+}
+
 const defaultAppSettings: AppSettingsState = {
   proxy: {
     mode: 'none',
@@ -356,7 +361,6 @@ const defaultAppSettings: AppSettingsState = {
   },
   thinking: {
     visible: false,
-    accentColor: defaultThinkingAccentColor,
   },
   terminal: {
     runtime: 'powershell',
@@ -2131,7 +2135,6 @@ function CardbushApp() {
                 shadowAccentColor={appSettings.shadow.accentColor}
                 thinkingNotice={section === 'chat' ? thinkingNotice : null}
                 thinkingVisible={reasoningTraceVisible}
-                thinkingAccentColor={appSettings.thinking.accentColor}
                 terminalRuntime={appSettings.terminal.runtime}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
@@ -2706,9 +2709,6 @@ function readInitialAppSettings(): AppSettingsState {
     },
     thinking: {
       visible: window.localStorage.getItem('cardbush_thinking_visible') === 'true',
-      accentColor:
-        window.localStorage.getItem('cardbush_thinking_accent_color') ??
-        defaultThinkingAccentColor,
     },
     terminal: {
       runtime: terminalRuntimeFromStorage(
@@ -2871,10 +2871,6 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
     },
     thinking: {
       visible: settings.thinking?.visible === true,
-      accentColor: normalizeHexColor(
-        settings.thinking?.accentColor,
-        defaultThinkingAccentColor,
-      ),
     },
     terminal: {
       runtime: normalizeTerminalRuntime(settings.terminal?.runtime),
@@ -2985,10 +2981,7 @@ function persistAppSettings(settings: AppSettingsState) {
     'cardbush_thinking_visible',
     String(settings.thinking.visible),
   );
-  window.localStorage.setItem(
-    'cardbush_thinking_accent_color',
-    normalizeHexColor(settings.thinking.accentColor, defaultThinkingAccentColor),
-  );
+  window.localStorage.removeItem('cardbush_thinking_accent_color');
   window.localStorage.setItem(
     'cardbush_terminal_runtime',
     normalizeTerminalRuntime(settings.terminal.runtime),
@@ -3600,7 +3593,6 @@ function ChatPanel({
   shadowAccentColor,
   thinkingNotice,
   thinkingVisible,
-  thinkingAccentColor,
   terminalRuntime,
   loading,
   sending,
@@ -3689,7 +3681,6 @@ function ChatPanel({
   shadowAccentColor: string;
   thinkingNotice: ThinkingNotice | null;
   thinkingVisible: boolean;
-  thinkingAccentColor: string;
   terminalRuntime: TerminalRuntime;
   loading: boolean;
   sending: boolean;
@@ -4530,7 +4521,7 @@ function ChatPanel({
       const delta = Math.ceil(itemRect.bottom - visibleBottom);
       scroller.scrollBy({
         top: delta,
-        behavior: 'auto',
+        behavior: gentleAutoFollowScrollBehavior(),
       });
     },
     [quickContextBottomInset, streamStatusHeight],
@@ -5412,7 +5403,11 @@ function ChatPanel({
         const scrollTopBeforeCorrection = scroller.scrollTop;
         const targetScrollTop = absoluteBottomScrollTop(scroller);
         if (Math.abs(targetScrollTop - scrollTopBeforeCorrection) > 0.5) {
-          scroller.scrollTop = targetScrollTop;
+          programmaticScrollUntilRef.current = Date.now() + 520;
+          scroller.scrollTo({
+            top: targetScrollTop,
+            behavior: gentleAutoFollowScrollBehavior(),
+          });
         }
         lastScrollTopRef.current = scroller.scrollTop;
         atBottomRef.current = true;
@@ -6203,17 +6198,16 @@ function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && (
           <div
             className={`composer-dock${
-              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || shadowThreadOpen
+              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0 || shadowThreadOpen
                 ? ' runtime-attached'
                 : ''
             }${shadowThreadOpen ? ' shadow-active' : ''}`}
             ref={composerDockRef}
             style={{
               '--shadow-accent': shadowAccentColor,
-              '--thinking-accent': thinkingAccentColor,
             } as CSSProperties}
           >
-            {(sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary) && (
+            {(sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0) && (
               <ComposerRuntimeRail
                 language={language}
                 running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
@@ -6226,6 +6220,9 @@ function ChatPanel({
                 thinkingOpen={thinkingOpen}
                 changeReports={currentTurnChangeReports}
                 changeSummary={currentTurnChangeSummary}
+                queuedMessageCount={queuedMessageCount}
+                queuedMessagePreview={queuedMessagePreview}
+                queuedMessages={queuedMessages}
                 onToggleThinking={() => {
                   setShadowThreadOpen(false);
                   setThinkingOpen((current) => !current);
@@ -6233,6 +6230,11 @@ function ChatPanel({
                 onCloseThinking={() => setThinkingOpen(false)}
                 onCancelGoal={onCancelGoal}
                 onOpenChangeReview={onOpenChangeReview}
+                onEditQueuedMessage={editQueuedMessage}
+                onGuideQueuedMessage={(queuedId) =>
+                  onGuideQueuedMessage(queuedId, 'append_context')
+                }
+                onRemoveQueuedMessage={onRemoveQueuedMessage}
               />
             )}
             {shadowThreadOpen && (
@@ -6258,9 +6260,9 @@ function ChatPanel({
               onDraftChange={shadowThreadOpen ? setShadowDraft : onDraftChange}
               sending={shadowThreadOpen ? shadowReplying : sending}
               cancelEnabled={shadowThreadOpen ? shadowReplying : Boolean(activeTurnId)}
-              queuedMessageCount={queuedMessageCount}
-              queuedMessagePreview={queuedMessagePreview}
-              queuedMessages={queuedMessages}
+              queuedMessageCount={0}
+              queuedMessagePreview=""
+              queuedMessages={[]}
               selectedModel={selectedModel}
               availableModels={availableModels}
               goalAvailable={goalAvailable}
@@ -6309,11 +6311,6 @@ function ChatPanel({
               onOpenTerminalConsole={
                 terminalAvailable ? () => toggleConsole('terminal') : undefined
               }
-              onEditQueuedMessage={editQueuedMessage}
-              onGuideQueuedMessage={(queuedId) =>
-                onGuideQueuedMessage(queuedId, 'append_context')
-              }
-              onRemoveQueuedMessage={onRemoveQueuedMessage}
             />
           </div>
         )}

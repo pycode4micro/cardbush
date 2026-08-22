@@ -85,11 +85,11 @@ assert.match(hookSource, /caught\.code === 'turn_guidance_closed'/);
 assert.match(hookSource, /caught\.code === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
-assert.match(hookSource, /const streamFlushIntervalMs = 80/);
-assert.match(hookSource, /const streamBaseCharChunkSize = 8/);
-assert.match(hookSource, /const streamMediumCharChunkSize = 16/);
-assert.match(hookSource, /const streamFastCharChunkSize = 28/);
-assert.match(hookSource, /const streamCatchUpCharChunkSize = 48/);
+assert.match(hookSource, /const streamFlushIntervalMs = 120/);
+assert.match(hookSource, /const streamBaseCharChunkSize = 4/);
+assert.match(hookSource, /const streamMediumCharChunkSize = 8/);
+assert.match(hookSource, /const streamFastCharChunkSize = 16/);
+assert.match(hookSource, /const streamCatchUpCharChunkSize = 28/);
 assert.equal(
   (hookSource.match(
     /streamBuffer\.flushToolBoundary\(\);[\s\S]{0,1000}?streamBuffer\.reset\(route,/g,
@@ -257,7 +257,7 @@ assert.equal(
   0,
   'incoming token events must be batched instead of forcing immediate Markdown reflow',
 );
-await new Promise((resolve) => setTimeout(resolve, 130));
+await new Promise((resolve) => setTimeout(resolve, 170));
 assert.ok(
   eagerStreamChunks.length > 0,
   'a complete opening sentence must start rendering without waiting for a large buffer',

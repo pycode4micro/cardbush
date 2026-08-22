@@ -257,7 +257,6 @@ interface ShadowUiSettings {
 
 interface ThinkingUiSettings {
   visible: boolean;
-  accentColor: string;
 }
 
 export interface ThinkingStreamEvent {

@@ -24,6 +24,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
+import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -57,6 +58,7 @@ const ignoredProjectSearchDirs = new Set([
 const projectFileSearchMaxDepth = 3;
 const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
+const localImagePreviewMaxBytes = 32 * 1024 * 1024;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
 protocol.registerSchemesAsPrivileged([
   {
@@ -1700,6 +1702,14 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle('image:read-data-url', async (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!sourceWindow || sourceWindow !== mainWindow) {
+    return '';
+  }
+  return readLocalImageDataUrl(targetPath);
+});
+
 ipcMain.handle('cardling:update-state', (event, payload: CardlingDesktopState) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow) {
@@ -1987,7 +1997,8 @@ function registerLocalFileProtocol() {
           'cache-control': 'public, max-age=31536000, immutable',
         },
       });
-    } catch {
+    } catch (error) {
+      console.error(`[${localFileProtocol}] failed to load ${request.url}`, error);
       return new Response('Not found', { status: 404 });
     }
   });
@@ -2111,14 +2122,7 @@ function localPathFromProtocolUrl(value: string) {
       path.basename(decodeURIComponent(parsed.pathname)),
     );
   }
-  const pathname = decodeURIComponent(parsed.pathname);
-  if (parsed.hostname) {
-    const uncPath = `//${parsed.hostname}${pathname}`;
-    return process.platform === 'win32' ? uncPath.replace(/\//g, '\\') : uncPath;
-  }
-  return process.platform === 'win32'
-    ? pathname.replace(/^\/([a-zA-Z]:)/, '$1').replace(/\//g, '\\')
-    : pathname;
+  return localFileSystemPathFromProtocolUrl(value);
 }
 
 function imageMimeTypeForPath(filePath: string) {
@@ -3976,6 +3980,24 @@ function saveImageDataUrl(
     height: image.getSize().height,
     copiedToClipboard,
   };
+}
+
+async function readLocalImageDataUrl(targetPath: string) {
+  const normalizedPath = normalizeShellPath(targetPath);
+  const stats = await fs.promises.stat(normalizedPath);
+  if (!stats.isFile()) {
+    throw new Error('Image path is not a file');
+  }
+  if (stats.size > localImagePreviewMaxBytes) {
+    throw new Error(`Image exceeds ${localImagePreviewMaxBytes} bytes`);
+  }
+  const bytes = await fs.promises.readFile(normalizedPath);
+  const declaredType = imageMimeTypeForPath(normalizedPath);
+  const contentType = declaredType || contentTypeForBytes(bytes.subarray(0, 512));
+  if (!contentType.startsWith('image/')) {
+    throw new Error('File is not a supported image');
+  }
+  return `data:${contentType};base64,${bytes.toString('base64')}`;
 }
 
 function imageExtension(value: string) {

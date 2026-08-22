@@ -1269,26 +1269,6 @@ function SettingsProfilePanel({
               }));
             }}
           />
-          <div className={`shadow-color-setting${settings.thinking.visible ? '' : ' disabled'}`}>
-            <label>
-              <input
-                type="color"
-                value={settings.thinking.accentColor}
-                disabled={!settings.thinking.visible}
-                onChange={(event) => {
-                  const accentColor = event.currentTarget.value;
-                  onSettingsChange((current) => ({
-                    ...current,
-                    thinking: { ...current.thinking, accentColor },
-                  }));
-                }}
-              />
-              <span>
-                <strong>{language === 'zh' ? '思考颜色' : 'Thinking color'}</strong>
-                <small>{settings.thinking.accentColor}</small>
-              </span>
-            </label>
-          </div>
         </>
       )}
       <SettingsDivider />

@@ -2754,7 +2754,11 @@ function controlStreamBody(request: ControlStreamRequest) {
   applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
   body.reasoning_trace_visible = request.reasoningTraceVisible === true;
-  applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyStandardImageInputEnabledToBody(
+    body,
+    metadata,
+    request.standardImageInputEnabled,
+  );
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
   applyOsModeToMetadata(metadata, request.osModeEnabled);
@@ -2822,7 +2826,11 @@ function chatStreamBody(request: ChatStreamRequest) {
   applyPermissionModeToBody(body, metadata, request.permissionMode);
   applyReasoningLevelToBody(body, metadata, request.reasoningLevel);
   body.reasoning_trace_visible = request.reasoningTraceVisible === true;
-  applyStandardImageInputEnabledToMetadata(metadata, request.standardImageInputEnabled);
+  applyStandardImageInputEnabledToBody(
+    body,
+    metadata,
+    request.standardImageInputEnabled,
+  );
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
   applyOsModeToMetadata(metadata, request.osModeEnabled);
@@ -2881,8 +2889,18 @@ function applyInteractiveRequestsToBody(
   if (enabled !== true) {
     return;
   }
+  applyRequestCapabilityToBody(body, 'interactiveRequests', true);
+}
+
+function applyRequestCapabilityToBody(
+  body: Record<string, unknown>,
+  capability: 'interactiveRequests' | 'vision',
+  enabled: boolean,
+) {
+  const current = asRecord(body.requestCapabilities);
   body.requestCapabilities = {
-    interactiveRequests: true,
+    ...current,
+    [capability]: enabled,
   };
 }
 
@@ -2921,13 +2939,17 @@ function applyPermissionModeToBody(
   metadata.permissionMode = normalized;
 }
 
-function applyStandardImageInputEnabledToMetadata(
+function applyStandardImageInputEnabledToBody(
+  body: Record<string, unknown>,
   metadata: Record<string, unknown>,
   value?: boolean,
 ) {
   const enabled = value === true;
   metadata.standard_image_input_enabled = enabled;
   metadata.standardImageInputEnabled = enabled;
+  if (enabled) {
+    applyRequestCapabilityToBody(body, 'vision', true);
+  }
 }
 
 function applyBrowserPrivacyModeToMetadata(
@@ -4724,7 +4746,43 @@ function messageAttachmentsFromPayload(
       });
     }
   }
+  if (![...byPath.values()].some((attachment) => attachment.type === 'image')) {
+    for (const pathValue of structuredImageSources(value.content)) {
+      const key = pathValue.replaceAll('\\', '/').toLowerCase();
+      if (byPath.has(key)) continue;
+      byPath.set(key, {
+        id: `attachment-${key}`,
+        name: pathValue.startsWith('data:')
+          ? 'image'
+          : pathValue.split(/[\\/]/).pop() || 'image',
+        path: pathValue,
+        type: 'image',
+      });
+    }
+  }
   return [...byPath.values()];
+}
+
+function structuredImageSources(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  const sources: string[] = [];
+  for (const itemValue of content) {
+    const item = asRecord(itemValue);
+    const type = String(item.type ?? '').trim().toLowerCase();
+    if (type !== 'image_url' && type !== 'image' && type !== 'input_image') {
+      continue;
+    }
+    const source = String(
+      asRecord(item.image_url).url ??
+      asRecord(item.imageUrl).url ??
+      asRecord(item.image).url ??
+      item.url ??
+      item.path ??
+      '',
+    ).trim();
+    if (source) sources.push(source);
+  }
+  return sources;
 }
 
 function attachmentTypeFromPathAndHint(
@@ -5327,6 +5385,10 @@ function contentPartToText(value: unknown): string {
     return String(value);
   }
   const item = asRecord(value);
+  const itemType = String(item.type ?? '').trim().toLowerCase();
+  if (itemType === 'image_url' || itemType === 'image' || itemType === 'input_image') {
+    return '';
+  }
   const text =
     item.text ??
     item.content ??

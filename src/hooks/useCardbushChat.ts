@@ -3487,11 +3487,15 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
 
 const streamSentenceFlushThreshold = 16;
 const streamForceFlushThreshold = 64;
-const streamFlushIntervalMs = 80;
-const streamBaseCharChunkSize = 8;
-const streamMediumCharChunkSize = 16;
-const streamFastCharChunkSize = 28;
-const streamCatchUpCharChunkSize = 48;
+// Keep the foreground cadence deliberately calm. A short final answer should
+// unfold over roughly one to two seconds instead of arriving as a visual pop;
+// large backlogs still catch up progressively so long responses do not lag far
+// behind the provider stream.
+const streamFlushIntervalMs = 120;
+const streamBaseCharChunkSize = 4;
+const streamMediumCharChunkSize = 8;
+const streamFastCharChunkSize = 16;
+const streamCatchUpCharChunkSize = 28;
 
 type StreamReadySegment = {
   text: string;

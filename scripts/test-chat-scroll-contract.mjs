@@ -83,8 +83,18 @@ assert.match(
 );
 assert.match(
   appSource,
-  /trace-outer-resize-follow[\s\S]*?scroller\.scrollTop = targetScrollTop/,
-  'An outer layout change must restore the real bottom while automatic follow is active',
+  /trace-outer-resize-follow[\s\S]*?scroller\.scrollTo\(\{[\s\S]*?top:\s*targetScrollTop,[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  'An outer layout change must ease toward the real bottom while automatic follow is active',
+);
+assert.match(
+  appSource,
+  /scrollBy\(\{[\s\S]*?top:\s*delta,[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  'Streaming content must ease into view instead of snapping the reading surface',
+);
+assert.match(
+  styles,
+  /@keyframes assistant-stream-segment-enter[\s\S]*?opacity:\s*0\.78[\s\S]*?translateY\(2px\)/,
+  'A newly mounted assistant segment must enter with a low-contrast transition',
 );
 assert.match(
   appSource,

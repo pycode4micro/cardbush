@@ -38,6 +38,8 @@ assert.match(settings, /className="settings-navigation"/);
 assert.match(settings, /aria-current=\{section === id \? 'page' : undefined\}/);
 assert.match(settings, /className="settings-page-header"/);
 assert.match(settings, /className="settings-card-body"/);
+assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
+assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
 assert.match(settings, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
 assert.match(
   settings,

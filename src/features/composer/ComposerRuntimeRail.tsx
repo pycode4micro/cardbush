@@ -4,10 +4,13 @@ import {
   Circle,
   Clock3,
   Code2,
+  Edit3,
   ListChecks,
   LoaderCircle,
   PanelRightOpen,
+  Sparkles,
   Target,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -33,6 +36,19 @@ export type ThinkingNotice = {
   createdAt: string;
 };
 
+type RuntimeRailItem = {
+  kind: 'processing' | 'thinking' | 'changes' | 'queue';
+  label: string;
+  summary: string;
+  title: string;
+};
+
+type RuntimeQueuedMessage = {
+  id: string;
+  text: string;
+  createdAt: string;
+};
+
 export function ComposerRuntimeRail({
   language,
   running,
@@ -45,10 +61,16 @@ export function ComposerRuntimeRail({
   thinkingOpen,
   changeReports,
   changeSummary,
+  queuedMessageCount = 0,
+  queuedMessagePreview = '',
+  queuedMessages = [],
   onToggleThinking,
   onCloseThinking,
   onCancelGoal,
   onOpenChangeReview,
+  onEditQueuedMessage,
+  onGuideQueuedMessage,
+  onRemoveQueuedMessage,
 }: {
   language: AppLanguage;
   running: boolean;
@@ -61,13 +83,21 @@ export function ComposerRuntimeRail({
   thinkingOpen: boolean;
   changeReports: ConversationChangeReport[];
   changeSummary: ConversationChangeSummary | null;
+  queuedMessageCount?: number;
+  queuedMessagePreview?: string;
+  queuedMessages?: RuntimeQueuedMessage[];
   onToggleThinking: () => void;
   onCloseThinking: () => void;
   onCancelGoal?: () => Promise<void>;
   onOpenChangeReview: () => void;
+  onEditQueuedMessage?: (item: RuntimeQueuedMessage) => void;
+  onGuideQueuedMessage?: (queuedId: string) => Promise<void>;
+  onRemoveQueuedMessage?: (queuedId: string) => void;
 }) {
   const [processingOpen, setProcessingOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const hasProcessing = running || Boolean(goal);
   const activePanel = processingOpen
     ? 'processing'
@@ -75,7 +105,9 @@ export function ComposerRuntimeRail({
       ? 'thinking'
       : changesOpen
         ? 'changes'
-        : null;
+        : queueOpen
+          ? 'queue'
+          : null;
   const [renderedPanel, setRenderedPanel] = useState(activePanel);
   const panelPresence = useSoftPanelPresence(Boolean(activePanel), 180);
   const changedFiles = useMemo(
@@ -94,6 +126,76 @@ export function ComposerRuntimeRail({
   const changedLineCount = changeSummary
     ? changeSummary.additions + changeSummary.deletions
     : 0;
+  const firstQueuedMessage = queuedMessages[0] ?? null;
+  const queuePreview = queuedMessagePreview.trim() || firstQueuedMessage?.text.trim() || '';
+  const railItems = useMemo<RuntimeRailItem[]>(() => {
+    const items: RuntimeRailItem[] = [];
+    if (hasProcessing) {
+      items.push({
+        kind: 'processing',
+        label: running
+          ? language === 'zh' ? '处理中' : 'Working'
+          : goal
+            ? language === 'zh' ? '目标' : 'Goal'
+            : language === 'zh' ? '计划' : 'Plan',
+        summary:
+          processingSummary ||
+          (language === 'zh' ? '正在准备下一步' : 'Preparing the next step'),
+        title: processingSummary,
+      });
+    }
+    if (thinkingNotice) {
+      items.push({
+        kind: 'thinking',
+        label: language === 'zh' ? '思考中' : 'Thinking',
+        summary: thinkingNotice.preview || thinkingNotice.content,
+        title: thinkingNotice.preview || thinkingNotice.content,
+      });
+    }
+    if (changeSummary) {
+      const summary = language === 'zh'
+        ? `${changeSummary.fileCount} 个文件 · 累计 ${changedLineCount} 行`
+        : `${changeSummary.fileCount} files · ${changedLineCount} lines total`;
+      items.push({
+        kind: 'changes',
+        label: running
+          ? language === 'zh' ? '更改中' : 'Changing'
+          : language === 'zh' ? '已更改' : 'Changed',
+        summary,
+        title: summary,
+      });
+    }
+    if (queuedMessageCount > 0) {
+      const queueHint = language === 'zh'
+        ? '当前回复完成后自动发送'
+        : 'Sends after the current reply';
+      items.push({
+        kind: 'queue',
+        label: language === 'zh'
+          ? `排队 ${queuedMessageCount}`
+          : `${queuedMessageCount} queued`,
+        summary: queuePreview || queueHint,
+        title: `${queueHint}${queuePreview ? `\n${queuePreview}` : ''}`,
+      });
+    }
+    return items;
+  }, [
+    changeSummary,
+    changedLineCount,
+    goal,
+    hasProcessing,
+    language,
+    processingSummary,
+    queuePreview,
+    queuedMessageCount,
+    running,
+    thinkingNotice,
+  ]);
+  const railKinds = railItems.map((item) => item.kind).join(':');
+  const [screenIndex, setScreenIndex] = useState(0);
+  const currentRailItem = railItems.length > 0
+    ? railItems[screenIndex % railItems.length]
+    : null;
 
   useEffect(() => {
     if (activePanel) {
@@ -112,6 +214,69 @@ export function ComposerRuntimeRail({
       setProcessingOpen(false);
     }
   }, [hasProcessing]);
+
+  useEffect(() => {
+    if (queuedMessageCount <= 0) {
+      setQueueOpen(false);
+    }
+  }, [queuedMessageCount]);
+
+  useEffect(() => {
+    setScreenIndex((current) => railItems.length > 0 ? current % railItems.length : 0);
+  }, [railItems.length, railKinds]);
+
+  useEffect(() => {
+    if (activePanel) {
+      const panelIndex = railItems.findIndex((item) => item.kind === activePanel);
+      if (panelIndex >= 0) setScreenIndex(panelIndex);
+      return undefined;
+    }
+    if (railItems.length <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setScreenIndex((current) => (current + 1) % railItems.length);
+    }, 2600);
+    return () => window.clearInterval(timer);
+  }, [activePanel, railItems, railKinds]);
+
+  function toggleCurrentPanel(item: RuntimeRailItem) {
+    if (item.kind === 'processing') {
+      if (thinkingOpen) onCloseThinking();
+      setChangesOpen(false);
+      setQueueOpen(false);
+      setProcessingOpen((current) => !current);
+      return;
+    }
+    if (item.kind === 'thinking') {
+      setProcessingOpen(false);
+      setChangesOpen(false);
+      setQueueOpen(false);
+      onToggleThinking();
+      return;
+    }
+    if (item.kind === 'changes') {
+      setProcessingOpen(false);
+      setQueueOpen(false);
+      if (thinkingOpen) onCloseThinking();
+      setChangesOpen((current) => !current);
+      return;
+    }
+    setProcessingOpen(false);
+    setChangesOpen(false);
+    if (thinkingOpen) onCloseThinking();
+    setQueueOpen((current) => !current);
+  }
+
+  async function guideFirstQueuedMessage() {
+    if (!firstQueuedMessage || !onGuideQueuedMessage) return;
+    setGuidingQueuedId(firstQueuedMessage.id);
+    try {
+      await onGuideQueuedMessage(firstQueuedMessage.id);
+    } finally {
+      setGuidingQueuedId('');
+    }
+  }
+
+  if (!currentRailItem) return null;
 
   return (
     <div className={`composer-runtime-rail ${expanded ? 'expanded' : ''} ${panelPresence.visible ? 'context-visible' : 'context-exiting'}`}>
@@ -237,6 +402,57 @@ export function ComposerRuntimeRail({
           </div>
         </section>
       )}
+      {panelPresence.mounted && renderedPanel === 'queue' && queuedMessageCount > 0 && (
+        <section
+          className="runtime-context-panel queue-context-panel"
+          aria-label={language === 'zh' ? '排队消息' : 'Queued message'}
+        >
+          <header>
+            <span>
+              <Clock3 size={14} />
+              <strong>{language === 'zh' ? `排队 ${queuedMessageCount}` : `${queuedMessageCount} queued`}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => setQueueOpen(false)}
+              aria-label={language === 'zh' ? '关闭排队详情' : 'Close queue details'}
+            >
+              <X size={14} />
+            </button>
+          </header>
+          <div className="runtime-queue-detail">
+            <p>{queuePreview || (language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</p>
+            {firstQueuedMessage && (
+              <div className="runtime-queue-actions">
+                <button
+                  type="button"
+                  disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
+                  onClick={() => void guideFirstQueuedMessage()}
+                >
+                  {guidingQueuedId === firstQueuedMessage.id ? <LoaderCircle size={13} /> : <Sparkles size={13} />}
+                  <span>{language === 'zh' ? '引导' : 'Guide'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!onEditQueuedMessage}
+                  onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
+                >
+                  <Edit3 size={13} />
+                  <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!onRemoveQueuedMessage}
+                  onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
+                >
+                  <Trash2 size={13} />
+                  <span>{language === 'zh' ? '删除' : 'Delete'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
       {panelPresence.mounted && renderedPanel === 'thinking' && thinkingNotice && (
         <section className="runtime-context-panel thinking-context-panel" aria-label="Thinking">
           <header>
@@ -298,77 +514,44 @@ export function ComposerRuntimeRail({
           </div>
         </section>
       )}
-      <div className="composer-runtime-tabs">
-        {hasProcessing && (
-          <button
-            className={`runtime-context-tab processing-context-tab ${running ? 'running' : 'settled'} ${processingOpen ? 'open' : ''}`}
-            type="button"
-            role="status"
-            aria-expanded={processingOpen}
-            title={processingSummary}
-            onClick={() => {
-              if (thinkingOpen) onCloseThinking();
-              setChangesOpen(false);
-              setProcessingOpen((current) => !current);
-            }}
-          >
-            {running ? <LoaderCircle size={13} /> : <Target size={13} />}
-            <span>
-              <strong>
-                {running
-                  ? language === 'zh' ? '处理中' : 'Working'
-                  : language === 'zh' ? '目标' : 'Goal'}
-              </strong>
-              {processingSummary && <small>{processingSummary}</small>}
-            </span>
-          </button>
+      <button
+        className={`composer-runtime-screen ${currentRailItem.kind} ${
+          currentRailItem.kind === activePanel ? 'open' : ''
+        } ${running ? 'running' : 'settled'}`}
+        type="button"
+        aria-expanded={currentRailItem.kind === activePanel}
+        title={currentRailItem.title}
+        onClick={() => toggleCurrentPanel(currentRailItem)}
+      >
+        {currentRailItem.kind === 'processing' ? (
+          running ? <LoaderCircle size={13} /> : <Target size={13} />
+        ) : currentRailItem.kind === 'thinking' ? (
+          <Brain size={13} />
+        ) : currentRailItem.kind === 'changes' ? (
+          <Code2 size={13} />
+        ) : (
+          <Clock3 size={13} />
         )}
-        {thinkingNotice && (
-          <button
-            className={`runtime-context-tab thinking-context-tab ${thinkingOpen ? 'open' : ''}`}
-            type="button"
-            title={thinkingNotice.preview}
-            aria-expanded={thinkingOpen}
-            onClick={() => {
-              setProcessingOpen(false);
-              setChangesOpen(false);
-              onToggleThinking();
-            }}
+        <span className="runtime-screen-viewport" aria-live="polite">
+          <span
+            className="runtime-screen-line"
+            key={`${currentRailItem.kind}:${screenIndex}`}
           >
-            <span className="runtime-tab-pulse" />
-            <Brain size={12} />
-            <span><strong>{language === 'zh' ? '思考中' : 'Thinking'}</strong></span>
-          </button>
-        )}
-        {changeSummary && (
-          <button
-            className={`runtime-context-tab change-context-tab ${changesOpen ? 'open' : ''}`}
-            type="button"
-            title={language === 'zh' ? '查看本轮文件更改' : 'View file changes from this turn'}
-            aria-expanded={changesOpen}
-            onClick={() => {
-              setProcessingOpen(false);
-              if (thinkingOpen) {
-                onCloseThinking();
-              }
-              setChangesOpen((current) => !current);
-            }}
-          >
-            <span className="runtime-tab-pulse" />
-            <Code2 size={12} />
-            <span>
-              <strong>{running ? (language === 'zh' ? '更改中' : 'Changing') : (language === 'zh' ? '已更改' : 'Changed')}</strong>
-              <small>
-                {language === 'zh'
-                  ? `${changeSummary.fileCount} 个文件 · 累计 ${changedLineCount} 行`
-                  : `${changeSummary.fileCount} files · ${changedLineCount} lines total`}
-              </small>
-              {changeSummary.additions > 0 && <b className="diff-count add">+{changeSummary.additions}</b>}
-              {changeSummary.deletions > 0 && <b className="diff-count del">-{changeSummary.deletions}</b>}
-            </span>
-          </button>
-        )}
-      </div>
+            <strong>{currentRailItem.label}</strong>
+            <small>{currentRailItem.summary}</small>
+            {currentRailItem.kind === 'changes' && changeSummary && (
+              <span className="runtime-screen-diff">
+                {changeSummary.additions > 0 && (
+                  <b className="diff-count add">+{changeSummary.additions}</b>
+                )}
+                {changeSummary.deletions > 0 && (
+                  <b className="diff-count del">-{changeSummary.deletions}</b>
+                )}
+              </span>
+            )}
+          </span>
+        </span>
+      </button>
     </div>
   );
 }

@@ -259,6 +259,7 @@ declare global {
         height: number;
         copiedToClipboard?: boolean;
       }>;
+      readImageDataUrl: (targetPath: string) => Promise<string>;
       setCardlingState: (payload: CardlingDesktopState) => Promise<void>;
       onCardlingState: (
         callback: (payload: CardlingDesktopState) => void,

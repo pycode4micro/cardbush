@@ -302,6 +302,8 @@ const desktopApi = {
       height: number;
       copiedToClipboard?: boolean;
     }>,
+  readImageDataUrl: (targetPath: string) =>
+    ipcRenderer.invoke('image:read-data-url', targetPath) as Promise<string>,
   setCardlingState: (payload: CardlingDesktopState) =>
     ipcRenderer.invoke('cardling:update-state', payload) as Promise<void>,
   onCardlingState: (callback: (payload: CardlingDesktopState) => void) => {

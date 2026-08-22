@@ -2653,18 +2653,13 @@ function MessageImageStrip({
     <>
       <div className="message-image-strip">
         {paths.map((pathValue, index) => {
-          const src = messageMediaSource(pathValue);
-          const name = basename(pathValue);
           return (
-            <button
-              className="message-image-preview"
-              type="button"
+            <MessageImagePreviewButton
               key={`${pathValue}-${index}`}
-              title={name}
-              onClick={() => setPreview({ src, name, path: pathValue })}
-            >
-              <img src={src} alt={name} />
-            </button>
+              pathValue={pathValue}
+              language={language}
+              onPreview={setPreview}
+            />
           );
         })}
       </div>
@@ -2676,6 +2671,70 @@ function MessageImageStrip({
         />
       )}
     </>
+  );
+}
+
+function MessageImagePreviewButton({
+  pathValue,
+  language,
+  onPreview,
+}: {
+  pathValue: string;
+  language: AppLanguage;
+  onPreview: (image: ImagePreview) => void;
+}) {
+  const name = basename(pathValue);
+  const [src, setSrc] = useState(() => messageMediaSource(pathValue));
+  const [failed, setFailed] = useState(false);
+  const fallbackAttemptedRef = useRef(false);
+
+  useEffect(() => {
+    fallbackAttemptedRef.current = false;
+    setSrc(messageMediaSource(pathValue));
+    setFailed(false);
+  }, [pathValue]);
+
+  const recoverLocalImage = useCallback(async () => {
+    if (
+      fallbackAttemptedRef.current ||
+      /^(?:https?:|data:|blob:)/i.test(pathValue.trim()) ||
+      !window.cardbushDesktop?.readImageDataUrl
+    ) {
+      setFailed(true);
+      return;
+    }
+    fallbackAttemptedRef.current = true;
+    try {
+      const dataUrl = await window.cardbushDesktop.readImageDataUrl(pathValue);
+      if (!dataUrl.startsWith('data:image/')) {
+        setFailed(true);
+        return;
+      }
+      setSrc(dataUrl);
+    } catch (error) {
+      console.warn('Unable to load local image preview', pathValue, error);
+      setFailed(true);
+    }
+  }, [pathValue]);
+
+  return (
+    <button
+      className={`message-image-preview${failed ? ' is-failed' : ''}`}
+      type="button"
+      title={name}
+      onClick={() => {
+        if (!failed) onPreview({ src, name, path: pathValue });
+      }}
+    >
+      {failed ? (
+        <span className="message-image-preview-fallback">
+          <FileIcon size={20} />
+          <span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
+        </span>
+      ) : (
+        <img src={src} alt={name} onError={() => void recoverLocalImage()} />
+      )}
+    </button>
   );
 }
 

@@ -146,7 +146,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
   );
   const style = {
     '--shadow-accent': '#a8d5b5',
-    '--thinking-accent': '#9dbce8',
   } as CSSProperties;
 
   return (
@@ -210,12 +209,22 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 thinkingOpen={thinkingOpen}
                 changeReports={showChanges ? changeReportsFixture : []}
                 changeSummary={showChanges ? changeSummaryFixture : null}
+                queuedMessageCount={showQueue ? 1 : 0}
+                queuedMessagePreview={showQueue ? '补充移动端状态条的窄屏验收。' : ''}
+                queuedMessages={showQueue ? [{
+                  id: 'pre-test-queue',
+                  text: '补充移动端状态条的窄屏验收。',
+                  createdAt: new Date().toISOString(),
+                }] : []}
                 onToggleThinking={() => {
                   setShadowOpen(false);
                   setThinkingOpen((current) => !current);
                 }}
                 onCloseThinking={() => setThinkingOpen(false)}
                 onOpenChangeReview={() => undefined}
+                onEditQueuedMessage={(item) => setDraft(item.text)}
+                onGuideQueuedMessage={async () => undefined}
+                onRemoveQueuedMessage={() => setFixture('processing')}
               />
               {shadowOpen && (
                 <ShadowTemporaryChat
@@ -234,13 +243,9 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 draft={shadowOpen ? shadowDraft : draft}
                 onDraftChange={shadowOpen ? setShadowDraft : setDraft}
                 sending={!shadowOpen}
-                queuedMessageCount={showQueue ? 1 : 0}
-                queuedMessagePreview={showQueue ? '补充移动端状态条的窄屏验收。' : ''}
-                queuedMessages={showQueue ? [{
-                  id: 'pre-test-queue',
-                  text: '补充移动端状态条的窄屏验收。',
-                  createdAt: new Date().toISOString(),
-                }] : []}
+                queuedMessageCount={0}
+                queuedMessagePreview=""
+                queuedMessages={[]}
                 selectedModel="pre-test-glm"
                 availableModels={[{
                   id: 'pre-test-glm',
@@ -305,9 +310,6 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 onConfigureModels={() => undefined}
                 onToggleSkill={() => undefined}
                 onVisualInputEnabledChange={() => undefined}
-                onEditQueuedMessage={(item) => setDraft(item.text)}
-                onGuideQueuedMessage={async () => undefined}
-                onRemoveQueuedMessage={() => setFixture('processing')}
               />
             </>
           )}
