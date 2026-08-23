@@ -239,16 +239,6 @@ function assistantTimeoutPresentation(
           : 'The turn stopped, and received progress remains available in this conversation.',
     };
   }
-  if (metadata.stopped === true || message.status === 'stopped') {
-    return {
-      reason: reason || 'user_stop',
-      title: language === 'zh' ? '本轮已停止' : 'Turn stopped',
-      detail:
-        language === 'zh'
-          ? '已经产生的回复、工具记录和文件变更仍保留在本次会话中，可以继续提出新的要求。'
-          : 'Existing response text, tool history, and file changes remain in this session so you can continue with a new request.',
-    };
-  }
   return null;
 }
 
@@ -826,9 +816,17 @@ function MessageBubbleView({
     ? activeAssistantTranscriptMessages(loopHistory, message)
     : [];
   const renderActiveTranscript = activeTranscriptMessages.length > 1;
+  const preserveStoppedExecutionRecord =
+    isStoppedAssistantMessage(message) &&
+    !visibleLoopHistory.some(
+      (historyMessage) => (historyMessage.toolExecutions?.length ?? 0) > 0,
+    );
   const toolExecutions =
     message.role === 'assistant'
-      ? visibleTopLevelToolExecutions(allToolExecutions, isActiveAssistantTurn)
+      ? visibleTopLevelToolExecutions(
+          allToolExecutions,
+          isActiveAssistantTurn || preserveStoppedExecutionRecord,
+        )
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
   const showAssistantProgress =
@@ -1551,9 +1549,20 @@ function groupExecutionsByContentOffset(
 
 function visibleTopLevelToolExecutions(
   executions: ChatToolExecution[],
-  active: boolean,
+  visible: boolean,
 ) {
-  return active ? executions : [];
+  return visible ? executions : [];
+}
+
+function isStoppedAssistantMessage(message: ChatMessage) {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+  return (
+    message.status === 'stopped' ||
+    message.metadata?.stopped === true ||
+    message.metadata?.cardbush_terminal_stopped === true
+  );
 }
 
 function isFinalAssistantDisplayMessage(message: ChatMessage) {

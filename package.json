@@ -33,6 +33,7 @@
     "test:history-tools": "node scripts/test-history-tool-contract.mjs",
     "test:assistant-timing": "node scripts/test-assistant-timing-contract.mjs",
     "test:message-media": "node scripts/test-message-media-contract.mjs",
+    "test:tool-media-artifacts": "node scripts/test-tool-media-artifacts-contract.mjs",
     "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs",
     "test:sidebar-interaction": "node scripts/test-sidebar-interaction-contract.mjs",
     "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",

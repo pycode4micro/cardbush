@@ -77,6 +77,7 @@ import {
   executionUpdateFromPayload,
 } from './streamProtocol';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
+import { toolArtifactsFromPayload } from './toolArtifacts';
 
 const conversationListPageSize = 160;
 const conversationListMaxPages = 1;
@@ -4999,6 +5000,7 @@ function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExe
     nonEmpty(metadata.tool_call_id) ??
     toolFingerprint(payload);
   const state = normalizeToolState(payload, metadata);
+  const artifacts = toolArtifactsFromPayload(payload);
   return {
     id,
     name: toolName(payload.name),
@@ -5033,6 +5035,7 @@ function toolExecutionFromPayload(payload: Record<string, unknown>): ChatToolExe
         metadata.assistant_segment_index ??
         metadata.assistantSegmentIndex,
     ),
+    ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata,
   };
 }
@@ -5095,6 +5098,7 @@ function toolExecutionsFromPayload(value: unknown): ChatToolExecution[] {
         metadata.contentOffset ??
         metadata.content_offset;
       const state = normalizeToolState(item, metadata);
+      const artifacts = toolArtifactsFromPayload(item);
       return {
         id:
           nonEmpty(item.id) ??
@@ -5124,6 +5128,17 @@ function toolExecutionsFromPayload(value: unknown): ChatToolExecution[] {
             metadata.assistantMessageId ??
             metadata.assistant_message_id,
         ),
+        turnId: optionalString(
+          item.turnId ?? item.turn_id ?? metadata.turnId ?? metadata.turn_id,
+        ),
+        messageId: optionalString(item.messageId ?? item.message_id),
+        assistantSegmentIndex: optionalNumber(
+          item.assistantSegmentIndex ??
+            item.assistant_segment_index ??
+            metadata.assistantSegmentIndex ??
+            metadata.assistant_segment_index,
+        ),
+        ...(artifacts.length > 0 ? { artifacts } : {}),
         metadata,
       };
     })

@@ -382,6 +382,13 @@ export interface ChatAttachment {
   size?: number;
 }
 
+export interface ChatToolArtifact extends ChatAttachment {
+  path: string;
+  mimeType?: string;
+  display?: 'inline' | 'attachment';
+  readOnly?: boolean;
+}
+
 export type RuntimeAssetCategory = 'prompts' | 'skills' | 'tools';
 
 interface RuntimeAssetLocation {
@@ -440,6 +447,7 @@ export interface ChatToolExecution {
   messageId?: string;
   assistantMessageId?: string;
   assistantSegmentIndex?: number;
+  artifacts?: ChatToolArtifact[];
   metadata: Record<string, unknown>;
 }
 

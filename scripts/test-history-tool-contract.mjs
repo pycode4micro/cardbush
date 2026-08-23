@@ -166,7 +166,7 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /function visibleTopLevelToolExecutions\([\s\S]*?return active \? executions : \[\];[\s\S]*?\n}/,
+  /function visibleTopLevelToolExecutions\([\s\S]*?return visible \? executions : \[\];[\s\S]*?\n}/,
 );
 assert.doesNotMatch(
   bubbleSource,

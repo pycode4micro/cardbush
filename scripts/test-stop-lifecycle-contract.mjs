@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
+
+import ts from 'typescript';
 
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -33,6 +36,7 @@ assert.doesNotMatch(
 assert.match(hook, /applyTurnTerminalSnapshot/);
 assert.match(hook, /cardbush_terminal_stopped/);
 assert.match(hook, /retainedStoppedAssistants/);
+assert.match(hook, /createdAt: source\.createdAt \?\? message\.createdAt/);
 assert.match(hook, /terminalTurnIdsRef\.current\.has\(terminalTurnId\)/);
 assert.match(hook, /const reconcileTerminalTurn = useCallback/);
 assert.match(hook, /reconcileTerminalTurn\(sessionId, turnId, 20, 750\)/);
@@ -41,7 +45,95 @@ assert.match(hook, /!isRunningSessionTurn\(latestTurn\)/);
 assert.match(app, /stopping=\{chat\.stopping\}/);
 assert.match(composer, /正在停止/);
 assert.match(composer, /cancelReady && !stopping/);
-assert.match(bubble, /本轮已停止/);
-assert.match(bubble, /工具记录和文件变更仍保留/);
+assert.doesNotMatch(bubble, /reason: reason \|\| 'user_stop'/);
+assert.doesNotMatch(bubble, /工具记录和文件变更仍保留/);
+assert.match(bubble, /const preserveStoppedExecutionRecord =/);
+assert.match(bubble, /isActiveAssistantTurn \|\| preserveStoppedExecutionRecord/);
+assert.match(bubble, /message\.metadata\?\.cardbush_terminal_stopped === true/);
+
+const hookTranspiled = ts.transpileModule(hook, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const hookModule = { exports: {} };
+vm.runInNewContext(hookTranspiled.outputText, {
+  module: hookModule,
+  exports: hookModule.exports,
+  require: (specifier) => {
+    if (specifier.endsWith('/assistantTurnTiming')) {
+      return {
+        assistantTurnTimingFingerprint: () => '',
+        hydrateAssistantTurnTiming: (messages) => messages,
+        persistAssistantTurnTiming: () => undefined,
+      };
+    }
+    if (specifier.endsWith('/goalState')) {
+      return {
+        applyGoalToolUpdate: () => null,
+        goalToolUpdateFromExecution: () => null,
+        isGoalSelfCheckMessage: () => false,
+      };
+    }
+    return {};
+  },
+  Date,
+  Map,
+  Set,
+  window: { setTimeout, clearTimeout },
+});
+const { mergeLoadedMessagesPreservingLocalState } = hookModule.exports;
+
+const stoppedTranscript = mergeLoadedMessagesPreservingLocalState(
+  [
+    {
+      id: 'user-local',
+      clientMessageId: 'client-user',
+      role: 'user',
+      content: '我说的是视觉效果',
+      turnId: 'turn-stop',
+      createdAt: '2026-08-23T10:00:00.000Z',
+    },
+    {
+      id: 'assistant-local',
+      role: 'assistant',
+      content: '正在检查视觉效果',
+      turnId: 'turn-stop',
+      createdAt: '2026-08-23T10:00:01.000Z',
+      status: 'stopped',
+      metadata: {
+        cardbush_terminal_snapshot: true,
+        cardbush_terminal_stopped: true,
+      },
+      toolExecutions: [{ id: 'tool-1', state: 'completed', metadata: {} }],
+    },
+  ],
+  [
+    {
+      id: 'assistant-local',
+      role: 'assistant',
+      content: '正在检查视觉效果',
+      turnId: 'turn-stop',
+      createdAt: '2026-08-23T09:59:58.000Z',
+      status: 'stopped',
+      metadata: { stopped: true },
+    },
+    {
+      id: 'user-server',
+      clientMessageId: 'client-user',
+      role: 'user',
+      content: '我说的是视觉效果',
+      turnId: 'turn-stop',
+      createdAt: '2026-08-23T10:00:03.000Z',
+    },
+  ],
+);
+assert.deepEqual(
+  Array.from(stoppedTranscript, (message) => message.role),
+  ['user', 'assistant'],
+  'Stop reconciliation must retain the established user → assistant transcript order',
+);
+assert.equal(stoppedTranscript[1].toolExecutions[0].id, 'tool-1');
 
 console.log('Stop lifecycle frontend contract tests passed');

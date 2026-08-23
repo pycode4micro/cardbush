@@ -64,6 +64,7 @@ import type {
   SubagentDispatchEvent,
   TurnTerminalSnapshot,
 } from '../types';
+import { mergeToolArtifacts } from '../backend/toolArtifacts';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   assistantTurnTimingFingerprint,
@@ -4761,7 +4762,12 @@ function mergeToolExecutionUpdate(
 ): ChatToolExecution {
   const currentSettled = toolExecutionStateRank(current.state) >= 2;
   const incomingRunning = toolExecutionStateRank(incoming.state) < 2;
-  const merged = { ...current, ...incoming };
+  const artifacts = mergeToolArtifacts(current.artifacts, incoming.artifacts);
+  const merged = {
+    ...current,
+    ...incoming,
+    ...(artifacts.length > 0 ? { artifacts } : {}),
+  };
   if (!currentSettled || !incomingRunning) {
     return merged;
   }
@@ -5216,7 +5222,7 @@ function compareToolExecutionTranscriptOrder(
   );
 }
 
-function mergeLoadedMessagesPreservingLocalState(
+export function mergeLoadedMessagesPreservingLocalState(
   existing: ChatMessage[],
   loaded: ChatMessage[],
 ) {
@@ -5233,6 +5239,11 @@ function mergeLoadedMessagesPreservingLocalState(
     }
     return {
       ...message,
+      // A terminal refresh may persist the user/assistant rows at slightly
+      // different wall-clock times than the optimistic transcript. Keep the
+      // established local timestamp so Stop cannot move the user bubble below
+      // the assistant execution it originally preceded.
+      createdAt: source.createdAt ?? message.createdAt,
       metadata: preserveLocalAssistantTimingMetadata(message, source),
       attachments: message.attachments ?? source.attachments,
       taskPlan: message.taskPlan ?? source.taskPlan,
@@ -6288,6 +6299,7 @@ function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
     attachments: message.attachments?.map((attachment) => ({ ...attachment })),
     toolExecutions: message.toolExecutions?.map((execution) => ({
       ...execution,
+      artifacts: execution.artifacts?.map((artifact) => ({ ...artifact })),
       metadata: { ...execution.metadata },
     })),
     taskPlan: message.taskPlan,

@@ -39,6 +39,7 @@ import { compactToolOutput, toolDisplayOutput, toolOutputNeedsCollapse } from '.
 import { asRecord } from './toolPayload';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
 import { GoalUpdateNotice } from './GoalUpdateNotice';
+import { ToolImageArtifactViewer } from './ToolImageArtifactViewer';
 export function ToolExecutionBlock({
   executions,
   language,
@@ -514,6 +515,10 @@ function ToolExecutionDetail({
         executions={childExecutions}
         language={language}
         isFailed={(child) => isToolFailedInContext(child, active)}
+      />
+      <ToolImageArtifactViewer
+        artifacts={execution.artifacts}
+        language={language}
       />
       {output.trim() && !goalUpdate && (
         <>
