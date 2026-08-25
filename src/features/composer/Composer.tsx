@@ -271,6 +271,7 @@ export function Composer({
   onDraftChange,
   sending,
   stopping = false,
+  guidanceDeliveryMode = 'queue',
   queuedMessageCount = 0,
   queuedMessagePreview = '',
   queuedMessages = [],
@@ -322,6 +323,7 @@ export function Composer({
   onDraftChange: (value: string) => void;
   sending: boolean;
   stopping?: boolean;
+  guidanceDeliveryMode?: 'queue' | 'immediate';
   queuedMessageCount?: number;
   queuedMessagePreview?: string;
   queuedMessages?: ComposerQueuedMessage[];
@@ -385,7 +387,9 @@ export function Composer({
     fileAttachments.length > 0;
   const sendButtonLabel = sending
     ? hasContent
-      ? language === 'zh' ? '加入发送队列' : 'Queue message'
+      ? guidanceDeliveryMode === 'immediate'
+        ? language === 'zh' ? '马上发送引导' : 'Send guidance now'
+        : language === 'zh' ? '加入发送队列' : 'Queue message'
       : stopping
         ? language === 'zh' ? '正在停止' : 'Stopping'
       : cancelReady
@@ -1229,7 +1233,7 @@ export function Composer({
               </button>
             )}
             <button
-              className={`send-button ${sending && hasContent ? 'queue' : ''} ${stopping ? 'stopping' : ''}`}
+              className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
               disabled={sending && !hasContent && (!cancelReady || stopping)}
               title={sendButtonLabel}
@@ -1238,10 +1242,10 @@ export function Composer({
             >
               {sending && !hasContent ? (
                 cancelReady && !stopping
-                  ? <Square size={14} fill="currentColor" />
-                  : <LoaderCircle size={17} className="spin" />
+                  ? <Square size={11} fill="currentColor" />
+                  : <LoaderCircle size={15} className="spin" />
               ) : (
-                <ArrowUp size={18} />
+                <ArrowUp size={16} />
               )}
             </button>
           </div>

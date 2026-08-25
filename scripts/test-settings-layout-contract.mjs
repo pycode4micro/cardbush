@@ -40,6 +40,11 @@ assert.match(settings, /className="settings-page-header"/);
 assert.match(settings, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
 assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
+assert.match(settings, /name="guidance-delivery-mode"/);
+assert.match(settings, /'加入队列' : 'Add to queue'/);
+assert.match(settings, /'马上发送' : 'Send immediately'/);
+assert.match(app, /cardbush_guidance_delivery_mode/);
+assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
 assert.match(settings, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
 assert.match(
   settings,

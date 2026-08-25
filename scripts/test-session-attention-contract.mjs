@@ -10,13 +10,27 @@ const app = read('src', 'App.tsx');
 const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
 const storage = read('src', 'features', 'sessionAttention.ts');
 const css = read('src', 'styles', 'app.css');
+const windowsIcon = fs.readFileSync(path.join(process.cwd(), 'assets', 'cardbush.ico'));
 
 assert.match(main, /Notification\.isSupported\(\)/);
 assert.match(main, /!mainWindow\.isVisible\(\) \|\| !mainWindow\.isFocused\(\)/);
 assert.match(main, /notification\.on\('click',[\s\S]*?attention:open-session/);
 assert.match(main, /mainWindow\.setOverlayIcon\(/);
 assert.match(main, /attention:set-count/);
-assert.match(main, /app\.setAppUserModelId\('com\.cardbush\.desktop'\)/);
+assert.match(main, /const cardbushAppUserModelId = 'com\.cardbush\.desktop'/);
+assert.match(main, /app\.setAppUserModelId\(cardbushAppUserModelId\)/);
+assert.match(main, /window\.setIcon\(icon\)/);
+assert.match(main, /window\.setAppDetails\(\{[\s\S]*?appIconPath:/);
+assert.match(main, /relaunchCommand:\s*windowsRelaunchCommand\(\)/);
+assert.match(main, /relaunchDisplayName:\s*cardbushDisplayName/);
+assert.match(main, /function ensureWindowsTaskbarShortcut\(\)/);
+assert.match(main, /Start Menu'[\s\S]*?'Programs'/);
+assert.match(main, /shell\.writeShortcutLink\(shortcutPath, 'replace'/);
+assert.match(main, /appUserModelId:\s*cardbushAppUserModelId/);
+assert.match(main, /ensureWindowsTaskbarShortcut\(\);[\s\S]*?registerLocalFileProtocol\(\);/);
+assert.match(main, /window\.on\('show', refreshWindowBackdrop\)/);
+assert.deepEqual([...windowsIcon.subarray(0, 4)], [0, 0, 1, 0]);
+assert.ok(windowsIcon.readUInt16LE(4) >= 6, 'Windows icon should contain multiple resolutions');
 
 assert.match(preload, /notifySessionAttention:[\s\S]*?attention:notify-session/);
 assert.match(preload, /setSessionAttentionCount:[\s\S]*?attention:set-count/);

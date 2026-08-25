@@ -28,7 +28,9 @@ import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
-const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png'];
+const cardbushAppUserModelId = 'com.cardbush.desktop';
+const cardbushDisplayName = 'cardbush';
+const logoAssetNames = ['cardbush.ico', 'cardbush-logo.png', 'cardbush-logo-backup.png'];
 const cardlingExpandedSize = { width: 380, height: 468 };
 const cardlingCollapsedHitSize = { width: 104, height: 104 };
 const ignoredProjectSearchDirs = new Set([
@@ -85,6 +87,11 @@ let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null =
 let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
+
+if (process.platform === 'win32') {
+  app.setName(cardbushDisplayName);
+  app.setAppUserModelId(cardbushAppUserModelId);
+}
 let cardlingApplyingBoundsTimer: ReturnType<typeof setTimeout> | null = null;
 let cardlingDragState: {
   offsetX: number;
@@ -223,6 +230,7 @@ function createWindow() {
     clearTimeout(startupRevealFallback);
     startupRevealFallback = null;
   }
+  const windowIcon = loadCardbushIcon(256);
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -230,7 +238,7 @@ function createWindow() {
     minHeight: 620,
     frame: false,
     title: 'cardbush',
-    icon: loadCardbushIcon(256),
+    icon: windowIcon,
     backgroundColor: mainWindowThemeBackgrounds.dark,
     backgroundMaterial: 'none',
     show: false,
@@ -243,12 +251,16 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+  applyCardbushWindowIcon(window, windowIcon);
   mainWindow = window;
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
   installMainWindowNavigationGuard(window);
 
-  const refreshWindowBackdrop = () => applyMainWindowVisualMaterial(window, lastMainWindowTheme);
+  const refreshWindowBackdrop = () => {
+    applyCardbushWindowIcon(window, windowIcon);
+    applyMainWindowVisualMaterial(window, lastMainWindowTheme);
+  };
   window.on('minimize', refreshWindowBackdrop);
   window.on('restore', refreshWindowBackdrop);
   window.on('show', refreshWindowBackdrop);
@@ -355,13 +367,14 @@ async function openUiPreview(targetUrl: string) {
   const officeReadOnlyPreview = Boolean(
     previewTarget.localPath && isOfficePreviewPath(previewTarget.localPath),
   );
+  const browserIcon = loadCardbushIcon(128);
   const browser = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 760,
     minHeight: 520,
     title: officeReadOnlyPreview ? 'CardBush Office 只读预览' : 'CardBush UI 预览',
-    icon: loadCardbushIcon(128),
+    icon: browserIcon,
     parent: mainWindow ?? undefined,
     show: false,
     autoHideMenuBar: officeReadOnlyPreview,
@@ -371,6 +384,7 @@ async function openUiPreview(targetUrl: string) {
       sandbox: true,
     },
   });
+  applyCardbushWindowIcon(browser, browserIcon);
   externalBrowserWindows.add(browser);
   browser.setMenu(
     Menu.buildFromTemplate([
@@ -1095,9 +1109,11 @@ function requestAppQuit() {
 
 function loadCardbushIcon(size: number) {
   for (const fileName of logoAssetNames) {
-    const image = nativeImage.createFromPath(path.join(__dirname, '../assets', fileName));
-    if (!image.isEmpty()) {
-      return image.resize({ width: size, height: size, quality: 'best' });
+    for (const filePath of cardbushIconAssetPaths(fileName)) {
+      const image = nativeImage.createFromPath(filePath);
+      if (!image.isEmpty()) {
+        return image.resize({ width: size, height: size, quality: 'best' });
+      }
     }
   }
   return nativeImage.createFromDataURL(
@@ -1106,6 +1122,78 @@ function loadCardbushIcon(size: number) {
         '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#637B61"/><path d="M10 21c6 0 10-4 12-11-7 2-11 6-12 11Z" fill="#F1E6CF"/></svg>',
       ),
   );
+}
+
+function cardbushIconAssetPaths(fileName: string) {
+  return Array.from(new Set([
+    path.join(__dirname, '../assets', fileName),
+    path.join(app.getAppPath(), 'assets', fileName),
+    path.join(process.resourcesPath, 'assets', fileName),
+    path.join(app.getAppPath(), 'public', fileName),
+  ]));
+}
+
+function applyCardbushWindowIcon(window: BrowserWindow, icon = loadCardbushIcon(256)) {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  window.setIcon(icon);
+  const iconPath = cardbushIconAssetPaths('cardbush.ico').find((candidate) =>
+    fs.existsSync(candidate),
+  );
+  window.setAppDetails({
+    appId: cardbushAppUserModelId,
+    ...(iconPath ? { appIconPath: iconPath, appIconIndex: 0 } : {}),
+    relaunchCommand: windowsRelaunchCommand(),
+    relaunchDisplayName: cardbushDisplayName,
+  });
+}
+
+function ensureWindowsTaskbarShortcut() {
+  if (process.platform !== 'win32') {
+    return false;
+  }
+  const iconPath = cardbushIconAssetPaths('cardbush.ico').find((candidate) =>
+    fs.existsSync(candidate),
+  );
+  if (!iconPath) {
+    return false;
+  }
+  try {
+    const programsDir = path.join(
+      app.getPath('appData'),
+      'Microsoft',
+      'Windows',
+      'Start Menu',
+      'Programs',
+    );
+    fs.mkdirSync(programsDir, { recursive: true });
+    const shortcutPath = path.join(programsDir, 'CardBush.lnk');
+    return shell.writeShortcutLink(shortcutPath, 'replace', {
+      target: process.execPath,
+      ...(app.isPackaged
+        ? {}
+        : { args: quoteWindowsCommandArgument(app.getAppPath()) }),
+      cwd: app.getAppPath(),
+      description: 'CardBush desktop',
+      icon: iconPath,
+      iconIndex: 0,
+      appUserModelId: cardbushAppUserModelId,
+    });
+  } catch {
+    return false;
+  }
+}
+
+function windowsRelaunchCommand() {
+  const executable = quoteWindowsCommandArgument(process.execPath);
+  return app.isPackaged
+    ? executable
+    : `${executable} ${quoteWindowsCommandArgument(app.getAppPath())}`;
+}
+
+function quoteWindowsCommandArgument(value: string) {
+  return `"${value.replace(/"/g, '\\"')}"`;
 }
 
 function loadSessionAttentionOverlayIcon() {
@@ -1890,15 +1978,13 @@ ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
 });
 
 app.whenReady().then(async () => {
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.cardbush.desktop');
-  }
   await applyProxySettings({
     mode: 'none',
     httpProxy: '',
     httpsProxy: '',
     noProxy: '',
   }).catch(() => undefined);
+  ensureWindowsTaskbarShortcut();
   registerLocalFileProtocol();
   createWindow();
   createTray();

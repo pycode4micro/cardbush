@@ -712,6 +712,49 @@ export function SettingsView({
               />
             )}
           </SettingsCard>
+          <SettingsCard
+            title={language === 'zh' ? '引导方式' : 'Guidance delivery'}
+            subtitle={
+              language === 'zh'
+                ? '设置任务运行中再次发送内容时，是等待下一轮还是立即交给当前轮次。'
+                : 'Choose whether messages sent during a running task wait for the next turn or enter the active turn immediately.'
+            }
+          >
+            <SettingsRadio
+              name="guidance-delivery-mode"
+              value="queue"
+              title={language === 'zh' ? '加入队列' : 'Add to queue'}
+              subtitle={
+                language === 'zh'
+                  ? '等待当前回复完成，再作为下一条消息自动发送。'
+                  : 'Wait for the current response, then send it automatically as the next message.'
+              }
+              checked={settings.guidance.deliveryMode === 'queue'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  guidance: { deliveryMode: 'queue' },
+                }))
+              }
+            />
+            <SettingsRadio
+              name="guidance-delivery-mode"
+              value="immediate"
+              title={language === 'zh' ? '马上发送' : 'Send immediately'}
+              subtitle={
+                language === 'zh'
+                  ? '立即提交到当前运行轮次，在下一次可用的执行边界生效。'
+                  : 'Submit to the active turn now and apply it at the next available execution boundary.'
+              }
+              checked={settings.guidance.deliveryMode === 'immediate'}
+              onChange={() =>
+                updateSettings((current) => ({
+                  ...current,
+                  guidance: { deliveryMode: 'immediate' },
+                }))
+              }
+            />
+          </SettingsCard>
         </div>
       );
     }

@@ -1,8 +1,9 @@
-import { Eye, FileImage, LoaderCircle, X } from 'lucide-react';
+import { Eye, FileImage, LoaderCircle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
+import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
 
 type ToolImagePreview = {
   name: string;
@@ -86,29 +87,11 @@ export function ToolImageArtifactViewer({
         })}
       </div>
       {preview && (
-        <div
-          className="modal-backdrop image-preview-backdrop"
-          onMouseDown={() => setPreview(null)}
-        >
-          <section
-            className="image-preview-dialog"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <strong title={preview.path}>{preview.name}</strong>
-              <button
-                type="button"
-                onClick={() => setPreview(null)}
-                aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
-              >
-                <X size={16} />
-              </button>
-            </header>
-            <div className="image-preview-stage">
-              <img src={preview.src} alt={preview.name} />
-            </div>
-          </section>
-        </div>
+        <ImagePreviewDialog
+          image={preview}
+          language={language}
+          onClose={() => setPreview(null)}
+        />
       )}
     </>
   );

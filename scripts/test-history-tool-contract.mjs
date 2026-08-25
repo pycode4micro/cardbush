@@ -280,6 +280,16 @@ assert.match(
 );
 assert.match(
   bubbleSource,
+  /guidanceBoundaryRound \? \([\s\S]*?assistantBody[\s\S]*?\) : finalAssistantRound/,
+  'Turn-guidance interruption segments must stay visible instead of entering the processed disclosure',
+);
+assert.match(
+  bubbleSource,
+  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveStoppedExecutionRecord/,
+  'Visible guidance segments must retain their inline tool execution order',
+);
+assert.match(
+  bubbleSource,
   /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
   'The terminal turn must keep the processed header and final answer in chat',
 );

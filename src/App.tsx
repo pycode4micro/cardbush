@@ -142,6 +142,7 @@ import {
   changeRootForConversation,
   conversationProjectDir as conversationProjectRoot,
   conversationWorkspaceRoot,
+  isOnlyTalkConversation,
 } from './features/conversationWorkspace';
 import {
   ChatSidebar,
@@ -308,6 +309,7 @@ const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
 const osConversationStorageKey = 'cardbush_os_conversation_id';
 const recentProjectStorageKey = 'cardbush_recent_project_dir';
+const onlyTalkModeStorageKey = 'cardbush_only_talk_mode';
 const defaultShadowAccentColor = '#a8d5b5';
 const thinkingEventName = 'cardbush:thinking';
 
@@ -361,6 +363,9 @@ const defaultAppSettings: AppSettingsState = {
   },
   thinking: {
     visible: false,
+  },
+  guidance: {
+    deliveryMode: 'queue',
   },
   terminal: {
     runtime: 'powershell',
@@ -477,6 +482,10 @@ function CardbushApp() {
   const [recentProjectDir, setRecentProjectDir] = useState(
     () => window.localStorage.getItem(recentProjectStorageKey)?.trim() ?? '',
   );
+  const [onlyTalkMode, setOnlyTalkMode] = useState(
+    () => window.localStorage.getItem(onlyTalkModeStorageKey) === 'true',
+  );
+  const onlyTalkModeSyncedRef = useRef(false);
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [osWallpaperSource, setOsWallpaperSource] = useState('');
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
@@ -1448,6 +1457,47 @@ function CardbushApp() {
     [chat, fallbackProjectDir, rememberRecentProject],
   );
 
+  const changeOnlyTalkMode = useCallback((enabled: boolean) => {
+    onlyTalkModeSyncedRef.current = enabled;
+    setOnlyTalkMode(enabled);
+    window.localStorage.setItem(onlyTalkModeStorageKey, String(enabled));
+    setSection('chat');
+    if (enabled) {
+      const recentTaskConversation = chat.conversations.find(isOnlyTalkConversation);
+      if (recentTaskConversation) {
+        chat.openConversation(recentTaskConversation.id);
+      } else {
+        void chat.startConversation();
+      }
+      return;
+    }
+    if (!fallbackProjectDir) return;
+    const recentProjectConversation = chat.conversations.find((conversation) => {
+      const projectDir = conversationProjectRoot(conversation);
+      return Boolean(projectDir && samePath(projectDir, fallbackProjectDir));
+    });
+    if (recentProjectConversation) {
+      chat.openConversation(recentProjectConversation.id);
+    } else {
+      void chat.startConversation(fallbackProjectDir);
+    }
+  }, [chat, fallbackProjectDir]);
+
+  useEffect(() => {
+    if (!onlyTalkMode) {
+      onlyTalkModeSyncedRef.current = false;
+      return;
+    }
+    if (chat.loading || onlyTalkModeSyncedRef.current) return;
+    onlyTalkModeSyncedRef.current = true;
+    const recentTaskConversation = chat.conversations.find(isOnlyTalkConversation);
+    if (recentTaskConversation) {
+      chat.openConversation(recentTaskConversation.id);
+    } else {
+      void chat.startConversation();
+    }
+  }, [chat.conversations, chat.loading, chat.openConversation, chat.startConversation, onlyTalkMode]);
+
   const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
     const normalized = projectDir?.trim() || null;
     if (normalized) rememberRecentProject(normalized);
@@ -2095,6 +2145,8 @@ function CardbushApp() {
                 projects={projectItems}
                 conversations={chat.conversations}
                 changeReportsByConversation={changeReportsByConversation}
+                onlyTalkMode={onlyTalkMode}
+                onOnlyTalkModeChange={changeOnlyTalkMode}
                 onSectionChange={(nextSection) => {
                   if (nextSection === 'os') {
                     void enterOsMode();
@@ -2107,7 +2159,7 @@ function CardbushApp() {
                   setSection('chat');
                 }}
                 onCreateConversation={() => {
-                  createConversation();
+                  createConversation(onlyTalkMode ? null : undefined);
                 }}
                 onAddProject={() => void addProject()}
                 onProjectAction={(action, project) => void handleProjectAction(action, project)}
@@ -2155,6 +2207,7 @@ function CardbushApp() {
                   backendCapabilities.osMode && backendCapabilities.desktopAutomation
                 }
                 osSettings={appSettings.os}
+                onlyTalkMode={onlyTalkMode}
                 onOsSettingsChange={(os) => updateAppSettings((current) => ({ ...current, os }))}
                 onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
@@ -2163,11 +2216,17 @@ function CardbushApp() {
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={section === 'os' ? undefined : activeProjectDir}
-                selectedProjectDir={section === 'os' ? '' : activeConversationProjectDir}
-                availableProjects={projectItems.filter((project) => !project.archived)}
+                selectedProjectDir={
+                  section === 'os' || onlyTalkMode ? '' : activeConversationProjectDir
+                }
+                availableProjects={
+                  onlyTalkMode
+                    ? []
+                    : projectItems.filter((project) => !project.archived)
+                }
                 onWelcomeProjectChange={changeWelcomeProject}
                 projectContext={
-                  section === 'os'
+                  section === 'os' || onlyTalkMode
                     ? ''
                     : projectContexts[projectContextKey(activeProjectDir)] ?? ''
                 }
@@ -2195,6 +2254,7 @@ function CardbushApp() {
                 shadowAccentColor={appSettings.shadow.accentColor}
                 thinkingNotice={section === 'chat' ? thinkingNotice : null}
                 thinkingVisible={reasoningTraceVisible}
+                guidanceDeliveryMode={appSettings.guidance.deliveryMode}
                 terminalRuntime={appSettings.terminal.runtime}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
@@ -2230,7 +2290,9 @@ function CardbushApp() {
                 onPermissionModeChange={chat.setPermissionMode}
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
-                onCreateConversation={() => createConversation(activeProjectDir)}
+                onCreateConversation={() =>
+                  createConversation(onlyTalkMode ? null : activeProjectDir)
+                }
                 onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
                 onVisualInputEnabledChange={setVisualInputEnabled}
@@ -2285,7 +2347,9 @@ function CardbushApp() {
                 onToggleTool={toggleToolEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
-                onCreateConversation={() => createConversation(activeProjectDir)}
+                onCreateConversation={() =>
+                  createConversation(onlyTalkMode ? null : activeProjectDir)
+                }
                 onOpenConversation={(conversationId) => {
                   chat.openConversation(conversationId);
                   setSection('chat');
@@ -2771,6 +2835,12 @@ function readInitialAppSettings(): AppSettingsState {
     thinking: {
       visible: window.localStorage.getItem('cardbush_thinking_visible') === 'true',
     },
+    guidance: {
+      deliveryMode:
+        window.localStorage.getItem('cardbush_guidance_delivery_mode') === 'immediate'
+          ? 'immediate'
+          : 'queue',
+    },
     terminal: {
       runtime: terminalRuntimeFromStorage(
         window.localStorage.getItem('cardbush_terminal_runtime'),
@@ -2933,6 +3003,10 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
     thinking: {
       visible: settings.thinking?.visible === true,
     },
+    guidance: {
+      deliveryMode:
+        settings.guidance?.deliveryMode === 'immediate' ? 'immediate' : 'queue',
+    },
     terminal: {
       runtime: normalizeTerminalRuntime(settings.terminal?.runtime),
     },
@@ -3041,6 +3115,10 @@ function persistAppSettings(settings: AppSettingsState) {
   window.localStorage.setItem(
     'cardbush_thinking_visible',
     String(settings.thinking.visible),
+  );
+  window.localStorage.setItem(
+    'cardbush_guidance_delivery_mode',
+    settings.guidance.deliveryMode,
   );
   window.localStorage.removeItem('cardbush_thinking_accent_color');
   window.localStorage.setItem(
@@ -3626,6 +3704,7 @@ function ChatPanel({
   osModeEnabled,
   osRuntimeAvailable,
   osSettings,
+  onlyTalkMode,
   onOsSettingsChange,
   onExitOsMode,
   sidebarCollapsed,
@@ -3654,6 +3733,7 @@ function ChatPanel({
   shadowAccentColor,
   thinkingNotice,
   thinkingVisible,
+  guidanceDeliveryMode,
   terminalRuntime,
   loading,
   sending,
@@ -3715,6 +3795,7 @@ function ChatPanel({
   osModeEnabled: boolean;
   osRuntimeAvailable: boolean;
   osSettings: AppSettingsState['os'];
+  onlyTalkMode: boolean;
   onOsSettingsChange: (settings: AppSettingsState['os']) => void;
   onExitOsMode: () => void;
   sidebarCollapsed: boolean;
@@ -3743,6 +3824,7 @@ function ChatPanel({
   shadowAccentColor: string;
   thinkingNotice: ThinkingNotice | null;
   thinkingVisible: boolean;
+  guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
   terminalRuntime: TerminalRuntime;
   loading: boolean;
   sending: boolean;
@@ -5880,6 +5962,28 @@ function ChatPanel({
 
   const handleComposerSend = useCallback(
     async (text: string) => {
+      if (
+        sending &&
+        guidanceDeliveryMode === 'immediate' &&
+        activeTurnId
+      ) {
+        const guidanceAnchor: ChatMessage = {
+          ...(activeAssistantForRender?.message ?? {
+            id: `active-turn-${activeTurnId}`,
+            role: 'assistant',
+            content: '',
+            createdAt: new Date().toISOString(),
+          }),
+          conversationId: activeConversationId,
+          turnId: activeTurnId,
+        };
+        await onGuideMessage(
+          guidanceAnchor,
+          text,
+          'append_context',
+        );
+        return;
+      }
       if (!sending) {
         const shouldFollowSubmission =
           !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
@@ -5893,7 +5997,16 @@ function ChatPanel({
       }
       await onSend(text);
     },
-    [onSend, sending, setScrollBottomVisible],
+    [
+      activeAssistantForRender,
+      activeConversationId,
+      activeTurnId,
+      guidanceDeliveryMode,
+      onGuideMessage,
+      onSend,
+      sending,
+      setScrollBottomVisible,
+    ],
   );
 
   const toggleConsole = useCallback(
@@ -5915,14 +6028,39 @@ function ChatPanel({
     }
   }, [consoleMode, gitAvailable, terminalAvailable]);
 
+  const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
+  const [workSummaryAnchorRight, setWorkSummaryAnchorRight] = useState(12);
   const chatBodyStyle = {
     '--composer-dock-height': `${composerDockHeight}px`,
     '--quick-context-bottom-inset': `${quickContextBottomInset}px`,
     '--stream-status-height': `${streamStatusHeight}px`,
+    '--work-summary-anchor-right': `${workSummaryAnchorRight}px`,
   } as CSSProperties;
-  const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const showWorkSummary = workSummaryVisible && !inspectorOpen;
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
+  const updateRestoredWorkSummaryAnchor = useCallback((anchor?: HTMLElement | null) => {
+    if (windowMaximized) return;
+    const chatBody = chatBodyRef.current;
+    const toggle = anchor ?? chatBody
+      ?.closest('.chat-panel')
+      ?.querySelector<HTMLElement>('[data-work-summary-toggle]');
+    if (!chatBody || !toggle) return;
+    const bodyBounds = chatBody.getBoundingClientRect();
+    const toggleBounds = toggle.getBoundingClientRect();
+    const summaryWidth = Math.min(336, Math.max(0, bodyBounds.width - 24));
+    const maximumRight = Math.max(12, bodyBounds.width - summaryWidth - 12);
+    setWorkSummaryAnchorRight(Math.min(
+      maximumRight,
+      Math.max(12, Math.round(bodyBounds.right - toggleBounds.right)),
+    ));
+  }, [windowMaximized]);
+  useEffect(() => {
+    if (!showWorkSummary || windowMaximized) return undefined;
+    const refreshAnchor = () => updateRestoredWorkSummaryAnchor();
+    refreshAnchor();
+    window.addEventListener('resize', refreshAnchor);
+    return () => window.removeEventListener('resize', refreshAnchor);
+  }, [showWorkSummary, updateRestoredWorkSummaryAnchor, windowMaximized]);
   useEffect(() => {
     if (!showWorkSummary || windowMaximized) {
       return undefined;
@@ -6013,7 +6151,8 @@ function ChatPanel({
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
           onToggleWorkSummary={renderMessages.length > 0
-            ? () => {
+            ? (anchor) => {
+                updateRestoredWorkSummaryAnchor(anchor);
                 setWorkSummaryVisible((current) => !current);
               }
             : undefined}
@@ -6124,11 +6263,13 @@ function ChatPanel({
             key={activeConversationId || 'new-session'}
             language={language}
             osModeEnabled={osModeEnabled}
+            onlyTalkMode={onlyTalkMode}
             osGamepadConnected={osGamepad.connected}
             draft={draft}
             onDraftChange={onDraftChange}
             sending={sending}
             stopping={stopping}
+            guidanceDeliveryMode={guidanceDeliveryMode}
             cancelEnabled={Boolean(activeTurnId)}
             queuedMessageCount={queuedMessageCount}
             queuedMessagePreview={queuedMessagePreview}
@@ -6325,6 +6466,7 @@ function ChatPanel({
               onDraftChange={shadowThreadOpen ? setShadowDraft : onDraftChange}
               sending={shadowThreadOpen ? shadowReplying : sending}
               stopping={shadowThreadOpen ? false : stopping}
+              guidanceDeliveryMode={shadowThreadOpen ? 'queue' : guidanceDeliveryMode}
               cancelEnabled={shadowThreadOpen ? shadowReplying : Boolean(activeTurnId)}
               queuedMessageCount={0}
               queuedMessagePreview=""
@@ -6552,11 +6694,13 @@ function ConversationConnectionNotice({
 function WelcomeComposer({
   language,
   osModeEnabled = false,
+  onlyTalkMode = false,
   osGamepadConnected = false,
   draft,
   onDraftChange,
   sending,
   stopping,
+  guidanceDeliveryMode,
   cancelEnabled,
   queuedMessageCount,
   queuedMessagePreview,
@@ -6598,11 +6742,13 @@ function WelcomeComposer({
 }: {
   language: AppLanguage;
   osModeEnabled?: boolean;
+  onlyTalkMode?: boolean;
   osGamepadConnected?: boolean;
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
   stopping: boolean;
+  guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
   cancelEnabled: boolean;
   queuedMessageCount: number;
   queuedMessagePreview: string;
@@ -6651,6 +6797,7 @@ function WelcomeComposer({
       onDraftChange={onDraftChange}
       sending={sending}
       stopping={stopping}
+      guidanceDeliveryMode={guidanceDeliveryMode}
       cancelEnabled={cancelEnabled}
       queuedMessageCount={queuedMessageCount}
       queuedMessagePreview={queuedMessagePreview}
@@ -6697,20 +6844,26 @@ function WelcomeComposer({
             <img className="welcome-hero-logo" src="./cardbush-logo.png" alt="" />
           </span>
           <h2>
-            {language === 'zh'
-              ? `你想让我们在 ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'} 中构建什么？`
-              : `What do you want us to build in ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'}?`}
+            {onlyTalkMode
+              ? language === 'zh'
+                ? '你想聊些什么？'
+                : 'What would you like to talk about?'
+              : language === 'zh'
+                ? `你想让我们在 ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'} 中构建什么？`
+                : `What do you want us to build in ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'}?`}
           </h2>
         </div>
       )}
       {!osModeEnabled ? (
-        <div className="welcome-input-stack">
-          <WelcomeProjectSwitcher
-            language={language}
-            projects={availableProjects}
-            selectedProjectDir={selectedProjectDir}
-            onSelect={onProjectChange}
-          />
+        <div className={`welcome-input-stack${onlyTalkMode ? ' only-talk' : ''}`}>
+          {!onlyTalkMode && (
+            <WelcomeProjectSwitcher
+              language={language}
+              projects={availableProjects}
+              selectedProjectDir={selectedProjectDir}
+              onSelect={onProjectChange}
+            />
+          )}
           {welcomeComposer}
         </div>
       ) : (
@@ -7439,7 +7592,7 @@ function TopBar({
   onToggleTerminal?: () => void;
   workSummaryVisible?: boolean;
   reviewAvailable?: boolean;
-  onToggleWorkSummary?: () => void;
+  onToggleWorkSummary?: (anchor: HTMLElement) => void;
   onOpenReview?: () => void;
   onRevealSidebar: () => void;
 }) {
@@ -7506,7 +7659,7 @@ function TopBar({
           className={`topbar-inspector-action ${workSummaryVisible ? 'active' : ''}`}
           type="button"
           data-work-summary-toggle
-          onClick={onToggleWorkSummary}
+          onClick={(event) => onToggleWorkSummary(event.currentTarget)}
           title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
         >
           <Clipboard size={15} />

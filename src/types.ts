@@ -259,6 +259,12 @@ interface ThinkingUiSettings {
   visible: boolean;
 }
 
+export type GuidanceDeliveryMode = 'queue' | 'immediate';
+
+interface GuidanceUiSettings {
+  deliveryMode: GuidanceDeliveryMode;
+}
+
 export interface ThinkingStreamEvent {
   id: string;
   channel: 'reasoning';
@@ -324,6 +330,7 @@ export interface AppSettingsState {
   browser: BrowserSettings;
   shadow: ShadowUiSettings;
   thinking: ThinkingUiSettings;
+  guidance: GuidanceUiSettings;
   terminal: TerminalSettings;
   os: OsSettings;
   backendAuth: BackendAuthSettings;

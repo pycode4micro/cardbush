@@ -88,6 +88,14 @@ assert.match(app, /!showWorkSummary \|\| windowMaximized/);
 assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
 assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);
 assert.match(app, /data-work-summary-toggle/);
+assert.match(app, /--work-summary-anchor-right/);
+assert.match(app, /bodyBounds\.right - toggleBounds\.right/);
+assert.match(app, /onToggleWorkSummary\(event\.currentTarget\)/);
+assert.match(
+  css,
+  /\.window-restored \.conversation-work-summary\s*\{[\s\S]*?top:\s*8px;[\s\S]*?right:\s*var\(--work-summary-anchor-right, 12px\)/,
+  'Restored windows must anchor the summary below its toolbar button instead of presenting it as a right sidebar',
+);
 assert.match(app, /retainedInspectorContent/);
 assert.match(app, /sidebarPreviewWidth/);
 assert.match(app, /onResizeEnd=\{\(width, shouldCollapse\)/);
@@ -137,7 +145,10 @@ assert.match(runtimeRail, /type RuntimeRailKind = RuntimeRailItem\['kind'\]/);
 assert.match(runtimeRail, /const \[screenKind, setScreenKind\] = useState<RuntimeRailKind \| null>\(null\)/);
 assert.match(runtimeRail, /railItems\.find\(\(item\) => item\.kind === screenKind\) \?\? railItems\[0\]/);
 assert.match(runtimeRail, /current && availableRailKinds\.includes\(current\)/);
-assert.match(runtimeRail, /\[activePanel, availableRailKinds, rollingToKind, screenKind\]/);
+assert.match(
+  runtimeRail,
+  /\[\s*activePanel,\s*availableRailKinds,\s*priorityKind,\s*rollingToKind,\s*screenKind,?\s*\]/,
+);
 assert.doesNotMatch(
   runtimeRail,
   /\[activePanel, railItems, railKinds\]/,
@@ -157,6 +168,13 @@ assert.doesNotMatch(runtimeRail, /composer-runtime-tabs|runtime-context-tab/);
 assert.match(runtimeRail, /kind: 'processing' \| 'thinking' \| 'changes' \| 'queue'/);
 assert.match(runtimeRail, /queuedMessageCount > 0/);
 assert.match(runtimeRail, /renderedPanel === 'queue'/);
+assert.match(runtimeRail, /queuedMessages\.map\(\(item, index\) =>/);
+assert.match(runtimeRail, /guideQueuedMessage\(item\.id\)/);
+assert.match(runtimeRail, /onEditQueuedMessage\?\.\(item\)/);
+assert.match(runtimeRail, /onRemoveQueuedMessage\?\.\(item\.id\)/);
+assert.match(runtimeRail, /previousQueuedMessageCountRef/);
+assert.match(runtimeRail, /setPriorityKind\('queue'\)/);
+assert.match(runtimeRail, /setRollingToKind\(priorityKind\)/);
 assert.match(app, /currentTurnChangeSummary \|\| queuedMessageCount > 0/);
 assert.match(app, /queuedMessageCount=\{0\}/);
 assert.match(runtimeRail, /className=\{`runtime-screen-track \$\{reelAnimating \? 'rolling' : ''\}`\}/);
@@ -179,6 +197,8 @@ assert.match(
 );
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
+assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
+assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
 assert.match(messageBubble, /key=\{segment\.id\}/);
 assert.doesNotMatch(messageBubble, /key=\{`\$\{segment\.id\}-\$\{index\}`\}/);
 assert.match(

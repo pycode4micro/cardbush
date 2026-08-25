@@ -61,6 +61,7 @@ import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
 } from './markdownFormat';
+import { ImagePreviewDialog } from './ImagePreviewDialog';
 import {
   linkifyLocalFileReferences,
   localFileReference,
@@ -816,6 +817,8 @@ function MessageBubbleView({
     ? activeAssistantTranscriptMessages(loopHistory, message)
     : [];
   const renderActiveTranscript = activeTranscriptMessages.length > 1;
+  const guidanceBoundaryRound =
+    !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
   const preserveStoppedExecutionRecord =
     isStoppedAssistantMessage(message) &&
     !visibleLoopHistory.some(
@@ -825,7 +828,9 @@ function MessageBubbleView({
     message.role === 'assistant'
       ? visibleTopLevelToolExecutions(
           allToolExecutions,
-          isActiveAssistantTurn || preserveStoppedExecutionRecord,
+          isActiveAssistantTurn ||
+            guidanceBoundaryRound ||
+            preserveStoppedExecutionRecord,
         )
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
@@ -954,6 +959,8 @@ function MessageBubbleView({
             />
           )}
           {isActiveAssistantTurn ? (
+            assistantBody
+          ) : guidanceBoundaryRound ? (
             assistantBody
           ) : finalAssistantRound ? (
             <>
@@ -1562,6 +1569,22 @@ function isStoppedAssistantMessage(message: ChatMessage) {
     message.status === 'stopped' ||
     message.metadata?.stopped === true ||
     message.metadata?.cardbush_terminal_stopped === true
+  );
+}
+
+function isGuidanceBoundaryAssistantMessage(message: ChatMessage) {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.segment_boundary === 'turn_guidance' ||
+    metadata.segmentBoundary === 'turn_guidance' ||
+    String(
+      metadata.sealed_by_client_message_id ??
+        metadata.sealedByClientMessageId ??
+        '',
+    ).trim().length > 0
   );
 }
 
@@ -2754,42 +2777,6 @@ function MessageImagePreviewButton({
         <img src={src} alt={name} onError={() => void recoverLocalImage()} />
       )}
     </button>
-  );
-}
-
-export function ImagePreviewDialog({
-  image,
-  language,
-  onClose,
-}: {
-  image: ImagePreview;
-  language: AppLanguage;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="modal-backdrop image-preview-backdrop"
-      onMouseDown={onClose}
-    >
-      <section
-        className="image-preview-dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header>
-          <strong title={image.path ?? image.name}>{image.name}</strong>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
-          >
-            <X size={16} />
-          </button>
-        </header>
-        <div className="image-preview-stage">
-          <img src={image.src} alt={image.name} />
-        </div>
-      </section>
-    </div>
   );
 }
 

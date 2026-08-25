@@ -41,7 +41,10 @@ import type {
   SessionAttentionState,
 } from '../../types';
 import { sectionLabels } from '../appSections';
-import { conversationProjectDir } from '../conversationWorkspace';
+import {
+  conversationProjectDir,
+  isOnlyTalkConversation,
+} from '../conversationWorkspace';
 import { copyText } from '../messageFeedback';
 import {
   groupChangeReportsByTurn,
@@ -122,6 +125,8 @@ export function ChatSidebar({
   projects: projectItems,
   conversations: conversationItems,
   changeReportsByConversation,
+  onlyTalkMode,
+  onOnlyTalkModeChange,
   onSectionChange,
   onConversationChange,
   onCreateConversation,
@@ -141,6 +146,8 @@ export function ChatSidebar({
   projects: ProjectItem[];
   conversations: ConversationSummary[];
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
+  onlyTalkMode: boolean;
+  onOnlyTalkModeChange: (enabled: boolean) => void;
   onSectionChange: (value: AppSection) => void;
   onConversationChange: (id: string) => void;
   onCreateConversation: () => void;
@@ -195,6 +202,13 @@ export function ChatSidebar({
     () => visibleConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
+  const onlyTalkConversations = useMemo(() => {
+    const taskConversations = visibleConversations.filter(isOnlyTalkConversation);
+    return [
+      ...taskConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
+      ...taskConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
+    ];
+  }, [pinnedConversationIds, visibleConversations]);
   useEffect(() => {
     const active = visibleConversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -538,21 +552,38 @@ export function ChatSidebar({
       aria-hidden={!softVisible}
     >
       <nav className="sidebar-nav">
-        <NavRow
-          icon={<Edit3 size={14} />}
-          label={language === 'zh' ? '新会话' : 'New chat'}
-          onClick={onCreateConversation}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'nav:new-chat', [
-              {
-                key: 'new-chat',
-                icon: <Edit3 size={15} />,
-                label: language === 'zh' ? '新建普通对话' : 'New chat',
-                onClick: onCreateConversation,
-              },
-            ])
-          }
-        />
+        <div className="new-chat-mode-row">
+          <NavRow
+            icon={<Edit3 size={14} />}
+            label={language === 'zh' ? '新会话' : 'New chat'}
+            onClick={onCreateConversation}
+            onContextMenu={(event) =>
+              openContextMenu(event, 'nav:new-chat', [
+                {
+                  key: 'new-chat',
+                  icon: <Edit3 size={15} />,
+                  label: language === 'zh' ? '新建普通对话' : 'New chat',
+                  onClick: onCreateConversation,
+                },
+              ])
+            }
+          />
+          <button
+            className={`only-talk-toggle${onlyTalkMode ? ' active' : ''}`}
+            type="button"
+            aria-pressed={onlyTalkMode}
+            aria-label={language === 'zh' ? '切换仅会话模式' : 'Toggle only talk mode'}
+            title={
+              onlyTalkMode
+                ? language === 'zh' ? '返回项目模式' : 'Return to projects'
+                : language === 'zh' ? '仅会话' : 'Only talk'
+            }
+            onClick={() => onOnlyTalkModeChange(!onlyTalkMode)}
+          >
+            <MessageSquare size={12} />
+            <span>{language === 'zh' ? '仅会话' : 'Only talk'}</span>
+          </button>
+        </div>
         <NavRow
           active={section === 'search'}
           icon={<Search size={14} />}
@@ -572,62 +603,85 @@ export function ChatSidebar({
       </nav>
 
       <div className="sidebar-scroll">
-        <SectionHeader
-          title={language === 'zh' ? '置顶' : 'Pinned'}
-          action={<Pin size={14} />}
-          actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
-          expanded={expandedSections.has('pinned')}
-          onToggle={() => toggleSection('pinned')}
-        />
-        {expandedSections.has('pinned') && (
-          pinnedProjects.length > 0 || pinnedConversations.length > 0
-            ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
-            : (
-              <div className="sidebar-pinned-empty">
-                {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
+        <div
+          key={onlyTalkMode ? 'only-talk' : 'projects'}
+          className={`sidebar-mode-content ${onlyTalkMode ? 'only-talk' : 'projects'}`}
+        >
+          {onlyTalkMode ? (
+            onlyTalkConversations.length > 0 ? (
+              <div className="only-talk-conversation-list">
+                {onlyTalkConversations.map(renderStandaloneConversation)}
+              </div>
+            ) : (
+              <div className="only-talk-empty">
+                <MessageSquare size={16} />
+                <span>
+                  {language === 'zh'
+                    ? '还没有普通对话，点击上方“新会话”开始'
+                    : 'No chats yet. Use New chat above to begin.'}
+                </span>
               </div>
             )
-        )}
+          ) : (
+            <>
+              <SectionHeader
+                title={language === 'zh' ? '置顶' : 'Pinned'}
+                action={<Pin size={14} />}
+                actionLabel={language === 'zh' ? '置顶内容' : 'Pinned items'}
+                expanded={expandedSections.has('pinned')}
+                onToggle={() => toggleSection('pinned')}
+              />
+              {expandedSections.has('pinned') && (
+                pinnedProjects.length > 0 || pinnedConversations.length > 0
+                  ? <>{pinnedProjects.map(renderProjectBlock)}{pinnedConversations.map(renderStandaloneConversation)}</>
+                  : (
+                    <div className="sidebar-pinned-empty">
+                      {language === 'zh' ? '右键项目或对话即可置顶' : 'Right-click a project or chat to pin it'}
+                    </div>
+                  )
+              )}
 
-        <SectionHeader
-          title={language === 'zh' ? '项目' : 'Projects'}
-          action={<FolderOpen size={14} />}
-          actionLabel={language === 'zh' ? '添加项目' : 'Add project'}
-          expanded={expandedSections.has('projects')}
-          onToggle={() => toggleSection('projects')}
-          onAction={onAddProject}
-          onContextMenu={(event) =>
-            openContextMenu(event, 'section:projects', [
-              {
-                key: 'toggle',
-                icon: <ChevronDown size={15} />,
-                label: expandedSections.has('projects')
-                  ? language === 'zh'
-                    ? '收起项目'
-                    : 'Collapse projects'
-                  : language === 'zh'
-                    ? '展开项目'
-                    : 'Expand projects',
-                onClick: () => toggleSection('projects'),
-              },
-              {
-                key: 'add-project',
-                icon: <FolderOpen size={15} />,
-                label: language === 'zh' ? '添加项目' : 'Add project',
-                onClick: onAddProject,
-              },
-              {
-                key: 'restore-conversations',
-                icon: <Archive size={15} />,
-                label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
-                disabled: archivedConversationIds.size === 0,
-                onClick: () => setArchivedConversationIds(new Set()),
-              },
-            ])
-          }
-        />
-        {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
-
+              <SectionHeader
+                title={language === 'zh' ? '项目' : 'Projects'}
+                action={<FolderOpen size={14} />}
+                actionLabel={language === 'zh' ? '添加项目' : 'Add project'}
+                expanded={expandedSections.has('projects')}
+                onToggle={() => toggleSection('projects')}
+                onAction={onAddProject}
+                onContextMenu={(event) =>
+                  openContextMenu(event, 'section:projects', [
+                    {
+                      key: 'toggle',
+                      icon: <ChevronDown size={15} />,
+                      label: expandedSections.has('projects')
+                        ? language === 'zh'
+                          ? '收起项目'
+                          : 'Collapse projects'
+                        : language === 'zh'
+                          ? '展开项目'
+                          : 'Expand projects',
+                      onClick: () => toggleSection('projects'),
+                    },
+                    {
+                      key: 'add-project',
+                      icon: <FolderOpen size={15} />,
+                      label: language === 'zh' ? '添加项目' : 'Add project',
+                      onClick: onAddProject,
+                    },
+                    {
+                      key: 'restore-conversations',
+                      icon: <Archive size={15} />,
+                      label: language === 'zh' ? '恢复归档对话' : 'Restore archived chats',
+                      disabled: archivedConversationIds.size === 0,
+                      onClick: () => setArchivedConversationIds(new Set()),
+                    },
+                  ])
+                }
+              />
+              {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
+            </>
+          )}
+        </div>
       </div>
 
       <button

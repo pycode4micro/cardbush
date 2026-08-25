@@ -48,7 +48,10 @@ assert.match(composer, /cancelReady && !stopping/);
 assert.doesNotMatch(bubble, /reason: reason \|\| 'user_stop'/);
 assert.doesNotMatch(bubble, /工具记录和文件变更仍保留/);
 assert.match(bubble, /const preserveStoppedExecutionRecord =/);
-assert.match(bubble, /isActiveAssistantTurn \|\| preserveStoppedExecutionRecord/);
+assert.match(
+  bubble,
+  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveStoppedExecutionRecord/,
+);
 assert.match(bubble, /message\.metadata\?\.cardbush_terminal_stopped === true/);
 
 const hookTranspiled = ts.transpileModule(hook, {

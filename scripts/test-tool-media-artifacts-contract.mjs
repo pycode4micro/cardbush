@@ -108,7 +108,8 @@ assert.doesNotMatch(bubbleSource, /toolArtifactPaths/);
 assert.match(toolBlockSource, /<ToolImageArtifactViewer/);
 assert.match(toolViewerSource, /'查看图像'/);
 assert.match(toolViewerSource, /readImageDataUrl\(pathValue\)/);
+assert.match(toolViewerSource, /<ImagePreviewDialog/);
 assert.match(cssSource, /\.message-image-preview img\s*\{[\s\S]*?object-fit:\s*contain/);
-assert.match(cssSource, /\.image-preview-stage img\s*\{[\s\S]*?max-height:\s*calc\(100vh - 180px\)/);
+assert.match(cssSource, /\.image-preview-canvas img\s*\{[\s\S]*?object-fit:\s*contain/);
 
 console.log('tool media artifact contract tests passed');

@@ -14,6 +14,10 @@ const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
+const conversationWorkspaceSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'conversationWorkspace.ts'),
+  'utf8',
+);
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
@@ -128,11 +132,24 @@ assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
 assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversation\)/);
 assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶对话/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
-assert.doesNotMatch(
-  sidebarSource,
-  /title=\{language === 'zh' \? '对话' : 'Conversations'\}/,
-  'The standalone conversation section must be removed from the sidebar',
+assert.match(sidebarSource, /className=\{`only-talk-toggle\$\{onlyTalkMode \? ' active' : ''\}`\}/);
+assert.match(sidebarSource, /aria-pressed=\{onlyTalkMode\}/);
+assert.match(sidebarSource, /onlyTalkConversations\.map\(renderStandaloneConversation\)/);
+assert.match(sidebarSource, /key=\{onlyTalkMode \? 'only-talk' : 'projects'\}/);
+assert.match(
+  appSource,
+  /createConversation\(onlyTalkMode \? null : undefined\)/,
+  'Only-talk new chats must explicitly bypass the recent-project fallback',
 );
+assert.match(appSource, /cardbush_only_talk_mode/);
+assert.match(conversationWorkspaceSource, /export function isOnlyTalkConversation/);
+assert.match(
+  conversationWorkspaceSource,
+  /metadataMode === 'task'/,
+  'Task metadata must override a stale project-dir index when grouping conversations',
+);
+assert.match(stylesSource, /@keyframes sidebar-mode-enter/);
+assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.sidebar-mode-content/);
 const sidebarIconRule = stylesSource.match(
   /\.nav-row-icon,\s*\.project-row-icon\s*\{([^}]*)\}/,
 )?.[1] ?? '';
@@ -156,7 +173,7 @@ assert.match(appSource, /placeholder=\{language === 'zh' \? '搜索项目' : 'Se
 assert.match(appSource, /不在项目中工作/);
 assert.match(
   appSource,
-  /className="welcome-input-stack"[\s\S]*?<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  /className=\{`welcome-input-stack\$\{onlyTalkMode \? ' only-talk' : ''\}`\}[\s\S]*?!onlyTalkMode && \([\s\S]*?<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
   'The project context rail must be physically joined above the welcome composer',
 );
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);

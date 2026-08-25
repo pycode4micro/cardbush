@@ -98,6 +98,17 @@ assert.equal(
   'foreground, control, and Goal streams must drain token text before an assistant revision resets the buffer',
 );
 
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
+assert.match(appSource, /guidanceDeliveryMode === 'immediate'/);
+assert.match(
+  appSource,
+  /const guidanceAnchor: ChatMessage[\s\S]*?turnId: activeTurnId[\s\S]*?onGuideMessage\([\s\S]*?guidanceAnchor,[\s\S]*?text,[\s\S]*?'append_context'/,
+);
+assert.match(appSource, /guidanceDeliveryMode=\{appSettings\.guidance\.deliveryMode\}/);
+
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
@@ -107,6 +118,8 @@ assert.match(bubbleSource, /发送中/);
 assert.match(bubbleSource, /已排队/);
 assert.match(bubbleSource, /发送失败/);
 assert.match(bubbleSource, /guidance-retry-button/);
+assert.match(bubbleSource, /isGuidanceBoundaryAssistantMessage\(message\)/);
+assert.match(bubbleSource, /guidanceBoundaryRound \? \([\s\S]*?assistantBody/);
 assert.match(bubbleSource, /onRetryGuidance\(message\)/);
 assert.match(bubbleSource, /等待本轮完成后/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);

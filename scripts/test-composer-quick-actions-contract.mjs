@@ -173,9 +173,14 @@ assert.match(
 );
 assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);
 assert.match(source, /停止生成/);
-assert.match(source, /<Square size=\{14\} fill="currentColor"/);
+assert.match(source, /<Square size=\{11\} fill="currentColor"/);
 assert.doesNotMatch(source, /<Pause\b/);
 assert.match(source, /aria-label=\{sendButtonLabel\}/);
+assert.match(
+  stylesSource,
+  /\.composer-actions \.send-button\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?border-radius:\s*50%/,
+  'The compact send control must remain a true circle',
+);
 assert.match(messageBubbleSource, /message-delivery-status/);
 assert.match(messageBubbleSource, /onRetryMessage\(message\)/);
 assert.match(chatHookSource, /let streamStarted = false/);

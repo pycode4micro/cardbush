@@ -13,7 +13,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ExperimentalGoal } from '../../backend/api';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
@@ -210,7 +210,9 @@ export function ComposerRuntimeRail({
   );
   const [screenKind, setScreenKind] = useState<RuntimeRailKind | null>(null);
   const [rollingToKind, setRollingToKind] = useState<RuntimeRailKind | null>(null);
+  const [priorityKind, setPriorityKind] = useState<RuntimeRailKind | null>(null);
   const [reelAnimating, setReelAnimating] = useState(false);
+  const previousQueuedMessageCountRef = useRef(queuedMessageCount);
   const currentRailItem =
     railItems.find((item) => item.kind === screenKind) ?? railItems[0] ?? null;
   const rollingRailItem = rollingToKind
@@ -254,6 +256,37 @@ export function ComposerRuntimeRail({
   }, [availableRailKinds, rollingToKind]);
 
   useEffect(() => {
+    const previousCount = previousQueuedMessageCountRef.current;
+    previousQueuedMessageCountRef.current = queuedMessageCount;
+    if (
+      queuedMessageCount <= previousCount ||
+      !availableRailKinds.includes('queue')
+    ) {
+      return;
+    }
+    setProcessingOpen(false);
+    setChangesOpen(false);
+    setQueueOpen(false);
+    if (thinkingOpen) onCloseThinking();
+    setReelAnimating(false);
+    setRollingToKind(null);
+    setPriorityKind('queue');
+  }, [
+    availableRailKinds,
+    onCloseThinking,
+    queuedMessageCount,
+    thinkingOpen,
+  ]);
+
+  useEffect(() => {
+    if (priorityKind && availableRailKinds.includes(priorityKind)) {
+      if (screenKind === priorityKind) {
+        setPriorityKind(null);
+      } else if (rollingToKind !== priorityKind) {
+        setRollingToKind(priorityKind);
+      }
+      return undefined;
+    }
     if (activePanel && availableRailKinds.includes(activePanel)) {
       setReelAnimating(false);
       setRollingToKind(null);
@@ -268,7 +301,13 @@ export function ComposerRuntimeRail({
       );
     }, 5000);
     return () => window.clearTimeout(timer);
-  }, [activePanel, availableRailKinds, rollingToKind, screenKind]);
+  }, [
+    activePanel,
+    availableRailKinds,
+    priorityKind,
+    rollingToKind,
+    screenKind,
+  ]);
 
   useEffect(() => {
     if (!rollingToKind) return undefined;
@@ -314,11 +353,11 @@ export function ComposerRuntimeRail({
     setQueueOpen((current) => !current);
   }
 
-  async function guideFirstQueuedMessage() {
-    if (!firstQueuedMessage || !onGuideQueuedMessage) return;
-    setGuidingQueuedId(firstQueuedMessage.id);
+  async function guideQueuedMessage(queuedId: string) {
+    if (!onGuideQueuedMessage) return;
+    setGuidingQueuedId(queuedId);
     try {
-      await onGuideQueuedMessage(firstQueuedMessage.id);
+      await onGuideQueuedMessage(queuedId);
     } finally {
       setGuidingQueuedId('');
     }
@@ -469,34 +508,45 @@ export function ComposerRuntimeRail({
             </button>
           </header>
           <div className="runtime-queue-detail">
-            <p>{queuePreview || (language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</p>
-            {firstQueuedMessage && (
-              <div className="runtime-queue-actions">
-                <button
-                  type="button"
-                  disabled={!onGuideQueuedMessage || guidingQueuedId === firstQueuedMessage.id}
-                  onClick={() => void guideFirstQueuedMessage()}
-                >
-                  {guidingQueuedId === firstQueuedMessage.id ? <LoaderCircle size={13} /> : <Sparkles size={13} />}
-                  <span>{language === 'zh' ? '引导' : 'Guide'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!onEditQueuedMessage}
-                  onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
-                >
-                  <Edit3 size={13} />
-                  <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={!onRemoveQueuedMessage}
-                  onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
-                >
-                  <Trash2 size={13} />
-                  <span>{language === 'zh' ? '删除' : 'Delete'}</span>
-                </button>
+            {queuedMessages.length > 0 ? (
+              <div className="runtime-queue-list">
+                {queuedMessages.map((item, index) => (
+                  <article className="runtime-queue-item" key={item.id}>
+                    <div className="runtime-queue-copy">
+                      <span>{index + 1}</span>
+                      <p title={item.text}>{item.text}</p>
+                    </div>
+                    <div className="runtime-queue-actions">
+                      <button
+                        type="button"
+                        disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
+                        onClick={() => void guideQueuedMessage(item.id)}
+                      >
+                        {guidingQueuedId === item.id ? <LoaderCircle size={13} /> : <Sparkles size={13} />}
+                        <span>{language === 'zh' ? '引导' : 'Guide'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!onEditQueuedMessage || Boolean(guidingQueuedId)}
+                        onClick={() => onEditQueuedMessage?.(item)}
+                      >
+                        <Edit3 size={13} />
+                        <span>{language === 'zh' ? '编辑' : 'Edit'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!onRemoveQueuedMessage || Boolean(guidingQueuedId)}
+                        onClick={() => onRemoveQueuedMessage?.(item.id)}
+                      >
+                        <Trash2 size={13} />
+                        <span>{language === 'zh' ? '删除' : 'Delete'}</span>
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
+            ) : (
+              <p>{queuePreview || (language === 'zh' ? '当前回复完成后自动发送' : 'Sends after the current reply')}</p>
             )}
           </div>
         </section>
