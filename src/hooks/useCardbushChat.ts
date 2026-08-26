@@ -1405,19 +1405,45 @@ export function useCardbushChat(
     );
   }, [clearSessionAttention]);
 
-  const renameConversation = useCallback((conversationId: string, title: string) => {
+  const renameConversation = useCallback(async (conversationId: string, title: string) => {
+    const normalizedId = conversationId.trim();
     const nextTitle = title.trim();
-    if (!nextTitle) {
-      return;
-    }
+    if (!normalizedId || !nextTitle) return false;
+    const previous = conversationsRef.current.find((item) => item.id === normalizedId);
+    if (!previous) return false;
+    if (previous.title.trim() === nextTitle) return true;
     setConversations((current) =>
       current.map((item) =>
-        item.id === conversationId ? { ...item, title: nextTitle } : item,
+        item.id === normalizedId ? { ...item, title: nextTitle } : item,
       ),
     );
-    void updateConversation({ sessionId: conversationId, title: nextTitle }).catch((caught) =>
-      setError(errorMessage(caught)),
-    );
+    try {
+      const synced = await updateConversation({ sessionId: normalizedId, title: nextTitle });
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === normalizedId
+            ? {
+                ...item,
+                ...synced,
+                id: normalizedId,
+                title: synced.title?.trim() || nextTitle,
+              }
+            : item,
+        ),
+      );
+      setError(null);
+      return true;
+    } catch (caught) {
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === normalizedId && item.title === nextTitle
+            ? { ...item, title: previous.title }
+            : item,
+        ),
+      );
+      setError(errorMessage(caught));
+      return false;
+    }
   }, []);
 
   const setConversationProject = useCallback(async (

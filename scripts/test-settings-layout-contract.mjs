@@ -75,6 +75,21 @@ assert.match(
   'Usage statistics must reflow when the settings content is narrow.',
 );
 assert.match(css, /\.settings-card-body\s*\{/);
+assert.match(settings, /const \[addModelExpanded, setAddModelExpanded\] = useState\(false\)/);
+assert.match(settings, /bodyHidden=\{!addModelExpanded\}/);
+assert.match(settings, /aria-expanded=\{addModelExpanded\}/);
+assert.match(settings, /const confirmResetModels = useCallback\(\(\) => \{/);
+assert.match(settings, /const confirmed = window\.confirm\([\s\S]*?if \(confirmed\) onResetModels\(\)/);
+assert.match(settings, /className="secondary-button danger model-clear-all-button"[\s\S]*?onClick=\{confirmResetModels\}/);
+assert.match(settings, /bodyHidden\?: boolean/);
+assert.match(settings, /!bodyHidden && <div className="settings-card-body">/);
+assert.match(css, /\.model-settings-stack\s*\{[\s\S]*?container-name:\s*model-settings/);
+assert.match(css, /@container model-settings \(max-width:\s*720px\)[\s\S]*?\.model-row[\s\S]*?repeat\(2,/);
+assert.match(
+  css,
+  /\.model-row > div > strong\s*\{[\s\S]*?overflow:\s*hidden;[\s\S]*?text-overflow:\s*ellipsis/,
+  'Long model names must stay inside their responsive summary column.',
+);
 assert.match(css, /\.settings-radio:has\(input:checked\)/);
 assert.match(css, /\.settings-switch input:checked::after/);
 assert.match(css, /@media \(max-width: 760px\)[\s\S]*?\.settings-actions > button/);

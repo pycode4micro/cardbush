@@ -4,11 +4,14 @@ import {
   CircleCheck,
   ChevronDown,
   Clipboard,
+  Cloud,
   Code2,
   Edit3,
   Folder,
   FolderOpen,
   LoaderCircle,
+  Mail,
+  MailOpen,
   MessageSquare,
   MoreHorizontal,
   Pin,
@@ -26,6 +29,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -62,6 +66,55 @@ export type ProjectAction =
 
 const sidebarMenuCloseEvent = 'cardbush-sidebar-menu-close';
 const pinnedConversationStorageKey = 'cardbush_pinned_conversation_ids';
+const conversationReadStateStorageKey = 'cardbush_conversation_read_state_v1';
+
+type ConversationReadReceipt = {
+  updatedAt: string;
+  attentionUpdatedAt: string;
+  forcedUnread: boolean;
+};
+
+type ConversationReadState = {
+  initialized: boolean;
+  receipts: Record<string, ConversationReadReceipt>;
+};
+
+function readConversationReadState(): ConversationReadState {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(conversationReadStateStorageKey) ?? 'null',
+    ) as Partial<ConversationReadState> | null;
+    if (!parsed || parsed.initialized !== true || !parsed.receipts) {
+      return { initialized: false, receipts: {} };
+    }
+    const receipts = Object.fromEntries(
+      Object.entries(parsed.receipts).flatMap(([conversationId, value]) => {
+        if (!value || typeof value !== 'object') return [];
+        const receipt = value as Partial<ConversationReadReceipt>;
+        return [[conversationId, {
+          updatedAt: String(receipt.updatedAt ?? ''),
+          attentionUpdatedAt: String(receipt.attentionUpdatedAt ?? ''),
+          forcedUnread: receipt.forcedUnread === true,
+        } satisfies ConversationReadReceipt]];
+      }),
+    );
+    return { initialized: true, receipts };
+  } catch {
+    return { initialized: false, receipts: {} };
+  }
+}
+
+function conversationReadReceipt(
+  conversation: ConversationSummary,
+  attention?: SessionAttentionState,
+  forcedUnread = false,
+): ConversationReadReceipt {
+  return {
+    updatedAt: conversation.updatedAt ?? '',
+    attentionUpdatedAt: attention?.updatedAt ?? '',
+    forcedUnread,
+  };
+}
 
 function readPinnedConversationIds() {
   try {
@@ -96,7 +149,9 @@ type SidebarContextMenuState = {
 type ConversationMenuOptions = {
   changeCount: number;
   pinned: boolean;
+  unread: boolean;
   onTogglePin: () => void;
+  onToggleRead: () => void;
   onOpenChanges?: () => void;
   onRename: () => void;
   onArchive: () => void;
@@ -154,7 +209,7 @@ export function ChatSidebar({
   onAddProject: () => void;
   onProjectAction: (action: ProjectAction, project: ProjectItem) => void;
   onDeleteConversation: (conversationId: string) => void;
-  onRenameConversation: (conversationId: string, title: string) => void;
+  onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onOpenConversationChanges: (conversationId: string) => void;
   onOpenSettings: () => void;
   softVisible?: boolean;
@@ -173,6 +228,9 @@ export function ChatSidebar({
   );
   const [pinnedConversationIds, setPinnedConversationIds] = useState<Set<string>>(
     readPinnedConversationIds,
+  );
+  const [conversationReadState, setConversationReadState] = useState<ConversationReadState>(
+    readConversationReadState,
   );
   const sidebarRef = useRef<HTMLElement | null>(null);
   const visibleProjects = useMemo(
@@ -209,6 +267,91 @@ export function ChatSidebar({
       ...taskConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
     ];
   }, [pinnedConversationIds, visibleConversations]);
+  const unreadConversationIds = useMemo(() => {
+    if (!conversationReadState.initialized) return new Set<string>();
+    return new Set(
+      conversationItems.flatMap((conversation) => {
+        const receipt = conversationReadState.receipts[conversation.id];
+        const attentionUpdatedAt = attentionByConversation?.[conversation.id]?.updatedAt ?? '';
+        const unread = !receipt || receipt.forcedUnread ||
+          receipt.updatedAt !== (conversation.updatedAt ?? '') ||
+          receipt.attentionUpdatedAt !== attentionUpdatedAt;
+        return unread ? [conversation.id] : [];
+      }),
+    );
+  }, [attentionByConversation, conversationItems, conversationReadState]);
+
+  const setConversationUnread = useCallback((conversationId: string, unread: boolean) => {
+    const conversation = conversationItems.find((item) => item.id === conversationId);
+    if (!conversation) return;
+    const receipt = conversationReadReceipt(
+      conversation,
+      attentionByConversation?.[conversationId],
+      unread,
+    );
+    setConversationReadState((current) => ({
+      initialized: true,
+      receipts: { ...current.receipts, [conversationId]: receipt },
+    }));
+  }, [attentionByConversation, conversationItems]);
+
+  useEffect(() => {
+    if (conversationReadState.initialized || conversationItems.length === 0) return;
+    setConversationReadState({
+      initialized: true,
+      receipts: Object.fromEntries(conversationItems.map((conversation) => [
+        conversation.id,
+        conversationReadReceipt(conversation, attentionByConversation?.[conversation.id]),
+      ])),
+    });
+  }, [attentionByConversation, conversationItems, conversationReadState.initialized]);
+
+  useEffect(() => {
+    if (!conversationReadState.initialized) return;
+    window.localStorage.setItem(
+      conversationReadStateStorageKey,
+      JSON.stringify(conversationReadState),
+    );
+  }, [conversationReadState]);
+
+  useEffect(() => {
+    if (!conversationReadState.initialized || !activeConversationId) return;
+    const markVisibleConversationRead = () => {
+      if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
+      const active = conversationItems.find((item) => item.id === activeConversationId);
+      if (!active) return;
+      const nextReceipt = conversationReadReceipt(
+        active,
+        attentionByConversation?.[activeConversationId],
+      );
+      setConversationReadState((current) => {
+        const previous = current.receipts[activeConversationId];
+        if (
+          previous && !previous.forcedUnread &&
+          previous.updatedAt === nextReceipt.updatedAt &&
+          previous.attentionUpdatedAt === nextReceipt.attentionUpdatedAt
+        ) {
+          return current;
+        }
+        return {
+          initialized: true,
+          receipts: { ...current.receipts, [activeConversationId]: nextReceipt },
+        };
+      });
+    };
+    markVisibleConversationRead();
+    window.addEventListener('focus', markVisibleConversationRead);
+    document.addEventListener('visibilitychange', markVisibleConversationRead);
+    return () => {
+      window.removeEventListener('focus', markVisibleConversationRead);
+      document.removeEventListener('visibilitychange', markVisibleConversationRead);
+    };
+  }, [
+    activeConversationId,
+    attentionByConversation,
+    conversationItems,
+    conversationReadState.initialized,
+  ]);
   useEffect(() => {
     const active = visibleConversations.find(
       (conversation) => conversation.id === activeConversationId,
@@ -423,6 +566,14 @@ export function ChatSidebar({
           : language === 'zh' ? '置顶对话' : 'Pin chat',
         onClick: options.onTogglePin,
       },
+      {
+        key: options.unread ? 'mark-read' : 'mark-unread',
+        icon: options.unread ? <MailOpen size={15} /> : <Mail size={15} />,
+        label: options.unread
+          ? language === 'zh' ? '标记为已读' : 'Mark as read'
+          : language === 'zh' ? '标记为未读' : 'Mark as unread',
+        onClick: options.onToggleRead,
+      },
     ];
     if (options.changeCount > 0) {
       items.push({
@@ -474,6 +625,7 @@ export function ChatSidebar({
         activeConversationId={activeConversationId}
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
+        unreadConversationIds={unreadConversationIds}
         menuOpen={openMenu === `project:${project.id}`}
         language={language}
         expanded={expandedProjectIds.has(project.id)}
@@ -502,6 +654,9 @@ export function ChatSidebar({
         }
         pinnedConversationIds={pinnedConversationIds}
         onToggleConversationPin={toggleConversationPin}
+        onToggleConversationRead={(conversationId) =>
+          setConversationUnread(conversationId, !unreadConversationIds.has(conversationId))
+        }
         changeReportsByConversation={changeReportsByConversation}
         onOpenConversationChanges={onOpenConversationChanges}
         openMenu={openMenu}
@@ -517,22 +672,20 @@ export function ChatSidebar({
         active={conversation.id === activeConversationId}
         running={runningConversationIds?.has(conversation.id) ?? false}
         attention={attentionByConversation?.[conversation.id]}
+        unread={unreadConversationIds.has(conversation.id)}
         pinned={pinnedConversationIds.has(conversation.id)}
         menuOpen={openMenu === `conversation:${conversation.id}`}
         language={language}
         onMenuToggle={() => toggleInlineMenu(`conversation:${conversation.id}`)}
         onTogglePin={() => toggleConversationPin(conversation.id)}
+        onToggleRead={() =>
+          setConversationUnread(conversation.id, !unreadConversationIds.has(conversation.id))
+        }
         onArchive={() => toggleConversationArchive(conversation.id)}
         onDelete={() => onDeleteConversation(conversation.id)}
         changeReports={changeReportsByConversation[conversation.id] ?? []}
         onOpenChanges={() => onOpenConversationChanges(conversation.id)}
-        onRename={() => {
-          const nextTitle = window.prompt(
-            language === 'zh' ? '重命名对话' : 'Rename chat',
-            conversation.title,
-          );
-          if (nextTitle?.trim()) onRenameConversation(conversation.id, nextTitle);
-        }}
+        onRename={(nextTitle) => onRenameConversation(conversation.id, nextTitle)}
         onContextMenu={(event, options) =>
           openContextMenu(
             event,
@@ -540,7 +693,10 @@ export function ChatSidebar({
             conversationMenuItems(conversation, options),
           )
         }
-        onClick={() => onConversationChange(conversation.id)}
+        onClick={() => {
+          setConversationUnread(conversation.id, false);
+          onConversationChange(conversation.id);
+        }}
       />
     );
   }
@@ -572,16 +728,24 @@ export function ChatSidebar({
             className={`only-talk-toggle${onlyTalkMode ? ' active' : ''}`}
             type="button"
             aria-pressed={onlyTalkMode}
-            aria-label={language === 'zh' ? '切换仅会话模式' : 'Toggle only talk mode'}
+            aria-label={
+              onlyTalkMode
+                ? language === 'zh' ? '切换到项目' : 'Switch to projects'
+                : language === 'zh' ? '切换到仅会话' : 'Switch to only talk'
+            }
             title={
               onlyTalkMode
-                ? language === 'zh' ? '返回项目模式' : 'Return to projects'
+                ? language === 'zh' ? '项目' : 'Projects'
                 : language === 'zh' ? '仅会话' : 'Only talk'
             }
             onClick={() => onOnlyTalkModeChange(!onlyTalkMode)}
           >
-            <MessageSquare size={12} />
-            <span>{language === 'zh' ? '仅会话' : 'Only talk'}</span>
+            {onlyTalkMode ? <Folder size={12} /> : <Cloud size={12} />}
+            <span>
+              {onlyTalkMode
+                ? language === 'zh' ? '项目' : 'Projects'
+                : language === 'zh' ? '仅会话' : 'Only talk'}
+            </span>
           </button>
         </div>
         <NavRow
@@ -809,6 +973,7 @@ function ProjectBlock({
   activeConversationId,
   runningConversationIds,
   attentionByConversation,
+  unreadConversationIds,
   language,
   expanded,
   menuOpen,
@@ -825,6 +990,7 @@ function ProjectBlock({
   onConversationContextMenu,
   pinnedConversationIds,
   onToggleConversationPin,
+  onToggleConversationRead,
   changeReportsByConversation,
   onOpenConversationChanges,
 }: {
@@ -833,6 +999,7 @@ function ProjectBlock({
   activeConversationId: string;
   runningConversationIds?: Set<string>;
   attentionByConversation?: Record<string, SessionAttentionState>;
+  unreadConversationIds: ReadonlySet<string>;
   language: AppLanguage;
   expanded: boolean;
   menuOpen: boolean;
@@ -845,7 +1012,7 @@ function ProjectBlock({
   onConversationMenuToggle: (conversationId: string) => void;
   onConversationArchive: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
-  onRenameConversation: (conversationId: string, title: string) => void;
+  onRenameConversation: (conversationId: string, title: string) => Promise<boolean>;
   onConversationContextMenu: (
     event: ReactMouseEvent,
     conversation: ConversationSummary,
@@ -853,6 +1020,7 @@ function ProjectBlock({
   ) => void;
   pinnedConversationIds: ReadonlySet<string>;
   onToggleConversationPin: (conversationId: string) => void;
+  onToggleConversationRead: (conversationId: string) => void;
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
   onOpenConversationChanges: (conversationId: string) => void;
 }) {
@@ -951,29 +1119,28 @@ function ProjectBlock({
           active={conversation.id === activeConversationId}
           running={runningConversationIds?.has(conversation.id) ?? false}
           attention={attentionByConversation?.[conversation.id]}
+          unread={unreadConversationIds.has(conversation.id)}
           nested
           pinned={pinnedConversationIds.has(conversation.id)}
           menuOpen={openMenu === `conversation:${conversation.id}`}
           language={language}
           onMenuToggle={() => onConversationMenuToggle(conversation.id)}
           onTogglePin={() => onToggleConversationPin(conversation.id)}
+          onToggleRead={() => onToggleConversationRead(conversation.id)}
           onArchive={() => onConversationArchive(conversation.id)}
           onDelete={() => onDeleteConversation(conversation.id)}
           changeReports={changeReportsByConversation[conversation.id] ?? []}
           onOpenChanges={() => onOpenConversationChanges(conversation.id)}
-          onRename={() => {
-            const nextTitle = window.prompt(
-              language === 'zh' ? '重命名对话' : 'Rename chat',
-              conversation.title,
-            );
-            if (nextTitle?.trim()) {
-              onRenameConversation(conversation.id, nextTitle);
-            }
-          }}
+          onRename={(nextTitle) => onRenameConversation(conversation.id, nextTitle)}
           onContextMenu={(event, options) =>
             onConversationContextMenu(event, conversation, options)
           }
-          onClick={() => onConversationChange(conversation.id)}
+          onClick={() => {
+            if (unreadConversationIds.has(conversation.id)) {
+              onToggleConversationRead(conversation.id);
+            }
+            onConversationChange(conversation.id);
+          }}
         />
       ))}
     </div>
@@ -998,12 +1165,14 @@ function ConversationRow({
   active,
   running,
   attention,
+  unread,
   nested,
   pinned,
   language,
   menuOpen,
   onMenuToggle,
   onTogglePin,
+  onToggleRead,
   onArchive,
   onDelete,
   changeReports,
@@ -1016,46 +1185,168 @@ function ConversationRow({
   active: boolean;
   running?: boolean;
   attention?: SessionAttentionState;
+  unread: boolean;
   nested?: boolean;
   pinned: boolean;
   language: AppLanguage;
   menuOpen: boolean;
   onMenuToggle: () => void;
   onTogglePin: () => void;
+  onToggleRead: () => void;
   onArchive: () => void;
   onDelete: () => void;
   changeReports?: ConversationChangeReport[];
   onOpenChanges?: () => void;
-  onRename: () => void;
+  onRename: (title: string) => Promise<boolean>;
   onContextMenu?: (event: ReactMouseEvent, options: ConversationMenuOptions) => void;
   onClick: () => void;
 }) {
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [renameDraft, setRenameDraft] = useState(conversation.title);
+  const [renamePending, setRenamePending] = useState(false);
+  const [renameFailed, setRenameFailed] = useState(false);
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
+  const beginRename = useCallback(() => {
+    setRenameDraft(conversation.title);
+    setRenameFailed(false);
+    setEditingTitle(true);
+  }, [conversation.title]);
+  const cancelRename = useCallback(() => {
+    if (renamePending) return;
+    setRenameDraft(conversation.title);
+    setRenameFailed(false);
+    setEditingTitle(false);
+  }, [conversation.title, renamePending]);
+  const submitRename = useCallback(async () => {
+    const nextTitle = renameDraft.trim();
+    if (!nextTitle) {
+      setRenameFailed(true);
+      renameInputRef.current?.focus();
+      return;
+    }
+    if (nextTitle === conversation.title.trim()) {
+      setEditingTitle(false);
+      setRenameFailed(false);
+      return;
+    }
+    setRenamePending(true);
+    setRenameFailed(false);
+    const saved = await onRename(nextTitle);
+    setRenamePending(false);
+    setRenameFailed(!saved);
+    if (saved) setEditingTitle(false);
+    else renameInputRef.current?.focus();
+  }, [conversation.title, onRename, renameDraft]);
+
+  useEffect(() => {
+    if (!editingTitle) return;
+    const input = renameInputRef.current;
+    input?.focus();
+    input?.select();
+  }, [editingTitle]);
+
   const menuOptions: ConversationMenuOptions = {
     changeCount,
     pinned,
+    unread,
     onTogglePin,
+    onToggleRead,
     onOpenChanges,
-    onRename,
+    onRename: beginRename,
     onArchive,
     onDelete,
   };
   return (
     <div
-      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''}`}
+      className={`conversation-row ${nested ? 'nested' : ''} ${active ? 'active' : ''} ${running ? 'running' : ''} ${unread ? 'unread' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onClick}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        beginRename();
+      }}
       onContextMenu={(event) => onContextMenu?.(event, menuOptions)}
       onKeyDown={(event) => {
+        if (event.key === 'F2') {
+          event.preventDefault();
+          beginRename();
+          return;
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           onClick();
         }
       }}
     >
-      <span className="conversation-title">{conversation.title}</span>
-      {running && (
+      {unread && !editingTitle && (
+        <span
+          className="conversation-unread-indicator"
+          role="status"
+          aria-label={language === 'zh' ? '未读对话' : 'Unread chat'}
+          title={language === 'zh' ? '未读' : 'Unread'}
+        />
+      )}
+      {editingTitle ? (
+        <form
+          className={`conversation-rename-form${renameFailed ? ' invalid' : ''}`}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.stopPropagation()}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              cancelRename();
+            }
+          }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitRename();
+          }}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              cancelRename();
+            }
+          }}
+        >
+          <input
+            ref={renameInputRef}
+            value={renameDraft}
+            maxLength={160}
+            disabled={renamePending}
+            aria-label={language === 'zh' ? '对话标题' : 'Chat title'}
+            aria-invalid={renameFailed}
+            title={renameFailed
+              ? language === 'zh' ? '标题不能为空或保存失败，请重试' : 'Title is empty or could not be saved'
+              : undefined}
+            onChange={(event) => {
+              setRenameDraft(event.target.value);
+              setRenameFailed(false);
+            }}
+          />
+          <button
+            type="submit"
+            disabled={renamePending || !renameDraft.trim()}
+            aria-label={language === 'zh' ? '保存标题' : 'Save title'}
+            title={language === 'zh' ? '保存' : 'Save'}
+          >
+            {renamePending ? <LoaderCircle className="spin" size={12} /> : <CircleCheck size={12} />}
+          </button>
+          <button
+            type="button"
+            disabled={renamePending}
+            aria-label={language === 'zh' ? '取消重命名' : 'Cancel rename'}
+            title={language === 'zh' ? '取消' : 'Cancel'}
+            onClick={cancelRename}
+          >
+            <X size={12} />
+          </button>
+        </form>
+      ) : (
+        <ScrollingConversationTitle title={conversation.title} />
+      )}
+      {!editingTitle && running && (
         <span
           className="conversation-running-indicator"
           role="status"
@@ -1068,7 +1359,7 @@ function ConversationRow({
           <span />
         </span>
       )}
-      {!running && attention && (
+      {!editingTitle && !running && attention && (
         <span
           className={`conversation-attention-indicator ${attention.kind}`}
           role="status"
@@ -1080,7 +1371,7 @@ function ConversationRow({
             : <CircleAlert size={15} />}
         </span>
       )}
-      {changeCount > 0 && (
+      {!editingTitle && changeCount > 0 && (
         <button
           className="conversation-change-badge"
           type="button"
@@ -1095,7 +1386,7 @@ function ConversationRow({
           <b>{changeCount}</b>
         </button>
       )}
-      <button
+      {!editingTitle && <button
         className="conversation-more"
         data-sidebar-menu-trigger="true"
         type="button"
@@ -1113,8 +1404,8 @@ function ConversationRow({
         }}
       >
         <MoreHorizontal size={15} />
-      </button>
-      {menuOpen && (
+      </button>}
+      {!editingTitle && menuOpen && (
         <SidebarMenu>
           <SidebarMenuButton icon={<MessageSquare size={15} />} onClick={onClick}>
             {language === 'zh' ? '打开对话' : 'Open chat'}
@@ -1124,12 +1415,20 @@ function ConversationRow({
               ? language === 'zh' ? '取消置顶' : 'Unpin chat'
               : language === 'zh' ? '置顶对话' : 'Pin chat'}
           </SidebarMenuButton>
+          <SidebarMenuButton
+            icon={unread ? <MailOpen size={15} /> : <Mail size={15} />}
+            onClick={onToggleRead}
+          >
+            {unread
+              ? language === 'zh' ? '标记为已读' : 'Mark as read'
+              : language === 'zh' ? '标记为未读' : 'Mark as unread'}
+          </SidebarMenuButton>
           {changeCount > 0 && (
             <SidebarMenuButton icon={<Code2 size={15} />} onClick={() => onOpenChanges?.()}>
               {language === 'zh' ? '查看 Diff' : 'View diff'}
             </SidebarMenuButton>
           )}
-          <SidebarMenuButton icon={<Edit3 size={15} />} onClick={onRename}>
+          <SidebarMenuButton icon={<Edit3 size={15} />} onClick={beginRename}>
             {language === 'zh' ? '重命名对话' : 'Rename chat'}
           </SidebarMenuButton>
           <SidebarMenuButton
@@ -1147,6 +1446,87 @@ function ConversationRow({
         </SidebarMenu>
       )}
     </div>
+  );
+}
+
+function ScrollingConversationTitle({ title }: { title: string }) {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const contentRef = useRef<HTMLSpanElement>(null);
+  const lastLayoutLogRef = useRef('');
+  const [overflowWidth, setOverflowWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+
+    const measure = () => {
+      const next = Math.max(0, Math.ceil(content.scrollWidth - viewport.clientWidth));
+      setOverflowWidth((current) => current === next ? current : next);
+      const row = viewport.closest<HTMLElement>('.conversation-row');
+      const diff = row?.querySelector<HTMLElement>('.conversation-change-badge') ?? null;
+      const menu = row?.querySelector<HTMLElement>('.conversation-more') ?? null;
+      if (row) {
+        const rowBounds = row.getBoundingClientRect();
+        const titleBounds = viewport.getBoundingClientRect();
+        const diffBounds = diff?.getBoundingClientRect();
+        const menuBounds = menu?.getBoundingClientRect();
+        const overlapsDiff = Boolean(
+          diffBounds && titleBounds.right > diffBounds.left,
+        );
+        const overlapsMenu = Boolean(
+          menuBounds && titleBounds.right > menuBounds.left,
+        );
+        const fingerprint = [
+          Math.round(rowBounds.width),
+          viewport.clientWidth,
+          content.scrollWidth,
+          next,
+          diff ? Math.round(diff.getBoundingClientRect().width) : 0,
+          menu ? Math.round(menu.getBoundingClientRect().width) : 0,
+          overlapsDiff,
+          overlapsMenu,
+        ].join(':');
+        if (fingerprint !== lastLayoutLogRef.current && (next > 0 || overlapsDiff || overlapsMenu)) {
+          lastLayoutLogRef.current = fingerprint;
+          console.info('[cardbush:sidebar-title-layout]', {
+            titleLength: title.length,
+            rowWidth: Math.round(rowBounds.width),
+            titleViewportWidth: viewport.clientWidth,
+            titleContentWidth: content.scrollWidth,
+            overflowWidth: next,
+            diffWidth: diffBounds ? Math.round(diffBounds.width) : 0,
+            menuWidth: menuBounds ? Math.round(menuBounds.width) : 0,
+            reservedRight: Math.round(rowBounds.right - titleBounds.right),
+            overlapsDiff,
+            overlapsMenu,
+          });
+        }
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [title]);
+
+  const duration = Math.min(12, Math.max(4, overflowWidth / 24 + 2));
+  return (
+    <span
+      ref={viewportRef}
+      className={`conversation-title${overflowWidth > 0 ? ' is-overflowing' : ''}`}
+      aria-label={title}
+      data-overflow-width={overflowWidth}
+      style={{
+        '--conversation-title-overflow': `${overflowWidth}px`,
+        '--conversation-title-duration': `${duration}s`,
+      } as React.CSSProperties}
+    >
+      <span ref={contentRef} className="conversation-title-text">
+        {title}
+      </span>
+    </span>
   );
 }
 

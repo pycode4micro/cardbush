@@ -1,5 +1,6 @@
 import { Minus, Plus, X } from 'lucide-react';
 import {
+  type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
@@ -19,6 +20,14 @@ const minimumZoom = 0.25;
 const maximumZoom = 5;
 const zoomStep = 0.25;
 
+type ImageDragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  scrollLeft: number;
+  scrollTop: number;
+};
+
 function clampZoom(value: number) {
   return Math.min(maximumZoom, Math.max(minimumZoom, value));
 }
@@ -33,10 +42,12 @@ export function ImagePreviewDialog({
   onClose: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<ImageDragState | null>(null);
   const zoomRef = useRef(1);
   const [zoom, setZoom] = useState(1);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const [dragging, setDragging] = useState(false);
 
   const applyZoom = useCallback((value: number, focalPoint?: { x: number; y: number }) => {
     const current = zoomRef.current;
@@ -111,6 +122,38 @@ export function ImagePreviewDialog({
     );
   }, [applyZoom]);
 
+  const finishDrag = useCallback((stage: HTMLDivElement, pointerId: number) => {
+    if (dragRef.current?.pointerId !== pointerId) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (stage.hasPointerCapture(pointerId)) {
+      stage.releasePointerCapture(pointerId);
+    }
+  }, []);
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const stage = event.currentTarget;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      scrollLeft: stage.scrollLeft,
+      scrollTop: stage.scrollTop,
+    };
+    stage.setPointerCapture(event.pointerId);
+    setDragging(true);
+    event.preventDefault();
+  }, []);
+
+  const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.currentTarget.scrollLeft = drag.scrollLeft - (event.clientX - drag.startX);
+    event.currentTarget.scrollTop = drag.scrollTop - (event.clientY - drag.startY);
+    event.preventDefault();
+  }, []);
+
   const availableWidth = Math.max(1, stageSize.width - 32);
   const availableHeight = Math.max(1, stageSize.height - 32);
   const fitScale = naturalSize.width > 0 && naturalSize.height > 0
@@ -175,8 +218,18 @@ export function ImagePreviewDialog({
         </header>
         <div
           ref={stageRef}
-          className="image-preview-stage"
+          className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
           onWheel={handleWheel}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
+          onPointerCancel={(event) => finishDrag(event.currentTarget, event.pointerId)}
+          onLostPointerCapture={(event) => {
+            if (dragRef.current?.pointerId === event.pointerId) {
+              dragRef.current = null;
+              setDragging(false);
+            }
+          }}
           onDoubleClick={() => applyZoom(zoomRef.current === 1 ? 2 : 1)}
         >
           <div

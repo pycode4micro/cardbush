@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   CheckCircle2,
+  ChevronUp,
   Circle,
   Clipboard,
   Cpu,
@@ -1635,6 +1636,18 @@ function ModelsSettingsPanel({
     models: [],
     message: '',
   });
+  const [addModelExpanded, setAddModelExpanded] = useState(false);
+
+  const confirmResetModels = useCallback(() => {
+    const count = settings.managedModelConfigs.length;
+    if (count === 0) return;
+    const confirmed = window.confirm(
+      language === 'zh'
+        ? `确定清空全部 ${count} 个模型配置吗？保存的 API Key、服务地址和 token 上限都会被移除，此操作无法撤销。`
+        : `Clear all ${count} model configurations? Saved API keys, endpoints, and token limits will be removed. This cannot be undone.`,
+    );
+    if (confirmed) onResetModels();
+  }, [language, onResetModels, settings.managedModelConfigs.length]);
 
   useEffect(() => {
     setModelDiscovery((current) =>
@@ -1712,7 +1725,7 @@ function ModelsSettingsPanel({
   }, [apiKey, baseUrl, language, modelName, onModelNameChange]);
 
   return (
-    <div className="settings-stack">
+    <div className="settings-stack model-settings-stack">
       <SettingsCard
         title={language === 'zh' ? '添加模型' : 'Add model'}
         subtitle={
@@ -1720,6 +1733,20 @@ function ModelsSettingsPanel({
             ? '连接模型服务，选择模型并保存。'
             : 'Connect a provider, choose a model, and save it.'
         }
+        bodyHidden={!addModelExpanded}
+        headerAction={(
+          <button
+            className="secondary-button model-form-disclosure"
+            type="button"
+            aria-expanded={addModelExpanded}
+            onClick={() => setAddModelExpanded((current) => !current)}
+          >
+            {addModelExpanded ? <ChevronUp size={14} /> : <Plus size={14} />}
+            {addModelExpanded
+              ? language === 'zh' ? '收起' : 'Collapse'
+              : language === 'zh' ? '添加模型' : 'Add model'}
+          </button>
+        )}
       >
         <form className="model-form" onSubmit={onAddModelConfig}>
           <div className="model-form-grid">
@@ -1844,10 +1871,6 @@ function ModelsSettingsPanel({
               <Plus size={14} />
               {language === 'zh' ? '添加模型' : 'Add model'}
             </button>
-            <button className="secondary-button danger" type="button" onClick={onResetModels}>
-              <RotateCcw size={14} />
-              {language === 'zh' ? '清空全部' : 'Clear all'}
-            </button>
           </div>
         </form>
       </SettingsCard>
@@ -1872,6 +1895,16 @@ function ModelsSettingsPanel({
               ? `${settings.managedModelConfigs.length} 个模型`
               : `${settings.managedModelConfigs.length} models`
           }
+          headerAction={(
+            <button
+              className="secondary-button danger model-clear-all-button"
+              type="button"
+              onClick={confirmResetModels}
+            >
+              <RotateCcw size={14} />
+              {language === 'zh' ? '清空全部' : 'Clear all'}
+            </button>
+          )}
         >
           <div className="model-provider-list">
             {providers.map((provider) => (
@@ -4357,19 +4390,26 @@ function usageDayTitle(date: string, interactions: number, language: AppLanguage
 function SettingsCard({
   title,
   subtitle,
+  headerAction,
+  bodyHidden = false,
   children,
 }: {
   title: string;
   subtitle?: string;
+  headerAction?: React.ReactNode;
+  bodyHidden?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <section className="settings-card">
-      <div className="settings-card-header">
-        <h3>{title}</h3>
-        {subtitle && <p>{subtitle}</p>}
+      <div className={`settings-card-header${headerAction ? ' has-action' : ''}`}>
+        <div className="settings-card-heading">
+          <h3>{title}</h3>
+          {subtitle && <p>{subtitle}</p>}
+        </div>
+        {headerAction && <div className="settings-card-header-action">{headerAction}</div>}
       </div>
-      <div className="settings-card-body">{children}</div>
+      {!bodyHidden && <div className="settings-card-body">{children}</div>}
     </section>
   );
 }
@@ -4553,7 +4593,7 @@ function ModelConfigRow({
   return (
     <div className="model-row">
       <div className="model-row-summary">
-        <strong>{config.modelName}</strong>
+        <strong title={config.modelName}>{config.modelName}</strong>
         <span>
           {config.baseUrl || (language === 'zh' ? '默认服务地址' : 'Default endpoint')}
           {' · '}

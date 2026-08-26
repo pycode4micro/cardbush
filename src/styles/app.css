@@ -997,13 +997,49 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row .conversation-title {
+  position: relative;
+  display: block;
   overflow: hidden;
   color: var(--sidebar-text-mid, color-mix(in srgb, var(--text-mid) 88%, transparent));
   font-size: 13px;
   font-weight: 560;
   letter-spacing: 0;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-title-text {
+  width: max-content;
+  max-width: none;
+  display: block;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
+.conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
+  animation: conversation-title-marquee var(--conversation-title-duration, 5s)
+    ease-in-out 350ms infinite alternate;
+}
+
+@keyframes conversation-title-marquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+
+  88%,
+  100% {
+    transform: translateX(calc(-1 * var(--conversation-title-overflow, 0px)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
+  .conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
+    animation: none;
+  }
 }
 
 .project-title small,
@@ -1019,12 +1055,13 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-row {
   position: relative;
+  box-sizing: border-box;
   width: 100%;
   min-height: 34px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 34px 0 var(--sidebar-tree-base);
+  padding: 0 36px 0 var(--sidebar-tree-base);
   color: var(--sidebar-text-mid, var(--text-mid));
   background: transparent;
   border-radius: 8px;
@@ -1033,7 +1070,7 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-row.nested {
   padding-left: var(--sidebar-tree-child);
-  padding-right: 34px;
+  padding-right: 36px;
 }
 
 .conversation-row.active {
@@ -1051,8 +1088,86 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row > .conversation-title {
-  flex: 1;
+  width: 0;
+  max-width: 100%;
+  flex: 1 1 0;
   min-width: 0;
+}
+
+.conversation-rename-form {
+  width: 0;
+  min-width: 0;
+  height: 26px;
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  gap: 3px;
+}
+
+.conversation-rename-form input {
+  width: 0;
+  min-width: 0;
+  height: 24px;
+  flex: 1 1 0;
+  padding: 0 7px;
+  color: var(--sidebar-text, var(--text));
+  background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
+  border-radius: 6px;
+  outline: none;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.conversation-rename-form input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.conversation-rename-form.invalid input {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.conversation-rename-form button {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--sidebar-text-muted, var(--text-soft));
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.conversation-rename-form button:hover:not(:disabled),
+.conversation-rename-form button:focus-visible {
+  color: var(--sidebar-text, var(--text));
+  background: color-mix(in srgb, var(--sidebar-text, var(--text)) 10%, transparent);
+  outline: none;
+}
+
+.conversation-rename-form button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.conversation-unread-indicator {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.conversation-row.unread .conversation-title {
+  color: var(--sidebar-text, var(--text));
+  font-weight: 720;
 }
 
 .conversation-running-indicator {
@@ -1158,17 +1273,19 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-change-badge {
   flex: 0 0 auto;
+  max-width: 52px;
   height: 20px;
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-left: auto;
+  margin-left: 0;
   padding: 0 5px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 13%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: 6px;
   opacity: 0.72;
+  z-index: 1;
 }
 
 .conversation-change-badge b {
@@ -16665,6 +16782,24 @@ body.right-inspector-resizing .right-inspector-resizer {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 56%, transparent);
 }
 
+.settings-card-header.has-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-card-heading {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-card-header-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .settings-card-header h3 {
   margin: 0;
   color: var(--text);
@@ -17919,6 +18054,17 @@ body.right-inspector-resizing .right-inspector-resizer {
   gap: 10px;
 }
 
+.model-settings-stack {
+  container-name: model-settings;
+  container-type: inline-size;
+}
+
+.model-form-disclosure,
+.model-clear-all-button {
+  min-height: 32px;
+  white-space: nowrap;
+}
+
 .model-form-grid {
   display: grid;
   grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr);
@@ -18076,8 +18222,12 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .model-row > div > strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-row > div > span {
@@ -19547,11 +19697,25 @@ body.right-inspector-resizing .right-inspector-resizer {
   flex: 1;
   min-height: 0;
   display: grid;
-  place-items: center;
+  place-items: safe center;
   padding: 16px;
   overflow: auto;
   background: #111;
   overscroll-behavior: contain;
+  cursor: grab;
+  touch-action: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
+  .conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
+    animation: none;
+  }
+}
+
+.image-preview-stage.is-dragging {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .image-preview-canvas {
@@ -20538,5 +20702,60 @@ body.change-review-resizing {
   .change-review-diff-pane {
     border-right: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  }
+}
+
+@container model-settings (max-width: 720px) {
+  .model-form-grid,
+  .model-credentials-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .model-credentials-row {
+    align-items: stretch;
+  }
+
+  .model-fetch-button {
+    width: fit-content;
+  }
+
+  .model-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 92px 30px;
+  }
+
+  .model-row-summary {
+    grid-column: 1 / -1;
+  }
+
+  .model-context-editor {
+    grid-column: auto;
+    min-width: 0;
+  }
+}
+
+@container model-settings (max-width: 500px) {
+  .settings-card-header.has-action {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-card-header-action {
+    justify-content: flex-start;
+  }
+
+  .model-row {
+    grid-template-columns: minmax(0, 1fr) 92px 30px;
+  }
+
+  .model-context-editor {
+    grid-column: 1 / -1;
+  }
+
+  .model-row > .current-badge,
+  .model-use-button {
+    grid-column: 2;
+  }
+
+  .model-delete-button {
+    grid-column: 3;
   }
 }

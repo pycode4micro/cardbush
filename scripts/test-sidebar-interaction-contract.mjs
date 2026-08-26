@@ -134,7 +134,41 @@ assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶�
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
 assert.match(sidebarSource, /className=\{`only-talk-toggle\$\{onlyTalkMode \? ' active' : ''\}`\}/);
 assert.match(sidebarSource, /aria-pressed=\{onlyTalkMode\}/);
+assert.match(
+  sidebarSource,
+  /onlyTalkMode \? <Folder size=\{12\} \/> : <Cloud size=\{12\} \/>/,
+  'The only-talk toggle must show the destination mode with project and cloud icons',
+);
+assert.match(
+  sidebarSource,
+  /onlyTalkMode[\s\S]*?language === 'zh' \? '项目' : 'Projects'[\s\S]*?language === 'zh' \? '仅会话' : 'Only talk'/,
+  'The only-talk toggle label must describe the mode reached after clicking',
+);
 assert.match(sidebarSource, /onlyTalkConversations\.map\(renderStandaloneConversation\)/);
+assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
+assert.match(sidebarSource, /conversationReadReceipt\(/);
+assert.match(sidebarSource, /document\.visibilityState !== 'visible' \|\| !document\.hasFocus\(\)/);
+assert.match(sidebarSource, /key: options\.unread \? 'mark-read' : 'mark-unread'/);
+assert.match(sidebarSource, /标记为已读/);
+assert.match(sidebarSource, /标记为未读/);
+assert.match(sidebarSource, /className="conversation-unread-indicator"/);
+assert.match(stylesSource, /\.conversation-unread-indicator\s*\{[\s\S]*?background:\s*var\(--accent\)/);
+assert.match(stylesSource, /\.conversation-row\.unread \.conversation-title\s*\{/);
+assert.doesNotMatch(sidebarSource, /window\.prompt\([\s\S]{0,120}重命名对话/);
+assert.match(sidebarSource, /className=\{`conversation-rename-form\$\{renameFailed \? ' invalid' : ''\}`\}/);
+assert.match(sidebarSource, /maxLength=\{160\}/);
+assert.match(sidebarSource, /if \(event\.key === 'Escape'\)/);
+assert.match(sidebarSource, /onDoubleClick=\{\(event\) => \{[\s\S]*?beginRename\(\)/);
+assert.match(sidebarSource, /if \(event\.key === 'F2'\)/);
+assert.match(sidebarSource, /const saved = await onRename\(nextTitle\)/);
+assert.match(stylesSource, /\.conversation-rename-form input\s*\{/);
+assert.match(chatHookSource, /const renameConversation = useCallback\(async \(conversationId: string, title: string\)/);
+assert.match(chatHookSource, /const synced = await updateConversation\(\{ sessionId: normalizedId, title: nextTitle \}\)/);
+assert.match(
+  chatHookSource,
+  /item\.id === normalizedId && item\.title === nextTitle[\s\S]*?title: previous\.title/,
+  'A failed rename must roll back only the optimistic title written by that request',
+);
 assert.match(sidebarSource, /key=\{onlyTalkMode \? 'only-talk' : 'projects'\}/);
 assert.match(
   appSource,
@@ -162,6 +196,33 @@ assert.match(
 );
 assert.match(stylesSource, /\.project-row\s*\{[\s\S]*?gap:\s*var\(--sidebar-tree-gap\)/);
 assert.match(stylesSource, /\.conversation-row\.nested\s*\{[\s\S]*?padding-left:\s*var\(--sidebar-tree-child\)/);
+assert.match(sidebarSource, /function ScrollingConversationTitle\(/);
+assert.match(sidebarSource, /content\.scrollWidth - viewport\.clientWidth/);
+assert.match(sidebarSource, /\[cardbush:sidebar-title-layout\]/);
+assert.match(sidebarSource, /overlapsDiff/);
+assert.doesNotMatch(sidebarSource, /className=\{`conversation-title[^\n]*[\s\S]{0,160}title=\{title\}/);
+assert.match(sidebarSource, /<ScrollingConversationTitle title=\{conversation\.title\}/);
+assert.match(stylesSource, /@keyframes conversation-title-marquee/);
+assert.match(
+  stylesSource,
+  /\.conversation-row > \.conversation-title\s*\{[\s\S]*?width:\s*0[\s\S]*?flex:\s*1 1 0/,
+  'Long titles must shrink inside the title lane instead of pushing action controls',
+);
+assert.match(
+  stylesSource,
+  /\.conversation-change-badge\s*\{[\s\S]*?flex:\s*0 0 auto[\s\S]*?max-width:\s*52px/,
+  'Diff badges must retain an independent bounded lane',
+);
+assert.match(
+  stylesSource,
+  /\.conversation-row\s*\{[\s\S]*?box-sizing:\s*border-box[\s\S]*?width:\s*100%/,
+  'Conversation padding must be included in the row width so the menu stays inside the sidebar',
+);
+assert.match(
+  stylesSource,
+  /\.conversation-row\.nested\s*\{[\s\S]*?padding-right:\s*36px/,
+  'Nested titles must reserve a fixed action column for the conversation menu',
+);
 assert.match(appSource, /cardbush_recent_project_dir/);
 assert.match(
   appSource,
