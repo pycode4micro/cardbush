@@ -90,6 +90,7 @@ import {
   goalToolUpdateFromExecution,
   isGoalSelfCheckMessage,
 } from '../shared/goalState';
+import { conversationProjectDir } from '../features/conversationWorkspace';
 
 export type QueuedChatMessage = {
   id: string;
@@ -3605,16 +3606,7 @@ function teamModeContextPrompt() {
 }
 
 function conversationProjectRequestDir(conversation: ConversationSummary) {
-  const workspaceMode = conversation.workspaceContext?.mode;
-  if (workspaceMode === 'task') {
-    return '';
-  }
-  return (
-    conversation.projectDir?.trim() ||
-    (workspaceMode === 'project'
-      ? conversation.workspaceContext?.projectDir?.trim() || ''
-      : '')
-  );
+  return conversationProjectDir(conversation);
 }
 
 function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) {

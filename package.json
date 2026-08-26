@@ -36,6 +36,7 @@
     "test:tool-media-artifacts": "node scripts/test-tool-media-artifacts-contract.mjs",
     "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs",
     "test:sidebar-interaction": "node scripts/test-sidebar-interaction-contract.mjs",
+    "test:conversation-workspace": "node scripts/test-conversation-workspace-contract.mjs",
     "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",
     "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",

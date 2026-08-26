@@ -30,7 +30,10 @@ const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
 const cardbushAppUserModelId = 'com.cardbush.desktop';
 const cardbushDisplayName = 'cardbush';
-const logoAssetNames = ['cardbush.ico', 'cardbush-logo.png', 'cardbush-logo-backup.png'];
+// BrowserWindow#setIcon is most reliable on Windows when it receives a
+// high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
+// shortcuts, where Windows explicitly requires an .ico file.
+const logoAssetNames = ['cardbush-logo.png', 'cardbush-logo-backup.png', 'cardbush.ico'];
 const cardlingExpandedSize = { width: 380, height: 468 };
 const cardlingCollapsedHitSize = { width: 104, height: 104 };
 const ignoredProjectSearchDirs = new Set([
@@ -230,7 +233,8 @@ function createWindow() {
     clearTimeout(startupRevealFallback);
     startupRevealFallback = null;
   }
-  const windowIcon = loadCardbushIcon(256);
+  const loadedWindowIcon = loadCardbushIconWithSource(256);
+  const windowIcon = loadedWindowIcon.image;
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -251,11 +255,14 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
-  applyCardbushWindowIcon(window, windowIcon);
+  applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
   installMainWindowNavigationGuard(window);
+  window.webContents.once('did-finish-load', () => {
+    applyCardbushWindowIcon(window, windowIcon, 'did-finish-load', loadedWindowIcon.sourcePath);
+  });
 
   const refreshWindowBackdrop = () => {
     applyCardbushWindowIcon(window, windowIcon);
@@ -1107,21 +1114,35 @@ function requestAppQuit() {
   app.quit();
 }
 
-function loadCardbushIcon(size: number) {
+function loadCardbushIconWithSource(size: number) {
+  const candidates: string[] = [];
   for (const fileName of logoAssetNames) {
     for (const filePath of cardbushIconAssetPaths(fileName)) {
+      candidates.push(filePath);
       const image = nativeImage.createFromPath(filePath);
       if (!image.isEmpty()) {
-        return image.resize({ width: size, height: size, quality: 'best' });
+        return {
+          image: image.resize({ width: size, height: size, quality: 'best' }),
+          sourcePath: filePath,
+          candidates,
+        };
       }
     }
   }
-  return nativeImage.createFromDataURL(
-    'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#637B61"/><path d="M10 21c6 0 10-4 12-11-7 2-11 6-12 11Z" fill="#F1E6CF"/></svg>',
-      ),
-  );
+  return {
+    image: nativeImage.createFromDataURL(
+      'data:image/svg+xml;utf8,' +
+        encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" rx="8" fill="#637B61"/><path d="M10 21c6 0 10-4 12-11-7 2-11 6-12 11Z" fill="#F1E6CF"/></svg>',
+        ),
+    ),
+    sourcePath: 'generated-fallback',
+    candidates,
+  };
+}
+
+function loadCardbushIcon(size: number) {
+  return loadCardbushIconWithSource(size).image;
 }
 
 function cardbushIconAssetPaths(fileName: string) {
@@ -1133,20 +1154,54 @@ function cardbushIconAssetPaths(fileName: string) {
   ]));
 }
 
-function applyCardbushWindowIcon(window: BrowserWindow, icon = loadCardbushIcon(256)) {
+function applyCardbushWindowIcon(
+  window: BrowserWindow,
+  icon = loadCardbushIcon(256),
+  debugStage = '',
+  sourcePath = '',
+) {
   if (process.platform !== 'win32') {
     return;
   }
-  window.setIcon(icon);
   const iconPath = cardbushIconAssetPaths('cardbush.ico').find((candidate) =>
     fs.existsSync(candidate),
   );
-  window.setAppDetails({
-    appId: cardbushAppUserModelId,
-    ...(iconPath ? { appIconPath: iconPath, appIconIndex: 0 } : {}),
-    relaunchCommand: windowsRelaunchCommand(),
-    relaunchDisplayName: cardbushDisplayName,
-  });
+  try {
+    window.setIcon(icon);
+    window.setAppDetails({
+      appId: cardbushAppUserModelId,
+      ...(iconPath ? { appIconPath: iconPath, appIconIndex: 0 } : {}),
+      relaunchCommand: windowsRelaunchCommand(),
+      relaunchDisplayName: cardbushDisplayName,
+    });
+    if (debugStage) {
+      appendDebugLog('taskbar', {
+        stage: debugStage,
+        success: true,
+        appId: cardbushAppUserModelId,
+        appName: app.getName(),
+        packaged: app.isPackaged,
+        execPath: process.execPath,
+        appPath: app.getAppPath(),
+        sourcePath,
+        sourceExists: sourcePath !== 'generated-fallback' && fs.existsSync(sourcePath),
+        iconPath: iconPath ?? '',
+        iconPathExists: Boolean(iconPath),
+        iconSize: icon.getSize(),
+        relaunchCommand: windowsRelaunchCommand(),
+      });
+    }
+  } catch (error) {
+    if (debugStage) {
+      appendDebugLog('taskbar', {
+        stage: debugStage,
+        success: false,
+        sourcePath,
+        iconPath: iconPath ?? '',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 function ensureWindowsTaskbarShortcut() {
@@ -1157,6 +1212,12 @@ function ensureWindowsTaskbarShortcut() {
     fs.existsSync(candidate),
   );
   if (!iconPath) {
+    appendDebugLog('taskbar', {
+      stage: 'shortcut',
+      success: false,
+      reason: 'icon-not-found',
+      candidates: cardbushIconAssetPaths('cardbush.ico'),
+    });
     return false;
   }
   try {
@@ -1169,7 +1230,8 @@ function ensureWindowsTaskbarShortcut() {
     );
     fs.mkdirSync(programsDir, { recursive: true });
     const shortcutPath = path.join(programsDir, 'CardBush.lnk');
-    return shell.writeShortcutLink(shortcutPath, 'replace', {
+    const operation = fs.existsSync(shortcutPath) ? 'replace' : 'create';
+    const success = shell.writeShortcutLink(shortcutPath, operation, {
       target: process.execPath,
       ...(app.isPackaged
         ? {}
@@ -1180,7 +1242,34 @@ function ensureWindowsTaskbarShortcut() {
       iconIndex: 0,
       appUserModelId: cardbushAppUserModelId,
     });
-  } catch {
+    let details: Electron.ShortcutDetails | null = null;
+    if (success) {
+      try {
+        details = shell.readShortcutLink(shortcutPath);
+      } catch {
+        details = null;
+      }
+    }
+    appendDebugLog('taskbar', {
+      stage: 'shortcut',
+      success,
+      operation,
+      shortcutPath,
+      shortcutExists: fs.existsSync(shortcutPath),
+      expectedTarget: process.execPath,
+      expectedIcon: iconPath,
+      actualTarget: details?.target ?? '',
+      actualIcon: details?.icon ?? '',
+      actualAppUserModelId: details?.appUserModelId ?? '',
+    });
+    return success;
+  } catch (error) {
+    appendDebugLog('taskbar', {
+      stage: 'shortcut',
+      success: false,
+      reason: 'exception',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
@@ -1329,7 +1418,26 @@ ipcMain.handle('app:renderer-ready', (event) => {
     startupRevealFallback = null;
   }
   applyMainWindowVisualMaterial(sourceWindow, lastMainWindowTheme);
+  const loadedIcon = loadCardbushIconWithSource(256);
+  applyCardbushWindowIcon(
+    sourceWindow,
+    loadedIcon.image,
+    'renderer-ready-before-show',
+    loadedIcon.sourcePath,
+  );
   sourceWindow.show();
+  // Windows can briefly restore the executable icon while creating the
+  // taskbar button. Reapply once after the HWND has become visible.
+  setTimeout(() => {
+    if (!sourceWindow.isDestroyed()) {
+      applyCardbushWindowIcon(
+        sourceWindow,
+        loadedIcon.image,
+        'renderer-ready-after-show',
+        loadedIcon.sourcePath,
+      );
+    }
+  }, 250);
 });
 
 ipcMain.handle('os:login-settings', () => readOsLoginSettings());
@@ -1978,13 +2086,32 @@ ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(cardbushAppUserModelId);
+  }
   await applyProxySettings({
     mode: 'none',
     httpProxy: '',
     httpsProxy: '',
     noProxy: '',
   }).catch(() => undefined);
-  ensureWindowsTaskbarShortcut();
+  const shortcutUpdated = ensureWindowsTaskbarShortcut();
+  if (process.platform === 'win32') {
+    const startupIcon = loadCardbushIconWithSource(256);
+    appendDebugLog('taskbar', {
+      stage: 'app-ready',
+      appId: cardbushAppUserModelId,
+      appName: app.getName(),
+      packaged: app.isPackaged,
+      execPath: process.execPath,
+      appPath: app.getAppPath(),
+      sourcePath: startupIcon.sourcePath,
+      sourceExists:
+        startupIcon.sourcePath !== 'generated-fallback' && fs.existsSync(startupIcon.sourcePath),
+      iconSize: startupIcon.image.getSize(),
+      shortcutUpdated,
+    });
+  }
   registerLocalFileProtocol();
   createWindow();
   createTray();

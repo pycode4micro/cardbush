@@ -834,8 +834,10 @@ function MessageBubbleView({
         )
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
+  const stoppedAssistantRound = isStoppedAssistantMessage(message);
   const showAssistantProgress =
     message.role === 'assistant' &&
+    !stoppedAssistantRound &&
     (isActiveAssistantTurn ||
       toolExecutions.length > 0 ||
       hasAssistantProgressSource(message, assistantProgressExecutions));
@@ -961,6 +963,8 @@ function MessageBubbleView({
           {isActiveAssistantTurn ? (
             assistantBody
           ) : guidanceBoundaryRound ? (
+            assistantBody
+          ) : stoppedAssistantRound ? (
             assistantBody
           ) : finalAssistantRound ? (
             <>

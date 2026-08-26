@@ -53,6 +53,17 @@ assert.match(
   /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveStoppedExecutionRecord/,
 );
 assert.match(bubble, /message\.metadata\?\.cardbush_terminal_stopped === true/);
+assert.match(bubble, /const stoppedAssistantRound = isStoppedAssistantMessage\(message\)/);
+assert.match(
+  bubble,
+  /showAssistantProgress\s*=\s*[\s\S]*?!stoppedAssistantRound/,
+  'Stopped turns must not retain the processed/working progress header',
+);
+assert.match(
+  bubble,
+  /guidanceBoundaryRound \? \([\s\S]*?\) : stoppedAssistantRound \? \([\s\S]*?assistantBody/,
+  'Stopped turns must render their preserved transcript directly instead of entering completed disclosure',
+);
 
 const hookTranspiled = ts.transpileModule(hook, {
   compilerOptions: {
