@@ -1371,21 +1371,6 @@ function ConversationRow({
             : <CircleAlert size={15} />}
         </span>
       )}
-      {!editingTitle && changeCount > 0 && (
-        <button
-          className="conversation-change-badge"
-          type="button"
-          title={language === 'zh' ? '查看本会话 Diff' : 'View chat diff'}
-          aria-label={language === 'zh' ? '查看本会话 Diff' : 'View chat diff'}
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenChanges?.();
-          }}
-        >
-          <Code2 size={13} />
-          <b>{changeCount}</b>
-        </button>
-      )}
       {!editingTitle && <button
         className="conversation-more"
         data-sidebar-menu-trigger="true"
@@ -1464,16 +1449,11 @@ function ScrollingConversationTitle({ title }: { title: string }) {
       const next = Math.max(0, Math.ceil(content.scrollWidth - viewport.clientWidth));
       setOverflowWidth((current) => current === next ? current : next);
       const row = viewport.closest<HTMLElement>('.conversation-row');
-      const diff = row?.querySelector<HTMLElement>('.conversation-change-badge') ?? null;
       const menu = row?.querySelector<HTMLElement>('.conversation-more') ?? null;
       if (row) {
         const rowBounds = row.getBoundingClientRect();
         const titleBounds = viewport.getBoundingClientRect();
-        const diffBounds = diff?.getBoundingClientRect();
         const menuBounds = menu?.getBoundingClientRect();
-        const overlapsDiff = Boolean(
-          diffBounds && titleBounds.right > diffBounds.left,
-        );
         const overlapsMenu = Boolean(
           menuBounds && titleBounds.right > menuBounds.left,
         );
@@ -1482,12 +1462,10 @@ function ScrollingConversationTitle({ title }: { title: string }) {
           viewport.clientWidth,
           content.scrollWidth,
           next,
-          diff ? Math.round(diff.getBoundingClientRect().width) : 0,
           menu ? Math.round(menu.getBoundingClientRect().width) : 0,
-          overlapsDiff,
           overlapsMenu,
         ].join(':');
-        if (fingerprint !== lastLayoutLogRef.current && (next > 0 || overlapsDiff || overlapsMenu)) {
+        if (fingerprint !== lastLayoutLogRef.current && (next > 0 || overlapsMenu)) {
           lastLayoutLogRef.current = fingerprint;
           console.info('[cardbush:sidebar-title-layout]', {
             titleLength: title.length,
@@ -1495,10 +1473,8 @@ function ScrollingConversationTitle({ title }: { title: string }) {
             titleViewportWidth: viewport.clientWidth,
             titleContentWidth: content.scrollWidth,
             overflowWidth: next,
-            diffWidth: diffBounds ? Math.round(diffBounds.width) : 0,
             menuWidth: menuBounds ? Math.round(menuBounds.width) : 0,
             reservedRight: Math.round(rowBounds.right - titleBounds.right),
-            overlapsDiff,
             overlapsMenu,
           });
         }

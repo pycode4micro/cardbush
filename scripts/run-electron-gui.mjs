@@ -5,14 +5,11 @@ import { resolveCardbushElectronExecutable } from './cardbush-electron-runtime.m
 
 const projectRoot = path.resolve(import.meta.dirname, '..');
 const electronBin = resolveCardbushElectronExecutable(projectRoot);
-
 const child = spawn(electronBin, ['.'], {
   cwd: projectRoot,
   env: {
     ...process.env,
     CARDBUSH_DEVELOPMENT_RUNTIME: '1',
-    CARDBUSH_ELECTRON_DEV_SERVER_URL:
-      process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL || 'http://127.0.0.1:5173',
   },
   stdio: 'inherit',
   shell: false,

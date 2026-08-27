@@ -1271,33 +1271,6 @@ body.sidebar-resizing .sidebar-resizer {
   background: color-mix(in srgb, gray 16%, transparent);
 }
 
-.conversation-change-badge {
-  flex: 0 0 auto;
-  max-width: 52px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: 0;
-  padding: 0 5px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  border-radius: 6px;
-  opacity: 0.72;
-  z-index: 1;
-}
-
-.conversation-change-badge b {
-  font-size: 11px;
-  line-height: 1;
-}
-
-.conversation-change-badge:hover {
-  color: var(--text);
-  opacity: 1;
-}
-
 .row-new-chat,
 .row-more,
 .conversation-more {
@@ -4054,6 +4027,24 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .message-list-item {
   overflow-anchor: none;
+}
+
+.message-list-item.user-message-entering .user-bubble {
+  transform-origin: right bottom;
+  animation: user-message-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: opacity, transform;
+}
+
+@keyframes user-message-enter {
+  from {
+    opacity: 0.82;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .message-list-footer {
@@ -19568,6 +19559,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .message-list-item.user-message-entering .user-bubble,
   .cardling-card,
   .assistant-thinking,
   .assistant-thinking-process > span:last-child,

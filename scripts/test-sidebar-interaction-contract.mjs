@@ -199,7 +199,8 @@ assert.match(stylesSource, /\.conversation-row\.nested\s*\{[\s\S]*?padding-left:
 assert.match(sidebarSource, /function ScrollingConversationTitle\(/);
 assert.match(sidebarSource, /content\.scrollWidth - viewport\.clientWidth/);
 assert.match(sidebarSource, /\[cardbush:sidebar-title-layout\]/);
-assert.match(sidebarSource, /overlapsDiff/);
+assert.doesNotMatch(sidebarSource, /conversation-change-badge/);
+assert.doesNotMatch(sidebarSource, /overlapsDiff/);
 assert.doesNotMatch(sidebarSource, /className=\{`conversation-title[^\n]*[\s\S]{0,160}title=\{title\}/);
 assert.match(sidebarSource, /<ScrollingConversationTitle title=\{conversation\.title\}/);
 assert.match(stylesSource, /@keyframes conversation-title-marquee/);
@@ -208,11 +209,8 @@ assert.match(
   /\.conversation-row > \.conversation-title\s*\{[\s\S]*?width:\s*0[\s\S]*?flex:\s*1 1 0/,
   'Long titles must shrink inside the title lane instead of pushing action controls',
 );
-assert.match(
-  stylesSource,
-  /\.conversation-change-badge\s*\{[\s\S]*?flex:\s*0 0 auto[\s\S]*?max-width:\s*52px/,
-  'Diff badges must retain an independent bounded lane',
-);
+assert.doesNotMatch(stylesSource, /\.conversation-change-badge\s*\{/);
+assert.match(sidebarSource, /key:\s*'diff'[\s\S]*?查看 Diff/);
 assert.match(
   stylesSource,
   /\.conversation-row\s*\{[\s\S]*?box-sizing:\s*border-box[\s\S]*?width:\s*100%/,

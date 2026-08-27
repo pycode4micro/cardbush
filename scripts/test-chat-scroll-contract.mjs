@@ -98,6 +98,25 @@ assert.match(
 );
 assert.match(
   appSource,
+  /pendingSubmittedUserEntryUntilRef[\s\S]*?user-message-entering/,
+  'Only a freshly submitted user message should receive the entry animation class',
+);
+assert.match(
+  styles,
+  /\.message-list-item\.user-message-entering \.user-bubble[\s\S]*?animation:\s*user-message-enter 220ms/,
+  'A submitted user bubble should enter with a short, low-impact transition',
+);
+assert.match(
+  styles,
+  /@keyframes user-message-enter[\s\S]*?opacity:\s*0\.82[\s\S]*?translateY\(4px\)/,
+);
+assert.match(
+  styles,
+  /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.message-list-item\.user-message-entering \.user-bubble/,
+  'The user-message entry transition must respect reduced-motion preferences',
+);
+assert.match(
+  appSource,
   /cardbushPreserveScroll[\s\S]*?userDetachedFromBottomRef\.current[\s\S]*?!autoFollowStreamRef\.current/,
   'Outer resize correction must not override explicit user or disclosure scrolling',
 );

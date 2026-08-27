@@ -597,15 +597,6 @@ export interface SceneEventRequest {
   metadata?: Record<string, unknown>;
 }
 
-export interface SessionSceneRecord {
-  sceneId: string;
-  sessionId?: string;
-  turnId?: string;
-  createdAt?: string;
-  updatedAt?: string;
-  raw: Record<string, unknown>;
-}
-
 export interface SessionMessagesResult {
   conversation: ConversationSummary;
   messages: ChatMessage[];
@@ -1773,7 +1764,12 @@ export async function sendSceneEvent({
   const normalizedSessionId = sessionId.trim();
   const normalizedSceneId = sceneId.trim();
   if (!normalizedSessionId || !normalizedSceneId) {
-    throw new Error(localizedClientMessage('Scene 缺少 session_id 或 scene_id', 'Scene is missing session_id or scene_id'));
+    throw new Error(
+      localizedClientMessage(
+        'Scene 缺少 session_id 或 scene_id',
+        'Scene is missing session_id or scene_id',
+      ),
+    );
   }
   return readJson<Record<string, unknown>>(
     url(
@@ -1791,40 +1787,6 @@ export async function sendSceneEvent({
       }),
     },
   );
-}
-
-export async function fetchSessionScenes(
-  sessionId: string,
-): Promise<SessionSceneRecord[]> {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) {
-    return [];
-  }
-  const payload = await readJson<unknown>(
-    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/scenes`),
-  );
-  const records = sceneRecordsFromPayload(payload, normalizedSessionId);
-  return records.filter((item) => item.sceneId.trim());
-}
-
-export async function fetchSessionScene({
-  sessionId,
-  sceneId,
-}: {
-  sessionId: string;
-  sceneId: string;
-}): Promise<SessionSceneRecord | null> {
-  const normalizedSessionId = sessionId.trim();
-  const normalizedSceneId = sceneId.trim();
-  if (!normalizedSessionId || !normalizedSceneId) {
-    return null;
-  }
-  const payload = await readJson<Record<string, unknown>>(
-    url(
-      `/v1/sessions/${encodeURIComponent(normalizedSessionId)}/scenes/${encodeURIComponent(normalizedSceneId)}`,
-    ),
-  );
-  return sceneRecordFromPayload(payload, normalizedSessionId);
 }
 
 export async function createShadowConversation({
@@ -4458,60 +4420,6 @@ function maintenanceClearResultFromPayload(
         return [key, Number.isFinite(numeric) ? numeric : 0];
       }),
     ),
-  };
-}
-
-function sceneRecordsFromPayload(
-  payload: unknown,
-  fallbackSessionId: string,
-): SessionSceneRecord[] {
-  const value = asRecord(payload);
-  const candidates = Array.isArray(payload)
-    ? payload
-    : Array.isArray(value.items)
-      ? value.items
-      : Array.isArray(value.scenes)
-        ? value.scenes
-        : Array.isArray(value.data)
-          ? value.data
-          : [];
-  return candidates
-    .map((item) => sceneRecordFromPayload(item, fallbackSessionId))
-    .filter((item): item is SessionSceneRecord => item != null);
-}
-
-function sceneRecordFromPayload(
-  payload: unknown,
-  fallbackSessionId: string,
-): SessionSceneRecord | null {
-  const value = asRecord(payload);
-  const nested = asRecord(value.scene ?? value.item ?? value.data);
-  const target = Object.keys(nested).length > 0 ? nested : value;
-  const sceneId = String(
-    target.scene_id ??
-      target.sceneId ??
-      value.scene_id ??
-      value.sceneId ??
-      '',
-  );
-  if (!sceneId.trim()) {
-    return null;
-  }
-  return {
-    sceneId,
-    sessionId: optionalString(
-      target.session_id ?? target.sessionId ?? value.session_id ?? value.sessionId,
-    ) ?? fallbackSessionId,
-    turnId: optionalString(
-      target.turn_id ?? target.turnId ?? value.turn_id ?? value.turnId,
-    ),
-    createdAt: optionalString(
-      target.created_at ?? target.createdAt ?? value.created_at ?? value.createdAt,
-    ),
-    updatedAt: optionalString(
-      target.updated_at ?? target.updatedAt ?? value.updated_at ?? value.updatedAt,
-    ),
-    raw: value,
   };
 }
 

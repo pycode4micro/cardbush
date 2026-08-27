@@ -63,8 +63,6 @@ import {
   fetchProjectContext,
   fetchRuntimeToolInventory,
   fetchSkills,
-  fetchSessionScene,
-  fetchSessionScenes,
   isBushServerHttpError,
   revertSessionWorkspaceChanges,
   saveModelConfigs,
@@ -182,12 +180,9 @@ import {
   type OsSystemSurfaceMode,
 } from './features/os/OsSystemSurface';
 import {
-  cardlingSceneFromSessionSceneRecord,
   cardlingSceneKey,
   cardlingSceneRevisionKey,
-  hasSceneHtml,
   latestCardlingSceneFromMessages,
-  latestSessionSceneRecord,
   sceneAutoPlayEnabled,
   type CardlingScene,
 } from './features/cardling/scene';
@@ -3969,6 +3964,8 @@ function ChatPanel({
   const userDetachedFromBottomRef = useRef(false);
   const showScrollBottomRef = useRef(false);
   const pendingSubmittedUserFocusRef = useRef(false);
+  const pendingSubmittedUserEntryUntilRef = useRef(0);
+  const userMessageEntryTimersRef = useRef<Map<string, number>>(new Map());
   const programmaticScrollUntilRef = useRef(0);
   const manualScrollDetachUntilRef = useRef(0);
   const lastScrollTopRef = useRef(0);
@@ -4008,6 +4005,23 @@ function ChatPanel({
   const activeScrollTraceIdRef = useRef('');
   const scrollTraceObserveUntilRef = useRef(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [enteringUserMessageIds, setEnteringUserMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const pendingSubmittedUserEntryMessageId = (() => {
+    if (Date.now() > pendingSubmittedUserEntryUntilRef.current) return '';
+    const previous = messageSnapshotRef.current;
+    const previousIds = previous.conversationId === activeConversationId
+      ? new Set(previous.ids)
+      : new Set<string>();
+    for (let index = renderMessages.length - 1; index >= 0; index -= 1) {
+      const message = renderMessages[index];
+      if (message?.role === 'user' && !previousIds.has(message.id)) {
+        return message.id;
+      }
+    }
+    return '';
+  })();
   const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
   const [shadowThreadOpen, setShadowThreadOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
@@ -4503,7 +4517,7 @@ function ChatPanel({
   );
 
   const showScene = useCallback(
-    (scene: CardlingScene, options?: { autoPlay?: boolean; fetchLatest?: boolean }) => {
+    (scene: CardlingScene, options?: { autoPlay?: boolean }) => {
       const key = cardlingSceneKey(scene);
       const revision = cardlingSceneRevisionKey(scene);
       setAvailableScene((current) =>
@@ -4521,52 +4535,13 @@ function ChatPanel({
         setActiveSceneInitialAutoPlay(false);
         setActiveScene(scene);
       }
-      if (!options?.fetchLatest || !scene.sessionId?.trim() || !scene.sceneId.trim()) {
-        return;
-      }
-      void fetchSessionScene({
-        sessionId: scene.sessionId,
-        sceneId: scene.sceneId,
-      })
-        .then((record) => {
-          if (!record) {
-            return;
-          }
-          const storedScene = cardlingSceneFromSessionSceneRecord(
-            record,
-            scene.sessionId,
-          );
-          if (!storedScene) {
-            return;
-          }
-          const storedRevision = cardlingSceneRevisionKey(storedScene);
-          setAvailableScene((current) =>
-            current && cardlingSceneRevisionKey(current) === storedRevision
-              ? current
-              : storedScene,
-          );
-          setActiveScene((current) => {
-            if (current?.sceneId !== scene.sceneId) {
-              return current;
-            }
-            if (activeSceneRevisionRef.current === storedRevision) {
-              return current;
-            }
-            activeSceneRevisionRef.current = storedRevision;
-            return storedScene;
-          });
-          if (activeSceneKeyRef.current === key) {
-            activeSceneKeyRef.current = cardlingSceneKey(storedScene);
-          }
-        })
-        .catch(() => undefined);
     },
     [nextSceneInitialAutoPlay],
   );
 
   const openScene = useCallback((scene: CardlingScene) => {
     dismissedSceneKeysRef.current.delete(cardlingSceneKey(scene));
-    showScene(scene, { fetchLatest: true });
+    showScene(scene);
   }, [showScene]);
 
   const closeScene = useCallback(() => {
@@ -5587,6 +5562,10 @@ function ChatPanel({
       if (outerResizeFollowFrameRef.current != null) {
         window.cancelAnimationFrame(outerResizeFollowFrameRef.current);
       }
+      for (const timer of userMessageEntryTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      userMessageEntryTimersRef.current.clear();
       listScrollerWheelCleanupRef.current?.();
       listScrollerWheelCleanupRef.current = null;
       scrollBottomWheelCleanupRef.current?.();
@@ -5597,7 +5576,45 @@ function ChatPanel({
   useEffect(() => {
     const previous = messageSnapshotRef.current;
     const ids = renderMessages.map((message) => message.id);
-      if (previous.conversationId !== activeConversationId) {
+    const previousIds = previous.conversationId === activeConversationId
+      ? new Set(previous.ids)
+      : new Set<string>();
+    let submittedUserIndex = -1;
+    for (let index = renderMessages.length - 1; index >= 0; index -= 1) {
+      const message = renderMessages[index];
+      if (message?.role === 'user' && !previousIds.has(message.id)) {
+        submittedUserIndex = index;
+        break;
+      }
+    }
+    if (
+      submittedUserIndex >= 0 &&
+      Date.now() <= pendingSubmittedUserEntryUntilRef.current
+    ) {
+      const messageId = renderMessages[submittedUserIndex].id;
+      pendingSubmittedUserEntryUntilRef.current = 0;
+      setEnteringUserMessageIds((current) => {
+        if (current.has(messageId)) return current;
+        const next = new Set(current);
+        next.add(messageId);
+        return next;
+      });
+      const previousTimer = userMessageEntryTimersRef.current.get(messageId);
+      if (previousTimer != null) window.clearTimeout(previousTimer);
+      userMessageEntryTimersRef.current.set(
+        messageId,
+        window.setTimeout(() => {
+          userMessageEntryTimersRef.current.delete(messageId);
+          setEnteringUserMessageIds((current) => {
+            if (!current.has(messageId)) return current;
+            const next = new Set(current);
+            next.delete(messageId);
+            return next;
+          });
+        }, 260),
+      );
+    }
+    if (previous.conversationId !== activeConversationId) {
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
       manualScrollDetachUntilRef.current = 0;
@@ -5617,10 +5634,6 @@ function ChatPanel({
       }
       return;
     }
-    const previousIds = new Set(previous.ids);
-    const submittedUserIndex = renderMessages.findIndex(
-      (message) => message.role === 'user' && !previousIds.has(message.id),
-    );
     if (
       submittedUserIndex >= 0 &&
       (pendingSubmittedUserFocusRef.current ||
@@ -5643,49 +5656,11 @@ function ChatPanel({
   ]);
 
   useEffect(() => {
-    let cancelled = false;
     setActiveScene(null);
     setAvailableScene(null);
     setActiveSceneInitialAutoPlay(false);
     activeSceneKeyRef.current = '';
     activeSceneRevisionRef.current = '';
-    if (!activeConversationId.trim()) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    async function loadLatestStoredScene() {
-      const records = await fetchSessionScenes(activeConversationId).catch(() => []);
-      if (cancelled || records.length === 0) {
-        return;
-      }
-      let latestRecord = latestSessionSceneRecord(records);
-      if (!latestRecord) {
-        return;
-      }
-      if (!hasSceneHtml(latestRecord.raw)) {
-        latestRecord =
-          (await fetchSessionScene({
-            sessionId: activeConversationId,
-            sceneId: latestRecord.sceneId,
-          }).catch(() => null)) ?? latestRecord;
-      }
-      if (cancelled) {
-        return;
-      }
-      const latestScene = cardlingSceneFromSessionSceneRecord(
-        latestRecord,
-        activeConversationId,
-      );
-      if (!latestScene) {
-        return;
-      }
-      setAvailableScene(latestScene);
-    }
-    void loadLatestStoredScene();
-    return () => {
-      cancelled = true;
-    };
   }, [activeConversationId]);
 
   useEffect(() => {
@@ -5703,17 +5678,13 @@ function ChatPanel({
         setActiveScene((current) => current?.sceneId === sceneId ? null : current);
         return;
       }
-      void fetchSessionScene({ sessionId, sceneId }).then((record) => {
-        if (!record) return;
-        const scene = cardlingSceneFromSessionSceneRecord(record, sessionId);
-        if (!scene) return;
-        setAvailableScene(scene);
-        if (sending) showScene(scene, { autoPlay: true });
-      }).catch(() => undefined);
+      // Session Scene REST was removed from BushServer. New scene content is
+      // restored from the streamed message artifacts below; this event only
+      // carries lifecycle identity and must not trigger a legacy fetch.
     };
     window.addEventListener('cardbush:scene-event', receiveSceneEvent);
     return () => window.removeEventListener('cardbush:scene-event', receiveSceneEvent);
-  }, [activeConversationId, sending, showScene]);
+  }, [activeConversationId]);
 
   useEffect(() => {
     const latestScene = latestCardlingSceneFromMessages(renderMessages);
@@ -5985,6 +5956,7 @@ function ChatPanel({
         return;
       }
       if (!sending) {
+        pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
         const shouldFollowSubmission =
           !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
         pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
@@ -6325,7 +6297,14 @@ function ChatPanel({
               {renderMessages.map((message, index) => (
                 <div
                   key={message.id}
-                  className={`message-list-item ${index === 0 ? 'first' : ''}`}
+                  className={`message-list-item${index === 0 ? ' first' : ''}${
+                    message.role === 'user' && (
+                      enteringUserMessageIds.has(message.id) ||
+                      pendingSubmittedUserEntryMessageId === message.id
+                    )
+                      ? ' user-message-entering'
+                      : ''
+                  }`}
                   data-message-id={message.id}
                   data-message-role={message.role}
                 >

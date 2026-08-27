@@ -10,17 +10,51 @@ const app = read('src', 'App.tsx');
 const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
 const storage = read('src', 'features', 'sessionAttention.ts');
 const css = read('src', 'styles', 'app.css');
+const packageJson = JSON.parse(read('package.json'));
+const guiRunner = read('scripts', 'run-electron-gui.mjs');
+const devRunner = read('scripts', 'run-electron-dev.mjs');
+const electronRuntime = read('scripts', 'cardbush-electron-runtime.mjs');
+const iconGenerator = read('scripts', 'generate-cardbush-icon.cjs');
 const windowsIcon = fs.readFileSync(path.join(process.cwd(), 'assets', 'cardbush.ico'));
 
 assert.match(main, /Notification\.isSupported\(\)/);
+assert.match(main, /dark:\s*'#1a1a1a'/);
+assert.doesNotMatch(main, /dark:\s*'#ff1a1a1a'/);
+assert.match(main, /target\.setBackgroundColor\(background\)/);
+assert.match(main, /target\.contentView\.setBackgroundColor\(background\)/);
+assert.match(
+  main,
+  /target\.setBackgroundMaterial\('none'\)[\s\S]*?target\.setBackgroundColor\(background\)/,
+  'native material must be applied before the final themed HWND background',
+);
+assert.match(main, /stage:\s*'background-applied'/);
+assert.match(main, /const actualBackground = target\.getBackgroundColor\(\)/);
 assert.match(main, /!mainWindow\.isVisible\(\) \|\| !mainWindow\.isFocused\(\)/);
 assert.match(main, /notification\.on\('click',[\s\S]*?attention:open-session/);
 assert.match(main, /mainWindow\.setOverlayIcon\(/);
 assert.match(main, /attention:set-count/);
-assert.match(main, /const cardbushAppUserModelId = 'com\.cardbush\.desktop'/);
+assert.match(main, /const cardbushProductionAppUserModelId = 'com\.cardbush\.desktop'/);
+assert.match(
+  main,
+  /`\$\{cardbushProductionAppUserModelId\}\.development\.\$\{cardbushDevelopmentRuntimeIdentity\}`/,
+);
 assert.match(main, /app\.setAppUserModelId\(cardbushAppUserModelId\)/);
+assert.match(
+  main,
+  /match\(\/\^cardbush-dev-\(\[a-f0-9\]\+\)\\\.exe\$\/i\)/,
+  'development AppUserModelId should track the branded runtime icon identity',
+);
+assert.match(
+  main,
+  /development\.\$\{cardbushDevelopmentRuntimeIdentity\}/,
+  'development taskbar grouping should invalidate stale icon caches when the runtime icon changes',
+);
 assert.match(main, /window\.setIcon\(icon\)/);
 assert.match(main, /const logoAssetNames = \['cardbush-logo\.png', 'cardbush-logo-backup\.png', 'cardbush\.ico'\]/);
+assert.match(main, /const icon = loadCardbushTrayIcon\(32\)/);
+assert.match(main, /function cropTransparentIconPadding\(image: NativeImage\)/);
+assert.match(main, /const cropped = cropTransparentIconPadding\(image\)/);
+assert.match(main, /const safePadding = Math\.ceil\(Math\.max\(contentWidth, contentHeight\) \* 0\.06\)/);
 assert.match(main, /window\.setAppDetails\(\{[\s\S]*?appIconPath:/);
 assert.match(main, /relaunchCommand:\s*windowsRelaunchCommand\(\)/);
 assert.match(main, /relaunchDisplayName:\s*cardbushDisplayName/);
@@ -31,9 +65,24 @@ assert.match(main, /shell\.writeShortcutLink\(shortcutPath, operation/);
 assert.match(main, /appUserModelId:\s*cardbushAppUserModelId/);
 assert.match(main, /ensureWindowsTaskbarShortcut\(\);[\s\S]*?registerLocalFileProtocol\(\);/);
 assert.match(main, /window\.on\('show', refreshWindowBackdrop\)/);
+assert.match(main, /function traceMainWindowComposition\(/);
+assert.match(main, /capturePage\(\)\s*\.then\(capturedFrameTelemetry\)/);
+assert.match(main, /whitePixelRatio/);
+assert.match(main, /appendDebugLog\('window-composition'/);
+assert.match(main, /traceMainWindowComposition\(sourceWindow, 'theme-change'/);
 assert.match(main, /'renderer-ready-before-show'/);
 assert.match(main, /'renderer-ready-after-show'/);
 assert.match(main, /appendDebugLog\('taskbar'/);
+assert.equal(packageJson.scripts.gui, 'npm run build && node scripts/run-electron-gui.mjs');
+assert.match(guiRunner, /resolveCardbushElectronExecutable\(projectRoot\)/);
+assert.match(devRunner, /resolveCardbushElectronExecutable\(projectRoot\)/);
+assert.match(guiRunner, /CARDBUSH_DEVELOPMENT_RUNTIME: '1'/);
+assert.match(devRunner, /CARDBUSH_DEVELOPMENT_RUNTIME: '1'/);
+assert.match(main, /cardbushRuntimeIsPackaged \? 'CardBush\.lnk' : 'CardBush Development\.lnk'/);
+assert.match(electronRuntime, /ResEdit\.Resource\.IconGroupEntry\.replaceIconsForResource/);
+assert.match(electronRuntime, /FileDescription: 'CardBush desktop'/);
+assert.match(iconGenerator, /const iconSizes = \[16, 20, 24, 32, 40, 48, 64, 128, 256\]/);
+assert.match(iconGenerator, /function buildPngIcon\(images\)/);
 assert.deepEqual([...windowsIcon.subarray(0, 4)], [0, 0, 1, 0]);
 assert.ok(windowsIcon.readUInt16LE(4) >= 6, 'Windows icon should contain multiple resolutions');
 

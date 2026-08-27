@@ -193,6 +193,7 @@ export function useCardbushChat(
   const activeTurnIdsRef = useRef<Record<string, string>>({});
   const terminalTurnIdsRef = useRef<Set<string>>(new Set());
   const stoppingRequestsRef = useRef<Set<string>>(new Set());
+  const contextWindowUsageRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeConversationIdRef = useRef(activeConversationId);
   const conversationsRef = useRef(conversations);
   const attentionByConversationRef = useRef(attentionByConversation);
@@ -538,6 +539,48 @@ export function useCardbushChat(
     });
   }, [requestContext.defaultReasoningLevel, requestContext.reasoningLevels]);
 
+  const refreshMeasuredContextWindowUsage = useCallback((
+    sessionId: string,
+    latestTurn?: SessionLatestTurn,
+  ) => {
+    const normalizedSessionId = sessionId.trim();
+    const turnId = latestTurn?.turnId.trim() ?? '';
+    if (!normalizedSessionId || requestContext.contextWindowUsageAvailable !== true) {
+      return Promise.resolve();
+    }
+    if (!turnId) {
+      setContextWindowUsageByConversation((current) => {
+        if (!(normalizedSessionId in current)) return current;
+        const next = { ...current };
+        delete next[normalizedSessionId];
+        return next;
+      });
+      return Promise.resolve();
+    }
+
+    const requestKey = `${normalizedSessionId}:${turnId}`;
+    const pending = contextWindowUsageRequestsRef.current.get(requestKey);
+    if (pending) return pending;
+
+    const request = fetchSessionContextWindowUsage(normalizedSessionId)
+      .then((usage) => {
+        const targetSessionId = (usage.sessionId || normalizedSessionId).trim();
+        if (!targetSessionId) return;
+        setContextWindowUsageByConversation((current) => ({
+          ...current,
+          [targetSessionId]: { ...usage, sessionId: targetSessionId },
+        }));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (contextWindowUsageRequestsRef.current.get(requestKey) === request) {
+          contextWindowUsageRequestsRef.current.delete(requestKey);
+        }
+      });
+    contextWindowUsageRequestsRef.current.set(requestKey, request);
+    return request;
+  }, [requestContext.contextWindowUsageAvailable]);
+
   useEffect(() => {
     if (!activeConversationId || messagesByConversation[activeConversationId]) {
       return;
@@ -567,6 +610,10 @@ export function useCardbushChat(
           persistAutoConversationTitle(
             result.conversation,
             firstUserTitleSource(loadedMessages, ''),
+          );
+          void refreshMeasuredContextWindowUsage(
+            activeConversationId,
+            result.latestTurn,
           );
           if (result.conversation.projectDir || result.conversation.workspaceContext) {
             setConversations((current) =>
@@ -605,6 +652,7 @@ export function useCardbushChat(
     activeConversationId,
     messagesByConversation,
     persistAutoConversationTitle,
+    refreshMeasuredContextWindowUsage,
     requestContext.workspaceChangesAvailable,
   ]);
 
@@ -1150,11 +1198,7 @@ export function useCardbushChat(
         result.conversation,
         firstUserTitleSource(loadedMessages, ''),
       );
-      if (requestContext.contextWindowUsageAvailable === true) {
-        await fetchSessionContextWindowUsage(sessionId)
-          .then((usage) => mergeContextWindowUsage(sessionId, usage))
-          .catch(() => undefined);
-      }
+      await refreshMeasuredContextWindowUsage(sessionId, result.latestTurn);
       await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
       await refreshGoal(sessionId);
       await reloadConversations().catch(() => undefined);
@@ -1175,28 +1219,11 @@ export function useCardbushChat(
   }, [
     activeConversationId,
     loadTeamFlow,
-    mergeContextWindowUsage,
     refreshGoal,
+    refreshMeasuredContextWindowUsage,
     reloadConversations,
     persistAutoConversationTitle,
-    requestContext.contextWindowUsageAvailable,
     requestContext.workspaceChangesAvailable,
-  ]);
-
-  useEffect(() => {
-    const sessionId = activeConversationId.trim();
-    if (!sessionId || requestContext.contextWindowUsageAvailable !== true) {
-      return;
-    }
-    const controller = new AbortController();
-    void fetchSessionContextWindowUsage(sessionId, controller.signal)
-      .then((usage) => mergeContextWindowUsage(sessionId, usage))
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [
-    activeConversationId,
-    mergeContextWindowUsage,
-    requestContext.contextWindowUsageAvailable,
   ]);
 
   const createSessionShareLink = useCallback(

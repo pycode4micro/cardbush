@@ -13,6 +13,7 @@ import {
   screen,
   session,
   shell,
+  type NativeImage,
   type OpenDialogOptions,
 } from 'electron';
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -28,7 +29,21 @@ import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
-const cardbushAppUserModelId = 'com.cardbush.desktop';
+const cardbushProductionAppUserModelId = 'com.cardbush.desktop';
+const cardbushDevelopmentRuntime =
+  process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() === '1';
+const cardbushRuntimeIsPackaged = app.isPackaged && !cardbushDevelopmentRuntime;
+const windowCompositionDebugEnabled =
+  !cardbushRuntimeIsPackaged ||
+  process.env.CARDBUSH_WINDOW_COMPOSITION_DEBUG?.trim() === '1';
+const cardbushDevelopmentRuntimeIdentity =
+  path
+    .basename(process.execPath)
+    .match(/^cardbush-dev-([a-f0-9]+)\.exe$/i)?.[1]
+    ?.toLowerCase() ?? 'default';
+const cardbushAppUserModelId = cardbushRuntimeIsPackaged
+  ? cardbushProductionAppUserModelId
+  : `${cardbushProductionAppUserModelId}.development.${cardbushDevelopmentRuntimeIdentity}`;
 const cardbushDisplayName = 'cardbush';
 // BrowserWindow#setIcon is most reliable on Windows when it receives a
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
@@ -124,7 +139,7 @@ type OsLoginSettings = {
 
 function osLoginItemArgs(startInOsMode: boolean) {
   const modeArgs = startInOsMode ? ['--os-mode'] : [];
-  return app.isPackaged ? modeArgs : [app.getAppPath(), ...modeArgs];
+  return cardbushRuntimeIsPackaged ? modeArgs : [app.getAppPath(), ...modeArgs];
 }
 
 function readOsLoginSettings(): OsLoginSettings & { supported: boolean } {
@@ -181,12 +196,17 @@ type CardlingDesktopState = {
 type AppThemeMode = CardlingDesktopState['theme'];
 
 const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
+  // Keep native window colors opaque and in six-digit RGB form. Although
+  // Electron documents ARGB hex support, the Windows runtime used by the dev
+  // launcher silently kept the HWND background at its default #FFFFFF when an
+  // eight-digit value was supplied.
   dark: '#1a1a1a',
   bright: '#f5f3ef',
   parchment: '#e1d4ba',
 };
 
 let lastMainWindowTheme: AppThemeMode = 'dark';
+let windowCompositionTraceSequence = 0;
 
 type CardlingDesktopAction =
   | 'settings'
@@ -209,7 +229,7 @@ type UiPreviewTarget = {
 };
 
 function appLogsDir() {
-  return path.join(app.isPackaged ? app.getPath('userData') : process.cwd(), 'logs');
+  return path.join(cardbushRuntimeIsPackaged ? app.getPath('userData') : process.cwd(), 'logs');
 }
 
 function appendDebugLog(scope: string, payload: unknown) {
@@ -223,6 +243,170 @@ function appendDebugLog(scope: string, payload: unknown) {
   };
   fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
   return filePath;
+}
+
+function capturedFrameTelemetry(image: NativeImage) {
+  if (image.isEmpty()) {
+    return { empty: true };
+  }
+  const originalSize = image.getSize();
+  const sampleWidth = Math.min(192, Math.max(1, originalSize.width));
+  const sampleHeight = Math.max(
+    1,
+    Math.round((originalSize.height / Math.max(1, originalSize.width)) * sampleWidth),
+  );
+  const sample = image.resize({
+    width: sampleWidth,
+    height: sampleHeight,
+    quality: 'good',
+  });
+  const sampleSize = sample.getSize();
+  const bitmap = sample.toBitmap({ scaleFactor: 1 });
+  const pixelCount = Math.min(
+    sampleSize.width * sampleSize.height,
+    Math.floor(bitmap.length / 4),
+  );
+  if (pixelCount <= 0) {
+    return { empty: true, originalSize, sampleSize };
+  }
+
+  let redTotal = 0;
+  let greenTotal = 0;
+  let blueTotal = 0;
+  let whitePixels = 0;
+  let darkPixels = 0;
+  let transparentPixels = 0;
+  for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+    const offset = pixelIndex * 4;
+    const blue = bitmap[offset] ?? 0;
+    const green = bitmap[offset + 1] ?? 0;
+    const red = bitmap[offset + 2] ?? 0;
+    const alpha = bitmap[offset + 3] ?? 255;
+    redTotal += red;
+    greenTotal += green;
+    blueTotal += blue;
+    if (red >= 242 && green >= 242 && blue >= 242 && alpha >= 240) {
+      whitePixels += 1;
+    }
+    if (red <= 40 && green <= 40 && blue <= 40 && alpha >= 240) {
+      darkPixels += 1;
+    }
+    if (alpha <= 16) {
+      transparentPixels += 1;
+    }
+  }
+
+  const ratio = (count: number) => Number((count / pixelCount).toFixed(4));
+  return {
+    empty: false,
+    originalSize,
+    sampleSize,
+    averageRgb: {
+      red: Math.round(redTotal / pixelCount),
+      green: Math.round(greenTotal / pixelCount),
+      blue: Math.round(blueTotal / pixelCount),
+    },
+    whitePixelRatio: ratio(whitePixels),
+    darkPixelRatio: ratio(darkPixels),
+    transparentPixelRatio: ratio(transparentPixels),
+  };
+}
+
+function traceMainWindowComposition(
+  target: BrowserWindow,
+  event: string,
+  delays: number[] = [0, 48, 160],
+) {
+  if (!windowCompositionDebugEnabled || target.isDestroyed()) {
+    return;
+  }
+  const traceId = ++windowCompositionTraceSequence;
+  const startedAt = Date.now();
+  const expectedBackground = backgroundForMainWindowTheme(lastMainWindowTheme);
+  const nativeState = () => {
+    if (target.isDestroyed()) {
+      return { destroyed: true };
+    }
+    return {
+      destroyed: false,
+      visible: target.isVisible(),
+      focused: target.isFocused(),
+      minimized: target.isMinimized(),
+      maximized: target.isMaximized(),
+      fullScreen: target.isFullScreen(),
+      bounds: target.getBounds(),
+      contentBounds: target.getContentBounds(),
+      nativeBackground: target.getBackgroundColor(),
+      expectedBackground,
+      theme: lastMainWindowTheme,
+    };
+  };
+
+  appendDebugLog('window-composition', {
+    stage: 'native-event',
+    traceId,
+    event,
+    native: nativeState(),
+  });
+
+  for (const delay of delays) {
+    setTimeout(() => {
+      if (target.isDestroyed()) {
+        appendDebugLog('window-composition', {
+          stage: 'composition-snapshot',
+          traceId,
+          event,
+          delay,
+          elapsedMs: Date.now() - startedAt,
+          native: { destroyed: true },
+        });
+        return;
+      }
+      const rendererStatePromise = target.webContents
+        .executeJavaScript(`(() => {
+          const computed = (element) => element == null ? null : getComputedStyle(element);
+          const html = computed(document.documentElement);
+          const body = computed(document.body);
+          const root = computed(document.getElementById('root'));
+          return {
+            visibilityState: document.visibilityState,
+            readyState: document.readyState,
+            hidden: document.hidden,
+            htmlBackgroundColor: html?.backgroundColor ?? null,
+            htmlBackgroundImage: html?.backgroundImage ?? null,
+            bodyBackgroundColor: body?.backgroundColor ?? null,
+            bodyBackgroundImage: body?.backgroundImage ?? null,
+            rootBackgroundColor: root?.backgroundColor ?? null,
+            rootBackgroundImage: root?.backgroundImage ?? null,
+            viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+          };
+        })()`)
+        .catch((error: unknown) => ({
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      const capturedFramePromise = target.webContents
+        .capturePage()
+        .then(capturedFrameTelemetry)
+        .catch((error: unknown) => ({
+          error: error instanceof Error ? error.message : String(error),
+        }));
+
+      void Promise.all([rendererStatePromise, capturedFramePromise]).then(
+        ([renderer, capturedFrame]) => {
+          appendDebugLog('window-composition', {
+            stage: 'composition-snapshot',
+            traceId,
+            event,
+            delay,
+            elapsedMs: Date.now() - startedAt,
+            native: nativeState(),
+            renderer,
+            capturedFrame,
+          });
+        },
+      );
+    }, delay);
+  }
 }
 
 function createWindow() {
@@ -269,10 +453,18 @@ function createWindow() {
     applyMainWindowVisualMaterial(window, lastMainWindowTheme);
   };
   window.on('minimize', refreshWindowBackdrop);
+  window.on('minimize', () => traceMainWindowComposition(window, 'minimize'));
   window.on('restore', refreshWindowBackdrop);
+  window.on('restore', () => traceMainWindowComposition(window, 'restore'));
   window.on('show', refreshWindowBackdrop);
+  window.on('show', () => traceMainWindowComposition(window, 'show', [0, 80]));
+  window.on('hide', () => traceMainWindowComposition(window, 'hide', [0, 80]));
+  window.on('blur', () => traceMainWindowComposition(window, 'blur', [0, 80]));
+  window.on('maximize', () => traceMainWindowComposition(window, 'maximize'));
+  window.on('unmaximize', () => traceMainWindowComposition(window, 'unmaximize'));
   window.on('focus', () => {
     refreshWindowBackdrop();
+    traceMainWindowComposition(window, 'focus');
     window.flashFrame(false);
   });
   applySessionAttentionBadge();
@@ -311,14 +503,33 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
     return;
   }
   lastMainWindowTheme = theme;
-  target.setBackgroundColor(backgroundForMainWindowTheme(theme));
-  if (process.platform !== 'win32') {
-    return;
+  const background = backgroundForMainWindowTheme(theme);
+  if (process.platform === 'win32') {
+    try {
+      // Electron resets the native HWND background to white when the material
+      // changes. Apply the material first so the themed backing color is the
+      // final native-window operation.
+      target.setBackgroundMaterial('none');
+    } catch {
+      // Older Windows builds ignore this; the opaque theme color still applies.
+    }
   }
-  try {
-    target.setBackgroundMaterial('none');
-  } catch {
-    // Older Windows builds ignore this; the CSS theme background still applies.
+  target.setBackgroundColor(background);
+  // BrowserWindow owns a separate native content View whose default backing
+  // color is white. During Windows minimize/restore transitions Chromium can
+  // briefly expose this View between the HWND and the rendered web page, so it
+  // must follow the app theme as well.
+  target.contentView.setBackgroundColor(background);
+  if (windowCompositionDebugEnabled) {
+    const actualBackground = target.getBackgroundColor();
+    appendDebugLog('window-composition', {
+      stage: 'background-applied',
+      theme,
+      requestedBackground: background,
+      actualBackground,
+      matches:
+        actualBackground.toLowerCase() === background.toLowerCase(),
+    });
   }
 }
 
@@ -1070,7 +1281,7 @@ function saveCardlingAnchor(bounds = cardlingWindow?.getBounds()) {
 }
 
 function createTray() {
-  const icon = loadCardbushIcon(32);
+  const icon = loadCardbushTrayIcon(32);
   tray = new Tray(icon);
   tray.setToolTip('cardbush');
   tray.setContextMenu(
@@ -1121,8 +1332,9 @@ function loadCardbushIconWithSource(size: number) {
       candidates.push(filePath);
       const image = nativeImage.createFromPath(filePath);
       if (!image.isEmpty()) {
+        const cropped = cropTransparentIconPadding(image);
         return {
-          image: image.resize({ width: size, height: size, quality: 'best' }),
+          image: cropped.resize({ width: size, height: size, quality: 'best' }),
           sourcePath: filePath,
           candidates,
         };
@@ -1143,6 +1355,58 @@ function loadCardbushIconWithSource(size: number) {
 
 function loadCardbushIcon(size: number) {
   return loadCardbushIconWithSource(size).image;
+}
+
+function loadCardbushTrayIcon(size: number) {
+  return loadCardbushIconWithSource(size).image;
+}
+
+function cropTransparentIconPadding(image: NativeImage) {
+  const { width, height } = image.getSize();
+  if (width <= 0 || height <= 0) {
+    return image;
+  }
+  const bitmap = image.toBitmap({ scaleFactor: 1 });
+  if (bitmap.length < width * height * 4) {
+    return image;
+  }
+
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = bitmap[(y * width + x) * 4 + 3] ?? 0;
+      if (alpha <= 8) {
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (maxX < minX || maxY < minY) {
+    return image;
+  }
+
+  const contentWidth = maxX - minX + 1;
+  const contentHeight = maxY - minY + 1;
+  const safePadding = Math.ceil(Math.max(contentWidth, contentHeight) * 0.06);
+  const side = Math.min(
+    width,
+    height,
+    Math.max(contentWidth, contentHeight) + safePadding * 2,
+  );
+  const centerX = (minX + maxX + 1) / 2;
+  const centerY = (minY + maxY + 1) / 2;
+  const x = Math.max(0, Math.min(width - side, Math.round(centerX - side / 2)));
+  const y = Math.max(0, Math.min(height - side, Math.round(centerY - side / 2)));
+  if (x === 0 && y === 0 && side === width && side === height) {
+    return image;
+  }
+  return image.crop({ x, y, width: side, height: side });
 }
 
 function cardbushIconAssetPaths(fileName: string) {
@@ -1180,7 +1444,9 @@ function applyCardbushWindowIcon(
         success: true,
         appId: cardbushAppUserModelId,
         appName: app.getName(),
-        packaged: app.isPackaged,
+        packaged: cardbushRuntimeIsPackaged,
+        electronPackagedDetection: app.isPackaged,
+        developmentRuntime: cardbushDevelopmentRuntime,
         execPath: process.execPath,
         appPath: app.getAppPath(),
         sourcePath,
@@ -1229,11 +1495,14 @@ function ensureWindowsTaskbarShortcut() {
       'Programs',
     );
     fs.mkdirSync(programsDir, { recursive: true });
-    const shortcutPath = path.join(programsDir, 'CardBush.lnk');
+    const shortcutPath = path.join(
+      programsDir,
+      cardbushRuntimeIsPackaged ? 'CardBush.lnk' : 'CardBush Development.lnk',
+    );
     const operation = fs.existsSync(shortcutPath) ? 'replace' : 'create';
     const success = shell.writeShortcutLink(shortcutPath, operation, {
       target: process.execPath,
-      ...(app.isPackaged
+      ...(cardbushRuntimeIsPackaged
         ? {}
         : { args: quoteWindowsCommandArgument(app.getAppPath()) }),
       cwd: app.getAppPath(),
@@ -1276,7 +1545,7 @@ function ensureWindowsTaskbarShortcut() {
 
 function windowsRelaunchCommand() {
   const executable = quoteWindowsCommandArgument(process.execPath);
-  return app.isPackaged
+  return cardbushRuntimeIsPackaged
     ? executable
     : `${executable} ${quoteWindowsCommandArgument(app.getAppPath())}`;
 }
@@ -1522,6 +1791,7 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
       ? theme
       : 'dark';
   applyMainWindowVisualMaterial(sourceWindow, normalizedTheme);
+  traceMainWindowComposition(sourceWindow, 'theme-change', [0, 80]);
 });
 
 ipcMain.handle('os:filesystem-locations', (event) => {
@@ -2102,7 +2372,9 @@ app.whenReady().then(async () => {
       stage: 'app-ready',
       appId: cardbushAppUserModelId,
       appName: app.getName(),
-      packaged: app.isPackaged,
+      packaged: cardbushRuntimeIsPackaged,
+      electronPackagedDetection: app.isPackaged,
+      developmentRuntime: cardbushDevelopmentRuntime,
       execPath: process.execPath,
       appPath: app.getAppPath(),
       sourcePath: startupIcon.sourcePath,
@@ -2110,6 +2382,8 @@ app.whenReady().then(async () => {
         startupIcon.sourcePath !== 'generated-fallback' && fs.existsSync(startupIcon.sourcePath),
       iconSize: startupIcon.image.getSize(),
       shortcutUpdated,
+      nativeBackground: backgroundForMainWindowTheme(lastMainWindowTheme),
+      contentViewBackgroundSynchronized: true,
     });
   }
   registerLocalFileProtocol();

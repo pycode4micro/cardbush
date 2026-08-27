@@ -1,4 +1,3 @@
-import type { SessionSceneRecord } from '../../backend/api';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 
 type CardlingScenePlacement = 'top' | 'right' | 'bottom' | 'left';
@@ -76,46 +75,6 @@ export function cardlingSceneFromToolExecution(
     sessionId: message.conversationId,
     turnId: message.turnId,
   });
-}
-
-export function cardlingSceneFromSessionSceneRecord(
-  record: SessionSceneRecord,
-  fallbackSessionId?: string,
-): CardlingScene | null {
-  const raw = asRecord(record.raw);
-  const rawScene = scenePayloadFromRecord(raw);
-  const metadata = asRecord(
-    raw.metadata ?? rawScene.metadata ?? asRecord(rawScene).metadata,
-  );
-  return cardlingSceneFromRawScene(rawScene, {
-    metadata,
-    executionId: sceneString(
-      raw.source_execution_id ??
-        raw.sourceExecutionId ??
-        raw.tool_call_id ??
-        raw.toolCallId,
-    ),
-    summary: sceneString(raw.title ?? rawScene.title),
-    sessionId:
-      record.sessionId ??
-      sceneString(raw.session_id ?? raw.sessionId) ??
-      fallbackSessionId,
-    turnId: record.turnId ?? sceneString(raw.turn_id ?? raw.turnId),
-  });
-}
-
-export function hasSceneHtml(payload: Record<string, unknown>) {
-  const rawScene = scenePayloadFromRecord(payload);
-  return String(rawScene.html ?? rawScene.content ?? '').trim().length > 0;
-}
-
-export function latestSessionSceneRecord(records: SessionSceneRecord[]) {
-  if (records.length === 0) {
-    return null;
-  }
-  return [...records].sort(
-    (a, b) => sceneRecordTimestamp(a) - sceneRecordTimestamp(b),
-  )[records.length - 1];
 }
 
 export function initialSceneSelectedNodeId(
@@ -338,41 +297,6 @@ function cardlingSceneFromRawScene(
     ),
     raw: rawScene,
   };
-}
-
-function scenePayloadFromRecord(payload: Record<string, unknown>) {
-  const data = asRecord(payload.data);
-  const item = asRecord(payload.item);
-  const scene = asRecord(payload.scene);
-  const metadata = asRecord(payload.metadata);
-  const candidates = [
-    scene,
-    asRecord(payload.cardling_scene),
-    asRecord(metadata.scene),
-    asRecord(metadata.cardling_scene),
-    item,
-    data,
-    payload,
-  ];
-  return (
-    candidates.find(
-      (candidate) =>
-        candidate.html != null ||
-        candidate.content != null ||
-        candidate.scene_id != null ||
-        candidate.sceneId != null,
-    ) ?? payload
-  );
-}
-
-function sceneRecordTimestamp(record: SessionSceneRecord) {
-  const raw = asRecord(record.raw);
-  const value =
-    record.updatedAt ??
-    record.createdAt ??
-    sceneString(raw.updated_at ?? raw.updatedAt ?? raw.created_at ?? raw.createdAt);
-  const timestamp = value ? Date.parse(value) : Number.NaN;
-  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 function parseCardlingSceneNodes(value: unknown): CardlingScene['nodes'] {
