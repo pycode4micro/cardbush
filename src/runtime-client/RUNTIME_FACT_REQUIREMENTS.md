@@ -45,6 +45,15 @@ The product layer needs structured lifecycle facts for:
 Human-readable summaries may be included for display, but they cannot replace
 the machine-readable lifecycle and associations.
 
+An actionable `permission_requested` event must also publish the concrete
+capability IDs that may be granted (or structured choices containing those IDs).
+The Runtime must reject an allow answer whose granted IDs are not a subset of
+that request. CardBush cannot derive capability IDs from action/resource text,
+tool names or model output. `permission_answered` must retain whether the user
+selected `allow_once` or `allow_session`, so replay restores the same permission
+scope. Until those facts are available, the product may safely expose deny and
+cancel but must not fabricate an allow request.
+
 ## Recovery checkpoint
 
 The UI needs observable facts for:

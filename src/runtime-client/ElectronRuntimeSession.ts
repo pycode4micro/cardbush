@@ -1,7 +1,10 @@
 import {
+  ANSWER_RUNTIME_PERMISSION_COMMAND,
   decodeRuntimeEvent,
+  runtimePermissionAnswerSchema,
   type ModelRequest,
   type RuntimeEvent,
+  type RuntimePermissionAnswer,
 } from '@cardbush/bush-protocol';
 import { RUN_MODEL_TURN_COMMAND } from '@cardbush/bush-runtime';
 import {
@@ -95,6 +98,13 @@ export class ElectronRuntimeSession {
     this.#operationController?.abort();
   }
 
+  answerPermission(
+    answer: RuntimePermissionAnswer,
+    signal?: AbortSignal,
+  ) {
+    return this.client.answerPermission(answer, signal);
+  }
+
   dispose() {
     this.stop();
     this.store.cancel();
@@ -109,6 +119,18 @@ export class ElectronProtocolRuntimeClient extends ProtocolRuntimeClient {
     return this.command(
       { kind: RUN_MODEL_TURN_COMMAND, payload: request },
       decodeRuntimeTerminalEvent,
+      signal,
+    );
+  }
+
+  answerPermission(
+    answer: RuntimePermissionAnswer,
+    signal?: AbortSignal,
+  ): Promise<RuntimePermissionAnswer> {
+    const payload = runtimePermissionAnswerSchema.parse(answer);
+    return this.command(
+      { kind: ANSWER_RUNTIME_PERMISSION_COMMAND, payload },
+      (input) => runtimePermissionAnswerSchema.parse(input),
       signal,
     );
   }

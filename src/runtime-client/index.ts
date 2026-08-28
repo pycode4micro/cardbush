@@ -20,8 +20,12 @@ export {
 export type { RuntimeFixtureClient } from './ProtocolRuntimeClient';
 export { RuntimeTurnProjection } from './RuntimeTurnProjection';
 export type {
+  RuntimePermissionPhase,
+  RuntimePermissionView,
   RuntimeSegmentView,
   RuntimeTerminalView,
+  RuntimeToolPhase,
+  RuntimeToolView,
   RuntimeTurnPhase,
   RuntimeTurnView,
 } from './RuntimeTurnProjection';

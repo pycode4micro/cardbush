@@ -38,3 +38,10 @@ Turn command, keeps the stream attached during user cancellation so the
 Runtime-owned stopped terminal can arrive, and never converts IPC failures into
 model or network prose. React should subscribe to its `RuntimeTurnStore`; it
 must not call preload IPC methods directly.
+
+Tool and permission events are projected by stable call/permission identity.
+Receipt, Execution Fact, Artifact and Workspace Change references remain
+separate arrays; rendered tool output is never inspected to manufacture them.
+Permission answers are validated against `bush.runtime_permission_answer.v1`
+before IPC. The allow UI remains gated until `permission_requested` publishes
+the concrete capability IDs that the user is allowed to grant.

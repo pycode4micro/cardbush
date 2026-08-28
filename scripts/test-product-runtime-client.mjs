@@ -141,6 +141,61 @@ try {
   assert.equal(liveResult.terminal.reason, 'runtime_provider_not_configured');
   assert.equal(liveSession.store.getSnapshot().eventCount, 3);
   assert.equal(liveResult.commandTerminal?.kind, 'turn_terminal');
+  const permissionAnswer = await liveSession.answerPermission({
+    protocol: 'bush.runtime_permission_answer.v1',
+    permissionId: 'permission_live',
+    answerId: 'answer_live',
+    decision: 'allow_once',
+    grantedCapabilityIds: ['capability.files.write'],
+  });
+  assert.deepEqual(permissionAnswer.grantedCapabilityIds, [
+    'capability.files.write',
+  ]);
+  assert.throws(() => liveSession.answerPermission({
+    protocol: 'bush.runtime_permission_answer.v1',
+    permissionId: 'permission_invalid',
+    answerId: 'answer_invalid',
+    decision: 'allow_once',
+    grantedCapabilityIds: [],
+  }));
+
+  const lifecycleProjection = new runtimeClientModule.RuntimeTurnProjection();
+  const lifecycleEvents = toolPermissionLifecycleEvents();
+  for (const event of lifecycleEvents) lifecycleProjection.apply(event);
+  const lifecycleView = lifecycleProjection.snapshot();
+  assert.equal(lifecycleView.tools.length, 1);
+  assert.equal(lifecycleView.tools[0].phase, 'completed');
+  assert.deepEqual(lifecycleView.tools[0].receiptIds, ['receipt_write_1']);
+  assert.deepEqual(lifecycleView.tools[0].executionFactIds, ['fact_write_1']);
+  assert.deepEqual(lifecycleView.tools[0].workspaceChangeIds, ['change_write_1']);
+  assert.equal(lifecycleView.permissions[0].phase, 'answered');
+  assert.deepEqual(lifecycleView.permissions[0].actions, ['write']);
+  assert.deepEqual(lifecycleView.permissions[0].resources, ['workspace/file.txt']);
+  assert.deepEqual(lifecycleView.permissions[0].grantedCapabilityIds, [
+    'capability.files.write',
+  ]);
+  const deniedAnswer = await liveSession.answerPermission({
+    protocol: 'bush.runtime_permission_answer.v1',
+    permissionId: 'permission_deny',
+    answerId: 'answer_deny',
+    decision: 'deny',
+    grantedCapabilityIds: [],
+  });
+  assert.equal(deniedAnswer.decision, 'deny');
+
+  const rejectedProjection = new runtimeClientModule.RuntimeTurnProjection();
+  for (const event of permissionRejectedEvents()) rejectedProjection.apply(event);
+  assert.equal(rejectedProjection.snapshot().permissions[0].phase, 'rejected');
+  assert.equal(rejectedProjection.snapshot().tools[0].phase, 'failed');
+  assert.equal(
+    rejectedProjection.snapshot().tools[0].error.code,
+    'permission_rejected',
+  );
+
+  const cancelledProjection = new runtimeClientModule.RuntimeTurnProjection();
+  for (const event of permissionCancelledEvents()) cancelledProjection.apply(event);
+  assert.equal(cancelledProjection.snapshot().permissions[0].phase, 'cancelled');
+  assert.equal(cancelledProjection.snapshot().tools[0].phase, 'cancelled');
 
   const cancellableBridge = createLiveRuntimeBridge({ waitForCancellation: true });
   const cancellableSession = new runtimeClientModule.ElectronRuntimeSession(
@@ -208,6 +263,9 @@ function createLiveRuntimeBridge(options = {}) {
           ],
           features: ['turn_stream'],
         });
+      }
+      if (message.command.kind === 'runtime.answer_permission') {
+        return response(message.operationId, message.command.payload);
       }
 
       const request = message.command.payload;
@@ -303,4 +361,115 @@ async function until(predicate) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error('Timed out waiting for the product Runtime state.');
+}
+
+function toolPermissionLifecycleEvents() {
+  const base = (sequence, kind, payload) => ({
+    protocol: 'bush.runtime_event.v1',
+    eventId: `event_lifecycle_${sequence}`,
+    sequence,
+    requestId: 'request_lifecycle',
+    sessionId: 'session_lifecycle',
+    turnId: 'turn_lifecycle',
+    createdAt: `2026-08-29T00:01:0${sequence}.000Z`,
+    kind,
+    payload,
+  });
+  const tool = {
+    toolCallId: 'tool_write_1',
+    toolName: 'workspace_write',
+    ordinal: 0,
+    assistantMessageId: 'message_assistant_1',
+    display: { title: 'Update file', summary: 'workspace/file.txt' },
+  };
+  return [
+    base(1, 'tool_queued', tool),
+    base(2, 'permission_requested', {
+      permissionId: 'permission_write_1',
+      toolCallId: tool.toolCallId,
+      reason: 'The Action Manifest requires workspace write access.',
+      actions: ['write'],
+      resources: ['workspace/file.txt'],
+    }),
+    base(3, 'permission_answered', {
+      permissionId: 'permission_write_1',
+      toolCallId: tool.toolCallId,
+      answerId: 'answer_write_1',
+      grantedCapabilityIds: ['capability.files.write'],
+    }),
+    base(4, 'tool_running', tool),
+    base(5, 'tool_completed', {
+      ...tool,
+      receiptIds: ['receipt_write_1'],
+      executionFactIds: ['fact_write_1'],
+      artifactIds: [],
+      workspaceChangeIds: ['change_write_1'],
+    }),
+  ];
+}
+
+function permissionRejectedEvents() {
+  const [queued, requested] = toolPermissionLifecycleEvents();
+  const identity = eventIdentity('rejected');
+  const tool = queued.payload;
+  return [
+    { ...queued, ...identity, eventId: 'event_rejected_1', sequence: 1 },
+    { ...requested, ...identity, eventId: 'event_rejected_2', sequence: 2 },
+    lifecycleEvent(identity, 3, 'permission_rejected', {
+      permissionId: requested.payload.permissionId,
+      toolCallId: tool.toolCallId,
+      reason: 'The user denied this action.',
+    }),
+    lifecycleEvent(identity, 4, 'tool_failed', {
+      ...tool,
+      receiptIds: [],
+      executionFactIds: [],
+      artifactIds: [],
+      workspaceChangeIds: [],
+      error: {
+        code: 'permission_rejected',
+        message: 'The requested permission was rejected.',
+        details: {},
+      },
+    }),
+  ];
+}
+
+function permissionCancelledEvents() {
+  const [queued, requested] = toolPermissionLifecycleEvents();
+  const identity = eventIdentity('cancelled');
+  const tool = queued.payload;
+  return [
+    { ...queued, ...identity, eventId: 'event_cancelled_1', sequence: 1 },
+    { ...requested, ...identity, eventId: 'event_cancelled_2', sequence: 2 },
+    lifecycleEvent(identity, 3, 'permission_cancelled', {
+      permissionId: requested.payload.permissionId,
+      toolCallId: tool.toolCallId,
+      reason: 'The permission request was cancelled.',
+    }),
+    lifecycleEvent(identity, 4, 'tool_cancelled', {
+      ...tool,
+      reason: 'permission_request_cancelled',
+    }),
+  ];
+}
+
+function eventIdentity(suffix) {
+  return {
+    requestId: `request_${suffix}`,
+    sessionId: `session_${suffix}`,
+    turnId: `turn_${suffix}`,
+  };
+}
+
+function lifecycleEvent(identity, sequence, kind, payload) {
+  return {
+    protocol: 'bush.runtime_event.v1',
+    eventId: `event_${identity.turnId}_${sequence}`,
+    sequence,
+    ...identity,
+    createdAt: `2026-08-29T00:02:0${sequence}.000Z`,
+    kind,
+    payload,
+  };
 }
