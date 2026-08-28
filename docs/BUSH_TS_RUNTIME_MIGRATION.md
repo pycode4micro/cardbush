@@ -28,3 +28,17 @@ reference and differential-test oracle during migration.
 
 Protocol compatibility is evaluated from structured facts, lifecycle events, and
 artifacts. Model prose and exact loop counts are observations, not equality keys.
+
+## Product integration checkpoint
+
+`@cardbush/bush-protocol` now exposes `decodeRuntimeEvent` and
+`decodeRuntimeCapabilities` for the product-owned `RuntimeClient`. Provider-level
+`bush.model_event.v1` remains internal to the Runtime; React consumes the stable
+`bush.runtime_event.v1` lifecycle instead.
+
+The first product fixture is
+`packages/bush-protocol/reference-fixtures/single-turn-stream.v1.json`. It contains
+capability discovery plus a complete accepted → started → reasoning → assistant →
+terminal Turn. Its `events` and `commandResponses` fields match the product-side
+fixture transport, so the decoded fixture is directly consumable without an
+adapter. CardBush does not infer completion from text or stream closure.

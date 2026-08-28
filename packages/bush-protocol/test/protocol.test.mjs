@@ -4,11 +4,51 @@ import test from "node:test";
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
+  BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
+  BUSH_RUNTIME_EVENT_PROTOCOL,
+  decodeRuntimeCapabilities,
+  decodeRuntimeEvent,
   modelEventSchema,
   modelRequestSchema,
   outcomeFinalizerSchema,
   taskPlanSchema,
 } from "../dist/index.js";
+
+test("runtime event decoder keeps reasoning separate from assistant content", () => {
+  const event = decodeRuntimeEvent({
+    protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
+    eventId: "evt_1",
+    sequence: 3,
+    requestId: "req_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    kind: "reasoning_segment_delta",
+    payload: {
+      messageId: "message_1",
+      segmentId: "reasoning_1",
+      ordinal: 0,
+      delta: "private reasoning",
+    },
+  });
+
+  assert.equal(event.kind, "reasoning_segment_delta");
+  assert.equal(event.payload.delta, "private reasoning");
+});
+
+test("runtime capability decoder rejects undeclared protocol versions", () => {
+  assert.throws(() =>
+    decodeRuntimeCapabilities({
+      protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
+      hostId: "runtime_1",
+      runtimeVersion: "0.1.0",
+      eventProtocol: "bush.runtime_event.v2",
+      supportedEvents: ["turn_terminal"],
+      supportedCommands: [],
+      features: ["turn_stream"],
+    }),
+  );
+});
 
 test("model request keeps provider-independent tool definitions", () => {
   const request = modelRequestSchema.parse({
