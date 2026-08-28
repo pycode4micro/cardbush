@@ -16,10 +16,31 @@ export const runtimeEventKindSchema = z.enum([
   "assistant_segment_started",
   "assistant_segment_delta",
   "assistant_segment_completed",
+  "tool_queued",
+  "tool_running",
+  "tool_completed",
+  "tool_failed",
+  "tool_cancelled",
+  "permission_requested",
+  "permission_answered",
+  "permission_rejected",
+  "permission_expired",
+  "permission_cancelled",
+  "provider_retry",
+  "connection_interrupted",
+  "stream_resumed",
+  "replay_reset",
   "turn_terminal",
 ]);
 
 export type RuntimeEventKind = z.infer<typeof runtimeEventKindSchema>;
+
+export const runtimeEventCursorSchema = z.object({
+  afterSequence: z.number().int().nonnegative().optional(),
+  lastEventId: z.string().min(1).optional(),
+});
+
+export type RuntimeEventCursorValue = z.infer<typeof runtimeEventCursorSchema>;
 
 const runtimeEventEnvelopeSchema = z.object({
   protocol: z.literal(BUSH_RUNTIME_EVENT_PROTOCOL),
@@ -43,6 +64,31 @@ const segmentDeltaPayloadSchema = segmentIdentitySchema.extend({
 });
 const segmentCompletedPayloadSchema = segmentIdentitySchema.extend({
   content: z.string(),
+});
+
+const toolIdentitySchema = z.object({
+  toolCallId: z.string().min(1),
+  toolName: z.string().min(1),
+  ordinal: z.number().int().nonnegative(),
+  assistantMessageId: z.string().min(1).optional(),
+  display: z
+    .object({
+      title: z.string().min(1),
+      summary: z.string().optional(),
+    })
+    .optional(),
+});
+
+const factReferencesSchema = z.object({
+  receiptIds: z.array(z.string().min(1)).default([]),
+  executionFactIds: z.array(z.string().min(1)).default([]),
+  artifactIds: z.array(z.string().min(1)).default([]),
+  workspaceChangeIds: z.array(z.string().min(1)).default([]),
+});
+
+const permissionIdentitySchema = z.object({
+  permissionId: z.string().min(1),
+  toolCallId: z.string().min(1).optional(),
 });
 
 export const runtimeEventSchema = z.discriminatedUnion("kind", [
@@ -77,6 +123,92 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("assistant_segment_completed"),
     payload: segmentCompletedPayloadSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("tool_queued"),
+    payload: toolIdentitySchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("tool_running"),
+    payload: toolIdentitySchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("tool_completed"),
+    payload: toolIdentitySchema.merge(factReferencesSchema),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("tool_failed"),
+    payload: toolIdentitySchema.merge(factReferencesSchema).extend({
+      error: z.object({
+        code: z.string().min(1),
+        message: z.string(),
+        details: z.record(z.string(), z.unknown()).default({}),
+      }),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("tool_cancelled"),
+    payload: toolIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("permission_requested"),
+    payload: permissionIdentitySchema.extend({
+      reason: z.string().min(1),
+      actions: z.array(z.string().min(1)),
+      resources: z.array(z.string().min(1)),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("permission_answered"),
+    payload: permissionIdentitySchema.extend({
+      answerId: z.string().min(1),
+      grantedCapabilityIds: z.array(z.string().min(1)),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("permission_rejected"),
+    payload: permissionIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("permission_expired"),
+    payload: permissionIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("permission_cancelled"),
+    payload: permissionIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("provider_retry"),
+    payload: z.object({
+      attempt: z.number().int().positive(),
+      maxAttempts: z.number().int().positive(),
+      nextRetryMs: z.number().int().nonnegative(),
+      code: z.string().min(1),
+      message: z.string(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("connection_interrupted"),
+    payload: z.object({
+      source: z.string().min(1),
+      code: z.string().min(1),
+      message: z.string(),
+      resumable: z.boolean(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("stream_resumed"),
+    payload: z.object({
+      afterSequence: z.number().int().nonnegative().optional(),
+      lastEventId: z.string().min(1).optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("replay_reset"),
+    payload: z.object({
+      reason: z.string().min(1),
+      supersededEventIds: z.array(z.string().min(1)),
+    }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("turn_terminal"),

@@ -94,7 +94,6 @@ export async function executeModelRound(
       break;
     }
     lastSequence = event.sequence;
-    await options.onEvent?.(event);
 
     if (completed && event.kind !== "usage") {
       failure = localFailure(
@@ -105,6 +104,7 @@ export async function executeModelRound(
       );
       break;
     }
+    await options.onEvent?.(event);
     switch (event.kind) {
       case "text_delta":
         text += event.delta;

@@ -50,6 +50,45 @@ test("runtime capability decoder rejects undeclared protocol versions", () => {
   );
 });
 
+test("tool and permission lifecycle facts require stable associations", () => {
+  const envelope = {
+    protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
+    eventId: "evt_lifecycle",
+    sequence: 4,
+    requestId: "req_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    createdAt: "2026-08-29T00:00:00.000Z",
+  };
+  const completed = decodeRuntimeEvent({
+    ...envelope,
+    kind: "tool_completed",
+    payload: {
+      toolCallId: "call_1",
+      toolName: "write_file",
+      ordinal: 0,
+      receiptIds: ["receipt_1"],
+      executionFactIds: ["fact_1"],
+      artifactIds: [],
+      workspaceChangeIds: ["change_1"],
+    },
+  });
+  assert.equal(completed.payload.receiptIds[0], "receipt_1");
+
+  assert.throws(() =>
+    decodeRuntimeEvent({
+      ...envelope,
+      eventId: "evt_permission",
+      kind: "permission_requested",
+      payload: {
+        reason: "outside workspace",
+        actions: ["read"],
+        resources: ["C:/outside.txt"],
+      },
+    }),
+  );
+});
+
 test("model request keeps provider-independent tool definitions", () => {
   const request = modelRequestSchema.parse({
     protocol: BUSH_MODEL_REQUEST_PROTOCOL,
