@@ -2,6 +2,9 @@
   "name": "cardbush-electron",
   "version": "1.0.0-dev",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "main": "dist-electron/main.js",
   "engines": {
     "node": ">=22.12.0",
@@ -12,6 +15,7 @@
     "predev": "node scripts/free-dev-port.mjs",
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"tsc -p tsconfig.node.json --watch --preserveWatchOutput\" \"wait-on http://127.0.0.1:5173 dist-electron/main.js && node scripts/run-electron-dev.mjs\"",
     "build": "tsc -p tsconfig.node.json && vite build",
+    "build:runtime": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-provider-openai",
     "gui": "npm run build && node scripts/run-electron-gui.mjs",
     "icon:generate": "electron scripts/generate-cardbush-icon.cjs",
     "fix:electron": "node scripts/install-electron.mjs",
@@ -51,6 +55,8 @@
     "test:project-roots": "node scripts/test-project-root-contract.mjs",
     "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
     "test:cardbush-app-host": "node scripts/test-cardbush-app-host-contract.mjs",
+    "test:runtime": "npm run build:runtime && npm run test:unit --workspace @cardbush/bush-protocol && npm run test:unit --workspace @cardbush/bush-runtime && npm run test:unit --workspace @cardbush/bush-provider-openai",
+    "typecheck:runtime": "npm run typecheck --workspace @cardbush/bush-protocol && npm run typecheck --workspace @cardbush/bush-runtime && npm run typecheck --workspace @cardbush/bush-provider-openai",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test:all": "node scripts/run-release-checks.mjs"
   },
