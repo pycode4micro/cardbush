@@ -4,9 +4,10 @@ This directory belongs to the CardBush product layer. It adapts structured
 Runtime protocol values for React features without implementing Agent Runtime
 semantics.
 
-The shared `bush-protocol` package remains the source of truth. Once that
-package is available, production code must pass its event and response decoders
-to `RuntimeClient`; this directory must not duplicate protocol schemas.
+The shared `@cardbush/bush-protocol` package remains the source of truth.
+`ProtocolRuntimeClient` injects its event and capability decoders into the
+transport-neutral `RuntimeClient`; this directory does not duplicate protocol
+schemas.
 
 Allowed responsibilities:
 
@@ -24,6 +25,9 @@ Forbidden responsibilities:
 - access Runtime SQLite storage;
 - implement permission or Execution Fact rules.
 
-`FixtureRuntimeTransport` deliberately accepts raw fixture values. Runtime-owned
-decoders validate those values before any feature receives them, so fixture UI
-work fails at the same contract boundary as the live Runtime Host.
+`FixtureRuntimeTransport` deliberately accepts raw fixture values.
+`createRuntimeFixtureClient` validates the complete fixture through the
+Runtime-owned decoder before any feature receives it, so fixture UI work fails
+at the same contract boundary as the live Runtime Host. `RuntimeTurnProjection`
+then projects those validated facts into separate reasoning and assistant
+segments and only applies a terminal phase from `turn_terminal`.
