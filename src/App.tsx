@@ -125,6 +125,7 @@ import {
   isLoopHistoryPreTestEnabled,
   LoopHistoryPreTest,
 } from './features/pre_test/LoopHistoryPreTest';
+import { isRuntimeStreamPreTestEnabled } from './features/pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
   ComposerRuntimeRail,
@@ -240,6 +241,13 @@ const LazyFeatureContentPanel = lazy(async () => {
   const module = await import('./features/panels');
   return { default: module.FeatureContentPanel };
 });
+
+const LazyRuntimeStreamPreTest = import.meta.env.DEV
+  ? lazy(async () => {
+      const module = await import('./features/pre_test/RuntimeStreamPreTest');
+      return { default: module.RuntimeStreamPreTest };
+    })
+  : null;
 
 type AppErrorBoundaryState = {
   message: string;
@@ -6105,6 +6113,14 @@ function ChatPanel({
 
   if (import.meta.env.DEV && isQuickContextPreTestEnabled()) {
     return <QuickContextPreTest language={language} />;
+  }
+
+  if (import.meta.env.DEV && LazyRuntimeStreamPreTest && isRuntimeStreamPreTestEnabled()) {
+    return (
+      <Suspense fallback={null}>
+        <LazyRuntimeStreamPreTest language={language} />
+      </Suspense>
+    );
   }
 
   return (

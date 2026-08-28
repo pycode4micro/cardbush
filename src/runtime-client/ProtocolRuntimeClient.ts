@@ -10,6 +10,7 @@ import {
 import {
   FixtureRuntimeTransport,
   type RuntimeFixtureScenario,
+  type RuntimeFixtureTransportOptions,
 } from './FixtureRuntimeTransport';
 import {
   RuntimeClient,
@@ -35,10 +36,14 @@ export interface RuntimeFixtureClient {
   fixture: RuntimeFixture;
 }
 
-export function createRuntimeFixtureClient(input: unknown): RuntimeFixtureClient {
+export function createRuntimeFixtureClient(
+  input: unknown,
+  options?: RuntimeFixtureTransportOptions,
+): RuntimeFixtureClient {
   const fixture = decodeRuntimeFixture(input);
   const transport = new FixtureRuntimeTransport(
     fixture satisfies RuntimeFixtureScenario,
+    options,
   );
   return {
     client: new ProtocolRuntimeClient(transport),

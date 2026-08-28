@@ -19,7 +19,8 @@ function assert(condition, message) {
 assert(packageJson.version === '1.0.0-dev', 'desktop version must be 1.0.0-dev');
 assert(packageJson.scripts['test:all'], 'test:all release gate is required');
 assert(
-  (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3,
+  (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3 &&
+    app.includes('import.meta.env.DEV && LazyRuntimeStreamPreTest && isRuntimeStreamPreTestEnabled()'),
   'all pre-test entry points must be development-only',
 );
 assert(
@@ -99,6 +100,11 @@ if (process.argv.includes('--dist')) {
   assert(
     !productionJavaScript.includes('cardbush_pre_test'),
     'production bundle still contains the pre-test activation key',
+  );
+  assert(
+    !productionJavaScript.includes('bush.runtime_fixture.v1') &&
+      !productionJavaScript.includes('single-turn-reasoning-assistant-terminal'),
+    'production bundle still contains the runtime protocol fixture',
   );
 }
 

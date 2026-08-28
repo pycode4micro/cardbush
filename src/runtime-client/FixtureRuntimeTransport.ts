@@ -14,15 +14,27 @@ export interface RuntimeFixtureScenario {
   commandResponses?: Record<string, unknown | ((payload: unknown) => unknown)>;
 }
 
+export interface RuntimeFixtureTransportOptions {
+  delayScale?: number;
+  minimumDelayMs?: number;
+}
+
 /**
  * Product-only fixture transport. It lets React features consume the same
  * RuntimeClient boundary before a live Runtime Host is available.
  */
 export class FixtureRuntimeTransport implements RuntimeTransport {
   readonly #scenario: RuntimeFixtureScenario;
+  readonly #delayScale: number;
+  readonly #minimumDelayMs: number;
 
-  constructor(scenario: RuntimeFixtureScenario) {
+  constructor(
+    scenario: RuntimeFixtureScenario,
+    options: RuntimeFixtureTransportOptions = {},
+  ) {
     this.#scenario = scenario;
+    this.#delayScale = Math.max(0, options.delayScale ?? 1);
+    this.#minimumDelayMs = Math.max(0, options.minimumDelayMs ?? 0);
   }
 
   async *openEventStream(request: RuntimeStreamRequest): AsyncIterable<unknown> {
@@ -30,7 +42,9 @@ export class FixtureRuntimeTransport implements RuntimeTransport {
       if (request.signal?.aborted) {
         return;
       }
-      await delay(frame.delayMs ?? 0, request.signal);
+      const delayMs = Math.max(frame.delayMs ?? 0, this.#minimumDelayMs) *
+        this.#delayScale;
+      await delay(delayMs, request.signal);
       if (request.signal?.aborted) {
         return;
       }

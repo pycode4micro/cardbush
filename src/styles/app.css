@@ -10913,6 +10913,215 @@ body.right-inspector-resizing .right-inspector-resizer {
   }
 }
 
+.runtime-stream-pre-test {
+  min-height: 0;
+  background: var(--surface);
+}
+
+.runtime-stream-pre-test-header {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 10px 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+
+.runtime-stream-pre-test-header > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.runtime-stream-pre-test-header strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.runtime-stream-pre-test-header small {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.runtime-stream-pre-test-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.runtime-stream-pre-test-actions output {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-stream-pre-test-actions output[data-state='settled'] {
+  color: var(--success);
+}
+
+.runtime-stream-pre-test-actions output[data-state='error'] {
+  color: var(--danger);
+}
+
+.runtime-stream-pre-test-actions button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 88%, transparent);
+}
+
+.runtime-stream-pre-test-stage {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 22px clamp(18px, 6vw, 86px) 34px;
+  overflow: auto;
+}
+
+.runtime-stream-pre-test-contract,
+.runtime-stream-pre-test-transcript,
+.runtime-stream-pre-test-terminal,
+.runtime-stream-pre-test-error {
+  width: min(100%, var(--chat-track-width));
+  margin: 0 auto;
+}
+
+.runtime-stream-pre-test-contract {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--border) 48%, transparent);
+}
+
+.runtime-stream-pre-test-contract > span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  background: var(--surface-strong);
+}
+
+.runtime-stream-pre-test-contract small,
+.runtime-stream-pre-test-terminal small,
+.runtime-stream-pre-test-reasoning small {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.runtime-stream-pre-test-contract strong {
+  overflow: hidden;
+  color: var(--text-mid);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-stream-pre-test-transcript {
+  align-self: center;
+  display: grid;
+  gap: 18px;
+}
+
+.runtime-stream-pre-test-user {
+  justify-self: end;
+  max-width: min(78%, 620px);
+  padding: 10px 14px;
+  border-radius: 16px;
+  color: var(--text);
+  background: var(--surface-strong);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.runtime-stream-pre-test-reasoning {
+  display: grid;
+  gap: 6px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--text-soft) 32%, transparent);
+}
+
+.runtime-stream-pre-test-reasoning.active {
+  border-left-color: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.runtime-stream-pre-test-reasoning p {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.runtime-stream-pre-test-message {
+  min-height: 54px;
+}
+
+.runtime-stream-pre-test-waiting {
+  min-height: 54px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.runtime-stream-pre-test-terminal {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.runtime-stream-pre-test-terminal strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.runtime-stream-pre-test-terminal span {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-stream-pre-test-error {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+  border-radius: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .runtime-stream-pre-test-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .runtime-stream-pre-test-contract {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-stream-pre-test-stage {
+    padding-inline: 14px;
+  }
+}
+
 .composer-queue-summary,
 .composer-team-summary {
   min-width: 0;

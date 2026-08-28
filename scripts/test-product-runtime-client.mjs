@@ -95,6 +95,40 @@ try {
     runtimeClientModule.createRuntimeFixtureClient(invalidFixture),
   );
 
+  const storeSetup = runtimeClientModule.createRuntimeFixtureClient(fixtureInput);
+  const store = new runtimeClientModule.RuntimeTurnStore(storeSetup.client);
+  const observedStoreStates = [];
+  const unsubscribe = store.subscribe(() => {
+    observedStoreStates.push(store.getSnapshot().streamState);
+  });
+  await store.discoverCapabilities();
+  await store.start({
+    sessionId: 'session_fixture_001',
+    turnId: 'turn_fixture_001',
+  });
+  unsubscribe();
+  assert.equal(store.getSnapshot().streamState, 'settled');
+  assert.equal(store.getSnapshot().eventCount, fixture.events.length);
+  assert.ok(observedStoreStates.includes('discovering'));
+  assert.ok(observedStoreStates.includes('streaming'));
+  assert.ok(observedStoreStates.includes('settled'));
+
+  const incompleteFixture = structuredClone(fixtureInput);
+  incompleteFixture.events.pop();
+  const incompleteSetup =
+    runtimeClientModule.createRuntimeFixtureClient(incompleteFixture);
+  const incompleteStore = new runtimeClientModule.RuntimeTurnStore(
+    incompleteSetup.client,
+  );
+  await assert.rejects(
+    incompleteStore.start({
+      sessionId: 'session_fixture_001',
+      turnId: 'turn_fixture_001',
+    }),
+    /closed before turn_terminal/,
+  );
+  assert.equal(incompleteStore.getSnapshot().streamState, 'error');
+
   console.log('Product Runtime Client contract passed.');
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });

@@ -2,6 +2,7 @@ export { FixtureRuntimeTransport } from './FixtureRuntimeTransport';
 export type {
   RuntimeFixtureFrame,
   RuntimeFixtureScenario,
+  RuntimeFixtureTransportOptions,
 } from './FixtureRuntimeTransport';
 export { RuntimeClient } from './RuntimeClient';
 export type {
@@ -24,3 +25,8 @@ export type {
   RuntimeTurnPhase,
   RuntimeTurnView,
 } from './RuntimeTurnProjection';
+export { RuntimeTurnStore, useRuntimeTurnStore } from './RuntimeTurnStore';
+export type {
+  RuntimeTurnStoreState,
+  RuntimeTurnStreamState,
+} from './RuntimeTurnStore';
