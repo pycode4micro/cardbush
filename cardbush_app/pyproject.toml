@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardbush-app"
+version = "1.0.0.dev0"
+description = "CardBush host MCP server and bot adapters"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "aiohttp>=3.14.1",
+  "cryptography>=42.0.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "lark-oapi>=1.5.0",
+  "mcp>=1.28.1",
+  "Pillow>=12.3.0",
+  "PyNaCl>=1.5.0",
+  "python-dotenv>=1.2.2",
+  "urllib3>=2.7.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pyinstaller>=6.13.0",
+  "pytest>=9.0.2",
+  "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+cardbush-app = "cardbush_app.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

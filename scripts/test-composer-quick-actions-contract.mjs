@@ -44,8 +44,9 @@ const slashBlock = source.match(
 assert.ok(slashBlock, 'slash quick-action block is missing');
 assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
-  ['/model', '/goal', '/skill', '/new'],
+  ['/team', '/model', '/goal', '/skill', '/new'],
 );
+assert.match(slashBlock, /选择 Team/);
 assert.match(slashBlock, /模型切换/);
 assert.match(slashBlock, /目标/);
 assert.match(slashBlock, /技能/);
@@ -172,6 +173,14 @@ assert.match(
   'The pre-start and accepted-stop send controls must remain disabled waiting states',
 );
 assert.match(source, /setTimeout\(\(\) => setCancelReady\(true\), 600\)/);
+assert.match(source, /function ComposerTeamPicker/);
+assert.match(source, /event\.key === 'ArrowDown'/);
+assert.match(source, /event\.key === 'ArrowUp'/);
+assert.match(source, /event\.key === 'Home' \|\| event\.key === 'End'/);
+assert.match(source, /event\.key === 'Enter' \|\| \(event\.key === 'Tab' && keyboardNavigating\)/);
+assert.match(source, /aria-activedescendant=/);
+assert.match(source, /role="listbox"/);
+assert.match(stylesSource, /\.composer-team-picker \.popover-row\.keyboard-active/);
 assert.match(source, /停止生成/);
 assert.match(source, /<Square size=\{11\} fill="currentColor"/);
 assert.doesNotMatch(source, /<Pause\b/);

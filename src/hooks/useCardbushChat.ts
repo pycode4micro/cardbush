@@ -97,6 +97,8 @@ export type QueuedChatMessage = {
   text: string;
   conversation?: ConversationSummary;
   createdAt: string;
+  teamId?: string;
+  teamName?: string;
 };
 
 export function useCardbushChat(
@@ -110,6 +112,8 @@ export function useCardbushChat(
     standardImageInputEnabled?: boolean;
     browserPrivacyMode?: boolean;
     teamModeEnabled?: boolean;
+    selectedTeamId?: string;
+    selectedTeamName?: string;
     osModeEnabled?: boolean;
     terminalRuntime?: TerminalRuntime;
     reasoningTraceVisible?: boolean;
@@ -206,7 +210,7 @@ export function useCardbushChat(
   const guidanceFallbackIdsRef = useRef<Set<string>>(new Set());
   const guidanceRequestIdsRef = useRef<Set<string>>(new Set());
   const sendMessageRef = useRef<
-    (text: string, conversation?: ConversationSummary) => Promise<void>
+    (text: string, conversation?: ConversationSummary, teamId?: string, teamName?: string) => Promise<void>
   >(async () => undefined);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const activeConversationIdForState = activeConversationId.trim();
@@ -1372,6 +1376,12 @@ export function useCardbushChat(
     [clearSessionAttention, conversations],
   );
 
+  const clearConversationSelection = useCallback(() => {
+    setActiveConversationId('');
+    setPendingInteraction(null);
+    setError(null);
+  }, []);
+
   const startConversation = useCallback(async (projectDir?: string, initialTitle?: string) => {
     const optimistic = localConversation(projectDir, initialTitle);
     setConversations((current) => [
@@ -1627,7 +1637,7 @@ export function useCardbushChat(
   }, [markSessionRunning, reloadConversations]);
 
   const sendMessage = useCallback(
-    async (text: string, queuedConversation?: ConversationSummary) => {
+    async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string) => {
       const trimmed = text.trim();
       if (!trimmed) {
         return;
@@ -1650,6 +1660,8 @@ export function useCardbushChat(
           conversationTitleFromUserText(visibleUserInput),
         ));
       const sessionId = conversation.id;
+      const turnTeamId = (queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
+      const turnTeamName = (queuedTeamName ?? requestContext.selectedTeamName)?.trim() || undefined;
       setConnectionRecoveryByConversation((current) => ({
         ...current,
         [sessionId]: undefined,
@@ -1662,6 +1674,8 @@ export function useCardbushChat(
           text: trimmed,
           conversation,
           createdAt: new Date().toISOString(),
+          teamId: turnTeamId,
+          teamName: turnTeamName,
         });
         return;
       }
@@ -1687,6 +1701,7 @@ export function useCardbushChat(
         status: 'pending',
         metadata: {
           message_delivery: 'pending',
+          ...(turnTeamId ? { team_id: turnTeamId, team_name: turnTeamName ?? turnTeamId } : {}),
         },
       };
       const assistantId = `assistant-${crypto.randomUUID()}`;
@@ -1748,6 +1763,7 @@ export function useCardbushChat(
           standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
           browserPrivacyMode: requestContext.browserPrivacyMode === true,
           teamModeEnabled: requestContext.teamModeEnabled === true,
+          teamId: turnTeamId,
           osModeEnabled: requestContext.osModeEnabled === true,
           terminalRuntime: requestContext.terminalRuntime,
           disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -2050,7 +2066,12 @@ export function useCardbushChat(
         const nextQueued = dequeueMessageForConversation(sessionId);
         if (nextQueued) {
           window.setTimeout(() => {
-            void sendMessageRef.current(nextQueued.text, nextQueued.conversation);
+            void sendMessageRef.current(
+              nextQueued.text,
+              nextQueued.conversation,
+              nextQueued.teamId,
+              nextQueued.teamName,
+            );
           }, 0);
         }
       }
@@ -2082,6 +2103,8 @@ export function useCardbushChat(
       requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
+      requestContext.selectedTeamId,
+      requestContext.selectedTeamName,
       requestContext.standardImageInputEnabled,
       requestContext.projectContexts,
       referencePlanMode,
@@ -2580,6 +2603,7 @@ export function useCardbushChat(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
       );
+      const controlTeamId = teamIdFromMessage(sourceUserMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
         conversation,
@@ -2613,6 +2637,7 @@ export function useCardbushChat(
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
+            teamId: controlTeamId,
             osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -2636,6 +2661,7 @@ export function useCardbushChat(
       requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
+      requestContext.selectedTeamId,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
@@ -2741,6 +2767,7 @@ export function useCardbushChat(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
       );
+      const controlTeamId = teamIdFromMessage(editSourceMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
         conversation,
@@ -2774,6 +2801,7 @@ export function useCardbushChat(
             standardImageInputEnabled: requestContext.standardImageInputEnabled === true,
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
+            teamId: controlTeamId,
             osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
@@ -2799,6 +2827,7 @@ export function useCardbushChat(
       requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
+      requestContext.selectedTeamId,
       requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
@@ -2974,7 +3003,7 @@ export function useCardbushChat(
           );
           if (!guidanceFallbackIdsRef.current.has(clientMessageId)) {
             guidanceFallbackIdsRef.current.add(clientMessageId);
-            await sendMessageRef.current(text, queued.conversation);
+            await sendMessageRef.current(text, queued.conversation, queued.teamId, queued.teamName);
           }
           setError(null);
           return;
@@ -3465,6 +3494,7 @@ export function useCardbushChat(
     reasoningLevel,
     setReasoningLevel,
     openConversation,
+    clearConversationSelection,
     startConversation,
     deleteConversation,
     renameConversation,
@@ -3648,6 +3678,10 @@ function mergedRequestContextPrompt(projectPrompt: string | undefined, teamModeE
   return [projectPrompt?.trim() ?? '', teamModeEnabled ? teamModeContextPrompt() : '']
     .filter(Boolean)
     .join('\n\n');
+}
+
+function teamIdFromMessage(message?: ChatMessage) {
+  return String(message?.metadata?.team_id ?? message?.metadata?.teamId ?? '').trim();
 }
 
 function teamModeContextPrompt() {

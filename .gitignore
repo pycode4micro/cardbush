@@ -4,5 +4,8 @@ dist-electron/
 logs/
 tmp/
 *.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
 .codex-video-frames-*/
 .codex-video-sheet-*.png

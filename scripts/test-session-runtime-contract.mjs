@@ -19,7 +19,8 @@ assert.match(
 );
 
 const helperStart = hook.indexOf('const refreshMeasuredContextWindowUsage');
-const helperEnd = hook.indexOf('\n\n  useEffect(', helperStart);
+const helperEndMatch = hook.slice(helperStart).match(/\r?\n\r?\n  useEffect\(/);
+const helperEnd = helperEndMatch?.index == null ? -1 : helperStart + helperEndMatch.index;
 assert.ok(helperStart >= 0 && helperEnd > helperStart, 'missing context-window refresh helper');
 const helper = hook.slice(helperStart, helperEnd);
 assert.match(helper, /const turnId = latestTurn\?\.turnId\.trim\(\) \?\? ''/);

@@ -5582,6 +5582,98 @@ body.right-inspector-resizing .right-inspector-resizer {
   color: color-mix(in srgb, var(--accent) 78%, var(--text));
 }
 
+.user-team-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0 0 7px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.user-team-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-team-chip {
+  max-width: 160px;
+}
+
+.composer-team-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-popover.teams {
+  overflow: hidden;
+}
+
+.composer-team-picker {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+}
+
+.composer-team-picker > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.composer-team-picker input {
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font: inherit;
+}
+
+.composer-team-picker .popover-row.keyboard-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.work-summary-subagent-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.work-summary-subagent-tags em {
+  padding: 2px 5px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.composer-tools .composer-team-chip {
+  width: auto;
+  min-width: 28px;
+  max-width: 150px;
+  flex: 0 1 auto;
+  gap: 5px;
+  padding: 0 7px;
+}
+
 .user-command-heading.has-content {
   margin-bottom: 7px;
   padding-bottom: 7px;

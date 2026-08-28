@@ -1007,14 +1007,14 @@ export function SettingsView({
       );
     }
     if (section === 'bots') {
-      if (!backendCapabilities.botControl) {
+      if (window.cardbushDesktop?.cardbushAppRequest == null) {
         return (
           <SettingsCard
             title={language === 'zh' ? 'Bot 连接' : 'Bot links'}
             subtitle={
               language === 'zh'
-                ? 'Bot 适配器独立运行，BushServer 不管理其配置与进程。'
-                : 'Bot adapters run independently; BushServer does not manage their configuration or processes.'
+                ? 'Bot 由 CardBush 桌面宿主管理，BushServer 不管理其配置与进程。'
+                : 'Bots are managed by the CardBush desktop host, not by BushServer.'
             }
           >
             <div className="maintenance-action-row">
@@ -1025,8 +1025,8 @@ export function SettingsView({
                 </strong>
                 <small>
                   {language === 'zh'
-                    ? '请通过独立适配器或其管理服务配置、登录和启停 Bot；聊天与会话交接仍由 BushServer 提供。'
-                    : 'Configure, sign in, and control Bots through an independent adapter or manager; BushServer still provides chat and session handoff.'}
+                    ? '当前页面不在 CardBush 桌面宿主中运行，无法配置、登录或启停 Bot。'
+                    : 'This page is not running inside the CardBush desktop host, so Bot configuration and lifecycle controls are unavailable.'}
                 </small>
               </span>
             </div>
@@ -3200,8 +3200,8 @@ function BotSettingsPanel({
         }`}
         subtitle={
           language === 'zh'
-            ? '服务状态来自 BushServer，前端只发送启动、停止或重启请求。'
-            : 'Service status comes from BushServer; the UI only sends lifecycle commands.'
+            ? '服务状态来自 CardBush 桌面宿主；Bot 进程随 CardBush 启动和关闭。'
+            : 'Service state comes from the CardBush desktop host; Bot processes follow the CardBush lifecycle.'
         }
       >
         <div className="bot-service-row">
@@ -3225,16 +3225,16 @@ function BotSettingsPanel({
         {selectedModelConfig && (
           <p className="settings-muted">
             {language === 'zh'
-              ? 'Bot 启动时由 BushServer 统一模型配置的默认槽位注入 provider / model / api_key / base_url。'
-              : 'Bot startup uses the default slot from BushServer model configs for provider / model / api_key / base_url.'}
+              ? 'CardBush 启动 Bot 时连接 BushServer，并使用其默认模型槽位完成会话。'
+              : 'CardBush connects each Bot to BushServer and uses its default model slot for conversations.'}
           </p>
         )}
         {(!selectedEnabled || !selectedConfigured) && (
           <p className="bot-settings-warning">
             {!selectedEnabled
               ? language === 'zh'
-                ? '当前平台未启用，BushServer 会拒绝启动请求。请先在配置中将 enabled 设置为 true 并保存。'
-                : 'This platform is disabled, so BushServer will reject start requests. Set enabled to true and save it first.'
+                ? '当前平台未启用，CardBush 桌面宿主会拒绝启动请求。请先在配置中将 enabled 设置为 true 并保存。'
+                : 'This platform is disabled, so the CardBush desktop host will reject start requests. Set enabled to true and save it first.'
               : botMissingConfigurationText(
                   selectedPlatform,
                   selectedMissingFields,

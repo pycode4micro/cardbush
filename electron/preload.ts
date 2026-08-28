@@ -71,6 +71,11 @@ const desktopApi = {
     ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
   bushHeaders: (targetUrl: string, json = false) =>
     ipcRenderer.invoke('bush:headers', targetUrl, json) as Promise<Record<string, string>>,
+  cardbushAppRequest: (request: {
+    path: string;
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    body?: unknown;
+  }) => ipcRenderer.invoke('cardbush-app:request', request) as Promise<unknown>,
   setProxy: (proxy: {
     mode: 'none' | 'system' | 'manual';
     httpProxy: string;

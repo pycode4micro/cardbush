@@ -145,8 +145,13 @@ import {
 import {
   ChatSidebar,
   ConversationChangeDialog,
+  TeamSidebar,
   type ProjectAction,
 } from './features/sidebar';
+import {
+  loadTeamWorkspace,
+  useTeamWorkspaceState,
+} from './features/team/teamWorkspaceStore';
 import {
   COPY_FEEDBACK_EVENT,
   copyText,
@@ -766,6 +771,10 @@ function CardbushApp() {
       ''
     );
   }, [projectItems, recentProjectDir]);
+  const teamWorkspace = useTeamWorkspaceState();
+  useEffect(() => {
+    void loadTeamWorkspace().catch(() => undefined);
+  }, []);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     language,
     projectContexts,
@@ -773,6 +782,8 @@ function CardbushApp() {
     disabledToolNames: effectiveDisabledToolNames,
     standardImageInputEnabled: visualInputEnabled,
     browserPrivacyMode: browserPrivacyModeEnabled,
+    selectedTeamId: teamWorkspace.selectedTeamId,
+    selectedTeamName: teamWorkspace.teams.find((team) => team.id === teamWorkspace.selectedTeamId)?.name,
     osModeEnabled: section === 'os',
     terminalRuntime: appSettings.terminal.runtime,
     reasoningTraceVisible,
@@ -1463,11 +1474,14 @@ function CardbushApp() {
       if (recentTaskConversation) {
         chat.openConversation(recentTaskConversation.id);
       } else {
-        void chat.startConversation();
+        chat.clearConversationSelection();
       }
       return;
     }
-    if (!fallbackProjectDir) return;
+    if (!fallbackProjectDir) {
+      chat.clearConversationSelection();
+      return;
+    }
     const recentProjectConversation = chat.conversations.find((conversation) => {
       const projectDir = conversationProjectRoot(conversation);
       return Boolean(projectDir && samePath(projectDir, fallbackProjectDir));
@@ -1475,7 +1489,7 @@ function CardbushApp() {
     if (recentProjectConversation) {
       chat.openConversation(recentProjectConversation.id);
     } else {
-      void chat.startConversation(fallbackProjectDir);
+      chat.clearConversationSelection();
     }
   }, [chat, fallbackProjectDir]);
 
@@ -1490,9 +1504,15 @@ function CardbushApp() {
     if (recentTaskConversation) {
       chat.openConversation(recentTaskConversation.id);
     } else {
-      void chat.startConversation();
+      chat.clearConversationSelection();
     }
-  }, [chat.conversations, chat.loading, chat.openConversation, chat.startConversation, onlyTalkMode]);
+  }, [
+    chat.clearConversationSelection,
+    chat.conversations,
+    chat.loading,
+    chat.openConversation,
+    onlyTalkMode,
+  ]);
 
   const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
     const normalized = projectDir?.trim() || null;
@@ -2132,45 +2152,54 @@ function CardbushApp() {
           )}
           {sidebarPresence.mounted && (
             <>
-              <ChatSidebar
-                language={language}
-                section={section}
-                activeConversationId={chat.activeConversationId}
-                runningConversationIds={runningConversationIds}
-                attentionByConversation={chat.attentionByConversation}
-                projects={projectItems}
-                conversations={chat.conversations}
-                changeReportsByConversation={changeReportsByConversation}
-                onlyTalkMode={onlyTalkMode}
-                onOnlyTalkModeChange={changeOnlyTalkMode}
-                onSectionChange={(nextSection) => {
-                  if (nextSection === 'os') {
-                    void enterOsMode();
-                    return;
-                  }
-                  setSection(nextSection);
-                }}
-                onConversationChange={(id) => {
-                  chat.openConversation(id);
-                  setSection('chat');
-                }}
-                onCreateConversation={() => {
-                  createConversation(onlyTalkMode ? null : undefined);
-                }}
-                onAddProject={() => void addProject()}
-                onProjectAction={(action, project) => void handleProjectAction(action, project)}
-                onDeleteConversation={chat.deleteConversation}
-                onRenameConversation={chat.renameConversation}
-                onOpenConversationChanges={(conversationId) => {
-                  setInspectorTarget(null);
-                  setWorkSummaryInspector(null);
-                  setChangeReviewFilePath('');
-                  setChangeReviewConversationId(conversationId);
-                  setChangeReviewNotice('');
-                }}
-                onOpenSettings={() => openSettings('profile')}
-                softVisible={sidebarPresence.visible}
-              />
+              {section === 'team' ? (
+                <TeamSidebar
+                  language={language}
+                  onBack={() => setSection('chat')}
+                  onOpenSettings={() => openSettings('profile')}
+                  softVisible={sidebarPresence.visible}
+                />
+              ) : (
+                <ChatSidebar
+                  language={language}
+                  section={section}
+                  activeConversationId={chat.activeConversationId}
+                  runningConversationIds={runningConversationIds}
+                  attentionByConversation={chat.attentionByConversation}
+                  projects={projectItems}
+                  conversations={chat.conversations}
+                  changeReportsByConversation={changeReportsByConversation}
+                  onlyTalkMode={onlyTalkMode}
+                  onOnlyTalkModeChange={changeOnlyTalkMode}
+                  onSectionChange={(nextSection) => {
+                    if (nextSection === 'os') {
+                      void enterOsMode();
+                      return;
+                    }
+                    setSection(nextSection);
+                  }}
+                  onConversationChange={(id) => {
+                    chat.openConversation(id);
+                    setSection('chat');
+                  }}
+                  onCreateConversation={() => {
+                    createConversation(onlyTalkMode ? null : undefined);
+                  }}
+                  onAddProject={() => void addProject()}
+                  onProjectAction={(action, project) => void handleProjectAction(action, project)}
+                  onDeleteConversation={chat.deleteConversation}
+                  onRenameConversation={chat.renameConversation}
+                  onOpenConversationChanges={(conversationId) => {
+                    setInspectorTarget(null);
+                    setWorkSummaryInspector(null);
+                    setChangeReviewFilePath('');
+                    setChangeReviewConversationId(conversationId);
+                    setChangeReviewNotice('');
+                  }}
+                  onOpenSettings={() => openSettings('profile')}
+                  softVisible={sidebarPresence.visible}
+                />
+              )}
               <SidebarResizer
                 language={language}
                 onWidthChange={(width) => {
@@ -8213,7 +8242,11 @@ function FeaturePanel({
   onCreateConversation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
-  const label = sectionLabels[section][language];
+  const teamWorkspace = useTeamWorkspaceState();
+  const activeTeam = teamWorkspace.teams.find((team) => team.id === teamWorkspace.activeTeamId);
+  const label = section === 'team'
+    ? activeTeam?.name.trim() || sectionLabels[section][language]
+    : sectionLabels[section][language];
   return (
     <div className="feature-panel">
       <TopBar

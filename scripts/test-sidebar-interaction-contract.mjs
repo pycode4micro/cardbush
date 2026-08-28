@@ -176,6 +176,19 @@ assert.match(
   'Only-talk new chats must explicitly bypass the recent-project fallback',
 );
 assert.match(appSource, /cardbush_only_talk_mode/);
+assert.match(
+  appSource,
+  /const changeOnlyTalkMode[\s\S]*?chat\.clearConversationSelection\(\)/,
+  'Switching chat modes without a matching conversation must show an empty draft instead of creating a session.',
+);
+const onlyTalkModeBlock = appSource.match(
+  /const changeOnlyTalkMode[\s\S]*?\}, \[chat, fallbackProjectDir\]\);/,
+)?.[0] ?? '';
+assert.doesNotMatch(
+  onlyTalkModeBlock,
+  /chat\.startConversation/,
+  'The only-talk/project toggle must never create a conversation implicitly.',
+);
 assert.match(conversationWorkspaceSource, /export function isOnlyTalkConversation/);
 assert.match(
   conversationWorkspaceSource,

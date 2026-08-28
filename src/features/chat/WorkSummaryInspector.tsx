@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from 'react';
 
-import { fetchSubagentTask } from '../../backend/api';
+import { fetchSubagentTask, fetchTurnSnapshot } from '../../backend/api';
 import type {
   AppLanguage,
   ChatMessage,
@@ -118,6 +118,7 @@ function SubagentTaskInspector({
   language: AppLanguage;
 }) {
   const [task, setTask] = useState(detail.task);
+  const [childTurn, setChildTurn] = useState<Record<string, unknown> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
 
@@ -131,6 +132,11 @@ function SubagentTaskInspector({
       const next = await fetchSubagentTask(taskId, signal);
       if (!signal?.aborted) {
         setTask((current) => mergeTask(current, next));
+        const childTurnId = next.childTurnId?.trim() || task.childTurnId?.trim();
+        if (childTurnId) {
+          const snapshot = await fetchTurnSnapshot(childTurnId, signal);
+          if (!signal?.aborted) setChildTurn(snapshot);
+        }
         setRefreshError('');
       }
     } catch (caught) {
@@ -140,7 +146,7 @@ function SubagentTaskInspector({
     } finally {
       if (!signal?.aborted) setRefreshing(false);
     }
-  }, [task.taskId]);
+  }, [task.childTurnId, task.taskId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -189,6 +195,9 @@ function SubagentTaskInspector({
   const requestedCapabilities = stringList(
     task.report.requested_capabilities ?? task.report.requestedCapabilities,
   );
+  const permissionRequirements = stringList(
+    task.raw.permission_requirements ?? task.raw.permissionRequirements,
+  );
 
   return (
     <section className="work-summary-inspector subagent-task-inspector">
@@ -201,7 +210,7 @@ function SubagentTaskInspector({
               : <CheckCircle2 size={17} />}
         </span>
         <div>
-          <strong>{task.agentName || detail.title || (language === 'zh' ? '子 Agent 任务' : 'Subagent task')}</strong>
+          <strong>{task.agentName || task.teamMemberId || detail.title || (language === 'zh' ? '子 Agent 任务' : 'Subagent task')}</strong>
           <small>{status.label}</small>
         </div>
         <button
@@ -220,7 +229,11 @@ function SubagentTaskInspector({
         <Fact label={language === 'zh' ? '任务 ID' : 'Task ID'} value={task.taskId || (language === 'zh' ? '等待分配' : 'Awaiting assignment')} />
         <Fact label={language === 'zh' ? '工具调用' : 'Tool call'} value={task.toolCallId || '-'} />
         <Fact label={language === 'zh' ? '父级回合' : 'Parent turn'} value={task.parentTurnId || '-'} />
+        <Fact label={language === 'zh' ? '子级回合' : 'Child turn'} value={task.childTurnId || '-'} />
         <Fact label={language === 'zh' ? '子会话' : 'Child session'} value={task.childSessionId || '-'} />
+        {task.origin === 'team' && <Fact label="Team" value={task.teamId || '-'} />}
+        {task.origin === 'team' && <Fact label={language === 'zh' ? '成员' : 'Member'} value={task.teamMemberId || '-'} />}
+        {task.origin === 'team' && <Fact label="Profile" value={task.agentProfileId || '-'} />}
         <Fact label={language === 'zh' ? '审查状态' : 'Review status'} value={task.reviewStatus || (language === 'zh' ? '待审查' : 'Pending')} />
         <Fact label={language === 'zh' ? '契约状态' : 'Contract state'} value={task.contractState || '-'} />
       </div>
@@ -247,6 +260,12 @@ function SubagentTaskInspector({
           </div>
         </InspectorSection>
       )}
+      {permissionRequirements.length > 0 && (
+        <InspectorSection title={language === 'zh' ? '父 Agent 处理权限' : 'Parent-agent permissions'}>
+          <p>{language === 'zh' ? '这些项目仅用于提示；子 Agent 不能在此直接获得授权。' : 'Informational only; the subagent cannot be authorized from this view.'}</p>
+          <div className="subagent-inspector-chips">{permissionRequirements.map((item) => <span key={item}>{item}</span>)}</div>
+        </InspectorSection>
+      )}
       {task.errorMessage && (
         <InspectorSection title={language === 'zh' ? '错误' : 'Error'} tone="failed">
           <p>{task.errorMessage}</p>
@@ -255,7 +274,7 @@ function SubagentTaskInspector({
 
       <details className="subagent-inspector-raw">
         <summary>{language === 'zh' ? '完整原始信息' : 'Complete raw details'}</summary>
-        <pre>{JSON.stringify(task.raw, null, 2)}</pre>
+        <pre>{JSON.stringify({ task: task.raw, child_turn: childTurn }, null, 2)}</pre>
       </details>
     </section>
   );
@@ -298,7 +317,12 @@ function taskFromDispatch(event: SubagentDispatchEvent): SubagentTaskSnapshot {
     parentSessionId: event.parentSessionId,
     parentTurnId: event.parentTurnId,
     childSessionId: event.childSessionId,
+    childTurnId: event.childTurnId,
     agentName: event.agentName,
+    origin: event.origin,
+    teamId: event.teamId,
+    teamMemberId: event.teamMemberId,
+    agentProfileId: event.agentProfileId,
     status: event.status || event.phase,
     terminal: event.terminal,
     accepted: event.accepted,

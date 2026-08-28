@@ -1,505 +1,143 @@
-import {
-  Check,
-  ChevronDown,
-  Copy,
-  FileCode2,
-  Plus,
-  Save,
-  Settings2,
-  Trash2,
-  Workflow,
-} from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { useEffect } from 'react';
 
-import type { AppLanguage } from '../../types';
-import { validateTeamWorkflow } from '../../backend/api';
+import type {
+  AgentProfileDefinition,
+  AppLanguage,
+  TeamDefinition,
+  TeamMemberDefinition,
+} from '../../types';
 import {
-  createTeamWorkflow,
-  createTeamWorkflowNode,
-  persistTeamWorkflows,
-  readTeamWorkflows,
-  workflowToYaml,
-  type TeamWorkflow,
-  type TeamWorkflowNode,
-} from './workflowModel';
+  loadTeamWorkspace,
+  teamWorkspaceActions,
+  useTeamWorkspaceState,
+} from './teamWorkspaceStore';
 import './team-workflow.css';
 
-
-export function TeamWorkflowPanel({
-  language,
-  activeProjectDir,
-  workflowValidationAvailable,
-}: {
+export function TeamWorkflowPanel({ language }: {
   language: AppLanguage;
   activeProjectDir?: string;
   workflowValidationAvailable: boolean;
 }) {
   const zh = language === 'zh';
-  const [workflows, setWorkflows] = useState(readTeamWorkflows);
-  const [activeWorkflowId, setActiveWorkflowId] = useState(() => readTeamWorkflows()[0]?.id ?? '');
-  const [selectedNodeId, setSelectedNodeId] = useState('');
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [yamlOpen, setYamlOpen] = useState(false);
-  const [libraryOpen, setLibraryOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [savedPath, setSavedPath] = useState('');
-  const [saveError, setSaveError] = useState('');
-  const [copyDone, setCopyDone] = useState(false);
-  const activeWorkflow = workflows.find((workflow) => workflow.id === activeWorkflowId) ?? workflows[0];
-  const selectedNode = activeWorkflow?.nodes.find((node) => node.id === selectedNodeId)
-    ?? activeWorkflow?.nodes[0]
-    ?? null;
-  const yaml = activeWorkflow ? workflowToYaml(activeWorkflow) : '';
+  const workspace = useTeamWorkspaceState();
+  const team = workspace.teams.find((item) => item.id === workspace.activeTeamId) ?? workspace.teams[0];
+  const member = team?.members.find((item) => item.id === workspace.activeMemberId) ?? team?.members[0];
+  const profile = workspace.profiles.find((item) => item.id === member?.agentProfileId);
 
-  useEffect(() => {
-    persistTeamWorkflows(workflows);
-  }, [workflows]);
+  useEffect(() => { void loadTeamWorkspace().catch(() => undefined); }, []);
 
-  useEffect(() => {
-    if (!activeWorkflow) return;
-    setSelectedNodeId((current) => (
-      activeWorkflow.nodes.some((node) => node.id === current)
-        ? current
-        : activeWorkflow.nodes[0]?.id ?? ''
-    ));
-    setSettingsOpen(false);
-    setYamlOpen(false);
-    setLibraryOpen(false);
-    setDetailsOpen(false);
-    setSavedPath('');
-    setSaveError('');
-  }, [activeWorkflow?.id]);
-
-  useEffect(() => {
-    if (!libraryOpen && !detailsOpen) return undefined;
-    const closePopover = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element) || target.closest('.team-workflow-topbar')) return;
-      setLibraryOpen(false);
-      setDetailsOpen(false);
-    };
-    window.addEventListener('pointerdown', closePopover);
-    return () => window.removeEventListener('pointerdown', closePopover);
-  }, [detailsOpen, libraryOpen]);
-
-  const updateWorkflow = useCallback((update: (workflow: TeamWorkflow) => TeamWorkflow) => {
-    setWorkflows((current) => current.map((workflow) => (
-      workflow.id === activeWorkflowId
-        ? { ...update(workflow), updatedAt: new Date().toISOString() }
-        : workflow
-    )));
-    setSavedPath('');
-    setSaveError('');
-  }, [activeWorkflowId]);
-
-  const updateNode = useCallback((nodeId: string, patch: Partial<TeamWorkflowNode>) => {
-    updateWorkflow((workflow) => ({
-      ...workflow,
-      nodes: workflow.nodes.map((node) => (node.id === nodeId ? { ...node, ...patch } : node)),
-    }));
-  }, [updateWorkflow]);
-
-  const addWorkflow = () => {
-    const workflow = createTeamWorkflow(zh ? '未命名工作流' : 'Untitled Workflow');
-    setWorkflows((current) => [workflow, ...current]);
-    setActiveWorkflowId(workflow.id);
-    setSelectedNodeId(workflow.nodes[0]?.id ?? '');
-    setLibraryOpen(false);
-    setDetailsOpen(true);
-  };
-
-  const deleteWorkflow = () => {
-    if (!activeWorkflow || workflows.length <= 1) return;
-    const next = workflows.filter((workflow) => workflow.id !== activeWorkflow.id);
-    setWorkflows(next);
-    setActiveWorkflowId(next[0]?.id ?? '');
-  };
-
-  const addNode = () => {
-    if (!activeWorkflow) return;
-    const node = createTeamWorkflowNode(undefined, zh ? '新场景 Agent' : 'New scene agent');
-    node.dependsOn = selectedNode ? [selectedNode.id] : [];
-    updateWorkflow((workflow) => ({ ...workflow, nodes: [...workflow.nodes, node] }));
-    setSelectedNodeId(node.id);
-    setSettingsOpen(false);
-    setYamlOpen(false);
-  };
-
-  const deleteNode = () => {
-    if (!activeWorkflow || !selectedNode || activeWorkflow.nodes.length <= 1) return;
-    const currentIndex = activeWorkflow.nodes.findIndex((node) => node.id === selectedNode.id);
-    const nextNodes = activeWorkflow.nodes
-      .filter((node) => node.id !== selectedNode.id)
-      .map((node) => ({
-        ...node,
-        dependsOn: node.dependsOn.filter((dependency) => dependency !== selectedNode.id),
-      }));
-    updateWorkflow((workflow) => ({ ...workflow, nodes: nextNodes }));
-    setSelectedNodeId(nextNodes[Math.max(0, currentIndex - 1)]?.id ?? nextNodes[0]?.id ?? '');
-  };
-
-  const selectNode = (nodeId: string) => {
-    setSelectedNodeId(nodeId);
-    setSettingsOpen(false);
-    setYamlOpen(false);
-  };
-
-  const saveYaml = async () => {
-    if (!activeWorkflow) return;
-    setSaveError('');
-    try {
-      if (workflowValidationAvailable) {
-        const validation = await validateTeamWorkflow({ yaml });
-        if (!validation.valid) {
-          const firstError = validation.errors[0];
-          const message = String(firstError?.message ?? firstError?.detail ?? '').trim();
-          throw new Error(message || (zh ? '工作流未通过后端校验' : 'Workflow validation failed'));
-        }
-      }
-      if (window.cardbushDesktop?.saveTeamWorkflow) {
-        const result = await window.cardbushDesktop.saveTeamWorkflow({
-          projectDir: activeProjectDir,
-          workflowId: activeWorkflow.id,
-          yaml,
-        });
-        setSavedPath(result.path);
-      } else {
-        const blobUrl = URL.createObjectURL(new Blob([yaml], { type: 'application/yaml' }));
-        const anchor = document.createElement('a');
-        anchor.href = blobUrl;
-        anchor.download = `${activeWorkflow.id}.yaml`;
-        anchor.click();
-        URL.revokeObjectURL(blobUrl);
-        setSavedPath(`${activeWorkflow.id}.yaml`);
-      }
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const copyYaml = async () => {
-    await navigator.clipboard.writeText(yaml);
-    setCopyDone(true);
-    window.setTimeout(() => setCopyDone(false), 1200);
-  };
-
-  if (!activeWorkflow || !selectedNode) return null;
+  if (workspace.loading && !team) return <div className="team-config-empty">{zh ? '正在加载 Team 配置…' : 'Loading team configuration…'}</div>;
+  if (!team || !member || !profile) {
+    return (
+      <div className="team-config-empty">
+        <strong>{workspace.error || (zh ? '还没有 Team 配置' : 'No team configuration yet')}</strong>
+        <button type="button" onClick={() => workspace.error ? void teamWorkspaceActions.refresh() : teamWorkspaceActions.createTeam(language)}>
+          {workspace.error ? <RefreshCw size={14} /> : <Plus size={14} />}
+          {workspace.error ? (zh ? '重试' : 'Retry') : (zh ? '新建 Team' : 'New team')}
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="team-workflow-content">
-      <div className="team-workflow-topbar">
-        <header className="team-workflow-toolbar">
-          <button
-            className={`team-workflow-switcher${libraryOpen ? ' active' : ''}`}
-            type="button"
-            aria-expanded={libraryOpen}
-            onClick={() => {
-              setLibraryOpen((current) => !current);
-              setDetailsOpen(false);
-            }}
-          >
-            <Workflow size={15} />
-            <span>
-              <strong>{activeWorkflow.name}</strong>
-              <small>{activeWorkflow.nodes.length} {zh ? '个场景 Agent' : 'scene agents'}</small>
-            </span>
-            <ChevronDown size={14} />
-          </button>
-          <div className="team-workflow-toolbar-actions">
-            <button
-              className={detailsOpen ? 'active' : ''}
-              type="button"
-              title={zh ? '工作流信息' : 'Workflow details'}
-              aria-label={zh ? '工作流信息' : 'Workflow details'}
-              onClick={() => {
-                setDetailsOpen((current) => !current);
-                setLibraryOpen(false);
-              }}
-            >
-              <Settings2 size={15} />
+    <div className="team-workflow-content team-config-workspace">
+      <header className="team-config-toolbar">
+        <div className="team-config-heading">
+          <span><small>{team.name}</small><strong>{workspace.view === 'manage' ? (zh ? '快速管理' : 'Quick management') : workspace.view === 'install' ? (zh ? '新建配置' : 'Create configuration') : profile.name}</strong></span>
+        </div>
+        <div className="team-workflow-toolbar-actions">
+          <button type="button" title={zh ? '刷新' : 'Refresh'} onClick={() => void teamWorkspaceActions.refresh()}><RefreshCw size={15} /></button>
+          {workspace.view === 'agent' && (
+            <button className="primary" type="button" disabled={workspace.saving} onClick={() => void teamWorkspaceActions.saveTeam(team.id)}>
+              <Save size={15} /><span>{workspace.saving ? (zh ? '校验并保存中' : 'Validating…') : (zh ? '校验并保存' : 'Validate & save')}</span>
             </button>
-            <button
-              className={yamlOpen ? 'active' : ''}
-              type="button"
-              title={zh ? '查看 YAML' : 'View YAML'}
-              aria-label={zh ? '查看 YAML' : 'View YAML'}
-              onClick={() => {
-                setYamlOpen((current) => !current);
-                setLibraryOpen(false);
-                setDetailsOpen(false);
-              }}
-            >
-              <FileCode2 size={15} />
-            </button>
-            <button
-              className="primary"
-              type="button"
-              title={zh ? '保存 YAML' : 'Save YAML'}
-              aria-label={zh ? '保存 YAML' : 'Save YAML'}
-              onClick={() => void saveYaml()}
-            >
-              <Save size={15} />
-            </button>
-          </div>
-        </header>
-
-        {libraryOpen && (
-          <nav className="team-workflow-popover team-workflow-library" aria-label={zh ? '工作流库' : 'Workflow library'}>
-            <div className="team-workflow-popover-heading">
-              <span>{zh ? '工作流' : 'Workflows'}</span>
-              <button type="button" onClick={addWorkflow}><Plus size={14} />{zh ? '新建' : 'New'}</button>
-            </div>
-            <div className="team-workflow-library-list">
-              {workflows.map((workflow) => (
-                <button
-                  className={`team-workflow-tile${workflow.id === activeWorkflow.id ? ' active' : ''}`}
-                  key={workflow.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveWorkflowId(workflow.id);
-                    setLibraryOpen(false);
-                  }}
-                >
-                  <Workflow size={14} />
-                  <span>
-                    <strong>{workflow.name}</strong>
-                    <small>{workflow.nodes.length} {zh ? '个节点' : 'nodes'}</small>
-                  </span>
-                  {workflow.id === activeWorkflow.id && <Check size={14} />}
-                </button>
-              ))}
-            </div>
-          </nav>
-        )}
-
-        {detailsOpen && (
-          <section className="team-workflow-popover team-workflow-details">
-            <div className="team-workflow-popover-heading">
-              <span>{zh ? '工作流信息' : 'Workflow details'}</span>
-              <small>{activeProjectDir ? (zh ? '项目工作流' : 'Project') : (zh ? '全局工作流' : 'Global')}</small>
-            </div>
-            <label>
-              <span>{zh ? '名称' : 'Name'}</span>
-              <input
-                className="team-workflow-name"
-                value={activeWorkflow.name}
-                onChange={(event) => updateWorkflow((workflow) => ({ ...workflow, name: event.currentTarget.value }))}
-              />
-            </label>
-            <label>
-              <span>{zh ? '用途' : 'Purpose'}</span>
-              <textarea
-                className="team-workflow-description"
-                value={activeWorkflow.description}
-                placeholder={zh ? '这条工作流解决什么问题？' : 'What does this workflow solve?'}
-                onChange={(event) => updateWorkflow((workflow) => ({ ...workflow, description: event.currentTarget.value }))}
-              />
-            </label>
-            <button
-              className="team-workflow-delete"
-              type="button"
-              disabled={workflows.length <= 1}
-              onClick={deleteWorkflow}
-            >
-              <Trash2 size={14} />{zh ? '删除工作流' : 'Delete workflow'}
-            </button>
-          </section>
-        )}
-      </div>
-
+          )}
+        </div>
+      </header>
       <section className="team-workflow-stage">
-        {yamlOpen ? (
-          <YamlPanel
-            copyDone={copyDone}
-            fileName={`${activeWorkflow.id}.yaml`}
-            language={language}
-            yaml={yaml}
-            onCopy={() => void copyYaml()}
-          />
+        {workspace.error && <div className="team-workflow-save-status error">{workspace.error}</div>}
+        {workspace.view === 'manage' ? (
+          <TeamManagement language={language} />
+        ) : workspace.view === 'install' ? (
+          <TeamCreatePage language={language} />
         ) : (
-          <NodeDeck
-            language={language}
-            workflow={activeWorkflow}
-            node={selectedNode}
-            settingsOpen={settingsOpen}
-            onAdd={addNode}
-            onDelete={deleteNode}
-            onSelect={selectNode}
-            onSettingsToggle={() => setSettingsOpen((current) => !current)}
-            onUpdate={(patch) => updateNode(selectedNode.id, patch)}
-          />
-        )}
-
-        {(savedPath || saveError) && (
-          <footer className={`team-workflow-save-status${saveError ? ' error' : ''}`}>
-            {saveError || `${zh ? '已保存到' : 'Saved to'} ${savedPath}`}
-          </footer>
+          <AgentEditor language={language} team={team} member={member} profile={profile} profiles={workspace.profiles} />
         )}
       </section>
     </div>
   );
 }
 
-function NodeDeck({
-  language,
-  workflow,
-  node,
-  settingsOpen,
-  onAdd,
-  onDelete,
-  onSelect,
-  onSettingsToggle,
-  onUpdate,
-}: {
+function AgentEditor({ language, team, member, profile, profiles }: {
   language: AppLanguage;
-  workflow: TeamWorkflow;
-  node: TeamWorkflowNode;
-  settingsOpen: boolean;
-  onAdd: () => void;
-  onDelete: () => void;
-  onSelect: (nodeId: string) => void;
-  onSettingsToggle: () => void;
-  onUpdate: (patch: Partial<TeamWorkflowNode>) => void;
+  team: TeamDefinition;
+  member: TeamMemberDefinition;
+  profile: AgentProfileDefinition;
+  profiles: AgentProfileDefinition[];
 }) {
   const zh = language === 'zh';
-  const nodeIndex = workflow.nodes.findIndex((candidate) => candidate.id === node.id);
+  const updateProfile = (patch: Partial<AgentProfileDefinition>) => teamWorkspaceActions.updateProfile(profile.id, patch);
+  const updateMember = (patch: Partial<TeamMemberDefinition>) => teamWorkspaceActions.updateMember(team.id, member.id, patch);
   return (
-    <div className="team-node-workspace">
-      <aside className="team-agent-rail" aria-label={zh ? '场景 Agent' : 'Scene agents'}>
-        <div className="team-agent-track">
-          {workflow.nodes.map((candidate, index) => (
-            <button
-              aria-label={`${zh ? '切换到' : 'Switch to'} ${candidate.title}`}
-              aria-current={candidate.id === node.id ? 'step' : undefined}
-              aria-posinset={index + 1}
-              aria-setsize={workflow.nodes.length}
-              className={`team-agent-marker${candidate.id === node.id ? ' active' : ''}`}
-              key={candidate.id}
-              type="button"
-              onClick={() => onSelect(candidate.id)}
-            >
-              <span className="team-agent-marker-line" />
-              <span className="team-agent-preview">
-                <small>{String(index + 1).padStart(2, '0')} · Skills / Tools</small>
-                <strong>{candidate.title}</strong>
-                <em>
-                  {candidate.dependsOn.length
-                    ? `${candidate.dependsOn.length} ${zh ? '个上游' : 'upstream'}`
-                    : zh ? '起始节点' : 'Starting node'}
-                </em>
-              </span>
-            </button>
-          ))}
+    <article className="team-agent-editor" key={`${team.id}:${member.id}`}>
+      <header className="team-agent-editor-header">
+        <div>
+          <span>{zh ? 'Agent Profile' : 'Agent profile'}</span>
+          <input value={profile.name} aria-label={zh ? 'Agent 名称' : 'Agent name'} onChange={(event) => updateProfile({ name: event.currentTarget.value })} />
+          <small>{profile.id}</small>
         </div>
-        <button className="team-agent-add" type="button" title={zh ? '增加 Agent' : 'Add agent'} onClick={onAdd}>
-          <Plus size={14} />
-        </button>
-      </aside>
+        <button type="button" disabled={team.members.length <= 1} title={zh ? '从 Team 移除成员' : 'Remove member from team'} onClick={() => teamWorkspaceActions.deleteAgent(team.id, member.id)}><Trash2 size={15} /></button>
+      </header>
 
-      <article className={`team-workflow-node-card active${settingsOpen ? ' settings-open' : ''}`} key={node.id}>
-        <header className="team-node-card-header">
-          <div>
-            <span>{zh ? `场景 Agent ${nodeIndex + 1}` : `Scene agent ${nodeIndex + 1}`}</span>
-            <input
-              aria-label={zh ? 'Agent 名称' : 'Agent name'}
-              value={node.title}
-              onChange={(event) => onUpdate({ title: event.currentTarget.value })}
-            />
-          </div>
-          <button
-            className="danger"
-            type="button"
-            disabled={workflow.nodes.length <= 1}
-            title={zh ? '删除节点' : 'Delete node'}
-            onClick={onDelete}
-          >
-            <Trash2 size={15} />
-          </button>
-        </header>
+      <div className="team-agent-config-grid team-profile-identity-grid">
+        <label><span>{zh ? '成员 ID' : 'Member ID'}</span><input value={member.id} disabled /></label>
+        <label><span>{zh ? '关联 Profile' : 'Agent profile'}</span><select value={member.agentProfileId} onChange={(event) => updateMember({ agentProfileId: event.currentTarget.value })}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.id}</option>)}</select></label>
+      </div>
 
-        <label className="team-node-prompt">
-          <span>{zh ? '提示词' : 'Prompt'}</span>
-          <textarea
-            value={node.prompt}
-            placeholder={zh ? '告诉这个 Agent 要完成什么、不要做什么，以及期望得到什么结果。' : 'Tell this agent what to do, what to avoid, and what result to produce.'}
-            onChange={(event) => onUpdate({ prompt: event.currentTarget.value })}
-          />
-        </label>
+      <label className="team-agent-prompt"><span>{zh ? '成员职责' : 'Member responsibility'}</span><textarea value={member.responsibility} placeholder={zh ? '说明主 Agent 何时应该把任务派发给这个成员。' : 'Describe when the parent agent should delegate work to this member.'} onChange={(event) => updateMember({ responsibility: event.currentTarget.value })} /></label>
+      <label className="team-agent-fallback"><input type="checkbox" checked={member.fallback} onChange={() => updateMember({ fallback: true })} /><span>{zh ? '设为唯一 fallback 成员' : 'Use as the single fallback member'}</span></label>
 
-        <div className="team-node-card-footer">
-          <div className="team-node-summary">
-            <span>{zh ? '运行时' : 'Runtime'} <strong>Skills / Tools</strong></span>
-            <span>{zh ? '上游' : 'Upstream'} <strong>{node.dependsOn.length}</strong></span>
-            <span>{zh ? '验收' : 'Validation'} <strong>{node.validation.trim() ? (zh ? '已定义' : 'Ready') : (zh ? '未定义' : 'None')}</strong></span>
-          </div>
-          <button className={settingsOpen ? 'active' : ''} type="button" onClick={onSettingsToggle}>
-            <Settings2 size={14} />{zh ? '节点设置' : 'Node settings'}<ChevronDown size={13} />
-          </button>
+      <label className="team-agent-prompt"><span>{zh ? 'Profile 描述' : 'Profile description'}</span><textarea value={profile.description} onChange={(event) => updateProfile({ description: event.currentTarget.value })} /></label>
+      <label className="team-agent-prompt"><span>{zh ? '系统指令' : 'Prompt instructions'}</span><textarea value={profile.prompts.instructions} placeholder={zh ? '定义职责、边界、行为和期望输出。' : 'Define responsibilities, boundaries, behavior, and expected output.'} onChange={(event) => updateProfile({ prompts: { instructions: event.currentTarget.value } })} /></label>
+
+      <div className="team-profile-capability-grid">
+        <StringListField language={language} label="disabled_tools" value={profile.disabledTools} onChange={(disabledTools) => updateProfile({ disabledTools })} />
+        <StringListField language={language} label="hooks" value={profile.hooks} onChange={(hooks) => updateProfile({ hooks })} />
+        <StringListField language={language} label="guards" value={profile.guards} onChange={(guards) => updateProfile({ guards })} />
+        <div className="team-profile-skills-field">
+          <label><input type="checkbox" checked={profile.skills == null} onChange={(event) => updateProfile({ skills: event.currentTarget.checked ? undefined : [] })} /><span>{zh ? 'skills 继承父 Agent' : 'Inherit parent skills'}</span></label>
+          {profile.skills != null && <StringListField language={language} label="skills" value={profile.skills} onChange={(skills) => updateProfile({ skills })} />}
         </div>
+      </div>
+      <footer className="team-agent-editor-footer"><span>Team <strong>{team.id}</strong></span><span>{zh ? '成员' : 'Member'} <strong>{member.id}</strong></span><span>{zh ? '保存前由后端严格校验' : 'Strict backend validation before save'}</span></footer>
+    </article>
+  );
+}
 
-        {settingsOpen && (
-          <div className="team-node-settings">
-            <fieldset>
-              <legend>{zh ? '完成这些节点后开始' : 'Start after these nodes'}</legend>
-              <div>
-                {workflow.nodes.filter((dependency) => dependency.id !== node.id).map((dependency) => {
-                  const checked = node.dependsOn.includes(dependency.id);
-                  return (
-                    <label key={dependency.id}>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => onUpdate({
-                          dependsOn: checked
-                            ? node.dependsOn.filter((id) => id !== dependency.id)
-                            : [...node.dependsOn, dependency.id],
-                        })}
-                      />
-                      <span>{dependency.title}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
-            <label className="validation">
-              <span>{zh ? '验收标准' : 'Validation'}</span>
-              <textarea
-                value={node.validation}
-                placeholder={zh ? '可选：怎样判断这个 Agent 已经完成？' : 'Optional: how is completion verified?'}
-                onChange={(event) => onUpdate({ validation: event.currentTarget.value })}
-              />
-            </label>
-          </div>
-        )}
-      </article>
+function StringListField({ language, label, value, onChange }: { language: AppLanguage; label: string; value: string[]; onChange: (value: string[]) => void }) {
+  return <label className="team-string-list"><span>{label}</span><textarea value={value.join('\n')} placeholder={language === 'zh' ? '每行一项' : 'One item per line'} onChange={(event) => onChange(event.currentTarget.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean))} /></label>;
+}
+
+function TeamManagement({ language }: { language: AppLanguage }) {
+  const zh = language === 'zh';
+  const workspace = useTeamWorkspaceState();
+  return (
+    <div className="team-management-page">
+      <div className="team-management-summary">
+        <div><strong>{workspace.teams.length}</strong><span>Teams</span></div>
+        <div><strong>{workspace.profiles.length}</strong><span>Profiles</span></div>
+        <div className="team-management-display-mode"><span>{zh ? '侧栏显示' : 'Sidebar labels'}</span><div><button className={workspace.displayMode === 'name' ? 'active' : ''} type="button" onClick={() => teamWorkspaceActions.setDisplayMode('name')}>{zh ? '名称' : 'Name'}</button><button className={workspace.displayMode === 'description' ? 'active' : ''} type="button" onClick={() => teamWorkspaceActions.setDisplayMode('description')}>{zh ? '描述' : 'Description'}</button></div></div>
+        <button type="button" onClick={() => teamWorkspaceActions.createTeam(language)}><Plus size={14} />{zh ? '新建 Team' : 'New team'}</button>
+      </div>
+      <div className="team-management-list">
+        {workspace.teams.map((team) => <article className="team-management-card" key={team.id}><header><input value={team.name} onChange={(event) => teamWorkspaceActions.updateTeam(team.id, { name: event.currentTarget.value })} /><span>{team.members.length} Agents</span><button type="button" onClick={() => void teamWorkspaceActions.deleteTeam(team.id)}><Trash2 size={14} /></button></header><textarea value={team.description} onChange={(event) => teamWorkspaceActions.updateTeam(team.id, { description: event.currentTarget.value })} /><footer><button type="button" onClick={() => teamWorkspaceActions.selectTeam(team.id)}>{zh ? '打开配置' : 'Open'}</button><button type="button" onClick={() => teamWorkspaceActions.createAgent(team.id, language)}><Plus size={13} />Agent</button><button type="button" onClick={() => void teamWorkspaceActions.saveTeam(team.id)}><Save size={13} />{zh ? '保存' : 'Save'}</button></footer></article>)}
+      </div>
     </div>
   );
 }
 
-function YamlPanel({
-  language,
-  fileName,
-  yaml,
-  copyDone,
-  onCopy,
-}: {
-  language: AppLanguage;
-  fileName: string;
-  yaml: string;
-  copyDone: boolean;
-  onCopy: () => void;
-}) {
+function TeamCreatePage({ language }: { language: AppLanguage }) {
   const zh = language === 'zh';
-  return (
-    <div className="team-workflow-yaml">
-      <div className="team-workflow-yaml-toolbar">
-        <span>{fileName}</span>
-        <button type="button" onClick={onCopy}>
-          {copyDone ? <Check size={14} /> : <Copy size={14} />}
-          {copyDone ? (zh ? '已复制' : 'Copied') : (zh ? '复制' : 'Copy')}
-        </button>
-      </div>
-      <pre>{yaml}</pre>
-    </div>
-  );
+  return <div className="team-install-page"><header><Plus size={20} /><div><strong>{zh ? '新建 Team 配置' : 'Create a team configuration'}</strong><span>{zh ? '后端没有模板安装协议；这里创建严格 v1 Team/Profile 草稿，保存前会调用 validate。' : 'The backend has no template installation protocol. This creates strict v1 Team/Profile drafts and validates before saving.'}</span></div></header><button className="team-create-primary" type="button" onClick={() => teamWorkspaceActions.createTeam(language)}><Plus size={14} />{zh ? '新建 Team' : 'New team'}</button></div>;
 }

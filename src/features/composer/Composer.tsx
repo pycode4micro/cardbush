@@ -26,6 +26,7 @@ import {
   Plus,
   Presentation,
   Puzzle,
+  Search,
   SlidersHorizontal,
   Sparkles,
   Square,
@@ -33,6 +34,7 @@ import {
   Terminal,
   Trash2,
   Unlock,
+  UsersRound,
   X,
 } from 'lucide-react';
 import type * as React from 'react';
@@ -41,6 +43,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -67,6 +70,11 @@ import { SkillIcon } from '../skills/SkillIcon';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
+import {
+  loadTeamWorkspace,
+  teamWorkspaceActions,
+  useTeamWorkspaceState,
+} from '../team/teamWorkspaceStore';
 
 type ComposerImageAttachment = {
   id: string;
@@ -101,6 +109,7 @@ type ComposerMenu =
   | 'skills'
   | 'models'
   | 'permissions'
+  | 'teams'
   | null;
 
 type MorePanelMenu =
@@ -153,6 +162,7 @@ const composerPopoverWidths: Record<Exclude<ComposerMenu, null>, number> = {
   skills: 336,
   models: 300,
   permissions: 274,
+  teams: 320,
 };
 
 function imageAttachmentFromPath(pathValue: string): ComposerImageAttachment {
@@ -379,6 +389,10 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
+  const teamWorkspace = useTeamWorkspaceState();
+  const selectedTeam = teamWorkspace.teams.find((team) => team.id === teamWorkspace.selectedTeamId);
+
+  useEffect(() => { void loadTeamWorkspace().catch(() => undefined); }, []);
   const goalDraft = composerGoalDraftPresentation(draft);
   const composerInputValue = goalDraft?.content ?? draft;
   const hasContent =
@@ -488,6 +502,13 @@ export function Composer({
       return;
     }
     if (!hasContent) {
+      return;
+    }
+    if (/^\/team\s*$/i.test(draft) && imageAttachments.length === 0 && fileAttachments.length === 0) {
+      onDraftChange('');
+      setCommandState(null);
+      setPopoverAnchor(null);
+      setActiveMenu('teams');
       return;
     }
     const attachmentPaths = [...imageAttachments, ...fileAttachments]
@@ -718,6 +739,19 @@ export function Composer({
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
       const commands: ComposerCommandItem[] = [
+        {
+          id: '/team',
+          title: language === 'zh' ? '选择 Team' : 'Select team',
+          subtitle: language === 'zh'
+            ? '为下一轮选择可派发的 Team 成员集合'
+            : 'Choose the team member set for the next turn',
+          icon: <UsersRound size={16} />,
+          run: () => {
+            setPopoverAnchor(null);
+            setActiveMenu('teams');
+          },
+          searchText: '/team 团队 team agent',
+        },
         {
           id: '/model',
           title: language === 'zh' ? '模型切换' : 'Switch model',
@@ -1185,6 +1219,18 @@ export function Composer({
                 active={shadowActive}
                 onClick={onToggleShadow}
               />
+            )}
+            {!osMode && selectedTeam && (
+              <button
+                className={`tool-chip composer-team-chip ${activeMenu === 'teams' ? 'active' : ''}`}
+                type="button"
+                data-composer-menu-trigger="true"
+                title={`${selectedTeam.name} · ${selectedTeam.id}`}
+                onClick={(event) => toggleMenu('teams', event)}
+              >
+                <UsersRound size={14} />
+                <span>{selectedTeam.name}</span>
+              </button>
             )}
             <button
               className={`permission-center-button mode-${permissionMode} ${
@@ -1718,6 +1764,7 @@ function ComposerPopover({
           ))}
         </div>
       )}
+      {menu === 'teams' && <ComposerTeamPicker language={language} onClose={onClose} />}
       {menu === 'project' && (
         <ProjectContextEditor
           language={language}
@@ -1866,8 +1913,93 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
     skills: { zh: 'Skills', en: 'Skills' },
     models: { zh: '模型', en: 'Model' },
     permissions: { zh: '权限中心', en: 'Permissions' },
+    teams: { zh: '选择 Team', en: 'Select team' },
   };
   return labels[menu][language];
+}
+
+function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onClose: () => void }) {
+  const workspace = useTeamWorkspaceState();
+  const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [keyboardNavigating, setKeyboardNavigating] = useState(false);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const listboxId = useId();
+  const normalized = query.trim().toLowerCase();
+  const teams = useMemo(
+    () => workspace.teams.filter((team) => !normalized || `${team.id} ${team.name} ${team.description}`.toLowerCase().includes(normalized)),
+    [normalized, workspace.teams],
+  );
+  const options = useMemo(
+    () => [
+      {
+        id: '',
+        name: language === 'zh' ? '不使用 Team' : 'No team',
+        description: language === 'zh' ? '下一轮不提供 team_delegate' : 'Do not expose team_delegate next turn',
+      },
+      ...teams,
+    ],
+    [language, teams],
+  );
+  const optionSignature = options.map((option) => option.id).join('\u0000');
+  const select = (teamId: string) => { teamWorkspaceActions.selectForNextTurn(teamId); onClose(); };
+
+  useEffect(() => {
+    const selectedIndex = options.findIndex((option) => option.id === workspace.selectedTeamId);
+    setActiveIndex(normalized && options.length > 1 ? 1 : Math.max(0, selectedIndex));
+    setKeyboardNavigating(false);
+  }, [normalized, optionSignature, workspace.selectedTeamId]);
+
+  const moveActive = (nextIndex: number) => {
+    const normalizedIndex = (nextIndex + options.length) % options.length;
+    setActiveIndex(normalizedIndex);
+    setKeyboardNavigating(true);
+    window.requestAnimationFrame(() => optionRefs.current[normalizedIndex]?.scrollIntoView({ block: 'nearest' }));
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || options.length === 0) return;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveActive(activeIndex + 1);
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveActive(activeIndex - 1);
+      return;
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      moveActive(event.key === 'Home' ? 0 : options.length - 1);
+      return;
+    }
+    if (event.key === 'Enter' || (event.key === 'Tab' && keyboardNavigating)) {
+      event.preventDefault();
+      select(options[activeIndex]?.id ?? '');
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+    }
+  };
+
+  return (
+    <div className="composer-team-picker">
+      <label><Search size={14} /><input autoFocus role="combobox" aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={language === 'zh' ? '搜索 Team' : 'Search teams'} /></label>
+      <div className="popover-list" id={listboxId} role="listbox">
+        <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!workspace.selectedTeamId} className={`popover-row ${workspace.selectedTeamId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
+          <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!workspace.selectedTeamId && <Check size={14} />}
+        </button>
+        {teams.map((team, index) => {
+          const optionIndex = index + 1;
+          return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={workspace.selectedTeamId === team.id} className={`popover-row ${workspace.selectedTeamId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || `${team.members.length} Agents · ${team.id}`}</small></span>{workspace.selectedTeamId === team.id && <Check size={14} />}</button>;
+        })}
+        {!workspace.loading && teams.length === 0 && <p className="composer-popover-empty">{workspace.error || (language === 'zh' ? '没有可用 Team' : 'No teams available')}</p>}
+      </div>
+    </div>
+  );
 }
 
 function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {

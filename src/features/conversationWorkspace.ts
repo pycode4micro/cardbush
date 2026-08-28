@@ -151,9 +151,8 @@ export function isOnlyTalkConversation(
     'runtimeMode',
   ).toLowerCase();
   if (
-    metadata?.os_mode_enabled === true ||
-    metadata?.osModeEnabled === true ||
-    runtimeMode === 'desktop_os'
+    metadata?.computer_use_enabled === true ||
+    runtimeMode === 'computer_use'
   ) {
     return false;
   }

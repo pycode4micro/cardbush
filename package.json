@@ -42,6 +42,7 @@
     "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
     "test:subagent-observability": "node scripts/test-subagent-observability-contract.mjs",
+    "test:team-configuration": "node scripts/test-team-configuration-contract.mjs",
     "test:runtime-asset-reset": "node scripts/test-runtime-asset-reset-contract.mjs",
     "test:llm-timeouts": "node scripts/test-llm-timeout-contract.mjs",
     "test:connection-recovery": "node scripts/test-connection-recovery-contract.mjs",
@@ -49,6 +50,7 @@
     "test:stop-lifecycle": "node scripts/test-stop-lifecycle-contract.mjs",
     "test:project-roots": "node scripts/test-project-root-contract.mjs",
     "test:tool-visibility": "node scripts/test-tool-visibility.mjs",
+    "test:cardbush-app-host": "node scripts/test-cardbush-app-host-contract.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test:all": "node scripts/run-release-checks.mjs"
   },

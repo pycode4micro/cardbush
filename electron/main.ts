@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
+import { CardbushAppService, type HostRequest } from './cardbushAppService';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -98,6 +99,8 @@ let cardlingWindow: BrowserWindow | null = null;
 const externalBrowserWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
 let isQuitting = false;
+let hostShutdownComplete = false;
+let hostShutdownPromise: Promise<void> | null = null;
 let quitFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 let startupRevealFallback: ReturnType<typeof setTimeout> | null = null;
 let osTaskbarWatchdog: ReturnType<typeof spawn> | null = null;
@@ -105,6 +108,7 @@ let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null =
 let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
+const cardbushAppService = new CardbushAppService();
 
 if (process.platform === 'win32') {
   app.setName(cardbushDisplayName);
@@ -1934,6 +1938,11 @@ ipcMain.handle('bush:headers', (_, targetUrl: string, json = false) => {
   return headers;
 });
 
+ipcMain.handle('cardbush-app:request', (event, request: HostRequest) => {
+  assertMainWindowSender(event.sender.id);
+  return cardbushAppService.request(request);
+});
+
 ipcMain.handle(
   'network:set-proxy',
   async (
@@ -2389,6 +2398,9 @@ app.whenReady().then(async () => {
   registerLocalFileProtocol();
   createWindow();
   createTray();
+  void cardbushAppService.start().catch((error) => {
+    console.error('[cardbush_app] startup failed', error);
+  });
   void listOsApplicationsCached().catch(() => undefined);
 
   app.on('activate', () => {
@@ -2491,8 +2503,18 @@ function registerLocalFileProtocol() {
   });
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   isQuitting = true;
+  if (hostShutdownComplete) {
+    return;
+  }
+  event.preventDefault();
+  if (hostShutdownPromise == null) {
+    hostShutdownPromise = cardbushAppService.stop().finally(() => {
+      hostShutdownComplete = true;
+      app.quit();
+    });
+  }
 });
 
 app.on('will-quit', () => {

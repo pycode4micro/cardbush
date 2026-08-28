@@ -36,6 +36,11 @@ declare global {
       wallpaperDataUrl: () => Promise<string>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
       bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
+      cardbushAppRequest: (request: {
+        path: string;
+        method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+        body?: unknown;
+      }) => Promise<unknown>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

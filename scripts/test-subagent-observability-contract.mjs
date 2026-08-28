@@ -17,13 +17,14 @@ assert.match(api, /subagentDispatchEventFromPayload/);
 assert.match(api, /event\.protocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL/);
 assert.match(api, /\/v1\/subagent-tasks\?*/);
 assert.match(api, /\/v1\/subagent-tasks\/\$\{encodeURIComponent\(normalizedTaskId\)\}/);
-assert.match(api, /\/subagent-completions/);
+assert.match(api, /\/v1\/turns\/\$\{encodeURIComponent\(normalizedTurnId\)\}/);
+assert.doesNotMatch(api, /\/subagent-completions/);
 assert.match(api, /subagent_observability/);
 assert.match(hook, /emitSubagentDispatch/);
 assert.match(events, /cardbush:subagent-dispatch/);
 
 assert.match(summary, /fetchSubagentTasks/);
-assert.match(summary, /fetchSubagentCompletions/);
+assert.doesNotMatch(summary, /fetchSubagentCompletions/);
 assert.match(summary, /hasActiveTasks/);
 assert.match(summary, /window\.setInterval\(refreshTaskFeed, hasActiveTasks \? 2500 : 10000\)/);
 assert.match(summary, /subagentTaskIsNewer/);
@@ -36,8 +37,11 @@ assert.match(summary, /kind: 'turn-history'/);
 assert.match(summary, /kind: 'subagent-task'/);
 
 assert.match(inspector, /fetchSubagentTask/);
+assert.match(inspector, /fetchTurnSnapshot/);
 assert.match(inspector, /window\.setInterval\(refreshActiveTask, 2500\)/);
 assert.match(inspector, /Complete raw details/);
+assert.match(inspector, /task\.teamMemberId/);
+assert.match(api, /teamMemberId: optionalString/);
 assert.match(inspector, /Awaiting parent review/);
 assert.match(inspector, /Service interrupted; task incomplete/);
 assert.match(app, /OPEN_WORK_SUMMARY_INSPECTOR_EVENT/);

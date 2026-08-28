@@ -34,7 +34,6 @@ import type {
   ThinkingStreamEvent,
   TaskPlanStreamUpdate,
   SubagentCapabilities,
-  SubagentCompletionEvent,
   SubagentDispatchEvent,
   SubagentListItem,
   SubagentRuntimeResult,
@@ -58,8 +57,15 @@ import type {
   CapabilityCandidatesUpdate,
   TerminalRuntime,
   TurnTerminalSnapshot,
+  AgentProfileDefinition,
+  TeamDefinition,
+  TeamConfigurationCapabilities,
 } from '../types';
-import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from '../types';
+import {
+  AGENT_PROFILE_PROTOCOL,
+  SUBAGENT_DISPATCH_EVENT_PROTOCOL,
+  TEAM_CONFIGURATION_PROTOCOL,
+} from '../types';
 import {
   applyDisabledToolsToMetadata,
   standardImageInputToolDefaultName,
@@ -226,6 +232,7 @@ export interface ChatStreamRequest {
   standardImageInputEnabled?: boolean;
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
+  teamId?: string;
   osModeEnabled?: boolean;
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
@@ -304,6 +311,7 @@ export interface ControlStreamRequest {
   standardImageInputEnabled?: boolean;
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
+  teamId?: string;
   osModeEnabled?: boolean;
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
@@ -414,14 +422,6 @@ export interface SessionMessageWindow {
   afterCursor?: string;
 }
 
-export interface TeamWorkflowValidationResult {
-  valid: boolean;
-  errors: Array<Record<string, unknown>>;
-  warnings: Array<Record<string, unknown>>;
-  normalized?: Record<string, unknown>;
-  raw: Record<string, unknown>;
-}
-
 export interface TeamWorkflowStreamEvent {
   type: string;
   runId: string;
@@ -470,7 +470,6 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   maintenanceRuntimeAssetsReset: false,
   runtimeAssetResetProtocol: '',
   runtimeAssetResetCategories: [],
-  botControl: false,
   sessionShareLinks: false,
   messageEditRegenerate: false,
   turnRegenerate: false,
@@ -777,6 +776,79 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
 
 export async function fetchBackendReadiness(): Promise<Record<string, unknown>> {
   return readJson<Record<string, unknown>>(url('/readyz'));
+}
+
+export async function fetchTeams(signal?: AbortSignal): Promise<TeamDefinition[]> {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/teams'), { signal });
+  return arrayFrom(payload.items).map(teamDefinitionFromPayload);
+}
+
+export async function fetchTeam(teamId: string, signal?: AbortSignal): Promise<TeamDefinition> {
+  return teamDefinitionFromPayload(await readJson<unknown>(
+    url(`/v1/teams/${encodeURIComponent(teamId.trim())}`),
+    { signal },
+  ));
+}
+
+export async function validateTeamDefinition(team: TeamDefinition, signal?: AbortSignal) {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/teams/validate'), {
+    method: 'POST', body: JSON.stringify(teamDefinitionToPayload(team)), signal,
+  });
+  return teamDefinitionFromPayload(payload.team);
+}
+
+export async function saveTeamDefinition(team: TeamDefinition, signal?: AbortSignal) {
+  await validateTeamDefinition(team, signal);
+  return teamDefinitionFromPayload(await readJson<unknown>(
+    url(`/v1/teams/${encodeURIComponent(team.id)}`),
+    { method: 'PUT', body: JSON.stringify(teamDefinitionToPayload(team)), signal },
+  ));
+}
+
+export async function deleteTeamDefinition(teamId: string): Promise<void> {
+  await readJson<unknown>(url(`/v1/teams/${encodeURIComponent(teamId.trim())}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchAgentProfiles(signal?: AbortSignal): Promise<AgentProfileDefinition[]> {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/agent-profiles'), { signal });
+  return arrayFrom(payload.items).map(agentProfileFromPayload);
+}
+
+export async function fetchAgentProfile(profileId: string, signal?: AbortSignal) {
+  return agentProfileFromPayload(await readJson<unknown>(
+    url(`/v1/agent-profiles/${encodeURIComponent(profileId.trim())}`),
+    { signal },
+  ));
+}
+
+export async function validateAgentProfile(profile: AgentProfileDefinition, signal?: AbortSignal) {
+  const payload = await readJson<Record<string, unknown>>(url('/v1/agent-profiles/validate'), {
+    method: 'POST', body: JSON.stringify(agentProfileToPayload(profile)), signal,
+  });
+  return agentProfileFromPayload(payload.profile);
+}
+
+export async function saveAgentProfile(profile: AgentProfileDefinition, signal?: AbortSignal) {
+  await validateAgentProfile(profile, signal);
+  return agentProfileFromPayload(await readJson<unknown>(
+    url(`/v1/agent-profiles/${encodeURIComponent(profile.id)}`),
+    { method: 'PUT', body: JSON.stringify(agentProfileToPayload(profile)), signal },
+  ));
+}
+
+export async function deleteAgentProfile(profileId: string): Promise<void> {
+  await readJson<unknown>(url(`/v1/agent-profiles/${encodeURIComponent(profileId.trim())}`), {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchTeamConfigurationCapabilities(signal?: AbortSignal) {
+  return teamConfigurationCapabilitiesFromPayload(await readJson<unknown>(
+    url('/v1/team-configuration/capabilities'),
+    { signal },
+  ));
 }
 
 export async function fetchRuntimeToolInventory(filters?: {
@@ -1610,7 +1682,7 @@ export async function createSessionShareLink({
 }
 
 export async function fetchBots(): Promise<BotPlatformOverview[]> {
-  const payload = await readJson<Record<string, unknown>>(url('/v1/bots'));
+  const payload = await readCardbushAppJson('/host/v1/bots');
   const candidates =
     payload.bots ?? payload.items ?? payload.platforms ?? payload.data ?? [];
   if (Array.isArray(candidates)) {
@@ -1627,8 +1699,8 @@ export async function fetchBots(): Promise<BotPlatformOverview[]> {
 export async function fetchBotConfig(
   platform: BotPlatform,
 ): Promise<BotConfigResult> {
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/bots/${encodeURIComponent(platform)}/config`),
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/${encodeURIComponent(platform)}/config`,
   );
   return botConfigFromPayload(platform, payload);
 }
@@ -1637,26 +1709,25 @@ export async function saveBotConfig({
   platform,
   config,
 }: SaveBotConfigRequest): Promise<BotConfigResult> {
-  const endpoint = url(`/v1/bots/${encodeURIComponent(platform)}/config`);
-  const payload = await readJson<Record<string, unknown>>(endpoint, {
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/${encodeURIComponent(platform)}/config`, {
     method: 'PUT',
-    body: JSON.stringify(config),
+    body: config,
   });
   return botConfigFromPayload(platform, payload);
 }
 
 export async function fetchBotStatus(platform: BotPlatform): Promise<BotStatusResult> {
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/bots/${encodeURIComponent(platform)}/status`),
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/${encodeURIComponent(platform)}/status`,
   );
   return botStatusFromPayload(platform, payload);
 }
 
 export async function startWeixinLogin(): Promise<WeixinLoginStartResult> {
-  const endpoint = url('/v1/bots/weixin/login/start');
-  const payload = await readJson<Record<string, unknown>>(endpoint, {
+  const payload = await readCardbushAppJson('/host/v1/bots/weixin/login/start', {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: {},
   });
   return weixinLoginStartFromPayload(payload);
 }
@@ -1664,17 +1735,15 @@ export async function startWeixinLogin(): Promise<WeixinLoginStartResult> {
 export async function fetchWeixinLoginStatus(
   loginId: string,
 ): Promise<WeixinLoginStatusResult> {
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/bots/weixin/login/${encodeURIComponent(loginId)}/status`),
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/weixin/login/${encodeURIComponent(loginId)}/status`,
   );
   return weixinLoginStatusFromPayload(loginId, payload);
 }
 
 export async function deleteWeixinAccount(accountId: string): Promise<void> {
-  const endpoint = url(
-    `/v1/bots/weixin/accounts/${encodeURIComponent(accountId)}`,
-  );
-  await readJson<Record<string, unknown>>(endpoint, {
+  await readCardbushAppJson(
+    `/host/v1/bots/weixin/accounts/${encodeURIComponent(accountId)}`, {
     method: 'DELETE',
   });
 }
@@ -1683,12 +1752,10 @@ export async function controlBotService(
   platform: BotPlatform,
   action: 'start' | 'stop' | 'restart',
 ): Promise<BotStatusResult> {
-  const endpoint = url(
-    `/v1/bots/${encodeURIComponent(platform)}/service/${action}`,
-  );
-  const payload = await readJson<Record<string, unknown>>(endpoint, {
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/${encodeURIComponent(platform)}/service/${action}`, {
     method: 'POST',
-    body: JSON.stringify({}),
+    body: {},
   });
   return botStatusFromPayload(platform, payload);
 }
@@ -1706,10 +1773,30 @@ export async function fetchBotServiceLogs({
   if (since?.trim()) {
     query.set('since', since.trim());
   }
-  const payload = await readJson<Record<string, unknown>>(
-    url(`/v1/bots/${encodeURIComponent(platform)}/service/logs?${query}`),
+  const payload = await readCardbushAppJson(
+    `/host/v1/bots/${encodeURIComponent(platform)}/service/logs?${query}`,
   );
   return botLogsFromPayload(platform, payload);
+}
+
+async function readCardbushAppJson(
+  path: string,
+  init?: {
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+    body?: unknown;
+  },
+): Promise<Record<string, unknown>> {
+  const request = window.cardbushDesktop?.cardbushAppRequest;
+  if (request == null) {
+    throw new Error(
+      localizedClientMessage(
+        'Bot 管理由 CardBush 桌面宿主提供，请在桌面客户端中使用。',
+        'Bot management is provided by the CardBush desktop host.',
+      ),
+    );
+  }
+  const payload = await request({ path, ...init });
+  return asRecord(payload);
 }
 
 export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
@@ -2133,35 +2220,6 @@ export async function revertSessionWorkspaceChanges(
   };
 }
 
-export async function validateTeamWorkflow({
-  yaml,
-  projectDir,
-  workflowId,
-}: {
-  yaml?: string;
-  projectDir?: string;
-  workflowId?: string;
-}): Promise<TeamWorkflowValidationResult> {
-  const payload = await readJson<Record<string, unknown>>(
-    url('/v1/team-workflows/validate'),
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        ...(yaml?.trim() ? { yaml } : {}),
-        ...(projectDir?.trim() ? { project_dir: projectDir.trim() } : {}),
-        ...(workflowId?.trim() ? { workflow_id: workflowId.trim() } : {}),
-      }),
-    },
-  );
-  return {
-    valid: payload.valid === true,
-    errors: arrayFrom(payload.errors).map(asRecord),
-    warnings: arrayFrom(payload.warnings).map(asRecord),
-    normalized: asOptionalRecord(payload.normalized ?? payload.workflow),
-    raw: payload,
-  };
-}
-
 export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
   const normalized = sessionId.trim();
   if (!normalized) {
@@ -2260,25 +2318,18 @@ export async function fetchSubagentTask(
   return subagentTaskFromPayload(payload);
 }
 
-export async function fetchSubagentCompletions(
-  sessionId: string,
-  options?: { deliveryState?: string; limit?: number; signal?: AbortSignal },
-): Promise<SubagentCompletionEvent[]> {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) return [];
-  const endpoint = new URL(
-    url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/subagent-completions`),
-  );
-  if (options?.deliveryState?.trim()) {
-    endpoint.searchParams.set('delivery_state', options.deliveryState.trim());
+export async function fetchTurnSnapshot(
+  turnId: string,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown>> {
+  const normalizedTurnId = turnId.trim();
+  if (!normalizedTurnId) {
+    throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
   }
-  endpoint.searchParams.set('limit', String(Math.max(1, options?.limit ?? 100)));
-  const payload = await readJson<Record<string, unknown>>(endpoint.toString(), {
-    signal: options?.signal,
-  });
-  return arrayFrom(payload.items)
-    .map(subagentCompletionFromPayload)
-    .filter((event) => Boolean(event.eventId || event.task.taskId));
+  return readJson<Record<string, unknown>>(
+    url(`/v1/turns/${encodeURIComponent(normalizedTurnId)}`),
+    { signal },
+  );
 }
 
 export async function dispatchSubagent({
@@ -2801,6 +2852,7 @@ function controlStreamBody(request: ControlStreamRequest) {
   );
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
+  applyTeamIdToBody(body, request.teamId);
   applyOsModeToMetadata(metadata, request.osModeEnabled);
   applyTerminalRuntimeToMetadata(metadata, request.terminalRuntime);
   applyDisabledToolsToMetadata(metadata, request.disabledTools);
@@ -2873,6 +2925,7 @@ function chatStreamBody(request: ChatStreamRequest) {
   );
   applyBrowserPrivacyModeToMetadata(metadata, request.browserPrivacyMode);
   applyTeamModeToMetadata(metadata, request.teamModeEnabled);
+  applyTeamIdToBody(body, request.teamId);
   applyOsModeToMetadata(metadata, request.osModeEnabled);
   applyTerminalRuntimeToMetadata(metadata, request.terminalRuntime);
   applyDisabledToolsToMetadata(metadata, request.disabledTools);
@@ -3018,6 +3071,11 @@ function applyTeamModeToMetadata(
   metadata.teamMode = 'agent_flow';
 }
 
+function applyTeamIdToBody(body: Record<string, unknown>, value?: string) {
+  const teamId = value?.trim();
+  if (teamId) body.teamId = teamId;
+}
+
 function applyOsModeToMetadata(
   metadata: Record<string, unknown>,
   value?: boolean,
@@ -3025,12 +3083,9 @@ function applyOsModeToMetadata(
   if (value !== true) {
     return;
   }
-  metadata.os_mode_enabled = true;
-  metadata.osModeEnabled = true;
-  metadata.runtime_mode = 'desktop_os';
-  metadata.runtimeMode = 'desktop_os';
-  metadata.workspace_mode = 'desktop';
-  metadata.workspaceMode = 'desktop';
+  metadata.computer_use_enabled = true;
+  metadata.runtime_mode = 'computer_use';
+  metadata.workspace_mode = 'computer_use';
 }
 
 function normalizeTerminalRuntime(value?: TerminalRuntime) {
@@ -3897,7 +3952,6 @@ function backendCapabilitiesFromPayload(payload: unknown): BackendCapabilities {
         ]),
     runtimeAssetResetProtocol: String(runtimeAssetReset.protocol ?? ''),
     runtimeAssetResetCategories: runtimeAssetCategories(runtimeAssetReset.categories),
-    botControl: capabilityBoolean(features, endpoints, 'botControl', ['bot_control']),
     sessionShareLinks: capabilityBoolean(features, endpoints, 'sessionShareLinks', [
       'session_share_links',
       'bot_session_handoff',
@@ -5713,6 +5767,90 @@ function finiteNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function agentProfileFromPayload(value: unknown): AgentProfileDefinition {
+  const item = asRecord(value);
+  const prompts = asRecord(item.prompts);
+  return {
+    protocol: String(item.protocol ?? AGENT_PROFILE_PROTOCOL),
+    id: String(item.id ?? ''),
+    name: String(item.name ?? ''),
+    description: String(item.description ?? ''),
+    disabledTools: stringList(item.disabled_tools),
+    ...(Array.isArray(item.skills) ? { skills: stringList(item.skills) } : {}),
+    hooks: stringList(item.hooks),
+    guards: stringList(item.guards),
+    prompts: { instructions: String(prompts.instructions ?? '') },
+  };
+}
+
+function agentProfileToPayload(profile: AgentProfileDefinition) {
+  return {
+    protocol: AGENT_PROFILE_PROTOCOL,
+    id: profile.id.trim(),
+    name: profile.name.trim(),
+    description: profile.description.trim(),
+    disabled_tools: profile.disabledTools,
+    ...(profile.skills == null ? {} : { skills: profile.skills }),
+    hooks: profile.hooks,
+    guards: profile.guards,
+    prompts: { instructions: profile.prompts.instructions },
+  };
+}
+
+function teamDefinitionFromPayload(value: unknown): TeamDefinition {
+  const item = asRecord(value);
+  return {
+    protocol: String(item.protocol ?? TEAM_CONFIGURATION_PROTOCOL),
+    id: String(item.id ?? ''),
+    name: String(item.name ?? ''),
+    description: String(item.description ?? ''),
+    members: arrayFrom(item.members).map((rawMember) => {
+      const member = asRecord(rawMember);
+      return {
+        id: String(member.id ?? ''),
+        agentProfileId: String(member.agent_profile_id ?? member.agentProfileId ?? ''),
+        responsibility: String(member.responsibility ?? ''),
+        fallback: member.fallback === true,
+      };
+    }),
+  };
+}
+
+function teamDefinitionToPayload(team: TeamDefinition) {
+  return {
+    protocol: TEAM_CONFIGURATION_PROTOCOL,
+    id: team.id.trim(),
+    name: team.name.trim(),
+    description: team.description.trim(),
+    members: team.members.map((member) => ({
+      id: member.id.trim(),
+      agent_profile_id: member.agentProfileId.trim(),
+      responsibility: member.responsibility,
+      fallback: member.fallback,
+    })),
+  };
+}
+
+function teamConfigurationCapabilitiesFromPayload(value: unknown): TeamConfigurationCapabilities {
+  const item = asRecord(value);
+  return {
+    available: item.available === true,
+    teamProtocol: String(item.team_protocol ?? ''),
+    agentProfileProtocol: String(item.agent_profile_protocol ?? ''),
+    contextProtocol: String(item.context_protocol ?? ''),
+    delegationTool: String(item.delegation_tool ?? ''),
+    ordinarySubagentProfileArgument: item.ordinary_subagent_profile_argument === true,
+    memberCapabilities: stringList(item.member_capabilities),
+    toolPolicy: String(item.tool_policy ?? ''),
+    fallbackMemberRequired: item.fallback_member_required === true,
+    fixedDag: item.fixed_dag === true,
+    profileOnlyHooks: arrayFrom(item.profile_only_hooks).map((rawHook) => {
+      const hook = asRecord(rawHook);
+      return { id: String(hook.id ?? ''), event: String(hook.event ?? '') };
+    }).filter((hook) => hook.id),
+  };
+}
+
 function subagentDispatchEventFromPayload(value: unknown): SubagentDispatchEvent {
   const item = asRecord(value);
   const rawPhase = String(item.phase ?? '').trim().toLowerCase();
@@ -5733,7 +5871,12 @@ function subagentDispatchEventFromPayload(value: unknown): SubagentDispatchEvent
     parentSessionId: String(item.parent_session_id ?? item.parentSessionId ?? ''),
     parentTurnId: String(item.parent_turn_id ?? item.parentTurnId ?? ''),
     childSessionId: optionalString(item.child_session_id ?? item.childSessionId),
+    childTurnId: optionalString(item.child_turn_id ?? item.childTurnId),
     agentName: optionalString(item.agent_name ?? item.agentName),
+    origin: optionalString(item.origin),
+    teamId: optionalString(item.team_id ?? item.teamId),
+    teamMemberId: optionalString(item.team_member_id ?? item.teamMemberId),
+    agentProfileId: optionalString(item.agent_profile_id ?? item.agentProfileId),
     autonomyLevel: optionalString(item.autonomy_level ?? item.autonomyLevel),
     taskType: optionalString(item.task_type ?? item.taskType),
     reviewStatus: optionalString(item.review_status ?? item.reviewStatus),
@@ -5763,7 +5906,12 @@ function subagentTaskFromPayload(value: unknown): SubagentTaskSnapshot {
     parentSessionId: String(item.parent_session_id ?? item.parentSessionId ?? ''),
     parentTurnId: String(item.parent_turn_id ?? item.parentTurnId ?? ''),
     childSessionId: optionalString(item.child_session_id ?? item.childSessionId),
+    childTurnId: optionalString(item.child_turn_id ?? item.childTurnId),
     agentName: optionalString(item.agent_name ?? item.agentName),
+    origin: optionalString(item.origin),
+    teamId: optionalString(item.team_id ?? item.teamId),
+    teamMemberId: optionalString(item.team_member_id ?? item.teamMemberId),
+    agentProfileId: optionalString(item.agent_profile_id ?? item.agentProfileId),
     requestPrompt: optionalString(item.request_prompt ?? item.requestPrompt),
     responsePrompt: optionalString(item.response_prompt ?? item.responsePrompt),
     status,
@@ -5787,19 +5935,6 @@ function subagentTaskFromPayload(value: unknown): SubagentTaskSnapshot {
     workerProposal: asRecord(item.worker_proposal ?? item.workerProposal),
     mergePlan: asRecord(item.merge_plan ?? item.mergePlan),
     usage: asRecord(item.usage),
-    raw: item,
-  };
-}
-
-function subagentCompletionFromPayload(value: unknown): SubagentCompletionEvent {
-  const item = asRecord(value);
-  return {
-    eventId: String(item.event_id ?? item.eventId ?? ''),
-    deliveryState: String(item.delivery_state ?? item.deliveryState ?? ''),
-    claimedByTurnId: optionalString(item.claimed_by_turn_id ?? item.claimedByTurnId),
-    createdAt: optionalString(item.created_at ?? item.createdAt),
-    updatedAt: optionalString(item.updated_at ?? item.updatedAt),
-    task: subagentTaskFromPayload(item.task),
     raw: item,
   };
 }

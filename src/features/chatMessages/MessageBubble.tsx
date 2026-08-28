@@ -20,6 +20,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Undo2,
+  UsersRound,
   WrapText,
   X,
 } from 'lucide-react';
@@ -566,6 +567,8 @@ function MessageBubbleView({
     message.role === 'user' ? guidanceDeliveryState(message) : null;
   const messageDelivery =
     message.role === 'user' ? userMessageDeliveryState(message) : null;
+  const messageTeamId = String(message.metadata?.team_id ?? message.metadata?.teamId ?? '').trim();
+  const messageTeamName = String(message.metadata?.team_name ?? message.metadata?.teamName ?? messageTeamId).trim();
 
   useEffect(() => {
     setEditing(false);
@@ -723,6 +726,12 @@ function MessageBubbleView({
             attachments={fileAttachments}
             language={language}
           />
+          {messageTeamId && (
+            <div className="user-team-context" title={`Team: ${messageTeamId}`}>
+              <UsersRound size={12} />
+              <span>{messageTeamName || messageTeamId}</span>
+            </div>
+          )}
           {goalCommand && (
             <div className={`user-command-heading goal${goalCommand.content ? ' has-content' : ''}`}>
               <Target size={14} />

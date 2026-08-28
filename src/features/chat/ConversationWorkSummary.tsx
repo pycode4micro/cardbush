@@ -12,7 +12,6 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
-  fetchSubagentCompletions,
   fetchSubagentTask,
   fetchSubagentTasks,
 } from '../../backend/api';
@@ -222,6 +221,13 @@ export function ConversationWorkSummary({
                       </span>
                       <span className="work-summary-subagent-main">
                         <strong>{subagentTaskTitle(task, language)}</strong>
+                        {task.origin === 'team' && (
+                          <span className="work-summary-subagent-tags">
+                            {task.teamId && <em>Team · {task.teamId}</em>}
+                            {task.teamMemberId && <em>{language === 'zh' ? '成员' : 'Member'} · {task.teamMemberId}</em>}
+                            {task.agentProfileId && <em>Profile · {task.agentProfileId}</em>}
+                          </span>
+                        )}
                         <small title={task.requestPrompt || task.errorMessage}>
                           {task.requestPrompt || task.errorMessage || subagentTaskStatusLabel(task, language)}
                         </small>
@@ -466,12 +472,9 @@ function useSubagentTaskFeed(sessionId: string, available: boolean) {
   const refresh = useCallback((signal?: AbortSignal) => {
     const normalized = sessionId.trim();
     if (!available || !normalized) return Promise.resolve();
-    return Promise.all([
-      fetchSubagentTasks(normalized, { limit: 100, signal }),
-      fetchSubagentCompletions(normalized, { limit: 100, signal }).catch(() => []),
-    ]).then(([snapshots, completions]) => {
+    return fetchSubagentTasks(normalized, { limit: 100, signal }).then((snapshots) => {
       if (signal?.aborted) return;
-      mergeTasks([...snapshots, ...completions.map((event) => event.task)]);
+      mergeTasks(snapshots);
     });
   }, [available, mergeTasks, sessionId]);
 
@@ -534,7 +537,12 @@ function subagentTaskFromDispatchEvent(event: SubagentDispatchEvent): SubagentTa
     parentSessionId: event.parentSessionId,
     parentTurnId: event.parentTurnId,
     childSessionId: event.childSessionId,
+    childTurnId: event.childTurnId,
     agentName: event.agentName,
+    origin: event.origin,
+    teamId: event.teamId,
+    teamMemberId: event.teamMemberId,
+    agentProfileId: event.agentProfileId,
     status: event.status || event.phase,
     terminal: event.terminal,
     accepted: event.accepted,
@@ -630,6 +638,7 @@ function subagentTaskTone(task: SubagentTaskSnapshot) {
 
 function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
   if (task.agentName?.trim()) return task.agentName.trim();
+  if (task.origin === 'team' && task.teamMemberId?.trim()) return task.teamMemberId.trim();
   if (task.taskId?.trim()) {
     const compact = task.taskId.trim().replace(/^subagent[_:-]?/i, '').slice(0, 8);
     return language === 'zh' ? `子任务 ${compact}` : `Task ${compact}`;
