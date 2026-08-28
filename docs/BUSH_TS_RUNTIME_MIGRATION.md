@@ -42,3 +42,36 @@ capability discovery plus a complete accepted → started → reasoning → assi
 terminal Turn. Its `events` and `commandResponses` fields match the product-side
 fixture transport, so the decoded fixture is directly consumable without an
 adapter. CardBush does not infer completion from text or stream closure.
+
+`InMemoryRuntimeHost` is the first executable Host boundary. It is structurally
+compatible with the product `RuntimeTransport`, publishes monotonically ordered
+events, supports cursor replay and live subscription, and makes Provider retries,
+attempt supersession, cancellation, and terminal failure observable. It is not a
+production persistence or tool-execution implementation; unsupported lifecycle
+events exist in the shared decoder but are intentionally absent from this Host's
+capability declaration.
+
+## Electron live-host checkpoint
+
+The Electron boundary consists of four isolated pieces:
+
+- `electron/runtimeHostWorker.mts` owns the live `InMemoryRuntimeHost` inside an
+  Electron Utility Process.
+- `electron/runtimeHostController.mts` owns Utility Process lifecycle and routes
+  typed command/stream messages in the main process.
+- the preload exposes `window.cardbushDesktop.runtime` as a delivery-only bridge;
+  it does not decode or infer Runtime state.
+- `@cardbush/bush-runtime-electron` implements the product-compatible
+  `RuntimeTransport` over that bridge.
+
+The live IPC contract is `bush.runtime_ipc.v1`. A capability or envelope version
+mismatch returns `bush.runtime_error.v1` with the stable
+`protocol_version_mismatch` code. Clean `build` and `typecheck` commands build all
+Runtime workspace packages first, so Electron and Vite never depend on stale
+local `dist` output.
+
+For the current integration checkpoint, a live OpenAI-compatible provider may be
+supplied to the Utility Process with `CARDBUSH_RUNTIME_PROVIDER_API_KEY`, optional
+`CARDBUSH_RUNTIME_PROVIDER_BASE_URL`, `CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS`, and
+`CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS`. Product settings are not yet forwarded;
+provider-secret ownership must be agreed before adding that bridge.

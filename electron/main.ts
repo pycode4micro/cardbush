@@ -95,6 +95,8 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let runtimeHostController: { start: () => Promise<unknown>; stop: () => void } | null = null;
+let unregisterRuntimeHostIpc: (() => void) | null = null;
 let cardlingWindow: BrowserWindow | null = null;
 const externalBrowserWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
@@ -2396,6 +2398,7 @@ app.whenReady().then(async () => {
     });
   }
   registerLocalFileProtocol();
+  await initializeRuntimeHost();
   createWindow();
   createTray();
   void cardbushAppService.start().catch((error) => {
@@ -2411,6 +2414,31 @@ app.whenReady().then(async () => {
     }
   });
 });
+
+async function initializeRuntimeHost() {
+  try {
+    const controllerModuleUrl = pathToFileURL(
+      path.join(__dirname, 'runtimeHostController.mjs'),
+    ).href;
+    const controllerModule = await import(controllerModuleUrl);
+    const controller = new controllerModule.RuntimeUtilityProcessController({
+      modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
+      onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
+    }) as { start: () => Promise<unknown>; stop: () => void };
+    runtimeHostController = controller;
+    unregisterRuntimeHostIpc = controllerModule.registerRuntimeHostIpc(
+      ipcMain,
+      controller,
+      (sender: Electron.WebContents) =>
+        mainWindow != null && sender.id === mainWindow.webContents.id,
+    );
+    void controller.start().catch((error: unknown) => {
+      console.error('[bush-runtime] Utility Process startup failed', error);
+    });
+  } catch (error) {
+    console.error('[bush-runtime] IPC initialization failed', error);
+  }
+}
 
 function registerLocalFileProtocol() {
   if (protocol.isProtocolHandled(localFileProtocol)) {
@@ -2518,6 +2546,10 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  unregisterRuntimeHostIpc?.();
+  unregisterRuntimeHostIpc = null;
+  runtimeHostController?.stop();
+  runtimeHostController = null;
   restoreWindowsTaskbar();
   if (quitFallbackTimer != null) {
     clearTimeout(quitFallbackTimer);

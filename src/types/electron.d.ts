@@ -9,6 +9,13 @@ declare global {
   interface Window {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      runtime: {
+        command: (message: unknown) => Promise<unknown>;
+        startStream: (message: unknown) => Promise<void>;
+        stopStream: (message: unknown) => Promise<void>;
+        cancelOperation: (message: unknown) => Promise<void>;
+        onStreamFrame: (callback: (message: unknown) => void) => () => void;
+      };
       rendererReady: () => Promise<void>;
       minimize: () => Promise<void>;
       toggleMaximize: () => Promise<void>;

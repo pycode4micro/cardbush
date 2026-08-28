@@ -38,6 +38,22 @@ type SessionAttentionPayload = {
 };
 
 const desktopApi = {
+  runtime: {
+    command: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:command', message) as Promise<unknown>,
+    startStream: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:start-stream', message) as Promise<void>,
+    stopStream: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:stop-stream', message) as Promise<void>,
+    cancelOperation: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:cancel-operation', message) as Promise<void>,
+    onStreamFrame: (callback: (message: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, message: unknown) =>
+        callback(message);
+      ipcRenderer.on('bush-runtime:stream-frame', listener);
+      return () => ipcRenderer.removeListener('bush-runtime:stream-frame', listener);
+    },
+  },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
