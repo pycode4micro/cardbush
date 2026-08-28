@@ -129,7 +129,178 @@ try {
   );
   assert.equal(incompleteStore.getSnapshot().streamState, 'error');
 
+  const liveBridge = createLiveRuntimeBridge();
+  const liveSession = new runtimeClientModule.ElectronRuntimeSession(
+    liveBridge,
+    { createId: sequentialId('live') },
+  );
+  const liveCapabilities = await liveSession.discoverCapabilities();
+  assert.equal(liveCapabilities.hostId, 'electron-live-test');
+  const liveResult = await liveSession.run(modelRequest('live'));
+  assert.equal(liveResult.terminal.status, 'failed');
+  assert.equal(liveResult.terminal.reason, 'runtime_provider_not_configured');
+  assert.equal(liveSession.store.getSnapshot().eventCount, 3);
+  assert.equal(liveResult.commandTerminal?.kind, 'turn_terminal');
+
+  const cancellableBridge = createLiveRuntimeBridge({ waitForCancellation: true });
+  const cancellableSession = new runtimeClientModule.ElectronRuntimeSession(
+    cancellableBridge,
+    { createId: sequentialId('cancel') },
+  );
+  const cancelledRun = cancellableSession.run(modelRequest('cancel'));
+  await until(() => cancellableSession.store.getSnapshot().eventCount === 2);
+  cancellableSession.stop();
+  const cancelledResult = await cancelledRun;
+  assert.equal(cancelledResult.terminal.status, 'stopped');
+  assert.equal(cancelledResult.terminal.reason, 'user_stop_requested');
+  assert.ok(cancelledResult.commandError);
+  assert.equal(cancellableSession.store.getSnapshot().streamState, 'settled');
+
   console.log('Product Runtime Client contract passed.');
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
+}
+
+function createLiveRuntimeBridge(options = {}) {
+  const listeners = new Set();
+  const subscriptions = new Map();
+  const operations = new Map();
+  const emit = (message) => {
+    for (const listener of listeners) listener(message);
+  };
+  const emitFrame = (subscriptionId, frame) => emit({
+    protocol: 'bush.runtime_ipc.v1',
+    type: 'stream_frame',
+    subscriptionId,
+    frame,
+  });
+  const response = (operationId, result) => ({
+    protocol: 'bush.runtime_ipc.v1',
+    type: 'command_response',
+    operationId,
+    ok: true,
+    result,
+  });
+  const event = (request, sequence, kind, payload) => ({
+    protocol: 'bush.runtime_event.v1',
+    eventId: `event_${request.turnId}_${sequence}`,
+    sequence,
+    requestId: request.requestId,
+    sessionId: request.sessionId,
+    turnId: request.turnId,
+    createdAt: `2026-08-29T00:00:0${sequence}.000Z`,
+    kind,
+    payload,
+  });
+
+  return {
+    async command(message) {
+      if (message.command.kind === 'runtime.get_capabilities') {
+        return response(message.operationId, {
+          protocol: 'bush.runtime_capabilities.v1',
+          hostId: 'electron-live-test',
+          runtimeVersion: '0.1.0',
+          eventProtocol: 'bush.runtime_event.v1',
+          supportedEvents: ['turn_accepted', 'turn_started', 'turn_terminal'],
+          supportedCommands: [
+            'runtime.get_capabilities',
+            'runtime.run_model_turn',
+          ],
+          features: ['turn_stream'],
+        });
+      }
+
+      const request = message.command.payload;
+      const subscriptionId = subscriptions.get(request.turnId);
+      assert.ok(subscriptionId, 'product must subscribe before dispatching a Turn');
+      emitFrame(subscriptionId, {
+        kind: 'event',
+        event: event(request, 1, 'turn_accepted', { status: 'accepted' }),
+      });
+      emitFrame(subscriptionId, {
+        kind: 'event',
+        event: event(request, 2, 'turn_started', { status: 'running' }),
+      });
+
+      if (options.waitForCancellation) {
+        return new Promise((resolve) => {
+          operations.set(message.operationId, { request, subscriptionId, resolve });
+        });
+      }
+
+      const terminal = event(request, 3, 'turn_terminal', {
+        status: 'failed',
+        reason: 'runtime_provider_not_configured',
+        details: {},
+      });
+      emitFrame(subscriptionId, { kind: 'event', event: terminal });
+      emitFrame(subscriptionId, { kind: 'end' });
+      return response(message.operationId, terminal);
+    },
+    async startStream(message) {
+      subscriptions.set(message.request.turnId, message.subscriptionId);
+    },
+    async stopStream(message) {
+      for (const [turnId, subscriptionId] of subscriptions) {
+        if (subscriptionId === message.subscriptionId) subscriptions.delete(turnId);
+      }
+    },
+    async cancelOperation(message) {
+      const operation = operations.get(message.operationId);
+      if (!operation) return;
+      operations.delete(message.operationId);
+      const terminal = event(operation.request, 3, 'turn_terminal', {
+        status: 'stopped',
+        reason: 'user_stop_requested',
+        details: {},
+      });
+      emitFrame(operation.subscriptionId, { kind: 'event', event: terminal });
+      emitFrame(operation.subscriptionId, { kind: 'end' });
+      operation.resolve({
+        protocol: 'bush.runtime_ipc.v1',
+        type: 'command_response',
+        operationId: message.operationId,
+        ok: false,
+        error: {
+          protocol: 'bush.runtime_error.v1',
+          code: 'operation_cancelled',
+          message: 'The Runtime operation was cancelled.',
+          retryable: false,
+          details: {},
+          requestId: message.operationId,
+        },
+      });
+    },
+    onStreamFrame(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+function sequentialId(prefix) {
+  let next = 0;
+  return () => `${prefix}_${++next}`;
+}
+
+function modelRequest(suffix) {
+  return {
+    protocol: 'bush.model_request.v1',
+    requestId: `request_${suffix}`,
+    sessionId: `session_${suffix}`,
+    turnId: `turn_${suffix}`,
+    model: 'unconfigured-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    tools: [],
+    toolChoice: 'auto',
+    metadata: {},
+  };
+}
+
+async function until(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('Timed out waiting for the product Runtime state.');
 }

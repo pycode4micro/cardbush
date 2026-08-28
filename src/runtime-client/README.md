@@ -31,3 +31,10 @@ Runtime-owned decoder before any feature receives it, so fixture UI work fails
 at the same contract boundary as the live Runtime Host. `RuntimeTurnProjection`
 then projects those validated facts into separate reasoning and assistant
 segments and only applies a terminal phase from `turn_terminal`.
+
+`ElectronRuntimeSession` binds the same product projection to
+`window.cardbushDesktop.runtime`. It starts the event subscription before the
+Turn command, keeps the stream attached during user cancellation so the
+Runtime-owned stopped terminal can arrive, and never converts IPC failures into
+model or network prose. React should subscribe to its `RuntimeTurnStore`; it
+must not call preload IPC methods directly.

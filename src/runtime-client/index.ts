@@ -30,3 +30,12 @@ export type {
   RuntimeTurnStoreState,
   RuntimeTurnStreamState,
 } from './RuntimeTurnStore';
+export {
+  ElectronProtocolRuntimeClient,
+  ElectronRuntimeSession,
+  createDesktopRuntimeSession,
+} from './ElectronRuntimeSession';
+export type {
+  ElectronRuntimeSessionOptions,
+  ElectronRuntimeTurnResult,
+} from './ElectronRuntimeSession';
