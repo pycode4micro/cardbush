@@ -119,6 +119,7 @@ export function useCardbushChat(
     defaultReasoningLevel?: ReasoningLevel;
     contextWindowUsageAvailable?: boolean;
     workspaceChangesAvailable?: boolean;
+    defaultProjectDir?: string;
   } = {},
 ) {
   const languageRef = useRef<AppLanguage>(requestContext.language ?? 'zh');
@@ -1644,7 +1645,10 @@ export function useCardbushChat(
       const conversation =
         queuedConversation ??
         activeConversation ??
-        (await startConversation(undefined, conversationTitleFromUserText(visibleUserInput)));
+        (await startConversation(
+          requestContext.defaultProjectDir?.trim() || undefined,
+          conversationTitleFromUserText(visibleUserInput),
+        ));
       const sessionId = conversation.id;
       setConnectionRecoveryByConversation((current) => ({
         ...current,

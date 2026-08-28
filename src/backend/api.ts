@@ -1498,13 +1498,23 @@ export async function createConversation({
   metadata?: Record<string, unknown>;
 } = {}): Promise<ConversationSummary> {
   const endpoint = url('/v1/sessions');
+  const normalizedProjectDir = projectDir?.trim() || '';
+  const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
+  if (normalizedProjectDir) {
+    normalizedMetadata.workspace_mode = 'project';
+    normalizedMetadata.workspace_dir = normalizedProjectDir;
+    normalizedMetadata.user_project_dir = normalizedProjectDir;
+    normalizedMetadata.project_dir = normalizedProjectDir;
+  } else if (normalizedMetadata.workspace_mode == null) {
+    normalizedMetadata.workspace_mode = 'task';
+  }
   const payload = await readJson<Record<string, unknown>>(endpoint, {
     method: 'POST',
     body: JSON.stringify({
       title,
       ...(sessionId?.trim() ? { session_id: sessionId.trim() } : {}),
-      ...(projectDir?.trim() ? { project_dir: projectDir.trim() } : {}),
-      ...(metadata ? { metadata } : {}),
+      ...(normalizedProjectDir ? { project_dir: normalizedProjectDir } : {}),
+      metadata: normalizedMetadata,
     }),
   });
   return conversationFromPayload(payload);
@@ -1525,6 +1535,14 @@ export async function updateConversation({
   if (!normalized) {
     throw new Error(localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'));
   }
+  const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
+  if (projectDir !== undefined) {
+    const normalizedProjectDir = projectDir?.trim() || '';
+    normalizedMetadata.workspace_mode = normalizedProjectDir ? 'project' : 'task';
+    normalizedMetadata.workspace_dir = normalizedProjectDir || null;
+    normalizedMetadata.user_project_dir = normalizedProjectDir || null;
+    normalizedMetadata.project_dir = normalizedProjectDir || null;
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalized)}`),
     {
@@ -1532,7 +1550,9 @@ export async function updateConversation({
       body: JSON.stringify({
         ...(title != null ? { title } : {}),
         ...(projectDir !== undefined ? { project_dir: projectDir } : {}),
-        ...(metadata ? { metadata } : {}),
+        ...(Object.keys(normalizedMetadata).length > 0
+          ? { metadata: normalizedMetadata }
+          : {}),
       }),
     },
   );

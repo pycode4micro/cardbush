@@ -21,22 +21,69 @@ function normalizedWorkspacePath(value: unknown) {
     .toLowerCase();
 }
 
+function isGeneratedTaskWorkspace(value: unknown) {
+  const normalized = normalizedWorkspacePath(value);
+  return Boolean(normalized && /\/bushserver\/task\/(?:_short\/)?[^/]+$/.test(normalized));
+}
+
+function taskWorkspaceRoots(conversation?: ConversationSummary | null) {
+  if (!conversation) return [];
+  const metadata = conversation.metadata ?? {};
+  return [
+    conversation.workspaceContext?.taskDir,
+    metadata.task_dir,
+    metadata.taskDir,
+    conversation.projectDir,
+    conversation.workspaceContext?.executionRoot,
+    conversation.workspaceContext?.projectDir,
+    metadata.session_workspace_dir,
+    metadata.sessionWorkspaceDir,
+  ]
+    .filter((value) => {
+      const normalized = normalizedWorkspacePath(value);
+      if (!normalized) return false;
+      return (
+        value === conversation.workspaceContext?.taskDir ||
+        value === metadata.task_dir ||
+        value === metadata.taskDir ||
+        isGeneratedTaskWorkspace(value)
+      );
+    })
+    .map(normalizedWorkspacePath);
+}
+
+function userProjectDir(conversation?: ConversationSummary | null) {
+  if (!conversation) return '';
+  const metadata = conversation.metadata ?? {};
+  const taskRoots = new Set(taskWorkspaceRoots(conversation));
+  const candidates = [
+    metadata.user_project_dir,
+    metadata.userProjectDir,
+    metadata.project_dir,
+    metadata.projectDir,
+    metadata.workspace_dir,
+    metadata.workspaceDir,
+    conversation.workspaceContext?.mode === 'project'
+      ? conversation.workspaceContext.projectDir
+      : '',
+    conversation.projectDir,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate ?? '').trim();
+    const normalized = normalizedWorkspacePath(value);
+    if (normalized && !taskRoots.has(normalized) && !isGeneratedTaskWorkspace(value)) {
+      return value;
+    }
+  }
+  return '';
+}
+
 function hasTaskWorkspaceIdentity(
   conversation?: ConversationSummary | null,
 ) {
   if (!conversation) return false;
   const metadata = conversation.metadata ?? {};
-  const taskRoots = [
-    conversation.workspaceContext?.taskDir,
-    metadata.task_dir,
-    metadata.taskDir,
-    metadata.session_workspace_dir,
-    metadata.sessionWorkspaceDir,
-    metadata.session_workspace_alias_path,
-    metadata.sessionWorkspaceAliasPath,
-  ]
-    .map(normalizedWorkspacePath)
-    .filter(Boolean);
+  const taskRoots = taskWorkspaceRoots(conversation);
   if (taskRoots.length === 0) return false;
 
   const executionRoots = [
@@ -53,12 +100,16 @@ function hasTaskWorkspaceIdentity(
     .map(normalizedWorkspacePath)
     .filter(Boolean);
 
-  return executionRoots.length === 0 || executionRoots.every((root) => taskRoots.includes(root));
+  return executionRoots.length > 0 && executionRoots.every((root) => taskRoots.includes(root));
 }
 
 export function conversationWorkspaceMode(
   conversation?: ConversationSummary | null,
 ) {
+  // BushServer can expose the internal task sandbox as top-level project_dir
+  // while retaining the real user project in metadata. A real user project
+  // outside the generated task tree is the authoritative sidebar identity.
+  if (userProjectDir(conversation)) return 'project';
   // A task session can be polluted by an older client that echoed its
   // generated task directory back as project_dir. The task directory is an
   // execution root, not a user project, so its stronger identity wins over
@@ -78,6 +129,8 @@ export function conversationProjectDir(conversation?: ConversationSummary | null
   if (conversationWorkspaceMode(conversation) === 'task') {
     return '';
   }
+  const metadataProjectDir = userProjectDir(conversation);
+  if (metadataProjectDir) return metadataProjectDir;
   return (
     conversation?.projectDir?.trim() ||
     (conversationWorkspaceMode(conversation) === 'project'

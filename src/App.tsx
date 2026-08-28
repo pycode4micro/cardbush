@@ -758,6 +758,14 @@ function CardbushApp() {
       active = false;
     };
   }, []);
+  const fallbackProjectDir = useMemo(() => {
+    const available = projectItems.filter((project) => !project.archived);
+    return (
+      available.find((project) => samePath(project.rootPath, recentProjectDir))?.rootPath.trim() ||
+      available[0]?.rootPath.trim() ||
+      ''
+    );
+  }, [projectItems, recentProjectDir]);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     language,
     projectContexts,
@@ -774,6 +782,7 @@ function CardbushApp() {
     defaultReasoningLevel: backendCapabilities.defaultReasoningLevel,
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
+    defaultProjectDir: onlyTalkMode ? '' : fallbackProjectDir,
   });
   const refreshBackendAndActiveSession = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -896,14 +905,6 @@ function CardbushApp() {
     modelConfigSyncReady,
   ]);
 
-  const fallbackProjectDir = useMemo(() => {
-    const available = projectItems.filter((project) => !project.archived);
-    return (
-      available.find((project) => samePath(project.rootPath, recentProjectDir))?.rootPath.trim() ||
-      available[0]?.rootPath.trim() ||
-      ''
-    );
-  }, [projectItems, recentProjectDir]);
   const activeConversationProjectDir = conversationProjectRoot(chat.activeConversation);
   const conversationProjectDir = conversationWorkspaceRoot(chat.activeConversation);
   const activeProjectDir =
