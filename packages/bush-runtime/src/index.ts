@@ -3,4 +3,8 @@ export * from "./modelProvider.js";
 export * from "./modelRound.js";
 export * from "./runtimeEventLog.js";
 export * from "./runtimeEventProjector.js";
+export * from "./runtimePermissionBroker.js";
+export * from "./runtimeToolLoop.js";
 export * from "./toolCallAccumulator.js";
+export * from "./toolExecutionCoordinator.js";
+export * from "./toolRegistry.js";

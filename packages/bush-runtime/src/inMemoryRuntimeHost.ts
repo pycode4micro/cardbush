@@ -1,12 +1,16 @@
 import {
+  ANSWER_RUNTIME_PERMISSION_COMMAND,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   modelRequestSchema,
+  runtimePermissionAnswerSchema,
   runtimeEventKindSchema,
   type ModelRequest,
+  type ModelMessage,
   type RuntimeCapabilities,
   type RuntimeEvent,
+  type RuntimePermissionAnswer,
 } from "@cardbush/bush-protocol";
 
 import { executeModelRound } from "./modelRound.js";
@@ -21,6 +25,8 @@ import {
   RuntimeEventProjector,
   type RuntimeEventProjectorOptions,
 } from "./runtimeEventProjector.js";
+import { RuntimeToolLoop } from "./runtimeToolLoop.js";
+import { ToolRegistry } from "./toolRegistry.js";
 
 export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 
@@ -40,6 +46,8 @@ export interface InMemoryRuntimeHostOptions {
   eventLog?: InMemoryRuntimeEventLog;
   eventLogOptions?: RuntimeEventLogOptions;
   projectorOptions?: RuntimeEventProjectorOptions;
+  toolRegistry?: ToolRegistry;
+  createPermissionId?: () => string;
 }
 
 export interface RuntimeHostStreamRequest {
@@ -62,7 +70,10 @@ export class InMemoryRuntimeHost {
   readonly #retryDelayMs: (context: RuntimeRetryContext) => number;
   readonly #wait: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #projectorOptions: RuntimeEventProjectorOptions;
+  readonly #toolRegistry: ToolRegistry;
+  readonly #createPermissionId?: () => string;
   readonly #activeTurns = new Set<string>();
+  readonly #toolLoops = new Set<RuntimeToolLoop>();
 
   constructor(options: InMemoryRuntimeHostOptions) {
     this.#provider = options.provider;
@@ -78,6 +89,8 @@ export class InMemoryRuntimeHost {
     this.#retryDelayMs = options.retryDelayMs ?? (() => 0);
     this.#wait = options.wait ?? wait;
     this.#projectorOptions = options.projectorOptions ?? {};
+    this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
+    this.#createPermissionId = options.createPermissionId;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
       hostId: options.hostId ?? "in-memory-runtime",
@@ -94,6 +107,14 @@ export class InMemoryRuntimeHost {
           "assistant_segment_delta",
           "assistant_segment_completed",
           "tool_queued",
+          "tool_running",
+          "tool_completed",
+          "tool_failed",
+          "tool_cancelled",
+          "permission_requested",
+          "permission_answered",
+          "permission_rejected",
+          "permission_cancelled",
           "provider_retry",
           "replay_reset",
           "turn_terminal",
@@ -102,6 +123,7 @@ export class InMemoryRuntimeHost {
       supportedCommands: [
         GET_RUNTIME_CAPABILITIES_COMMAND,
         RUN_MODEL_TURN_COMMAND,
+        ANSWER_RUNTIME_PERMISSION_COMMAND,
       ],
       features: [
         "turn_stream",
@@ -109,6 +131,8 @@ export class InMemoryRuntimeHost {
         "assistant_segments",
         "cursor_replay",
         "provider_retry",
+        "tool_execution",
+        "interactive_permissions",
       ],
     };
   }
@@ -146,6 +170,10 @@ export class InMemoryRuntimeHost {
         return this.capabilities();
       case RUN_MODEL_TURN_COMMAND:
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
+      case ANSWER_RUNTIME_PERMISSION_COMMAND:
+        return this.#answerPermission(
+          runtimePermissionAnswerSchema.parse(command.payload),
+        );
       default:
         throw new Error(`Unsupported Runtime command: ${command.kind}`);
     }
@@ -178,140 +206,183 @@ export class InMemoryRuntimeHost {
       payload: { status: "running" },
     });
 
+    const toolLoop = new RuntimeToolLoop({
+      eventLog: this.#eventLog,
+      identity,
+      registry: this.#toolRegistry,
+      createPermissionId: this.#createPermissionId,
+    });
+    this.#toolLoops.add(toolLoop);
+
     try {
-      for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-        if (options.signal?.aborted) {
-          return this.#stopped(identity);
-        }
-        const projector = new RuntimeEventProjector(
-          this.#eventLog,
-          identity,
-          this.#projectorOptions,
-        );
-        const attemptStartSequence =
-          this.#eventLog.replay(request.sessionId, request.turnId).at(-1)?.sequence ?? 0;
-        let result;
-        try {
-          result = await executeModelRound(this.#provider, request, {
-            signal: options.signal,
-            onEvent: (event) => {
-              if (options.signal?.aborted) {
-                throw new Error("Runtime Turn was stopped.");
-              }
-              projector.accept(event);
-            },
-          });
-        } catch (error) {
+      let messages: ModelMessage[] = [...request.messages];
+      let round = 0;
+      while (true) {
+        round += 1;
+        if (options.signal?.aborted) return this.#stopped(identity);
+
+        let completedRound:
+          | Extract<
+              Awaited<ReturnType<typeof executeModelRound>>,
+              { status: "completed" }
+            >
+          | undefined;
+        let completedProjector: RuntimeEventProjector | undefined;
+        for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+          const projector = new RuntimeEventProjector(
+            this.#eventLog,
+            identity,
+            this.#projectorOptions,
+          );
+          const attemptStartSequence =
+            this.#eventLog.replay(request.sessionId, request.turnId).at(-1)
+              ?.sequence ?? 0;
+          let result;
+          try {
+            result = await executeModelRound(
+              this.#provider,
+              { ...request, messages },
+              {
+                signal: options.signal,
+                onEvent: (event) => {
+                  if (options.signal?.aborted) {
+                    throw new Error("Runtime Turn was stopped.");
+                  }
+                  projector.accept(event);
+                },
+              },
+            );
+          } catch (error) {
+            projector.completeOpenSegment();
+            if (options.signal?.aborted) {
+              return this.#stopped(identity, projector.finalMessageId);
+            }
+            return this.#eventLog.append(identity, {
+              kind: "turn_terminal",
+              payload: {
+                status: "failed",
+                reason: "provider_stream_exception",
+                details: {
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              },
+            });
+          }
           projector.completeOpenSegment();
-          if (options.signal?.aborted) {
-            return this.#stopped(identity, projector.finalMessageId);
+          if (result.status === "completed") {
+            completedRound = result;
+            completedProjector = projector;
+            break;
+          }
+          if (result.error.retryable && attempt < this.#maxAttempts) {
+            const supersededEventIds = this.#eventLog
+              .replay(request.sessionId, request.turnId, {
+                afterSequence: attemptStartSequence,
+              })
+              .map((event) => event.eventId);
+            if (supersededEventIds.length > 0) {
+              this.#eventLog.append(identity, {
+                kind: "replay_reset",
+                payload: {
+                  reason: "provider_attempt_failed",
+                  supersededEventIds,
+                },
+              });
+            }
+            const nextAttempt = attempt + 1;
+            const nextRetryMs = Math.max(
+              0,
+              this.#retryDelayMs({
+                nextAttempt,
+                maxAttempts: this.#maxAttempts,
+                code: result.error.code,
+              }),
+            );
+            this.#eventLog.append(identity, {
+              kind: "provider_retry",
+              payload: {
+                attempt: nextAttempt,
+                maxAttempts: this.#maxAttempts,
+                nextRetryMs,
+                code: result.error.code,
+                message: result.error.message,
+              },
+            });
+            await this.#wait(nextRetryMs, options.signal);
+            if (options.signal?.aborted) {
+              return this.#stopped(identity, projector.finalMessageId);
+            }
+            continue;
           }
           return this.#eventLog.append(identity, {
             kind: "turn_terminal",
             payload: {
               status: "failed",
-              reason: "provider_stream_exception",
+              reason: result.error.code,
+              finalMessageId: projector.finalMessageId,
               details: {
-                message: error instanceof Error ? error.message : String(error),
+                message: result.error.message,
+                retryable: result.error.retryable,
+                attempts: attempt,
+                round,
               },
             },
           });
         }
-        projector.completeOpenSegment();
-
-        if (result.status === "completed") {
-          if (result.toolCalls.length > 0) {
-            result.toolCalls.forEach((toolCall, ordinal) => {
-              this.#eventLog.append(identity, {
-                kind: "tool_queued",
-                payload: {
-                  toolCallId: toolCall.id,
-                  toolName: toolCall.name,
-                  ordinal,
-                  assistantMessageId: projector.messageId,
-                },
-              });
-            });
-            return this.#eventLog.append(identity, {
-              kind: "turn_terminal",
-              payload: {
-                status: "failed",
-                reason: "tool_execution_not_implemented",
-                finalMessageId: projector.finalMessageId,
-                details: { toolCallIds: result.toolCalls.map((call) => call.id) },
-              },
-            });
-          }
+        if (!completedRound || !completedProjector) {
+          throw new Error("Runtime retry loop exited without a model result.");
+        }
+        if (completedRound.toolCalls.length === 0) {
           return this.#eventLog.append(identity, {
             kind: "turn_terminal",
             payload: {
               status: "completed",
               reason: "model_response_completed",
-              finalMessageId: projector.finalMessageId,
-              details: { finishReason: result.finishReason ?? null },
-            },
-          });
-        }
-
-        if (result.error.retryable && attempt < this.#maxAttempts) {
-          const supersededEventIds = this.#eventLog
-            .replay(request.sessionId, request.turnId, {
-              afterSequence: attemptStartSequence,
-            })
-            .map((event) => event.eventId);
-          if (supersededEventIds.length > 0) {
-            this.#eventLog.append(identity, {
-              kind: "replay_reset",
-              payload: {
-                reason: "provider_attempt_failed",
-                supersededEventIds,
+              finalMessageId: completedProjector.finalMessageId,
+              details: {
+                finishReason: completedRound.finishReason ?? null,
+                rounds: round,
               },
-            });
-          }
-          const nextAttempt = attempt + 1;
-          const nextRetryMs = Math.max(
-            0,
-            this.#retryDelayMs({
-              nextAttempt,
-              maxAttempts: this.#maxAttempts,
-              code: result.error.code,
-            }),
-          );
-          this.#eventLog.append(identity, {
-            kind: "provider_retry",
-            payload: {
-              attempt: nextAttempt,
-              maxAttempts: this.#maxAttempts,
-              nextRetryMs,
-              code: result.error.code,
-              message: result.error.message,
             },
           });
-          await this.#wait(nextRetryMs, options.signal);
-          if (options.signal?.aborted) {
-            return this.#stopped(identity, projector.finalMessageId);
-          }
-          continue;
         }
 
-        return this.#eventLog.append(identity, {
-          kind: "turn_terminal",
-          payload: {
-            status: "failed",
-            reason: result.error.code,
-            finalMessageId: projector.finalMessageId,
-            details: {
-              message: result.error.message,
-              retryable: result.error.retryable,
-              attempts: attempt,
-            },
-          },
+        const toolMessages = await toolLoop.execute(completedRound.toolCalls, {
+          round,
+          assistantMessageId: completedProjector.messageId,
+          signal: options.signal,
         });
+        messages = [
+          ...messages,
+          {
+            role: "assistant",
+            content: completedRound.text,
+            toolCalls: completedRound.toolCalls.map((call) => ({
+              id: call.id,
+              name: call.name,
+              argumentsText: call.argumentsText,
+            })),
+          },
+          ...toolMessages,
+        ];
       }
-      throw new Error("Runtime retry loop exited without a terminal event.");
     } finally {
+      this.#toolLoops.delete(toolLoop);
       this.#activeTurns.delete(turnKey);
     }
+  }
+
+  #answerPermission(answer: RuntimePermissionAnswer): RuntimePermissionAnswer {
+    const matches = [...this.#toolLoops].filter((toolLoop) =>
+      toolLoop.hasPendingPermission(answer.permissionId),
+    );
+    if (matches.length > 1) {
+      throw new Error(
+        `Permission ${answer.permissionId} is ambiguous across active Turns.`,
+      );
+    }
+    if (matches.length === 1) return matches[0].answerPermission(answer);
+    throw new Error(`Permission ${answer.permissionId} is not pending.`);
   }
 
   #stopped(

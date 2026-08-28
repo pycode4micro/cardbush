@@ -6,6 +6,31 @@ export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
 export const BUSH_RUNTIME_FIXTURE_PROTOCOL = "bush.runtime_fixture.v1" as const;
 export const GET_RUNTIME_CAPABILITIES_COMMAND =
   "runtime.get_capabilities" as const;
+export const ANSWER_RUNTIME_PERMISSION_COMMAND =
+  "runtime.answer_permission" as const;
+export const BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL =
+  "bush.runtime_permission_answer.v1" as const;
+
+const runtimePermissionAnswerBaseSchema = z.object({
+  protocol: z.literal(BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL),
+  permissionId: z.string().min(1),
+  answerId: z.string().min(1),
+});
+
+export const runtimePermissionAnswerSchema = z.discriminatedUnion("decision", [
+  runtimePermissionAnswerBaseSchema.extend({
+    decision: z.enum(["allow_once", "allow_session"]),
+    grantedCapabilityIds: z.array(z.string().min(1)).min(1),
+  }),
+  runtimePermissionAnswerBaseSchema.extend({
+    decision: z.enum(["deny", "cancel"]),
+    grantedCapabilityIds: z.array(z.string().min(1)).default([]),
+  }),
+]);
+
+export type RuntimePermissionAnswer = z.infer<
+  typeof runtimePermissionAnswerSchema
+>;
 
 export const runtimeEventKindSchema = z.enum([
   "turn_accepted",

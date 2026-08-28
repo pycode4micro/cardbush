@@ -46,10 +46,17 @@ adapter. CardBush does not infer completion from text or stream closure.
 `InMemoryRuntimeHost` is the first executable Host boundary. It is structurally
 compatible with the product `RuntimeTransport`, publishes monotonically ordered
 events, supports cursor replay and live subscription, and makes Provider retries,
-attempt supersession, cancellation, and terminal failure observable. It is not a
-production persistence or tool-execution implementation; unsupported lifecycle
-events exist in the shared decoder but are intentionally absent from this Host's
-capability declaration.
+attempt supersession, cancellation, and terminal failure observable.
+
+The Host now also executes registered tools through a provider-independent
+`ToolRegistry`. Each registration supplies its own input decoder, authoritative
+Action Manifest template, optional admission decision, and handler. Runtime only
+parses JSON, validates the registration's decoder, verifies Tool Call / Manifest /
+Execution Fact identities, and projects lifecycle facts. It never infers effects
+from a Tool name or output prose. Interactive permission decisions use a separate
+command and concrete capability identifiers; denied or cancelled requests never
+invoke the handler. Production persistence and real application Tool adapters are
+still pending.
 
 ## Electron live-host checkpoint
 

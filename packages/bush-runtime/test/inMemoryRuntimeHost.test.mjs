@@ -70,7 +70,7 @@ test("is structurally usable as the product RuntimeTransport", async () => {
   });
 
   assert.equal(capabilities.eventProtocol, "bush.runtime_event.v1");
-  assert.ok(!capabilities.supportedEvents.includes("permission_requested"));
+  assert.ok(capabilities.supportedEvents.includes("permission_requested"));
   await assert.rejects(() =>
     host.sendCommand({ kind: "runtime.unknown", payload: {} }),
   );

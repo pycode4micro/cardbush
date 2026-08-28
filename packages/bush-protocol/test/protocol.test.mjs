@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  actionManifestSchema,
+  BUSH_ACTION_MANIFEST_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
+  BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
   modelEventSchema,
   modelRequestSchema,
   outcomeFinalizerSchema,
+  runtimePermissionAnswerSchema,
   taskPlanSchema,
 } from "../dist/index.js";
 
@@ -85,6 +89,37 @@ test("tool and permission lifecycle facts require stable associations", () => {
         actions: ["read"],
         resources: ["C:/outside.txt"],
       },
+    }),
+  );
+});
+
+test("action manifests and permission answers enforce only explicit protocol facts", () => {
+  const parsed = actionManifestSchema.parse({
+    protocol: BUSH_ACTION_MANIFEST_PROTOCOL,
+    manifest_id: "attempt:turn_1:1:call_1",
+    effect_kind: "observation",
+    operation: "fixture.read",
+    risk: "low",
+    owner: "fixture_runtime",
+    dispatch_phase: "execution",
+    dispatch_scope: "turn",
+    dispatch_side_effect: "none",
+    dispatch_mutating: false,
+    dispatch_source: "registered_tool",
+    stage_modes: ["execute"],
+    output_kinds: ["structured_data"],
+    handoff_exports: [],
+    evidence_hints: ["observation"],
+  });
+  assert.equal(parsed.operation, "fixture.read");
+
+  assert.throws(() =>
+    runtimePermissionAnswerSchema.parse({
+      protocol: BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+      permissionId: "permission_1",
+      answerId: "answer_1",
+      decision: "allow_once",
+      grantedCapabilityIds: [],
     }),
   );
 });
