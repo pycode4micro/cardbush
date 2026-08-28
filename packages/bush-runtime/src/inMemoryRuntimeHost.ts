@@ -3,17 +3,22 @@ import {
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
+  INSPECT_RUNTIME_RECOVERY_COMMAND,
+  RESUME_MODEL_TURN_COMMAND,
   modelRequestSchema,
   runtimePermissionAnswerSchema,
   runtimeEventKindSchema,
+  runtimeTurnIdentitySchema,
   type ModelRequest,
   type ModelMessage,
+  type CacheChainState,
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
 } from "@cardbush/bush-protocol";
 
 import { executeModelRound } from "./modelRound.js";
+import { CacheChainTracker } from "./cacheChainTracker.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -27,6 +32,11 @@ import {
 } from "./runtimeEventProjector.js";
 import { RuntimeToolLoop } from "./runtimeToolLoop.js";
 import { ToolRegistry } from "./toolRegistry.js";
+import {
+  InMemoryRuntimeCheckpointStore,
+  type RuntimeCheckpointStore,
+} from "./runtimeCheckpointStore.js";
+import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
 
 export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 
@@ -48,6 +58,10 @@ export interface InMemoryRuntimeHostOptions {
   projectorOptions?: RuntimeEventProjectorOptions;
   toolRegistry?: ToolRegistry;
   createPermissionId?: () => string;
+  checkpointStore?: RuntimeCheckpointStore;
+  checkpointNow?: () => string;
+  onRecoveryError?: (error: Error) => void;
+  durableRecovery?: boolean;
 }
 
 export interface RuntimeHostStreamRequest {
@@ -72,6 +86,8 @@ export class InMemoryRuntimeHost {
   readonly #projectorOptions: RuntimeEventProjectorOptions;
   readonly #toolRegistry: ToolRegistry;
   readonly #createPermissionId?: () => string;
+  readonly #recovery: RuntimeRecoveryCoordinator;
+  readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
 
@@ -91,6 +107,12 @@ export class InMemoryRuntimeHost {
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
     this.#createPermissionId = options.createPermissionId;
+    this.#recovery = new RuntimeRecoveryCoordinator({
+      eventLog: this.#eventLog,
+      checkpoints: options.checkpointStore ?? new InMemoryRuntimeCheckpointStore(),
+      now: options.checkpointNow,
+    });
+    this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
       hostId: options.hostId ?? "in-memory-runtime",
@@ -115,8 +137,10 @@ export class InMemoryRuntimeHost {
           "permission_answered",
           "permission_rejected",
           "permission_cancelled",
+          "cache_chain_observed",
           "provider_retry",
           "replay_reset",
+          "stream_resumed",
           "turn_terminal",
         ].includes(kind),
       ),
@@ -124,6 +148,8 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_CAPABILITIES_COMMAND,
         RUN_MODEL_TURN_COMMAND,
         ANSWER_RUNTIME_PERMISSION_COMMAND,
+        INSPECT_RUNTIME_RECOVERY_COMMAND,
+        RESUME_MODEL_TURN_COMMAND,
       ],
       features: [
         "turn_stream",
@@ -133,6 +159,9 @@ export class InMemoryRuntimeHost {
         "provider_retry",
         "tool_execution",
         "interactive_permissions",
+        "checkpoint_recovery",
+        "cache_chain_observation",
+        ...(options.durableRecovery ? ["durable_restart_recovery"] : []),
       ],
     };
   }
@@ -174,6 +203,14 @@ export class InMemoryRuntimeHost {
         return this.#answerPermission(
           runtimePermissionAnswerSchema.parse(command.payload),
         );
+      case INSPECT_RUNTIME_RECOVERY_COMMAND: {
+        const identity = runtimeTurnIdentitySchema.parse(command.payload);
+        return this.#recovery.inspect(identity.sessionId, identity.turnId);
+      }
+      case RESUME_MODEL_TURN_COMMAND: {
+        const identity = runtimeTurnIdentitySchema.parse(command.payload);
+        return this.resumeModelTurn(identity.sessionId, identity.turnId, { signal });
+      }
       default:
         throw new Error(`Unsupported Runtime command: ${command.kind}`);
     }
@@ -197,29 +234,92 @@ export class InMemoryRuntimeHost {
       throw new Error(`Turn ${request.turnId} already exists.`);
     }
     this.#activeTurns.add(turnKey);
-    this.#eventLog.append(identity, {
-      kind: "turn_accepted",
-      payload: { status: "accepted" },
+    try {
+      this.#eventLog.append(identity, {
+        kind: "turn_accepted",
+        payload: { status: "accepted" },
+      });
+      this.#eventLog.append(identity, {
+        kind: "turn_started",
+        payload: { status: "running" },
+      });
+      this.#recovery.save({
+        request,
+        messages: request.messages,
+        nextRound: 1,
+        completedReceiptIds: [],
+        cacheChainState: new CacheChainTracker().snapshot(),
+      });
+    } catch (error) {
+      this.#activeTurns.delete(turnKey);
+      throw error;
+    }
+    return this.#continueModelTurn({
+      request,
+      identity,
+      messages: request.messages,
+      nextRound: 1,
+      completedReceiptIds: [],
+      cacheChainState: new CacheChainTracker().snapshot(),
+      signal: options.signal,
     });
-    this.#eventLog.append(identity, {
-      kind: "turn_started",
-      payload: { status: "running" },
-    });
+  }
 
+  async resumeModelTurn(
+    sessionId: string,
+    turnId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<RuntimeEvent> {
+    const turnKey = JSON.stringify([sessionId, turnId]);
+    if (this.#activeTurns.has(turnKey)) {
+      throw new Error(`Turn ${turnId} is already running.`);
+    }
+    this.#activeTurns.add(turnKey);
+    let recovery;
+    try {
+      recovery = this.#recovery.prepareResume(sessionId, turnId);
+    } catch (error) {
+      this.#activeTurns.delete(turnKey);
+      throw error;
+    }
+    return this.#continueModelTurn({
+      request: recovery.checkpoint.request,
+      identity: recovery.identity,
+      messages: recovery.checkpoint.request.messages,
+      nextRound: recovery.nextRound,
+      completedReceiptIds: recovery.checkpoint.completedReceiptIds,
+      cacheChainState: recovery.checkpoint.cacheChainState,
+      signal: options.signal,
+    });
+  }
+
+  async #continueModelTurn(input: {
+    request: ModelRequest;
+    identity: RuntimeEventIdentity;
+    messages: ModelMessage[];
+    nextRound: number;
+    completedReceiptIds: string[];
+    cacheChainState: CacheChainState;
+    signal?: AbortSignal;
+  }): Promise<RuntimeEvent> {
+    const { request, identity } = input;
+    const turnKey = JSON.stringify([request.sessionId, request.turnId]);
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
       identity,
       registry: this.#toolRegistry,
       createPermissionId: this.#createPermissionId,
+      existingReceiptIds: input.completedReceiptIds,
     });
     this.#toolLoops.add(toolLoop);
-
+    let messages: ModelMessage[] = [...input.messages];
+    let completedReceiptIds = [...input.completedReceiptIds];
+    let round = input.nextRound - 1;
+    const cacheChain = new CacheChainTracker(input.cacheChainState);
     try {
-      let messages: ModelMessage[] = [...request.messages];
-      let round = 0;
       while (true) {
         round += 1;
-        if (options.signal?.aborted) return this.#stopped(identity);
+        if (input.signal?.aborted) return this.#stopped(identity);
 
         let completedRound:
           | Extract<
@@ -229,6 +329,19 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+          const roundRequest = { ...request, messages };
+          const cacheObservation = cacheChain.observe(roundRequest);
+          this.#eventLog.append(identity, {
+            kind: "cache_chain_observed",
+            payload: cacheObservation,
+          });
+          this.#recovery.save({
+            request,
+            messages,
+            nextRound: round,
+            completedReceiptIds,
+            cacheChainState: cacheChain.snapshot(),
+          });
           const projector = new RuntimeEventProjector(
             this.#eventLog,
             identity,
@@ -241,11 +354,11 @@ export class InMemoryRuntimeHost {
           try {
             result = await executeModelRound(
               this.#provider,
-              { ...request, messages },
+              roundRequest,
               {
-                signal: options.signal,
+                signal: input.signal,
                 onEvent: (event) => {
-                  if (options.signal?.aborted) {
+                  if (input.signal?.aborted) {
                     throw new Error("Runtime Turn was stopped.");
                   }
                   projector.accept(event);
@@ -254,17 +367,14 @@ export class InMemoryRuntimeHost {
             );
           } catch (error) {
             projector.completeOpenSegment();
-            if (options.signal?.aborted) {
+            if (input.signal?.aborted) {
               return this.#stopped(identity, projector.finalMessageId);
             }
-            return this.#eventLog.append(identity, {
-              kind: "turn_terminal",
-              payload: {
-                status: "failed",
-                reason: "provider_stream_exception",
-                details: {
-                  message: error instanceof Error ? error.message : String(error),
-                },
+            return this.#finishTurn(identity, {
+              status: "failed",
+              reason: "provider_stream_exception",
+              details: {
+                message: error instanceof Error ? error.message : String(error),
               },
             });
           }
@@ -308,24 +418,21 @@ export class InMemoryRuntimeHost {
                 message: result.error.message,
               },
             });
-            await this.#wait(nextRetryMs, options.signal);
-            if (options.signal?.aborted) {
+            await this.#wait(nextRetryMs, input.signal);
+            if (input.signal?.aborted) {
               return this.#stopped(identity, projector.finalMessageId);
             }
             continue;
           }
-          return this.#eventLog.append(identity, {
-            kind: "turn_terminal",
-            payload: {
-              status: "failed",
-              reason: result.error.code,
-              finalMessageId: projector.finalMessageId,
-              details: {
-                message: result.error.message,
-                retryable: result.error.retryable,
-                attempts: attempt,
-                round,
-              },
+          return this.#finishTurn(identity, {
+            status: "failed",
+            reason: result.error.code,
+            finalMessageId: projector.finalMessageId,
+            details: {
+              message: result.error.message,
+              retryable: result.error.retryable,
+              attempts: attempt,
+              round,
             },
           });
         }
@@ -333,24 +440,21 @@ export class InMemoryRuntimeHost {
           throw new Error("Runtime retry loop exited without a model result.");
         }
         if (completedRound.toolCalls.length === 0) {
-          return this.#eventLog.append(identity, {
-            kind: "turn_terminal",
-            payload: {
-              status: "completed",
-              reason: "model_response_completed",
-              finalMessageId: completedProjector.finalMessageId,
-              details: {
-                finishReason: completedRound.finishReason ?? null,
-                rounds: round,
-              },
+          return this.#finishTurn(identity, {
+            status: "completed",
+            reason: "model_response_completed",
+            finalMessageId: completedProjector.finalMessageId,
+            details: {
+              finishReason: completedRound.finishReason ?? null,
+              rounds: round,
             },
           });
         }
 
-        const toolMessages = await toolLoop.execute(completedRound.toolCalls, {
+        const toolRound = await toolLoop.execute(completedRound.toolCalls, {
           round,
           assistantMessageId: completedProjector.messageId,
-          signal: options.signal,
+          signal: input.signal,
         });
         messages = [
           ...messages,
@@ -363,8 +467,18 @@ export class InMemoryRuntimeHost {
               argumentsText: call.argumentsText,
             })),
           },
-          ...toolMessages,
+          ...toolRound.messages,
         ];
+        completedReceiptIds = [
+          ...new Set([...completedReceiptIds, ...toolRound.receiptIds]),
+        ];
+        this.#recovery.save({
+          request,
+          messages,
+          nextRound: round + 1,
+          completedReceiptIds,
+          cacheChainState: cacheChain.snapshot(),
+        });
       }
     } finally {
       this.#toolLoops.delete(toolLoop);
@@ -385,18 +499,33 @@ export class InMemoryRuntimeHost {
     throw new Error(`Permission ${answer.permissionId} is not pending.`);
   }
 
+  #finishTurn(
+    identity: RuntimeEventIdentity,
+    payload: Extract<RuntimeEvent, { kind: "turn_terminal" }>["payload"],
+  ): RuntimeEvent {
+    const terminal = this.#eventLog.append(identity, {
+      kind: "turn_terminal",
+      payload,
+    });
+    try {
+      this.#recovery.remove(identity.sessionId, identity.turnId);
+    } catch (error) {
+      this.#onRecoveryError?.(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    return terminal;
+  }
+
   #stopped(
     identity: RuntimeEventIdentity,
     finalMessageId?: string,
   ): RuntimeEvent {
-    return this.#eventLog.append(identity, {
-      kind: "turn_terminal",
-      payload: {
-        status: "stopped",
-        reason: "user_stop_requested",
-        finalMessageId,
-        details: {},
-      },
+    return this.#finishTurn(identity, {
+      status: "stopped",
+      reason: "user_stop_requested",
+      finalMessageId,
+      details: {},
     });
   }
 }

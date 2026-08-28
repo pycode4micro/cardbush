@@ -40,18 +40,20 @@ export interface ToolExecutionCoordinatorOptions {
   registry: ToolRegistry;
   permissions: PermissionResolver;
   observer?: ToolExecutionObserver;
+  existingReceiptIds?: string[];
 }
 
 export class ToolExecutionCoordinator {
   readonly #registry: ToolRegistry;
   readonly #permissions: PermissionResolver;
   readonly #observer: ToolExecutionObserver;
-  readonly #receiptIds = new Set<string>();
+  readonly #receiptIds: Set<string>;
 
   constructor(options: ToolExecutionCoordinatorOptions) {
     this.#registry = options.registry;
     this.#permissions = options.permissions;
     this.#observer = options.observer ?? {};
+    this.#receiptIds = new Set(options.existingReceiptIds ?? []);
   }
 
   async execute(

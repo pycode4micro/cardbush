@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
+
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
   "bush.runtime_capabilities.v1" as const;
@@ -51,6 +53,7 @@ export const runtimeEventKindSchema = z.enum([
   "permission_rejected",
   "permission_expired",
   "permission_cancelled",
+  "cache_chain_observed",
   "provider_retry",
   "connection_interrupted",
   "stream_resumed",
@@ -201,6 +204,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("permission_cancelled"),
     payload: permissionIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("cache_chain_observed"),
+    payload: cacheChainObservationPayloadSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("provider_retry"),

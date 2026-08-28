@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const { mkdtempSync, readdirSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -20,6 +22,9 @@ async function run() {
     '@cardbush/bush-runtime-electron'
   );
   const repositoryRoot = path.resolve(__dirname, '..');
+  const runtimeStateRoot = mkdtempSync(
+    path.join(tmpdir(), 'cardbush-runtime-utility-'),
+  );
 
   await app.whenReady();
   const {
@@ -36,7 +41,10 @@ async function run() {
       'dist-electron',
       'runtimeHostWorker.mjs',
     ),
-    env: withoutProviderConfiguration(process.env),
+    env: {
+      ...withoutProviderConfiguration(process.env),
+      CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
+    },
     onStdout: (text) => process.stdout.write(text),
     onStderr: (text) => process.stderr.write(text),
   });
@@ -45,6 +53,7 @@ async function run() {
     const ready = await within(controller.start(), 15_000, 'Runtime Host startup');
     assert.equal(ready.type, 'ready');
     assert.equal(ready.capabilities.eventProtocol, 'bush.runtime_event.v1');
+    assert.ok(ready.capabilities.features.includes('durable_restart_recovery'));
 
     const capabilityResponse = await within(
       controller.command({
@@ -126,7 +135,12 @@ async function run() {
       frames
         .filter((frame) => frame.kind === 'event')
         .map((frame) => frame.event.kind),
-      ['turn_accepted', 'turn_started', 'turn_terminal'],
+      [
+        'turn_accepted',
+        'turn_started',
+        'cache_chain_observed',
+        'turn_terminal',
+      ],
     );
     assert.equal(frames.at(-1)?.kind, 'end');
 
@@ -169,8 +183,15 @@ async function run() {
     assert.equal(transportedTerminal.kind, 'turn_terminal');
     assert.deepEqual(
       transportedEvents.map((event) => event.kind),
-      ['turn_accepted', 'turn_started', 'turn_terminal'],
+      [
+        'turn_accepted',
+        'turn_started',
+        'cache_chain_observed',
+        'turn_terminal',
+      ],
     );
+    assert.ok(readdirSync(path.join(runtimeStateRoot, 'events')).length >= 2);
+    assert.deepEqual(readdirSync(path.join(runtimeStateRoot, 'checkpoints')), []);
 
     let testWindow;
     const unregisterIpc = registerRuntimeHostIpc(
@@ -208,6 +229,13 @@ async function run() {
     console.log('Electron Utility Runtime Host contract passed.');
   } finally {
     controller.stop();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    rmSync(runtimeStateRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
     app.quit();
   }
 }

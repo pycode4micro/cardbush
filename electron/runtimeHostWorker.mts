@@ -12,10 +12,14 @@ import {
   type RuntimeProtocolError,
 } from '@cardbush/bush-protocol';
 import {
+  FileRuntimeCheckpointStore,
+  FileRuntimeEventPersistence,
+  InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
 import { OpenAICompatibleProvider } from '@cardbush/bush-provider-openai';
+import { isAbsolute, join } from 'node:path';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -171,14 +175,40 @@ class UnconfiguredProvider implements ModelProvider {
   }
 }
 
+const runtimeStateRoot = process.env.CARDBUSH_RUNTIME_STATE_ROOT?.trim();
+if (runtimeStateRoot && !isAbsolute(runtimeStateRoot)) {
+  throw new Error('CARDBUSH_RUNTIME_STATE_ROOT must be an absolute path.');
+}
+const eventLog = runtimeStateRoot
+  ? new InMemoryRuntimeEventLog({
+      persistence: new FileRuntimeEventPersistence({
+        root: join(runtimeStateRoot, 'events'),
+        onRecoveryIssue: (issue) => {
+          process.stderr.write(`${JSON.stringify(issue)}\n`);
+        },
+      }),
+    })
+  : undefined;
+const checkpointStore = runtimeStateRoot
+  ? new FileRuntimeCheckpointStore(join(runtimeStateRoot, 'checkpoints'))
+  : undefined;
+
 host = new InMemoryRuntimeHost({
   provider: createProvider(),
+  eventLog,
+  checkpointStore,
+  durableRecovery: Boolean(runtimeStateRoot),
   hostId: `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
   maxAttempts: positiveInteger(
     process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS,
     1,
   ),
+  onRecoveryError: (error) => {
+    process.stderr.write(
+      `${JSON.stringify({ code: 'runtime_checkpoint_cleanup_failed', message: error.message })}\n`,
+    );
+  },
 });
 
 parentPort.on('message', (messageEvent) => {

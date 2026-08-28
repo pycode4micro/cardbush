@@ -3,18 +3,22 @@ import test from "node:test";
 
 import {
   actionManifestSchema,
+  BUSH_CACHE_CHAIN_STATE_PROTOCOL,
   BUSH_ACTION_MANIFEST_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+  BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL,
+  cacheChainStateSchema,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
   modelEventSchema,
   modelRequestSchema,
   outcomeFinalizerSchema,
   runtimePermissionAnswerSchema,
+  runtimeRecoveryInspectionSchema,
   taskPlanSchema,
 } from "../dist/index.js";
 
@@ -194,4 +198,43 @@ test("outcome finalizer accepts only reference statuses", () => {
       stale_acceptance: [],
     }),
   );
+});
+
+test("cache chain state contains only structural request hashes", () => {
+  const parsed = cacheChainStateSchema.parse({
+    protocol: BUSH_CACHE_CHAIN_STATE_PROTOCOL,
+    requestOrdinal: 2,
+    stableInputDigest: "stable-hash",
+    messageDigests: ["message-hash-1", "message-hash-2"],
+    taskKind: "code_change",
+    toolNames: ["read_file"],
+  });
+
+  assert.deepEqual(Object.keys(parsed).sort(), [
+    "messageDigests",
+    "protocol",
+    "requestOrdinal",
+    "stableInputDigest",
+  ]);
+});
+
+test("public recovery inspection never exposes checkpoint messages", () => {
+  const parsed = runtimeRecoveryInspectionSchema.parse({
+    protocol: BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL,
+    sessionId: "session_1",
+    turnId: "turn_1",
+    status: "resumable",
+    reason: "stable_checkpoint_available",
+    checkpointSequence: 4,
+    nextRound: 2,
+    eventsAfterCheckpoint: ["event_5"],
+    checkpoint: {
+      request: {
+        messages: [{ role: "user", content: "private user content" }],
+      },
+    },
+  });
+
+  assert.equal("checkpoint" in parsed, false);
+  assert.equal("messages" in parsed, false);
 });

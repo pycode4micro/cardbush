@@ -44,6 +44,7 @@ test("publishes a complete live Turn without mixing reasoning and assistant outp
   assert.deepEqual(events.map((event) => event.kind), [
     "turn_accepted",
     "turn_started",
+    "cache_chain_observed",
     "reasoning_segment_started",
     "reasoning_segment_delta",
     "reasoning_segment_completed",
@@ -52,9 +53,18 @@ test("publishes a complete live Turn without mixing reasoning and assistant outp
     "assistant_segment_completed",
     "turn_terminal",
   ]);
-  assert.equal(events[4].payload.content, "think");
-  assert.equal(events[7].payload.content, "answer");
-  assert.equal(terminal.payload.finalMessageId, events[5].payload.messageId);
+  assert.equal(
+    events.find((event) => event.kind === "reasoning_segment_completed")?.payload.content,
+    "think",
+  );
+  assert.equal(
+    events.find((event) => event.kind === "assistant_segment_completed")?.payload.content,
+    "answer",
+  );
+  assert.equal(
+    terminal.payload.finalMessageId,
+    events.find((event) => event.kind === "assistant_segment_started")?.payload.messageId,
+  );
   assert.ok(
     host.capabilities().supportedCommands.includes(
       GET_RUNTIME_CAPABILITIES_COMMAND,

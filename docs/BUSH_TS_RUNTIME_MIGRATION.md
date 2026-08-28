@@ -55,8 +55,36 @@ parses JSON, validates the registration's decoder, verifies Tool Call / Manifest
 Execution Fact identities, and projects lifecycle facts. It never infers effects
 from a Tool name or output prose. Interactive permission decisions use a separate
 command and concrete capability identifiers; denied or cancelled requests never
-invoke the handler. Production persistence and real application Tool adapters are
-still pending.
+invoke the handler. Real application Tool adapters are still pending.
+
+## Durable recovery and Cache Chain checkpoint
+
+The Runtime now has injectable event-journal and checkpoint stores. The file
+implementations require an explicit absolute root, use hashed Turn identities for
+filenames, checksum every record, and fail closed on complete corruption. Event
+records are appended before publication. Token deltas are written immediately,
+while `fsync` is reserved for lifecycle boundaries so durability does not add a
+disk flush to every streamed token. An incomplete final journal record can be
+removed mechanically after a process crash; complete invalid records are never
+guessed or repaired.
+
+The stable checkpoint contains the exact provider-independent request, current
+messages, completed receipt identifiers, and a hash-only Cache Chain snapshot.
+Restart recovery supersedes partial provider output and resumes from that stable
+request. If a Tool or permission lifecycle advanced after the checkpoint, Runtime
+blocks automatic resume instead of re-dispatching a possibly completed effect.
+The renderer-facing recovery inspection exposes only status, cursor, round, and
+event identifiers; raw checkpoint messages remain inside the Runtime process.
+
+Cache Chain observation compares the real provider request structure and ordered
+message hashes. It reports append-only prefix continuity and exact break position,
+but never classifies a task, Tool name, programming language, or output prose. The
+Python reference's name-based Cache heuristics are intentionally not migrated.
+
+The Utility Process enables file-backed recovery only when
+`CARDBUSH_RUNTIME_STATE_ROOT` is an absolute directory. Choosing the production
+state root remains a CardBush product-host responsibility; the Runtime does not
+invent or migrate product data locations.
 
 ## Electron live-host checkpoint
 

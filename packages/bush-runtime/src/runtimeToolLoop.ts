@@ -23,6 +23,12 @@ export interface RuntimeToolLoopOptions {
   identity: RuntimeEventIdentity;
   registry: ToolRegistry;
   createPermissionId?: () => string;
+  existingReceiptIds?: string[];
+}
+
+export interface RuntimeToolRoundResult {
+  messages: ModelMessage[];
+  receiptIds: string[];
 }
 
 export class RuntimeToolLoop {
@@ -67,6 +73,7 @@ export class RuntimeToolLoop {
           });
         },
       },
+      existingReceiptIds: options.existingReceiptIds,
     });
   }
 
@@ -85,7 +92,7 @@ export class RuntimeToolLoop {
       assistantMessageId: string;
       signal?: AbortSignal;
     },
-  ): Promise<ModelMessage[]> {
+  ): Promise<RuntimeToolRoundResult> {
     toolCalls.forEach((toolCall, ordinal) => {
       this.#eventLog.append(this.#identity, {
         kind: "tool_queued",
@@ -93,6 +100,7 @@ export class RuntimeToolLoop {
       });
     });
     const messages: ModelMessage[] = [];
+    const receiptIds: string[] = [];
     for (const [ordinal, toolCall] of toolCalls.entries()) {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const outcome = await this.#coordinator.execute(
@@ -101,13 +109,14 @@ export class RuntimeToolLoop {
         input.signal,
       );
       this.#appendToolOutcome(toolCall, executionIdentity, outcome);
+      receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
       messages.push({
         role: "tool",
         toolCallId: toolCall.id,
         content: JSON.stringify(outcome.result),
       });
     }
-    return messages;
+    return { messages, receiptIds };
   }
 
   #executionIdentity(

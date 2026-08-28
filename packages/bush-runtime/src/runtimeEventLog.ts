@@ -41,6 +41,12 @@ export interface RuntimeEventIdContext extends RuntimeEventIdentity {
 export interface RuntimeEventLogOptions {
   createEventId?: (context: RuntimeEventIdContext) => string;
   now?: () => string;
+  persistence?: RuntimeEventPersistence;
+}
+
+export interface RuntimeEventPersistence {
+  load(sessionId: string, turnId: string): RuntimeEvent[];
+  append(event: RuntimeEvent): void;
 }
 
 interface TurnEventStream {
@@ -67,10 +73,12 @@ export class InMemoryRuntimeEventLog {
   readonly #eventIds = new Set<string>();
   readonly #createEventId: (context: RuntimeEventIdContext) => string;
   readonly #now: () => string;
+  readonly #persistence?: RuntimeEventPersistence;
 
   constructor(options: RuntimeEventLogOptions = {}) {
     this.#createEventId = options.createEventId ?? (() => `evt_${randomUUID()}`);
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#persistence = options.persistence;
   }
 
   append(identity: RuntimeEventIdentity, draft: RuntimeEventDraft): RuntimeEvent {
@@ -95,6 +103,7 @@ export class InMemoryRuntimeEventLog {
       createdAt: this.#now(),
       ...draft,
     });
+    this.#persistence?.append(event);
     this.#eventIds.add(eventId);
     stream.events.push(event);
     for (const listener of stream.listeners) {
@@ -198,10 +207,50 @@ export class InMemoryRuntimeEventLog {
     const key = JSON.stringify([sessionId, turnId]);
     let stream = this.#streams.get(key);
     if (!stream) {
-      stream = { events: [], listeners: new Set() };
+      const events = this.#loadPersistedEvents(sessionId, turnId);
+      stream = {
+        identity: events[0]
+          ? {
+              requestId: events[0].requestId,
+              sessionId: events[0].sessionId,
+              turnId: events[0].turnId,
+            }
+          : undefined,
+        events,
+        listeners: new Set(),
+      };
       this.#streams.set(key, stream);
     }
     return stream;
+  }
+
+  #loadPersistedEvents(sessionId: string, turnId: string): RuntimeEvent[] {
+    const events = this.#persistence?.load(sessionId, turnId) ?? [];
+    let previousSequence = 0;
+    let terminal = false;
+    for (const candidate of events) {
+      const event = runtimeEventSchema.parse(candidate);
+      if (event.sessionId !== sessionId || event.turnId !== turnId) {
+        throw new Error(
+          `Persisted event ${event.eventId} belongs to a different Turn.`,
+        );
+      }
+      if (event.sequence !== previousSequence + 1) {
+        throw new Error(
+          `Persisted Turn ${turnId} has a non-contiguous event sequence.`,
+        );
+      }
+      if (terminal) {
+        throw new Error(`Persisted Turn ${turnId} has events after its terminal fact.`);
+      }
+      if (this.#eventIds.has(event.eventId)) {
+        throw new Error(`Persisted Runtime event ID ${event.eventId} is not unique.`);
+      }
+      this.#eventIds.add(event.eventId);
+      previousSequence = event.sequence;
+      terminal = event.kind === "turn_terminal";
+    }
+    return events.map((event) => structuredClone(event));
   }
 }
 
