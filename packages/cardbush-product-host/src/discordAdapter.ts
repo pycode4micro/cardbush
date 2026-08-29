@@ -209,7 +209,12 @@ export class DiscordGatewayAdapter implements BotAdapter {
       rawEvent: data,
     };
     try {
-      const reply = await this.#backend.respond(envelope, this.#context.signal);
+      const reply = await this.#backend.respond(envelope, {
+        signal: this.#context.signal,
+        onPermissionRequest: async (request) => {
+          await this.#sendText(channelId, formatPermissionRequest(request), messageId);
+        },
+      });
       await this.#sendText(channelId, reply.text, messageId);
     } catch (error) {
       await this.#context.log("error", `message failed: ${errorMessage(error)}`);
@@ -362,4 +367,18 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: stri
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatPermissionRequest(request: {
+  reason: string;
+  actions: string[];
+  resources: string[];
+}): string {
+  return [
+    "需要你的授权",
+    request.reason,
+    `动作：${request.actions.join(", ")}`,
+    `资源：${request.resources.join("\n")}`,
+    "回复 1 仅本次允许，2 本会话允许，3 拒绝。",
+  ].join("\n");
 }

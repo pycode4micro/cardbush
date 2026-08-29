@@ -28,7 +28,12 @@ export {
 } from "./discordAdapter.js";
 export type { DiscordAdapterDependencies } from "./discordAdapter.js";
 export { identityIsAllowed } from "./conversation.js";
-export type { ChatEnvelope, ChatReply, ConversationBackend } from "./conversation.js";
+export type {
+  BotPermissionRequest,
+  ChatEnvelope,
+  ChatReply,
+  ConversationBackend,
+} from "./conversation.js";
 export type {
   ProductHostCommand,
   ProductHostFailure,

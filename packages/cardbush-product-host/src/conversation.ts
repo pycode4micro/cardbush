@@ -15,9 +15,23 @@ export interface ChatReply {
 }
 
 export interface ConversationBackend {
-  respond(envelope: ChatEnvelope, signal?: AbortSignal): Promise<ChatReply>;
+  respond(
+    envelope: ChatEnvelope,
+    options?: {
+      signal?: AbortSignal;
+      onPermissionRequest?: (request: BotPermissionRequest) => void | Promise<void>;
+    },
+  ): Promise<ChatReply>;
   stopSession?(sessionId: string): Promise<void>;
   close?(): Promise<void>;
+}
+
+export interface BotPermissionRequest {
+  permissionId: string;
+  reason: string;
+  actions: string[];
+  resources: string[];
+  requestedCapabilityIds: string[];
 }
 
 export function identityIsAllowed(input: {
