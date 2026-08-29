@@ -133,3 +133,18 @@ Changes. Tools declare these values; Runtime validates identities and publishes
 their IDs without parsing output prose or dispatching on Tool names. Records are
 queryable through typed Runtime commands and persist under the Utility Process
 state root.
+
+## Plan and Goal fact checkpoint
+
+Plan and Goal state now cross the same typed Runtime command boundary and use a
+checksummed append-only Coordination journal. Updates use optimistic revisions,
+stable Session/Plan/Goal identities, and Runtime-assigned IDs for Plan nodes that
+arrive without one. Removing a previously identified Plan node requires the
+caller to submit an explicit scope-change reason; Runtime records that declaration
+but does not interpret it.
+
+Goal status and reason are caller-declared facts. Runtime validates their schema,
+identity, and revision, then preserves them verbatim. It does not inspect user or
+assistant prose, Tool names, Plan-node combinations, or Execution Facts to decide
+whether a Goal is complete. Automatic Goal continuation and the model-facing
+coordination Tools remain a later behavior checkpoint built on these facts.

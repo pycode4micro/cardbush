@@ -4,7 +4,12 @@ import test from "node:test";
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
+  CREATE_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
+  GET_RUNTIME_GOAL_COMMAND,
+  GET_RUNTIME_PLAN_COMMAND,
+  SET_RUNTIME_PLAN_COMMAND,
+  UPDATE_RUNTIME_GOAL_COMMAND,
 } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost } from "../dist/index.js";
 
@@ -84,6 +89,65 @@ test("is structurally usable as the product RuntimeTransport", async () => {
   await assert.rejects(() =>
     host.sendCommand({ kind: "runtime.unknown", payload: {} }),
   );
+});
+
+test("exposes Plan and Goal as explicit typed command facts", async () => {
+  const host = hostWithAttempts([]);
+  const plan = await host.sendCommand({
+    kind: SET_RUNTIME_PLAN_COMMAND,
+    payload: {
+      sessionId: "session_coordination",
+      expectedRevision: 0,
+      plan: {
+        protocol: "bush.task_plan.v1",
+        plan_id: "plan_1",
+        session_id: "session_coordination",
+        nodes: [{ step: "inspect", status: "in_progress" }],
+        explanation: "",
+        active: true,
+      },
+    },
+  });
+  assert.equal(plan.revision, 1);
+  assert.ok(plan.plan.nodes[0].id);
+  assert.equal(
+    (await host.sendCommand({
+      kind: GET_RUNTIME_PLAN_COMMAND,
+      payload: { sessionId: "session_coordination" },
+    })).revision,
+    1,
+  );
+
+  const goal = await host.sendCommand({
+    kind: CREATE_RUNTIME_GOAL_COMMAND,
+    payload: {
+      goalId: "goal_1",
+      sessionId: "session_coordination",
+      objective: "finish",
+      linkedA2ATaskIds: [],
+    },
+  });
+  const updated = await host.sendCommand({
+    kind: UPDATE_RUNTIME_GOAL_COMMAND,
+    payload: {
+      goalId: goal.goalId,
+      sessionId: goal.sessionId,
+      expectedRevision: goal.revision,
+      status: "complete",
+      statusReason: "declared by the caller",
+      consumedTokens: 1,
+      linkedA2ATaskIds: [],
+    },
+  });
+  assert.equal(updated.status, "complete");
+  assert.equal(
+    (await host.sendCommand({
+      kind: GET_RUNTIME_GOAL_COMMAND,
+      payload: { sessionId: "session_coordination" },
+    })).revision,
+    2,
+  );
+  assert.ok(host.capabilities().features.includes("explicit_goal_facts"));
 });
 
 test("projects explicit cancellation as a stopped terminal fact", async () => {

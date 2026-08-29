@@ -13,6 +13,8 @@ import {
   BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL,
   BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
   cacheChainStateSchema,
+  coordinationEventSchema,
+  createRuntimeGoalRequestSchema,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
   modelEventSchema,
@@ -23,6 +25,8 @@ import {
   runtimeProviderBindingConfigSchema,
   runtimeProviderBindingResultSchema,
   taskPlanSchema,
+  setRuntimePlanRequestSchema,
+  updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
 
 test("runtime event decoder keeps reasoning separate from assistant content", () => {
@@ -240,6 +244,48 @@ test("public recovery inspection never exposes checkpoint messages", () => {
 
   assert.equal("checkpoint" in parsed, false);
   assert.equal("messages" in parsed, false);
+});
+
+test("coordination commands carry explicit identities and revisions", () => {
+  const setPlan = setRuntimePlanRequestSchema.parse({
+    sessionId: "session_1",
+    expectedRevision: 0,
+    plan: {
+      protocol: "bush.task_plan.v1",
+      plan_id: "plan_1",
+      session_id: "session_1",
+      nodes: [{ id: "node_1", step: "inspect", status: "in_progress" }],
+      explanation: "",
+      active: true,
+    },
+  });
+  const createGoal = createRuntimeGoalRequestSchema.parse({
+    goalId: "goal_1",
+    sessionId: "session_1",
+    objective: "finish",
+  });
+  const updateGoal = updateRuntimeGoalRequestSchema.parse({
+    goalId: "goal_1",
+    sessionId: "session_1",
+    expectedRevision: 1,
+    status: "active",
+    statusReason: "",
+    consumedTokens: 0,
+    linkedA2ATaskIds: [],
+  });
+
+  assert.equal(setPlan.scopeChangeReason, "");
+  assert.deepEqual(createGoal.linkedA2ATaskIds, []);
+  assert.equal(updateGoal.expectedRevision, 1);
+  assert.throws(() => coordinationEventSchema.parse({
+    protocol: "bush.coordination_event.v1",
+    eventId: "event_1",
+    sequence: 0,
+    sessionId: "session_1",
+    createdAt: "2026-08-29T00:00:00.000Z",
+    kind: "goal_set",
+    payload: {},
+  }));
 });
 
 test("provider binding commands validate secrets but return only opaque references", () => {

@@ -35,3 +35,9 @@ from those declared facts; Runtime never extracts paths or effects from output
 text. Existing CardBush
 chat remains unchanged until the typed Session Turn path passes product A/B
 gates.
+
+Plan and Goal state is stored separately in an append-only Coordination journal.
+The store enforces only protocol identities, monotonic revisions, stable Plan
+node IDs, and explicit scope-change declarations. Semantic completion remains a
+model/caller declaration; Runtime does not derive it from prose or lifecycle
+state combinations.

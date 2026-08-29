@@ -1,4 +1,5 @@
 export * from "./cacheChain.js";
+export * from "./coordination.js";
 export * from "./model.js";
 export * from "./providerBinding.js";
 export * from "./recovery.js";

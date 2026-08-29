@@ -4,21 +4,30 @@ import {
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
+  GET_RUNTIME_GOAL_COMMAND,
+  GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+  CREATE_RUNTIME_GOAL_COMMAND,
+  SET_RUNTIME_PLAN_COMMAND,
+  UPDATE_RUNTIME_GOAL_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
+  createRuntimeGoalRequestSchema,
   modelRequestSchema,
   runtimePermissionAnswerSchema,
+  runtimeCoordinationSessionSchema,
   runtimeSessionIdentitySchema,
   runtimeSessionTurnRequestSchema,
   toolExecutionIdentitySchema,
   turnToolExecutionsIdentitySchema,
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
+  setRuntimePlanRequestSchema,
+  updateRuntimeGoalRequestSchema,
   type ModelRequest,
   type ModelMessage,
   type CacheChainState,
@@ -31,6 +40,7 @@ import {
 
 import { executeModelRound } from "./modelRound.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
+import { CoordinationStore } from "./coordinationStore.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -86,6 +96,8 @@ export interface InMemoryRuntimeHostOptions {
   durableSessions?: boolean;
   sessionNow?: () => string;
   toolExecutionStore?: ToolExecutionStore;
+  coordinationStore?: CoordinationStore;
+  durableCoordination?: boolean;
   additionalSupportedCommands?: string[];
 }
 
@@ -115,6 +127,7 @@ export class InMemoryRuntimeHost {
   readonly #sessions: RuntimeSessionCoordinator;
   readonly #sessionNow: () => string;
   readonly #toolExecutions: ToolExecutionStore;
+  readonly #coordination: CoordinationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -146,6 +159,7 @@ export class InMemoryRuntimeHost {
       now: this.#sessionNow,
     });
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
+    this.#coordination = options.coordinationStore ?? new CoordinationStore();
     this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
@@ -189,6 +203,11 @@ export class InMemoryRuntimeHost {
         RUN_RUNTIME_SESSION_TURN_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+        GET_RUNTIME_PLAN_COMMAND,
+        SET_RUNTIME_PLAN_COMMAND,
+        GET_RUNTIME_GOAL_COMMAND,
+        CREATE_RUNTIME_GOAL_COMMAND,
+        UPDATE_RUNTIME_GOAL_COMMAND,
         ...(options.additionalSupportedCommands ?? []),
       ],
       features: [
@@ -205,6 +224,9 @@ export class InMemoryRuntimeHost {
         "append_only_session_context",
         ...(options.durableSessions ? ["durable_sessions"] : []),
         "authoritative_tool_execution_records",
+        "explicit_plan_facts",
+        "explicit_goal_facts",
+        ...(options.durableCoordination ? ["durable_coordination"] : []),
       ],
     };
   }
@@ -272,6 +294,24 @@ export class InMemoryRuntimeHost {
         const identity = turnToolExecutionsIdentitySchema.parse(command.payload);
         return this.#toolExecutions.listTurn(identity.sessionId, identity.turnId);
       }
+      case GET_RUNTIME_PLAN_COMMAND: {
+        const identity = runtimeCoordinationSessionSchema.parse(command.payload);
+        return this.#coordination.getPlan(identity.sessionId) ?? null;
+      }
+      case SET_RUNTIME_PLAN_COMMAND:
+        return this.#coordination.setPlan(setRuntimePlanRequestSchema.parse(command.payload));
+      case GET_RUNTIME_GOAL_COMMAND: {
+        const identity = runtimeCoordinationSessionSchema.parse(command.payload);
+        return this.#coordination.getGoal(identity.sessionId) ?? null;
+      }
+      case CREATE_RUNTIME_GOAL_COMMAND:
+        return this.#coordination.createGoal(
+          createRuntimeGoalRequestSchema.parse(command.payload),
+        );
+      case UPDATE_RUNTIME_GOAL_COMMAND:
+        return this.#coordination.updateGoal(
+          updateRuntimeGoalRequestSchema.parse(command.payload),
+        );
       case ANSWER_RUNTIME_PERMISSION_COMMAND:
         return this.#answerPermission(
           runtimePermissionAnswerSchema.parse(command.payload),

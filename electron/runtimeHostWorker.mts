@@ -18,10 +18,12 @@ import {
 import {
   FileRuntimeCheckpointStore,
   FileRuntimeEventPersistence,
+  FileCoordinationPersistence,
   FileSessionEventPersistence,
   FileToolExecutionPersistence,
   InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
+  CoordinationStore,
   SessionStore,
   ToolExecutionStore,
   type ModelProvider,
@@ -221,6 +223,14 @@ const toolExecutionPersistence = runtimeStateRoot
       },
     })
   : undefined;
+const coordinationPersistence = runtimeStateRoot
+  ? new FileCoordinationPersistence({
+      root: join(runtimeStateRoot, 'coordination'),
+      onTruncatedTail: (issue) => {
+        process.stderr.write(`${JSON.stringify({ code: 'truncated_tail_removed', ...issue })}\n`);
+      },
+    })
+  : undefined;
 
 providers = new OpenAICompatibleProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
@@ -234,8 +244,12 @@ host = new InMemoryRuntimeHost({
   toolExecutionStore: new ToolExecutionStore({
     persistence: toolExecutionPersistence,
   }),
+  coordinationStore: new CoordinationStore({
+    persistence: coordinationPersistence,
+  }),
   durableRecovery: Boolean(runtimeStateRoot),
   durableSessions: Boolean(runtimeStateRoot),
+  durableCoordination: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
