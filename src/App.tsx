@@ -52,18 +52,14 @@ import {
 } from 'react';
 
 import {
-  backendBearerTokenStorageKey,
-  backendLocalRequestKeyStorageKey,
   defaultBackendCapabilities,
   closeShadowConversation,
   createShadowConversation,
   fetchBackendCapabilities,
-  fetchBackendReadiness,
   fetchModelConfigs,
   fetchProjectContext,
   fetchRuntimeToolInventory,
-  fetchSkills,
-  isBushServerHttpError,
+  isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
   saveModelConfigs,
   saveProjectContext,
@@ -125,6 +121,10 @@ import {
   isLoopHistoryPreTestEnabled,
   LoopHistoryPreTest,
 } from './features/pre_test/LoopHistoryPreTest';
+import {
+  isRuntimeStreamPreTestEnabled,
+  runtimeStreamPreTestMode,
+} from './features/pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
   ComposerRuntimeRail,
@@ -210,7 +210,6 @@ import type {
   ReferencePlanMode,
   RuntimeContextWindowUsage,
   RuntimeConnectionUpdate,
-  RuntimeAssetCategory,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -240,6 +239,13 @@ const LazyFeatureContentPanel = lazy(async () => {
   const module = await import('./features/panels');
   return { default: module.FeatureContentPanel };
 });
+
+const LazyRuntimeStreamPreTest = import.meta.env.DEV
+  ? lazy(async () => {
+      const module = await import('./features/pre_test/RuntimeStreamPreTest');
+      return { default: module.RuntimeStreamPreTest };
+    })
+  : null;
 
 type AppErrorBoundaryState = {
   message: string;
@@ -382,10 +388,6 @@ const defaultAppSettings: AppSettingsState = {
       appsButton: 2,
       settingsButton: 9,
     },
-  },
-  backendAuth: {
-    bearerToken: '',
-    localRequestKey: '',
   },
   managedModelConfigs: [],
   backgroundImagePath: '',
@@ -818,41 +820,6 @@ function CardbushApp() {
     () => new Set(Object.keys(chat.runningByConversation)),
     [chat.runningByConversation],
   );
-  const reloadRuntimeAssetConfiguration = useCallback(async (
-    categories: RuntimeAssetCategory[],
-  ) => {
-    const readiness = await fetchBackendReadiness();
-    if (String(readiness.status ?? '').trim().toLowerCase() !== 'ready') {
-      throw new Error(
-        language === 'zh'
-          ? 'BushServer 尚未就绪，请完成重启后再验证。'
-          : 'BushServer is not ready. Finish restarting it before verification.',
-      );
-    }
-    const [capabilities, inventory] = await Promise.all([
-      fetchBackendCapabilities(),
-      fetchRuntimeToolInventory(),
-      fetchSkills(),
-    ]);
-    setBackendCapabilities(capabilities);
-    if (categories.includes('skills')) {
-      const next = new Set<string>();
-      setDisabledSkillNames(next);
-      persistDisabledSkillNames(next);
-    }
-    if (categories.includes('tools')) {
-      const protectedNames = new Set(
-        inventory.installed
-          .filter((tool) => tool.injection.core)
-          .map((tool) => tool.name),
-      );
-      const next = new Set<string>();
-      setProtectedCoreToolNames(protectedNames);
-      setDisabledToolNames(next);
-      persistDisabledToolNames(next);
-    }
-  }, [language]);
-
   useEffect(() => {
     activeConversationForThinkingRef.current = chat.activeConversationId;
     setThinkingNotice(null);
@@ -906,6 +873,24 @@ function CardbushApp() {
     void saveModelConfigs({
       defaultModelId: defaultId,
       models: appSettings.managedModelConfigs,
+    }).then((saved) => {
+      const sanitized = normalizeManagedModelConfigs(saved.models);
+      const savedDefaultId = defaultModelConfigId(sanitized, saved.defaultModelId || defaultId);
+      lastSavedModelConfigSignatureRef.current = modelConfigSignature(
+        sanitized,
+        savedDefaultId,
+      );
+      setAppSettings((current) => {
+        if (modelConfigSignature(current.managedModelConfigs, defaultId) !== signature) {
+          return current;
+        }
+        const next = normalizeAppSettings({
+          ...current,
+          managedModelConfigs: sanitized,
+        });
+        persistAppSettings(next);
+        return next;
+      });
     }).catch(() => {
       lastSavedModelConfigSignatureRef.current = '';
     });
@@ -2104,7 +2089,6 @@ function CardbushApp() {
             selectedModel={chat.selectedModel}
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
-            runtimeBusy={runningConversationIds.size > 0}
             conversations={chat.conversations}
             initialSection={settingsInitialSection}
             onBack={() => setSettingsOpen(false)}
@@ -2119,7 +2103,6 @@ function CardbushApp() {
             onUseModel={chat.setSelectedModel}
             onSidebarWidthChange={setSidebarWidth}
             onConversationHistoryCleared={() => chat.reloadConversations()}
-            onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
           />
         </Suspense>
       )}
@@ -2878,10 +2861,6 @@ function readInitialAppSettings(): AppSettingsState {
       backgroundContrast: storedOsPreferences.backgroundContrast,
       gamepad: storedOsPreferences.gamepad,
     },
-    backendAuth: {
-      bearerToken: window.localStorage.getItem(backendBearerTokenStorageKey) ?? '',
-      localRequestKey: window.localStorage.getItem(backendLocalRequestKeyStorageKey) ?? '',
-    },
     managedModelConfigs: readManagedModelConfigs(),
     backgroundImagePath: window.localStorage.getItem('cardbush_background_image_path') ?? '',
     companionEnabled:
@@ -3050,10 +3029,6 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
         settingsButton: normalizeGamepadButton(settings.os?.gamepad?.settingsButton, 9),
       },
     },
-    backendAuth: {
-      bearerToken: settings.backendAuth.bearerToken.trim(),
-      localRequestKey: settings.backendAuth.localRequestKey.trim(),
-    },
     managedModelConfigs: normalizeManagedModelConfigs(
       settings.managedModelConfigs,
     ),
@@ -3164,17 +3139,15 @@ function persistAppSettings(settings: AppSettingsState) {
     gamepad: settings.os.gamepad,
   }));
   window.localStorage.setItem(
-    backendBearerTokenStorageKey,
-    settings.backendAuth.bearerToken,
-  );
-  window.localStorage.setItem(
-    backendLocalRequestKeyStorageKey,
-    settings.backendAuth.localRequestKey,
-  );
-  window.localStorage.setItem(
     'cardbush_managed_model_configs',
-    JSON.stringify(settings.managedModelConfigs),
+    JSON.stringify(settings.managedModelConfigs.map((config) => ({
+      ...config,
+      apiKey: '',
+      hasApiKey: config.hasApiKey === true || Boolean(config.apiKey),
+      apiKeyMasked: config.apiKeyMasked,
+    }))),
   );
+  window.localStorage.removeItem('cardbush_runtime_default_model_id');
   window.localStorage.setItem('cardbush_background_image_path', settings.backgroundImagePath);
   window.localStorage.setItem(
     'cardbush_cardling_enabled',
@@ -3217,7 +3190,9 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
     if (!provider || !modelName) {
       continue;
     }
-    const key = `${provider.toLowerCase()}\u0000${modelName.toLowerCase()}\u0000${apiKey.toLowerCase()}\u0000${baseUrl.toLowerCase()}`;
+    const key = raw.id.trim()
+      ? `id:${raw.id.trim().toLowerCase()}`
+      : `model:${provider.toLowerCase()}\u0000${modelName.toLowerCase()}\u0000${baseUrl.toLowerCase()}`;
     if (!seen.add(key)) {
       continue;
     }
@@ -3934,8 +3909,8 @@ function ChatPanel({
     } catch (caught) {
       setRefreshError(
         language === 'zh'
-          ? '无法连接 BushServer，请检查后端是否正在运行。'
-          : 'Unable to connect to BushServer. Check whether the backend is running.',
+          ? 'TypeScript Runtime 不可用，请重启 CardBush 后重试。'
+          : 'The TypeScript Runtime is unavailable. Restart CardBush and retry.',
       );
       throw caught;
     }
@@ -5708,9 +5683,8 @@ function ChatPanel({
         setActiveScene((current) => current?.sceneId === sceneId ? null : current);
         return;
       }
-      // Session Scene REST was removed from BushServer. New scene content is
-      // restored from the streamed message artifacts below; this event only
-      // carries lifecycle identity and must not trigger a legacy fetch.
+      // Scene content is restored from streamed Runtime artifacts below. This
+      // event only carries lifecycle identity and never triggers another service.
     };
     window.addEventListener('cardbush:scene-event', receiveSceneEvent);
     return () => window.removeEventListener('cardbush:scene-event', receiveSceneEvent);
@@ -6105,6 +6079,18 @@ function ChatPanel({
 
   if (import.meta.env.DEV && isQuickContextPreTestEnabled()) {
     return <QuickContextPreTest language={language} />;
+  }
+
+  if (import.meta.env.DEV && LazyRuntimeStreamPreTest && isRuntimeStreamPreTestEnabled()) {
+    return (
+      <Suspense fallback={null}>
+        <LazyRuntimeStreamPreTest
+          language={language}
+          mode={runtimeStreamPreTestMode() ?? 'fixture'}
+          modelConfig={selectedModelConfig}
+        />
+      </Suspense>
+    );
   }
 
   return (
@@ -6668,8 +6654,8 @@ function ConversationConnectionNotice({
         ? '模型服务重试失败'
         : 'Model provider retry failed.'
       : language === 'zh'
-        ? '连接恢复失败，请检查 BushServer'
-        : 'Connection recovery failed. Check BushServer.'
+        ? '连接恢复失败，请检查 Runtime 或模型服务'
+        : 'Connection recovery failed. Check the Runtime or model provider.'
     : isSyncing
       ? language === 'zh'
         ? '连接已建立，正在同步运行状态'
@@ -7699,8 +7685,8 @@ function TopBar({
               ? botShareLabel
               : !botHandoffAvailable
                 ? language === 'zh'
-                  ? 'BushServer 尚未提供 Bot 会话交接能力'
-                  : 'BushServer does not expose Bot session handoff yet'
+                  ? 'Product Host 尚未提供 Bot 会话交接能力'
+                  : 'Product Host does not expose Bot session handoff yet'
               : language === 'zh'
                 ? '请先创建会话'
                 : 'Create a chat first'
@@ -7768,32 +7754,16 @@ function errorMessage(error: unknown) {
 }
 
 function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
-  if (isBushServerHttpError(error)) {
-    if (error.code === 'workspace_change_conflict') {
-      return language === 'zh'
-        ? '文件在该修改之后又发生了变化，为避免覆盖后续编辑，本次未执行撤回。'
-        : 'A file changed after this edit, so nothing was overwritten.';
-    }
-    if (error.code === 'workspace_change_revert_unavailable') {
-      return language === 'zh'
-        ? '这组修改没有完整的恢复快照，无法安全撤回。'
-        : 'This change does not have a complete recovery snapshot.';
-    }
-    if (error.statusCode === 404 || error.statusCode === 405) {
-      return language === 'zh'
-        ? '当前 BushServer 版本尚不支持快照撤回，请升级服务端。'
-        : 'The current BushServer version does not support snapshot restore.';
-    }
+  if (isRuntimeWorkspaceSnapshotUnavailableError(error)) {
+    return language === 'zh'
+      ? 'Runtime 尚无完整恢复快照，已尝试使用桌面 diff 安全撤回。'
+      : 'Runtime has no complete recovery snapshot; the desktop diff fallback was attempted.';
   }
   return errorMessage(error);
 }
 
 function snapshotRevertFallbackAllowed(error: unknown) {
-  return isBushServerHttpError(error) && (
-    error.code === 'workspace_change_revert_unavailable' ||
-    error.statusCode === 404 ||
-    error.statusCode === 405
-  );
+  return isRuntimeWorkspaceSnapshotUnavailableError(error);
 }
 
 function InteractionCard({

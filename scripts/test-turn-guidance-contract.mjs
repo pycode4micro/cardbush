@@ -70,20 +70,19 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /message_id:\s*request\.clientMessageId\.trim\(\)/);
-assert.match(apiSource, /source:\s*'frontend'/);
-assert.match(apiSource, /request\.onDelta\?\.\(delta, assistantStreamChunkFromPayload\(decoded\)\)/);
-assert.match(apiSource, /request\.onFinalAssistantText\(text, assistantStreamChunkFromPayload\(decoded\)\)/);
-assert.match(apiSource, /throw new BushServerHttpError\(response\.status, responseText\)/);
+assert.match(apiSource, /enqueueRuntimeGuidance\(\{/);
+assert.match(apiSource, /continuationQueued:\s*true/);
+assert.doesNotMatch(apiSource, /\/v1\/turns/);
+assert.doesNotMatch(apiSource, /BushServerHttpError/);
 
 const hookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
 assert.match(hookSource, /optimisticGuidanceMessage\(/);
-assert.match(hookSource, /caught\.code === 'turn_guidance_closed'/);
-assert.match(hookSource, /caught\.code === 'turn_not_active'/);
-assert.doesNotMatch(hookSource, /\|\|\s*isBushServerHttpError\(caught, 404\)/);
+assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/);
+assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
+assert.doesNotMatch(hookSource, /isBushServerHttpError/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
 assert.match(hookSource, /const streamFlushIntervalMs = 120/);
 assert.match(hookSource, /const streamBaseCharChunkSize = 4/);

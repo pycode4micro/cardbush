@@ -1,0 +1,179 @@
+{
+  "protocol": "bush.runtime_fixture.v1",
+  "name": "single-turn-reasoning-assistant-terminal",
+  "commandResponses": {
+    "runtime.get_capabilities": {
+      "protocol": "bush.runtime_capabilities.v1",
+      "hostId": "fixture-runtime",
+      "runtimeVersion": "0.1.0",
+      "eventProtocol": "bush.runtime_event.v1",
+      "supportedEvents": [
+        "turn_accepted",
+        "turn_started",
+        "reasoning_segment_started",
+        "reasoning_segment_delta",
+        "reasoning_segment_completed",
+        "assistant_segment_started",
+        "assistant_segment_delta",
+        "assistant_segment_completed",
+        "turn_terminal"
+      ],
+      "supportedCommands": ["runtime.get_capabilities"],
+      "features": ["turn_stream", "reasoning_segments", "assistant_segments"]
+    }
+  },
+  "events": [
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_001",
+        "sequence": 1,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.000Z",
+        "kind": "turn_accepted",
+        "payload": { "status": "accepted" }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_002",
+        "sequence": 2,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.010Z",
+        "kind": "turn_started",
+        "payload": { "status": "running" }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_003",
+        "sequence": 3,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.020Z",
+        "kind": "reasoning_segment_started",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_reasoning_001",
+          "ordinal": 0
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_004",
+        "sequence": 4,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.030Z",
+        "kind": "reasoning_segment_delta",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_reasoning_001",
+          "ordinal": 0,
+          "delta": "检查请求与可用事实。"
+        }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_005",
+        "sequence": 5,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.040Z",
+        "kind": "reasoning_segment_completed",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_reasoning_001",
+          "ordinal": 0,
+          "content": "检查请求与可用事实。"
+        }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_006",
+        "sequence": 6,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.050Z",
+        "kind": "assistant_segment_started",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_assistant_001",
+          "ordinal": 1
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_007",
+        "sequence": 7,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.060Z",
+        "kind": "assistant_segment_delta",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_assistant_001",
+          "ordinal": 1,
+          "delta": "首轮 Runtime 流已接通。"
+        }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_008",
+        "sequence": 8,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.070Z",
+        "kind": "assistant_segment_completed",
+        "payload": {
+          "messageId": "message_fixture_001",
+          "segmentId": "segment_assistant_001",
+          "ordinal": 1,
+          "content": "首轮 Runtime 流已接通。"
+        }
+      }
+    },
+    {
+      "event": {
+        "protocol": "bush.runtime_event.v1",
+        "eventId": "evt_009",
+        "sequence": 9,
+        "requestId": "req_fixture_001",
+        "sessionId": "session_fixture_001",
+        "turnId": "turn_fixture_001",
+        "createdAt": "2026-08-29T08:00:00.080Z",
+        "kind": "turn_terminal",
+        "payload": {
+          "status": "completed",
+          "reason": "assistant_response_completed",
+          "finalMessageId": "message_fixture_001",
+          "details": {}
+        }
+      }
+    }
+  ]
+}

@@ -12,10 +12,11 @@ assert.doesNotMatch(app, /fetchSessionScenes|fetchSessionScene\b/);
 assert.doesNotMatch(api, /export async function fetchSessionScenes/);
 assert.doesNotMatch(api, /export async function fetchSessionScene\b/);
 assert.doesNotMatch(api, /SessionSceneRecord/);
+assert.doesNotMatch(api, /export async function sendSceneEvent/);
 assert.match(
-  api,
-  /export async function sendSceneEvent/,
-  'The supported scene event transport must remain available',
+  app,
+  /latestCardlingSceneFromMessages/,
+  'Interactive scenes must be projected from typed tool execution facts',
 );
 
 const helperStart = hook.indexOf('const refreshMeasuredContextWindowUsage');

@@ -7,5 +7,7 @@ tmp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+*.egg-info/
 .codex-video-frames-*/
 .codex-video-sheet-*.png

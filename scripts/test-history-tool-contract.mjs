@@ -84,9 +84,9 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /root\.tool_executions \?\? root\.toolExecutions/);
-assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(parsedMessages, toolExecutions\)/);
-assert.match(apiSource, /options\.includeSuperseded !== false \? '\?include_superseded=true'/);
+assert.match(apiSource, /runtime\.client\.listTurnToolExecutions\(\{/);
+assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(messages, toolExecutions\)/);
+assert.match(apiSource, /options\.includeSuperseded === false \? snapshot\.supersededMessageIds : \[\]/);
 
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),

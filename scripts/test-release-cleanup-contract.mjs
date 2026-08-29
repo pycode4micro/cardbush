@@ -19,7 +19,8 @@ function assert(condition, message) {
 assert(packageJson.version === '1.0.0-dev', 'desktop version must be 1.0.0-dev');
 assert(packageJson.scripts['test:all'], 'test:all release gate is required');
 assert(
-  (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3,
+  (app.match(/import\.meta\.env\.DEV && is(?:ComposerRuntime|LoopHistory|QuickContext)PreTestEnabled\(\)/g) ?? []).length === 3 &&
+    app.includes('import.meta.env.DEV && LazyRuntimeStreamPreTest && isRuntimeStreamPreTestEnabled()'),
   'all pre-test entry points must be development-only',
 );
 assert(
@@ -29,7 +30,7 @@ assert(
 assert(
   app.includes("<BackendLoading language={language} />") &&
     app.includes("Connecting to backend service..."),
-  'backend loading state must support both UI languages',
+  'runtime loading state must support both UI languages',
 );
 assert(
   app.includes('function RuntimeStatusBanner(') &&
@@ -47,7 +48,7 @@ assert(
   app.includes('const [refreshError, setRefreshError]') &&
     app.includes('onRefreshActiveSession={refreshBackendWithFeedback}') &&
     app.includes('{(error || refreshError) && ('),
-  'backend refresh failures must use the shared retryable runtime status banner',
+  'runtime refresh failures must use the shared retryable status banner',
 );
 assert(
   !app.includes('title="Git 控制台"') && !app.includes('title="终端控制台"'),
@@ -75,9 +76,13 @@ assert(
   'chat notices must not be Chinese-only literals',
 );
 assert(
-  chat.includes('Unable to connect to BushServer') &&
-    chat.includes('无法连接 BushServer'),
-  'network connection failures must support both UI languages',
+  chat.includes('Unable to reach the model provider or an external integration') &&
+    chat.includes('无法连接模型服务或外部集成'),
+  'external connection failures must support both UI languages',
+);
+assert(
+  !api.includes('/v1/') && !api.includes('BushServer') && !api.includes('VITE_BACKEND_BASE_URL'),
+  'production API must not contain the retired local HTTP service boundary',
 );
 assert(
   api.includes('function localizedClientMessage') &&
@@ -99,6 +104,11 @@ if (process.argv.includes('--dist')) {
   assert(
     !productionJavaScript.includes('cardbush_pre_test'),
     'production bundle still contains the pre-test activation key',
+  );
+  assert(
+    !productionJavaScript.includes('bush.runtime_fixture.v1') &&
+      !productionJavaScript.includes('single-turn-reasoning-assistant-terminal'),
+    'production bundle still contains the runtime protocol fixture',
   );
 }
 

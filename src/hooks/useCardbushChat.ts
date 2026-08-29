@@ -17,7 +17,6 @@ import {
   fetchSkills,
   fetchSessionMessages,
   fetchTeamFlow,
-  isBushServerHttpError,
   isPendingInteractionConflictError,
   replyInteraction,
   sendGuidance,
@@ -2900,10 +2899,7 @@ export function useCardbushChat(
         );
         setError(null);
       } catch (caught) {
-        if (
-          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
-          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active')
-        ) {
+        if (runtimeErrorCode(caught) === 'turn_not_active' || runtimeErrorCode(caught) === 'turn_guidance_closed') {
           setMessagesByConversation((current) =>
             removeOptimisticGuidance(current, conversationId, clientMessageId),
           );
@@ -2994,10 +2990,7 @@ export function useCardbushChat(
         );
         setError(null);
       } catch (caught) {
-        if (
-          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
-          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active')
-        ) {
+        if (runtimeErrorCode(caught) === 'turn_not_active' || runtimeErrorCode(caught) === 'turn_guidance_closed') {
           setMessagesByConversation((current) =>
             removeOptimisticGuidance(current, conversationId, clientMessageId),
           );
@@ -3082,9 +3075,8 @@ export function useCardbushChat(
         );
         setError(null);
       } catch (caught) {
-        const shouldFallback =
-          (isBushServerHttpError(caught, 409) && caught.code === 'turn_guidance_closed') ||
-          (isBushServerHttpError(caught, 404) && caught.code === 'turn_not_active');
+        const shouldFallback = runtimeErrorCode(caught) === 'turn_not_active' ||
+          runtimeErrorCode(caught) === 'turn_guidance_closed';
         if (shouldFallback) {
           setMessagesByConversation((current) =>
             removeOptimisticGuidance(current, conversationId, clientMessageId),
@@ -3185,38 +3177,6 @@ export function useCardbushChat(
         clearSessionAttention(sessionId, 'waiting');
         setError(null);
       } catch (caught) {
-        if (isBushServerHttpError(caught, 409)) {
-          const recovered = sessionId
-            ? await fetchPendingInteraction(sessionId).catch(() => null)
-            : null;
-          if (recovered) {
-            setPendingInteraction(recovered);
-          }
-          setError(null);
-          setNotice(localize(
-            '当前会话正在等待权限确认。',
-            'This conversation is waiting for permission confirmation.',
-          ));
-          return;
-        }
-        if (
-          isBushServerHttpError(caught, 404) ||
-          isBushServerHttpError(caught, 410)
-        ) {
-          const expired = isBushServerHttpError(caught, 410);
-          const recovered = sessionId
-            ? await fetchPendingInteraction(sessionId).catch(() => null)
-            : null;
-          setPendingInteraction(recovered);
-          if (!recovered) clearSessionAttention(sessionId, 'waiting');
-          setError(null);
-          setNotice(
-            expired
-              ? localize('权限申请已过期，未授予权限。', 'The permission request expired without being granted.')
-              : localize('权限申请已不存在。', 'The permission request no longer exists.'),
-          );
-          return;
-        }
         if (isInteractionGoneError(caught)) {
           setPendingInteraction(null);
           clearSessionAttention(sessionId, 'waiting');
@@ -3241,38 +3201,6 @@ export function useCardbushChat(
       clearSessionAttention(sessionId, 'waiting');
       setError(null);
     } catch (caught) {
-      if (isBushServerHttpError(caught, 409)) {
-        const recovered = sessionId
-          ? await fetchPendingInteraction(sessionId).catch(() => null)
-          : null;
-        if (recovered) {
-          setPendingInteraction(recovered);
-        }
-        setError(null);
-        setNotice(localize(
-          '当前会话正在等待权限确认。',
-          'This conversation is waiting for permission confirmation.',
-        ));
-        return;
-      }
-      if (
-        isBushServerHttpError(caught, 404) ||
-        isBushServerHttpError(caught, 410)
-      ) {
-        const expired = isBushServerHttpError(caught, 410);
-        const recovered = sessionId
-          ? await fetchPendingInteraction(sessionId).catch(() => null)
-          : null;
-        setPendingInteraction(recovered);
-        if (!recovered) clearSessionAttention(sessionId, 'waiting');
-        setError(null);
-        setNotice(
-          expired
-            ? localize('权限申请已过期，未授予权限。', 'The permission request expired without being granted.')
-            : localize('权限申请已不存在。', 'The permission request no longer exists.'),
-        );
-        return;
-      }
       if (isInteractionGoneError(caught)) {
         setPendingInteraction(null);
         clearSessionAttention(sessionId, 'waiting');
@@ -3300,15 +3228,7 @@ export function useCardbushChat(
         }).catch(() => null)
       )?.latestTurn ?? goalLatestTurnByConversation[sessionId];
       if (latestTurn && isRunningSessionTurn(latestTurn)) {
-        await stopTurn(latestTurn.turnId).catch((caught) => {
-          if (
-            !isBushServerHttpError(caught, 404) &&
-            !isBushServerHttpError(caught, 409) &&
-            !isBushServerHttpError(caught, 410)
-          ) {
-            throw caught;
-          }
-        });
+        await stopTurn(latestTurn.turnId);
       }
 
       let latestGoal = goal;
@@ -3319,8 +3239,7 @@ export function useCardbushChat(
           statusReason: localize('用户主动取消', 'Cancelled by user'),
           expectedRevision: goal.revision,
         });
-      } catch (caught) {
-        if (!isBushServerHttpError(caught, 409)) throw caught;
+      } catch {
         const refreshed = currentExperimentalGoal(
           await fetchExperimentalGoals(sessionId),
         );
@@ -6812,9 +6731,8 @@ function isNotFoundLikeError(error: unknown) {
 }
 
 function isInteractionGoneError(error: unknown) {
-  return /BushServer error (404|410)\b|\b(404|410)\b.*(not found|gone)/i.test(
-    errorMessage(error),
-  );
+  return runtimeErrorCode(error) === 'permission_not_pending' ||
+    /permission .* is not pending/i.test(errorMessage(error));
 }
 
 function waitForRecoveryDelay(delayMs: number) {
@@ -6840,8 +6758,14 @@ function errorMessage(error: unknown) {
     document.documentElement.lang.toLowerCase().startsWith('en');
   if (/failed to fetch|networkerror|load failed/i.test(message)) {
     return english
-      ? 'Unable to connect to BushServer. Check that the backend is running.'
-      : '无法连接 BushServer，请检查后端是否正在运行。';
+      ? 'Unable to reach the model provider or an external integration.'
+      : '无法连接模型服务或外部集成。';
   }
   return message;
+}
+
+function runtimeErrorCode(error: unknown): string {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
 }

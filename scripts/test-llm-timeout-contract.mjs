@@ -5,6 +5,8 @@ import path from 'node:path';
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const api = read('src', 'backend', 'api.ts');
+const provider = read('packages', 'bush-provider-openai', 'src', 'chatCompletions.ts');
+const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
 const bubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const styles = read('src', 'styles', 'app.css');
 
@@ -13,13 +15,14 @@ for (const reason of [
   'llm-stream-idle-timeout',
   'llm-call-timeout',
 ]) {
-  assert.match(api, new RegExp(reason));
   assert.match(bubble, new RegExp(reason));
 }
 
-assert.match(api, /function localizedLlmTimeoutMessage/);
-assert.match(api, /stopDetails\.limit_reason/);
-assert.match(api, /stopDetails:\s*asOptionalRecord\(item\.stop_details/);
+assert.match(provider, /timeout: config\.timeoutMs/);
+assert.match(provider, /maxRetries: 0/);
+assert.match(provider, /code: "provider_connection_error"/);
+assert.match(runtimeChat, /case 'provider_retry'/);
+assert.doesNotMatch(api, /function localizedLlmTimeoutMessage/);
 assert.match(bubble, /function assistantTimeoutPresentation/);
 assert.match(bubble, /className="assistant-timeout-notice"/);
 assert.match(bubble, /data-timeout-reason=\{timeoutPresentation\.reason\}/);

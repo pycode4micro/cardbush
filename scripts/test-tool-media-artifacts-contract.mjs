@@ -89,6 +89,7 @@ assert.equal(merged.length, 1);
 assert.equal(merged[0].name, 'updated.png');
 
 const apiSource = read('src', 'backend', 'api.ts');
+const runtimeChatSource = read('src', 'backend', 'runtimeChat.ts');
 const hookSource = read('src', 'hooks', 'useCardbushChat.ts');
 const bubbleSource = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const toolBlockSource = read('src', 'features', 'tools', 'ToolExecutionBlock.tsx');
@@ -100,9 +101,15 @@ assert.match(typesSource, /export interface ChatToolArtifact extends ChatAttachm
 assert.match(typesSource, /artifacts\?: ChatToolArtifact\[\]/);
 assert.equal(
   (apiSource.match(/toolArtifactsFromPayload\(/g) ?? []).length,
-  2,
-  'Live SSE and restored history must use the same artifact parser',
+  1,
+  'Only compatibility history projection should need the defensive artifact parser',
 );
+assert.match(
+  runtimeChatSource,
+  /record\.result\.artifacts\.map\(artifact\)/,
+  'Live Runtime facts should project their validated artifact array directly',
+);
+assert.doesNotMatch(apiSource, /restored HTTP history/i);
 assert.match(hookSource, /mergeToolArtifacts\(current\.artifacts, incoming\.artifacts\)/);
 assert.doesNotMatch(bubbleSource, /toolArtifactPaths/);
 assert.match(toolBlockSource, /<ToolImageArtifactViewer/);

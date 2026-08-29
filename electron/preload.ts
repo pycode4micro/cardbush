@@ -38,6 +38,22 @@ type SessionAttentionPayload = {
 };
 
 const desktopApi = {
+  runtime: {
+    command: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:command', message) as Promise<unknown>,
+    startStream: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:start-stream', message) as Promise<void>,
+    stopStream: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:stop-stream', message) as Promise<void>,
+    cancelOperation: (message: unknown) =>
+      ipcRenderer.invoke('bush-runtime:cancel-operation', message) as Promise<void>,
+    onStreamFrame: (callback: (message: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, message: unknown) =>
+        callback(message);
+      ipcRenderer.on('bush-runtime:stream-frame', listener);
+      return () => ipcRenderer.removeListener('bush-runtime:stream-frame', listener);
+    },
+  },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
@@ -69,13 +85,16 @@ const desktopApi = {
   wallpaperDataUrl: () => ipcRenderer.invoke('appearance:wallpaper-data-url') as Promise<string>,
   setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') =>
     ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
-  bushHeaders: (targetUrl: string, json = false) =>
-    ipcRenderer.invoke('bush:headers', targetUrl, json) as Promise<Record<string, string>>,
-  cardbushAppRequest: (request: {
-    path: string;
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-    body?: unknown;
-  }) => ipcRenderer.invoke('cardbush-app:request', request) as Promise<unknown>,
+  productHostCommand: (command: unknown) =>
+    ipcRenderer.invoke('cardbush-product-host:command', command) as Promise<unknown>,
+  a2aInspect: (agentUrl: string) =>
+    ipcRenderer.invoke('a2a:inspect', agentUrl) as Promise<unknown>,
+  a2aDispatch: (input: {
+    agentUrl: string;
+    text: string;
+    contextId?: string;
+    taskId?: string;
+  }) => ipcRenderer.invoke('a2a:dispatch', input) as Promise<unknown>,
   setProxy: (proxy: {
     mode: 'none' | 'system' | 'manual';
     httpProxy: string;
@@ -191,6 +210,9 @@ const desktopApi = {
       name: string;
       size: number;
     }>>,
+  listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
+  readSkill: (skillName: string) =>
+    ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,

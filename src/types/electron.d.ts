@@ -9,6 +9,13 @@ declare global {
   interface Window {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      runtime: {
+        command: (message: unknown) => Promise<unknown>;
+        startStream: (message: unknown) => Promise<void>;
+        stopStream: (message: unknown) => Promise<void>;
+        cancelOperation: (message: unknown) => Promise<void>;
+        onStreamFrame: (callback: (message: unknown) => void) => () => void;
+      };
       rendererReady: () => Promise<void>;
       minimize: () => Promise<void>;
       toggleMaximize: () => Promise<void>;
@@ -35,12 +42,16 @@ declare global {
       wallpaperPath: () => Promise<string>;
       wallpaperDataUrl: () => Promise<string>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
-      bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
-      cardbushAppRequest: (request: {
-        path: string;
-        method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-        body?: unknown;
+      productHostCommand: (command: unknown) => Promise<unknown>;
+      a2aInspect: (agentUrl: string) => Promise<unknown>;
+      a2aDispatch: (input: {
+        agentUrl: string;
+        text: string;
+        contextId?: string;
+        taskId?: string;
       }) => Promise<unknown>;
+      listSkills: () => Promise<unknown[]>;
+      readSkill: (skillName: string) => Promise<unknown>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

@@ -1,0 +1,44 @@
+{
+  "reference_commit": "a1e2f2b4",
+  "execution_fact": {
+    "protocol": "bush.tool.execution_fact.v1",
+    "receipt_id": "receipt_1",
+    "action_manifest_id": "manifest_1",
+    "status": "succeeded",
+    "operation": "write_file",
+    "effect_kind": "local_mutation",
+    "owner": "tool_runtime",
+    "dispatch_scope": "workspace",
+    "categories": ["mutation", "verification_passed"],
+    "paths": ["C:/workspace/src/app.ts"],
+    "execution_success": true,
+    "semantic_success": true,
+    "verification_state": "verified",
+    "error_code": ""
+  },
+  "task_plan": {
+    "protocol": "bush.task_plan.v1",
+    "plan_id": "plan_1",
+    "session_id": "session_1",
+    "nodes": [
+      { "step": "Inspect project", "status": "completed", "id": "inspect" },
+      { "step": "Implement change", "status": "in_progress", "id": "implement" }
+    ],
+    "explanation": "Reference plan",
+    "active": true
+  },
+  "outcome_finalizer": {
+    "protocol": "bush.outcome_finalizer.v1",
+    "status": "continue",
+    "result_intent": "deliverable",
+    "required_evidence": ["mutation", "verification"],
+    "observed_evidence": ["mutation"],
+    "missing_evidence": ["verification"],
+    "blocking_facts": [],
+    "reason": "outcome_evidence_missing",
+    "required_acceptance": ["tests"],
+    "passed_acceptance": [],
+    "failed_acceptance": [],
+    "stale_acceptance": []
+  }
+}

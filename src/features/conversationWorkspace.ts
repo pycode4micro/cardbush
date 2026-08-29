@@ -21,11 +21,6 @@ function normalizedWorkspacePath(value: unknown) {
     .toLowerCase();
 }
 
-function isGeneratedTaskWorkspace(value: unknown) {
-  const normalized = normalizedWorkspacePath(value);
-  return Boolean(normalized && /\/bushserver\/task\/(?:_short\/)?[^/]+$/.test(normalized));
-}
-
 function taskWorkspaceRoots(conversation?: ConversationSummary | null) {
   if (!conversation) return [];
   const metadata = conversation.metadata ?? {};
@@ -45,8 +40,7 @@ function taskWorkspaceRoots(conversation?: ConversationSummary | null) {
       return (
         value === conversation.workspaceContext?.taskDir ||
         value === metadata.task_dir ||
-        value === metadata.taskDir ||
-        isGeneratedTaskWorkspace(value)
+        value === metadata.taskDir
       );
     })
     .map(normalizedWorkspacePath);
@@ -71,7 +65,7 @@ function userProjectDir(conversation?: ConversationSummary | null) {
   for (const candidate of candidates) {
     const value = String(candidate ?? '').trim();
     const normalized = normalizedWorkspacePath(value);
-    if (normalized && !taskRoots.has(normalized) && !isGeneratedTaskWorkspace(value)) {
+    if (normalized && !taskRoots.has(normalized)) {
       return value;
     }
   }
@@ -106,9 +100,8 @@ function hasTaskWorkspaceIdentity(
 export function conversationWorkspaceMode(
   conversation?: ConversationSummary | null,
 ) {
-  // BushServer can expose the internal task sandbox as top-level project_dir
-  // while retaining the real user project in metadata. A real user project
-  // outside the generated task tree is the authoritative sidebar identity.
+  // An explicit user project outside a declared task execution root is the
+  // authoritative sidebar identity.
   if (userProjectDir(conversation)) return 'project';
   // A task session can be polluted by an older client that echoed its
   // generated task directory back as project_dir. The task directory is an

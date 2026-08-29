@@ -1,0 +1,25 @@
+{
+  "name": "@cardbush/bush-provider-openai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && npm run test:unit",
+    "test:unit": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@cardbush/bush-protocol": "^0.1.0",
+    "@cardbush/bush-runtime": "^0.1.0",
+    "openai": "^7.8.0"
+  }
+}

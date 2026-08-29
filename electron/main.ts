@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  desktopCapturer,
   Menu,
   net,
   Notification,
@@ -26,7 +27,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
-import { CardbushAppService, type HostRequest } from './cardbushAppService';
+import { listProductSkills, readProductSkill } from './productSkills';
+import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -81,6 +83,10 @@ const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
 const localImagePreviewMaxBytes = 32 * 1024 * 1024;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
+const productA2AClient = new ProductA2AClient({
+  fetchImpl: net.fetch as typeof fetch,
+  allowedOrigins: productA2AAllowedOrigins(process.env.CARDBUSH_A2A_ALLOWED_ORIGINS),
+});
 protocol.registerSchemesAsPrivileged([
   {
     scheme: localFileProtocol,
@@ -95,6 +101,23 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+type RuntimeHostController = {
+  start: () => Promise<unknown>;
+  stop: () => void;
+  command: (message: unknown) => Promise<unknown>;
+  startStream: (message: unknown) => Promise<void>;
+  stopStream: (message: unknown) => Promise<void>;
+  cancelOperation: (message: unknown) => Promise<void>;
+  onStreamFrame: (listener: (message: unknown) => void) => () => void;
+};
+
+let runtimeHostController: RuntimeHostController | null = null;
+let unregisterRuntimeHostIpc: (() => void) | null = null;
+let productHostController: {
+  execute: (command: unknown) => Promise<unknown>;
+  executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
+  shutdown: () => Promise<void>;
+} | null = null;
 let cardlingWindow: BrowserWindow | null = null;
 const externalBrowserWindows = new Set<BrowserWindow>();
 let tray: Tray | null = null;
@@ -108,8 +131,6 @@ let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null =
 let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
-const cardbushAppService = new CardbushAppService();
-
 if (process.platform === 'win32') {
   app.setName(cardbushDisplayName);
   app.setAppUserModelId(cardbushAppUserModelId);
@@ -1919,28 +1940,12 @@ ipcMain.handle('os:install-catalog-application', async (event, packageId: string
   return { installed: true, output: result.stdout.slice(-4000) };
 });
 
-ipcMain.handle('bush:headers', (_, targetUrl: string, json = false) => {
-  const headers: Record<string, string> = {};
-  if (json) {
-    headers['content-type'] = 'application/json';
-  }
-  const parsed = safeUrl(targetUrl);
-  const localSecret = parsed != null && isLoopback(parsed.hostname)
-    ? readLocalRequestSecret()
-    : '';
-  if (localSecret) {
-    headers['X-Bush-Local-Key'] = localSecret;
-  }
-  const token = process.env.BUSH_API_AUTH_TOKEN?.trim();
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  return headers;
-});
-
-ipcMain.handle('cardbush-app:request', (event, request: HostRequest) => {
+ipcMain.handle('cardbush-product-host:command', (event, command: unknown) => {
   assertMainWindowSender(event.sender.id);
-  return cardbushAppService.request(request);
+  if (!productHostController) {
+    throw new Error('CardBush Product Host is unavailable.');
+  }
+  return productHostController.execute(command);
 });
 
 ipcMain.handle(
@@ -2016,6 +2021,27 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
   }));
   return inspected.filter((item) => item != null);
 });
+
+ipcMain.handle('a2a:inspect', (event, agentUrl: string) => {
+  assertMainWindowSender(event.sender.id);
+  return productA2AClient.inspect(agentUrl);
+});
+
+ipcMain.handle('a2a:dispatch', (event, input: {
+  agentUrl: string;
+  text: string;
+  contextId?: string;
+  taskId?: string;
+}) => {
+  assertMainWindowSender(event.sender.id);
+  return productA2AClient.dispatch(input);
+});
+
+ipcMain.handle('skills:list', () => listProductSkills(productSkillRoots()));
+
+ipcMain.handle('skills:read', (_, skillName: string) =>
+  readProductSkill(productSkillRoots(), String(skillName ?? '')),
+);
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
@@ -2396,11 +2422,9 @@ app.whenReady().then(async () => {
     });
   }
   registerLocalFileProtocol();
+  await initializeRuntimeHost();
   createWindow();
   createTray();
-  void cardbushAppService.start().catch((error) => {
-    console.error('[cardbush_app] startup failed', error);
-  });
   void listOsApplicationsCached().catch(() => undefined);
 
   app.on('activate', () => {
@@ -2411,6 +2435,67 @@ app.whenReady().then(async () => {
     }
   });
 });
+
+async function initializeRuntimeHost() {
+  try {
+    const controllerModuleUrl = pathToFileURL(
+      path.join(__dirname, 'runtimeHostController.mjs'),
+    ).href;
+    const controllerModule = await import(controllerModuleUrl);
+    const controller = new controllerModule.RuntimeUtilityProcessController({
+      modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
+      env: {
+        ...process.env,
+        CARDBUSH_RUNTIME_STATE_ROOT: path.join(
+          app.getPath('userData'),
+          'runtime-state',
+        ),
+        CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
+      },
+      onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
+      executeHostTool: executeProductHostTool,
+    }) as RuntimeHostController;
+    runtimeHostController = controller;
+    unregisterRuntimeHostIpc = controllerModule.registerRuntimeHostIpc(
+      ipcMain,
+      controller,
+      (sender: Electron.WebContents) =>
+        mainWindow != null && sender.id === mainWindow.webContents.id,
+    );
+    await controller.start();
+    await initializeProductHost(controller);
+  } catch (error) {
+    console.error('[bush-runtime] IPC initialization failed', error);
+  }
+}
+
+async function initializeProductHost(controller: RuntimeHostController) {
+  const moduleUrl = pathToFileURL(
+    path.join(__dirname, 'productHostController.mjs'),
+  ).href;
+  const productModule = await import(moduleUrl);
+  productHostController = new productModule.ElectronProductHostController({
+    dataRoot: path.join(app.getPath('userData'), 'product-host'),
+    runtimeBridge: controller,
+    fetch: net.fetch as typeof fetch,
+  }) as {
+    execute: (command: unknown) => Promise<unknown>;
+    executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
+    shutdown: () => Promise<void>;
+  };
+}
+
+function productSkillRoots(): string[] {
+  const configuredRoots = process.env.CARDBUSH_PRODUCT_SKILL_ROOTS?.trim();
+  const externalRoots = configuredRoots
+    ? configuredRoots.split(path.delimiter).map((item) => item.trim()).filter(Boolean)
+    : [];
+  return [
+    path.join(app.getAppPath(), 'assets', 'skills'),
+    path.join(app.getPath('userData'), 'skills'),
+    ...externalRoots,
+  ];
+}
 
 function registerLocalFileProtocol() {
   if (protocol.isProtocolHandled(localFileProtocol)) {
@@ -2510,7 +2595,7 @@ app.on('before-quit', (event) => {
   }
   event.preventDefault();
   if (hostShutdownPromise == null) {
-    hostShutdownPromise = cardbushAppService.stop().finally(() => {
+    hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(() => {
       hostShutdownComplete = true;
       app.quit();
     });
@@ -2518,6 +2603,11 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  unregisterRuntimeHostIpc?.();
+  unregisterRuntimeHostIpc = null;
+  runtimeHostController?.stop();
+  runtimeHostController = null;
+  productHostController = null;
   restoreWindowsTaskbar();
   if (quitFallbackTimer != null) {
     clearTimeout(quitFallbackTimer);
@@ -3336,6 +3426,7 @@ public static class CardBushWindowsShell {
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsIconic(IntPtr handle);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool IsZoomed(IntPtr handle);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr handle, out RECT rect);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
   [DllImport("user32.dll", SetLastError=true)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
@@ -3445,20 +3536,38 @@ async function listOsWindows() {
 
 async function controlOsWindow(
   windowId: string,
-  action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close',
+  action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close' | 'move' | 'resize',
+  bounds: { x?: number; y?: number; width?: number; height?: number } = {},
 ) {
   if (process.platform !== 'win32') throw new Error('Window control is unavailable.');
   if (!/^[1-9]\d{0,9}:[1-9]\d{0,19}$/.test(windowId)) {
     throw new Error('Invalid window identifier.');
   }
   const [processId, handle] = windowId.split(':');
-  const allowedActions = new Set(['focus', 'minimize', 'maximize', 'restore', 'close']);
+  const allowedActions = new Set(['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize']);
   if (!allowedActions.has(action)) throw new Error('Unsupported window action.');
+  const x = boundedInteger(bounds.x, -100_000, 100_000, 'x');
+  const y = boundedInteger(bounds.y, -100_000, 100_000, 'y');
+  const width = boundedInteger(bounds.width, 1, 100_000, 'width');
+  const height = boundedInteger(bounds.height, 1, 100_000, 'height');
+  if (action === 'move' && (x == null || y == null)) {
+    throw new Error('Window move requires x and y.');
+  }
+  if (action === 'resize' && (width == null || height == null)) {
+    throw new Error('Window resize requires width and height.');
+  }
   const source = `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n` +
     `$process = Get-Process -Id ${processId} -ErrorAction Stop\n` +
     `$handle = [IntPtr]${handle}\n` +
     `if ($process.MainWindowHandle -ne $handle) { throw 'Window target is stale.' }\n` +
-    (action === 'close'
+    (action === 'move' || action === 'resize'
+      ? `$rect = New-Object CardBushWindowsShell+RECT\n` +
+        `if (-not [CardBushWindowsShell]::GetWindowRect($handle, [ref]$rect)) { throw 'Window bounds are unavailable.' }\n` +
+        `[void][CardBushWindowsShell]::SetWindowPos($handle, [IntPtr]::Zero, ` +
+        `${action === 'move' ? x : '$rect.Left'}, ${action === 'move' ? y : '$rect.Top'}, ` +
+        `${action === 'resize' ? width : '($rect.Right - $rect.Left)'}, ` +
+        `${action === 'resize' ? height : '($rect.Bottom - $rect.Top)'}, 0x0014)\n`
+      : action === 'close'
       ? `[void][CardBushWindowsShell]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)\n`
       : action === 'minimize'
         ? `[void][CardBushWindowsShell]::ShowWindow($handle, 6)\n`
@@ -3476,6 +3585,248 @@ async function controlOsWindow(
             `[void][CardBushWindowsShell]::FitOsWorkspace($handle)\n`);
   await runWindowsShellScript(source);
   return { ok: true, windowId, action };
+}
+
+async function executeProductHostTool(request: {
+  toolName: string;
+  input: unknown;
+}) {
+  if (request.toolName === 'transport_deliver') {
+    if (!productHostController) throw new Error('CardBush Product Host is unavailable.');
+    return productHostController.executeTool(request);
+  }
+  if (request.toolName !== 'computer_use') {
+    throw new Error(`Unknown Product Host tool: ${request.toolName}`);
+  }
+  const input = recordInput(request.input, 'computer_use input');
+  const action = String(input.action ?? '').trim();
+  switch (action) {
+    case 'observe': {
+      const [windows, applications, capture] = await Promise.all([
+        listOsWindows(),
+        listOsApplicationsCached(input.refresh === true),
+        captureDesktopForRuntime(),
+      ]);
+      return productToolSuccess({ windows, applications, capture }, [capture.artifact]);
+    }
+    case 'screenshot': {
+      const capture = await captureDesktopForRuntime();
+      return productToolSuccess(capture, [capture.artifact]);
+    }
+    case 'window': {
+      const windows = await listOsWindows();
+      const target = resolveComputerWindow(windows, input);
+      const operation = String(input.operation ?? 'activate').trim().toLowerCase();
+      const normalized = operation === 'activate' ? 'focus' : operation;
+      if (!['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize'].includes(normalized)) {
+        throw new Error(`Unsupported window operation: ${operation}`);
+      }
+      const result = await controlOsWindow(
+        String(target.id),
+        normalized as 'focus' | 'minimize' | 'maximize' | 'restore' | 'close' | 'move' | 'resize',
+        {
+          x: optionalNumber(input.x),
+          y: optionalNumber(input.y),
+          width: optionalNumber(input.width),
+          height: optionalNumber(input.height),
+        },
+      );
+      return productToolSuccess({ ...result, target });
+    }
+    case 'open_app':
+      return productToolSuccess(await launchComputerApplication(requiredText(input.app, 'app')));
+    case 'click':
+    case 'type':
+    case 'key':
+    case 'scroll':
+    case 'drag':
+      return productToolSuccess(await runComputerInput(action, input));
+    default:
+      throw new Error(`Unsupported computer_use action: ${action}`);
+  }
+}
+
+function productToolSuccess(output: unknown, artifacts: Array<Record<string, unknown>> = []) {
+  return { success: true, output, artifacts, paths: artifacts.map((item) => String(item.path ?? '')).filter(Boolean) };
+}
+
+async function captureDesktopForRuntime() {
+  const display = screen.getPrimaryDisplay();
+  const width = Math.max(1, Math.round(display.size.width * display.scaleFactor));
+  const height = Math.max(1, Math.round(display.size.height * display.scaleFactor));
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width, height },
+  });
+  const source = sources.find((item) => item.display_id === String(display.id)) ?? sources[0];
+  if (!source || source.thumbnail.isEmpty()) throw new Error('Desktop capture returned no image.');
+  const directory = path.join(app.getPath('userData'), 'product-host', 'captures');
+  await fs.promises.mkdir(directory, { recursive: true });
+  const capturePath = path.join(directory, `capture-${Date.now()}-${randomUUID()}.png`);
+  await fs.promises.writeFile(capturePath, source.thumbnail.toPNG());
+  return {
+    path: capturePath,
+    width: source.thumbnail.getSize().width,
+    height: source.thumbnail.getSize().height,
+    displayId: String(display.id),
+    artifact: {
+      artifact_id: `artifact_${randomUUID()}`,
+      type: 'image',
+      path: capturePath,
+      media_type: 'image/png',
+      display: 'inline',
+      metadata: { model_input: true, read_only: true },
+    },
+  };
+}
+
+function resolveComputerWindow(
+  windows: Awaited<ReturnType<typeof listOsWindows>>,
+  input: Record<string, unknown>,
+) {
+  const hwnd = optionalNumber(input.hwnd);
+  if (hwnd != null) {
+    const exact = windows.find((item) => item.handle === hwnd);
+    if (exact) return exact;
+  }
+  const pattern = String(input.title_pattern ?? '').trim().toLowerCase();
+  const matches = pattern
+    ? windows.filter((item) => item.title.toLowerCase().includes(pattern))
+    : [];
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) throw new Error('Window selector matched more than one visible window.');
+  throw new Error('No matching visible window was found.');
+}
+
+async function launchComputerApplication(query: string) {
+  const applications = await listOsApplicationsCached();
+  const byId = applications.find((item) => item.id.toLowerCase() === query.toLowerCase());
+  const exact = applications.find((item) => item.name.toLowerCase() === query.toLowerCase());
+  const partial = applications.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()));
+  const selected = byId ?? exact ?? (partial.length === 1 ? partial[0] : undefined);
+  if (!selected) throw new Error(`Installed application '${query}' was not uniquely found.`);
+  const record = resolvedStartMenuApplication(selected.id);
+  if (!record) throw new Error('Application shortcut is no longer available.');
+  if (await focusExistingWindowsApplication(record.target)) {
+    return { status: 'focused', applicationId: record.id, name: record.name };
+  }
+  const failure = await shell.openPath(record.id);
+  if (failure) throw new Error(failure);
+  return { status: 'launched', applicationId: record.id, name: record.name };
+}
+
+const computerInputBridgeSource = String.raw`
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class CardBushComputerInput {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+  public static void Key(byte key, bool down) { keybd_event(key, 0, down ? 0u : 2u, UIntPtr.Zero); }
+  public static void Drag(int x, int y, int toX, int toY, int steps, int duration) {
+    SetCursorPos(x, y); mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+    int pause = steps > 0 ? duration / steps : 0;
+    for (int i = 1; i <= steps; i++) { SetCursorPos(x + (toX-x)*i/steps, y + (toY-y)*i/steps); if (pause > 0) Thread.Sleep(pause); }
+    mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+  }
+}`;
+
+async function runComputerInput(action: string, input: Record<string, unknown>) {
+  if (process.platform !== 'win32') throw new Error('Computer input is unavailable on this platform.');
+  const prefix = `Add-Type -TypeDefinition @'\n${computerInputBridgeSource}\n'@\n`;
+  if (action === 'click') {
+    const x = boundedInteger(input.x, -100_000, 100_000, 'x', true)!;
+    const y = boundedInteger(input.y, -100_000, 100_000, 'y', true)!;
+    const clicks = boundedInteger(input.clicks ?? 1, 1, 5, 'clicks', true)!;
+    const button = String(input.button ?? 'left');
+    const flags = button === 'left' ? [2, 4] : button === 'right' ? [8, 16] : button === 'middle' ? [32, 64] : undefined;
+    if (!flags) throw new Error('button must be left, right, or middle.');
+    await runWindowsShellScript(prefix +
+      `[CardBushComputerInput]::SetCursorPos(${x}, ${y}) | Out-Null\n` +
+      `1..${clicks} | ForEach-Object { [CardBushComputerInput]::mouse_event(${flags[0]},0,0,0,[UIntPtr]::Zero); [CardBushComputerInput]::mouse_event(${flags[1]},0,0,0,[UIntPtr]::Zero) }`);
+    return { action, x, y, button, clicks };
+  }
+  if (action === 'scroll') {
+    const delta = boundedInteger(input.delta, -20, 20, 'delta', true)!;
+    await runWindowsShellScript(prefix + `[CardBushComputerInput]::mouse_event(2048,0,0,${delta * 120},[UIntPtr]::Zero)`);
+    return { action, delta };
+  }
+  if (action === 'drag') {
+    const x = boundedInteger(input.x, -100_000, 100_000, 'x', true)!;
+    const y = boundedInteger(input.y, -100_000, 100_000, 'y', true)!;
+    const toX = boundedInteger(input.to_x, -100_000, 100_000, 'to_x', true)!;
+    const toY = boundedInteger(input.to_y, -100_000, 100_000, 'to_y', true)!;
+    const steps = boundedInteger(input.steps ?? 20, 1, 120, 'steps', true)!;
+    const duration = boundedInteger(input.duration_ms ?? 400, 0, 5000, 'duration_ms', true)!;
+    await runWindowsShellScript(prefix + `[CardBushComputerInput]::Drag(${x},${y},${toX},${toY},${steps},${duration})`, duration + 4_500);
+    return { action, x, y, toX, toY, steps, durationMs: duration };
+  }
+  if (action === 'type') {
+    const text = typeof input.text === 'string' ? input.text : (() => { throw new Error('text must be a string.'); })();
+    const previous = clipboard.readText();
+    clipboard.writeText(text);
+    try {
+      await runWindowsShellScript(prefix +
+        `[CardBushComputerInput]::Key(0x11,$true); [CardBushComputerInput]::Key(0x56,$true); ` +
+        `[CardBushComputerInput]::Key(0x56,$false); [CardBushComputerInput]::Key(0x11,$false)`);
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      clipboard.writeText(previous);
+    }
+    return { action, characters: text.length };
+  }
+  const keys = Array.isArray(input.keys) ? input.keys : [input.key];
+  const normalized = keys.map((item) => requiredText(item, 'key').toLowerCase());
+  const codes = normalized.map((key) => virtualKeyCode(key));
+  const down = codes.map((code) => `[CardBushComputerInput]::Key(${code},$true)`).join('; ');
+  const up = [...codes].reverse().map((code) => `[CardBushComputerInput]::Key(${code},$false)`).join('; ');
+  await runWindowsShellScript(prefix + `${down}; ${up}`);
+  return { action, keys: normalized };
+}
+
+function virtualKeyCode(key: string): number {
+  const named: Record<string, number> = {
+    backspace: 0x08, tab: 0x09, enter: 0x0d, shift: 0x10, ctrl: 0x11,
+    control: 0x11, alt: 0x12, escape: 0x1b, esc: 0x1b, space: 0x20,
+    pageup: 0x21, pagedown: 0x22, end: 0x23, home: 0x24, left: 0x25,
+    up: 0x26, right: 0x27, down: 0x28, delete: 0x2e, win: 0x5b,
+  };
+  if (named[key] != null) return named[key];
+  if (/^[a-z0-9]$/.test(key)) return key.toUpperCase().charCodeAt(0);
+  const functionKey = key.match(/^f([1-9]|1[0-2])$/);
+  if (functionKey) return 0x6f + Number(functionKey[1]);
+  throw new Error(`Unsupported key: ${key}`);
+}
+
+function recordInput(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object.`);
+  return value as Record<string, unknown>;
+}
+
+function requiredText(value: unknown, label: string): string {
+  const result = typeof value === 'string' ? value.trim() : '';
+  if (!result) throw new Error(`${label} is required.`);
+  return result;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return value == null ? undefined : Number(value);
+}
+
+function boundedInteger(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+  label: string,
+  required = false,
+): number | undefined {
+  if (value == null && !required) return undefined;
+  const result = Number(value);
+  if (!Number.isInteger(result) || result < minimum || result > maximum) {
+    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return result;
 }
 
 function taskbarVisibilityBody(show: boolean) {
@@ -3767,22 +4118,6 @@ function rgbToHex(r: number, g: number, b: number) {
   return `#${[r, g, b]
     .map((value) => Math.max(0, Math.min(255, value)).toString(16).padStart(2, '0'))
     .join('')}`;
-}
-
-function readLocalRequestSecret() {
-  const envSecret = process.env.BUSH_LOCAL_REQUEST_SECRET?.trim();
-  if (envSecret) {
-    return envSecret;
-  }
-  const secretPath = localRequestSecretPath();
-  if (secretPath == null) {
-    return '';
-  }
-  try {
-    return fs.readFileSync(secretPath, 'utf8').trim();
-  } catch {
-    return '';
-  }
 }
 
 function listProjectRoot(rootPath: string) {
@@ -4551,16 +4886,4 @@ function trimTerminalOutput(value: string) {
     return value;
   }
   return value.slice(value.length - maxLength);
-}
-
-function localRequestSecretPath() {
-  const override = process.env.BUSH_LOCAL_REQUEST_SECRET_PATH?.trim();
-  if (override) {
-    return override;
-  }
-  if (process.platform === 'win32') {
-    const root = process.env.LOCALAPPDATA || process.env.APPDATA;
-    return root ? path.join(root, 'bushserver', 'config', 'local_request_secret') : null;
-  }
-  return path.join(os.homedir(), '.local', 'share', 'bushserver', 'config', 'local_request_secret');
 }

@@ -86,7 +86,7 @@ export function ExperimentalA2APanel({
       <div className="experimental-a2a-disabled">
         <Ban size={18} />
         <strong>{language === 'zh' ? 'A2A 未启用' : 'A2A is disabled'}</strong>
-        <p>{language === 'zh' ? '启动 BushServer 前设置 BUSH_EXPERIMENTAL_GOAL_A2A_ENABLED=true。' : 'Set BUSH_EXPERIMENTAL_GOAL_A2A_ENABLED=true before starting BushServer.'}</p>
+        <p>{language === 'zh' ? 'A2A 出站客户端仅在 CardBush 桌面版中提供。' : 'The outbound A2A client is available in CardBush Desktop.'}</p>
         {error && <small>{error}</small>}
         <button type="button" onClick={() => void refresh()}><RefreshCw size={13} />{language === 'zh' ? '重新探测' : 'Retry'}</button>
       </div>

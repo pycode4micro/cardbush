@@ -29,7 +29,7 @@ const {
   isOnlyTalkConversation,
 } = module.exports;
 
-const taskRoot = String.raw`C:\Users\tester\AppData\Local\bushserver\task\local-task`;
+const taskRoot = String.raw`C:\Users\tester\AppData\Local\CardBush\runtime\sessions\local-task`;
 const pollutedTaskConversation = {
   id: 'local-task',
   projectDir: taskRoot,
@@ -73,11 +73,11 @@ assert.equal(conversationWorkspaceMode(genuineProjectConversation), 'project');
 assert.equal(conversationProjectDir(genuineProjectConversation), genuineProjectRoot);
 assert.equal(isOnlyTalkConversation(genuineProjectConversation), false);
 
-// BushServer project sessions use session_workspace_dir for the user project
-// while task_dir points at an internal per-session runtime directory. The
+// Product Runtime project sessions keep the user project separate from an
+// internal per-session execution directory. The
 // former must never be treated as evidence of Only Talk/task mode.
 const treelkProjectRoot = String.raw`C:\Users\tester\Desktop\treelk`;
-const treelkTaskRoot = String.raw`C:\Users\tester\AppData\Local\bushserver\task\local-treelk`;
+const treelkTaskRoot = String.raw`C:\Users\tester\AppData\Local\CardBush\runtime\sessions\local-treelk`;
 const projectWithEmptyInitialHistory = {
   id: 'local-treelk',
   projectDir: treelkProjectRoot,
@@ -87,7 +87,7 @@ const projectWithEmptyInitialHistory = {
     user_project_dir: treelkProjectRoot,
     workspace_dir: treelkProjectRoot,
     session_workspace_dir: treelkProjectRoot,
-    session_workspace_alias_path: String.raw`C:\Users\tester\AppData\Local\bushserver\task\_short\treelk`,
+    session_workspace_alias_path: String.raw`C:\Users\tester\AppData\Local\CardBush\runtime\aliases\treelk`,
   },
   workspaceContext: {
     mode: 'project',

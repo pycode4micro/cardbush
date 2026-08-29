@@ -522,8 +522,8 @@ function SkillsPanel({
       <p className="feature-hint">
         {loading
           ? language === 'zh'
-            ? '正在从 BushServer 加载 skills...'
-            : 'Loading skills from BushServer...'
+            ? '正在从 CardBush Skill 目录加载...'
+            : 'Loading the CardBush Skill catalog...'
           : language === 'zh'
             ? `共 ${localItems.length} 个 skills，点击详情查看 SKILL.md。`
             : `${localItems.length} skills. Open details to view SKILL.md.`}
