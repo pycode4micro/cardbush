@@ -4,9 +4,11 @@ import {
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+  LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
@@ -28,6 +30,9 @@ import {
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
   toolDefinitionSchema,
+  subagentTaskIdentitySchema,
+  subagentTaskListRequestSchema,
+  subagentTaskSchema,
   turnToolExecutionsIdentitySchema,
   type ContextSnapshot,
   type RuntimeCapabilities,
@@ -39,6 +44,7 @@ import {
   type SessionSnapshot,
   type ToolExecutionRecord,
   type ToolDefinition,
+  type SubagentTask,
 } from '@cardbush/bush-protocol';
 import {
   FixtureRuntimeTransport,
@@ -127,6 +133,30 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
       (value) => toolDefinitionSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  getSubagentTask(
+    input: { parentSessionId: string; taskId: string },
+    signal?: AbortSignal,
+  ): Promise<SubagentTask | null> {
+    const payload = subagentTaskIdentitySchema.parse(input);
+    return this.command(
+      { kind: GET_RUNTIME_SUBAGENT_TASK_COMMAND, payload },
+      (value) => value == null ? null : subagentTaskSchema.parse(value),
+      signal,
+    );
+  }
+
+  listSubagentTasks(
+    input: { parentSessionId: string; parentTurnId?: string },
+    signal?: AbortSignal,
+  ): Promise<SubagentTask[]> {
+    const payload = subagentTaskListRequestSchema.parse(input);
+    return this.command(
+      { kind: LIST_RUNTIME_SUBAGENT_TASKS_COMMAND, payload },
+      (value) => subagentTaskSchema.array().parse(value),
       signal,
     );
   }

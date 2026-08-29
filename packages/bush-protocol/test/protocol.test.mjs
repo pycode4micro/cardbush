@@ -26,6 +26,7 @@ import {
   runtimeProviderBindingResultSchema,
   taskPlanSchema,
   setRuntimePlanRequestSchema,
+  subagentTaskSchema,
   updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
 
@@ -286,6 +287,29 @@ test("coordination commands carry explicit identities and revisions", () => {
     kind: "goal_set",
     payload: {},
   }));
+});
+
+test("Subagent task facts keep parent and child identities explicit", () => {
+  const task = subagentTaskSchema.parse({
+    protocol: "bush.subagent_task.v1",
+    taskId: "task_1",
+    parentSessionId: "parent",
+    parentTurnId: "parent_turn",
+    childSessionId: "child",
+    childTurnId: "child_turn",
+    prompt: "work",
+    inheritContext: true,
+    inheritedMessageCount: 2,
+    status: "running",
+    finalResponse: "",
+    errorMessage: "",
+    usage: {},
+    revision: 1,
+    createdAt: "2026-08-29T00:00:00.000Z",
+    updatedAt: "2026-08-29T00:00:00.000Z",
+  });
+  assert.equal(task.parentTurnId, "parent_turn");
+  assert.throws(() => subagentTaskSchema.parse({ ...task, status: "guessed" }));
 });
 
 test("provider binding commands validate secrets but return only opaque references", () => {

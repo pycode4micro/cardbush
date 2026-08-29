@@ -116,6 +116,15 @@ export const toolResultSchema = z.object({
   facts: z.array(executionFactSchema).default([]),
   artifacts: z.array(artifactSchema).default([]),
   workspace_changes: z.array(workspaceChangeSchema).default([]),
+  guidance: z
+    .array(
+      z.object({
+        role: z.literal("user"),
+        content: z.string(),
+        name: z.string().min(1).optional(),
+      }),
+    )
+    .default([]),
   error: z
     .object({
       code: z.string().min(1),

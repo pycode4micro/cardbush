@@ -156,6 +156,7 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
   assert.deepEqual(catalog.map((definition) => definition.name), [
     "update_task_plan",
     "update_goal",
+    "subagent",
   ]);
 });
 

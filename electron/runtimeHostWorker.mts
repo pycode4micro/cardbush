@@ -20,11 +20,13 @@ import {
   FileRuntimeEventPersistence,
   FileCoordinationPersistence,
   FileSessionEventPersistence,
+  FileSubagentTaskPersistence,
   FileToolExecutionPersistence,
   InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
   CoordinationStore,
   SessionStore,
+  SubagentTaskStore,
   ToolExecutionStore,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
@@ -231,6 +233,14 @@ const coordinationPersistence = runtimeStateRoot
       },
     })
   : undefined;
+const subagentPersistence = runtimeStateRoot
+  ? new FileSubagentTaskPersistence({
+      root: join(runtimeStateRoot, 'subagents'),
+      onTruncatedTail: (issue) => {
+        process.stderr.write(`${JSON.stringify({ code: 'truncated_tail_removed', ...issue })}\n`);
+      },
+    })
+  : undefined;
 
 providers = new OpenAICompatibleProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
@@ -247,9 +257,13 @@ host = new InMemoryRuntimeHost({
   coordinationStore: new CoordinationStore({
     persistence: coordinationPersistence,
   }),
+  subagentTaskStore: new SubagentTaskStore({
+    persistence: subagentPersistence,
+  }),
   durableRecovery: Boolean(runtimeStateRoot),
   durableSessions: Boolean(runtimeStateRoot),
   durableCoordination: Boolean(runtimeStateRoot),
+  durableSubagentTasks: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,

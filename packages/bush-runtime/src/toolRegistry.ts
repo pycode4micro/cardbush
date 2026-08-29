@@ -7,6 +7,8 @@ import {
   type ToolCall,
   type ToolDefinition,
   type ToolResult,
+  type ModelMessage,
+  type ModelRequest,
 } from "@cardbush/bush-protocol";
 
 export interface ToolPermissionRequest {
@@ -33,6 +35,10 @@ export interface ToolAdmissionContext<TInput = unknown> {
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
+  turn?: {
+    request: ModelRequest;
+    contextMessages: ModelMessage[];
+  };
 }
 
 export interface ToolRegistration<TInput = unknown> {
@@ -43,6 +49,8 @@ export interface ToolRegistration<TInput = unknown> {
     context: ToolAdmissionContext<TInput>,
   ) => ToolAdmissionDecision | Promise<ToolAdmissionDecision>;
   execute: (context: ToolHandlerContext<TInput>) => ToolResult | Promise<ToolResult>;
+  parallelSafe?: boolean;
+  visibleToChild?: boolean;
 }
 
 export interface PermissionResolver {
@@ -69,6 +77,8 @@ export class ToolRegistry {
       decodeInput: candidate.decodeInput as (input: unknown) => unknown,
       authorize: candidate.authorize as AnyToolRegistration["authorize"],
       execute: candidate.execute as AnyToolRegistration["execute"],
+      parallelSafe: candidate.parallelSafe ?? false,
+      visibleToChild: candidate.visibleToChild ?? true,
     });
     return this;
   }
@@ -81,5 +91,15 @@ export class ToolRegistry {
     return [...this.#registrations.values()].map(({ definition }) =>
       structuredClone(definition),
     );
+  }
+
+  childDefinitions(): ToolDefinition[] {
+    return [...this.#registrations.values()]
+      .filter((registration) => registration.visibleToChild)
+      .map(({ definition }) => structuredClone(definition));
+  }
+
+  isParallelSafe(name: string): boolean {
+    return this.#registrations.get(name)?.parallelSafe === true;
   }
 }

@@ -154,3 +154,24 @@ Session identity, stable Plan/Goal identity, and optimistic revision inside the
 Runtime. Models submit only their declared state. A typed Tool Catalog exposes the
 actual registered schemas to the product; React does not duplicate them and the
 Runtime does not discover them by parsing prompt text.
+
+## Subagent fork checkpoint
+
+`subagent` is now a Runtime-registered root-only delegation Tool. It forks the
+parent's model-visible conversation immediately before the dispatch call, removes
+root System/Developer instructions, adds only explicitly supplied child prefix
+messages, and appends the assignment as a new User message. Child-visible Tools
+are the intersection of the parent's selected catalog and registrations that
+explicitly declare child visibility. A fabricated call to a hidden Tool is
+mechanically rejected even if a provider emits its name.
+
+Registrations declare `parallelSafe` directly. A same-round batch runs concurrently
+only when every registration in that batch makes that declaration; Runtime does
+not infer safety from Tool names, language, task text, manifests, or state
+combinations. Results remain ordered by the original Tool Call batch.
+
+ToolResult now has a structured `guidance` channel. Subagent terminal responses
+are persisted in a checksummed task journal and re-enter the parent after all Tool
+receipts as User guidance, without parsing output prose. Child sessions use the
+same Session/Turn/Provider/Tool loop and durable stores as root sessions. Team
+configuration and peer discussion remain a separate product-owned checkpoint.

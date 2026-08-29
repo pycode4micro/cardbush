@@ -7,12 +7,14 @@ import {
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+  LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
@@ -28,6 +30,8 @@ import {
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
   setRuntimePlanRequestSchema,
+  subagentTaskIdentitySchema,
+  subagentTaskListRequestSchema,
   updateRuntimeGoalRequestSchema,
   type ModelRequest,
   type ModelMessage,
@@ -43,6 +47,8 @@ import { executeModelRound } from "./modelRound.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
+import { registerSubagentTool } from "./subagentTool.js";
+import { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -100,6 +106,8 @@ export interface InMemoryRuntimeHostOptions {
   toolExecutionStore?: ToolExecutionStore;
   coordinationStore?: CoordinationStore;
   durableCoordination?: boolean;
+  subagentTaskStore?: SubagentTaskStore;
+  durableSubagentTasks?: boolean;
   additionalSupportedCommands?: string[];
 }
 
@@ -130,6 +138,7 @@ export class InMemoryRuntimeHost {
   readonly #sessionNow: () => string;
   readonly #toolExecutions: ToolExecutionStore;
   readonly #coordination: CoordinationStore;
+  readonly #subagentTasks: SubagentTaskStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -163,6 +172,18 @@ export class InMemoryRuntimeHost {
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
+    this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
+    registerSubagentTool(
+      this.#toolRegistry,
+      this.#subagentTasks,
+      async (request, signal) => {
+        const terminal = await this.runSessionTurn(request, { signal });
+        return {
+          terminal,
+          session: this.#sessions.snapshot(request.sessionId),
+        };
+      },
+    );
     this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
@@ -207,6 +228,8 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
+        GET_RUNTIME_SUBAGENT_TASK_COMMAND,
+        LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
         GET_RUNTIME_PLAN_COMMAND,
         SET_RUNTIME_PLAN_COMMAND,
         GET_RUNTIME_GOAL_COMMAND,
@@ -231,6 +254,8 @@ export class InMemoryRuntimeHost {
         "explicit_plan_facts",
         "explicit_goal_facts",
         ...(options.durableCoordination ? ["durable_coordination"] : []),
+        "subagent_context_fork",
+        ...(options.durableSubagentTasks ? ["durable_subagent_tasks"] : []),
       ],
     };
   }
@@ -300,6 +325,14 @@ export class InMemoryRuntimeHost {
       }
       case GET_RUNTIME_TOOL_CATALOG_COMMAND:
         return this.#toolRegistry.definitions();
+      case GET_RUNTIME_SUBAGENT_TASK_COMMAND: {
+        const identity = subagentTaskIdentitySchema.parse(command.payload);
+        return this.#subagentTasks.get(identity.parentSessionId, identity.taskId) ?? null;
+      }
+      case LIST_RUNTIME_SUBAGENT_TASKS_COMMAND: {
+        const input = subagentTaskListRequestSchema.parse(command.payload);
+        return this.#subagentTasks.list(input.parentSessionId, input.parentTurnId);
+      }
       case GET_RUNTIME_PLAN_COMMAND: {
         const identity = runtimeCoordinationSessionSchema.parse(command.payload);
         return this.#coordination.getPlan(identity.sessionId) ?? null;
@@ -654,6 +687,8 @@ export class InMemoryRuntimeHost {
           round,
           assistantMessageId: completedProjector.messageId,
           signal: input.signal,
+          request,
+          contextMessages: messages,
         });
         const assistantMessage: ModelMessage = {
           role: "assistant",
@@ -676,7 +711,10 @@ export class InMemoryRuntimeHost {
         });
         toolRound.messages.forEach((message, index) => {
           generatedMessages.push({
-            messageId: `msg_tool_${request.turnId}_${round}_${index}_${completedRound.toolCalls[index]!.id}`,
+            messageId:
+              message.role === "tool"
+                ? `msg_tool_${request.turnId}_${round}_${index}_${message.toolCallId}`
+                : `msg_guidance_${request.turnId}_${round}_${index}`,
             createdAt: this.#sessionNow(),
             message,
           });

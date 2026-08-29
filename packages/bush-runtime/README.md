@@ -45,3 +45,10 @@ state combinations.
 `update_task_plan` and `update_goal` are ordinary registered Tools. Their Session,
 identity and revision fields are supplied by Runtime rather than the model. The
 typed Tool Catalog is the sole source of their model-visible definitions.
+
+Subagent execution forks the exact pre-dispatch conversation into an ordinary
+child Session Turn. Tool registrations explicitly declare child visibility and
+parallel safety; Runtime does not derive either property. Child terminal output
+returns through ToolResult `guidance` as a User message after the complete Tool
+receipt batch. Subagent lifecycle facts are stored in a checksummed append-only
+journal and are queryable through typed commands.

@@ -9,6 +9,7 @@ import {
 } from "@cardbush/bush-protocol";
 
 import type { PermissionResolver, ToolRegistry } from "./toolRegistry.js";
+import type { ToolHandlerContext } from "./toolRegistry.js";
 
 export interface ToolExecutionIdentity {
   requestId: string;
@@ -60,7 +61,18 @@ export class ToolExecutionCoordinator {
     toolCall: ToolCall,
     identity: ToolExecutionIdentity,
     signal?: AbortSignal,
+    turn?: ToolHandlerContext["turn"],
   ): Promise<ToolExecutionOutcome> {
+    if (
+      turn &&
+      !turn.request.tools.some((definition) => definition.name === toolCall.name)
+    ) {
+      return failedResult(
+        toolCall.id,
+        "tool_not_exposed",
+        `Tool ${toolCall.name} is not exposed to this Turn.`,
+      );
+    }
     const registration = this.#registry.resolve(toolCall.name);
     if (!registration) {
       return failedResult(
@@ -186,6 +198,7 @@ export class ToolExecutionCoordinator {
           actionManifest,
           capabilityIds,
           signal,
+          turn,
         }),
       );
     } catch (error) {
@@ -287,6 +300,7 @@ function failedResult(
       facts: [],
       artifacts: [],
       workspace_changes: [],
+      guidance: [],
       error: { code, message, details },
     },
   };
@@ -309,6 +323,7 @@ function cancelledResult(
       facts: [],
       artifacts: [],
       workspace_changes: [],
+      guidance: [],
       error: { code: reason, message: "Tool execution was cancelled.", details: {} },
     },
   };
