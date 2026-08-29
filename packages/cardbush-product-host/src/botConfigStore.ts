@@ -158,10 +158,27 @@ export class BotConfigStore {
     return {
       protocol: "cardbush.product_bot_config.v1",
       platform,
+      enabled: Boolean(config.enabled),
+      configured: this.missingRequiredFields(platform, config).length === 0,
       config: publicConfig,
       secrets,
       required_fields: [...spec.requiredFields],
+      missing_required_fields: this.missingRequiredFields(platform, config),
     };
+  }
+
+  missingRequiredFields(
+    platform: BotPlatform,
+    config?: Record<string, unknown>,
+  ): string[] {
+    const spec = botPlatformSpec(platform);
+    if (!spec.supported) return ["adapter_package"];
+    const values = config ?? spec.defaults;
+    const missing = spec.requiredFields.filter((key) => !values[key]);
+    if (platform === "discord" && values.mode === "webhook" && !values.public_key) {
+      missing.push("public_key");
+    }
+    return missing;
   }
 
   async #document(): Promise<ConfigDocument> {
