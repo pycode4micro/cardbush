@@ -1,6 +1,7 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+  RUN_RUNTIME_SESSION_TURN_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   decodeRuntimeEvent,
   runtimeProviderBindingConfigSchema,
@@ -8,6 +9,7 @@ import {
   runtimeProviderBindingResultSchema,
   runtimePermissionAnswerSchema,
   type ModelRequest,
+  type RuntimeSessionTurnRequest,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
   type RuntimeProviderBindingConfig,
@@ -20,6 +22,12 @@ import {
 } from '@cardbush/bush-runtime-electron';
 
 import { ProtocolRuntimeClient } from './ProtocolRuntimeClient';
+import {
+  GoalContinuationRunner,
+  type GoalContinuationResult,
+  type GoalContinuationRunInput,
+  type GoalContinuationTurnResult,
+} from './GoalContinuationRunner';
 import type { RuntimeTerminalView } from './RuntimeTurnProjection';
 import { RuntimeTurnStore } from './RuntimeTurnStore';
 
@@ -47,13 +55,16 @@ export class ElectronRuntimeSession {
   readonly client: ElectronProtocolRuntimeClient;
   readonly store: RuntimeTurnStore;
   #operationController?: AbortController;
+  #goalController?: AbortController;
+  readonly #createId: (kind?: string) => string;
 
   constructor(
     bridge: ElectronRuntimeBridge,
     options: ElectronRuntimeSessionOptions = {},
   ) {
+    this.#createId = options.createId ?? (() => crypto.randomUUID());
     this.client = new ElectronProtocolRuntimeClient(
-      new ElectronRuntimeTransport(bridge, { createId: options.createId }),
+      new ElectronRuntimeTransport(bridge, { createId: this.#createId }),
     );
     this.store = new RuntimeTurnStore(this.client);
   }
@@ -64,17 +75,75 @@ export class ElectronRuntimeSession {
   }
 
   async run(request: ModelRequest): Promise<ElectronRuntimeTurnResult> {
+    return this.#runCommand(
+      request.sessionId,
+      request.turnId,
+      (signal) => this.client.runModelTurn(request, signal),
+    );
+  }
+
+  async runSessionTurn(
+    request: RuntimeSessionTurnRequest,
+    signal?: AbortSignal,
+  ): Promise<ElectronRuntimeTurnResult> {
+    return this.#runCommand(
+      request.sessionId,
+      request.turnId,
+      (operationSignal) => this.client.runSessionTurn(request, operationSignal),
+      signal,
+    );
+  }
+
+  async runGoal(
+    input: GoalContinuationRunInput,
+    options: {
+      onTurnCompleted?: (result: GoalContinuationTurnResult) => void | Promise<void>;
+    } = {},
+  ): Promise<GoalContinuationResult> {
+    if (this.#goalController) throw new Error('An Electron Runtime Goal is already active.');
+    const controller = new AbortController();
+    this.#goalController = controller;
+    const runner = new GoalContinuationRunner({
+      client: this.client,
+      runTurn: async (request, signal) => {
+        const result = await this.runSessionTurn(request, signal);
+        if (!result.commandTerminal) {
+          throw result.commandError ?? new Error('Goal Turn returned no terminal command fact.');
+        }
+        return result.commandTerminal;
+      },
+      createId: (kind) => this.#createId(kind),
+    });
+    try {
+      return await runner.run(input, {
+        signal: controller.signal,
+        onTurnCompleted: options.onTurnCompleted,
+      });
+    } finally {
+      if (this.#goalController === controller) this.#goalController = undefined;
+    }
+  }
+
+  async #runCommand(
+    sessionId: string,
+    turnId: string,
+    command: (signal: AbortSignal) => Promise<RuntimeTerminalEvent>,
+    externalSignal?: AbortSignal,
+  ): Promise<ElectronRuntimeTurnResult> {
     if (this.#operationController) {
       throw new Error('An Electron Runtime Turn is already active.');
     }
 
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    if (externalSignal?.aborted) controller.abort();
+    else externalSignal?.addEventListener('abort', abort, { once: true });
     this.#operationController = controller;
     const streamResult = this.store.start({
-      sessionId: request.sessionId,
-      turnId: request.turnId,
+      sessionId,
+      turnId,
     });
-    const commandResult = this.client.runModelTurn(request, controller.signal);
+    const commandResult = command(controller.signal);
 
     try {
       const [stream, command] = await Promise.allSettled([
@@ -98,10 +167,12 @@ export class ElectronRuntimeSession {
       if (this.#operationController === controller) {
         this.#operationController = undefined;
       }
+      externalSignal?.removeEventListener('abort', abort);
     }
   }
 
   stop() {
+    this.#goalController?.abort();
     this.#operationController?.abort();
   }
 
@@ -136,6 +207,17 @@ export class ElectronProtocolRuntimeClient extends ProtocolRuntimeClient {
   ): Promise<RuntimeTerminalEvent> {
     return this.command(
       { kind: RUN_MODEL_TURN_COMMAND, payload: request },
+      decodeRuntimeTerminalEvent,
+      signal,
+    );
+  }
+
+  override runSessionTurn(
+    request: RuntimeSessionTurnRequest,
+    signal?: AbortSignal,
+  ): Promise<RuntimeTerminalEvent> {
+    return this.command(
+      { kind: RUN_RUNTIME_SESSION_TURN_COMMAND, payload: request },
       decodeRuntimeTerminalEvent,
       signal,
     );

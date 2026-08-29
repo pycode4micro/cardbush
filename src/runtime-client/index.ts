@@ -30,6 +30,13 @@ export type {
   RuntimeTurnView,
 } from './RuntimeTurnProjection';
 export { RuntimeTurnStore, useRuntimeTurnStore } from './RuntimeTurnStore';
+export { GoalContinuationRunner } from './GoalContinuationRunner';
+export type {
+  GoalContinuationResult,
+  GoalContinuationRunInput,
+  GoalContinuationRunnerOptions,
+  GoalContinuationTurnResult,
+} from './GoalContinuationRunner';
 export type {
   RuntimeTurnStoreState,
   RuntimeTurnStreamState,

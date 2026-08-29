@@ -66,6 +66,42 @@ try {
     'turn_terminal',
   );
 
+  const goalTurns = [];
+  let goalRead = 0;
+  const goalRunner = new runtimeClientModule.GoalContinuationRunner({
+    client: {
+      async createGoal(input) {
+        return goalState(input, 'active', 1);
+      },
+      async getGoal(sessionId) {
+        goalRead += 1;
+        return goalState(
+          { goalId: 'goal_1', sessionId, objective: 'finish' },
+          goalRead === 1 ? 'active' : 'complete',
+          goalRead + 1,
+        );
+      },
+    },
+    async runTurn(request) {
+      goalTurns.push(request);
+      return terminalEvent(request, 'completed');
+    },
+    createId: sequentialGoalId(),
+  });
+  const goalResult = await goalRunner.run({
+    goalId: 'goal_1',
+    objective: 'finish',
+    initialTurn: sessionTurnRequest(),
+    continuationPrompt: 'Check the objective; continue if it is not complete.',
+  });
+  assert.equal(goalResult.goal.status, 'complete');
+  assert.equal(goalResult.turns.length, 2);
+  assert.equal(
+    goalTurns[1].inputMessages[0].message.content,
+    'Check the objective; continue if it is not complete.',
+  );
+  assert.notEqual(goalTurns[0].turnId, goalTurns[1].turnId);
+
   const projection = new runtimeClientModule.RuntimeTurnProjection();
   const eventKinds = [];
   let view = projection.snapshot();
@@ -603,4 +639,44 @@ function sessionTurnRequest() {
     }],
     tools: [],
   };
+}
+
+function goalState(input, status, revision) {
+  return {
+    protocol: 'bush.goal.v1',
+    goalId: input.goalId,
+    sessionId: input.sessionId,
+    objective: input.objective,
+    status,
+    statusReason: '',
+    consumedTokens: 0,
+    linkedA2ATaskIds: [],
+    revision,
+    createdAt: '2026-08-29T00:00:00.000Z',
+    updatedAt: '2026-08-29T00:00:00.000Z',
+    ...(status === 'active' ? {} : { completedAt: '2026-08-29T00:00:00.000Z' }),
+  };
+}
+
+function terminalEvent(request, status) {
+  return {
+    protocol: 'bush.runtime_event.v1',
+    eventId: `event_${request.turnId}`,
+    sequence: 1,
+    requestId: request.requestId,
+    sessionId: request.sessionId,
+    turnId: request.turnId,
+    createdAt: '2026-08-29T00:00:00.000Z',
+    kind: 'turn_terminal',
+    payload: {
+      status,
+      reason: 'model_response_completed',
+      details: {},
+    },
+  };
+}
+
+function sequentialGoalId() {
+  let id = 0;
+  return (kind) => `${kind}_goal_${++id}`;
 }

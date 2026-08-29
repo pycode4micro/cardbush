@@ -175,3 +175,16 @@ are persisted in a checksummed task journal and re-enter the parent after all To
 receipts as User guidance, without parsing output prose. Child sessions use the
 same Session/Turn/Provider/Tool loop and durable stores as root sessions. Team
 configuration and peer discussion remain a separate product-owned checkpoint.
+
+## Goal continuation checkpoint
+
+The product Runtime Client now implements Goal continuation as consecutive normal
+Session Turns rather than one unbounded internal Loop. After each `turn_terminal`
+it reads the typed Goal fact. Only an explicit `active` declaration causes the
+caller-supplied continuation prompt to be appended as a new User message with new
+Runtime-owned request, Turn and message IDs. `complete`, `blocked`, `cancelled`, a
+non-completed Turn, or cancellation stops the runner mechanically. There is no
+elapsed-time, action-count, token-percentage or semantic completion classifier.
+
+Each Turn retains its own stream and durable commit, so interruption never hides
+the last completed Turn and the UI can display progress one Turn at a time.

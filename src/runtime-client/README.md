@@ -61,3 +61,8 @@ Session history is exposed only through typed Runtime commands.
 journal or assemble messages in the renderer. The Runtime owns append order,
 explicit supersession, crash recovery and atomic Turn commit. The existing
 product chat path is not switched by merely exposing these methods.
+
+`GoalContinuationRunner` composes ordinary durable Session Turns. It observes only
+the typed Goal status returned by Runtime and appends a caller-supplied User
+continuation while that status remains `active`; it does not infer completion from
+assistant text, Plan nodes, Tool names, elapsed time or loop counts.
