@@ -11,6 +11,7 @@ import {
   BUSH_RUNTIME_EVENT_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL,
+  BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
   cacheChainStateSchema,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
@@ -19,6 +20,8 @@ import {
   outcomeFinalizerSchema,
   runtimePermissionAnswerSchema,
   runtimeRecoveryInspectionSchema,
+  runtimeProviderBindingConfigSchema,
+  runtimeProviderBindingResultSchema,
   taskPlanSchema,
 } from "../dist/index.js";
 
@@ -237,4 +240,23 @@ test("public recovery inspection never exposes checkpoint messages", () => {
 
   assert.equal("checkpoint" in parsed, false);
   assert.equal("messages" in parsed, false);
+});
+
+test("provider binding commands validate secrets but return only opaque references", () => {
+  const config = runtimeProviderBindingConfigSchema.parse({
+    protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
+    bindingId: "model_config_1",
+    adapter: "openai_compatible",
+    apiKey: "secret-value",
+    baseURL: "https://provider.invalid/v1",
+  });
+  const result = runtimeProviderBindingResultSchema.parse({
+    protocol: "bush.provider_binding_result.v1",
+    status: "configured",
+    binding: { bindingId: config.bindingId, revision: "revision_1" },
+    apiKey: config.apiKey,
+  });
+
+  assert.equal(config.apiKey, "secret-value");
+  assert.equal("apiKey" in result, false);
 });

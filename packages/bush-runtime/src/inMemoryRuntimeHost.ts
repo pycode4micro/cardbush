@@ -62,6 +62,7 @@ export interface InMemoryRuntimeHostOptions {
   checkpointNow?: () => string;
   onRecoveryError?: (error: Error) => void;
   durableRecovery?: boolean;
+  additionalSupportedCommands?: string[];
 }
 
 export interface RuntimeHostStreamRequest {
@@ -150,6 +151,7 @@ export class InMemoryRuntimeHost {
         ANSWER_RUNTIME_PERMISSION_COMMAND,
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
+        ...(options.additionalSupportedCommands ?? []),
       ],
       features: [
         "turn_stream",

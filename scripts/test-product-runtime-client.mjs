@@ -136,6 +136,19 @@ try {
   );
   const liveCapabilities = await liveSession.discoverCapabilities();
   assert.equal(liveCapabilities.hostId, 'electron-live-test');
+  const providerBinding = await liveSession.configureProvider({
+    protocol: 'bush.provider_binding_config.v1',
+    bindingId: 'product_model_config',
+    adapter: 'openai_compatible',
+    apiKey: 'product-test-secret',
+    baseURL: 'https://provider.invalid/v1',
+  });
+  assert.equal(providerBinding.status, 'configured');
+  assert.equal(JSON.stringify(providerBinding).includes('product-test-secret'), false);
+  assert.equal(
+    (await liveSession.removeProvider('product_model_config')).status,
+    'removed',
+  );
   const liveResult = await liveSession.run(modelRequest('live'));
   assert.equal(liveResult.terminal.status, 'failed');
   assert.equal(liveResult.terminal.reason, 'runtime_provider_not_configured');
@@ -260,12 +273,31 @@ function createLiveRuntimeBridge(options = {}) {
           supportedCommands: [
             'runtime.get_capabilities',
             'runtime.run_model_turn',
+            'runtime.upsert_provider_binding',
+            'runtime.remove_provider_binding',
           ],
           features: ['turn_stream'],
         });
       }
       if (message.command.kind === 'runtime.answer_permission') {
         return response(message.operationId, message.command.payload);
+      }
+      if (message.command.kind === 'runtime.upsert_provider_binding') {
+        return response(message.operationId, {
+          protocol: 'bush.provider_binding_result.v1',
+          status: 'configured',
+          binding: {
+            bindingId: message.command.payload.bindingId,
+            revision: 'product_revision_1',
+          },
+        });
+      }
+      if (message.command.kind === 'runtime.remove_provider_binding') {
+        return response(message.operationId, {
+          protocol: 'bush.provider_binding_result.v1',
+          status: 'removed',
+          bindingId: message.command.payload.bindingId,
+        });
       }
 
       const request = message.command.payload;

@@ -2,9 +2,13 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
+  REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+  UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   createProtocolVersionMismatchError,
   decodeRuntimeIpcInboundMessage,
   extractRuntimeIpcProtocol,
+  runtimeProviderBindingConfigSchema,
+  runtimeProviderBindingIdentitySchema,
   runtimeIpcOutboundMessageSchema,
   type ModelEvent,
   type ModelRequest,
@@ -18,7 +22,10 @@ import {
   InMemoryRuntimeHost,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
-import { OpenAICompatibleProvider } from '@cardbush/bush-provider-openai';
+import {
+  OpenAICompatibleProvider,
+  OpenAICompatibleProviderRegistry,
+} from '@cardbush/bush-provider-openai';
 import { isAbsolute, join } from 'node:path';
 
 const parentPort = process.parentPort;
@@ -29,6 +36,7 @@ if (!parentPort) {
 const operations = new Map<string, AbortController>();
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
+let providers: OpenAICompatibleProviderRegistry;
 
 async function handleMessage(input: unknown) {
   let message;
@@ -62,7 +70,10 @@ async function handleMessage(input: unknown) {
       const controller = new AbortController();
       operations.set(message.operationId, controller);
       try {
-        const result = await host.sendCommand(message.command, controller.signal);
+        const result = await executeRuntimeCommand(
+          message.command,
+          controller.signal,
+        );
         post({
           protocol: BUSH_RUNTIME_IPC_PROTOCOL,
           type: 'command_response',
@@ -147,9 +158,9 @@ async function streamEvents(
   }
 }
 
-function createProvider(): ModelProvider {
+function createEnvironmentProvider(): ModelProvider | undefined {
   const apiKey = process.env.CARDBUSH_RUNTIME_PROVIDER_API_KEY?.trim();
-  if (!apiKey) return new UnconfiguredProvider();
+  if (!apiKey) return undefined;
   return new OpenAICompatibleProvider({
     apiKey,
     baseURL: process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined,
@@ -160,19 +171,17 @@ function createProvider(): ModelProvider {
   });
 }
 
-class UnconfiguredProvider implements ModelProvider {
-  async *stream(request: ModelRequest): AsyncIterable<ModelEvent> {
-    yield {
-      protocol: BUSH_MODEL_EVENT_PROTOCOL,
-      requestId: request.requestId,
-      sequence: 0,
-      createdAt: new Date().toISOString(),
-      kind: 'response_failed',
-      code: 'runtime_provider_not_configured',
-      message: 'The Electron Runtime Host has no configured model provider.',
-      retryable: false,
-    };
+async function executeRuntimeCommand(
+  command: { kind: string; payload: unknown },
+  signal: AbortSignal,
+) {
+  if (command.kind === UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND) {
+    return providers.upsert(runtimeProviderBindingConfigSchema.parse(command.payload));
   }
+  if (command.kind === REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND) {
+    return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
+  }
+  return host.sendCommand(command, signal);
 }
 
 const runtimeStateRoot = process.env.CARDBUSH_RUNTIME_STATE_ROOT?.trim();
@@ -193,11 +202,19 @@ const checkpointStore = runtimeStateRoot
   ? new FileRuntimeCheckpointStore(join(runtimeStateRoot, 'checkpoints'))
   : undefined;
 
+providers = new OpenAICompatibleProviderRegistry({
+  fallbackProvider: createEnvironmentProvider(),
+});
+
 host = new InMemoryRuntimeHost({
-  provider: createProvider(),
+  provider: providers,
   eventLog,
   checkpointStore,
   durableRecovery: Boolean(runtimeStateRoot),
+  additionalSupportedCommands: [
+    UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
+    REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+  ],
   hostId: `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
   maxAttempts: positiveInteger(

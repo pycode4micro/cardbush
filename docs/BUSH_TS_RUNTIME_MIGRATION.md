@@ -84,7 +84,18 @@ Python reference's name-based Cache heuristics are intentionally not migrated.
 The Utility Process enables file-backed recovery only when
 `CARDBUSH_RUNTIME_STATE_ROOT` is an absolute directory. Choosing the production
 state root remains a CardBush product-host responsibility; the Runtime does not
-invent or migrate product data locations.
+invent or migrate product data locations. The Electron main process now supplies
+`<app userData>/runtime-state`, while tests use isolated system-temporary roots.
+
+Provider credentials use a separate typed control path. The product registers an
+OpenAI-compatible configuration with `runtime.upsert_provider_binding`; the
+Utility Process returns only an opaque binding ID and deterministic revision.
+Model Requests, Cache Chain state, event journals, and checkpoints contain this
+reference but never the API key or headers. Identical configuration produces the
+same revision after restart so a durable checkpoint can resume once the product
+registers its settings again. Changed configuration creates a different revision,
+preventing an active Turn from silently switching provider behavior between
+rounds.
 
 ## Electron live-host checkpoint
 

@@ -2423,6 +2423,13 @@ async function initializeRuntimeHost() {
     const controllerModule = await import(controllerModuleUrl);
     const controller = new controllerModule.RuntimeUtilityProcessController({
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
+      env: {
+        ...process.env,
+        CARDBUSH_RUNTIME_STATE_ROOT: path.join(
+          app.getPath('userData'),
+          'runtime-state',
+        ),
+      },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
     }) as { start: () => Promise<unknown>; stop: () => void };
     runtimeHostController = controller;

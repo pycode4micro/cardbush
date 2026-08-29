@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { toolDefinitionSchema } from "./tool.js";
+import { runtimeProviderBindingRefSchema } from "./providerBinding.js";
 
 export const BUSH_MODEL_REQUEST_PROTOCOL = "bush.model_request.v1" as const;
 export const BUSH_MODEL_EVENT_PROTOCOL = "bush.model_event.v1" as const;
@@ -45,6 +46,7 @@ export const modelRequestSchema = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
   model: z.string().min(1),
+  providerBinding: runtimeProviderBindingRefSchema.optional(),
   messages: z.array(modelMessageSchema),
   tools: z.array(toolDefinitionSchema).default([]),
   toolChoice: z.enum(["auto", "none", "required"]).default("auto"),

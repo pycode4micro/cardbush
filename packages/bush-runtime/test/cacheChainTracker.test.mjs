@@ -79,6 +79,24 @@ test("restores hash-only state and preserves continuity across Runtime restart",
   assert.equal(observation.frozenPrefixBreak, false);
 });
 
+test("observes an explicit provider binding revision change mechanically", () => {
+  const tracker = new CacheChainTracker();
+  tracker.observe(
+    request({
+      providerBinding: { bindingId: "provider_1", revision: "revision_1" },
+    }),
+  );
+
+  const observation = tracker.observe(
+    request({
+      providerBinding: { bindingId: "provider_1", revision: "revision_2" },
+    }),
+  );
+
+  assert.equal(observation.frozenPrefixBreak, true);
+  assert.equal(observation.breakIndex, 0);
+});
+
 function request(overrides = {}) {
   return modelRequestSchema.parse({
     protocol: BUSH_MODEL_REQUEST_PROTOCOL,

@@ -1,10 +1,17 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
+  REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+  UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   decodeRuntimeEvent,
+  runtimeProviderBindingConfigSchema,
+  runtimeProviderBindingIdentitySchema,
+  runtimeProviderBindingResultSchema,
   runtimePermissionAnswerSchema,
   type ModelRequest,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
+  type RuntimeProviderBindingConfig,
+  type RuntimeProviderBindingResult,
 } from '@cardbush/bush-protocol';
 import { RUN_MODEL_TURN_COMMAND } from '@cardbush/bush-runtime';
 import {
@@ -105,6 +112,17 @@ export class ElectronRuntimeSession {
     return this.client.answerPermission(answer, signal);
   }
 
+  configureProvider(
+    config: RuntimeProviderBindingConfig,
+    signal?: AbortSignal,
+  ) {
+    return this.client.configureProvider(config, signal);
+  }
+
+  removeProvider(bindingId: string, signal?: AbortSignal) {
+    return this.client.removeProvider(bindingId, signal);
+  }
+
   dispose() {
     this.stop();
     this.store.cancel();
@@ -131,6 +149,30 @@ export class ElectronProtocolRuntimeClient extends ProtocolRuntimeClient {
     return this.command(
       { kind: ANSWER_RUNTIME_PERMISSION_COMMAND, payload },
       (input) => runtimePermissionAnswerSchema.parse(input),
+      signal,
+    );
+  }
+
+  configureProvider(
+    config: RuntimeProviderBindingConfig,
+    signal?: AbortSignal,
+  ): Promise<RuntimeProviderBindingResult> {
+    const payload = runtimeProviderBindingConfigSchema.parse(config);
+    return this.command(
+      { kind: UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND, payload },
+      (input) => runtimeProviderBindingResultSchema.parse(input),
+      signal,
+    );
+  }
+
+  removeProvider(
+    bindingId: string,
+    signal?: AbortSignal,
+  ): Promise<RuntimeProviderBindingResult> {
+    const payload = runtimeProviderBindingIdentitySchema.parse({ bindingId });
+    return this.command(
+      { kind: REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND, payload },
+      (input) => runtimeProviderBindingResultSchema.parse(input),
       signal,
     );
   }

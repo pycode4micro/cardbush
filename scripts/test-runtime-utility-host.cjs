@@ -14,8 +14,11 @@ void run().catch((error) => {
 async function run() {
   const {
     BUSH_MODEL_REQUEST_PROTOCOL,
+    BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
     BUSH_RUNTIME_IPC_PROTOCOL,
     GET_RUNTIME_CAPABILITIES_COMMAND,
+    REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+    UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   } = await import('@cardbush/bush-protocol');
   const { RUN_MODEL_TURN_COMMAND } = await import('@cardbush/bush-runtime');
   const { ElectronRuntimeTransport } = await import(
@@ -54,6 +57,11 @@ async function run() {
     assert.equal(ready.type, 'ready');
     assert.equal(ready.capabilities.eventProtocol, 'bush.runtime_event.v1');
     assert.ok(ready.capabilities.features.includes('durable_restart_recovery'));
+    assert.ok(
+      ready.capabilities.supportedCommands.includes(
+        UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
+      ),
+    );
 
     const capabilityResponse = await within(
       controller.command({
@@ -67,6 +75,27 @@ async function run() {
     );
     assert.equal(capabilityResponse.type, 'command_response');
     assert.equal(capabilityResponse.ok, true);
+    const configuredProvider = await controller.command({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: 'command',
+      operationId: 'operation_configure_provider',
+      command: {
+        kind: UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
+        payload: {
+          protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
+          bindingId: 'utility_provider',
+          adapter: 'openai_compatible',
+          apiKey: 'utility-test-secret',
+          baseURL: 'https://provider.invalid/v1',
+        },
+      },
+    });
+    assert.equal(configuredProvider.ok, true);
+    assert.equal(configuredProvider.result.status, 'configured');
+    assert.equal(
+      JSON.stringify(configuredProvider.result).includes('utility-test-secret'),
+      false,
+    );
     const mismatchResponse = await controller.command({
       protocol: 'bush.runtime_ipc.v2',
       type: 'command',
@@ -192,6 +221,17 @@ async function run() {
     );
     assert.ok(readdirSync(path.join(runtimeStateRoot, 'events')).length >= 2);
     assert.deepEqual(readdirSync(path.join(runtimeStateRoot, 'checkpoints')), []);
+    const removedProvider = await controller.command({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: 'command',
+      operationId: 'operation_remove_provider',
+      command: {
+        kind: REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+        payload: { bindingId: 'utility_provider' },
+      },
+    });
+    assert.equal(removedProvider.ok, true);
+    assert.equal(removedProvider.result.status, 'removed');
 
     let testWindow;
     const unregisterIpc = registerRuntimeHostIpc(

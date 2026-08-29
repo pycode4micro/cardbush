@@ -45,3 +45,12 @@ separate arrays; rendered tool output is never inspected to manufacture them.
 Permission answers are validated against `bush.runtime_permission_answer.v1`
 before IPC. The allow UI remains gated until `permission_requested` publishes
 the concrete capability IDs that the user is allowed to grant.
+
+Provider credentials cross the typed IPC boundary only through
+`runtime.upsert_provider_binding`. The Utility Process returns an opaque
+`bindingId + revision`; only that reference enters a Model Request, checkpoint,
+or event journal. Reconfiguring a binding creates a new immutable revision, so
+an active Turn cannot silently switch provider configuration between rounds.
+The revision is a deterministic one-way fingerprint of the exact configuration:
+registering the same configuration after an app restart restores the same
+checkpoint reference without persisting the credential in Runtime state.

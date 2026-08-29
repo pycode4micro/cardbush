@@ -25,6 +25,7 @@ export class CacheChainTracker {
     const stableInputDigest = digest(
       JSON.stringify({
         model: request.model,
+        providerBinding: request.providerBinding ?? null,
         tools: request.tools,
         toolChoice: request.toolChoice,
         maxOutputTokens: request.maxOutputTokens ?? null,
