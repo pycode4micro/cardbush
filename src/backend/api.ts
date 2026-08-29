@@ -1329,24 +1329,36 @@ export async function dispatchExperimentalA2ATask(request: {
       }
     }
     try {
-    const payload = recordFromUnknown(await window.cardbushDesktop.a2aDispatch({
-      agentUrl: request.agentUrl,
-      text: request.text,
-      ...(request.contextId ? { contextId: request.contextId } : {}),
-    }));
-    const task = a2aTaskFromPayload(payload.task ?? payload);
-    if (linkedGoal && linkedRuntime && task.id) {
-      await linkedRuntime.client.updateGoal({
-        goalId: linkedGoal.goalId,
-        sessionId: linkedGoal.sessionId,
-        expectedRevision: linkedGoal.revision,
-        status: linkedGoal.status,
-        statusReason: linkedGoal.statusReason,
-        consumedTokens: linkedGoal.consumedTokens,
-        linkedA2ATaskIds: [...new Set([...linkedGoal.linkedA2ATaskIds, task.id])],
-      });
-    }
-    return task;
+      const payload = recordFromUnknown(await window.cardbushDesktop.a2aDispatch({
+        agentUrl: request.agentUrl,
+        text: request.text,
+        ...(request.contextId ? { contextId: request.contextId } : {}),
+      }));
+      const task = a2aTaskFromPayload(payload.task ?? payload);
+      if (!linkedGoal || !linkedRuntime || !task.id) return task;
+      try {
+        await linkedRuntime.client.updateGoal({
+          goalId: linkedGoal.goalId,
+          sessionId: linkedGoal.sessionId,
+          expectedRevision: linkedGoal.revision,
+          status: linkedGoal.status,
+          statusReason: linkedGoal.statusReason,
+          consumedTokens: linkedGoal.consumedTokens,
+          linkedA2ATaskIds: [...new Set([...linkedGoal.linkedA2ATaskIds, task.id])],
+        });
+        return { ...task, raw: { ...task.raw, goalLink: { status: 'linked' } } };
+      } catch (error) {
+        return {
+          ...task,
+          raw: {
+            ...task.raw,
+            goalLink: {
+              status: 'failed',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          },
+        };
+      }
     } finally {
       linkedRuntime?.dispose();
     }
