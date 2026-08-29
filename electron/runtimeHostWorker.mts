@@ -19,9 +19,11 @@ import {
   FileRuntimeCheckpointStore,
   FileRuntimeEventPersistence,
   FileSessionEventPersistence,
+  FileToolExecutionPersistence,
   InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
   SessionStore,
+  ToolExecutionStore,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
 import {
@@ -211,6 +213,14 @@ const sessionPersistence = runtimeStateRoot
       },
     })
   : undefined;
+const toolExecutionPersistence = runtimeStateRoot
+  ? new FileToolExecutionPersistence({
+      root: join(runtimeStateRoot, 'tool-executions'),
+      onTruncatedTail: (issue) => {
+        process.stderr.write(`${JSON.stringify({ code: 'truncated_tail_removed', ...issue })}\n`);
+      },
+    })
+  : undefined;
 
 providers = new OpenAICompatibleProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
@@ -221,6 +231,9 @@ host = new InMemoryRuntimeHost({
   eventLog,
   checkpointStore,
   sessionStore: new SessionStore({ persistence: sessionPersistence }),
+  toolExecutionStore: new ToolExecutionStore({
+    persistence: toolExecutionPersistence,
+  }),
   durableRecovery: Boolean(runtimeStateRoot),
   durableSessions: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [

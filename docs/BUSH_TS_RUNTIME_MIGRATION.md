@@ -116,8 +116,20 @@ mismatch returns `bush.runtime_error.v1` with the stable
 Runtime workspace packages first, so Electron and Vite never depend on stale
 local `dist` output.
 
-For the current integration checkpoint, a live OpenAI-compatible provider may be
-supplied to the Utility Process with `CARDBUSH_RUNTIME_PROVIDER_API_KEY`, optional
-`CARDBUSH_RUNTIME_PROVIDER_BASE_URL`, `CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS`, and
-`CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS`. Product settings are not yet forwarded;
-provider-secret ownership must be agreed before adding that bridge.
+Product model settings now cross typed IPC through an opaque provider binding.
+Secrets remain inside the Utility Process registry and never enter Model Requests,
+event journals, checkpoints, Cache Chain state or renderer-visible results.
+
+## Session and authoritative Tool facts checkpoint
+
+Session history is an append-only checksummed journal. A Turn is committed once
+with ordered message identity and usage; history changes require explicit message
+supersession. Context assembly appends fixed prefix, committed messages and current
+input without percentage thresholds, summaries or semantic selection.
+
+Tool execution now has a separate authoritative record containing the admitted
+Action Manifest, exact ToolResult, Execution Facts, Artifacts and Workspace
+Changes. Tools declare these values; Runtime validates identities and publishes
+their IDs without parsing output prose or dispatching on Tool names. Records are
+queryable through typed Runtime commands and persist under the Utility Process
+state root.

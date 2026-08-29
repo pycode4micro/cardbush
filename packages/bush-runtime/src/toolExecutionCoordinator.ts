@@ -285,6 +285,8 @@ function failedResult(
       success: false,
       output: null,
       facts: [],
+      artifacts: [],
+      workspace_changes: [],
       error: { code, message, details },
     },
   };
@@ -305,6 +307,8 @@ function cancelledResult(
       success: false,
       output: null,
       facts: [],
+      artifacts: [],
+      workspace_changes: [],
       error: { code: reason, message: "Tool execution was cancelled.", details: {} },
     },
   };

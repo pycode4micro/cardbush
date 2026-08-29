@@ -2,6 +2,8 @@ import {
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+  LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   decodeContextSnapshot,
@@ -11,12 +13,16 @@ import {
   runtimeSessionIdentitySchema,
   runtimeSessionTurnRequestSchema,
   sessionSnapshotSchema,
+  toolExecutionIdentitySchema,
+  toolExecutionRecordSchema,
+  turnToolExecutionsIdentitySchema,
   type ContextSnapshot,
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimeFixture,
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
+  type ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
 import {
   FixtureRuntimeTransport,
@@ -73,6 +79,30 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: RUN_RUNTIME_SESSION_TURN_COMMAND, payload },
       decodeRuntimeEvent,
+      signal,
+    );
+  }
+
+  getToolExecution(
+    input: { sessionId: string; turnId: string; toolCallId: string },
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionRecord | null> {
+    const payload = toolExecutionIdentitySchema.parse(input);
+    return this.command(
+      { kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND, payload },
+      (value) => value == null ? null : toolExecutionRecordSchema.parse(value),
+      signal,
+    );
+  }
+
+  listTurnToolExecutions(
+    input: { sessionId: string; turnId: string },
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionRecord[]> {
+    const payload = turnToolExecutionsIdentitySchema.parse(input);
+    return this.command(
+      { kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, payload },
+      (value) => toolExecutionRecordSchema.array().parse(value),
       signal,
     );
   }

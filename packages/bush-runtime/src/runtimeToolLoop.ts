@@ -17,6 +17,7 @@ import {
   type ToolExecutionOutcome,
 } from "./toolExecutionCoordinator.js";
 import type { ToolRegistry } from "./toolRegistry.js";
+import type { ToolExecutionStore } from "./toolExecutionStore.js";
 
 export interface RuntimeToolLoopOptions {
   eventLog: InMemoryRuntimeEventLog;
@@ -24,6 +25,7 @@ export interface RuntimeToolLoopOptions {
   registry: ToolRegistry;
   createPermissionId?: () => string;
   existingReceiptIds?: string[];
+  executionStore?: ToolExecutionStore;
 }
 
 export interface RuntimeToolRoundResult {
@@ -36,6 +38,7 @@ export class RuntimeToolLoop {
   readonly #identity: RuntimeEventIdentity;
   readonly #permissions: RuntimePermissionBroker;
   readonly #coordinator: ToolExecutionCoordinator;
+  readonly #executionStore?: ToolExecutionStore;
 
   constructor(options: RuntimeToolLoopOptions) {
     this.#eventLog = options.eventLog;
@@ -75,6 +78,7 @@ export class RuntimeToolLoop {
       },
       existingReceiptIds: options.existingReceiptIds,
     });
+    this.#executionStore = options.executionStore;
   }
 
   hasPendingPermission(permissionId: string): boolean {
@@ -108,6 +112,7 @@ export class RuntimeToolLoop {
         executionIdentity,
         input.signal,
       );
+      this.#executionStore?.record(toolCall, executionIdentity, outcome);
       this.#appendToolOutcome(toolCall, executionIdentity, outcome);
       receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
       messages.push({
@@ -227,7 +232,7 @@ function factReferences(result: ToolResult): {
   return {
     receiptIds,
     executionFactIds: [...receiptIds],
-    artifactIds: [],
-    workspaceChangeIds: [],
+    artifactIds: result.artifacts.map((artifact) => artifact.artifact_id),
+    workspaceChangeIds: result.workspace_changes.map((change) => change.change_id),
   };
 }

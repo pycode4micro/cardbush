@@ -5,14 +5,18 @@ import {
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
+  LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   modelRequestSchema,
   runtimePermissionAnswerSchema,
   runtimeSessionIdentitySchema,
   runtimeSessionTurnRequestSchema,
+  toolExecutionIdentitySchema,
+  turnToolExecutionsIdentitySchema,
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
   type ModelRequest,
@@ -46,6 +50,7 @@ import {
 } from "./runtimeCheckpointStore.js";
 import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
 import { SessionStore } from "./sessionStore.js";
+import { ToolExecutionStore } from "./toolExecutionStore.js";
 import {
   RuntimeSessionCoordinator,
   type GeneratedMessageFact,
@@ -80,6 +85,7 @@ export interface InMemoryRuntimeHostOptions {
   sessionStore?: SessionStore;
   durableSessions?: boolean;
   sessionNow?: () => string;
+  toolExecutionStore?: ToolExecutionStore;
   additionalSupportedCommands?: string[];
 }
 
@@ -108,6 +114,7 @@ export class InMemoryRuntimeHost {
   readonly #recovery: RuntimeRecoveryCoordinator;
   readonly #sessions: RuntimeSessionCoordinator;
   readonly #sessionNow: () => string;
+  readonly #toolExecutions: ToolExecutionStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -138,6 +145,7 @@ export class InMemoryRuntimeHost {
       store: options.sessionStore,
       now: this.#sessionNow,
     });
+    this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
@@ -179,6 +187,8 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_SESSION_COMMAND,
         ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
         RUN_RUNTIME_SESSION_TURN_COMMAND,
+        GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+        LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         ...(options.additionalSupportedCommands ?? []),
       ],
       features: [
@@ -194,6 +204,7 @@ export class InMemoryRuntimeHost {
         ...(options.durableRecovery ? ["durable_restart_recovery"] : []),
         "append_only_session_context",
         ...(options.durableSessions ? ["durable_sessions"] : []),
+        "authoritative_tool_execution_records",
       ],
     };
   }
@@ -249,6 +260,18 @@ export class InMemoryRuntimeHost {
           runtimeSessionTurnRequestSchema.parse(command.payload),
           { signal },
         );
+      case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
+        const identity = toolExecutionIdentitySchema.parse(command.payload);
+        return this.#toolExecutions.get(
+          identity.sessionId,
+          identity.turnId,
+          identity.toolCallId,
+        ) ?? null;
+      }
+      case LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND: {
+        const identity = turnToolExecutionsIdentitySchema.parse(command.payload);
+        return this.#toolExecutions.listTurn(identity.sessionId, identity.turnId);
+      }
       case ANSWER_RUNTIME_PERMISSION_COMMAND:
         return this.#answerPermission(
           runtimePermissionAnswerSchema.parse(command.payload),
@@ -405,6 +428,7 @@ export class InMemoryRuntimeHost {
       registry: this.#toolRegistry,
       createPermissionId: this.#createPermissionId,
       existingReceiptIds: input.completedReceiptIds,
+      executionStore: this.#toolExecutions,
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];

@@ -28,6 +28,10 @@ checkpoint also retains generated-message identity and accumulated usage, so a
 Turn interrupted after tool execution can resume and commit exactly once.
 
 The live Utility Process stores Runtime events, checkpoints and Session facts
-under separate directories beneath its explicit state root. Existing CardBush
+under separate directories beneath its explicit state root. Tool execution also
+has a checksummed journal containing the admitted manifest, exact result,
+Execution Facts, Artifacts and Workspace Changes. Event references come only
+from those declared facts; Runtime never extracts paths or effects from output
+text. Existing CardBush
 chat remains unchanged until the typed Session Turn path passes product A/B
 gates.

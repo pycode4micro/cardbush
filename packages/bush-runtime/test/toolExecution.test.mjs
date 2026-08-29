@@ -8,6 +8,8 @@ import {
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   BUSH_TOOL_RESULT_PROTOCOL,
+  GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+  LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
 } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost, ToolRegistry } from "../dist/index.js";
 
@@ -86,6 +88,58 @@ test("returns malformed JSON as one factual tool failure and lets the model reco
   assert.equal(executions, 0);
   assert.equal(failed.payload.error.code, "tool_arguments_invalid_json");
   assert.doesNotMatch(failed.payload.error.message, /fixture_tool/);
+});
+
+test("projects only tool-declared Artifact and Workspace Change references", async () => {
+  const registry = registryWithExecution({
+    execute({ toolCall, actionManifest }) {
+      const base = result(toolCall.id, actionManifest);
+      return {
+        ...base,
+        artifacts: [{
+          artifact_id: "artifact_fixture",
+          type: "image",
+          path: "C:\\tmp\\fixture.png",
+          media_type: "image/png",
+          display: "inline",
+          metadata: {},
+        }],
+        workspace_changes: [{
+          change_id: "change_fixture",
+          path: "src/fixture.ts",
+          status: "modified",
+          additions: 2,
+          deletions: 1,
+          metadata: {},
+        }],
+      };
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("done")]),
+    registry,
+  );
+  await host.runModelTurn(request());
+  const completed = host.events("session_tools", "turn_tools").find(
+    (event) => event.kind === "tool_completed",
+  );
+  const record = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: {
+      sessionId: "session_tools",
+      turnId: "turn_tools",
+      toolCallId: "call_fixture",
+    },
+  });
+  const listed = await host.sendCommand({
+    kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+    payload: { sessionId: "session_tools", turnId: "turn_tools" },
+  });
+
+  assert.deepEqual(completed.payload.artifactIds, ["artifact_fixture"]);
+  assert.deepEqual(completed.payload.workspaceChangeIds, ["change_fixture"]);
+  assert.equal(record.result.artifacts[0].path, "C:\\tmp\\fixture.png");
+  assert.equal(listed.length, 1);
 });
 
 test("rejects a mismatched Execution Fact instead of trusting tool output prose", async () => {

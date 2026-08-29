@@ -5,6 +5,12 @@ export const BUSH_TOOL_RESULT_PROTOCOL = "bush.tool_result.v1" as const;
 export const BUSH_ACTION_MANIFEST_PROTOCOL =
   "bush.tool.action_manifest.v1" as const;
 export const BUSH_EXECUTION_FACT_PROTOCOL = "bush.tool.execution_fact.v1" as const;
+export const BUSH_TOOL_EXECUTION_RECORD_PROTOCOL =
+  "bush.tool.execution_record.v1" as const;
+export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
+  "runtime.get_tool_execution" as const;
+export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
+  "runtime.list_turn_tool_executions" as const;
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),
@@ -71,12 +77,44 @@ export const executionFactSchema = z.object({
 
 export type ExecutionFact = z.infer<typeof executionFactSchema>;
 
+export const artifactSchema = z
+  .object({
+    artifact_id: z.string().min(1),
+    type: z.string().min(1),
+    uri: z.string().min(1).optional(),
+    path: z.string().min(1).optional(),
+    media_type: z.string().min(1).optional(),
+    display: z.enum(["inline", "attachment", "hidden"]).optional(),
+    metadata: z.record(z.string(), z.unknown()).default({}),
+  })
+  .refine((artifact) => artifact.uri !== undefined || artifact.path !== undefined, {
+    message: "artifact requires uri or path",
+  });
+
+export type Artifact = z.infer<typeof artifactSchema>;
+
+export const workspaceChangeSchema = z.object({
+  change_id: z.string().min(1),
+  path: z.string().min(1),
+  status: z.enum(["added", "modified", "deleted", "renamed"]),
+  previous_path: z.string().min(1).optional(),
+  additions: z.number().int().nonnegative().optional(),
+  deletions: z.number().int().nonnegative().optional(),
+  before_hash: z.string().min(1).optional(),
+  after_hash: z.string().min(1).optional(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export type WorkspaceChange = z.infer<typeof workspaceChangeSchema>;
+
 export const toolResultSchema = z.object({
   protocol: z.literal(BUSH_TOOL_RESULT_PROTOCOL),
   tool_call_id: z.string().min(1),
   success: z.boolean(),
   output: z.unknown(),
   facts: z.array(executionFactSchema).default([]),
+  artifacts: z.array(artifactSchema).default([]),
+  workspace_changes: z.array(workspaceChangeSchema).default([]),
   error: z
     .object({
       code: z.string().min(1),
@@ -87,3 +125,30 @@ export const toolResultSchema = z.object({
 });
 
 export type ToolResult = z.infer<typeof toolResultSchema>;
+
+export const toolExecutionIdentitySchema = z.object({
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  toolCallId: z.string().min(1),
+});
+
+export const turnToolExecutionsIdentitySchema = z.object({
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+});
+
+export const toolExecutionRecordSchema = z.object({
+  protocol: z.literal(BUSH_TOOL_EXECUTION_RECORD_PROTOCOL),
+  requestId: z.string().min(1),
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  round: z.number().int().positive(),
+  ordinal: z.number().int().nonnegative(),
+  recordedAt: z.string().min(1),
+  toolCall: toolCallSchema,
+  outcome: z.enum(["completed", "failed", "cancelled"]),
+  actionManifest: actionManifestSchema.optional(),
+  result: toolResultSchema,
+});
+
+export type ToolExecutionRecord = z.infer<typeof toolExecutionRecordSchema>;
