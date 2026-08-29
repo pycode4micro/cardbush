@@ -207,6 +207,9 @@ const desktopApi = {
       name: string;
       size: number;
     }>>,
+  listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
+  readSkill: (skillName: string) =>
+    ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,

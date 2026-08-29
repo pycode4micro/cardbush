@@ -27,6 +27,7 @@ import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import { CardbushAppService, type HostRequest } from './cardbushAppService';
+import { listProductSkills, readProductSkill } from './productSkills';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -2019,6 +2020,12 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
   return inspected.filter((item) => item != null);
 });
 
+ipcMain.handle('skills:list', () => listProductSkills(productSkillRoots()));
+
+ipcMain.handle('skills:read', (_, skillName: string) =>
+  readProductSkill(productSkillRoots(), String(skillName ?? '')),
+);
+
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
     title: 'Open project',
@@ -2429,6 +2436,7 @@ async function initializeRuntimeHost() {
           app.getPath('userData'),
           'runtime-state',
         ),
+        CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
     }) as { start: () => Promise<unknown>; stop: () => void };
@@ -2445,6 +2453,18 @@ async function initializeRuntimeHost() {
   } catch (error) {
     console.error('[bush-runtime] IPC initialization failed', error);
   }
+}
+
+function productSkillRoots(): string[] {
+  const configuredRoots = process.env.CARDBUSH_PRODUCT_SKILL_ROOTS?.trim();
+  const externalRoots = configuredRoots
+    ? configuredRoots.split(path.delimiter).map((item) => item.trim()).filter(Boolean)
+    : [];
+  return [
+    path.join(app.getAppPath(), 'assets', 'skills'),
+    path.join(app.getPath('userData'), 'skills'),
+    ...externalRoots,
+  ];
 }
 
 function registerLocalFileProtocol() {

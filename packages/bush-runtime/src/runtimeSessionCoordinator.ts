@@ -75,6 +75,18 @@ export class RuntimeSessionCoordinator {
     return this.#store.updateMetadata(input);
   }
 
+  supersedeMessages(input: {
+    sessionId: string;
+    messageIds: string[];
+    reason: string;
+    replacementTurnId?: string;
+  }): SessionSnapshot {
+    if (this.#activeSessions.has(input.sessionId)) {
+      throw new Error("Session messages cannot change while its Turn is active.");
+    }
+    return this.#store.supersedeMessages(input);
+  }
+
   delete(sessionId: string): boolean {
     if (this.#activeSessions.has(sessionId)) {
       throw new Error("An active Session cannot be deleted.");

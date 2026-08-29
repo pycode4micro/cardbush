@@ -25,6 +25,7 @@
     "test:markdown": "node scripts/test-markdown-format.mjs",
     "test:skill-selection": "node scripts/test-skill-selection-metadata.mjs",
     "test:skill-icons": "node scripts/test-skill-icons-contract.mjs",
+    "test:product-skills": "tsc -p tsconfig.node.json && node scripts/test-product-skills-contract.mjs",
     "test:task-plan": "node scripts/test-task-plan-contract.mjs",
     "test:turn-guidance": "node scripts/test-turn-guidance-contract.mjs",
     "test:composer-actions": "node scripts/test-composer-quick-actions-contract.mjs",

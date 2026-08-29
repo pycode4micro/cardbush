@@ -8,6 +8,7 @@ import {
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
   GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
@@ -24,6 +25,7 @@ import {
   CREATE_RUNTIME_SESSION_COMMAND,
   DELETE_RUNTIME_SESSION_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
+  SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   createRuntimeGoalRequestSchema,
@@ -44,6 +46,7 @@ import {
   teamSnapshotSchema,
   updateRuntimeGoalRequestSchema,
   updateRuntimeSessionMetadataRequestSchema,
+  supersedeRuntimeSessionMessagesRequestSchema,
   type ModelRequest,
   type ModelMessage,
   type CacheChainState,
@@ -267,11 +270,13 @@ export class InMemoryRuntimeHost {
         DELETE_RUNTIME_SESSION_COMMAND,
         LIST_RUNTIME_SESSIONS_COMMAND,
         UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
+        SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
         ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
         RUN_RUNTIME_SESSION_TURN_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
+        GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
         LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
         APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
@@ -365,6 +370,10 @@ export class InMemoryRuntimeHost {
         return this.#sessions.updateMetadata(
           updateRuntimeSessionMetadataRequestSchema.parse(command.payload),
         );
+      case SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND:
+        return this.#sessions.supersedeMessages(
+          supersedeRuntimeSessionMessagesRequestSchema.parse(command.payload),
+        );
       case ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND: {
         const input = assembleRuntimeSessionContextRequestSchema.parse(command.payload);
         return this.#sessions.assemble({
@@ -393,6 +402,8 @@ export class InMemoryRuntimeHost {
       }
       case GET_RUNTIME_TOOL_CATALOG_COMMAND:
         return this.#toolRegistry.definitions();
+      case GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND:
+        return this.#toolRegistry.catalog();
       case GET_RUNTIME_SUBAGENT_TASK_COMMAND: {
         const identity = subagentTaskIdentitySchema.parse(command.payload);
         return this.#subagentTasks.get(identity.parentSessionId, identity.taskId) ?? null;

@@ -20,10 +20,10 @@ async function run() {
     GET_RUNTIME_CAPABILITIES_COMMAND,
     GET_RUNTIME_SESSION_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+    RUN_MODEL_TURN_COMMAND,
     RUN_RUNTIME_SESSION_TURN_COMMAND,
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   } = await import('@cardbush/bush-protocol');
-  const { RUN_MODEL_TURN_COMMAND } = await import('@cardbush/bush-runtime');
   const { ElectronRuntimeTransport } = await import(
     '@cardbush/bush-runtime-electron'
   );
@@ -153,11 +153,14 @@ async function run() {
       15_000,
       'Runtime Turn command',
     );
-    await within(streamComplete, 15_000, 'Runtime Turn stream');
-    removeFrameListener();
-
     assert.equal(turnResponse.type, 'command_response');
     assert.equal(turnResponse.ok, true);
+    await within(streamComplete, 15_000, 'Runtime Turn stream').catch((error) => {
+      error.message += `; observed frames: ${JSON.stringify(frames)}`;
+      throw error;
+    });
+    removeFrameListener();
+
     assert.equal(turnResponse.result.kind, 'turn_terminal');
     assert.equal(turnResponse.result.payload.status, 'failed');
     assert.equal(

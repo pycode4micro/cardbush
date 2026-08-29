@@ -19,25 +19,24 @@ import {
   registerRuntimePermission,
   removeRuntimePermission,
   removeRuntimePermissionsForTurn,
+  takeRuntimeGuidance,
 } from '../runtime-client';
-import type { ChatStreamRequest } from './api';
+import type {
+  ChatStreamEventHandlers,
+  ChatStreamRequest,
+  TurnEventStreamRequest,
+} from './api';
+import { synchronizeProductMcpSnapshot } from './productMcp';
+import { synchronizeProductTeamSnapshot } from './productTeams';
 
 const ROOT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
-For delivery or review work, use update_task_plan when a visible plan materially helps. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
+For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
 Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure.`;
 
 const CHILD_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables.`;
 const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
-const WORKSPACE_TOOLS = new Set([
-  'read_file',
-  'search_file_content',
-  'write_file',
-  'edit_file',
-  'terminal_exec',
-]);
-
 export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
     throw new Error('Electron Runtime bridge is unavailable.');
@@ -66,15 +65,20 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     const providerBinding = configured?.status === 'configured'
     ? configured.binding
     : undefined;
-    const catalog = await runtime.client.getToolCatalog(controller.signal);
+    await synchronizeProductMcpSnapshot(runtime.client);
+    const catalog = await runtime.client.getToolCatalogDetails(controller.signal);
+    await synchronizeProductTeamSnapshot(
+      runtime.client,
+      catalog.map((entry) => entry.definition),
+    );
     const disabled = new Set(request.disabledTools ?? []);
     const hasWorkspace = Boolean(request.projectDir?.trim());
-    const tools = catalog.filter((tool) =>
-      !disabled.has(tool.name) &&
-      (hasWorkspace || !WORKSPACE_TOOLS.has(tool.name)) &&
-      (request.referencePlanMode !== 'off' || tool.name !== 'update_task_plan') &&
-      (request.teamModeEnabled === true || tool.name !== 'team_delegate'),
-    );
+    const tools = catalog.filter((entry) =>
+      !disabled.has(entry.definition.name) &&
+      (hasWorkspace || entry.manifest.dispatch_scope !== 'resource') &&
+      (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
+      (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
+    ).map((entry) => entry.definition);
     const contextMessage = runtimeContext(request);
     const runtimeRequest: RuntimeSessionTurnRequest = {
     protocol: 'bush.session_turn_request.v1',
@@ -150,19 +154,22 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         unregisterTurn();
       }
 
+      const guidance = takeRuntimeGuidance(request.sessionId);
       const goal = await runtime.client.getGoal(request.sessionId, controller.signal);
-      if (goal?.status !== 'active' || terminal.payload.status !== 'completed') break;
+      if (!guidance && (goal?.status !== 'active' || terminal.payload.status !== 'completed')) {
+        break;
+      }
       currentRequest = {
         ...runtimeRequest,
         requestId: `request_${crypto.randomUUID()}`,
         turnId: `turn_${crypto.randomUUID()}`,
         inputMessages: [{
-          messageId: `message_${crypto.randomUUID()}`,
+          messageId: guidance?.clientMessageId || `message_${crypto.randomUUID()}`,
           createdAt: new Date().toISOString(),
           message: {
             role: 'user',
-            name: 'goal_continuation',
-            content: GOAL_CONTINUATION_PROMPT,
+            name: guidance ? 'turn_guidance' : 'goal_continuation',
+            content: guidance?.content ?? GOAL_CONTINUATION_PROMPT,
           },
         }],
         sessionMetadata: {},
@@ -208,20 +215,71 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   }
 }
 
+export async function streamRuntimeTurnEvents(
+  request: TurnEventStreamRequest,
+): Promise<void> {
+  const runtime = createDesktopRuntimeSession();
+  const pendingToolLoads = new Set<Promise<void>>();
+  let terminal: Extract<RuntimeEvent, { kind: 'turn_terminal' }> | undefined;
+  try {
+    await consumeRuntimeEvents(
+      runtime,
+      { sessionId: request.sessionId, turnId: request.turnId },
+      request,
+      pendingToolLoads,
+      (event) => { terminal = event; },
+      () => undefined,
+      request.signal ?? new AbortController().signal,
+      {
+        afterSequence: request.afterSequence,
+        lastEventId: request.lastEventId,
+      },
+    );
+    await Promise.allSettled([...pendingToolLoads]);
+    if (terminal) request.onDone?.(terminalSnapshot(terminal));
+    const snapshot = await runtime.client.getSession(request.sessionId, request.signal);
+    if (snapshot) {
+      request.onMessages?.(
+        snapshot.turns.flatMap((turn) => turn.messages).map((message) => ({
+          id: message.messageId,
+          messageId: message.messageId,
+          role: message.message.role === 'developer' ? 'system' : message.message.role,
+          content: message.message.content,
+          conversationId: snapshot.sessionId,
+          turnId: message.turnId,
+          createdAt: message.createdAt,
+          turnSequence: message.turnSequence,
+          messageIndex: message.messageIndex,
+        })),
+        true,
+      );
+    }
+  } finally {
+    runtime.dispose();
+  }
+}
+
 async function consumeRuntimeEvents(
   runtime: ReturnType<typeof createDesktopRuntimeSession>,
-  runtimeRequest: RuntimeSessionTurnRequest,
-  request: ChatStreamRequest,
+  runtimeRequest: Pick<RuntimeSessionTurnRequest, 'sessionId' | 'turnId'>,
+  request: ChatStreamEventHandlers,
   pendingToolLoads: Set<Promise<void>>,
   onTerminal: (event: Extract<RuntimeEvent, { kind: 'turn_terminal' }>) => void,
   onAssistantMessage: (messageId: string) => void,
   signal: AbortSignal,
+  cursor?: { afterSequence?: number; lastEventId?: string },
 ) {
   for await (const event of runtime.client.events({
     sessionId: runtimeRequest.sessionId,
     turnId: runtimeRequest.turnId,
+    cursor,
     signal,
   })) {
+    request.onEventCursor?.({
+      eventName: event.kind,
+      eventId: event.eventId,
+      sequence: event.sequence,
+    });
     switch (event.kind) {
       case 'turn_accepted':
         request.onStart?.({

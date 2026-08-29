@@ -65,6 +65,7 @@ import type {
   GoalState as RuntimeGoalState,
   SessionMessage as RuntimeSessionMessage,
   SessionSnapshot as RuntimeSessionSnapshot,
+  SubagentTask as RuntimeSubagentTask,
   ToolExecutionRecord as RuntimeToolExecutionRecord,
 } from '@cardbush/bush-protocol';
 import {
@@ -79,6 +80,10 @@ import {
 import { applyAllowedResourcePathsToMetadata } from './localPathMetadata';
 import { applyAllowedSkillsToRequest } from './skillSelectionMetadata';
 import {
+  readProductProjectContext,
+  saveProductProjectContext,
+} from './productProjectContext';
+import {
   taskPlanFromPayload,
   taskPlanUpdateFromExecutionPayload,
 } from './taskPlan';
@@ -90,9 +95,22 @@ import {
 } from './streamProtocol';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { toolArtifactsFromPayload } from './toolArtifacts';
-import { streamRuntimeChat } from './runtimeChat';
+import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
+import {
+  readProductMcpServers,
+  replaceProductMcpServers,
+  synchronizeProductMcpSnapshot,
+  validateProductMcpServer,
+} from './productMcp';
+import {
+  readProductAgentProfiles,
+  readProductTeams,
+  replaceProductTeamConfiguration,
+  validateProductTeamConfiguration,
+} from './productTeams';
 import {
   answerRuntimeInteraction,
+  enqueueRuntimeGuidance,
   hasRuntimeInteraction,
   pendingRuntimeInteraction,
   stopActiveRuntimeTurn,
@@ -846,11 +864,17 @@ export async function fetchBackendReadiness(): Promise<Record<string, unknown>> 
 }
 
 export async function fetchTeams(signal?: AbortSignal): Promise<TeamDefinition[]> {
+  if (window.cardbushDesktop?.runtime) return readProductTeams();
   const payload = await readJson<Record<string, unknown>>(url('/v1/teams'), { signal });
   return arrayFrom(payload.items).map(teamDefinitionFromPayload);
 }
 
 export async function fetchTeam(teamId: string, signal?: AbortSignal): Promise<TeamDefinition> {
+  if (window.cardbushDesktop?.runtime) {
+    const team = readProductTeams().find((item) => item.id === teamId.trim());
+    if (!team) throw new Error(localizedClientMessage('团队不存在', 'Team does not exist'));
+    return team;
+  }
   return teamDefinitionFromPayload(await readJson<unknown>(
     url(`/v1/teams/${encodeURIComponent(teamId.trim())}`),
     { signal },
@@ -858,6 +882,26 @@ export async function fetchTeam(teamId: string, signal?: AbortSignal): Promise<T
 }
 
 export async function validateTeamDefinition(team: TeamDefinition, signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog(signal);
+      const teams = readProductTeams().filter((item) => item.id !== team.id);
+      const result = validateProductTeamConfiguration({
+        teams: [...teams, team],
+        profiles: readProductAgentProfiles(),
+        tools,
+      });
+      if (!result.success) {
+        throw new Error(result.error.issues.map((issue) =>
+          `${issue.path.join('.')}: ${issue.message}`).join('\n'));
+      }
+      return team;
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(url('/v1/teams/validate'), {
     method: 'POST', body: JSON.stringify(teamDefinitionToPayload(team)), signal,
   });
@@ -865,6 +909,25 @@ export async function validateTeamDefinition(team: TeamDefinition, signal?: Abor
 }
 
 export async function saveTeamDefinition(team: TeamDefinition, signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog(signal);
+      const teams = readProductTeams();
+      const index = teams.findIndex((item) => item.id === team.id);
+      if (index >= 0) teams[index] = team;
+      else teams.push(team);
+      await replaceProductTeamConfiguration(runtime.client, {
+        teams,
+        profiles: readProductAgentProfiles(),
+        tools,
+      });
+      return team;
+    } finally {
+      runtime.dispose();
+    }
+  }
   await validateTeamDefinition(team, signal);
   return teamDefinitionFromPayload(await readJson<unknown>(
     url(`/v1/teams/${encodeURIComponent(team.id)}`),
@@ -873,17 +936,38 @@ export async function saveTeamDefinition(team: TeamDefinition, signal?: AbortSig
 }
 
 export async function deleteTeamDefinition(teamId: string): Promise<void> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog();
+      await replaceProductTeamConfiguration(runtime.client, {
+        teams: readProductTeams().filter((team) => team.id !== teamId.trim()),
+        profiles: readProductAgentProfiles(),
+        tools,
+      });
+      return;
+    } finally {
+      runtime.dispose();
+    }
+  }
   await readJson<unknown>(url(`/v1/teams/${encodeURIComponent(teamId.trim())}`), {
     method: 'DELETE',
   });
 }
 
 export async function fetchAgentProfiles(signal?: AbortSignal): Promise<AgentProfileDefinition[]> {
+  if (window.cardbushDesktop?.runtime) return readProductAgentProfiles();
   const payload = await readJson<Record<string, unknown>>(url('/v1/agent-profiles'), { signal });
   return arrayFrom(payload.items).map(agentProfileFromPayload);
 }
 
 export async function fetchAgentProfile(profileId: string, signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    const profile = readProductAgentProfiles().find((item) => item.id === profileId.trim());
+    if (!profile) throw new Error(localizedClientMessage('成员配置不存在', 'Agent configuration does not exist'));
+    return profile;
+  }
   return agentProfileFromPayload(await readJson<unknown>(
     url(`/v1/agent-profiles/${encodeURIComponent(profileId.trim())}`),
     { signal },
@@ -891,6 +975,26 @@ export async function fetchAgentProfile(profileId: string, signal?: AbortSignal)
 }
 
 export async function validateAgentProfile(profile: AgentProfileDefinition, signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog(signal);
+      const profiles = readProductAgentProfiles().filter((item) => item.id !== profile.id);
+      const result = validateProductTeamConfiguration({
+        teams: readProductTeams(),
+        profiles: [...profiles, profile],
+        tools,
+      });
+      if (!result.success) {
+        throw new Error(result.error.issues.map((issue) =>
+          `${issue.path.join('.')}: ${issue.message}`).join('\n'));
+      }
+      return profile;
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(url('/v1/agent-profiles/validate'), {
     method: 'POST', body: JSON.stringify(agentProfileToPayload(profile)), signal,
   });
@@ -898,6 +1002,25 @@ export async function validateAgentProfile(profile: AgentProfileDefinition, sign
 }
 
 export async function saveAgentProfile(profile: AgentProfileDefinition, signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog(signal);
+      const profiles = readProductAgentProfiles();
+      const index = profiles.findIndex((item) => item.id === profile.id);
+      if (index >= 0) profiles[index] = profile;
+      else profiles.push(profile);
+      await replaceProductTeamConfiguration(runtime.client, {
+        teams: readProductTeams(),
+        profiles,
+        tools,
+      });
+      return profile;
+    } finally {
+      runtime.dispose();
+    }
+  }
   await validateAgentProfile(profile, signal);
   return agentProfileFromPayload(await readJson<unknown>(
     url(`/v1/agent-profiles/${encodeURIComponent(profile.id)}`),
@@ -906,12 +1029,44 @@ export async function saveAgentProfile(profile: AgentProfileDefinition, signal?:
 }
 
 export async function deleteAgentProfile(profileId: string): Promise<void> {
+  if (window.cardbushDesktop?.runtime) {
+    const normalized = profileId.trim();
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog();
+      await replaceProductTeamConfiguration(runtime.client, {
+        teams: readProductTeams(),
+        profiles: readProductAgentProfiles().filter((profile) => profile.id !== normalized),
+        tools,
+      });
+      return;
+    } finally {
+      runtime.dispose();
+    }
+  }
   await readJson<unknown>(url(`/v1/agent-profiles/${encodeURIComponent(profileId.trim())}`), {
     method: 'DELETE',
   });
 }
 
 export async function fetchTeamConfigurationCapabilities(signal?: AbortSignal) {
+  if (window.cardbushDesktop?.runtime) {
+    void signal;
+    return {
+      available: true,
+      teamProtocol: 'bush.team_snapshot.v1',
+      agentProfileProtocol: AGENT_PROFILE_PROTOCOL,
+      contextProtocol: 'bush.session_snapshot.v1',
+      delegationTool: 'team_delegate',
+      ordinarySubagentProfileArgument: false,
+      memberCapabilities: ['instructions', 'tools', 'conference'],
+      toolPolicy: 'explicit_snapshot',
+      fallbackMemberRequired: false,
+      fixedDag: false,
+      profileOnlyHooks: [],
+    } satisfies TeamConfigurationCapabilities;
+  }
   return teamConfigurationCapabilitiesFromPayload(await readJson<unknown>(
     url('/v1/team-configuration/capabilities'),
     { signal },
@@ -922,6 +1077,52 @@ export async function fetchRuntimeToolInventory(filters?: {
   sessionId?: string;
   turnId?: string;
 }): Promise<RuntimeToolInventory> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const [catalog, mcp] = await Promise.all([
+        runtime.client.getToolCatalogDetails(),
+        runtime.client.getMcpSnapshot(),
+      ]);
+      const mcpOwners = new Map((mcp?.servers ?? []).flatMap((server) =>
+        server.tools.map((tool) => [tool.runtimeName, server.id] as const)));
+      const installed = catalog.map((entry): RuntimeToolInventoryEntry => {
+        const mcpOwner = mcpOwners.get(entry.definition.name);
+        return {
+          name: entry.definition.name,
+          package: mcpOwner ? `mcp:${mcpOwner}` : entry.registrationOwner ?? 'runtime',
+          description: entry.definition.description,
+          enabled: true,
+          runtimeLoaded: true,
+          schemaAvailable: true,
+          inputSchema: entry.definition.inputSchema,
+          dispatch: entry.manifest,
+          injection: { core: !mcpOwner, default: true },
+          category: mcpOwner ? 'discoverable_plugin' : 'default',
+        };
+      });
+      const names = installed.map((tool) => tool.name);
+      void filters;
+      return {
+        protocol: 'bush.tool_catalog.v1',
+        tools: names,
+        installed,
+        modelVisibleDefault: names,
+        modelVisibleThisTurn: names,
+        modelVisibleSource: 'electron_runtime_catalog',
+        modelVisibleSnapshot: null,
+        conditional: [],
+        turnAdded: [],
+        discoverablePlugins: [...mcpOwners.keys()],
+        disabled: [],
+        internalGuardEvents: [],
+        loadErrors: [],
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const endpoint = new URL(url('/v1/tools'));
   if (filters?.sessionId?.trim()) {
     endpoint.searchParams.set('session_id', filters.sessionId.trim());
@@ -950,6 +1151,21 @@ export async function manageRuntimeTool(request: {
   enabled?: boolean;
   default?: boolean;
 }): Promise<Record<string, unknown>> {
+  if (window.cardbushDesktop?.runtime) {
+    if (request.action === 'enable' || request.action === 'disable' ||
+        request.action === 'update_injection' || request.action === 'check' ||
+        request.action === 'user_ask_list') {
+      return {
+        source: 'cardbush_product_policy',
+        action: request.action,
+        toolName: request.toolName ?? '',
+      };
+    }
+    throw new Error(localizedClientMessage(
+      '工具安装与卸载已迁移到 CardBush MCP 配置，请在 MCP 设置中管理。',
+      'Tool installation is managed through CardBush MCP settings.',
+    ));
+  }
   return readJson<Record<string, unknown>>(url('/v1/tools/manage'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1171,6 +1387,27 @@ export async function saveModelConfigs(request: {
 }
 
 export async function fetchMcpServers(): Promise<McpServersResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const servers = readProductMcpServers();
+      const result = await synchronizeProductMcpSnapshot(runtime.client).catch(() => null);
+      const toolCounts = new Map(
+        result?.servers.map((server) => [server.id, server.tools.length]) ?? [],
+      );
+      return {
+        servers: servers.map((server) => ({
+          ...server,
+          toolCount: toolCounts.get(server.id) ?? 0,
+          status: result ? (server.enabled ? 'connected' : 'disabled') : 'unavailable',
+        })),
+        protocolVersions: ['2025-11-25', '2025-06-18'],
+        raw: { source: 'cardbush_product', snapshot: result },
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<unknown>(url('/v1/mcp/servers'));
   return mcpServersFromPayload(payload);
 }
@@ -1178,6 +1415,23 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
 export async function validateMcpServerConfig(
   input: McpServerConfigInput,
 ): Promise<McpServerValidationResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
+    const result = validateProductMcpServer(candidate);
+    return {
+      ok: result.success,
+      serverId: candidate.id,
+      tools: [],
+      messages: result.success
+        ? []
+        : result.error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            message: issue.message,
+            severity: 'error' as const,
+          })),
+      raw: result.success ? { source: 'cardbush_product' } : { issues: result.error.issues },
+    };
+  }
   const payload = await readJson<unknown>(url('/v1/mcp/servers/validate'), {
     method: 'POST',
     body: JSON.stringify(mcpServerRequestBody(input)),
@@ -1191,6 +1445,25 @@ export async function saveMcpServerConfig(
   const normalized = input.id.trim();
   if (!normalized) {
     throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
+    const servers = readProductMcpServers();
+    const index = servers.findIndex((server) => server.id === normalized);
+    if (index >= 0) servers[index] = candidate;
+    else servers.push(candidate);
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const result = await replaceProductMcpServers(runtime.client, servers);
+      const connected = result.servers.find((server) => server.id === candidate.id);
+      return {
+        ...candidate,
+        toolCount: connected?.tools.length ?? 0,
+        status: candidate.enabled ? 'connected' : 'disabled',
+      };
+    } finally {
+      runtime.dispose();
+    }
   }
   const payload = await readJson<unknown>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
@@ -1210,6 +1483,26 @@ export async function setMcpServerEnabled(
   if (!normalized) {
     throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
   }
+  if (window.cardbushDesktop?.runtime) {
+    const servers = readProductMcpServers();
+    const index = servers.findIndex((server) => server.id === normalized);
+    if (index < 0) {
+      throw new Error(localizedClientMessage('MCP 服务不存在', 'MCP server does not exist'));
+    }
+    servers[index] = { ...servers[index], enabled };
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const result = await replaceProductMcpServers(runtime.client, servers);
+      const current = servers[index];
+      return {
+        ...current,
+        toolCount: result.servers.find((server) => server.id === normalized)?.tools.length ?? 0,
+        status: enabled ? 'connected' : 'disabled',
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<unknown>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}/${enabled ? 'enable' : 'disable'}`),
     { method: 'POST' },
@@ -1223,6 +1516,21 @@ export async function deleteMcpServerConfig(
   const normalized = serverId.trim();
   if (!normalized) {
     throw new Error(localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'));
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const servers = readProductMcpServers();
+    const exists = servers.some((server) => server.id === normalized);
+    if (!exists) return { id: normalized, deleted: false, source: 'cardbush_product' };
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await replaceProductMcpServers(
+        runtime.client,
+        servers.filter((server) => server.id !== normalized),
+      );
+      return { id: normalized, deleted: true, source: 'cardbush_product' };
+    } finally {
+      runtime.dispose();
+    }
   }
   return readJson<Record<string, unknown>>(
     url(`/v1/mcp/servers/${encodeURIComponent(normalized)}`),
@@ -1816,6 +2124,24 @@ function initialRuntimeConversationTitle(value: unknown) {
   const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
   return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
+}
+
+function lexicalTerms(value: string) {
+  return [...new Set(
+    value
+      .normalize('NFKC')
+      .toLocaleLowerCase()
+      .split(/[^\p{L}\p{N}_]+/u)
+      .map((term) => term.trim())
+      .filter(Boolean),
+  )];
+}
+
+function lexicalScore(content: string, terms: string[]) {
+  if (terms.length === 0) return 0;
+  const normalized = content.normalize('NFKC').toLocaleLowerCase();
+  return terms.reduce((score, term) => score + (normalized.includes(term) ? 1 : 0), 0) /
+    terms.length;
 }
 
 function runtimeMessage(
@@ -2455,6 +2781,40 @@ export async function searchSessionContext({
   requestId?: string;
   signal?: AbortSignal;
 }): Promise<SessionContextSearchResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
+      const excluded = new Set(excludeMessageIds ?? []);
+      const terms = lexicalTerms(query);
+      const offset = Math.max(0, Number(cursor) || 0);
+      const items = (snapshot?.turns.flatMap((turn) => turn.messages) ?? [])
+        .filter((message) => !excluded.has(message.messageId))
+        .map((message) => ({ message, projected: runtimeMessage(message, sessionId) }))
+        .filter(({ projected }) => roles.includes(projected.role))
+        .map(({ message, projected }) => ({
+          messageId: message.messageId,
+          turnId: message.turnId,
+          role: projected.role,
+          score: lexicalScore(projected.content, terms),
+          snippet: projected.content.slice(0, 800),
+          createdAt: message.createdAt,
+        }))
+        .filter((item) => item.score > 0)
+        .sort((left, right) => right.score - left.score || right.createdAt.localeCompare(left.createdAt));
+      const page = items.slice(offset, offset + limit);
+      return {
+        requestId: requestId ?? `context_${crypto.randomUUID()}`,
+        sessionId: snapshot?.sessionId ?? sessionId,
+        queryFingerprint: lexicalTerms(query).join('|'),
+        items: page,
+        nextCursor: offset + page.length < items.length ? String(offset + page.length) : undefined,
+        indexState: 'electron_runtime_exact_history',
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/context-search`),
     {
@@ -2503,6 +2863,29 @@ export async function fetchSessionMessageWindow({
   after?: number;
   signal?: AbortSignal;
 }): Promise<SessionMessageWindow> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
+      const messages = snapshot?.turns.flatMap((turn) => turn.messages) ?? [];
+      const anchor = messages.findIndex((message) => message.messageId === messageId.trim());
+      if (anchor < 0) {
+        throw new Error(localizedClientMessage('消息不存在', 'Message does not exist'));
+      }
+      const start = Math.max(0, anchor - before);
+      const end = Math.min(messages.length, anchor + after + 1);
+      return {
+        anchorMessageId: messageId,
+        messages: messages.slice(start, end).map((message) => runtimeMessage(message, sessionId)),
+        hasMoreBefore: start > 0,
+        hasMoreAfter: end < messages.length,
+        beforeCursor: start > 0 ? String(start) : undefined,
+        afterCursor: end < messages.length ? String(end) : undefined,
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const query = new URLSearchParams({ before: String(before), after: String(after) });
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(sessionId.trim())}/messages/${encodeURIComponent(messageId.trim())}/window?${query}`),
@@ -2529,6 +2912,24 @@ export async function fetchSessionContextWindowUsage(
   if (!normalizedSessionId) {
     throw new Error('session_id is required');
   }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(normalizedSessionId, signal);
+      const latest = snapshot?.turns.at(-1);
+      return {
+        sessionId: normalizedSessionId,
+        turnId: latest?.turnId ?? '',
+        model: '',
+        usedTokens: latest?.usage.inputTokens,
+        measuredAt: latest?.completedAt ?? snapshot?.updatedAt ?? new Date().toISOString(),
+        source: 'electron_runtime',
+        raw: { usage: latest?.usage ?? {} },
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/context-window`),
     { signal },
@@ -2543,6 +2944,27 @@ export async function fetchSessionTokenUsage(
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error('session_id is required');
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(normalizedSessionId, signal);
+      const totals = (snapshot?.turns ?? []).reduce((current, turn) => ({
+        prompt: current.prompt + (turn.usage.inputTokens ?? 0),
+        completion: current.completion + (turn.usage.outputTokens ?? 0),
+        cache: current.cache + (turn.usage.cachedInputTokens ?? 0),
+      }), { prompt: 0, completion: 0, cache: 0 });
+      return {
+        sessionId: normalizedSessionId,
+        promptTokens: totals.prompt,
+        completionTokens: totals.completion,
+        totalTokens: totals.prompt + totals.completion,
+        promptCacheHitTokens: totals.cache,
+        promptCacheMissTokens: Math.max(0, totals.prompt - totals.cache),
+      };
+    } finally {
+      runtime.dispose();
+    }
   }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalizedSessionId)}/usage`),
@@ -2574,6 +2996,21 @@ export async function fetchSessionWorkspaceChanges(
 ): Promise<ChatToolExecution[]> {
   const normalized = sessionId.trim();
   if (!normalized) return [];
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(normalized, signal);
+      if (!snapshot) return [];
+      const records = (await Promise.all(snapshot.turns.map((turn) =>
+        runtime.client.listTurnToolExecutions({ sessionId: normalized, turnId: turn.turnId }, signal)
+      ))).flat();
+      return records
+        .filter((record) => record.result.workspace_changes.length > 0)
+        .map(runtimeHistoryToolExecution);
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<{ items?: unknown[] }>(
     url(`/v1/sessions/${encodeURIComponent(normalized)}/workspace-changes`),
     { signal },
@@ -2654,6 +3091,23 @@ export async function sendTeamFlowAction(
 }
 
 export async function fetchSubagentCapabilities(): Promise<SubagentCapabilities> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const tools = await runtime.client.getToolCatalog();
+      return {
+        models: [],
+        tools: tools.map((tool) => tool.name),
+        toolPackages: [],
+        skills: [],
+        permissionLevels: ['allow', 'ask'],
+        runModes: ['concurrent_context_fork'],
+        toolProfiles: [],
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url('/v1/subagents/capabilities'),
   );
@@ -2661,6 +3115,25 @@ export async function fetchSubagentCapabilities(): Promise<SubagentCapabilities>
 }
 
 export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions();
+      const tasks = (await Promise.all(sessions.map((session) =>
+        runtime.client.listSubagentTasks({ parentSessionId: session.sessionId })
+      ))).flat();
+      return {
+        activeTasks: tasks.filter((task) => task.status === 'running').map((task) => ({ ...task })),
+        items: [],
+        usage: tasks.reduce((usage, task) => ({
+          inputTokens: Number(usage.inputTokens ?? 0) + (task.usage.inputTokens ?? 0),
+          outputTokens: Number(usage.outputTokens ?? 0) + (task.usage.outputTokens ?? 0),
+        }), {} as Record<string, unknown>),
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url('/v1/subagents/runtime'),
   );
@@ -2690,6 +3163,21 @@ export async function fetchSubagentTasks(
 ): Promise<SubagentTaskSnapshot[]> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) return [];
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const tasks = await runtime.client.listSubagentTasks(
+        { parentSessionId: normalizedSessionId },
+        options?.signal,
+      );
+      return tasks
+        .filter((task) => !options?.activeOnly || task.status === 'running')
+        .slice(0, Math.max(1, options?.limit ?? 100))
+        .map(runtimeSubagentTask);
+    } finally {
+      runtime.dispose();
+    }
+  }
   const endpoint = new URL(url('/v1/subagent-tasks'));
   endpoint.searchParams.set('session_id', normalizedSessionId);
   if (options?.activeOnly) endpoint.searchParams.set('active_only', 'true');
@@ -2710,6 +3198,22 @@ export async function fetchSubagentTask(
   if (!normalizedTaskId) {
     throw new Error(localizedClientMessage('子任务 ID 为空', 'Subagent task ID is empty'));
   }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions(signal);
+      for (const session of sessions) {
+        const task = await runtime.client.getSubagentTask({
+          parentSessionId: session.sessionId,
+          taskId: normalizedTaskId,
+        }, signal);
+        if (task) return runtimeSubagentTask(task);
+      }
+      throw new Error(localizedClientMessage('子任务不存在', 'Subagent task does not exist'));
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/subagent-tasks/${encodeURIComponent(normalizedTaskId)}`),
     { signal },
@@ -2724,6 +3228,19 @@ export async function fetchTurnSnapshot(
   const normalizedTurnId = turnId.trim();
   if (!normalizedTurnId) {
     throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions(signal);
+      for (const session of sessions) {
+        const turn = session.turns.find((item) => item.turnId === normalizedTurnId);
+        if (turn) return { ...turn, sessionId: session.sessionId, source: 'electron_runtime' };
+      }
+      throw new Error(localizedClientMessage('Turn 不存在', 'Turn does not exist'));
+    } finally {
+      runtime.dispose();
+    }
   }
   return readJson<Record<string, unknown>>(
     url(`/v1/turns/${encodeURIComponent(normalizedTurnId)}`),
@@ -2771,6 +3288,18 @@ export async function dispatchSubagent({
 }
 
 export async function fetchSkills(): Promise<SkillSummary[]> {
+  if (window.cardbushDesktop?.listSkills) {
+    const items = await window.cardbushDesktop.listSkills();
+    return items.map((item) => {
+      const value = asRecord(item);
+      return {
+        name: String(value.name ?? ''),
+        description: String(value.description ?? ''),
+        descriptionZh: String(value.descriptionZh ?? value.description_zh ?? ''),
+        path: String(value.path ?? ''),
+      };
+    }).filter((item) => item.name.trim());
+  }
   const payload = await readJson<{ skills?: unknown[]; items?: unknown[] }>(
     url('/v1/skills'),
   );
@@ -2794,6 +3323,9 @@ export async function fetchSkillDetail(skillName: string): Promise<SkillDetail> 
   if (!normalized) {
     throw new Error(localizedClientMessage('Skill 名称为空', 'Skill name is empty'));
   }
+  if (window.cardbushDesktop?.readSkill) {
+    return skillDetailFromPayload(await window.cardbushDesktop.readSkill(normalized));
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/skills/${encodeURIComponent(normalized)}`),
   );
@@ -2807,6 +3339,7 @@ export async function fetchProjectContext(
   if (!normalized) {
     return { projectDir: '', userPrompt: '' };
   }
+  if (window.cardbushDesktop?.runtime) return readProductProjectContext(normalized);
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/projects/context?project_dir=${encodeURIComponent(normalized)}`),
   );
@@ -2820,6 +3353,9 @@ export async function saveProjectContext({
   projectDir: string;
   userPrompt: string;
 }): Promise<ProjectContextResult> {
+  if (window.cardbushDesktop?.runtime) {
+    return saveProductProjectContext({ projectDir, userPrompt });
+  }
   const payload = await readJson<Record<string, unknown>>(url('/v1/projects/context'), {
     method: 'PUT',
     body: JSON.stringify({
@@ -3008,6 +3544,9 @@ export async function streamTurnEvents(request: TurnEventStreamRequest) {
   if (!turnId) {
     throw new Error(localizedClientMessage('turn_id 为空', 'turn_id is empty'));
   }
+  if (window.cardbushDesktop?.runtime) {
+    return streamRuntimeTurnEvents(request);
+  }
   const afterSequence = Math.max(0, Math.floor(request.afterSequence ?? 0));
   return streamEndpoint({
     endpoint: url(
@@ -3032,6 +3571,31 @@ export async function editMessage(request: EditMessageRequest) {
   if (!content) {
     throw new Error(localizedClientMessage('消息内容为空', 'Message content is empty'));
   }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(sessionId, request.signal);
+      if (!snapshot) {
+        throw new Error(localizedClientMessage('会话不存在', 'Conversation does not exist'));
+      }
+      const superseded = new Set(snapshot.supersededMessageIds);
+      const messages = snapshot.turns
+        .flatMap((turn) => turn.messages)
+        .filter((message) => !superseded.has(message.messageId));
+      const index = messages.findIndex((message) => message.messageId === messageId);
+      if (index < 0) {
+        throw new Error(localizedClientMessage('消息不存在', 'Message does not exist'));
+      }
+      await runtime.client.supersedeSessionMessages({
+        sessionId,
+        messageIds: messages.slice(index).map((message) => message.messageId),
+        reason: 'user_edit_regenerate',
+      }, request.signal);
+    } finally {
+      runtime.dispose();
+    }
+    return streamRuntimeChat({ ...request, userInput: content });
+  }
   await streamEndpoint({
     endpoint: url(
       `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
@@ -3053,6 +3617,21 @@ export async function sendGuidance(request: SendGuidanceRequest) {
   const guidance = request.guidance.trim();
   if (!sessionId || !turnId || !guidance) {
     throw new Error(localizedClientMessage('会话、turn_id 或引导内容为空', 'Conversation ID, turn_id, or guidance is empty'));
+  }
+  if (window.cardbushDesktop?.runtime) {
+    enqueueRuntimeGuidance({
+      sessionId,
+      clientMessageId: request.clientMessageId.trim(),
+      content: guidance,
+    });
+    return {
+      continuationQueued: true,
+      willContinueAfterCurrentRound: true,
+      guidance: {
+        clientMessageId: request.clientMessageId.trim(),
+        mode: 'append_context',
+      },
+    } satisfies SendGuidanceResponse;
   }
   const body: Record<string, unknown> = {
     session_id: sessionId,
@@ -5567,21 +6146,21 @@ function skillDetailFromPayload(item: unknown): SkillDetail {
   return {
     name: String(value.name ?? ''),
     description: String(value.description ?? ''),
-    descriptionZh: String(value.description_zh ?? ''),
+    descriptionZh: String(value.descriptionZh ?? value.description_zh ?? ''),
     path: String(value.path ?? ''),
-    packageDir: String(value.package_dir ?? ''),
+    packageDir: String(value.packageDir ?? value.package_dir ?? ''),
     content: String(value.content ?? ''),
     version: optionalString(value.version),
-    routingHidden: value.routing_hidden === true,
+    routingHidden: value.routingHidden === true || value.routing_hidden === true,
     requires: stringList(value.requires),
-    conflictsWith: stringList(value.conflicts_with),
-    minServerVersion: optionalString(value.min_server_version),
+    conflictsWith: stringList(value.conflictsWith ?? value.conflicts_with),
+    minServerVersion: optionalString(value.minServerVersion ?? value.min_server_version),
     timeout: numberRecord(value.timeout),
-    companionTools: stringList(value.companion_tools),
-    blockedTools: stringList(value.blocked_tools),
-    requiredReads: stringList(value.required_reads),
-    conditionalReads: stringList(value.conditional_reads),
-    resourceQuickRefs: recordList(value.resource_quick_refs),
+    companionTools: stringList(value.companionTools ?? value.companion_tools),
+    blockedTools: stringList(value.blockedTools ?? value.blocked_tools),
+    requiredReads: stringList(value.requiredReads ?? value.required_reads),
+    conditionalReads: stringList(value.conditionalReads ?? value.conditional_reads),
+    resourceQuickRefs: recordList(value.resourceQuickRefs ?? value.resource_quick_refs),
   };
 }
 
@@ -6239,6 +6818,10 @@ function teamDefinitionFromPayload(value: unknown): TeamDefinition {
     id: String(item.id ?? ''),
     name: String(item.name ?? ''),
     description: String(item.description ?? ''),
+    conferenceEnabled: item.conference_enabled === true || item.conferenceEnabled === true,
+    conferenceInstructions: optionalString(
+      item.conference_instructions ?? item.conferenceInstructions,
+    ),
     members: arrayFrom(item.members).map((rawMember) => {
       const member = asRecord(rawMember);
       return {
@@ -6257,6 +6840,8 @@ function teamDefinitionToPayload(team: TeamDefinition) {
     id: team.id.trim(),
     name: team.name.trim(),
     description: team.description.trim(),
+    conference_enabled: team.conferenceEnabled === true,
+    conference_instructions: team.conferenceInstructions ?? '',
     members: team.members.map((member) => ({
       id: member.id.trim(),
       agent_profile_id: member.agentProfileId.trim(),
@@ -6372,6 +6957,16 @@ function subagentTaskFromPayload(value: unknown): SubagentTaskSnapshot {
     usage: asRecord(item.usage),
     raw: item,
   };
+}
+
+function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
+  return subagentTaskFromPayload({
+    ...task,
+    terminal: task.status !== 'running',
+    requestPrompt: task.prompt,
+    responsePrompt: task.finalResponse,
+    report: task.finalResponse ? { finalResponse: task.finalResponse } : {},
+  });
 }
 
 function subagentWriteLeaseFromPayload(

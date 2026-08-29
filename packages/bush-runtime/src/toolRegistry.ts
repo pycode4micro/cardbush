@@ -6,6 +6,7 @@ import {
   type RuntimePermissionAnswer,
   type ToolCall,
   type ToolDefinition,
+  type ToolCatalogEntry,
   type ToolResult,
   type ModelMessage,
   type ModelRequest,
@@ -119,6 +120,20 @@ export class ToolRegistry {
   definitions(): ToolDefinition[] {
     return [...this.#registrations.values()].map(({ definition }) =>
       structuredClone(definition),
+    );
+  }
+
+  catalog(): ToolCatalogEntry[] {
+    return [...this.#registrations.values()].map((registration) =>
+      structuredClone({
+        definition: registration.definition,
+        manifest: registration.manifest,
+        parallelSafe: registration.parallelSafe === true,
+        visibleToChild: registration.visibleToChild !== false,
+        ...(registration.registrationOwner
+          ? { registrationOwner: registration.registrationOwner }
+          : {}),
+      }),
     );
   }
 

@@ -12,6 +12,8 @@ export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
 export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
   "runtime.list_turn_tool_executions" as const;
 export const GET_RUNTIME_TOOL_CATALOG_COMMAND = "runtime.get_tool_catalog" as const;
+export const GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND =
+  "runtime.get_tool_catalog_details" as const;
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),
@@ -58,6 +60,16 @@ export const actionManifestTemplateSchema = actionManifestSchema.omit({
 export type ActionManifestTemplate = z.infer<
   typeof actionManifestTemplateSchema
 >;
+
+export const toolCatalogEntrySchema = z.object({
+  definition: toolDefinitionSchema,
+  manifest: actionManifestTemplateSchema,
+  parallelSafe: z.boolean(),
+  visibleToChild: z.boolean(),
+  registrationOwner: z.string().min(1).optional(),
+});
+
+export type ToolCatalogEntry = z.infer<typeof toolCatalogEntrySchema>;
 
 export const executionFactSchema = z.object({
   protocol: z.literal(BUSH_EXECUTION_FACT_PROTOCOL),

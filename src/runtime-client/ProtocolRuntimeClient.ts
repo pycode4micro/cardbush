@@ -8,6 +8,7 @@ import {
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   LIST_RUNTIME_SESSIONS_COMMAND,
@@ -20,6 +21,7 @@ import {
   CREATE_RUNTIME_SESSION_COMMAND,
   DELETE_RUNTIME_SESSION_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
+  SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   createRuntimeGoalRequestSchema,
@@ -44,11 +46,13 @@ import {
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
   toolDefinitionSchema,
+  toolCatalogEntrySchema,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
   subagentTaskSchema,
   turnToolExecutionsIdentitySchema,
   updateRuntimeSessionMetadataRequestSchema,
+  supersedeRuntimeSessionMessagesRequestSchema,
   type ContextSnapshot,
   type RuntimeCapabilities,
   type RuntimeEvent,
@@ -63,6 +67,7 @@ import {
   type SessionSnapshot,
   type ToolExecutionRecord,
   type ToolDefinition,
+  type ToolCatalogEntry,
   type SubagentTask,
 } from '@cardbush/bush-protocol';
 import {
@@ -148,6 +153,23 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     );
   }
 
+  supersedeSessionMessages(
+    input: {
+      sessionId: string;
+      messageIds: string[];
+      reason: string;
+      replacementTurnId?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<SessionSnapshot> {
+    const payload = supersedeRuntimeSessionMessagesRequestSchema.parse(input);
+    return this.command(
+      { kind: SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND, payload },
+      (value) => sessionSnapshotSchema.parse(value),
+      signal,
+    );
+  }
+
   assembleSessionContext(
     input: unknown,
     signal?: AbortSignal,
@@ -200,6 +222,14 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
       (value) => toolDefinitionSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  getToolCatalogDetails(signal?: AbortSignal): Promise<ToolCatalogEntry[]> {
+    return this.command(
+      { kind: GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND, payload: {} },
+      (value) => toolCatalogEntrySchema.array().parse(value),
       signal,
     );
   }

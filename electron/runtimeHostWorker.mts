@@ -28,6 +28,7 @@ import {
   InMemoryRuntimeHost,
   CoordinationStore,
   SessionStore,
+  registerSkillTools,
   SubagentTaskStore,
   ToolExecutionStore,
   ToolRegistry,
@@ -258,6 +259,8 @@ providers = new OpenAICompatibleProviderRegistry({
 });
 
 const toolRegistry = new ToolRegistry();
+const skillRoots = skillRootsFromEnvironment();
+if (skillRoots.length > 0) registerSkillTools(toolRegistry, skillRoots);
 host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry,
@@ -300,6 +303,21 @@ mcp = new McpClientManager({
   registry: toolRegistry,
   canApply: () => !host.hasActiveTurns(),
 });
+
+function skillRootsFromEnvironment(): string[] {
+  const raw = process.env.CARDBUSH_RUNTIME_SKILL_ROOTS?.trim();
+  if (!raw) return [];
+  let roots: unknown;
+  try {
+    roots = JSON.parse(raw);
+  } catch {
+    throw new Error('CARDBUSH_RUNTIME_SKILL_ROOTS must be a JSON array.');
+  }
+  if (!Array.isArray(roots) || roots.some((root) => typeof root !== 'string' || !isAbsolute(root))) {
+    throw new Error('Every Runtime Skill root must be an absolute path.');
+  }
+  return roots;
+}
 
 parentPort.on('message', (messageEvent) => {
   void handleMessage(messageEvent.data);

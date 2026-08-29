@@ -851,6 +851,8 @@ export interface TeamDefinition {
   id: string;
   name: string;
   description: string;
+  conferenceEnabled?: boolean;
+  conferenceInstructions?: string;
   members: TeamMemberDefinition[];
 }
 

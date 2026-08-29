@@ -13,6 +13,8 @@ export const DELETE_RUNTIME_SESSION_COMMAND = "runtime.delete_session" as const;
 export const LIST_RUNTIME_SESSIONS_COMMAND = "runtime.list_sessions" as const;
 export const UPDATE_RUNTIME_SESSION_METADATA_COMMAND =
   "runtime.update_session_metadata" as const;
+export const SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND =
+  "runtime.supersede_session_messages" as const;
 export const RUN_RUNTIME_SESSION_TURN_COMMAND = "runtime.run_session_turn" as const;
 export const ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND =
   "runtime.assemble_session_context" as const;
@@ -139,6 +141,13 @@ export const updateRuntimeSessionMetadataRequestSchema = z.object({
   sessionId: z.string().min(1),
   expectedRevision: z.number().int().positive(),
   metadata: z.record(z.string(), z.unknown()),
+});
+
+export const supersedeRuntimeSessionMessagesRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  messageIds: z.array(z.string().min(1)).min(1),
+  reason: z.string().min(1),
+  replacementTurnId: z.string().min(1).optional(),
 });
 
 export const runtimeSessionInputMessageSchema = z.object({

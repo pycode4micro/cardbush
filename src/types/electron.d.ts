@@ -48,6 +48,8 @@ declare global {
         method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
         body?: unknown;
       }) => Promise<unknown>;
+      listSkills: () => Promise<unknown[]>;
+      readSkill: (skillName: string) => Promise<unknown>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

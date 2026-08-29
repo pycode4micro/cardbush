@@ -20,6 +20,7 @@ export * from "./runtimePermissionBroker.js";
 export * from "./runtimeRecoveryCoordinator.js";
 export * from "./runtimeSessionCoordinator.js";
 export * from "./sessionStore.js";
+export * from "./skillTools.js";
 export * from "./subagentTaskStore.js";
 export * from "./subagentTool.js";
 export * from "./teamSnapshotStore.js";

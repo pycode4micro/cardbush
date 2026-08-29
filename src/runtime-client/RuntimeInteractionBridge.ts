@@ -10,6 +10,10 @@ interface RuntimePermissionEntry {
 
 const permissions = new Map<string, RuntimePermissionEntry>();
 const activeTurns = new Map<string, { sessionId: string; stop: () => void }>();
+const guidanceBySession = new Map<string, Array<{
+  clientMessageId: string;
+  content: string;
+}>>();
 
 export function registerRuntimePermission(input: {
   permissionId: string;
@@ -122,4 +126,21 @@ export function stopActiveRuntimeTurn(turnId: string): boolean {
   if (!active) return false;
   active.stop();
   return true;
+}
+
+export function enqueueRuntimeGuidance(input: {
+  sessionId: string;
+  clientMessageId: string;
+  content: string;
+}): void {
+  const queue = guidanceBySession.get(input.sessionId) ?? [];
+  queue.push({ clientMessageId: input.clientMessageId, content: input.content });
+  guidanceBySession.set(input.sessionId, queue);
+}
+
+export function takeRuntimeGuidance(sessionId: string) {
+  const queue = guidanceBySession.get(sessionId);
+  const next = queue?.shift();
+  if (queue && queue.length === 0) guidanceBySession.delete(sessionId);
+  return next;
 }
