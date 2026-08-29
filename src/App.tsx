@@ -125,7 +125,10 @@ import {
   isLoopHistoryPreTestEnabled,
   LoopHistoryPreTest,
 } from './features/pre_test/LoopHistoryPreTest';
-import { isRuntimeStreamPreTestEnabled } from './features/pre_test/runtimeStreamPreTestActivation';
+import {
+  isRuntimeStreamPreTestEnabled,
+  runtimeStreamPreTestMode,
+} from './features/pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
   ComposerRuntimeRail,
@@ -6118,7 +6121,11 @@ function ChatPanel({
   if (import.meta.env.DEV && LazyRuntimeStreamPreTest && isRuntimeStreamPreTestEnabled()) {
     return (
       <Suspense fallback={null}>
-        <LazyRuntimeStreamPreTest language={language} />
+        <LazyRuntimeStreamPreTest
+          language={language}
+          mode={runtimeStreamPreTestMode() ?? 'fixture'}
+          modelConfig={selectedModelConfig}
+        />
       </Suspense>
     );
   }

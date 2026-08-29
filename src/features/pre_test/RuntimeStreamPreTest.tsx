@@ -1,15 +1,38 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import {
+  BUSH_MODEL_REQUEST_PROTOCOL,
+  BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
+} from '@cardbush/bush-protocol';
 
 import runtimeFixture from '../../../packages/bush-protocol/reference-fixtures/single-turn-stream.v1.json';
 import {
   RuntimeTurnStore,
+  createDesktopRuntimeSession,
   createRuntimeFixtureClient,
   useRuntimeTurnStore,
 } from '../../runtime-client';
-import type { AppLanguage, ChatMessage } from '../../types';
+import type { AppLanguage, ChatMessage, ManagedModelConfig } from '../../types';
 import { MessageBubble } from '../chatMessages';
+import type { RuntimeStreamPreTestMode } from './runtimeStreamPreTestActivation';
 
-export function RuntimeStreamPreTest({ language }: { language: AppLanguage }) {
+export function RuntimeStreamPreTest({
+  language,
+  mode = 'fixture',
+  modelConfig,
+}: {
+  language: AppLanguage;
+  mode?: RuntimeStreamPreTestMode;
+  modelConfig?: ManagedModelConfig;
+}) {
+  return mode === 'live' ? (
+    <RuntimeLivePreTest language={language} modelConfig={modelConfig} />
+  ) : (
+    <RuntimeFixturePreTest language={language} />
+  );
+}
+
+function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
   const setup = useMemo(() => {
     const fixtureClient = createRuntimeFixtureClient(runtimeFixture, {
       minimumDelayMs: 420,
@@ -156,6 +179,224 @@ export function RuntimeStreamPreTest({ language }: { language: AppLanguage }) {
       </main>
     </div>
   );
+}
+
+function RuntimeLivePreTest({
+  language,
+  modelConfig,
+}: {
+  language: AppLanguage;
+  modelConfig?: ManagedModelConfig;
+}) {
+  if (!window.cardbushDesktop?.runtime) {
+    return (
+      <div className="chat-panel runtime-stream-pre-test">
+        <section className="runtime-stream-pre-test-error" role="alert">
+          <strong>Runtime Host unavailable</strong>
+          <span>The typed Electron Runtime bridge is not available.</span>
+        </section>
+      </div>
+    );
+  }
+  return (
+    <ConnectedRuntimeLivePreTest language={language} modelConfig={modelConfig} />
+  );
+}
+
+function ConnectedRuntimeLivePreTest({
+  language,
+  modelConfig,
+}: {
+  language: AppLanguage;
+  modelConfig?: ManagedModelConfig;
+}) {
+  const session = useMemo(() => createDesktopRuntimeSession(), []);
+  const state = useRuntimeTurnStore(session.store);
+  const [prompt, setPrompt] = useState(
+    language === 'zh'
+      ? '用一句话说明这条消息已经通过 TypeScript Runtime。'
+      : 'Confirm in one sentence that this message passed through the TypeScript Runtime.',
+  );
+  const [submittedPrompt, setSubmittedPrompt] = useState('');
+  const [error, setError] = useState('');
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    void session.discoverCapabilities().catch((caught) => {
+      setError(errorMessage(caught));
+    });
+    return () => session.dispose();
+  }, [session]);
+
+  const run = useCallback(async () => {
+    const content = prompt.trim();
+    if (!content) return;
+    if (!modelConfig?.apiKey.trim()) {
+      setError(
+        language === 'zh'
+          ? '当前模型配置没有可用的 API Key。'
+          : 'The selected model configuration has no usable API key.',
+      );
+      return;
+    }
+    setRunning(true);
+    setError('');
+    setSubmittedPrompt(content);
+    try {
+      const configured = await session.configureProvider({
+        protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
+        bindingId: modelConfig.id,
+        adapter: 'openai_compatible',
+        apiKey: modelConfig.apiKey,
+        baseURL: modelConfig.baseUrl.trim() || undefined,
+        defaultHeaders: {},
+      });
+      if (configured.status !== 'configured') {
+        throw new Error(`Provider binding returned ${configured.status}.`);
+      }
+      const suffix = crypto.randomUUID();
+      await session.run({
+        protocol: BUSH_MODEL_REQUEST_PROTOCOL,
+        requestId: `request_runtime_live_${suffix}`,
+        sessionId: `session_runtime_live_${suffix}`,
+        turnId: `turn_runtime_live_${suffix}`,
+        model: modelConfig.modelName,
+        providerBinding: configured.binding,
+        messages: [{ role: 'user', content }],
+        tools: [],
+        toolChoice: 'auto',
+        metadata: {},
+      });
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setRunning(false);
+    }
+  }, [language, modelConfig, prompt, session]);
+
+  const reasoningContent = state.view.reasoningSegments
+    .map((segment) => segment.content)
+    .join('');
+  const assistantContent = state.view.assistantSegments
+    .map((segment) => segment.content)
+    .join('');
+  const assistantMessage: ChatMessage | null = assistantContent
+    ? {
+        id: state.view.terminal?.finalMessageId ?? 'runtime-live-assistant',
+        turnId: state.view.turnId,
+        role: 'assistant',
+        content: assistantContent,
+        createdAt: new Date().toISOString(),
+      }
+    : null;
+
+  return (
+    <div className="chat-panel runtime-stream-pre-test">
+      <header className="runtime-stream-pre-test-header">
+        <span>
+          <strong>
+            {language === 'zh'
+              ? 'TypeScript Runtime · Live Gate'
+              : 'TypeScript Runtime · Live Gate'}
+          </strong>
+          <small>
+            {modelConfig
+              ? `${modelConfig.provider} · ${modelConfig.modelName}`
+              : language === 'zh'
+                ? '未选择模型配置'
+                : 'No model configuration selected'}
+          </small>
+        </span>
+        <output data-state={state.streamState}>
+          {runtimeStateLabel(state.streamState, language)} · {state.eventCount}
+        </output>
+      </header>
+
+      <main className="runtime-stream-pre-test-stage">
+        <section className="runtime-stream-pre-test-contract">
+          <span>
+            <small>{language === 'zh' ? '协议' : 'Protocol'}</small>
+            <strong>{state.capabilities?.eventProtocol ?? '—'}</strong>
+          </span>
+          <span>
+            <small>{language === 'zh' ? '宿主' : 'Host'}</small>
+            <strong>{state.capabilities?.hostId ?? '—'}</strong>
+          </span>
+          <span>
+            <small>{language === 'zh' ? '终态' : 'Terminal'}</small>
+            <strong>{state.view.terminal?.status ?? '—'}</strong>
+          </span>
+        </section>
+
+        <form
+          className="runtime-live-pre-test-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void run();
+          }}
+        >
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            disabled={running}
+            aria-label={language === 'zh' ? 'Live Runtime 测试消息' : 'Live Runtime test message'}
+          />
+          <button type="submit" disabled={running || !modelConfig}>
+            {running
+              ? language === 'zh' ? '执行中…' : 'Running…'
+              : language === 'zh' ? '运行真实 Turn' : 'Run live Turn'}
+          </button>
+        </form>
+
+        {(error || state.error) && (
+          <section className="runtime-stream-pre-test-error" role="alert">
+            <strong>{language === 'zh' ? 'Live Gate 失败' : 'Live Gate failed'}</strong>
+            <span>{error || state.error}</span>
+          </section>
+        )}
+
+        <section className="runtime-stream-pre-test-transcript">
+          {submittedPrompt && (
+            <article className="runtime-stream-pre-test-user">{submittedPrompt}</article>
+          )}
+          {reasoningContent && (
+            <section className="runtime-stream-pre-test-reasoning">
+              <small>Thinking</small>
+              <p>{reasoningContent}</p>
+            </section>
+          )}
+          {assistantMessage && (
+            <div className="message-list runtime-stream-pre-test-message">
+              <MessageBubble
+                message={assistantMessage}
+                language={language}
+                sending={running}
+                activeTurnId={state.view.turnId ?? ''}
+                activeAssistantMessageId={assistantMessage.id}
+                selectedModel={modelConfig?.modelName ?? ''}
+                onRegenerate={async () => undefined}
+                onEditUserMessage={async () => undefined}
+                onGuideMessage={async () => undefined}
+                onRetryGuidance={async () => undefined}
+                onRevertChangeReport={async () => undefined}
+                onOpenScene={() => undefined}
+              />
+            </div>
+          )}
+        </section>
+
+        <footer className="runtime-stream-pre-test-terminal">
+          <small>{language === 'zh' ? 'Runtime 终态事实' : 'Runtime terminal fact'}</small>
+          <strong>{state.view.terminal?.status ?? 'pending'}</strong>
+          <span>{state.view.terminal?.reason ?? state.lastEventKind ?? '—'}</span>
+        </footer>
+      </main>
+    </div>
+  );
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function runtimeStateLabel(

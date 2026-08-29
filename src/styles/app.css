@@ -10956,6 +10956,12 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-variant-numeric: tabular-nums;
 }
 
+.runtime-stream-pre-test-header > output {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .runtime-stream-pre-test-actions output[data-state='settled'] {
   color: var(--success);
 }
@@ -11026,6 +11032,41 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.runtime-live-pre-test-form {
+  width: min(100%, var(--chat-track-width));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.runtime-live-pre-test-form textarea {
+  min-height: 74px;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--surface-strong);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.runtime-live-pre-test-form button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--surface);
+  background: var(--text);
+  font-weight: 720;
+}
+
+.runtime-live-pre-test-form button:disabled {
+  opacity: .48;
 }
 
 .runtime-stream-pre-test-transcript {
@@ -11119,6 +11160,10 @@ body.right-inspector-resizing .right-inspector-resizer {
 
   .runtime-stream-pre-test-stage {
     padding-inline: 14px;
+  }
+
+  .runtime-live-pre-test-form {
+    grid-template-columns: 1fr;
   }
 }
 
