@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type {
   ChatCompletionChunk,
+  ChatCompletionCreateParamsStreaming,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
@@ -164,6 +165,23 @@ function toOpenAITools(request: ModelRequest): ChatCompletionTool[] | undefined 
   }));
 }
 
+export function toChatCompletionCreateParams(
+  request: ModelRequest,
+): ChatCompletionCreateParamsStreaming {
+  return {
+    model: request.model,
+    messages: request.messages.map(toOpenAIMessage),
+    tools: toOpenAITools(request),
+    tool_choice: request.tools.length ? request.toolChoice : undefined,
+    max_completion_tokens: request.maxOutputTokens,
+    temperature: request.temperature,
+    top_p: request.topP,
+    reasoning_effort: request.reasoningEffort,
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+}
+
 function retryableStatus(status: number | undefined): boolean {
   return status === undefined || status === 408 || status === 409 || status === 429 || status >= 500;
 }
@@ -239,16 +257,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     let completed = false;
     try {
       const stream = await this.#client.chat.completions.create(
-        {
-          model: request.model,
-          messages: request.messages.map(toOpenAIMessage),
-          tools: toOpenAITools(request),
-          tool_choice: request.tools.length ? request.toolChoice : undefined,
-          temperature: request.temperature,
-          top_p: request.topP,
-          stream: true,
-          stream_options: { include_usage: true },
-        },
+        toChatCompletionCreateParams(request),
         { signal: options.signal },
       );
       for await (const chunk of stream) {

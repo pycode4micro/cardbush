@@ -42,6 +42,12 @@ export interface ToolExecutionCoordinatorOptions {
   permissions: PermissionResolver;
   observer?: ToolExecutionObserver;
   existingReceiptIds?: string[];
+  capabilities?: RuntimeCapabilityStore;
+}
+
+export interface RuntimeCapabilityStore {
+  hasAll(sessionId: string, capabilityIds: string[]): boolean;
+  grant(sessionId: string, capabilityIds: string[]): void;
 }
 
 export class ToolExecutionCoordinator {
@@ -49,12 +55,14 @@ export class ToolExecutionCoordinator {
   readonly #permissions: PermissionResolver;
   readonly #observer: ToolExecutionObserver;
   readonly #receiptIds: Set<string>;
+  readonly #capabilities?: RuntimeCapabilityStore;
 
   constructor(options: ToolExecutionCoordinatorOptions) {
     this.#registry = options.registry;
     this.#permissions = options.permissions;
     this.#observer = options.observer ?? {};
     this.#receiptIds = new Set(options.existingReceiptIds ?? []);
+    this.#capabilities = options.capabilities;
   }
 
   async execute(
@@ -141,43 +149,50 @@ export class ToolExecutionCoordinator {
         );
       }
       if (admission.kind === "ask") {
-        let answer: RuntimePermissionAnswer;
-        try {
-          answer = await this.#permissions.request(
-            { ...admission.request, toolCallId: toolCall.id },
-            signal,
-          );
-        } catch (error) {
-          if (isAbortError(error)) {
+        if (this.#capabilities?.hasAll(identity.sessionId, admission.request.capabilityIds)) {
+          capabilityIds = [...admission.request.capabilityIds];
+        } else {
+          let answer: RuntimePermissionAnswer;
+          try {
+            answer = await this.#permissions.request(
+              { ...admission.request, toolCallId: toolCall.id },
+              signal,
+            );
+          } catch (error) {
+            if (isAbortError(error)) {
+              return cancelledResult(
+                toolCall.id,
+                "permission_request_cancelled",
+                actionManifest,
+              );
+            }
+            return failedResult(
+              toolCall.id,
+              "permission_request_failed",
+              error instanceof Error ? error.message : String(error),
+              actionManifest,
+            );
+          }
+          if (answer.decision === "deny") {
+            return failedResult(
+              toolCall.id,
+              "permission_rejected",
+              "The requested permission was rejected.",
+              actionManifest,
+            );
+          }
+          if (answer.decision === "cancel") {
             return cancelledResult(
               toolCall.id,
               "permission_request_cancelled",
               actionManifest,
             );
           }
-          return failedResult(
-            toolCall.id,
-            "permission_request_failed",
-            error instanceof Error ? error.message : String(error),
-            actionManifest,
-          );
+          capabilityIds = [...answer.grantedCapabilityIds];
+          if (answer.decision === "allow_session") {
+            this.#capabilities?.grant(identity.sessionId, capabilityIds);
+          }
         }
-        if (answer.decision === "deny") {
-          return failedResult(
-            toolCall.id,
-            "permission_rejected",
-            "The requested permission was rejected.",
-            actionManifest,
-          );
-        }
-        if (answer.decision === "cancel") {
-          return cancelledResult(
-            toolCall.id,
-            "permission_request_cancelled",
-            actionManifest,
-          );
-        }
-        capabilityIds = [...answer.grantedCapabilityIds];
       } else {
         capabilityIds = [...(admission.capabilityIds ?? [])];
       }

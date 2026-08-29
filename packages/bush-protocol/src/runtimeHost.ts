@@ -8,6 +8,7 @@ export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
 export const BUSH_RUNTIME_FIXTURE_PROTOCOL = "bush.runtime_fixture.v1" as const;
 export const GET_RUNTIME_CAPABILITIES_COMMAND =
   "runtime.get_capabilities" as const;
+export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 export const ANSWER_RUNTIME_PERMISSION_COMMAND =
   "runtime.answer_permission" as const;
 export const BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL =

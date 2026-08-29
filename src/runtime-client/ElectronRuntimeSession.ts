@@ -1,6 +1,7 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+  RUN_MODEL_TURN_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   decodeRuntimeEvent,
@@ -15,7 +16,6 @@ import {
   type RuntimeProviderBindingConfig,
   type RuntimeProviderBindingResult,
 } from '@cardbush/bush-protocol';
-import { RUN_MODEL_TURN_COMMAND } from '@cardbush/bush-runtime';
 import {
   ElectronRuntimeTransport,
   type ElectronRuntimeBridge,

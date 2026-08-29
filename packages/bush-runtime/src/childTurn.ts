@@ -79,6 +79,11 @@ export function buildChildTurnRequest(input: {
       messageId: input.ids.messageId,
       message: { role: "user", content: input.prompt },
     }],
+    sessionMetadata: {
+      parentSessionId: input.context.sessionId,
+      parentTurnId: input.context.turnId,
+      agentRole: "child",
+    },
     tools: childTools,
     toolChoice: input.toolChoice ?? (childTools.length > 0 ? "auto" : "none"),
     maxOutputTokens: parentRequest.maxOutputTokens,

@@ -53,7 +53,7 @@ export const modelRequestSchema = z.object({
   maxOutputTokens: z.number().int().positive().optional(),
   temperature: z.number().finite().optional(),
   topP: z.number().finite().optional(),
-  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh"]).optional(),
+  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 

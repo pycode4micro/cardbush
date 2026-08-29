@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeChatCompletionChunk } from "../dist/index.js";
+import { normalizeChatCompletionChunk, toChatCompletionCreateParams } from "../dist/index.js";
 
 test("normalizes text, reasoning, parallel tool deltas and cache usage", () => {
   const state = { requestId: "req_1", sequence: 0, started: false };
@@ -67,4 +67,28 @@ test("keeps sequence stable across chunks", () => {
   );
 
   assert.deepEqual([...first, ...second].map((event) => event.sequence), [0, 1, 2, 3]);
+});
+
+test("forwards explicit output and reasoning controls without adding local defaults", () => {
+  const base = {
+    protocol: "bush.model_request.v1",
+    requestId: "request",
+    sessionId: "session",
+    turnId: "turn",
+    model: "model",
+    messages: [{ role: "user", content: "hello" }],
+    tools: [],
+    toolChoice: "auto",
+    metadata: {},
+  };
+  const providerDefault = toChatCompletionCreateParams(base);
+  assert.equal(providerDefault.max_completion_tokens, undefined);
+  assert.equal(providerDefault.reasoning_effort, undefined);
+  const explicit = toChatCompletionCreateParams({
+    ...base,
+    maxOutputTokens: 32768,
+    reasoningEffort: "xhigh",
+  });
+  assert.equal(explicit.max_completion_tokens, 32768);
+  assert.equal(explicit.reasoning_effort, "xhigh");
 });

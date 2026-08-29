@@ -56,6 +56,32 @@ export class RuntimeSessionCoordinator {
     return this.#store.snapshot(sessionId);
   }
 
+  list(): SessionSnapshot[] {
+    return this.#store.list();
+  }
+
+  create(sessionId: string, metadata: Record<string, unknown> = {}): SessionSnapshot {
+    return this.#store.ensureSession(sessionId, metadata);
+  }
+
+  updateMetadata(input: {
+    sessionId: string;
+    expectedRevision: number;
+    metadata: Record<string, unknown>;
+  }): SessionSnapshot {
+    if (this.#activeSessions.has(input.sessionId)) {
+      throw new Error("Session metadata cannot change while its Turn is active.");
+    }
+    return this.#store.updateMetadata(input);
+  }
+
+  delete(sessionId: string): boolean {
+    if (this.#activeSessions.has(sessionId)) {
+      throw new Error("An active Session cannot be deleted.");
+    }
+    return this.#store.deleteSession(sessionId);
+  }
+
   assemble(
     input: Omit<AssembleContextInput, "session"> & { sessionId: string },
   ): ContextSnapshot {
@@ -75,7 +101,7 @@ export class RuntimeSessionCoordinator {
         `Session ${request.sessionId} already has active Turn ${activeTurnId}.`,
       );
     }
-    const session = this.#store.ensureSession(request.sessionId);
+    const session = this.#store.ensureSession(request.sessionId, request.sessionMetadata);
     if (session.turns.some((turn) => turn.turnId === request.turnId)) {
       throw new Error(`Turn ${request.turnId} already exists in Session history.`);
     }

@@ -10,20 +10,26 @@ import {
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  LIST_RUNTIME_SESSIONS_COMMAND,
+  UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
+  CREATE_RUNTIME_SESSION_COMMAND,
+  DELETE_RUNTIME_SESSION_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   createRuntimeGoalRequestSchema,
+  createRuntimeSessionRequestSchema,
   decodeContextSnapshot,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
   decodeRuntimeFixture,
   runtimeSessionIdentitySchema,
+  runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
   runtimeCoordinationSessionSchema,
   setRuntimePlanRequestSchema,
@@ -42,6 +48,7 @@ import {
   subagentTaskListRequestSchema,
   subagentTaskSchema,
   turnToolExecutionsIdentitySchema,
+  updateRuntimeSessionMetadataRequestSchema,
   type ContextSnapshot,
   type RuntimeCapabilities,
   type RuntimeEvent,
@@ -89,6 +96,54 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_SESSION_COMMAND, payload },
       (input) => input == null ? null : sessionSnapshotSchema.parse(input),
+      signal,
+    );
+  }
+
+  createSession(
+    input: { sessionId: string; metadata?: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<SessionSnapshot> {
+    const payload = createRuntimeSessionRequestSchema.parse(input);
+    return this.command(
+      { kind: CREATE_RUNTIME_SESSION_COMMAND, payload },
+      (value) => sessionSnapshotSchema.parse(value),
+      signal,
+    );
+  }
+
+  deleteSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<{ sessionId: string; deleted: boolean }> {
+    const payload = runtimeSessionIdentitySchema.parse({ sessionId });
+    return this.command(
+      { kind: DELETE_RUNTIME_SESSION_COMMAND, payload },
+      (value) => {
+        const record = value as Record<string, unknown>;
+        return { sessionId: String(record.sessionId), deleted: record.deleted === true };
+      },
+      signal,
+    );
+  }
+
+  listSessions(signal?: AbortSignal): Promise<SessionSnapshot[]> {
+    const payload = runtimeSessionListRequestSchema.parse({});
+    return this.command(
+      { kind: LIST_RUNTIME_SESSIONS_COMMAND, payload },
+      (input) => sessionSnapshotSchema.array().parse(input),
+      signal,
+    );
+  }
+
+  updateSessionMetadata(
+    input: { sessionId: string; expectedRevision: number; metadata: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<SessionSnapshot> {
+    const payload = updateRuntimeSessionMetadataRequestSchema.parse(input);
+    return this.command(
+      { kind: UPDATE_RUNTIME_SESSION_METADATA_COMMAND, payload },
+      (value) => sessionSnapshotSchema.parse(value),
       signal,
     );
   }

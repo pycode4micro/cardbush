@@ -61,6 +61,12 @@ import type {
   TeamDefinition,
   TeamConfigurationCapabilities,
 } from '../types';
+import type {
+  GoalState as RuntimeGoalState,
+  SessionMessage as RuntimeSessionMessage,
+  SessionSnapshot as RuntimeSessionSnapshot,
+  ToolExecutionRecord as RuntimeToolExecutionRecord,
+} from '@cardbush/bush-protocol';
 import {
   AGENT_PROFILE_PROTOCOL,
   SUBAGENT_DISPATCH_EVENT_PROTOCOL,
@@ -84,6 +90,14 @@ import {
 } from './streamProtocol';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { toolArtifactsFromPayload } from './toolArtifacts';
+import { streamRuntimeChat } from './runtimeChat';
+import {
+  answerRuntimeInteraction,
+  hasRuntimeInteraction,
+  pendingRuntimeInteraction,
+  stopActiveRuntimeTurn,
+} from '../runtime-client/RuntimeInteractionBridge';
+import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 
 const conversationListPageSize = 160;
 const conversationListMaxPages = 1;
@@ -761,6 +775,44 @@ async function readJson<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const capabilities = await runtime.client.getCapabilities();
+      const features = new Set(capabilities.features);
+      const commands = new Set(capabilities.supportedCommands);
+      return {
+        ...defaultBackendCapabilities,
+        chatStream: features.has('turn_stream'),
+        sessions: features.has('append_only_session_context'),
+        interactions: features.has('interactive_permissions'),
+        interactiveRequests: features.has('interactive_permissions'),
+        permissionRequests: features.has('interactive_permissions'),
+        turnStop: true,
+        turnEventReplay: features.has('cursor_replay'),
+        stableMessageIds: true,
+        projects: true,
+        git: true,
+        terminal: true,
+        mcpServers: features.has('product_mcp_snapshot'),
+        subagents: features.has('subagent_context_fork'),
+        subagentObservability: features.has('subagent_context_fork'),
+        subagentObservabilityProtocol: features.has('subagent_context_fork')
+          ? 'bush.subagent_task.v1'
+          : '',
+        teamMode: features.has('product_team_snapshot'),
+        teamAgentFlow: features.has('team_concurrent_execution'),
+        contextWindowUsage: true,
+        workspaceChanges: features.has('authoritative_tool_execution_records'),
+        taskPlan: features.has('explicit_plan_facts'),
+        reasoningStream: features.has('reasoning_segments'),
+        reasoningLevelSelection: true,
+        runtimeInspection: commands.has('runtime.get_session'),
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const endpoint = url('/v1/capabilities');
   const response = await fetch(endpoint, {
     headers: await headersFor(endpoint),
@@ -775,6 +827,21 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
 }
 
 export async function fetchBackendReadiness(): Promise<Record<string, unknown>> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const capabilities = await runtime.client.getCapabilities();
+      return {
+        ready: true,
+        source: 'electron_runtime',
+        runtimeId: capabilities.hostId,
+        runtimeVersion: capabilities.runtimeVersion,
+        protocolVersions: [capabilities.protocol, capabilities.eventProtocol],
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   return readJson<Record<string, unknown>>(url('/readyz'));
 }
 
@@ -898,6 +965,15 @@ export async function manageRuntimeTool(request: {
 }
 
 export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoalA2AStatus> {
+  if (window.cardbushDesktop?.runtime) {
+    return {
+      enabled: true,
+      mode: 'electron_runtime',
+      goalProtocol: 'bush.goal.v1',
+      a2aProtocolVersion: '',
+      mergedIntoCore: true,
+    };
+  }
   const payload = recordFromUnknown(
     await readJson<unknown>(url('/v1/experimental/goal-a2a')),
   );
@@ -914,6 +990,17 @@ export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoal
 }
 
 export async function fetchExperimentalGoals(sessionId: string): Promise<ExperimentalGoal[]> {
+  if (window.cardbushDesktop?.runtime) {
+    const normalized = sessionId.trim();
+    if (!normalized) return [];
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const goal = await runtime.client.getGoal(normalized);
+      return goal ? [runtimeExperimentalGoal(goal)] : [];
+    } finally {
+      runtime.dispose();
+    }
+  }
   const endpoint = new URL(url('/v1/experimental/goals'));
   if (sessionId.trim()) endpoint.searchParams.set('session_id', sessionId.trim());
   const payload = recordFromUnknown(await readJson<unknown>(endpoint.toString()));
@@ -926,6 +1013,34 @@ export async function updateExperimentalGoal(request: {
   statusReason?: string;
   expectedRevision: number;
 }): Promise<ExperimentalGoal> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions();
+      let current: Awaited<ReturnType<typeof runtime.client.getGoal>> = null;
+      for (const session of sessions) {
+        const goal = await runtime.client.getGoal(session.sessionId);
+        if (goal?.goalId === request.goalId) {
+          current = goal;
+          break;
+        }
+      }
+      if (!current) {
+        throw new Error(localizedClientMessage('目标不存在', 'Goal does not exist'));
+      }
+      return runtimeExperimentalGoal(await runtime.client.updateGoal({
+        goalId: current.goalId,
+        sessionId: current.sessionId,
+        expectedRevision: request.expectedRevision,
+        status: request.status,
+        statusReason: request.statusReason ?? '',
+        consumedTokens: current.consumedTokens,
+        linkedA2ATaskIds: current.linkedA2ATaskIds,
+      }));
+    } finally {
+      runtime.dispose();
+    }
+  }
   return experimentalGoalFromPayload(await readJson<unknown>(
     url(`/v1/experimental/goals/${encodeURIComponent(request.goalId)}`),
     {
@@ -968,14 +1083,73 @@ export async function dispatchExperimentalA2ATask(request: {
 }
 
 export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const raw = window.localStorage.getItem('cardbush_managed_model_configs');
+    let models: unknown = [];
+    if (raw?.trim()) {
+      try {
+        models = JSON.parse(raw) as unknown;
+      } catch {
+        models = [];
+      }
+    }
+    const normalized = Array.isArray(models)
+      ? models
+          .map(managedModelConfigFromPayload)
+          .filter((item): item is ManagedModelConfig => item !== null)
+      : [];
+    const defaultModelId =
+      window.localStorage.getItem('cardbush_runtime_default_model_id') ?? '';
+    return {
+      defaultModelId,
+      models: normalized,
+      raw: { defaultModelId, models: normalized, source: 'cardbush_product' },
+    };
+  }
   const payload = await readJson<unknown>(url('/v1/model-configs'));
   return modelConfigsFromPayload(payload);
+}
+
+function runtimeExperimentalGoal(
+  goal: RuntimeGoalState,
+): ExperimentalGoal {
+  return {
+    protocol: goal.protocol,
+    goalId: goal.goalId,
+    sessionId: goal.sessionId,
+    objective: goal.objective,
+    status: goal.status,
+    statusReason: goal.statusReason,
+    tokenBudget: goal.tokenBudget,
+    consumedTokens: goal.consumedTokens,
+    linkedA2ATaskIds: goal.linkedA2ATaskIds,
+    revision: goal.revision,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+    completedAt: goal.completedAt,
+  };
 }
 
 export async function saveModelConfigs(request: {
   defaultModelId?: string;
   models: ManagedModelConfig[];
 }): Promise<BackendModelConfigsResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const models = request.models
+      .map(managedModelConfigFromPayload)
+      .filter((item): item is ManagedModelConfig => item !== null);
+    const defaultModelId = request.defaultModelId?.trim() || models[0]?.id || '';
+    window.localStorage.setItem(
+      'cardbush_managed_model_configs',
+      JSON.stringify(models),
+    );
+    window.localStorage.setItem('cardbush_runtime_default_model_id', defaultModelId);
+    return {
+      defaultModelId,
+      models,
+      raw: { defaultModelId, models, source: 'cardbush_product' },
+    };
+  }
   const payload = await readJson<unknown>(url('/v1/model-configs'), {
     method: 'PUT',
     body: JSON.stringify({
@@ -1467,6 +1641,18 @@ function positiveNumber(value: unknown) {
 }
 
 export async function fetchConversations(): Promise<ConversationSummary[]> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions();
+      return sessions
+        .filter((session) => session.metadata?.agentRole !== 'child')
+        .map(runtimeConversation)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    } finally {
+      runtime.dispose();
+    }
+  }
   const rawItems: unknown[] = [];
   for (let page = 0; page < conversationListMaxPages; page += 1) {
     const offset = page * conversationListPageSize;
@@ -1499,6 +1685,79 @@ export async function fetchSessionMessages(
   sessionId: string,
   options: { includeSuperseded?: boolean } = {},
 ): Promise<SessionMessagesResult> {
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.getSession(sessionId);
+      if (!snapshot) {
+        return {
+          conversation: {
+            id: sessionId,
+            title: sessionId,
+            preview: '',
+            updatedAt: new Date(0).toISOString(),
+          },
+          messages: [],
+          toolExecutions: [],
+        };
+      }
+      const superseded = new Set(
+        options.includeSuperseded === false ? snapshot.supersededMessageIds : [],
+      );
+      const messages = snapshot.turns.flatMap((turn) =>
+        turn.messages
+          .filter((message) => !superseded.has(message.messageId))
+          .map((message) => runtimeMessage(message, snapshot.sessionId)),
+      );
+      const records = (
+        await Promise.all(snapshot.turns.map((turn) =>
+          runtime.client.listTurnToolExecutions({
+            sessionId: snapshot.sessionId,
+            turnId: turn.turnId,
+          })
+        ))
+      ).flat();
+      const toolExecutions = records.map(runtimeHistoryToolExecution);
+      const latest = snapshot.turns.at(-1);
+      const projectDir = optionalString(snapshot.metadata?.projectDir);
+      const workspaceContext: WorkspaceContext | undefined = projectDir
+        ? {
+            mode: 'project',
+            executionRoot: projectDir,
+            projectDir,
+            taskDir: '',
+            source: 'electron_runtime',
+          }
+        : undefined;
+      return {
+        conversation: {
+          ...runtimeConversation(snapshot),
+          workspaceContext,
+        },
+        messages: attachHistoryToolExecutions(messages, toolExecutions),
+        toolExecutions,
+        workspaceContext,
+        ...(latest
+          ? {
+              latestTurn: {
+                turnId: latest.turnId,
+                turnSequence: latest.turnSequence,
+                status: latest.status,
+                stopped: latest.status === 'stopped',
+                stopReason: latest.reason,
+                stopScenario: latest.reason,
+                errorMessage: latest.status === 'failed' ? latest.reason : '',
+                finalDecision: latest.status,
+                finalReason: latest.reason,
+                completedAt: latest.completedAt,
+              },
+            }
+          : {}),
+      };
+    } finally {
+      runtime.dispose();
+    }
+  }
   const query = options.includeSuperseded !== false ? '?include_superseded=true' : '';
   const payload = await readJson<{ messages?: unknown[] }>(
     url(`/v1/sessions/${encodeURIComponent(sessionId)}${query}`),
@@ -1526,6 +1785,97 @@ export async function fetchSessionMessages(
     toolExecutions,
     workspaceContext,
     ...(latestTurn ? { latestTurn } : {}),
+  };
+}
+
+function runtimeConversation(snapshot: RuntimeSessionSnapshot): ConversationSummary {
+  const visibleMessages = snapshot.turns
+    .flatMap((turn) => turn.messages)
+    .filter((message) => !snapshot.supersededMessageIds.includes(message.messageId));
+  const firstUserMessage = visibleMessages.find(
+    (message) => message.message.role === 'user' && message.message.name !== 'runtime_context',
+  );
+  const lastAssistantMessage = [...visibleMessages]
+    .reverse()
+    .find((message) => message.message.role === 'assistant');
+  const title = optionalString(snapshot.metadata?.title) ||
+    initialRuntimeConversationTitle(firstUserMessage?.message.content) ||
+    defaultConversationTitle(snapshot.sessionId);
+  const projectDir = optionalString(snapshot.metadata?.projectDir);
+  return {
+    id: snapshot.sessionId,
+    title,
+    preview: lastAssistantMessage?.message.content ?? '',
+    updatedAt: snapshot.updatedAt,
+    ...(projectDir ? { projectDir } : {}),
+    ...(snapshot.metadata ? { metadata: { ...snapshot.metadata } } : {}),
+  };
+}
+
+function initialRuntimeConversationTitle(value: unknown) {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
+}
+
+function runtimeMessage(
+  message: RuntimeSessionMessage,
+  sessionId: string,
+): ChatMessage {
+  const role = message.message.role === 'developer'
+    ? 'system'
+    : message.message.role;
+  const metadata: Record<string, unknown> = {};
+  if (message.message.role === 'assistant') {
+    metadata.toolCalls = message.message.toolCalls;
+  } else if (message.message.role === 'tool') {
+    metadata.toolCallId = message.message.toolCallId;
+  } else if (message.message.name) {
+    metadata.name = message.message.name;
+  }
+  return {
+    id: message.messageId,
+    messageId: message.messageId,
+    role,
+    content: message.message.content,
+    conversationId: sessionId,
+    turnId: message.turnId,
+    createdAt: message.createdAt,
+    turnSequence: message.turnSequence,
+    messageIndex: message.messageIndex,
+    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+  };
+}
+
+function runtimeHistoryToolExecution(
+  record: RuntimeToolExecutionRecord,
+): ChatToolExecution {
+  const artifacts = toolArtifactsFromPayload({
+    artifacts: record.result.artifacts,
+  });
+  const output = typeof record.result.output === 'string'
+    ? record.result.output
+    : JSON.stringify(record.result.output, null, 2);
+  return {
+    id: record.toolCall.id,
+    name: record.toolCall.name,
+    state: record.outcome,
+    summary: record.result.error?.message ?? record.toolCall.name,
+    output,
+    success: record.result.success,
+    durationMs: 0,
+    createdAt: record.recordedAt,
+    contentOffset: 0,
+    sequence: record.ordinal,
+    loopIndex: record.round,
+    turnId: record.turnId,
+    ...(artifacts.length > 0 ? { artifacts } : {}),
+    metadata: {
+      actionManifest: record.actionManifest,
+      facts: record.result.facts,
+      workspaceChanges: record.result.workspace_changes,
+      error: record.result.error,
+    },
   };
 }
 
@@ -1569,7 +1919,6 @@ export async function createConversation({
   sessionId?: string;
   metadata?: Record<string, unknown>;
 } = {}): Promise<ConversationSummary> {
-  const endpoint = url('/v1/sessions');
   const normalizedProjectDir = projectDir?.trim() || '';
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
   if (normalizedProjectDir) {
@@ -1580,6 +1929,23 @@ export async function createConversation({
   } else if (normalizedMetadata.workspace_mode == null) {
     normalizedMetadata.workspace_mode = 'task';
   }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const snapshot = await runtime.client.createSession({
+        sessionId: sessionId?.trim() || `local-${crypto.randomUUID()}`,
+        metadata: {
+          ...normalizedMetadata,
+          title,
+          ...(normalizedProjectDir ? { projectDir: normalizedProjectDir } : {}),
+        },
+      });
+      return runtimeConversation(snapshot);
+    } finally {
+      runtime.dispose();
+    }
+  }
+  const endpoint = url('/v1/sessions');
   const payload = await readJson<Record<string, unknown>>(endpoint, {
     method: 'POST',
     body: JSON.stringify({
@@ -1615,6 +1981,31 @@ export async function updateConversation({
     normalizedMetadata.user_project_dir = normalizedProjectDir || null;
     normalizedMetadata.project_dir = normalizedProjectDir || null;
   }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const current = await runtime.client.getSession(normalized);
+      if (!current) {
+        throw new Error(localizedClientMessage('会话不存在', 'Conversation does not exist'));
+      }
+      const nextMetadata: Record<string, unknown> = {
+        ...(current.metadata ?? {}),
+        ...normalizedMetadata,
+        ...(title != null ? { title } : {}),
+      };
+      if (projectDir !== undefined) {
+        nextMetadata.projectDir = projectDir?.trim() || null;
+      }
+      const snapshot = await runtime.client.updateSessionMetadata({
+        sessionId: normalized,
+        expectedRevision: current.revision,
+        metadata: nextMetadata,
+      });
+      return runtimeConversation(snapshot);
+    } finally {
+      runtime.dispose();
+    }
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalized)}`),
     {
@@ -1635,6 +2026,14 @@ export async function deleteConversationApi(sessionId: string) {
   const normalized = sessionId.trim();
   if (!normalized) {
     return false;
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      return (await runtime.client.deleteSession(normalized)).deleted;
+    } finally {
+      runtime.dispose();
+    }
   }
   const endpoint = url(`/v1/sessions/${encodeURIComponent(normalized)}`);
   const response = await fetch(endpoint, {
@@ -2438,6 +2837,8 @@ export async function fetchPendingInteraction(
   if (!normalized) {
     return null;
   }
+  const runtimeInteraction = pendingRuntimeInteraction(normalized);
+  if (runtimeInteraction) return runtimeInteraction;
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/interactions/pending?session_id=${encodeURIComponent(normalized)}`),
   );
@@ -2480,6 +2881,23 @@ export async function replyInteraction({
   if ((normalizedAnswers?.length ?? 0) === 0 && !trimmedRawText) {
     throw new Error(localizedClientMessage('交互回答为空', 'Interaction reply is empty'));
   }
+  if (hasRuntimeInteraction(normalized)) {
+    const candidate = String(
+      normalizedAnswers?.find((answer) => answer.question_id === 'permission')
+        ?.selected_option_id ?? trimmedRawText,
+    ).trim();
+    if (!['allow_once', 'allow_session', 'deny'].includes(candidate)) {
+      throw new Error(localizedClientMessage(
+        '权限回答必须是允许一次、本会话允许或拒绝',
+        'Runtime permission reply must be allow_once, allow_session, or deny',
+      ));
+    }
+    await answerRuntimeInteraction(
+      normalized,
+      candidate as 'allow_once' | 'allow_session' | 'deny',
+    );
+    return;
+  }
   await readJson<Record<string, unknown>>(
     url(`/v1/interactions/${encodeURIComponent(normalized)}/reply`),
     {
@@ -2496,6 +2914,10 @@ export async function replyInteraction({
 export async function cancelInteraction(interactionId: string) {
   const normalized = interactionId.trim();
   if (!normalized) {
+    return;
+  }
+  if (hasRuntimeInteraction(normalized)) {
+    await answerRuntimeInteraction(normalized, 'cancel');
     return;
   }
   await readJson<Record<string, unknown>>(
@@ -2526,6 +2948,16 @@ export async function stopTurn(turnId: string): Promise<StopTurnResult> {
       alreadyInactive: false,
       reason: 'turn_id_empty',
       raw: {},
+    };
+  }
+  if (stopActiveRuntimeTurn(normalized)) {
+    return {
+      turnId: normalized,
+      accepted: true,
+      terminal: false,
+      alreadyInactive: false,
+      reason: 'runtime_stop_requested',
+      raw: { source: 'electron_runtime' },
     };
   }
   const endpoint = url(`/v1/turns/${encodeURIComponent(normalized)}/stop`);
@@ -2560,6 +2992,9 @@ export async function stopTurn(turnId: string): Promise<StopTurnResult> {
 }
 
 export async function streamChat(request: ChatStreamRequest) {
+  if (window.cardbushDesktop?.runtime) {
+    return streamRuntimeChat(request);
+  }
   await streamEndpoint({
     endpoint: url('/v1/chat/stream'),
     method: 'POST',

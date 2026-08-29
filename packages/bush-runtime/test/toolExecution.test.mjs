@@ -336,6 +336,71 @@ test("a rejected permission never invokes the tool handler", async () => {
   );
 });
 
+test("reuses allow_session only for the exact capability in the same Session", async () => {
+  let permissions = 0;
+  let executions = 0;
+  const registry = registryWithExecution({
+    authorize() {
+      return {
+        kind: "ask",
+        request: {
+          reason: "Read the selected external fixture.",
+          actions: ["read"],
+          resources: ["file:///external/fixture.txt"],
+          capabilityIds: ["capability_fixture"],
+        },
+      };
+    },
+    execute(context) {
+      executions += 1;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const provider = {
+    async *stream(modelRequest) {
+      const events = modelRequest.messages.at(-1)?.role === "tool"
+        ? answerRound("done")
+        : toolRound();
+      for (const candidate of events) {
+        yield {
+          ...candidate,
+          requestId: modelRequest.requestId,
+          ...(candidate.kind === "tool_call_delta"
+            ? { toolCallId: `call_fixture_${modelRequest.turnId}` }
+            : {}),
+        };
+      }
+    },
+  };
+  const host = createHost(provider, registry, {
+    createPermissionId: () => `permission_${++permissions}`,
+  });
+  const first = host.runModelTurn(request());
+  await waitForEvent(host, "permission_requested");
+  await host.sendCommand({
+    kind: ANSWER_RUNTIME_PERMISSION_COMMAND,
+    payload: {
+      protocol: BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+      permissionId: "permission_1",
+      answerId: "answer_session",
+      decision: "allow_session",
+      grantedCapabilityIds: ["capability_fixture"],
+    },
+  });
+  await first;
+  await host.runModelTurn({
+    ...request(),
+    requestId: "request_tools_2",
+    turnId: "turn_tools_2",
+  });
+  assert.equal(permissions, 1);
+  assert.equal(executions, 2);
+  assert.equal(
+    host.events("session_tools", "turn_tools_2").some((event) => event.kind === "permission_requested"),
+    false,
+  );
+});
+
 test("cancelling while permission is pending closes both permission and Turn facts", async () => {
   const controller = new AbortController();
   const registry = registryWithExecution({
@@ -507,7 +572,7 @@ function createHost(provider, registry, options = {}) {
     toolRegistry: registry,
     createPermissionId: options.createPermissionId,
     eventLogOptions: {
-      createEventId: ({ sequence }) => `event_${sequence}`,
+      createEventId: ({ turnId, sequence }) => `event_${turnId}_${sequence}`,
       now: () => "2026-08-29T00:00:00.000Z",
     },
     projectorOptions: {

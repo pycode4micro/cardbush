@@ -46,6 +46,7 @@ export {
   ElectronRuntimeSession,
   createDesktopRuntimeSession,
 } from './ElectronRuntimeSession';
+export * from './RuntimeInteractionBridge';
 export type {
   ElectronRuntimeSessionOptions,
   ElectronRuntimeTurnResult,

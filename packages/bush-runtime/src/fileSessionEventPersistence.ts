@@ -6,8 +6,10 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   truncateSync,
+  unlinkSync,
   writeSync,
 } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
@@ -93,6 +95,42 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     const descriptor = this.#descriptor(path);
     writeSync(descriptor, `${record}\n`, undefined, "utf8");
     fsyncSync(descriptor);
+  }
+
+  listSessionIds(): string[] {
+    const identities = new Set<string>();
+    for (const name of readdirSync(this.#root)) {
+      if (!name.endsWith(".jsonl")) continue;
+      const path = resolve(this.#root, name);
+      const first = readFileSync(path, "utf8").split("\n").find(Boolean);
+      if (!first) continue;
+      try {
+        const record = JSON.parse(first) as Record<string, unknown>;
+        if (record.protocol !== RECORD_PROTOCOL) throw new Error("record protocol mismatch");
+        const event = sessionEventSchema.parse(record.event);
+        this.#decode(path, 1, first, event.sessionId);
+        identities.add(event.sessionId);
+      } catch (error) {
+        throw new SessionJournalCorruptionError(
+          path,
+          1,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    return [...identities];
+  }
+
+  remove(sessionId: string): boolean {
+    const path = this.#path(sessionId);
+    const descriptor = this.#descriptors.get(path);
+    if (descriptor !== undefined) {
+      closeSync(descriptor);
+      this.#descriptors.delete(path);
+    }
+    if (!existsSync(path)) return false;
+    unlinkSync(path);
+    return true;
   }
 
   close(): void {

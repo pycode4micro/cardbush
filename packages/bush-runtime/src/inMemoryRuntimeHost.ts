@@ -11,21 +11,28 @@ import {
   GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  LIST_RUNTIME_SESSIONS_COMMAND,
+  UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
+  RUN_MODEL_TURN_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
+  CREATE_RUNTIME_SESSION_COMMAND,
+  DELETE_RUNTIME_SESSION_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
   assembleRuntimeSessionContextRequestSchema,
   createRuntimeGoalRequestSchema,
+  createRuntimeSessionRequestSchema,
   modelRequestSchema,
   runtimePermissionAnswerSchema,
   runtimeCoordinationSessionSchema,
   runtimeSessionIdentitySchema,
+  runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
   toolExecutionIdentitySchema,
   turnToolExecutionsIdentitySchema,
@@ -36,6 +43,7 @@ import {
   subagentTaskListRequestSchema,
   teamSnapshotSchema,
   updateRuntimeGoalRequestSchema,
+  updateRuntimeSessionMetadataRequestSchema,
   type ModelRequest,
   type ModelMessage,
   type CacheChainState,
@@ -73,6 +81,7 @@ import {
   type RuntimeCheckpointStore,
 } from "./runtimeCheckpointStore.js";
 import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
+import { InMemoryRuntimeCapabilityStore } from "./runtimeCapabilityStore.js";
 import { SessionStore } from "./sessionStore.js";
 import { ToolExecutionStore } from "./toolExecutionStore.js";
 import {
@@ -81,8 +90,6 @@ import {
   type TurnFinalizedObserver,
   type TurnTerminalPayload,
 } from "./runtimeSessionCoordinator.js";
-
-export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 
 export interface RuntimeRetryContext {
   nextAttempt: number;
@@ -147,6 +154,7 @@ export class InMemoryRuntimeHost {
   readonly #sessions: RuntimeSessionCoordinator;
   readonly #sessionNow: () => string;
   readonly #toolExecutions: ToolExecutionStore;
+  readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
   readonly #teams: TeamSnapshotStore;
@@ -255,6 +263,10 @@ export class InMemoryRuntimeHost {
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
         GET_RUNTIME_SESSION_COMMAND,
+        CREATE_RUNTIME_SESSION_COMMAND,
+        DELETE_RUNTIME_SESSION_COMMAND,
+        LIST_RUNTIME_SESSIONS_COMMAND,
+        UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
         ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
         RUN_RUNTIME_SESSION_TURN_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
@@ -338,6 +350,21 @@ export class InMemoryRuntimeHost {
         const identity = runtimeSessionIdentitySchema.parse(command.payload);
         return this.#sessions.snapshot(identity.sessionId) ?? null;
       }
+      case CREATE_RUNTIME_SESSION_COMMAND: {
+        const input = createRuntimeSessionRequestSchema.parse(command.payload);
+        return this.#sessions.create(input.sessionId, input.metadata);
+      }
+      case DELETE_RUNTIME_SESSION_COMMAND: {
+        const identity = runtimeSessionIdentitySchema.parse(command.payload);
+        return { sessionId: identity.sessionId, deleted: this.#sessions.delete(identity.sessionId) };
+      }
+      case LIST_RUNTIME_SESSIONS_COMMAND:
+        runtimeSessionListRequestSchema.parse(command.payload);
+        return this.#sessions.list();
+      case UPDATE_RUNTIME_SESSION_METADATA_COMMAND:
+        return this.#sessions.updateMetadata(
+          updateRuntimeSessionMetadataRequestSchema.parse(command.payload),
+        );
       case ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND: {
         const input = assembleRuntimeSessionContextRequestSchema.parse(command.payload);
         return this.#sessions.assemble({
@@ -553,6 +580,7 @@ export class InMemoryRuntimeHost {
       createPermissionId: this.#createPermissionId,
       existingReceiptIds: input.completedReceiptIds,
       executionStore: this.#toolExecutions,
+      capabilities: this.#capabilityGrants,
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];

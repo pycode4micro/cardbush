@@ -70,6 +70,24 @@ test("fails closed on a checksummed committed-record mutation", () => {
   });
 });
 
+test("enumerates durable Sessions and preserves their explicit metadata", () => {
+  withRoot((root) => {
+    const persistence = new FileSessionEventPersistence({ root });
+    const store = deterministicStore(persistence);
+    store.ensureSession("session_a", { title: "A" });
+    store.ensureSession("session_b", { title: "B" });
+    persistence.close();
+
+    const reopened = new FileSessionEventPersistence({ root });
+    const sessions = new SessionStore({ persistence: reopened }).list();
+    assert.deepEqual(
+      sessions.map((session) => [session.sessionId, session.metadata?.title]).sort(),
+      [["session_a", "A"], ["session_b", "B"]],
+    );
+    reopened.close();
+  });
+});
+
 function deterministicStore(persistence) {
   let id = 0;
   return new SessionStore({

@@ -15,6 +15,7 @@ export * from "./modelRound.js";
 export * from "./runtimeEventLog.js";
 export * from "./runtimeEventProjector.js";
 export * from "./runtimeCheckpointStore.js";
+export * from "./runtimeCapabilityStore.js";
 export * from "./runtimePermissionBroker.js";
 export * from "./runtimeRecoveryCoordinator.js";
 export * from "./runtimeSessionCoordinator.js";

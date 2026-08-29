@@ -16,6 +16,7 @@ import {
   ToolExecutionCoordinator,
   type ToolExecutionIdentity,
   type ToolExecutionOutcome,
+  type RuntimeCapabilityStore,
 } from "./toolExecutionCoordinator.js";
 import type { ToolRegistry } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
@@ -27,6 +28,7 @@ export interface RuntimeToolLoopOptions {
   createPermissionId?: () => string;
   existingReceiptIds?: string[];
   executionStore?: ToolExecutionStore;
+  capabilities?: RuntimeCapabilityStore;
 }
 
 export interface RuntimeToolRoundResult {
@@ -81,6 +83,7 @@ export class RuntimeToolLoop {
         },
       },
       existingReceiptIds: options.existingReceiptIds,
+      capabilities: options.capabilities,
     });
     this.#executionStore = options.executionStore;
   }

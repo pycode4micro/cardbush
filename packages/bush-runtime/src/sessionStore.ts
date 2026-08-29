@@ -14,6 +14,8 @@ import {
 export interface SessionEventPersistence {
   load(sessionId: string): SessionEvent[];
   append(event: SessionEvent): void;
+  listSessionIds?(): string[];
+  remove?(sessionId: string): boolean;
 }
 
 export interface SessionStoreOptions {
@@ -39,15 +41,61 @@ export class SessionStore {
     return events.length === 0 ? undefined : projectSession(sessionId, events);
   }
 
-  ensureSession(sessionId: string): SessionSnapshot {
+  list(): SessionSnapshot[] {
+    const identities = new Set([
+      ...this.#events.keys(),
+      ...(this.#persistence?.listSessionIds?.() ?? []),
+    ]);
+    return [...identities]
+      .map((sessionId) => this.snapshot(sessionId))
+      .filter((session): session is SessionSnapshot => session !== undefined)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  ensureSession(
+    sessionId: string,
+    metadata: Record<string, unknown> = {},
+  ): SessionSnapshot {
     const normalized = requireIdentity(sessionId, "sessionId");
     const existing = this.snapshot(normalized);
     if (existing) return existing;
     this.#append(normalized, {
       kind: "session_created",
-      payload: {},
+      payload: Object.keys(metadata).length > 0 ? { metadata } : {},
     });
     return this.snapshot(normalized)!;
+  }
+
+  deleteSession(sessionId: string): boolean {
+    const normalized = requireIdentity(sessionId, "sessionId");
+    const exists = this.snapshot(normalized) !== undefined;
+    if (!exists) return false;
+    this.#events.delete(normalized);
+    this.#persistence?.remove?.(normalized);
+    return true;
+  }
+
+  updateMetadata(input: {
+    sessionId: string;
+    expectedRevision: number;
+    metadata: Record<string, unknown>;
+  }): SessionSnapshot {
+    const sessionId = requireIdentity(input.sessionId, "sessionId");
+    const before = this.snapshot(sessionId);
+    if (!before) throw new Error(`Session ${sessionId} does not exist.`);
+    if (before.revision !== input.expectedRevision) {
+      throw new Error(
+        `Session ${sessionId} revision ${before.revision} does not match ${input.expectedRevision}.`,
+      );
+    }
+    this.#append(sessionId, {
+      kind: "session_metadata_updated",
+      payload: {
+        expectedRevision: input.expectedRevision,
+        metadata: structuredClone(input.metadata),
+      },
+    });
+    return this.snapshot(sessionId)!;
   }
 
   commitTurn(sessionId: string, candidate: CommittedTurn): SessionSnapshot {
@@ -160,6 +208,7 @@ export function projectSession(
   const turnIds = new Set<string>();
   const messageIds = new Set<string>();
   const superseded = new Set<string>();
+  let metadata: Record<string, unknown> | undefined;
   for (const [index, event] of events.entries()) {
     if (event.sessionId !== sessionId) throw new Error("Session event identity mismatch.");
     if (event.sequence !== index + 1) throw new Error("Session event sequence is not contiguous.");
@@ -167,6 +216,11 @@ export function projectSession(
     eventIds.add(event.eventId);
     if (index === 0 && event.kind !== "session_created") {
       throw new Error("The first Session event must be session_created.");
+    }
+    if (event.kind === "session_created") {
+      metadata = event.payload.metadata
+        ? structuredClone(event.payload.metadata)
+        : undefined;
     }
     if (index > 0 && event.kind === "session_created") {
       throw new Error("Session may only be created once.");
@@ -198,6 +252,12 @@ export function projectSession(
         superseded.add(messageId);
       }
     }
+    if (event.kind === "session_metadata_updated") {
+      if (event.payload.expectedRevision !== index) {
+        throw new Error("Session metadata update expected revision does not match history.");
+      }
+      metadata = structuredClone(event.payload.metadata);
+    }
   }
   return sessionSnapshotSchema.parse({
     protocol: BUSH_SESSION_SNAPSHOT_PROTOCOL,
@@ -207,6 +267,7 @@ export function projectSession(
     updatedAt: events.at(-1)!.createdAt,
     turns,
     supersededMessageIds: [...superseded],
+    ...(metadata ? { metadata } : {}),
   });
 }
 

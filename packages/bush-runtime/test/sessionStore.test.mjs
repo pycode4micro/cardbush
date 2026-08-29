@@ -135,6 +135,29 @@ test("large append-only history is not altered by thresholds", () => {
   assert.match(context.messages.at(-1).content, /^payload-80-/);
 });
 
+test("stores product-owned Session metadata with optimistic revisions", () => {
+  const store = deterministicStore();
+  const created = store.ensureSession("session_1", {
+    title: "Explicit title",
+    projectDir: "C:\\project",
+  });
+  assert.deepEqual(created.metadata, {
+    title: "Explicit title",
+    projectDir: "C:\\project",
+  });
+  const updated = store.updateMetadata({
+    sessionId: "session_1",
+    expectedRevision: created.revision,
+    metadata: { title: "Renamed" },
+  });
+  assert.deepEqual(updated.metadata, { title: "Renamed" });
+  assert.throws(() => store.updateMetadata({
+    sessionId: "session_1",
+    expectedRevision: created.revision,
+    metadata: {},
+  }), /does not match/);
+});
+
 function deterministicStore() {
   let id = 0;
   return new SessionStore({

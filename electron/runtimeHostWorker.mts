@@ -288,7 +288,7 @@ host = new InMemoryRuntimeHost({
   runtimeVersion: '0.1.0',
   maxAttempts: positiveInteger(
     process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS,
-    1,
+    5,
   ),
   onRecoveryError: (error) => {
     process.stderr.write(

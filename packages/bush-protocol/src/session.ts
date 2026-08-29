@@ -8,6 +8,11 @@ export const BUSH_CONTEXT_SNAPSHOT_PROTOCOL = "bush.context_snapshot.v1" as cons
 export const BUSH_SESSION_TURN_REQUEST_PROTOCOL =
   "bush.session_turn_request.v1" as const;
 export const GET_RUNTIME_SESSION_COMMAND = "runtime.get_session" as const;
+export const CREATE_RUNTIME_SESSION_COMMAND = "runtime.create_session" as const;
+export const DELETE_RUNTIME_SESSION_COMMAND = "runtime.delete_session" as const;
+export const LIST_RUNTIME_SESSIONS_COMMAND = "runtime.list_sessions" as const;
+export const UPDATE_RUNTIME_SESSION_METADATA_COMMAND =
+  "runtime.update_session_metadata" as const;
 export const RUN_RUNTIME_SESSION_TURN_COMMAND = "runtime.run_session_turn" as const;
 export const ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND =
   "runtime.assemble_session_context" as const;
@@ -60,7 +65,9 @@ const sessionEventEnvelopeSchema = z.object({
 export const sessionEventSchema = z.discriminatedUnion("kind", [
   sessionEventEnvelopeSchema.extend({
     kind: z.literal("session_created"),
-    payload: z.object({}),
+    payload: z.object({
+      metadata: z.record(z.string(), z.unknown()).optional(),
+    }),
   }),
   sessionEventEnvelopeSchema.extend({
     kind: z.literal("turn_committed"),
@@ -72,6 +79,13 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
       messageIds: z.array(z.string().min(1)).min(1),
       reason: z.string().min(1),
       replacementTurnId: z.string().min(1).optional(),
+    }),
+  }),
+  sessionEventEnvelopeSchema.extend({
+    kind: z.literal("session_metadata_updated"),
+    payload: z.object({
+      expectedRevision: z.number().int().positive(),
+      metadata: z.record(z.string(), z.unknown()),
     }),
   }),
 ]);
@@ -86,6 +100,7 @@ export const sessionSnapshotSchema = z.object({
   updatedAt: z.string().min(1),
   turns: z.array(committedTurnSchema),
   supersededMessageIds: z.array(z.string().min(1)),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type SessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
@@ -111,6 +126,19 @@ export function decodeContextSnapshot(input: unknown): ContextSnapshot {
 
 export const runtimeSessionIdentitySchema = z.object({
   sessionId: z.string().min(1),
+});
+
+export const createRuntimeSessionRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const runtimeSessionListRequestSchema = z.object({});
+
+export const updateRuntimeSessionMetadataRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  expectedRevision: z.number().int().positive(),
+  metadata: z.record(z.string(), z.unknown()),
 });
 
 export const runtimeSessionInputMessageSchema = z.object({
@@ -144,6 +172,7 @@ export const runtimeSessionTurnRequestSchema = modelRequestSchema
     protocol: z.literal(BUSH_SESSION_TURN_REQUEST_PROTOCOL),
     prefixMessages: z.array(modelMessageSchema).default([]),
     inputMessages: z.array(runtimeSessionInputMessageSchema).min(1),
+    sessionMetadata: z.record(z.string(), z.unknown()).default({}),
   });
 
 export type RuntimeSessionTurnRequest = z.infer<
