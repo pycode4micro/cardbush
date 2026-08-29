@@ -34,6 +34,26 @@ export type {
   ChatReply,
   ConversationBackend,
 } from "./conversation.js";
+export {
+  FeishuLongConnectionAdapter,
+  createFeishuAdapterFactory,
+} from "./feishuAdapter.js";
+export {
+  WeixinAccountManager,
+  WeixinAccountStore,
+  WeixinApiClient,
+  WeixinPollingAdapter,
+  createWeixinAdapterFactory,
+} from "./weixinAdapter.js";
+export type {
+  WeixinAccount,
+  WeixinAdapterDependencies,
+} from "./weixinAdapter.js";
+export type {
+  FeishuAdapterDependencies,
+  FeishuConnector,
+  FeishuMessageEvent,
+} from "./feishuAdapter.js";
 export type {
   ProductHostCommand,
   ProductHostFailure,
