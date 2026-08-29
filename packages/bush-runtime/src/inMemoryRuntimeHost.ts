@@ -1,5 +1,6 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
+  APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
@@ -7,6 +8,7 @@ import {
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
@@ -32,6 +34,7 @@ import {
   setRuntimePlanRequestSchema,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
+  teamSnapshotSchema,
   updateRuntimeGoalRequestSchema,
   type ModelRequest,
   type ModelMessage,
@@ -49,6 +52,8 @@ import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerSubagentTool } from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
+import { TeamSnapshotStore } from "./teamSnapshotStore.js";
+import { registerTeamTool } from "./teamTool.js";
 import { registerWorkspaceTools, WorkspaceObservationStore } from "./workspaceTools.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
@@ -108,6 +113,7 @@ export interface InMemoryRuntimeHostOptions {
   coordinationStore?: CoordinationStore;
   durableCoordination?: boolean;
   subagentTaskStore?: SubagentTaskStore;
+  teamSnapshotStore?: TeamSnapshotStore;
   durableSubagentTasks?: boolean;
   workspaceObservationStore?: WorkspaceObservationStore;
   registerDefaultWorkspaceTools?: boolean;
@@ -143,6 +149,7 @@ export class InMemoryRuntimeHost {
   readonly #toolExecutions: ToolExecutionStore;
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
+  readonly #teams: TeamSnapshotStore;
   readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
@@ -185,6 +192,21 @@ export class InMemoryRuntimeHost {
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     registerSubagentTool(
       this.#toolRegistry,
+      this.#subagentTasks,
+      async (request, signal) => {
+        const terminal = await this.runSessionTurn(request, { signal });
+        return {
+          terminal,
+          session: this.#sessions.snapshot(request.sessionId),
+        };
+      },
+    );
+    this.#teams = options.teamSnapshotStore ?? new TeamSnapshotStore({
+      canApply: () => !this.hasActiveTurns(),
+    });
+    registerTeamTool(
+      this.#toolRegistry,
+      this.#teams,
       this.#subagentTasks,
       async (request, signal) => {
         const terminal = await this.runSessionTurn(request, { signal });
@@ -240,6 +262,8 @@ export class InMemoryRuntimeHost {
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
         LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
+        APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
+        GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
         GET_RUNTIME_PLAN_COMMAND,
         SET_RUNTIME_PLAN_COMMAND,
         GET_RUNTIME_GOAL_COMMAND,
@@ -265,6 +289,8 @@ export class InMemoryRuntimeHost {
         "explicit_goal_facts",
         ...(options.durableCoordination ? ["durable_coordination"] : []),
         "subagent_context_fork",
+        "product_team_snapshot",
+        "team_concurrent_execution",
         ...(options.durableSubagentTasks ? ["durable_subagent_tasks"] : []),
         ...(options.additionalFeatures ?? []),
       ],
@@ -348,6 +374,10 @@ export class InMemoryRuntimeHost {
         const input = subagentTaskListRequestSchema.parse(command.payload);
         return this.#subagentTasks.list(input.parentSessionId, input.parentTurnId);
       }
+      case APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND:
+        return this.#teams.apply(teamSnapshotSchema.parse(command.payload));
+      case GET_RUNTIME_TEAM_SNAPSHOT_COMMAND:
+        return this.#teams.result() ?? null;
       case GET_RUNTIME_PLAN_COMMAND: {
         const identity = runtimeCoordinationSessionSchema.parse(command.payload);
         return this.#coordination.getPlan(identity.sessionId) ?? null;

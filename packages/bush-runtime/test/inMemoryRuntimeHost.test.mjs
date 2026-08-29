@@ -162,6 +162,7 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
     "edit_file",
     "terminal_exec",
     "subagent",
+    "team_delegate",
   ]);
 });
 

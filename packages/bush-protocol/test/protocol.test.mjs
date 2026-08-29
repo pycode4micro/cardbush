@@ -8,6 +8,7 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_MCP_SNAPSHOT_PROTOCOL,
+  BUSH_TEAM_SNAPSHOT_PROTOCOL,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
@@ -29,6 +30,7 @@ import {
   taskPlanSchema,
   setRuntimePlanRequestSchema,
   subagentTaskSchema,
+  teamSnapshotSchema,
   updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
 
@@ -312,6 +314,42 @@ test("Subagent task facts keep parent and child identities explicit", () => {
   });
   assert.equal(task.parentTurnId, "parent_turn");
   assert.throws(() => subagentTaskSchema.parse({ ...task, status: "guessed" }));
+});
+
+test("Team snapshots keep membership, Tool access and conference behavior explicit", () => {
+  const snapshot = teamSnapshotSchema.parse({
+    protocol: BUSH_TEAM_SNAPSHOT_PROTOCOL,
+    snapshotId: "team-config",
+    revision: 1,
+    teams: [{
+      teamId: "delivery",
+      name: "Delivery",
+      instructions: "Share verified facts.",
+      conference: { enabled: true, instructions: "Identify conflicts first." },
+      members: [
+        {
+          memberId: "builder",
+          name: "Builder",
+          role: "implementation",
+          instructions: "Own the assigned files.",
+          toolNames: ["read_file", "edit_file"],
+        },
+        {
+          memberId: "reviewer",
+          name: "Reviewer",
+          role: "review",
+          instructions: "Verify the result.",
+          toolNames: ["read_file"],
+        },
+      ],
+    }],
+  });
+  assert.equal(snapshot.teams[0].conference.enabled, true);
+  assert.deepEqual(snapshot.teams[0].members[0].toolNames, ["read_file", "edit_file"]);
+  assert.throws(() => teamSnapshotSchema.parse({
+    ...snapshot,
+    teams: [{ ...snapshot.teams[0], members: [snapshot.teams[0].members[0], snapshot.teams[0].members[0]] }],
+  }));
 });
 
 test("provider binding commands validate secrets but return only opaque references", () => {

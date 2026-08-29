@@ -1,10 +1,12 @@
 import {
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
@@ -30,6 +32,8 @@ import {
   goalStateSchema,
   mcpSnapshotResultSchema,
   mcpSnapshotSchema,
+  teamSnapshotSchema,
+  teamSnapshotResultSchema,
   sessionSnapshotSchema,
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
@@ -47,6 +51,8 @@ import {
   type GoalState,
   type McpSnapshot,
   type McpSnapshotResult,
+  type TeamSnapshot,
+  type TeamSnapshotResult,
   type SessionSnapshot,
   type ToolExecutionRecord,
   type ToolDefinition,
@@ -159,6 +165,26 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {} },
       (value) => value == null ? null : mcpSnapshotResultSchema.parse(value),
+      signal,
+    );
+  }
+
+  applyTeamSnapshot(
+    input: TeamSnapshot,
+    signal?: AbortSignal,
+  ): Promise<TeamSnapshotResult> {
+    const payload = teamSnapshotSchema.parse(input);
+    return this.command(
+      { kind: APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND, payload },
+      (value) => teamSnapshotResultSchema.parse(value),
+      signal,
+    );
+  }
+
+  getTeamSnapshot(signal?: AbortSignal): Promise<TeamSnapshotResult | null> {
+    return this.command(
+      { kind: GET_RUNTIME_TEAM_SNAPSHOT_COMMAND, payload: {} },
+      (value) => value == null ? null : teamSnapshotResultSchema.parse(value),
       signal,
     );
   }

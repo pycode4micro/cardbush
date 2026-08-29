@@ -8,5 +8,6 @@ export * from "./recovery.js";
 export * from "./runtimeHost.js";
 export * from "./runtimeIpc.js";
 export * from "./session.js";
+export * from "./team.js";
 export * from "./tool.js";
 export * from "./turn.js";

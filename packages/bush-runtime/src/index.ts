@@ -1,4 +1,5 @@
 export * from "./cacheChainTracker.js";
+export * from "./childTurn.js";
 export * from "./contextAssembler.js";
 export * from "./coordinationStore.js";
 export * from "./coordinationTools.js";
@@ -20,6 +21,8 @@ export * from "./runtimeSessionCoordinator.js";
 export * from "./sessionStore.js";
 export * from "./subagentTaskStore.js";
 export * from "./subagentTool.js";
+export * from "./teamSnapshotStore.js";
+export * from "./teamTool.js";
 export * from "./runtimeToolLoop.js";
 export * from "./toolCallAccumulator.js";
 export * from "./toolExecutionCoordinator.js";

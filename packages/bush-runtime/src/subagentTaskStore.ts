@@ -39,6 +39,10 @@ export class SubagentTaskStore {
     prompt: string;
     inheritContext: boolean;
     inheritedMessageCount: number;
+    origin?: "subagent" | "team";
+    teamId?: string;
+    teamMemberId?: string;
+    phase?: "discussion" | "execution";
   }): SubagentTask {
     const existing = this.get(input.parentSessionId, input.taskId);
     if (existing) throw new Error(`Subagent task ${input.taskId} already exists.`);
@@ -46,6 +50,8 @@ export class SubagentTaskStore {
     const task = subagentTaskSchema.parse({
       protocol: BUSH_SUBAGENT_TASK_PROTOCOL,
       ...input,
+      origin: input.origin ?? "subagent",
+      phase: input.phase ?? "execution",
       status: "running",
       finalResponse: "",
       errorMessage: "",
@@ -164,6 +170,10 @@ export function projectSubagentTasks(
         "prompt",
         "inheritContext",
         "inheritedMessageCount",
+        "origin",
+        "teamId",
+        "teamMemberId",
+        "phase",
         "createdAt",
       ] as const) {
         if (event.task[key] !== before[key]) {

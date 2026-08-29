@@ -231,3 +231,24 @@ Execution Fact; Runtime does not scrape result prose for paths, Artifacts, or
 workspace changes. Reusing a snapshot revision with different content, moving a
 revision backwards, changing configuration during a Turn, or colliding with a
 Tool owned by another source fails closed while the previous snapshot stays live.
+
+## Team execution checkpoint
+
+Team configuration is likewise a product-owned, revisioned
+`bush.team_snapshot.v1` fact. It explicitly names Teams, members, roles,
+instructions, child-visible Tool allowlists, and whether the Team uses a
+conference phase. Runtime does not infer any of these from the task or member
+prose, and configuration cannot change while a Turn is active.
+
+`subagent` and `team_delegate` share one child-Turn builder and the same durable
+Session, Provider, Tool, permission, and task-journal path. A configured
+conference runs all assigned members concurrently without Tools, freezes their
+complete responses as one immutable transcript, and then gives that identical
+transcript to every independently executing member. With conferencing disabled,
+the explicit assignments begin directly. Runtime performs only mechanical
+identity, phase, exposure, and all-assignment completion checks; it does not
+classify dependencies, choose members, or interpret whether their prose is good.
+
+Older Subagent journals remain byte-compatible: Team origin and phase fields are
+optional when reading historical records and are written explicitly for every
+new task, so schema evolution does not invalidate existing checksums.

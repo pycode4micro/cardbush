@@ -2,15 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import {
   BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_SESSION_TURN_REQUEST_PROTOCOL,
   BUSH_TOOL_RESULT_PROTOCOL,
-  modelMessageSchema,
-  type RuntimeEvent,
-  type RuntimeSessionTurnRequest,
   type SessionSnapshot,
   type ToolResult,
 } from "@cardbush/bush-protocol";
 
+import {
+  buildChildTurnRequest,
+  inheritedChildMessages,
+  resolveChildTurn,
+  type ChildTurnRunner,
+} from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 
@@ -21,15 +23,7 @@ interface SubagentInput {
   inheritContext: boolean;
 }
 
-export interface SubagentChildResult {
-  terminal: RuntimeEvent;
-  session: SessionSnapshot | undefined;
-}
-
-export type SubagentChildRunner = (
-  request: RuntimeSessionTurnRequest,
-  signal?: AbortSignal,
-) => Promise<SubagentChildResult>;
+export type SubagentChildRunner = ChildTurnRunner;
 
 export function registerSubagentTool(
   registry: ToolRegistry,
@@ -90,12 +84,7 @@ export function registerSubagentTool(
       const taskId = createTaskId();
       const childSessionId = createSessionId();
       const childTurnId = createTurnId();
-      const inherited = context.input.inheritContext
-        ? context.turn.contextMessages.filter(
-            (message) => message.role !== "system" && message.role !== "developer",
-          )
-        : [];
-      const childPrefix = childPrefixMessages(context.turn.request.metadata);
+      const inherited = inheritedChildMessages(context, context.input.inheritContext);
       tasks.start({
         taskId,
         parentSessionId: context.sessionId,
@@ -107,38 +96,19 @@ export function registerSubagentTool(
         inheritedMessageCount: inherited.length,
       });
 
-      const parentRequest = context.turn.request;
-      const visibleNames = new Set(parentRequest.tools.map((tool) => tool.name));
-      const childTools = registry
-        .childDefinitions()
-        .filter((definition) => visibleNames.has(definition.name));
-      const childRequest: RuntimeSessionTurnRequest = {
-        protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
-        requestId: createRequestId(),
-        sessionId: childSessionId,
-        turnId: childTurnId,
-        model: parentRequest.model,
-        providerBinding: parentRequest.providerBinding,
-        prefixMessages: [...childPrefix, ...inherited],
-        inputMessages: [{
+      const childRequest = buildChildTurnRequest({
+        context,
+        registry,
+        ids: {
+          requestId: createRequestId(),
+          sessionId: childSessionId,
+          turnId: childTurnId,
           messageId: createMessageId(),
-          message: { role: "user", content: context.input.prompt },
-        }],
-        tools: childTools,
-        toolChoice: "auto",
-        maxOutputTokens: parentRequest.maxOutputTokens,
-        temperature: parentRequest.temperature,
-        topP: parentRequest.topP,
-        reasoningEffort: parentRequest.reasoningEffort,
-        metadata: {
-          ...parentRequest.metadata,
-          agentRole: "child",
-          parentSessionId: context.sessionId,
-          parentTurnId: context.turnId,
-          subagentTaskId: taskId,
-          inheritedObservationSessionId: context.sessionId,
         },
-      };
+        prompt: context.input.prompt,
+        inherited,
+        metadata: { subagentTaskId: taskId },
+      });
 
       let status: "completed" | "failed" | "stopped" = "failed";
       let finalResponse = "";
@@ -146,27 +116,10 @@ export function registerSubagentTool(
       let usage: SessionSnapshot["turns"][number]["usage"] = {};
       try {
         const result = await runChild(childRequest, context.signal);
-        if (result.terminal.kind !== "turn_terminal") {
-          throw new Error("Child runner returned a non-terminal Runtime event.");
-        }
-        status = result.terminal.payload.status === "completed"
-          ? "completed"
-          : result.terminal.payload.status === "stopped"
-            ? "stopped"
-            : "failed";
-        const committed = result.session?.turns.find((turn) => turn.turnId === childTurnId);
-        usage = committed?.usage ?? {};
-        const finalMessageId = result.terminal.payload.finalMessageId;
-        const finalMessage = committed?.messages.find(
-          (message) => message.messageId === finalMessageId,
-        )?.message;
-        if (finalMessage?.role === "assistant") finalResponse = finalMessage.content;
-        if (status !== "completed") {
-          errorMessage = String(result.terminal.payload.reason || "child_turn_failed");
-        } else if (!finalResponse.trim()) {
-          status = "failed";
-          errorMessage = "child_turn_produced_no_terminal_response";
-        }
+        ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(
+          result,
+          childTurnId,
+        ));
       } catch (error) {
         status = context.signal?.aborted ? "stopped" : "failed";
         errorMessage = error instanceof Error ? error.message : String(error);
@@ -234,15 +187,6 @@ function result(
           },
         }),
   };
-}
-
-function childPrefixMessages(metadata: Record<string, unknown>) {
-  const candidate = metadata.subagentChildPrefixMessages;
-  if (!Array.isArray(candidate)) return [];
-  return modelMessageSchema
-    .array()
-    .parse(candidate)
-    .filter((message) => message.role === "system" || message.role === "developer");
 }
 
 function decodeInput(input: unknown): SubagentInput {
