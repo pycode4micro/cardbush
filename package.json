@@ -16,7 +16,7 @@
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"tsc -p tsconfig.node.json --watch --preserveWatchOutput\" \"wait-on http://127.0.0.1:5173 dist-electron/main.js && node scripts/run-electron-dev.mjs\"",
     "prebuild": "npm run build:runtime",
     "build": "tsc -p tsconfig.node.json && vite build",
-    "build:runtime": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && npm run build --workspace @cardbush/bush-provider-openai && npm run build --workspace @cardbush/bush-mcp-client && npm run build --workspace @cardbush/bush-runtime-electron",
+    "build:runtime": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && npm run build --workspace @cardbush/product-host && npm run build --workspace @cardbush/bush-provider-openai && npm run build --workspace @cardbush/bush-mcp-client && npm run build --workspace @cardbush/bush-runtime-electron",
     "gui": "npm run build && node scripts/run-electron-gui.mjs",
     "icon:generate": "electron scripts/generate-cardbush-icon.cjs",
     "fix:electron": "node scripts/install-electron.mjs",
