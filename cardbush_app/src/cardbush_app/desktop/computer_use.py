@@ -262,7 +262,7 @@ def _result(
     error_code: str = "",
 ) -> dict[str, Any]:
     return {
-        "protocol": "bushserver.tool_result.v1",
+        "protocol": "cardbush_app.computer_result.v1",
         "outcome": {
             "semantic_success": bool(ok),
             "verification_state": "verified" if ok else "failed",

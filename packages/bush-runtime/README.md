@@ -32,9 +32,8 @@ under separate directories beneath its explicit state root. Tool execution also
 has a checksummed journal containing the admitted manifest, exact result,
 Execution Facts, Artifacts and Workspace Changes. Event references come only
 from those declared facts; Runtime never extracts paths or effects from output
-text. Existing CardBush
-chat remains unchanged until the typed Session Turn path passes product A/B
-gates.
+text. The Electron product chat path now consumes these typed Session and Tool
+facts directly; ordinary Turns no longer need a Python HTTP/SSE adapter.
 
 Plan and Goal state is stored separately in an append-only Coordination journal.
 The store enforces only protocol identities, monotonic revisions, stable Plan
@@ -45,6 +44,15 @@ state combinations.
 `update_task_plan` and `update_goal` are ordinary registered Tools. Their Session,
 identity and revision fields are supplied by Runtime rather than the model. The
 typed Tool Catalog is the sole source of their model-visible definitions.
+
+`declare_turn_outcome` is the only product Turn-finalization protocol. The model
+declares the disposition and complete visible response; Runtime validates cited
+receipts against authoritative records and projects the response without
+classifying its prose. `effect_complete` requires a successful cited Action
+Manifest that explicitly declares an effect. A missing declaration receives one
+protocol reminder, whose count is included in the recovery checkpoint, then
+fails explicitly if omitted again. The legacy Python outcome-finalizer semantic
+classification shape is intentionally not part of the TypeScript protocol.
 
 Subagent execution forks the exact pre-dispatch conversation into an ordinary
 child Session Turn. Tool registrations explicitly declare child visibility and

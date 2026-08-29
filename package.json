@@ -46,6 +46,7 @@
     "test:conversation-workspace": "node scripts/test-conversation-workspace-contract.mjs",
     "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",
     "test:goal-command": "node scripts/test-goal-command-contract.mjs",
+    "test:product-a2a": "tsc -p tsconfig.node.json && node scripts/test-product-a2a-contract.mjs",
     "test:desktop-action": "node scripts/test-desktop-action-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
     "test:subagent-observability": "node scripts/test-subagent-observability-contract.mjs",

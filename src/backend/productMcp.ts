@@ -28,7 +28,10 @@ export function readProductMcpServers(): McpServerConfig[] {
 export async function synchronizeProductMcpSnapshot(
   client: Pick<ProtocolRuntimeClient, 'applyMcpSnapshot'>,
 ): Promise<McpSnapshotResult> {
-  return client.applyMcpSnapshot(snapshot(readProductMcpServers(), readRevision()));
+  return client.applyMcpSnapshot(snapshot(
+    await withProductOwnedServers(readProductMcpServers()),
+    readRevision(),
+  ));
 }
 
 export async function replaceProductMcpServers(
@@ -41,7 +44,10 @@ export async function replaceProductMcpServers(
   window.localStorage.setItem(serverStorageKey, JSON.stringify(servers.map(storedServer)));
   window.localStorage.setItem(revisionStorageKey, String(revision));
   try {
-    return await client.applyMcpSnapshot(snapshot(servers, revision));
+    return await client.applyMcpSnapshot(snapshot(
+      await withProductOwnedServers(servers),
+      revision,
+    ));
   } catch (error) {
     restore(serverStorageKey, previousServers);
     restore(revisionStorageKey, previousRevision);
@@ -81,6 +87,49 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
       },
       toolPolicies: {},
     })),
+  };
+}
+
+async function withProductOwnedServers(
+  configured: McpServerConfig[],
+): Promise<McpServerConfig[]> {
+  const bridge = window.cardbushDesktop?.cardbushAppMcpServer;
+  if (!bridge) return configured;
+  const builtin = serverFromProduct(await bridge());
+  return [
+    ...configured.filter((server) => server.id !== builtin.id),
+    builtin,
+  ];
+}
+
+function serverFromProduct(value: unknown): McpServerConfig {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('CardBush App returned an invalid MCP server descriptor.');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    record.id !== 'cardbush_app'
+    || record.transport !== 'streamable_http'
+    || record.enabled !== true
+  ) {
+    throw new Error('CardBush App returned an unsupported MCP server descriptor.');
+  }
+  const url = optionalString(record.url);
+  if (!url) throw new Error('CardBush App MCP endpoint is missing.');
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1') {
+    throw new Error('CardBush App MCP endpoint must use IPv4 loopback HTTP.');
+  }
+  return {
+    id: 'cardbush_app',
+    name: String(record.name ?? 'CardBush App'),
+    description: String(record.description ?? ''),
+    enabled: true,
+    transport: 'streamable_http',
+    args: [],
+    url: parsed.toString(),
+    headers: stringRecord(record.headers),
+    raw: { source: 'cardbush_product' },
   };
 }
 

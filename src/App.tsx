@@ -64,6 +64,7 @@ import {
   fetchRuntimeToolInventory,
   fetchSkills,
   isBushServerHttpError,
+  isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
   saveModelConfigs,
   saveProjectContext,
@@ -7791,6 +7792,11 @@ function errorMessage(error: unknown) {
 }
 
 function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
+  if (isRuntimeWorkspaceSnapshotUnavailableError(error)) {
+    return language === 'zh'
+      ? 'Runtime 尚无完整恢复快照，已尝试使用桌面 diff 安全撤回。'
+      : 'Runtime has no complete recovery snapshot; the desktop diff fallback was attempted.';
+  }
   if (isBushServerHttpError(error)) {
     if (error.code === 'workspace_change_conflict') {
       return language === 'zh'
@@ -7812,10 +7818,12 @@ function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
 }
 
 function snapshotRevertFallbackAllowed(error: unknown) {
-  return isBushServerHttpError(error) && (
-    error.code === 'workspace_change_revert_unavailable' ||
-    error.statusCode === 404 ||
-    error.statusCode === 405
+  return isRuntimeWorkspaceSnapshotUnavailableError(error) || (
+    isBushServerHttpError(error) && (
+      error.code === 'workspace_change_revert_unavailable' ||
+      error.statusCode === 404 ||
+      error.statusCode === 405
+    )
   );
 }
 

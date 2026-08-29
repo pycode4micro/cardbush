@@ -863,6 +863,21 @@ export async function fetchBackendReadiness(): Promise<Record<string, unknown>> 
   return readJson<Record<string, unknown>>(url('/readyz'));
 }
 
+export class RuntimeWorkspaceSnapshotUnavailableError extends Error {
+  readonly code = 'runtime_workspace_snapshot_unavailable';
+
+  constructor() {
+    super('The TypeScript Runtime has no reversible workspace snapshot for this change.');
+    this.name = 'RuntimeWorkspaceSnapshotUnavailableError';
+  }
+}
+
+export function isRuntimeWorkspaceSnapshotUnavailableError(
+  error: unknown,
+): error is RuntimeWorkspaceSnapshotUnavailableError {
+  return error instanceof RuntimeWorkspaceSnapshotUnavailableError;
+}
+
 export async function fetchTeams(signal?: AbortSignal): Promise<TeamDefinition[]> {
   if (window.cardbushDesktop?.runtime) return readProductTeams();
   const payload = await readJson<Record<string, unknown>>(url('/v1/teams'), { signal });
@@ -1186,8 +1201,8 @@ export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoal
       enabled: true,
       mode: 'electron_runtime',
       goalProtocol: 'bush.goal.v1',
-      a2aProtocolVersion: '',
-      mergedIntoCore: true,
+      a2aProtocolVersion: '1.0',
+      mergedIntoCore: false,
     };
   }
   const payload = recordFromUnknown(
@@ -1271,6 +1286,9 @@ export async function updateExperimentalGoal(request: {
 }
 
 export async function inspectExperimentalA2AAgent(agentUrl: string): Promise<A2AAgentCard> {
+  if (window.cardbushDesktop?.a2aInspect) {
+    return a2aAgentCardFromPayload(await window.cardbushDesktop.a2aInspect(agentUrl));
+  }
   return a2aAgentCardFromPayload(await readJson<unknown>(
     url('/v1/experimental/a2a/inspect'),
     { method: 'POST', body: JSON.stringify({ agent_url: agentUrl }) },
@@ -1283,6 +1301,56 @@ export async function dispatchExperimentalA2ATask(request: {
   goalId?: string;
   contextId?: string;
 }): Promise<A2ATask> {
+  if (window.cardbushDesktop?.a2aDispatch) {
+    let linkedGoal: RuntimeGoalState | null = null;
+    let linkedRuntime: ReturnType<typeof createDesktopRuntimeSession> | null = null;
+    if (request.goalId) {
+      if (!window.cardbushDesktop.runtime) {
+        throw new Error(localizedClientMessage(
+          '当前环境无法关联 Goal。',
+          'The current environment cannot link an A2A task to a Goal.',
+        ));
+      }
+      linkedRuntime = createDesktopRuntimeSession();
+      const sessions = await linkedRuntime.client.listSessions();
+      for (const session of sessions) {
+        const candidate = await linkedRuntime.client.getGoal(session.sessionId);
+        if (candidate?.goalId === request.goalId) {
+          linkedGoal = candidate;
+          break;
+        }
+      }
+      if (!linkedGoal || linkedGoal.status !== 'active') {
+        linkedRuntime.dispose();
+        throw new Error(localizedClientMessage(
+          '关联的 Goal 不存在或已结束。',
+          'The linked Goal is missing or no longer active.',
+        ));
+      }
+    }
+    try {
+    const payload = recordFromUnknown(await window.cardbushDesktop.a2aDispatch({
+      agentUrl: request.agentUrl,
+      text: request.text,
+      ...(request.contextId ? { contextId: request.contextId } : {}),
+    }));
+    const task = a2aTaskFromPayload(payload.task ?? payload);
+    if (linkedGoal && linkedRuntime && task.id) {
+      await linkedRuntime.client.updateGoal({
+        goalId: linkedGoal.goalId,
+        sessionId: linkedGoal.sessionId,
+        expectedRevision: linkedGoal.revision,
+        status: linkedGoal.status,
+        statusReason: linkedGoal.statusReason,
+        consumedTokens: linkedGoal.consumedTokens,
+        linkedA2ATaskIds: [...new Set([...linkedGoal.linkedA2ATaskIds, task.id])],
+      });
+    }
+    return task;
+    } finally {
+      linkedRuntime?.dispose();
+    }
+  }
   const payload = recordFromUnknown(await readJson<unknown>(
     url('/v1/experimental/a2a/dispatch'),
     {
@@ -3042,6 +3110,9 @@ export async function revertSessionWorkspaceChanges(
   if (!normalizedSession || normalizedTurns.length === 0) {
     throw new Error('session_id and turn_ids are required');
   }
+  if (window.cardbushDesktop?.runtime) {
+    throw new RuntimeWorkspaceSnapshotUnavailableError();
+  }
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/sessions/${encodeURIComponent(normalizedSession)}/workspace-changes/revert`),
     {
@@ -3388,6 +3459,7 @@ export async function fetchPendingInteraction(
   }
   const runtimeInteraction = pendingRuntimeInteraction(normalized);
   if (runtimeInteraction) return runtimeInteraction;
+  if (window.cardbushDesktop?.runtime) return null;
   const payload = await readJson<Record<string, unknown>>(
     url(`/v1/interactions/pending?session_id=${encodeURIComponent(normalized)}`),
   );
@@ -3447,6 +3519,12 @@ export async function replyInteraction({
     );
     return;
   }
+  if (window.cardbushDesktop?.runtime) {
+    throw new Error(localizedClientMessage(
+      '当前 Runtime 中不存在这个待处理交互。',
+      'This interaction is not pending in the current Runtime.',
+    ));
+  }
   await readJson<Record<string, unknown>>(
     url(`/v1/interactions/${encodeURIComponent(normalized)}/reply`),
     {
@@ -3469,6 +3547,7 @@ export async function cancelInteraction(interactionId: string) {
     await answerRuntimeInteraction(normalized, 'cancel');
     return;
   }
+  if (window.cardbushDesktop?.runtime) return;
   await readJson<Record<string, unknown>>(
     url(`/v1/interactions/${encodeURIComponent(normalized)}/cancel`),
     {
@@ -3508,6 +3587,24 @@ export async function stopTurn(turnId: string): Promise<StopTurnResult> {
       reason: 'runtime_stop_requested',
       raw: { source: 'electron_runtime' },
     };
+  }
+  if (window.cardbushDesktop?.runtime) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const sessions = await runtime.client.listSessions();
+      const turn = sessions.flatMap((session) => session.turns)
+        .find((candidate) => candidate.turnId === normalized);
+      return {
+        turnId: normalized,
+        accepted: false,
+        terminal: Boolean(turn),
+        alreadyInactive: Boolean(turn),
+        reason: turn ? turn.reason : 'turn_not_found',
+        raw: { source: 'electron_runtime', ...(turn ? { status: turn.status } : {}) },
+      };
+    } finally {
+      runtime.dispose();
+    }
   }
   const endpoint = url(`/v1/turns/${encodeURIComponent(normalized)}/stop`);
   const response = await fetch(endpoint, {

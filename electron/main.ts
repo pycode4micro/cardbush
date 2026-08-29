@@ -28,6 +28,7 @@ import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import { CardbushAppService, type HostRequest } from './cardbushAppService';
 import { listProductSkills, readProductSkill } from './productSkills';
+import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -82,6 +83,10 @@ const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
 const localImagePreviewMaxBytes = 32 * 1024 * 1024;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
+const productA2AClient = new ProductA2AClient({
+  fetchImpl: net.fetch as typeof fetch,
+  allowedOrigins: productA2AAllowedOrigins(process.env.CARDBUSH_A2A_ALLOWED_ORIGINS),
+});
 protocol.registerSchemesAsPrivileged([
   {
     scheme: localFileProtocol,
@@ -1946,6 +1951,11 @@ ipcMain.handle('cardbush-app:request', (event, request: HostRequest) => {
   return cardbushAppService.request(request);
 });
 
+ipcMain.handle('cardbush-app:mcp-server', (event) => {
+  assertMainWindowSender(event.sender.id);
+  return cardbushAppService.mcpServer();
+});
+
 ipcMain.handle(
   'network:set-proxy',
   async (
@@ -2018,6 +2028,21 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
     };
   }));
   return inspected.filter((item) => item != null);
+});
+
+ipcMain.handle('a2a:inspect', (event, agentUrl: string) => {
+  assertMainWindowSender(event.sender.id);
+  return productA2AClient.inspect(agentUrl);
+});
+
+ipcMain.handle('a2a:dispatch', (event, input: {
+  agentUrl: string;
+  text: string;
+  contextId?: string;
+  taskId?: string;
+}) => {
+  assertMainWindowSender(event.sender.id);
+  return productA2AClient.dispatch(input);
 });
 
 ipcMain.handle('skills:list', () => listProductSkills(productSkillRoots()));

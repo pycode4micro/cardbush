@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { actionManifestTemplateSchema } from "./tool.js";
 
 export const BUSH_MCP_SNAPSHOT_PROTOCOL = "bush.mcp_snapshot.v1" as const;
 export const BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL =
@@ -33,6 +34,7 @@ export const mcpToolPolicySchema = z.object({
   permission: z.enum(["allow", "ask"]).default("ask"),
   parallelSafe: z.boolean().default(false),
   visibleToChild: z.boolean().default(true),
+  actionManifest: actionManifestTemplateSchema.optional(),
 });
 
 export const mcpServerSnapshotSchema = z.object({

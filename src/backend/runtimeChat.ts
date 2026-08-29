@@ -124,6 +124,9 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
           }
         : {}),
       permissionMode: request.permissionMode ?? 'task_free',
+      mcpContext: {
+        filesystemRoots: request.projectDir?.trim() ? [request.projectDir.trim()] : [],
+      },
       teamId: request.teamId,
       allowedSkills: request.allowedSkills ?? [],
       subagentChildPrefixMessages: [{ role: 'system', content: CHILD_SYSTEM_PROMPT }],

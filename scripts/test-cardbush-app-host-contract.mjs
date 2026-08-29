@@ -18,20 +18,23 @@ const backend = read(
 assert.match(main, /cardbushAppService\.start\(\)/);
 assert.match(main, /cardbushAppService\.stop\(\)/);
 assert.match(preload, /cardbushAppRequest/);
-assert.match(service, /\/v1\/mcp\/servers\/cardbush_app/);
-assert.match(service, /method: 'PUT'/);
-assert.match(service, /method: 'DELETE'/);
-assert.match(service, /'filesystem_roots'/);
+assert.match(service, /async mcpServer\(\)/);
+assert.match(service, /transport: 'streamable_http'/);
+assert.doesNotMatch(service, /\/v1\/mcp\/servers\/cardbush_app/);
+assert.doesNotMatch(service, /registerWithBushServer|unregisterFromBushServer/);
 assert.match(service, /requestPath\.startsWith\('\/host\/v1\/'\)/);
+assert.match(preload, /cardbushAppMcpServer/);
+assert.match(api, /synchronizeProductMcpSnapshot/);
 
 assert.match(api, /readCardbushAppJson\('\/host\/v1\/bots'/);
 assert.doesNotMatch(api, /requestJson<[^>]*>\('\/v1\/bots/);
 assert.match(server, /name="computer_use"/);
 assert.match(server, /name="transport_deliver"/);
-assert.match(server, /"bushserver\/dispatch"/);
-assert.match(server, /"protocol": "bushserver\.tool_dispatch\.v1"/);
+assert.match(server, /"cardbush\/action_manifest"/);
+assert.doesNotMatch(server, /"bushserver\/dispatch"/);
 assert.match(server, /\/host\/v1\/bots/);
-assert.match(server, /"protocol": "bushserver\.tool_result\.v1"/);
+assert.match(server, /"protocol": "bush\.tool_result\.v1"/);
+assert.doesNotMatch(server, /bushserver\.tool_result/);
 assert.match(server, /"send_confirmed": False/);
 
 assert.match(bots, /CARDBUSH_BOT_STREAM_BASE_URL/);

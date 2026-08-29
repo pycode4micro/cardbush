@@ -3,7 +3,6 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import netNode from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 
 type HostRequest = {
@@ -18,15 +17,23 @@ type LaunchSpec = {
   env: NodeJS.ProcessEnv;
 };
 
+export type CardbushAppMcpServer = {
+  id: 'cardbush_app';
+  name: string;
+  description: string;
+  enabled: true;
+  transport: 'streamable_http';
+  url: string;
+  headers: Record<string, string>;
+  source: 'cardbush_product';
+};
+
 export class CardbushAppService {
   private child: ChildProcess | null = null;
   private hostPort = 0;
   private readonly hostToken = randomBytes(32).toString('base64url');
   private startPromise: Promise<void> | null = null;
   private stopping = false;
-  private registrationTimer: ReturnType<typeof setTimeout> | null = null;
-  private registeredBackend: URL | null = null;
-  private registrationGeneration = 0;
 
   start(): Promise<void> {
     if (this.startPromise != null) {
@@ -41,15 +48,6 @@ export class CardbushAppService {
 
   async stop(): Promise<void> {
     this.stopping = true;
-    this.registrationGeneration += 1;
-    this.clearRegistrationTimer();
-    const backend = this.registeredBackend;
-    this.registeredBackend = null;
-    if (backend != null) {
-      await this.unregisterFromBushServer(backend).catch((error) => {
-        console.warn('[cardbush_app] MCP unregister failed', error);
-      });
-    }
     const child = this.child;
     this.child = null;
     this.startPromise = null;
@@ -112,9 +110,22 @@ export class CardbushAppService {
     return payload;
   }
 
+  async mcpServer(): Promise<CardbushAppMcpServer> {
+    await this.start();
+    return {
+      id: 'cardbush_app',
+      name: 'CardBush App',
+      description: 'CardBush desktop control and transport capabilities',
+      enabled: true,
+      transport: 'streamable_http',
+      url: `http://127.0.0.1:${this.hostPort}/mcp`,
+      headers: { Authorization: `Bearer ${this.hostToken}` },
+      source: 'cardbush_product',
+    };
+  }
+
   private async startInternal(): Promise<void> {
     this.stopping = false;
-    const registrationGeneration = ++this.registrationGeneration;
     this.hostPort = await allocateLoopbackPort();
     const backend = backendEndpoint();
     const dataDir = path.join(app.getPath('userData'), 'host');
@@ -140,111 +151,12 @@ export class CardbushAppService {
     child.once('exit', () => {
       if (this.child === child) {
         this.child = null;
-        this.clearRegistrationTimer();
         if (!this.stopping) {
           this.startPromise = null;
         }
       }
     });
     await waitUntilReady(this.hostPort, child);
-    this.scheduleRegistration(backend, 0, registrationGeneration);
-  }
-
-  private scheduleRegistration(
-    backend: URL,
-    delayMs: number,
-    generation: number,
-  ): void {
-    this.clearRegistrationTimer();
-    if (
-      this.stopping
-      || generation !== this.registrationGeneration
-      || this.child == null
-      || this.child.exitCode != null
-    ) {
-      return;
-    }
-    this.registrationTimer = setTimeout(() => {
-      this.registrationTimer = null;
-      void this.registerWithBushServer(backend)
-        .then(async () => {
-          if (this.stopping || generation !== this.registrationGeneration) {
-            await this.unregisterFromBushServer(backend).catch(() => undefined);
-            return;
-          }
-          this.registeredBackend = backend;
-        })
-        .catch((error) => {
-          if (!this.stopping && generation === this.registrationGeneration) {
-            console.warn('[cardbush_app] MCP registration pending', error);
-            this.scheduleRegistration(backend, 2_000, generation);
-          }
-        });
-    }, Math.max(0, delayMs));
-  }
-
-  private clearRegistrationTimer(): void {
-    if (this.registrationTimer != null) {
-      clearTimeout(this.registrationTimer);
-      this.registrationTimer = null;
-    }
-  }
-
-  private async registerWithBushServer(backend: URL): Promise<void> {
-    const endpoint = new URL('/v1/mcp/servers/cardbush_app', backend);
-    const response = await net.fetch(endpoint.toString(), {
-      method: 'PUT',
-      headers: {
-        ...bushHeaders(endpoint),
-        accept: 'application/json',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: 'cardbush_app',
-        description: 'CardBush desktop host capabilities',
-        transport: 'streamable_http',
-        url: `http://127.0.0.1:${this.hostPort}/mcp`,
-        headers: { Authorization: `Bearer ${this.hostToken}` },
-        timeout_seconds: 60,
-        exposure_default: 'on_demand',
-        tool_exposure: {
-          computer_use: 'on_demand',
-          transport_deliver: 'contextual',
-        },
-        context_access: [
-          'session_id',
-          'turn_id',
-          'tool_call_id',
-          'transport_channel',
-          'permission_grants',
-          'filesystem_roots',
-        ],
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`BushServer rejected cardbush_app MCP registration (${response.status})`);
-    }
-  }
-
-  private async unregisterFromBushServer(backend: URL): Promise<void> {
-    const endpoint = new URL('/v1/mcp/servers/cardbush_app', backend);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2_000);
-    try {
-      const response = await net.fetch(endpoint.toString(), {
-        method: 'DELETE',
-        headers: {
-          ...bushHeaders(endpoint),
-          accept: 'application/json',
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok && response.status !== 404) {
-        throw new Error(`BushServer rejected cardbush_app MCP unregister (${response.status})`);
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
   }
 }
 
@@ -303,35 +215,6 @@ function backendEndpoint(): URL {
     throw new Error('CardBush desktop requires a loopback BushServer endpoint.');
   }
   return parsed;
-}
-
-function bushHeaders(target: URL): Record<string, string> {
-  const headers: Record<string, string> = {};
-  const token = process.env.BUSH_API_AUTH_TOKEN?.trim();
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  const secret = readLocalRequestSecret();
-  if (secret && ['127.0.0.1', 'localhost', '::1'].includes(target.hostname)) {
-    headers['X-Bush-Local-Key'] = secret;
-  }
-  return headers;
-}
-
-function readLocalRequestSecret(): string {
-  const direct = process.env.BUSH_LOCAL_REQUEST_SECRET?.trim();
-  if (direct) {
-    return direct;
-  }
-  const override = process.env.BUSH_LOCAL_REQUEST_SECRET_PATH?.trim();
-  const candidate = override || (process.platform === 'win32'
-    ? path.join(process.env.LOCALAPPDATA || process.env.APPDATA || os.homedir(), 'bushserver', 'config', 'local_request_secret')
-    : path.join(os.homedir(), '.local', 'share', 'bushserver', 'config', 'local_request_secret'));
-  try {
-    return fs.readFileSync(candidate, 'utf8').trim();
-  } catch {
-    return '';
-  }
 }
 
 async function allocateLoopbackPort(): Promise<number> {

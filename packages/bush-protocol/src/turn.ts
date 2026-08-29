@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const BUSH_TASK_PLAN_PROTOCOL = "bush.task_plan.v1" as const;
-export const BUSH_OUTCOME_FINALIZER_PROTOCOL = "bush.outcome_finalizer.v1" as const;
 export const BUSH_TURN_OUTCOME_DECLARATION_PROTOCOL =
   "bush.turn_outcome_declaration.v1" as const;
 
@@ -47,23 +46,6 @@ export const taskPlanSchema = z
   });
 
 export type TaskPlan = z.infer<typeof taskPlanSchema>;
-
-export const outcomeFinalizerSchema = z.object({
-  protocol: z.literal(BUSH_OUTCOME_FINALIZER_PROTOCOL),
-  status: z.enum(["complete", "continue", "blocked", "awaiting_input"]),
-  result_intent: z.enum(["conversation", "deliverable", "uncertain"]),
-  required_evidence: z.array(z.string()),
-  observed_evidence: z.array(z.string()),
-  missing_evidence: z.array(z.string()),
-  blocking_facts: z.array(z.string()),
-  reason: z.string(),
-  required_acceptance: z.array(z.string()),
-  passed_acceptance: z.array(z.string()),
-  failed_acceptance: z.array(z.string()),
-  stale_acceptance: z.array(z.string()),
-});
-
-export type OutcomeFinalizerDecision = z.infer<typeof outcomeFinalizerSchema>;
 
 export const turnOutcomeDeclarationSchema = z.object({
   protocol: z.literal(BUSH_TURN_OUTCOME_DECLARATION_PROTOCOL),

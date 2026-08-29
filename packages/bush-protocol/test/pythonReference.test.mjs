@@ -4,7 +4,6 @@ import test from "node:test";
 
 import {
   executionFactSchema,
-  outcomeFinalizerSchema,
   taskPlanSchema,
 } from "../dist/index.js";
 
@@ -18,5 +17,5 @@ test("parses contracts exported by the frozen Python reference", async () => {
   assert.equal(fixture.reference_commit, "a1e2f2b4");
   assert.equal(executionFactSchema.parse(fixture.execution_fact).receipt_id, "receipt_1");
   assert.equal(taskPlanSchema.parse(fixture.task_plan).nodes.length, 2);
-  assert.equal(outcomeFinalizerSchema.parse(fixture.outcome_finalizer).status, "continue");
+  assert.equal(fixture.outcome_finalizer.protocol, "bush.outcome_finalizer.v1");
 });

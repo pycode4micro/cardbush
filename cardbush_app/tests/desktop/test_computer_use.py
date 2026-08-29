@@ -54,7 +54,7 @@ def test_computer_use_translates_click_and_returns_canonical_result() -> None:
         "button": "left",
         "_bush_context": {"session_id": "session-1"},
     }
-    assert output["protocol"] == "bushserver.tool_result.v1"
+    assert output["protocol"] == "cardbush_app.computer_result.v1"
     assert output["outcome"]["semantic_success"] is True
 
 

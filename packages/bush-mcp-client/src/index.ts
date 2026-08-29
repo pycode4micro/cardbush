@@ -12,11 +12,14 @@ import {
   BUSH_EXECUTION_FACT_PROTOCOL,
   BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
   BUSH_TOOL_RESULT_PROTOCOL,
+  actionManifestTemplateSchema,
   mcpSnapshotSchema,
+  toolResultSchema,
   type McpServerSnapshot,
   type McpSnapshot,
   type McpSnapshotResult,
   type McpToolPolicy,
+  type ActionManifestTemplate,
   type ToolResult,
 } from "@cardbush/bush-protocol";
 import {
@@ -28,7 +31,12 @@ import {
 interface ConnectedServer {
   config: McpServerSnapshot;
   client: Client;
-  tools: Array<{ remote: McpTool; runtimeName: string; policy: McpToolPolicy }>;
+  tools: Array<{
+    remote: McpTool;
+    runtimeName: string;
+    policy: McpToolPolicy;
+    manifest: ActionManifestTemplate;
+  }>;
 }
 
 export interface McpClientManagerOptions {
@@ -135,11 +143,15 @@ export class McpClientManager {
       const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
       const tools = listed.tools
         .filter((tool) => !exposed || exposed.has(tool.name))
-        .map((remote) => ({
-          remote,
-          runtimeName: runtimeToolName(config.id, remote.name),
-          policy: config.toolPolicies[remote.name] ?? config.defaultToolPolicy,
-        }));
+        .map((remote) => {
+          const policy = config.toolPolicies[remote.name] ?? config.defaultToolPolicy;
+          return {
+            remote,
+            runtimeName: runtimeToolName(config.id, remote.name),
+            policy,
+            manifest: explicitActionManifest(config.id, remote, policy),
+          };
+        });
       assertUnique(tools.map((tool) => tool.runtimeName), `MCP server ${config.id}`);
       return { config, client, tools };
     } catch (error) {
@@ -160,21 +172,7 @@ export class McpClientManager {
         description: tool.remote.description ?? "",
         inputSchema: jsonObject(tool.remote.inputSchema),
       },
-      manifest: {
-        effect_kind: "external_tool_call",
-        operation: `mcp.${connection.config.id}.${tool.remote.name}`,
-        risk: tool.policy.permission === "ask" ? "medium" : "low",
-        owner: `mcp:${connection.config.id}`,
-        dispatch_phase: "execution",
-        dispatch_scope: "external_service",
-        dispatch_side_effect: "external_tool_call",
-        dispatch_mutating: true,
-        dispatch_source: "product_mcp_snapshot",
-        stage_modes: ["execute"],
-        output_kinds: ["structured_data"],
-        handoff_exports: [],
-        evidence_hints: ["mcp_tool_result"],
-      },
+      manifest: tool.manifest,
       parallelSafe: tool.policy.parallelSafe,
       visibleToChild: tool.policy.visibleToChild,
       decodeInput: jsonObject,
@@ -195,19 +193,71 @@ export class McpClientManager {
             };
           },
       execute: async (context) => {
+        const receiptId = this.#createReceiptId();
         const candidate = await connection.client.callTool(
-          { name: tool.remote.name, arguments: context.input },
+          {
+            name: tool.remote.name,
+            arguments: context.input,
+            _meta: mcpRequestMetadata(context, receiptId),
+          },
           { signal: context.signal, toolDefinition: tool.remote },
         );
-        return mcpToolResult(
+        return strictMcpToolResult(
           context,
           toJson(candidate),
           resource,
-          this.#createReceiptId(),
+          receiptId,
         );
       },
     };
   }
+}
+
+function mcpRequestMetadata(
+  context: ToolHandlerContext<unknown>,
+  receiptId: string,
+): Record<string, unknown> {
+  const rawContext = context.turn?.request.metadata.mcpContext;
+  const declared = rawContext != null && typeof rawContext === "object" && !Array.isArray(rawContext)
+    ? rawContext as Record<string, unknown>
+    : {};
+  const filesystemRoots = Array.isArray(declared.filesystemRoots)
+    ? declared.filesystemRoots
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim())
+    : [];
+  const transportChannel = typeof declared.transportChannel === "string"
+    ? declared.transportChannel.trim()
+    : "";
+  return {
+    session_id: context.sessionId,
+    turn_id: context.turnId,
+    tool_call_id: context.toolCall.id,
+    permission_grants: [...context.capabilityIds],
+    filesystem_roots: filesystemRoots,
+    runtime_tool_result_protocol: BUSH_TOOL_RESULT_PROTOCOL,
+    receipt_id: receiptId,
+    action_manifest: { ...context.actionManifest },
+    ...(transportChannel ? { transport_channel: transportChannel } : {}),
+  };
+}
+
+function explicitActionManifest(
+  serverId: string,
+  remote: McpTool,
+  policy: McpToolPolicy,
+): ActionManifestTemplate {
+  const metadata = remote._meta && typeof remote._meta === "object"
+    ? remote._meta as Record<string, unknown>
+    : {};
+  const candidate = policy.actionManifest ?? metadata["cardbush/action_manifest"];
+  const parsed = actionManifestTemplateSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new Error(
+      `MCP Tool ${serverId}/${remote.name} must provide a complete cardbush/action_manifest or product policy manifest.`,
+    );
+  }
+  return parsed.data;
 }
 
 function createClient(server: McpServerSnapshot): Client {
@@ -243,46 +293,81 @@ function createTransport(server: McpServerSnapshot): Transport {
   return new StreamableHTTPClientTransport(new URL(transport.url), { requestInit });
 }
 
-function mcpToolResult(
+function strictMcpToolResult(
   context: ToolHandlerContext<unknown>,
   output: Record<string, unknown>,
   resource: string,
   receiptId: string,
 ): ToolResult {
-  const success = output.isError !== true;
+  if (output.isError === true) {
+    return mcpProtocolFailure(
+      context,
+      output,
+      resource,
+      receiptId,
+      "mcp_tool_error",
+      `MCP tool ${resource} reported an error.`,
+    );
+  }
+  const parsed = toolResultSchema.safeParse(output.structuredContent);
+  if (!parsed.success) {
+    return mcpProtocolFailure(
+      context,
+      output,
+      resource,
+      receiptId,
+      "mcp_tool_result_protocol_invalid",
+      `MCP tool ${resource} did not return a complete ${BUSH_TOOL_RESULT_PROTOCOL} structured result.`,
+      { issues: parsed.error.issues },
+    );
+  }
+  if (!parsed.data.facts.some((fact) => fact.receipt_id === receiptId)) {
+    return mcpProtocolFailure(
+      context,
+      output,
+      resource,
+      receiptId,
+      "mcp_tool_result_receipt_missing",
+      `MCP tool ${resource} did not return the Runtime-issued receipt identity.`,
+    );
+  }
+  return parsed.data;
+}
+
+function mcpProtocolFailure(
+  context: ToolHandlerContext<unknown>,
+  output: Record<string, unknown>,
+  resource: string,
+  receiptId: string,
+  code: string,
+  message: string,
+  details: Record<string, unknown> = {},
+): ToolResult {
   return {
     protocol: BUSH_TOOL_RESULT_PROTOCOL,
     tool_call_id: context.toolCall.id,
-    success,
+    success: false,
     output,
     facts: [{
       protocol: BUSH_EXECUTION_FACT_PROTOCOL,
       receipt_id: receiptId,
       action_manifest_id: context.actionManifest.manifest_id,
-      status: success ? "succeeded" : "failed",
+      status: "failed",
       operation: context.actionManifest.operation,
       effect_kind: context.actionManifest.effect_kind,
       owner: context.actionManifest.owner,
       dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["mcp_tool_result"],
+      categories: ["mcp_protocol_failure"],
       paths: [],
       execution_success: true,
-      semantic_success: success,
-      verification_state: success ? "verified" : "failed",
-      error_code: success ? "" : "mcp_tool_error",
+      semantic_success: false,
+      verification_state: "failed",
+      error_code: code,
     }],
     artifacts: [],
     workspace_changes: [],
     guidance: [],
-    ...(success
-      ? {}
-      : {
-          error: {
-            code: "mcp_tool_error",
-            message: `MCP tool ${resource} reported an error.`,
-            details: {},
-          },
-        }),
+    error: { code, message, details },
   };
 }
 

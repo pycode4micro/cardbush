@@ -92,6 +92,16 @@ const desktopApi = {
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
     body?: unknown;
   }) => ipcRenderer.invoke('cardbush-app:request', request) as Promise<unknown>,
+  cardbushAppMcpServer: () =>
+    ipcRenderer.invoke('cardbush-app:mcp-server') as Promise<unknown>,
+  a2aInspect: (agentUrl: string) =>
+    ipcRenderer.invoke('a2a:inspect', agentUrl) as Promise<unknown>,
+  a2aDispatch: (input: {
+    agentUrl: string;
+    text: string;
+    contextId?: string;
+    taskId?: string;
+  }) => ipcRenderer.invoke('a2a:dispatch', input) as Promise<unknown>,
   setProxy: (proxy: {
     mode: 'none' | 'system' | 'manual';
     httpProxy: string;

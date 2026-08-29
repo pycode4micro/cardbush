@@ -22,7 +22,7 @@ import {
   modelEventSchema,
   modelRequestSchema,
   mcpSnapshotSchema,
-  outcomeFinalizerSchema,
+  turnOutcomeDeclarationSchema,
   runtimePermissionAnswerSchema,
   runtimeRecoveryInspectionSchema,
   runtimeProviderBindingConfigSchema,
@@ -193,21 +193,13 @@ test("task plan preserves the reference runtime invariants", () => {
   );
 });
 
-test("outcome finalizer accepts only reference statuses", () => {
+test("turn outcome declaration exposes only model-declared terminal facts", () => {
   assert.throws(() =>
-    outcomeFinalizerSchema.parse({
-      protocol: "bush.outcome_finalizer.v1",
-      status: "guessed_complete",
-      result_intent: "deliverable",
-      required_evidence: [],
-      observed_evidence: [],
-      missing_evidence: [],
-      blocking_facts: [],
-      reason: "",
-      required_acceptance: [],
-      passed_acceptance: [],
-      failed_acceptance: [],
-      stale_acceptance: [],
+    turnOutcomeDeclarationSchema.parse({
+      protocol: "bush.turn_outcome_declaration.v1",
+      disposition: "guessed_complete",
+      receipt_ids: [],
+      final_response: "done",
     }),
   );
 });

@@ -48,6 +48,14 @@ declare global {
         method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
         body?: unknown;
       }) => Promise<unknown>;
+      cardbushAppMcpServer: () => Promise<unknown>;
+      a2aInspect: (agentUrl: string) => Promise<unknown>;
+      a2aDispatch: (input: {
+        agentUrl: string;
+        text: string;
+        contextId?: string;
+        taskId?: string;
+      }) => Promise<unknown>;
       listSkills: () => Promise<unknown[]>;
       readSkill: (skillName: string) => Promise<unknown>;
       setProxy: (proxy: {

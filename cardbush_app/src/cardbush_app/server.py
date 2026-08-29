@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import uvicorn
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -93,29 +93,29 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP[Any]):
+    async def lifespan(_server: MCPServer[HostRuntime]):
         await supervisor.startup()
         try:
             yield runtime
         finally:
             await supervisor.shutdown()
 
-    mcp = FastMCP(
+    mcp = MCPServer(
         "cardbush_app",
         instructions=(
             "Host capabilities supplied by the CardBush desktop application. "
             "Files are bounded by MCP Roots and delivery success means staged only."
         ),
-        host="127.0.0.1",
-        port=0,
-        streamable_http_path="/mcp",
-        stateless_http=True,
-        json_response=True,
         lifespan=lifespan,
     )
     _register_mcp_tools(mcp, runtime)
     _register_host_routes(mcp, runtime)
-    app = mcp.streamable_http_app()
+    app = mcp.streamable_http_app(
+        streamable_http_path="/mcp",
+        stateless_http=True,
+        json_response=True,
+        host="127.0.0.1",
+    )
     app.add_middleware(BearerAuthMiddleware, token=host_token)
     return app
 
@@ -151,36 +151,25 @@ def run_server(
     )
 
 
-def _register_mcp_tools(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
+def _register_mcp_tools(mcp: MCPServer[HostRuntime], runtime: HostRuntime) -> None:
     @mcp.tool(
         name="computer_use",
         description=ComputerUseTool.description,
         meta={
-            "bushserver/dispatch": {
-                "protocol": "bushserver.tool_dispatch.v1",
-                "phase": "write",
-                "scope": "process",
-                "side_effect": "external",
-                "parallel_safe": False,
-                "idempotent": False,
-                "requires_barrier": True,
-                "exclusive": True,
-                "operations": {
-                    "action": {
-                        "observe": {
-                            "phase": "read", "scope": "process",
-                            "side_effect": "none", "parallel_safe": True,
-                            "idempotent": True, "requires_barrier": False,
-                            "exclusive": False,
-                        },
-                        "screenshot": {
-                            "phase": "read", "scope": "process",
-                            "side_effect": "none", "parallel_safe": True,
-                            "idempotent": True, "requires_barrier": False,
-                            "exclusive": False,
-                        },
-                    }
-                },
+            "cardbush/action_manifest": {
+                "effect_kind": "desktop_control",
+                "operation": "desktop.control",
+                "risk": "medium",
+                "owner": "cardbush_app",
+                "dispatch_phase": "execution",
+                "dispatch_scope": "process",
+                "dispatch_side_effect": "desktop_control",
+                "dispatch_mutating": True,
+                "dispatch_source": "mcp_tool_metadata",
+                "stage_modes": ["execute"],
+                "output_kinds": ["structured_data", "artifact"],
+                "handoff_exports": [],
+                "evidence_hints": ["desktop_state", "screenshot"],
             }
         },
         structured_output=True,
@@ -226,10 +215,11 @@ def _register_mcp_tools(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
             }.items()
             if value is not None
         }
-        return await runtime.computer_use.run(
+        result = await runtime.computer_use.run(
             arguments,
             request_context=_mcp_request_meta(ctx),
         )
+        return _runtime_tool_result(result, _mcp_request_meta(ctx))
 
     @mcp.tool(
         name="transport_deliver",
@@ -239,15 +229,20 @@ def _register_mcp_tools(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
             "reported separately by an authoritative transport receipt."
         ),
         meta={
-            "bushserver/dispatch": {
-                "protocol": "bushserver.tool_dispatch.v1",
-                "phase": "write",
-                "scope": "network",
-                "side_effect": "external",
-                "parallel_safe": False,
-                "idempotent": False,
-                "requires_barrier": True,
-                "exclusive": True,
+            "cardbush/action_manifest": {
+                "effect_kind": "transport_staging",
+                "operation": "transport.stage_delivery",
+                "risk": "medium",
+                "owner": "cardbush_app",
+                "dispatch_phase": "execution",
+                "dispatch_scope": "external_service",
+                "dispatch_side_effect": "transport_staging",
+                "dispatch_mutating": True,
+                "dispatch_source": "mcp_tool_metadata",
+                "stage_modes": ["execute"],
+                "output_kinds": ["artifact", "delivery_receipt"],
+                "handoff_exports": ["artifact"],
+                "evidence_hints": ["transport_receipt"],
             }
         },
         structured_output=True,
@@ -281,8 +276,8 @@ def _register_mcp_tools(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
             {"type": "file", "path": item["path"], "read_only": True}
             for item in normalized
         ]
-        return {
-            "protocol": "bushserver.tool_result.v1",
+        result = {
+            "protocol": "cardbush_app.transport_staging.v1",
             "outcome": {
                 "semantic_success": True,
                 "verification_state": "verified",
@@ -307,9 +302,10 @@ def _register_mcp_tools(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
                 }
             ],
         }
+        return _runtime_tool_result(result, meta)
 
 
-def _register_host_routes(mcp: FastMCP[Any], runtime: HostRuntime) -> None:
+def _register_host_routes(mcp: MCPServer[HostRuntime], runtime: HostRuntime) -> None:
     @mcp.custom_route("/readyz", methods=["GET"])
     async def ready(_request: Request) -> JSONResponse:
         return JSONResponse(
@@ -437,6 +433,87 @@ def _mcp_request_meta(ctx: Context) -> dict[str, Any]:
     else:
         payload = {}
     return dict(payload) if isinstance(payload, dict) else {}
+
+
+def _runtime_tool_result(
+    payload: dict[str, Any],
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    tool_call_id = str(meta.get("tool_call_id") or "").strip()
+    receipt_id = str(meta.get("receipt_id") or "").strip()
+    manifest = meta.get("action_manifest")
+    if not tool_call_id or not receipt_id or not isinstance(manifest, dict):
+        raise ValueError("Runtime Tool Result identities are missing from MCP metadata")
+    required_manifest = (
+        "manifest_id", "operation", "effect_kind", "owner", "dispatch_scope",
+    )
+    if any(not str(manifest.get(key) or "").strip() for key in required_manifest):
+        raise ValueError("Runtime Action Manifest metadata is incomplete")
+    outcome = payload.get("outcome")
+    if not isinstance(outcome, dict):
+        raise ValueError("MCP tool outcome must be an object")
+    success = bool(outcome.get("semantic_success"))
+    verification = str(outcome.get("verification_state") or "").strip()
+    if verification not in {"verified", "attempted", "unverified", "failed"}:
+        raise ValueError("MCP tool verification_state is invalid")
+    error_code = str(outcome.get("error_code") or "").strip()
+    artifacts: list[dict[str, Any]] = []
+    paths: list[str] = []
+    for index, item in enumerate(payload.get("artifacts") or []):
+        if not isinstance(item, dict):
+            raise ValueError("MCP tool artifacts must be objects")
+        artifact_path = str(item.get("path") or "").strip()
+        artifact_uri = str(item.get("uri") or "").strip()
+        if not artifact_path and not artifact_uri:
+            raise ValueError("MCP tool artifact requires path or uri")
+        if artifact_path:
+            paths.append(artifact_path)
+        display = str(item.get("display") or "").strip()
+        artifact = {
+            "artifact_id": f"{receipt_id}_artifact_{index + 1}",
+            "type": str(item.get("type") or "file"),
+            **({"path": artifact_path} if artifact_path else {}),
+            **({"uri": artifact_uri} if artifact_uri else {}),
+            **({"media_type": str(item["media_type"])} if item.get("media_type") else {}),
+            **({"display": display} if display in {"inline", "attachment", "hidden"} else {}),
+            "metadata": {
+                "read_only": bool(item.get("read_only", True)),
+                "model_input": bool(item.get("model_input", False)),
+            },
+        }
+        artifacts.append(artifact)
+    result = {
+        "protocol": "bush.tool_result.v1",
+        "tool_call_id": tool_call_id,
+        "success": success,
+        "output": payload,
+        "facts": [{
+            "protocol": "bush.tool.execution_fact.v1",
+            "receipt_id": receipt_id,
+            "action_manifest_id": str(manifest["manifest_id"]),
+            "status": "succeeded" if success else "failed",
+            "operation": str(manifest["operation"]),
+            "effect_kind": str(manifest["effect_kind"]),
+            "owner": str(manifest["owner"]),
+            "dispatch_scope": str(manifest["dispatch_scope"]),
+            "categories": ["mcp_tool_result"],
+            "paths": paths,
+            "execution_success": True,
+            "semantic_success": success,
+            "verification_state": verification,
+            "error_code": error_code,
+        }],
+        "artifacts": artifacts,
+        "workspace_changes": [],
+        "guidance": [],
+    }
+    if not success:
+        result["error"] = {
+            "code": error_code or "mcp_tool_failed",
+            "message": str(payload.get("summary") or "MCP tool failed"),
+            "details": {},
+        }
+    return result
 
 
 def _context_roots(meta: dict[str, Any]) -> tuple[Path, ...]:
