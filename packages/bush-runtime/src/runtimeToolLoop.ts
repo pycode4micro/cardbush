@@ -5,6 +5,7 @@ import {
   type RuntimePermissionAnswer,
   type ToolCall,
   type ToolResult,
+  type TurnOutcomeDeclaration,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -34,6 +35,7 @@ export interface RuntimeToolLoopOptions {
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
   receiptIds: string[];
+  turnOutcomes: TurnOutcomeDeclaration[];
 }
 
 export class RuntimeToolLoop {
@@ -115,6 +117,7 @@ export class RuntimeToolLoop {
     const toolMessages: ModelMessage[] = [];
     const guidanceMessages: ModelMessage[] = [];
     const receiptIds: string[] = [];
+    const turnOutcomes: TurnOutcomeDeclaration[] = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const outcome = await this.#coordinator.execute(
@@ -137,6 +140,7 @@ export class RuntimeToolLoop {
     for (const [ordinal, outcome] of outcomes.entries()) {
       const toolCall = toolCalls[ordinal]!;
       receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
+      if (outcome.result.turn_outcome) turnOutcomes.push(outcome.result.turn_outcome);
       toolMessages.push({
         role: "tool",
         toolCallId: toolCall.id,
@@ -144,7 +148,11 @@ export class RuntimeToolLoop {
       });
       guidanceMessages.push(...outcome.result.guidance);
     }
-    return { messages: [...toolMessages, ...guidanceMessages], receiptIds };
+    return {
+      messages: [...toolMessages, ...guidanceMessages],
+      receiptIds,
+      turnOutcomes,
+    };
   }
 
   #executionIdentity(

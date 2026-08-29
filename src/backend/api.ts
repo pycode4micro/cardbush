@@ -3056,11 +3056,12 @@ export async function revertSessionWorkspaceChanges(
   };
 }
 
-export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState> {
+export async function fetchTeamFlow(sessionId: string): Promise<TeamFlowState | null> {
   const normalized = sessionId.trim();
   if (!normalized) {
     throw new Error(localizedClientMessage('Team Flow session_id 为空', 'Team Flow session_id is empty'));
   }
+  if (window.cardbushDesktop?.runtime) return null;
   const payload = await readJson<unknown>(
     url(`/v1/team-flows/${encodeURIComponent(normalized)}`),
   );
@@ -3073,6 +3074,12 @@ export async function sendTeamFlowAction(
   const flowId = request.flowId.trim();
   if (!flowId) {
     throw new Error(localizedClientMessage('Team Flow ID 为空', 'Team Flow ID is empty'));
+  }
+  if (window.cardbushDesktop?.runtime) {
+    throw new Error(localizedClientMessage(
+      '旧 Team Flow 动作协议已停用；当前 Team 由显式配置和 team_delegate 工具执行。',
+      'Legacy Team Flow actions are retired; Teams execute through explicit configuration and team_delegate.',
+    ));
   }
   const text = request.text?.trim() ?? '';
   const payload = await readJson<unknown>(
@@ -3260,6 +3267,12 @@ export async function dispatchSubagent({
   writeScope,
   waitSeconds = 0,
 }: SubagentDispatchRequest): Promise<SubagentDispatchResult> {
+  if (window.cardbushDesktop?.runtime) {
+    throw new Error(localizedClientMessage(
+      '子 Agent 由运行中的主 Agent 通过 subagent 工具派发，产品层不再伪造独立派发上下文。',
+      'Subagents are dispatched by the active parent Agent through the subagent tool.',
+    ));
+  }
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
     throw new Error(localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'));

@@ -154,6 +154,7 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
     payload: {},
   });
   assert.deepEqual(catalog.map((definition) => definition.name), [
+    "declare_turn_outcome",
     "update_task_plan",
     "update_goal",
     "read_file",
@@ -239,6 +240,46 @@ test("turns an unexpected provider exception into one terminal fact", async () =
   );
 });
 
+test("requires one explicit outcome declaration and projects its final response", async () => {
+  const host = hostWithAttempts([
+    answerRound("draft"),
+    outcomeRound({ disposition: "answer", finalResponse: "final answer" }),
+  ], { requireOutcomeDeclaration: true });
+  const catalog = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_CATALOG_COMMAND,
+    payload: {},
+  });
+  const outcomeTool = catalog.find((definition) => definition.name === "declare_turn_outcome");
+  assert.ok(outcomeTool);
+
+  const terminal = await host.runModelTurn({
+    ...request,
+    tools: [outcomeTool],
+  });
+  const events = host.events(request.sessionId, request.turnId);
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(terminal.payload.reason, "model_declared_answer");
+  assert.equal(terminal.payload.details.rounds, 2);
+  assert.equal(
+    events.filter((event) => event.kind === "assistant_segment_completed").at(-1)?.payload.content,
+    "final answer",
+  );
+});
+
+test("fails after one reminder when the model omits the outcome declaration twice", async () => {
+  const host = hostWithAttempts([
+    answerRound("first omission"),
+    answerRound("second omission"),
+  ], { requireOutcomeDeclaration: true });
+
+  const terminal = await host.runModelTurn(request);
+
+  assert.equal(terminal.payload.status, "failed");
+  assert.equal(terminal.payload.reason, "outcome_declaration_missing");
+  assert.equal(terminal.payload.details.reminders, 1);
+});
+
 function hostWithAttempts(attempts, options = {}) {
   let index = 0;
   return new InMemoryRuntimeHost({
@@ -248,6 +289,7 @@ function hostWithAttempts(attempts, options = {}) {
       },
     },
     maxAttempts: options.maxAttempts,
+    requireOutcomeDeclaration: options.requireOutcomeDeclaration,
     retryDelayMs: () => 0,
     wait: async () => {},
     eventLogOptions: deterministicEventLogOptions(),
@@ -256,6 +298,34 @@ function hostWithAttempts(attempts, options = {}) {
       createSegmentId: counter("segment"),
     },
   });
+}
+
+function answerRound(text) {
+  return [
+    { ...base, sequence: 0, kind: "response_started" },
+    { ...base, sequence: 1, kind: "text_delta", delta: text },
+    { ...base, sequence: 2, kind: "response_completed", finishReason: "stop" },
+  ];
+}
+
+function outcomeRound({ disposition, finalResponse }) {
+  return [
+    { ...base, sequence: 0, kind: "response_started" },
+    {
+      ...base,
+      sequence: 1,
+      kind: "tool_call_delta",
+      index: 0,
+      toolCallId: "call_outcome",
+      nameDelta: "declare_turn_outcome",
+      argumentsDelta: JSON.stringify({
+        disposition,
+        receipt_ids: [],
+        final_response: finalResponse,
+      }),
+    },
+    { ...base, sequence: 2, kind: "response_completed", finishReason: "tool_calls" },
+  ];
 }
 
 function deterministicEventLogOptions() {

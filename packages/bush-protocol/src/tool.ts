@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { turnOutcomeDeclarationSchema } from "./turn.js";
 
 export const BUSH_TOOL_CALL_PROTOCOL = "bush.tool_call.v1" as const;
 export const BUSH_TOOL_RESULT_PROTOCOL = "bush.tool_result.v1" as const;
@@ -137,6 +138,7 @@ export const toolResultSchema = z.object({
       }),
     )
     .default([]),
+  turn_outcome: turnOutcomeDeclarationSchema.optional(),
   error: z
     .object({
       code: z.string().min(1),

@@ -50,6 +50,7 @@ export class RuntimeRecoveryCoordinator {
     messages: ModelMessage[];
     nextRound: number;
     completedReceiptIds: string[];
+    outcomeReminderCount?: number;
     cacheChainState: CacheChainState;
     sessionCommit?: RuntimeSessionCommitCheckpoint;
   }): RuntimeCheckpoint {
@@ -69,6 +70,7 @@ export class RuntimeRecoveryCoordinator {
       lastEventSequence: cursor.sequence,
       lastEventId: cursor.eventId,
       completedReceiptIds: [...new Set(input.completedReceiptIds)],
+      outcomeReminderCount: input.outcomeReminderCount,
       cacheChainState: input.cacheChainState,
       sessionCommit: input.sessionCommit,
       createdAt: this.#now(),

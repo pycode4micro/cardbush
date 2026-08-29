@@ -280,6 +280,7 @@ host = new InMemoryRuntimeHost({
   durableSessions: Boolean(runtimeStateRoot),
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
+  requireOutcomeDeclaration: true,
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,

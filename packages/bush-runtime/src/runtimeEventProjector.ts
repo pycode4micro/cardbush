@@ -82,6 +82,12 @@ export class RuntimeEventProjector {
     ];
   }
 
+  appendAssistantText(content: string): RuntimeEvent[] {
+    const events = this.#appendDelta("assistant", content);
+    events.push(...this.completeOpenSegment());
+    return events;
+  }
+
   #appendDelta(channel: SegmentChannel, delta: string): RuntimeEvent[] {
     const events: RuntimeEvent[] = [];
     if (this.#active?.channel !== channel) {

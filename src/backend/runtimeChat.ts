@@ -28,14 +28,17 @@ import type {
 } from './api';
 import { synchronizeProductMcpSnapshot } from './productMcp';
 import { synchronizeProductTeamSnapshot } from './productTeams';
+import { parseGoalCommand } from './goalCommand';
 
 const ROOT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
 For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
-Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure.`;
+Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure.
 
-const CHILD_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables.`;
+End every Turn by calling declare_turn_outcome exactly once. Put the complete user-visible response in final_response. Use answer when no external effect is being claimed. Use effect_complete only with the successful receipt_ids returned by the effects completed in this Turn. Use blocked or awaiting_input when those are the accurate states. In Goal mode, update_goal before declaring the Turn outcome.`;
+
+const CHILD_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables. End the Turn by calling declare_turn_outcome exactly once; use effect_complete only with successful receipt_ids returned by completed effects, and put the complete parent-visible report in final_response.`;
 const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
@@ -48,6 +51,8 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   const turnId = `turn_${crypto.randomUUID()}`;
   const requestId = `request_${crypto.randomUUID()}`;
   const userMessageId = `message_${crypto.randomUUID()}`;
+  const goalCommand = parseGoalCommand(request.userInput);
+  const effectiveUserInput = goalCommand?.objective ?? request.userInput;
   const pendingToolLoads = new Set<Promise<void>>();
   let terminal: Extract<RuntimeEvent, { kind: 'turn_terminal' }> | undefined;
   let lastAssistantMessageId = '';
@@ -96,10 +101,14 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     inputMessages: [{
       messageId: userMessageId,
       createdAt: new Date().toISOString(),
-      message: { role: 'user', content: request.userInput },
+      message: {
+        role: 'user',
+        ...(goalCommand ? { name: 'goal_request' } : {}),
+        content: effectiveUserInput,
+      },
     }],
     sessionMetadata: {
-      title: initialTitle(request.userInput),
+      title: initialTitle(effectiveUserInput),
       ...(request.projectDir?.trim() ? { projectDir: request.projectDir.trim() } : {}),
     },
     tools,
@@ -120,6 +129,14 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       subagentChildPrefixMessages: [{ role: 'system', content: CHILD_SYSTEM_PROMPT }],
       },
     };
+    if (goalCommand) {
+      await runtime.client.createGoal({
+        goalId: `goal_${crypto.randomUUID()}`,
+        sessionId: request.sessionId,
+        objective: goalCommand.objective,
+        linkedA2ATaskIds: [],
+      }, controller.signal);
+    }
     let currentRequest = runtimeRequest;
     while (true) {
       terminal = undefined;

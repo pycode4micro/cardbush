@@ -12,6 +12,7 @@ export * from "./fileSubagentTaskPersistence.js";
 export * from "./fileToolExecutionPersistence.js";
 export * from "./modelProvider.js";
 export * from "./modelRound.js";
+export * from "./outcomeTool.js";
 export * from "./runtimeEventLog.js";
 export * from "./runtimeEventProjector.js";
 export * from "./runtimeCheckpointStore.js";

@@ -26,6 +26,7 @@ export const runtimeCheckpointSchema = z.object({
   lastEventSequence: z.number().int().nonnegative(),
   lastEventId: z.string().min(1),
   completedReceiptIds: z.array(z.string().min(1)),
+  outcomeReminderCount: z.number().int().nonnegative().optional(),
   cacheChainState: cacheChainStateSchema,
   sessionCommit: runtimeSessionCommitCheckpointSchema.optional(),
   createdAt: z.string().min(1),

@@ -61,6 +61,7 @@ import { executeModelRound } from "./modelRound.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
+import { registerOutcomeTool } from "./outcomeTool.js";
 import { registerSubagentTool } from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { TeamSnapshotStore } from "./teamSnapshotStore.js";
@@ -129,6 +130,7 @@ export interface InMemoryRuntimeHostOptions {
   registerDefaultWorkspaceTools?: boolean;
   additionalSupportedCommands?: string[];
   additionalFeatures?: string[];
+  requireOutcomeDeclaration?: boolean;
 }
 
 export interface RuntimeHostStreamRequest {
@@ -162,6 +164,7 @@ export class InMemoryRuntimeHost {
   readonly #subagentTasks: SubagentTaskStore;
   readonly #teams: TeamSnapshotStore;
   readonly #workspaceObservations: WorkspaceObservationStore;
+  readonly #requireOutcomeDeclaration: boolean;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -193,6 +196,8 @@ export class InMemoryRuntimeHost {
       now: this.#sessionNow,
     });
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
+    this.#requireOutcomeDeclaration = options.requireOutcomeDeclaration === true;
+    registerOutcomeTool(this.#toolRegistry, this.#toolExecutions);
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
     this.#workspaceObservations =
@@ -512,6 +517,7 @@ export class InMemoryRuntimeHost {
         messages: request.messages,
         nextRound: 1,
         completedReceiptIds: [],
+        outcomeReminderCount: 0,
         cacheChainState: new CacheChainTracker().snapshot(),
         sessionCommit: options.sessionCommit,
       });
@@ -525,6 +531,7 @@ export class InMemoryRuntimeHost {
       messages: request.messages,
       nextRound: 1,
       completedReceiptIds: [],
+      outcomeReminderCount: 0,
       cacheChainState: new CacheChainTracker().snapshot(),
       signal: options.signal,
       sessionCommit: options.sessionCommit,
@@ -559,6 +566,7 @@ export class InMemoryRuntimeHost {
       messages: recovery.checkpoint.request.messages,
       nextRound: recovery.nextRound,
       completedReceiptIds: recovery.checkpoint.completedReceiptIds,
+      outcomeReminderCount: recovery.checkpoint.outcomeReminderCount ?? 0,
       cacheChainState: recovery.checkpoint.cacheChainState,
       signal: options.signal,
       sessionCommit: recovery.checkpoint.sessionCommit,
@@ -577,6 +585,7 @@ export class InMemoryRuntimeHost {
     messages: ModelMessage[];
     nextRound: number;
     completedReceiptIds: string[];
+    outcomeReminderCount: number;
     cacheChainState: CacheChainState;
     signal?: AbortSignal;
     onFinalized?: TurnFinalizedObserver;
@@ -596,6 +605,7 @@ export class InMemoryRuntimeHost {
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
     let completedReceiptIds = [...input.completedReceiptIds];
+    let outcomeReminderCount = input.outcomeReminderCount;
     let round = input.nextRound - 1;
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
@@ -641,6 +651,7 @@ export class InMemoryRuntimeHost {
             messages,
             nextRound: round,
             completedReceiptIds,
+            outcomeReminderCount,
             cacheChainState: cacheChain.snapshot(),
             sessionCommit: input.sessionCommit
               ? { ...input.sessionCommit, generatedMessages, usage }
@@ -746,15 +757,51 @@ export class InMemoryRuntimeHost {
         }
         if (completedRound.toolCalls.length === 0) {
           if (completedRound.text) {
+            const assistantMessage: ModelMessage = {
+              role: "assistant",
+              content: completedRound.text,
+              toolCalls: [],
+            };
             generatedMessages.push({
               messageId: completedProjector.messageId,
               createdAt: this.#sessionNow(),
-              message: {
-                role: "assistant",
-                content: completedRound.text,
-                toolCalls: [],
-              },
+              message: assistantMessage,
             });
+            messages = [...messages, assistantMessage];
+          }
+          if (this.#requireOutcomeDeclaration) {
+            if (outcomeReminderCount > 0) {
+              return finalize({
+                status: "failed",
+                reason: "outcome_declaration_missing",
+                finalMessageId: completedProjector.finalMessageId,
+                details: {
+                  finishReason: completedRound.finishReason ?? null,
+                  rounds: round,
+                  reminders: outcomeReminderCount,
+                },
+              });
+            }
+            outcomeReminderCount += 1;
+            const reminder = outcomeProtocolReminder();
+            messages = [...messages, reminder];
+            generatedMessages.push({
+              messageId: `msg_outcome_reminder_${request.turnId}_${round}`,
+              createdAt: this.#sessionNow(),
+              message: reminder,
+            });
+            this.#recovery.save({
+              request,
+              messages,
+              nextRound: round + 1,
+              completedReceiptIds,
+              outcomeReminderCount,
+              cacheChainState: cacheChain.snapshot(),
+              sessionCommit: input.sessionCommit
+                ? { ...input.sessionCommit, generatedMessages, usage }
+                : undefined,
+            });
+            continue;
           }
           return finalize({
             status: "completed",
@@ -806,11 +853,53 @@ export class InMemoryRuntimeHost {
         completedReceiptIds = [
           ...new Set([...completedReceiptIds, ...toolRound.receiptIds]),
         ];
+        if (toolRound.turnOutcomes.length > 1) {
+          return finalize({
+            status: "failed",
+            reason: "multiple_outcome_declarations",
+            finalMessageId: completedProjector.finalMessageId,
+            details: { count: toolRound.turnOutcomes.length, rounds: round },
+          });
+        }
+        const declaration = toolRound.turnOutcomes[0];
+        if (declaration) {
+          const finalProjector = new RuntimeEventProjector(
+            this.#eventLog,
+            identity,
+            this.#projectorOptions,
+          );
+          finalProjector.appendAssistantText(declaration.final_response);
+          generatedMessages.push({
+            messageId: finalProjector.messageId,
+            createdAt: this.#sessionNow(),
+            message: {
+              role: "assistant",
+              content: declaration.final_response,
+              toolCalls: [],
+            },
+          });
+          const status = declaration.disposition === "awaiting_input"
+            ? "awaiting_user_action"
+            : declaration.disposition === "blocked"
+              ? "failed"
+              : "completed";
+          return finalize({
+            status,
+            reason: `model_declared_${declaration.disposition}`,
+            finalMessageId: finalProjector.messageId,
+            details: {
+              disposition: declaration.disposition,
+              receiptIds: declaration.receipt_ids,
+              rounds: round,
+            },
+          });
+        }
         this.#recovery.save({
           request,
           messages,
           nextRound: round + 1,
           completedReceiptIds,
+          outcomeReminderCount,
           cacheChainState: cacheChain.snapshot(),
           sessionCommit: input.sessionCommit
             ? { ...input.sessionCommit, generatedMessages, usage }
@@ -876,4 +965,13 @@ function mergeUsage(
   for (const key of ["inputTokens", "outputTokens", "cachedInputTokens"] as const) {
     if (source[key] !== undefined) target[key] = (target[key] ?? 0) + source[key];
   }
+}
+
+function outcomeProtocolReminder(): ModelMessage {
+  return {
+    role: "developer",
+    name: "runtime_outcome_protocol",
+    content:
+      "Complete this Turn by calling declare_turn_outcome exactly once. Put the complete user-visible response in final_response. Use answer for a response without external effects; effect_complete must cite successful receipt_ids returned by this Turn; use blocked or awaiting_input when applicable.",
+  };
 }
