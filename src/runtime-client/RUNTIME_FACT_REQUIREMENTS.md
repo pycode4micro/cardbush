@@ -85,9 +85,9 @@ capabilities before the product layer enables a feature. Missing capabilities
 hide or disable the related UI; CardBush must not probe removed endpoints to
 guess support.
 
-## Compatibility boundary
+## Production boundary
 
-The initial adapter may translate the current BushServer SSE payloads into the
-shared protocol, but React features must not depend on BushServer route names,
-snake_case payloads or HTTP status conventions. That adapter is removed when the
-TS Runtime Host becomes authoritative.
+The TypeScript Runtime Host is authoritative. React consumes only decoded shared
+protocol facts through typed Electron IPC; there is no local HTTP/SSE adapter,
+route-name dependency, snake_case compatibility projection, or HTTP status
+convention in the production execution path.

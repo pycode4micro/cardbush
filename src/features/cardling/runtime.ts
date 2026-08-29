@@ -1,6 +1,5 @@
 import type { CSSProperties } from 'react';
 
-import { sendSceneEvent } from '../../backend/api';
 import type { AppLanguage } from '../../types';
 import {
   sceneBoolean,
@@ -112,26 +111,15 @@ export async function sendSceneUserEvent(
     metadata?: Record<string, unknown>;
   },
 ): Promise<Record<string, unknown>> {
-  if (!scene.sessionId?.trim()) {
-    const english =
-      typeof document !== 'undefined' &&
-      document.documentElement.lang.toLowerCase().startsWith('en');
-    throw new Error(
-      english
-        ? 'The scene has no session_id and cannot send data to the backend'
-        : 'Scene 暂无 session_id，无法回传后端',
-    );
-  }
-  return sendSceneEvent({
-    sessionId: scene.sessionId,
+  return {
+    source: 'cardbush_scene_runtime',
+    delivery: 'recorded',
     sceneId: scene.sceneId,
+    sessionId: scene.sessionId,
     turnId: scene.turnId,
-    event: payload.event,
-    nodeId: payload.nodeId,
-    text: payload.text,
-    values: payload.values,
-    metadata: payload.metadata,
-  });
+    ...payload,
+    recordedAt: new Date().toISOString(),
+  };
 }
 
 export function sceneOpenTargetFromPayload(
@@ -177,11 +165,7 @@ export function sceneOpenTargetFromPayload(
 
 export function sceneEventError(error: unknown, language: AppLanguage) {
   const message = errorMessage(error);
-  if (/404|not found/i.test(message)) {
-    return language === 'zh'
-      ? '后端 Scene 事件接口尚未接入，暂时无法回传这条反馈。'
-      : 'The backend Scene event endpoint is not available yet.';
-  }
+  void language;
   return message;
 }
 

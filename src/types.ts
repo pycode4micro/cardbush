@@ -57,11 +57,6 @@ interface ProxySettings {
   noProxy: string;
 }
 
-interface BackendAuthSettings {
-  bearerToken: string;
-  localRequestKey: string;
-}
-
 interface TerminalSettings {
   runtime: TerminalRuntime;
 }
@@ -92,9 +87,6 @@ export interface BackendCapabilities {
   runtimeInspection: boolean;
   maintenanceConversationHistoryClear: boolean;
   maintenanceLogsCacheClear: boolean;
-  maintenanceRuntimeAssetsReset: boolean;
-  runtimeAssetResetProtocol: string;
-  runtimeAssetResetCategories: RuntimeAssetCategory[];
   sessionShareLinks: boolean;
   messageEditRegenerate: boolean;
   turnRegenerate: boolean;
@@ -290,6 +282,7 @@ export interface RuntimeConnectionUpdate {
   sessionId: string;
   turnId?: string;
   attempt?: number;
+  maxAttempts?: number;
   nextRetryMs?: number;
   reason?: string;
   message?: string;
@@ -332,7 +325,6 @@ export interface AppSettingsState {
   guidance: GuidanceUiSettings;
   terminal: TerminalSettings;
   os: OsSettings;
-  backendAuth: BackendAuthSettings;
   managedModelConfigs: ManagedModelConfig[];
   backgroundImagePath: string;
   companionEnabled: boolean;
@@ -393,38 +385,6 @@ export interface ChatToolArtifact extends ChatAttachment {
   mimeType?: string;
   display?: 'inline' | 'attachment';
   readOnly?: boolean;
-}
-
-export type RuntimeAssetCategory = 'prompts' | 'skills' | 'tools';
-
-interface RuntimeAssetLocation {
-  sourcePath: string;
-  targetPath: string;
-}
-
-export interface RuntimeAssetResetPlan {
-  protocol: string;
-  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetLocation>>;
-  requiresConfirmation: boolean;
-  requiresIdleRuntime: boolean;
-  destructive: boolean;
-  restartRequiredAfterChange: boolean;
-}
-
-interface RuntimeAssetResetCategoryResult extends RuntimeAssetLocation {
-  changed: boolean;
-  seedFileCount: number;
-  restoredFileCount: number;
-  removedRuntimeFileCount: number;
-}
-
-export interface RuntimeAssetResetResult {
-  protocol: string;
-  selectedCategories: RuntimeAssetCategory[];
-  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetResetCategoryResult>>;
-  changed: boolean;
-  restartRequired: boolean;
-  effectiveAfter: string;
 }
 
 export interface SessionTokenUsage {
@@ -820,7 +780,7 @@ export interface SubagentRuntimeResult {
   supervisor?: SubagentSupervisorSnapshot;
 }
 
-export const SUBAGENT_DISPATCH_EVENT_PROTOCOL = 'bushserver.subagent_dispatch_event.v4';
+export const SUBAGENT_DISPATCH_EVENT_PROTOCOL = 'bush.subagent_task.v1';
 
 export const AGENT_PROFILE_PROTOCOL = 'bush.agent_profile.v1';
 export const TEAM_CONFIGURATION_PROTOCOL = 'bush.team.v1';

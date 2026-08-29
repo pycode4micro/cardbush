@@ -118,6 +118,7 @@ const report = {
     outcome: record.outcome,
     success: record.result.success,
     errorCode: record.result.error?.code,
+    errorMessage: record.result.error?.message,
   })),
   finalResponse: finalMessage?.message.role === 'assistant'
     ? finalMessage.message.content

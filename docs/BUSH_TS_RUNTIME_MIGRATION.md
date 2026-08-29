@@ -292,3 +292,36 @@ A post-fix write Turn completed through an explicit `effect_complete` declaratio
 in 83 seconds with no provider retry, returned the authoritative write receipt,
 and reported the delivery path as an absolute path. The original source project
 was not modified by either run.
+
+## Product cutover completion checkpoint
+
+The CardBush production path no longer connects to the Python service for Agent
+execution, Session history, Shadow conversations, workspace changes, context
+usage, Goal/A2A, Plan, Subagent, Team, Bot session links, permissions or provider
+recovery. React uses one typed Runtime Client; Electron owns the Utility Process
+Runtime Host and typed Product Host commands. The removed HTTP/SSE payload
+parsers and backend settings are not retained as a compatibility layer.
+
+Shadow conversations are hidden, temporary Runtime Sessions with an explicit
+source-Turn boundary and a read-only Tool selection. Bot link codes are stored by
+the Product Host with atomic updates, expiry, identity binding and one-time
+consumption. Assistant timing comes from committed Runtime Turn timestamps, and
+media comes from validated ToolResult Artifacts rather than response-text or
+arbitrary JSON inference.
+
+The complete product release gate passes after the cutover, including protocol,
+Runtime, provider, MCP, Electron IPC, Product Host, Bot, Goal/A2A, Shadow,
+Subagent, Team, permission, recovery, typecheck, production build and packaged
+release-cleanup checks.
+
+A final live `deepseek-v4-flash-vision-exp` Turn ran against a system-temporary
+copy of the Game project. It added a persisted and bounded configurable War
+face-down count to both Python and Rust implementations, preserved the default
+behavior, emitted the actual count as an event fact and added boundary and
+save/load tests. Independent verification passed 18 Python tests and 63 Rust
+tests; the original Game source hash manifest remained unchanged. The Turn
+completed naturally in 762 seconds over 47 rounds with no provider retry. It used
+3,527,304 input tokens, of which 3,412,352 were provider-cache hits (96.74%), and
+81,088 output tokens. This validates behavior and isolation while also recording
+that complex cross-language convergence remains a model-efficiency concern rather
+than hiding it behind a local hard timeout.

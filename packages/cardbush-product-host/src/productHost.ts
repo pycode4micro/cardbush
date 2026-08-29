@@ -40,6 +40,13 @@ export type ProductHostCommand =
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "weixin.login.start" }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
+      kind: "session_link.create";
+      sessionId: string;
+      platform?: string;
+      expiresSeconds: number;
+    }
+  | {
+      protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
       kind: "weixin.login.status";
       loginId: string;
     }
@@ -61,6 +68,14 @@ export interface ProductModelHost {
   resolve(modelId: string): Promise<Record<string, unknown>>;
 }
 
+export interface ProductSessionLinkHost {
+  issue(input: {
+    sessionId: string;
+    platform?: string;
+    expiresSeconds: number;
+  }): Promise<Record<string, unknown>>;
+}
+
 export interface ProductHostResult {
   protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
   ok: true;
@@ -79,6 +94,7 @@ export class ProductHost {
     readonly bots: BotSupervisor,
     readonly weixin?: WeixinAccountHost,
     readonly model?: ProductModelHost,
+    readonly sessionLinks?: ProductSessionLinkHost,
   ) {}
 
   async execute(input: unknown): Promise<ProductHostResult | ProductHostFailure> {
@@ -139,6 +155,18 @@ export class ProductHost {
           );
         }
         return this.model.resolve(command.modelId);
+      case "session_link.create":
+        if (!this.sessionLinks) {
+          throw new ProductHostProtocolError(
+            "session_link_host_unavailable",
+            "The Product Session Link Host is not installed",
+          );
+        }
+        return this.sessionLinks.issue({
+          sessionId: command.sessionId,
+          ...(command.platform ? { platform: command.platform } : {}),
+          expiresSeconds: command.expiresSeconds,
+        });
       case "weixin.login.start":
         return this.#weixin().startLogin();
       case "weixin.login.status":
@@ -225,6 +253,20 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, loginId: requiredString(value.loginId, "loginId") };
     case "weixin.account.delete":
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, accountId: requiredString(value.accountId, "accountId") };
+    case "session_link.create": {
+      const rawExpires = value.expiresSeconds;
+      if (!Number.isInteger(rawExpires) || Number(rawExpires) < 60 || Number(rawExpires) > 86400) {
+        throw new ProductHostProtocolError("invalid_product_host_command", "expiresSeconds must be between 60 and 86400");
+      }
+      const platform = typeof value.platform === "string" ? value.platform.trim().toLowerCase() : "";
+      return {
+        protocol: PRODUCT_HOST_IPC_PROTOCOL,
+        kind,
+        sessionId: requiredString(value.sessionId, "sessionId"),
+        ...(platform ? { platform } : {}),
+        expiresSeconds: Number(rawExpires),
+      };
+    }
     default:
       throw new ProductHostProtocolError(
         "unknown_product_host_command",

@@ -102,8 +102,21 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /cardbush_turn_started_at:[\s\S]*?startedAt/);
-assert.match(apiSource, /cardbush_turn_duration_ms:[\s\S]*?durationMs/);
+assert.match(
+  apiSource,
+  /cardbush_turn_started_at\s*=\s*turn\.createdAt/,
+  'assistant history should project the Runtime-owned Turn start timestamp',
+);
+assert.match(
+  apiSource,
+  /cardbush_turn_completed_at\s*=\s*turn\.completedAt/,
+  'assistant history should project the Runtime-owned Turn completion timestamp',
+);
+assert.match(
+  apiSource,
+  /cardbush_turn_duration_ms\s*=\s*completedAt\s*-\s*startedAt/,
+  'assistant history should derive duration only from committed Runtime timestamps',
+);
 
 console.log('assistant turn timing persistence contract tests passed');
 

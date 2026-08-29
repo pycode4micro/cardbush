@@ -7,6 +7,8 @@ import {
   ProductHost,
   ProductHostProtocolError,
   ProductModelConfigStore,
+  LinkedConversationBackend,
+  SessionLinkStore,
   WeixinAccountManager,
   WeixinAccountStore,
   WeixinApiClient,
@@ -50,7 +52,8 @@ export class ElectronProductHostController {
     this.#config = new BotConfigStore(join(dataRoot, 'config', 'bots.json'));
     this.#models = new ProductModelConfigStore(join(dataRoot, 'config', 'models.json'));
     const accountStore = new WeixinAccountStore(join(dataRoot, 'weixin'));
-    const backend = new ProductRuntimeConversationBackend({
+    const links = new SessionLinkStore(join(dataRoot, 'config', 'session-links.json'));
+    const runtimeBackend = new ProductRuntimeConversationBackend({
       bridge: options.runtimeBridge,
       modelConfig: () => this.#model,
       policy: async (envelope) => {
@@ -64,6 +67,7 @@ export class ElectronProductHostController {
         };
       },
     });
+    const backend = new LinkedConversationBackend(runtimeBackend, links);
     this.#bots = new BotSupervisor({
       configStore: this.#config,
       dataDir: join(dataRoot, 'bots'),
@@ -95,6 +99,11 @@ export class ElectronProductHostController {
         return this.#models.publicPayload(snapshot);
       },
       resolve: (modelId) => this.#resolveModel(modelId),
+    }, {
+      issue: async (input) => ({
+        ...(await links.issue(input)),
+        platform: input.platform ?? '',
+      }),
     });
   }
 

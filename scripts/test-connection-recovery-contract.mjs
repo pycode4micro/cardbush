@@ -5,7 +5,8 @@ import path from 'node:path';
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const types = read('src', 'types.ts');
-const api = read('src', 'backend', 'api.ts');
+const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
+const runtimeProtocol = read('packages', 'bush-protocol', 'src', 'runtimeHost.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
 const app = read('src', 'App.tsx');
 const styles = read('src', 'styles', 'app.css');
@@ -15,14 +16,18 @@ for (const state of ['retrying', 'syncing', 'recovered', 'failed']) {
   assert.match(types, new RegExp(`'${state}'`));
 }
 
-for (const event of ['connection_state', 'provider_retry', 'provider_recovered']) {
-  assert.match(api, new RegExp(`'${event}'`));
+for (const event of ['provider_retry', 'connection_interrupted', 'stream_resumed']) {
+  assert.ok(
+    runtimeProtocol.includes(`kind: z.literal("${event}")`),
+    `runtime protocol must decode ${event}`,
+  );
+  assert.match(runtimeChat, new RegExp(`case '${event}'`));
 }
-assert.match(api, /onConnectionState\?: \(update: RuntimeConnectionUpdate\) => void/);
-assert.match(api, /function runtimeConnectionUpdateFromPayload/);
-assert.match(api, /payload\.next_retry_ms/);
-assert.match(api, /line\.startsWith\('id:'\)/);
-assert.match(api, /SSE connection closed before the done event/);
+assert.match(runtimeChat, /onConnectionState\?\./);
+assert.match(runtimeChat, /maxAttempts: event\.payload\.maxAttempts/);
+assert.match(runtimeChat, /nextRetryMs: event\.payload\.nextRetryMs/);
+assert.match(runtimeChat, /event\.payload\.resumable \? 'retrying' : 'failed'/);
+assert.match(runtimeChat, /state: 'recovered'/);
 
 const recoveryStart = hook.indexOf('const recoverInterruptedSession');
 const recoveryEnd = hook.indexOf('const sendMessage', recoveryStart);

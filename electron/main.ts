@@ -1940,25 +1940,6 @@ ipcMain.handle('os:install-catalog-application', async (event, packageId: string
   return { installed: true, output: result.stdout.slice(-4000) };
 });
 
-ipcMain.handle('bush:headers', (_, targetUrl: string, json = false) => {
-  const headers: Record<string, string> = {};
-  if (json) {
-    headers['content-type'] = 'application/json';
-  }
-  const parsed = safeUrl(targetUrl);
-  const localSecret = parsed != null && isLoopback(parsed.hostname)
-    ? readLocalRequestSecret()
-    : '';
-  if (localSecret) {
-    headers['X-Bush-Local-Key'] = localSecret;
-  }
-  const token = process.env.BUSH_API_AUTH_TOKEN?.trim();
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  return headers;
-});
-
 ipcMain.handle('cardbush-product-host:command', (event, command: unknown) => {
   assertMainWindowSender(event.sender.id);
   if (!productHostController) {
@@ -4139,22 +4120,6 @@ function rgbToHex(r: number, g: number, b: number) {
     .join('')}`;
 }
 
-function readLocalRequestSecret() {
-  const envSecret = process.env.BUSH_LOCAL_REQUEST_SECRET?.trim();
-  if (envSecret) {
-    return envSecret;
-  }
-  const secretPath = localRequestSecretPath();
-  if (secretPath == null) {
-    return '';
-  }
-  try {
-    return fs.readFileSync(secretPath, 'utf8').trim();
-  } catch {
-    return '';
-  }
-}
-
 function listProjectRoot(rootPath: string) {
   const root = path.resolve(rootPath);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
@@ -4921,16 +4886,4 @@ function trimTerminalOutput(value: string) {
     return value;
   }
   return value.slice(value.length - maxLength);
-}
-
-function localRequestSecretPath() {
-  const override = process.env.BUSH_LOCAL_REQUEST_SECRET_PATH?.trim();
-  if (override) {
-    return override;
-  }
-  if (process.platform === 'win32') {
-    const root = process.env.LOCALAPPDATA || process.env.APPDATA;
-    return root ? path.join(root, 'bushserver', 'config', 'local_request_secret') : null;
-  }
-  return path.join(os.homedir(), '.local', 'share', 'bushserver', 'config', 'local_request_secret');
 }

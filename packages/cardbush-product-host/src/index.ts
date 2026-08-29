@@ -31,6 +31,7 @@ export { identityIsAllowed } from "./conversation.js";
 export { downloadInboundMedia } from "./inboundMedia.js";
 export type { InboundMedia } from "./inboundMedia.js";
 export { ProductModelConfigStore } from "./modelConfigStore.js";
+export { LinkedConversationBackend, SessionLinkStore } from "./sessionLinks.js";
 export type {
   ProductModelConfig,
   ProductModelConfigSnapshot,

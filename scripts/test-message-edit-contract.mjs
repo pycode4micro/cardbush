@@ -37,8 +37,13 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /method:\s*'PATCH'/);
-assert.match(apiSource, /regenerate:\s*true/);
-assert.match(apiSource, /truncate_after:\s*true/);
+assert.match(apiSource, /runtime\.client\.supersedeSessionMessages\(\s*\{/);
+assert.match(
+  apiSource,
+  /messageIds:\s*messages\s*\.slice\(supersedeFrom\)\s*\.map/,
+);
+assert.match(apiSource, /reason: 'user_edit_regenerate'/);
+assert.match(apiSource, /streamRuntimeChat\(\{ \.\.\.request, userInput: content \}\)/);
+assert.doesNotMatch(apiSource, /method:\s*'PATCH'|truncate_after/);
 
 console.log('message edit and rerun contract tests passed');

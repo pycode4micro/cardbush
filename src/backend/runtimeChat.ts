@@ -204,7 +204,7 @@ interface ResolvedProductModel {
   maxOutputTokens?: number;
 }
 
-async function resolveProductModel(modelId: string): Promise<ResolvedProductModel> {
+export async function resolveProductModel(modelId: string): Promise<ResolvedProductModel> {
   const execute = window.cardbushDesktop?.productHostCommand;
   if (!execute) throw new Error('CardBush Product Host is unavailable.');
   const response = await execute({
@@ -261,7 +261,7 @@ export async function streamRuntimeTurnEvents(
     const snapshot = await runtime.client.getSession(request.sessionId, request.signal);
     if (snapshot) {
       request.onMessages?.(
-        snapshot.turns.flatMap((turn) => turn.messages).map((message) => ({
+        snapshot.turns.flatMap((turn) => turn.messages.map((message) => ({
           id: message.messageId,
           messageId: message.messageId,
           role: message.message.role === 'developer' ? 'system' : message.message.role,
@@ -271,7 +271,18 @@ export async function streamRuntimeTurnEvents(
           createdAt: message.createdAt,
           turnSequence: message.turnSequence,
           messageIndex: message.messageIndex,
-        })),
+          ...(message.message.role === 'assistant' ? {
+            metadata: {
+              toolCalls: message.message.toolCalls,
+              cardbush_turn_started_at: turn.createdAt,
+              cardbush_turn_completed_at: turn.completedAt,
+              cardbush_turn_duration_ms: Math.max(
+                0,
+                Date.parse(turn.completedAt) - Date.parse(turn.createdAt),
+              ),
+            },
+          } : {}),
+        }))),
         true,
       );
     }
@@ -371,7 +382,19 @@ async function consumeRuntimeEvents(
           sessionId: event.sessionId,
           turnId: event.turnId,
           attempt: event.payload.attempt,
+          maxAttempts: event.payload.maxAttempts,
           nextRetryMs: event.payload.nextRetryMs,
+          reason: event.payload.code,
+          message: event.payload.message,
+          createdAt: event.createdAt,
+        });
+        break;
+      case 'connection_interrupted':
+        request.onConnectionState?.({
+          state: event.payload.resumable ? 'retrying' : 'failed',
+          source: event.payload.source === 'provider' ? 'provider' : 'network',
+          sessionId: event.sessionId,
+          turnId: event.turnId,
           reason: event.payload.code,
           message: event.payload.message,
           createdAt: event.createdAt,

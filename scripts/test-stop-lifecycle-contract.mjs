@@ -9,6 +9,8 @@ const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const types = read('src', 'types.ts');
 const api = read('src', 'backend', 'api.ts');
+const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
+const runtimeBridge = read('src', 'runtime-client', 'RuntimeInteractionBridge.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
 const app = read('src', 'App.tsx');
 const composer = read('src', 'features', 'composer', 'Composer.tsx');
@@ -16,11 +18,12 @@ const bubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 
 assert.match(types, /export interface TurnTerminalSnapshot/);
 assert.match(api, /export interface StopTurnResult/);
-assert.match(api, /accepted: payload\.accepted === true \|\| payload\.stopped === true/);
+assert.match(api, /if \(stopActiveRuntimeTurn\(normalized\)\)/);
+assert.match(api, /reason: ["']runtime_stop_requested["']/);
+assert.match(runtimeBridge, /export function stopActiveRuntimeTurn/);
 assert.match(api, /onDone\?: \(terminal: TurnTerminalSnapshot\) => void/);
-assert.match(api, /request\.onDone\?\.\(terminal\)/);
-assert.match(api, /if \(sawDoneEvent\) \{\s*return;\s*\}/);
-assert.match(api, /await reader\.cancel\(\)\.catch\(\(\) => undefined\)/);
+assert.match(runtimeChat, /request\.onDone\?\.\(terminalSnapshot\(terminal\)\)/);
+assert.match(runtimeChat, /case 'turn_terminal'/);
 
 const cancelStart = hook.indexOf('const cancelSending = useCallback');
 const cancelEnd = hook.indexOf('const clearError', cancelStart);

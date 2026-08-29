@@ -17,7 +17,6 @@ import {
   Monitor,
   MonitorCog,
   Network,
-  PackageOpen,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -40,11 +39,7 @@ import {
 } from 'react';
 
 import {
-  backendBaseUrl,
-  backendRequestHeaders,
-  RUNTIME_ASSET_RESET_PROTOCOL,
   clearConversationHistory,
-  clearLogsCache,
   controlBotService,
   deleteMcpServerConfig,
   deleteWeixinAccount,
@@ -52,14 +47,11 @@ import {
   fetchBots,
   fetchBotServiceLogs,
   fetchBotStatus,
+  fetchBackendCapabilities,
+  fetchBackendReadiness,
   fetchMcpServers,
-  fetchRuntimeAssetResetPlan,
-  fetchRuntimeMaintenanceLogs,
   fetchSubagentRuntime,
   fetchWeixinLoginStatus,
-  llmEndpoint,
-  isBushServerHttpError,
-  resetRuntimeAssets,
   saveBotConfig,
   saveMcpServerConfig,
   setMcpServerEnabled,
@@ -93,9 +85,6 @@ import type {
   McpServerConfig,
   McpServerValidationResult,
   McpTransport,
-  RuntimeAssetCategory,
-  RuntimeAssetResetPlan,
-  RuntimeAssetResetResult,
   SettingsSection,
   ThemePreference,
   WeixinLoginStartResult,
@@ -104,7 +93,6 @@ import type {
 } from '../types';
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
-const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const customProviderValue = '__custom_provider__';
 const defaultMaxContextTokens = 256_000;
 const suggestedProviders = [
@@ -273,7 +261,6 @@ export function SettingsView({
   selectedModel,
   availableModels,
   backendCapabilities,
-  runtimeBusy,
   conversations,
   initialSection,
   onBack,
@@ -285,7 +272,6 @@ export function SettingsView({
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
-  onRuntimeAssetsReloaded,
 }: {
   active: boolean;
   onReady: () => void;
@@ -299,7 +285,6 @@ export function SettingsView({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
-  runtimeBusy: boolean;
   conversations: ConversationSummary[];
   initialSection: SettingsSection;
   onBack: () => void;
@@ -311,7 +296,6 @@ export function SettingsView({
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
-  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -622,8 +606,8 @@ export function SettingsView({
             title={language === 'zh' ? '运行环境' : 'Runtime environment'}
             subtitle={
               language === 'zh'
-                ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给 BushServer。'
-                : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to BushServer with chat requests.'
+                ? '选择终端命令默认在哪个环境中执行。该设置会传给内置 TypeScript Runtime。'
+                : 'Choose where terminal commands run by default. The setting is passed to the embedded TypeScript Runtime.'
             }
           >
             <SettingsRadio
@@ -858,8 +842,8 @@ export function SettingsView({
             <MonitorCog size={16} />
             <span>
               {language === 'zh'
-                ? '应用启动能力由桌面端提供；软件识别、窗口控制和界面操作仍需要 BushServer 暴露对应能力。'
-                : 'Startup is handled by the desktop app. App discovery, window control, and UI actions still require BushServer support.'}
+                ? '应用启动、软件识别、窗口控制和界面操作由桌面 Product Host 提供。'
+                : 'App launch, discovery, window control, and UI actions are provided by the desktop Product Host.'}
             </span>
           </div>
           <div className="settings-actions">
@@ -887,8 +871,8 @@ export function SettingsView({
             title={language === 'zh' ? '不使用代理' : 'No proxy'}
             subtitle={
               language === 'zh'
-                ? '默认直连，本地 BushServer 请求不会被 HTTP_PROXY / HTTPS_PROXY 接走。'
-                : 'Direct connection by default; local BushServer requests are not routed through HTTP_PROXY / HTTPS_PROXY.'
+                ? 'Runtime 使用进程内 IPC；代理设置只影响 Provider 与外部集成。'
+                : 'Runtime uses process IPC; proxy settings affect only providers and external integrations.'
             }
             checked={settings.proxy.mode === 'none'}
             onChange={() => updateProxy({ mode: 'none' })}
@@ -956,8 +940,8 @@ export function SettingsView({
                   ? '开启后浏览器工具不会读取或保存 cookie/localStorage；默认关闭以保持登录态。'
                   : 'When enabled, browser tools do not read or save cookie/localStorage. Off keeps signed-in state.'
                 : language === 'zh'
-                  ? '当前 BushServer 未声明 browser_privacy_mode，前端不会发送该模式。'
-                  : 'The current BushServer does not advertise browser_privacy_mode, so this mode is not sent.'
+                  ? '当前 Runtime 未声明 browser_privacy_mode，因此不会发送该模式。'
+                  : 'The current Runtime does not advertise browser_privacy_mode, so this mode is not sent.'
             }
             checked={settings.browser.privacyMode}
             disabled={!backendCapabilities.browserPrivacyMode}
@@ -1013,8 +997,8 @@ export function SettingsView({
             title={language === 'zh' ? 'Bot 连接' : 'Bot links'}
             subtitle={
               language === 'zh'
-                ? 'Bot 由 CardBush 桌面宿主管理，BushServer 不管理其配置与进程。'
-                : 'Bots are managed by the CardBush desktop host, not by BushServer.'
+                ? 'Bot 的配置、进程与会话由 CardBush Product Host 管理。'
+                : 'Bot configuration, processes, and sessions are managed by CardBush Product Host.'
             }
           >
             <div className="maintenance-action-row">
@@ -1066,8 +1050,6 @@ export function SettingsView({
           capabilities={backendCapabilities}
           onNotify={notify}
           onConversationHistoryCleared={onConversationHistoryCleared}
-          runtimeBusy={runtimeBusy}
-          onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
         />
       );
     }
@@ -1943,583 +1925,62 @@ function CacheMaintenancePanel({
   capabilities,
   onNotify,
   onConversationHistoryCleared,
-  runtimeBusy,
-  onRuntimeAssetsReloaded,
 }: {
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
-  runtimeBusy: boolean;
-  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
-  const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | ''>('');
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<MaintenanceClearResult | null>(null);
   const [error, setError] = useState('');
-
-  const runClear = useCallback(
-    async (target: 'conversation' | 'logs') => {
-      if (busyTarget) {
-        return;
-      }
-      const supported =
-        target === 'conversation'
-          ? capabilities.maintenanceConversationHistoryClear
-          : capabilities.maintenanceLogsCacheClear;
-      if (!supported) {
-        setError(
-          language === 'zh'
-            ? 'BushServer 尚未提供这个缓存维护接口。'
-            : 'BushServer does not expose this cache maintenance API yet.',
-        );
-        return;
-      }
-      const confirmed = window.confirm(
-        target === 'conversation'
-          ? language === 'zh'
-            ? '确定清空本地对话历史吗？这会删除会话、轮次、摘要和 token usage，但不会删除项目文件或任务工作目录。'
-            : 'Clear local conversation history? This removes sessions, turns, summaries, and token usage, but not project files or task workspaces.'
-          : language === 'zh'
-            ? '确定清空本地日志缓存吗？这只会删除 chain logs 和 tool failure logs，不影响对话历史。'
-            : 'Clear local logs cache? This removes chain logs and tool failure logs without touching conversations.',
-      );
-      if (!confirmed) {
-        return;
-      }
-      setBusyTarget(target);
-      setError('');
-      try {
-        const cleared =
-          target === 'conversation'
-            ? await clearConversationHistory()
-            : await clearLogsCache();
-        setResult(cleared);
-        if (target === 'conversation') {
-          await onConversationHistoryCleared?.();
-        }
-        onNotify(
-          target === 'conversation'
-            ? language === 'zh'
-              ? '对话历史已清空'
-              : 'Conversation history cleared'
-            : language === 'zh'
-              ? '日志缓存已清空'
-              : 'Logs cache cleared',
-        );
-      } catch (caught) {
-        const message = errorMessage(caught);
-        setError(
-          message.includes('404')
-            ? language === 'zh'
-              ? 'BushServer 尚未提供缓存维护接口，请后端接入 maintenance clear API 后再使用。'
-              : 'BushServer does not expose the cache maintenance API yet.'
-            : message,
-        );
-      } finally {
-        setBusyTarget('');
-      }
-    },
-    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify],
-  );
-  const conversationClearSupported = capabilities.maintenanceConversationHistoryClear;
-  const logsClearSupported = capabilities.maintenanceLogsCacheClear;
-
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? '缓存维护' : 'Cache maintenance'}
-        subtitle={
-          language === 'zh'
-            ? '这些操作只清理 BushServer 本地数据库中的历史和诊断缓存，不会删除项目文件、任务工作目录或 provider 侧缓存。'
-            : 'These actions clear BushServer local database history and diagnostics cache only. Project files, task workspaces, and provider-side caches are untouched.'
-        }
-      >
-        <div className="maintenance-action-list">
-          <div className="maintenance-action-row">
-            <Archive size={18} />
-            <span>
-              <strong>
-                {language === 'zh' ? '清空对话历史' : 'Clear conversation history'}
-              </strong>
-              <small>
-                {language === 'zh'
-                  ? '清理 chat_messages、turns、turn_summaries、session_token_usage 和 chat_sessions。'
-                  : 'Clears chat messages, turns, summaries, token usage, and sessions.'}
-              </small>
-            </span>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={Boolean(busyTarget) || !conversationClearSupported}
-              onClick={() => void runClear('conversation')}
-              title={
-                conversationClearSupported
-                  ? undefined
-                  : language === 'zh'
-                    ? '后端尚未提供此接口'
-                    : 'Backend API is not available yet'
-              }
-            >
-              {busyTarget === 'conversation' ? (
-                <LoaderCircle size={14} />
-              ) : (
-                <Trash2 size={14} />
-              )}
-              {language === 'zh' ? '清空' : 'Clear'}
-            </button>
-          </div>
-          <div className="maintenance-action-row">
-            <Clipboard size={18} />
-            <span>
-              <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
-              <small>
-                {language === 'zh'
-                  ? '清理 chain_logs 和 tool_failure_logs，保留对话与 token usage。'
-                  : 'Clears chain logs and tool failure logs while keeping conversations and token usage.'}
-              </small>
-            </span>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={Boolean(busyTarget) || !logsClearSupported}
-              onClick={() => void runClear('logs')}
-              title={
-                logsClearSupported
-                  ? undefined
-                  : language === 'zh'
-                    ? '后端尚未提供此接口'
-                    : 'Backend API is not available yet'
-              }
-            >
-              {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-              {language === 'zh' ? '清空' : 'Clear'}
-            </button>
-          </div>
-        </div>
-        {(!conversationClearSupported || !logsClearSupported) && (
-          <p className="bot-settings-error">
-            {language === 'zh'
-              ? '部分缓存维护能力尚未由 BushServer 暴露，已暂时禁用对应按钮。'
-              : 'Some cache maintenance capabilities are not exposed by BushServer yet, so the matching buttons are disabled.'}
-          </p>
-        )}
-        {error && <p className="bot-settings-error">{error}</p>}
-        {result && (
-          <div className="maintenance-result">
-            <strong>
-              {language === 'zh' ? '上次执行结果' : 'Last result'}
-              {result.target ? ` · ${result.target}` : ''}
-            </strong>
-            <div className="maintenance-count-grid">
-              {Object.entries(result.counts).length ? (
-                Object.entries(result.counts).map(([table, count]) => (
-                  <span key={table}>
-                    <code>{table}</code>
-                    <b>{count}</b>
-                  </span>
-                ))
-              ) : (
-                <em>{language === 'zh' ? '无计数返回' : 'No counts returned'}</em>
-              )}
-            </div>
-          </div>
-        )}
-      </SettingsCard>
-      <RuntimeAssetResetCard
-        language={language}
-        capabilities={capabilities}
-        runtimeBusy={runtimeBusy}
-        onNotify={onNotify}
-        onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
-      />
-    </div>
-  );
-}
-
-const runtimeAssetCategoryOrder: RuntimeAssetCategory[] = ['prompts', 'skills', 'tools'];
-
-function RuntimeAssetResetCard({
-  language,
-  capabilities,
-  runtimeBusy,
-  onNotify,
-  onRuntimeAssetsReloaded,
-}: {
-  language: AppLanguage;
-  capabilities: BackendCapabilities;
-  runtimeBusy: boolean;
-  onNotify: (message: string) => void;
-  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
-}) {
-  const available = capabilities.maintenanceRuntimeAssetsReset &&
-    capabilities.runtimeAssetResetProtocol === RUNTIME_ASSET_RESET_PROTOCOL;
-  const supportedCategories = capabilities.runtimeAssetResetCategories.length > 0
-    ? capabilities.runtimeAssetResetCategories
-    : runtimeAssetCategoryOrder;
-  const [selected, setSelected] = useState<Set<RuntimeAssetCategory>>(
-    () => new Set(runtimeAssetCategoryOrder),
-  );
-  const [plan, setPlan] = useState<RuntimeAssetResetPlan | null>(null);
-  const [result, setResult] = useState<RuntimeAssetResetResult | null>(
-    readPendingRuntimeAssetReset,
-  );
-  const [activeChildTasks, setActiveChildTasks] = useState(0);
-  const [busy, setBusy] = useState<'inspect' | 'reset' | 'verify' | ''>('');
-  const [error, setError] = useState('');
-  const [restartVerified, setRestartVerified] = useState(false);
-  const [serviceLogs, setServiceLogs] = useState<{
-    chain: unknown[];
-    toolFailures: unknown[];
-  } | null>(null);
-  const [loadingLogs, setLoadingLogs] = useState(false);
-
-  const refreshInspection = useCallback(async () => {
-    if (!available) return;
-    setBusy('inspect');
-    try {
-      const [nextPlan, runtime] = await Promise.all([
-        fetchRuntimeAssetResetPlan(),
-        capabilities.subagents
-          ? fetchSubagentRuntime().catch(() => null)
-          : Promise.resolve(null),
-      ]);
-      setPlan(nextPlan);
-      setActiveChildTasks(runtime?.activeTasks.length ?? 0);
-      setError('');
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy('');
-    }
-  }, [available, capabilities.subagents]);
-
-  useEffect(() => {
-    void refreshInspection();
-  }, [refreshInspection]);
-
-  useEffect(() => {
-    setSelected((current) => new Set(
-      [...current].filter((category) => supportedCategories.includes(category)),
-    ));
-  }, [supportedCategories.join('|')]);
-
-  const selectedCategories = runtimeAssetCategoryOrder.filter(
-    (category) => selected.has(category) && supportedCategories.includes(category),
-  );
-  const runtimeActive = runtimeBusy || activeChildTasks > 0;
-  const requiresRestart = Boolean(result?.restartRequired && !restartVerified);
-
-  const toggleCategory = (category: RuntimeAssetCategory) => {
-    if (busy || requiresRestart) return;
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(category)) next.delete(category);
-      else next.add(category);
-      return next;
-    });
-  };
-
-  const runReset = useCallback(async () => {
-    if (!available || busy || selectedCategories.length === 0 || runtimeActive) return;
-    setError('');
-    if (capabilities.subagents) {
-      try {
-        const runtime = await fetchSubagentRuntime();
-        setActiveChildTasks(runtime.activeTasks.length);
-        if (runtime.activeTasks.length > 0) {
-          setError(language === 'zh'
-            ? '仍有子 Agent 任务在运行，请等待或停止任务后再重置。'
-            : 'Subagent tasks are still active. Wait for or stop them before resetting.');
-          return;
-        }
-      } catch {
-        // The reset endpoint remains the final authority for runtime-idle checks.
-      }
-    }
-    const confirmed = window.confirm(
-      language === 'zh'
-        ? `确定恢复 ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join('、')} 吗？\n\n所选类别中的本地修改、运行时自定义包、过期文件和工具启用覆盖将被永久移除。`
-        : `Restore ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join(', ')}?\n\nLocal edits, runtime-only packages, stale files, and tool enable overrides in the selected categories will be permanently removed.`,
-    );
+  const supported = capabilities.maintenanceConversationHistoryClear;
+  const runClear = useCallback(async () => {
+    if (busy || !supported) return;
+    const confirmed = window.confirm(language === 'zh'
+      ? '确定清空本地对话历史吗？这不会删除项目文件或 provider 侧缓存。'
+      : 'Clear local conversation history? Project files and provider-side caches are not deleted.');
     if (!confirmed) return;
-    setBusy('reset');
-    try {
-      const next = await resetRuntimeAssets(selectedCategories);
-      setResult(next);
-      setRestartVerified(false);
-      persistPendingRuntimeAssetReset(next.restartRequired ? next : null);
-      onNotify(next.changed
-        ? language === 'zh' ? '内置配置已恢复，重启 BushServer 后生效' : 'Bundled assets restored; restart BushServer to apply'
-        : language === 'zh' ? '配置已与内置版本一致' : 'Runtime assets already match the bundled version');
-    } catch (caught) {
-      if (
-        isBushServerHttpError(caught, 409) &&
-        caught.code === 'runtime_asset_reset_requires_idle_runtime'
-      ) {
-        setError(language === 'zh'
-          ? '检测到主 Agent 或子 Agent 正在运行。请先结束所有任务，再重新手动执行重置。'
-          : 'A parent or child turn is active. Stop all tasks, then start the reset again manually.');
-      } else if (
-        isBushServerHttpError(caught, 409) &&
-        caught.code === 'runtime_asset_reset_confirmation_required'
-      ) {
-        setError(language === 'zh'
-          ? '后端未收到有效确认，本次没有执行任何重置。'
-          : 'The backend did not receive valid confirmation. Nothing was reset.');
-      } else {
-        setError(errorMessage(caught));
-      }
-    } finally {
-      setBusy('');
-    }
-  }, [
-    available,
-    busy,
-    capabilities.subagents,
-    language,
-    onNotify,
-    runtimeActive,
-    selectedCategories,
-  ]);
-
-  const verifyRestart = useCallback(async () => {
-    if (!result?.restartRequired || busy) return;
-    setBusy('verify');
+    setBusy(true);
     setError('');
     try {
-      await onRuntimeAssetsReloaded?.(result.selectedCategories);
-      setRestartVerified(true);
-      persistPendingRuntimeAssetReset(null);
-      await refreshInspection();
-      onNotify(language === 'zh'
-        ? 'BushServer 已就绪，配置能力已重新加载'
-        : 'BushServer is ready and runtime capabilities were reloaded');
+      const next = await clearConversationHistory();
+      setResult(next);
+      await onConversationHistoryCleared?.();
+      onNotify(language === 'zh' ? '对话历史已清空' : 'Conversation history cleared');
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
-      setBusy('');
+      setBusy(false);
     }
-  }, [busy, language, onNotify, onRuntimeAssetsReloaded, refreshInspection, result]);
-
-  const loadServiceLogs = useCallback(async () => {
-    if (loadingLogs) return;
-    setLoadingLogs(true);
-    try {
-      setServiceLogs(await fetchRuntimeMaintenanceLogs());
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setLoadingLogs(false);
-    }
-  }, [loadingLogs]);
-
+  }, [busy, language, onConversationHistoryCleared, onNotify, supported]);
   return (
     <SettingsCard
-      title={language === 'zh' ? '恢复内置配置包' : 'Restore bundled runtime assets'}
+      title={language === 'zh' ? '会话维护' : 'Conversation maintenance'}
       subtitle={language === 'zh'
-        ? '将 Prompts、Skills 或 Tools 精确恢复为当前 BushServer 随附的内置版本。这是破坏性维护操作。'
-        : 'Restore Prompts, Skills, or Tools exactly to the versions bundled with the current BushServer build. This is destructive maintenance.'}
+        ? '清理 TypeScript Runtime 的会话历史，不影响项目文件。'
+        : 'Clear TypeScript Runtime conversation history without touching project files.'}
     >
-      <div className="runtime-asset-reset-panel">
-        <div className="runtime-asset-category-grid">
-          {runtimeAssetCategoryOrder.map((category) => {
-            const supported = supportedCategories.includes(category);
-            return (
-              <label key={category} className={!supported ? 'disabled' : ''}>
-                <input
-                  type="checkbox"
-                  checked={supported && selected.has(category)}
-                  disabled={!available || !supported || Boolean(busy) || requiresRestart}
-                  onChange={() => toggleCategory(category)}
-                />
-                <span>
-                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
-                  <small>{runtimeAssetCategoryDescription(category, language)}</small>
-                </span>
-              </label>
-            );
-          })}
-        </div>
-
-        <div className="runtime-asset-reset-warning">
-          <AlertCircle size={17} />
-          <span>{language === 'zh'
-            ? '会删除所选类别中的本地编辑、运行时安装包、过期文件和工具启用覆盖。项目文件与对话历史不受影响。'
-            : 'Removes local edits, runtime-installed packages, stale files, and tool enable overrides in selected categories. Project files and conversations are not affected.'}</span>
-        </div>
-
-        {runtimeActive && (
-          <p className="bot-settings-error">
-            {language === 'zh'
-              ? `运行时正忙${activeChildTasks > 0 ? `（${activeChildTasks} 个子任务）` : ''}，重置已禁用。`
-              : `The runtime is busy${activeChildTasks > 0 ? ` (${activeChildTasks} child tasks)` : ''}; reset is disabled.`}
-          </p>
-        )}
-        {!available && (
-          <p className="bot-settings-error">
-            {language === 'zh'
-              ? '当前 BushServer 未声明 runtime asset reset 能力。'
-              : 'The current BushServer does not advertise runtime asset reset.'}
-          </p>
-        )}
-        {error && (
-          <div className="runtime-asset-reset-error">
-            <p className="bot-settings-error">{error}</p>
-            <button className="secondary-button" type="button" onClick={() => void loadServiceLogs()}>
-              {loadingLogs ? <LoaderCircle size={14} /> : <Clipboard size={14} />}
-              {language === 'zh' ? '查看服务日志' : 'View service logs'}
-            </button>
-          </div>
-        )}
-
-        {serviceLogs && (
-          <details className="runtime-asset-service-logs" open>
-            <summary>{language === 'zh' ? '最近服务日志' : 'Recent service logs'}</summary>
-            <pre>{JSON.stringify(serviceLogs, null, 2)}</pre>
-          </details>
-        )}
-
-        <div className="runtime-asset-reset-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!available || Boolean(busy) || runtimeActive || requiresRestart || selectedCategories.length === 0}
-            onClick={() => void runReset()}
-          >
-            {busy === 'reset' ? <LoaderCircle size={14} /> : <PackageOpen size={14} />}
-            {language === 'zh' ? '恢复所选配置' : 'Restore selected assets'}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={!available || Boolean(busy)}
-            onClick={() => void refreshInspection()}
-          >
-            {busy === 'inspect' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {language === 'zh' ? '检查状态' : 'Inspect status'}
-          </button>
-        </div>
-
-        {result && <RuntimeAssetResetResultView result={result} language={language} />}
-
-        {requiresRestart && (
-          <div className="runtime-asset-restart-required" role="alert">
-            <RotateCcw size={18} />
-            <span>
-              <strong>{language === 'zh' ? '必须重启 BushServer' : 'BushServer restart required'}</strong>
-              <small>{language === 'zh'
-                ? '配置已经写入，但尚未激活。请先在服务管理器或运行后端的终端中重启 BushServer，然后再验证。'
-                : 'Assets were written but are not active yet. Restart BushServer in its service manager or terminal, then verify.'}</small>
-            </span>
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busy === 'verify' || !onRuntimeAssetsReloaded}
-              onClick={() => void verifyRestart()}
-            >
-              {busy === 'verify' ? <LoaderCircle size={14} /> : <Check size={14} />}
-              {language === 'zh' ? '我已重启，验证并加载' : 'Restarted — verify and reload'}
-            </button>
-          </div>
-        )}
-
-        {plan && (
-          <details className="runtime-asset-paths">
-            <summary>{language === 'zh' ? '查看内置来源与运行时路径' : 'View bundled source and runtime paths'}</summary>
-            {runtimeAssetCategoryOrder.map((category) => {
-              const location = plan.categories[category];
-              if (!location) return null;
-              return (
-                <div key={category}>
-                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
-                  <code title={location.sourcePath}>{location.sourcePath}</code>
-                  <code title={location.targetPath}>{location.targetPath}</code>
-                </div>
-              );
-            })}
-          </details>
-        )}
+      <div className="maintenance-action-row">
+        <Archive size={18} />
+        <span><strong>{language === 'zh' ? '清空对话历史' : 'Clear conversation history'}</strong></span>
+        <button className="secondary-button" type="button" disabled={busy || !supported} onClick={() => void runClear()}>
+          {busy ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+          {language === 'zh' ? '清空' : 'Clear'}
+        </button>
       </div>
+      {!supported && <p className="bot-settings-error">{language === 'zh' ? '当前 Runtime 不支持会话清理。' : 'The current Runtime cannot clear conversation history.'}</p>}
+      {error && <p className="bot-settings-error">{error}</p>}
+      {result && <pre className="runtime-asset-service-logs">{JSON.stringify(result.counts, null, 2)}</pre>}
     </SettingsCard>
   );
-}
-
-function RuntimeAssetResetResultView({
-  result,
-  language,
-}: {
-  result: RuntimeAssetResetResult;
-  language: AppLanguage;
-}) {
-  return (
-    <div className="runtime-asset-reset-result">
-      <strong>{result.changed
-        ? language === 'zh' ? '恢复结果' : 'Restore result'
-        : language === 'zh' ? '已经是内置版本' : 'Already matches bundled assets'}</strong>
-      <div>
-        {result.selectedCategories.map((category) => {
-          const item = result.categories[category];
-          if (!item) return null;
-          return (
-            <span key={category}>
-              <b>{runtimeAssetCategoryLabel(category, language)}</b>
-              <small>
-                {language === 'zh'
-                  ? `恢复 ${item.restoredFileCount} · 删除 ${item.removedRuntimeFileCount} · 内置 ${item.seedFileCount}`
-                  : `restored ${item.restoredFileCount} · removed ${item.removedRuntimeFileCount} · bundled ${item.seedFileCount}`}
-              </small>
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function runtimeAssetCategoryLabel(category: RuntimeAssetCategory, language: AppLanguage) {
-  const labels = {
-    prompts: { zh: 'Prompts', en: 'Prompts' },
-    skills: { zh: 'Skills', en: 'Skills' },
-    tools: { zh: 'Tools', en: 'Tools' },
-  } as const;
-  return labels[category][language];
-}
-
-function runtimeAssetCategoryDescription(category: RuntimeAssetCategory, language: AppLanguage) {
-  const descriptions = {
-    prompts: { zh: '系统提示词与内置模板', en: 'System prompts and bundled templates' },
-    skills: { zh: '内置技能包及其文件', en: 'Bundled skill packages and files' },
-    tools: { zh: '工具包、配置与启用覆盖', en: 'Tool packages, configuration, and enable overrides' },
-  } as const;
-  return descriptions[category][language];
-}
-
-function readPendingRuntimeAssetReset(): RuntimeAssetResetResult | null {
-  try {
-    const raw = window.localStorage.getItem(pendingRuntimeAssetResetStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as RuntimeAssetResetResult;
-    return parsed?.restartRequired === true && Array.isArray(parsed.selectedCategories)
-      ? parsed
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistPendingRuntimeAssetReset(result: RuntimeAssetResetResult | null) {
-  if (!result) {
-    window.localStorage.removeItem(pendingRuntimeAssetResetStorageKey);
-    return;
-  }
-  window.localStorage.setItem(pendingRuntimeAssetResetStorageKey, JSON.stringify(result));
 }
 
 function DiagnosticsPanel({
   language,
   settings,
   selectedModel,
-  onSettingsChange,
+  onSettingsChange: _onSettingsChange,
 }: {
   language: AppLanguage;
   settings: AppSettingsState;
@@ -2527,43 +1988,10 @@ function DiagnosticsPanel({
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
 }) {
   const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<DiagnosticResult | null>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState('');
   const modelInfo = resolveEffectiveModelInfo(settings, selectedModel, language);
-  const desktopAuthAvailable = Boolean(window.cardbushDesktop?.bushHeaders);
-  const authLabels = useMemo(
-    () => {
-      const labels = [
-        desktopAuthAvailable ? 'Electron X-Bush-Local-Key' : '',
-        settings.backendAuth.bearerToken ? 'frontend Bearer token' : '',
-        settings.backendAuth.localRequestKey ? 'frontend local key' : '',
-      ]
-        .filter(Boolean);
-      return labels.length
-        ? labels.join(' / ')
-        : language === 'zh'
-          ? '(未配置)'
-          : '(not configured)';
-    },
-    [
-      desktopAuthAvailable,
-      language,
-      settings.backendAuth.bearerToken,
-      settings.backendAuth.localRequestKey,
-    ],
-  );
-
-  const updateBackendAuth = useCallback(
-    (patch: Partial<AppSettingsState['backendAuth']>) => {
-      onSettingsChange((current) => ({
-        ...current,
-        backendAuth: {
-          ...current.backendAuth,
-          ...patch,
-        },
-      }));
-    },
-    [onSettingsChange],
-  );
+  void _onSettingsChange;
 
   const runCheck = useCallback(async () => {
     if (checking) {
@@ -2571,21 +1999,14 @@ function DiagnosticsPanel({
     }
     setChecking(true);
     try {
-      const [health, auth] = await Promise.all([
-        probeEndpoint(
-          language === 'zh' ? '健康检查' : 'Health check',
-          '/healthz',
-          false,
-          language,
-        ),
-        probeEndpoint(
-          language === 'zh' ? '鉴权检查' : 'Auth check',
-          '/v1/sessions?limit=1',
-          true,
-          language,
-        ),
+      const [readiness, capabilities] = await Promise.all([
+        fetchBackendReadiness(),
+        fetchBackendCapabilities(),
       ]);
-      setResult({ health, auth });
+      setResult({ readiness, capabilities });
+      setDiagnosticError('');
+    } catch (caught) {
+      setDiagnosticError(errorMessage(caught));
     } finally {
       setChecking(false);
     }
@@ -2598,16 +2019,13 @@ function DiagnosticsPanel({
   const copyDiagnostics = async () => {
     await copyText(
       [
-        `BACKEND_BASE_URL=${backendBaseUrl}`,
-        `LLM_ENDPOINT=${llmEndpoint}`,
-        `auth_headers=${authLabels}`,
+        'RUNTIME_TRANSPORT=electron_typed_ipc',
         `model_source=${modelInfo.source}`,
         `model=${modelInfo.model}`,
         `provider=${modelInfo.provider}`,
         `api_key=${modelInfo.apiKeyLabel}`,
         `base_url=${modelInfo.baseUrl}`,
-        result ? `health=${diagnosticSummary(result.health)}` : '',
-        result ? `auth=${diagnosticSummary(result.auth)}` : '',
+        result ? `runtime=${JSON.stringify(result)}` : '',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -2619,8 +2037,8 @@ function DiagnosticsPanel({
       title={language === 'zh' ? '连接诊断' : 'Connection diagnostics'}
       subtitle={
         language === 'zh'
-          ? '检查 BushServer 连接、鉴权状态，以及实际发送的模型参数。'
-          : 'Check BushServer connection, auth state, and the model parameters sent by cardbush.'
+          ? '检查 Electron Utility Process Runtime、typed IPC 和实际模型配置。'
+          : 'Check the Electron Utility Process Runtime, typed IPC, and active model configuration.'
       }
     >
       <div className="settings-subblock">
@@ -2630,40 +2048,18 @@ function DiagnosticsPanel({
         <InfoRow label={language === 'zh' ? '模型商' : 'Provider'} value={modelInfo.provider} />
         <InfoRow label="api_key" value={modelInfo.apiKeyLabel} />
         <InfoRow label="base_url" value={modelInfo.baseUrl} />
-        <InfoRow
-          label={language === 'zh' ? '流式端点' : 'Stream endpoint'}
-          value={llmEndpoint || `${backendBaseUrl}/v1/chat/stream`}
-        />
+        <InfoRow label={language === 'zh' ? '运行时传输' : 'Runtime transport'} value="Electron typed IPC" />
       </div>
       <SettingsDivider />
       <div className="settings-subblock">
         <strong>{language === 'zh' ? '服务检查' : 'Service check'}</strong>
-        <InfoRow label={language === 'zh' ? '后端地址' : 'Backend address'} value={backendBaseUrl} />
-        <InfoRow label={language === 'zh' ? '请求凭据' : 'Request credentials'} value={authLabels} />
-        <SettingsInput
-          label={language === 'zh' ? '后端 Bearer token' : 'Backend Bearer token'}
-          type="password"
-          value={settings.backendAuth.bearerToken}
-          placeholder="BUSH_API_AUTH_TOKEN"
-          onChange={(value) => updateBackendAuth({ bearerToken: value })}
-        />
-        <SettingsInput
-          label={language === 'zh' ? '本地请求 key' : 'Local request key'}
-          type="password"
-          value={settings.backendAuth.localRequestKey}
-          placeholder="X-Bush-Local-Key"
-          onChange={(value) => updateBackendAuth({ localRequestKey: value })}
-        />
         <p className="settings-muted">
           {language === 'zh'
-            ? 'Electron 会自动注入本地 key；浏览器/Vite 调试时可在这里填 Bearer token 或 local key。'
-            : 'Electron injects the local key automatically; browser/Vite debugging can use a Bearer token or local key here.'}
+            ? 'Renderer 不持有本地 HTTP 凭据；Provider 密钥只由 Product Host 写入 Utility Process。'
+            : 'The Renderer holds no local HTTP credential; Product Host installs provider secrets inside the Utility Process.'}
         </p>
         {result ? (
-          <>
-            <DiagnosticRow probe={result.health} />
-            <DiagnosticRow probe={result.auth} />
-          </>
+          <pre className="runtime-asset-service-logs">{JSON.stringify(result, null, 2)}</pre>
         ) : (
           <p className="settings-muted">
             {checking
@@ -2675,6 +2071,7 @@ function DiagnosticsPanel({
                 : 'Not checked'}
           </p>
         )}
+        {diagnosticError && <p className="bot-settings-error">{diagnosticError}</p>}
         <div className="settings-actions">
           <button
             className="primary-button"
@@ -2707,34 +2104,20 @@ function MobileSettingsPanel({ language }: { language: AppLanguage }) {
       title={language === 'zh' ? '手机连接' : 'Connect to phone'}
       subtitle={
         language === 'zh'
-          ? '在同一局域网下，把手机接入 cardbush 服务。'
-          : 'Connect your phone to cardbush on the same local network.'
+          ? '生产 Runtime 已内聚到桌面进程；远程客户端需要单独的 typed remote host，不能复用已下线的本地 HTTP 服务。'
+          : 'The production Runtime is embedded in the desktop process. Remote clients require a separate typed remote host, not the retired local HTTP service.'
       }
     >
-      <div className="mobile-steps">
-        <StepText>{language === 'zh' ? '1. 让手机和当前电脑连接同一个 Wi-Fi。' : '1. Connect your phone and this computer to the same Wi-Fi.'}</StepText>
-        <StepText>{language === 'zh' ? '2. 启动后端时监听 0.0.0.0:51717。' : '2. Start the backend listening on 0.0.0.0:51717.'}</StepText>
-        <StepText>{language === 'zh' ? '3. 在手机端把服务地址配置为 http://<电脑局域网IP>:51717。' : '3. On your phone, set the service URL to http://<LAN IP>:51717.'}</StepText>
-      </div>
-      <button
-        className="settings-copyline"
-        type="button"
-        onClick={() => void copyText('BACKEND_BASE_URL=http://<LAN IP>:51717')}
-      >
-        <Smartphone size={16} />
-        <span>
-          {language === 'zh'
-            ? '示例：BACKEND_BASE_URL=http://192.168.1.8:51717'
-            : 'Example: BACKEND_BASE_URL=http://192.168.1.8:51717'}
-        </span>
-      </button>
+      <p className="settings-muted">
+        {language === 'zh' ? '当前版本不开放局域网 Runtime 端口。' : 'This version exposes no LAN Runtime port.'}
+      </p>
     </SettingsCard>
   );
 }
 
 function AboutSettingsPanel({ language }: { language: AppLanguage }) {
   const copyEnvironment = async () => {
-    await copyText(`BACKEND_BASE_URL=${backendBaseUrl}\nLLM_ENDPOINT=${llmEndpoint}`);
+    await copyText('RUNTIME_TRANSPORT=electron_typed_ipc\nRUNTIME_OWNER=cardbush');
   };
   return (
     <SettingsCard
@@ -2747,14 +2130,11 @@ function AboutSettingsPanel({ language }: { language: AppLanguage }) {
     >
       <InfoRow label={language === 'zh' ? '应用' : 'App'} value="cardbush" />
       <InfoRow label={language === 'zh' ? '版本' : 'Version'} value="0.1.0+1" />
-      <InfoRow label={language === 'zh' ? '后端地址' : 'Backend address'} value={backendBaseUrl} />
+      <InfoRow label={language === 'zh' ? '运行时' : 'Runtime'} value="CardBush TypeScript Utility Process" />
       <InfoRow
         label={language === 'zh' ? 'LLM 地址' : 'LLM address'}
         value={
-          llmEndpoint ||
-          (language === 'zh'
-            ? '未配置（使用 BushServer）'
-            : 'Not configured (using BushServer)')
+          language === 'zh' ? '由 Product Host 模型配置决定' : 'Configured by Product Host'
         }
       />
       <div className="settings-actions">
@@ -3117,8 +2497,8 @@ function BotSettingsPanel({
         title={language === 'zh' ? 'Bot 连接' : 'Bot connections'}
         subtitle={
           language === 'zh'
-            ? 'CardBush 只负责配置入口和状态展示；运行时、密钥、登录状态和 adapter 生命周期由 BushServer 管理。'
-            : 'CardBush owns the UX; BushServer owns runtime, secrets, login state, and adapter lifecycle.'
+            ? 'CardBush Product Host 负责配置、密钥、登录状态与 adapter 生命周期；Agent Loop 位于 Utility Process。'
+            : 'CardBush Product Host owns configuration, secrets, login state, and adapter lifecycle; the Agent Loop runs in a Utility Process.'
         }
       >
         <div className="bot-platform-grid">
@@ -3225,8 +2605,8 @@ function BotSettingsPanel({
         {selectedModelConfig && (
           <p className="settings-muted">
             {language === 'zh'
-              ? 'CardBush 启动 Bot 时连接 BushServer，并使用其默认模型槽位完成会话。'
-              : 'CardBush connects each Bot to BushServer and uses its default model slot for conversations.'}
+              ? 'CardBush 启动 Bot 后直接连接内置 Runtime，并使用 Product Host 默认模型。'
+              : 'CardBush connects Bots directly to the embedded Runtime and uses the Product Host default model.'}
           </p>
         )}
         {(!selectedEnabled || !selectedConfigured) && (
@@ -3270,8 +2650,8 @@ function BotSettingsPanel({
           title={language === 'zh' ? '微信扫码登录' : 'WeChat QR login'}
           subtitle={
             language === 'zh'
-              ? '扫码流程由 BushServer 管理，CardBush 只显示二维码和状态。'
-              : 'BushServer manages the QR login state machine; CardBush only displays it.'
+              ? '扫码状态机由 Product Host 管理，Renderer 只显示二维码和状态。'
+              : 'Product Host manages the QR login state machine; the Renderer only displays the code and status.'
           }
         >
           <div className="settings-actions">
@@ -3373,8 +2753,8 @@ function BotSettingsPanel({
         title={language === 'zh' ? '配置' : 'Configuration'}
         subtitle={
           language === 'zh'
-            ? '配置由 BushServer 落盘。secret 字段应只返回脱敏值；如果要修改 secret，请重新输入对应字段。'
-            : 'BushServer persists config. Secret fields should be masked on read; re-enter them when changing secrets.'
+            ? '配置由 Product Host 原子落盘。secret 只返回脱敏值；修改时需重新输入。'
+            : 'Product Host persists configuration atomically. Secrets are masked on read and must be re-entered to change them.'
         }
       >
         {!selectedConfig ? (
@@ -3436,8 +2816,8 @@ function BotSettingsPanel({
         title={language === 'zh' ? '日志' : 'Logs'}
         subtitle={
           language === 'zh'
-            ? '读取 BushServer 暴露的 adapter 日志 tail。'
-            : 'Read the adapter log tail exposed by BushServer.'
+            ? '读取 Product Host adapter 的日志尾部。'
+            : 'Read the Product Host adapter log tail.'
         }
       >
         <div className="settings-actions">
@@ -3699,8 +3079,8 @@ function McpServersPanel({
       {capabilityUndeclared && (
         <p className="bot-settings-error">
           {language === 'zh'
-            ? '当前 /v1/capabilities 未声明 mcp_servers；后端接口上线后这里会直接可用。'
-            : '/v1/capabilities does not declare mcp_servers yet. This panel will work once backend endpoints are exposed.'}
+            ? '当前 Runtime 未声明 MCP snapshot 能力。'
+            : 'The current Runtime does not advertise MCP snapshot support.'}
         </p>
       )}
       {error && <p className="bot-settings-error">{error}</p>}
@@ -4104,8 +3484,8 @@ function botPanelError(caught: unknown, language: AppLanguage) {
   const message = caught instanceof Error ? caught.message : String(caught);
   if (message.includes('Failed to fetch')) {
     return language === 'zh'
-      ? '无法连接 BushServer。请确认后端服务已启动，或稍后重试。'
-      : 'Could not connect to BushServer. Start the backend service and try again.';
+      ? 'Product Host 不可用，请重启 CardBush 后重试。'
+      : 'Product Host is unavailable. Restart CardBush and retry.';
   }
   if (message.includes('404')) {
     return language === 'zh'
@@ -4129,13 +3509,13 @@ function mcpErrorText(caught: unknown, language: AppLanguage) {
   const message = errorMessage(caught);
   if (message.includes('Failed to fetch')) {
     return language === 'zh'
-      ? '无法连接 BushServer。请确认后端服务已启动后重试。'
-      : 'Could not connect to BushServer. Start the backend and try again.';
+      ? 'Product Host 不可用，请重启 CardBush 后重试。'
+      : 'Product Host is unavailable. Restart CardBush and retry.';
   }
   if (message.includes('404')) {
     return language === 'zh'
-      ? 'MCP 服务配置接口尚未由 BushServer 提供。'
-      : 'MCP server configuration API is not available from BushServer yet.';
+      ? 'Runtime 尚未提供 MCP snapshot 能力。'
+      : 'The Runtime does not provide MCP snapshot support.';
   }
   if (/mcp/i.test(message) && /transport/i.test(message)) {
     return language === 'zh'
@@ -4177,7 +3557,7 @@ function botServiceDetailText(
     }
     return language === 'zh'
       ? '服务处于失败状态，但后端没有返回错误详情；可加载日志查看原因。'
-      : 'The service is failed, but BushServer returned no error detail. Load logs to inspect it.';
+      : 'The service failed without an error detail. Load Product Host logs to inspect it.';
   }
   if (status?.serviceStatus === 'stopped' && status.stoppedAt) {
     return language === 'zh'
@@ -4692,32 +4072,6 @@ function ModelConfigRow({
   );
 }
 
-function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
-  return (
-    <div className={`diagnostic-row ${probe.ok ? 'ok' : 'fail'}`}>
-      {probe.ok ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-      <div>
-        <strong>{probe.label}</strong>
-        <span>{probe.detail}</span>
-      </div>
-      <small>{probe.elapsedMs}ms</small>
-    </div>
-  );
-}
-
-type DiagnosticResult = {
-  health: DiagnosticProbe;
-  auth: DiagnosticProbe;
-};
-
-type DiagnosticProbe = {
-  label: string;
-  ok: boolean;
-  elapsedMs: number;
-  detail: string;
-  statusCode?: number;
-};
-
 type EffectiveModelInfo = {
   source: string;
   model: string;
@@ -4849,7 +4203,7 @@ function resolveEffectiveModelInfo(
   language: AppLanguage,
 ): EffectiveModelInfo {
   const determinedByServer =
-    language === 'zh' ? '(由 BushServer 决定)' : '(determined by BushServer)';
+    language === 'zh' ? '(由 Product Host 决定)' : '(determined by Product Host)';
   const config = settings.managedModelConfigs.find(
     (item) => item.id.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
   ) ?? settings.managedModelConfigs.find(
@@ -4857,7 +4211,7 @@ function resolveEffectiveModelInfo(
   );
   if (!config || !shouldUseManagedConfig(config)) {
     return {
-      source: llmEndpoint ? 'External LLM_ENDPOINT' : language === 'zh' ? 'BushServer 默认配置' : 'BushServer default config',
+      source: language === 'zh' ? 'Product Host 默认配置' : 'Product Host default config',
       model: config?.modelName || selectedModel || determinedByServer,
       provider: determinedByServer,
       apiKeyLabel: determinedByServer,
@@ -4896,86 +4250,6 @@ function maskSecret(value: string, language: AppLanguage) {
     return `${raw[0]}${'*'.repeat(Math.max(0, raw.length - 1))}`;
   }
   return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
-}
-
-async function probeEndpoint(
-  label: string,
-  path: string,
-  includeAuthHeaders: boolean,
-  language: AppLanguage,
-): Promise<DiagnosticProbe> {
-  const endpoint = `${backendBaseUrl.replace(/\/$/, '')}${path}`;
-  const started = performance.now();
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 4000);
-  try {
-    const headers = includeAuthHeaders ? await backendRequestHeaders(endpoint) : {};
-    const response = await fetch(endpoint, {
-      headers,
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    return {
-      label,
-      ok: response.ok,
-      statusCode: response.status,
-      elapsedMs: Math.round(performance.now() - started),
-      detail: probeDetail(response.status, text, language),
-    };
-  } catch (caught) {
-    return {
-      label,
-      ok: false,
-      elapsedMs: Math.round(performance.now() - started),
-      detail: friendlyProbeError(caught, language),
-    };
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function probeDetail(status: number, body: string, language: AppLanguage) {
-  const compact = body.trim().replace(/\s+/g, ' ');
-  if (!compact) {
-    return `HTTP ${status}`;
-  }
-  try {
-    const decoded: unknown = JSON.parse(compact);
-    if (isRecord(decoded)) {
-      if (decoded.status) {
-        return `HTTP ${status} · status=${decoded.status}`;
-      }
-      if (decoded.detail) {
-        return `HTTP ${status} · ${decoded.detail}`;
-      }
-    }
-  } catch {
-    // Keep compact text below.
-  }
-  const clipped = compact.length > 90 ? `${compact.slice(0, 87)}...` : compact;
-  if ((status === 401 || status === 403) && language === 'zh') {
-    return `HTTP ${status} · ${clipped} · 鉴权失败`;
-  }
-  return `HTTP ${status} · ${clipped}`;
-}
-
-function friendlyProbeError(caught: unknown, language: AppLanguage) {
-  const text = caught instanceof Error ? caught.message : String(caught);
-  if (/abort|timeout/i.test(text)) {
-    return language === 'zh'
-      ? '请求超时，请检查 BushServer 是否卡住或被防火墙阻止'
-      : 'Request timed out. Check whether BushServer is blocked or stuck.';
-  }
-  if (/failed to fetch|connection refused/i.test(text)) {
-    return language === 'zh'
-      ? '连接失败，BushServer 可能没有启动或端口不对'
-      : 'Connection failed. BushServer may not be running or the port is wrong.';
-  }
-  return text.replace(/^Exception:\s*/, '');
-}
-
-function diagnosticSummary(probe: DiagnosticProbe) {
-  return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
 }
 
 function cssImageUrl(value: string) {

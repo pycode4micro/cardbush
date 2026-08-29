@@ -85,8 +85,6 @@ const desktopApi = {
   wallpaperDataUrl: () => ipcRenderer.invoke('appearance:wallpaper-data-url') as Promise<string>,
   setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') =>
     ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
-  bushHeaders: (targetUrl: string, json = false) =>
-    ipcRenderer.invoke('bush:headers', targetUrl, json) as Promise<Record<string, string>>,
   productHostCommand: (command: unknown) =>
     ipcRenderer.invoke('cardbush-product-host:command', command) as Promise<unknown>,
   a2aInspect: (agentUrl: string) =>

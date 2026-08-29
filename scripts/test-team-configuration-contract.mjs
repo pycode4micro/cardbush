@@ -28,16 +28,23 @@ expect(!panel.includes('team-agent-rail') && !panel.includes('team-agent-marker'
 expect(store.includes("type TeamWorkspaceView = 'agent' | 'manage' | 'install'"), 'Team workspace views must be explicit.');
 expect(store.includes("type TeamSidebarDisplayMode = 'name' | 'description'"), 'Team sidebar must support name and description labels.');
 expect(store.includes('displayModeStorageKey'), 'Team sidebar display preference must persist.');
-expect(store.includes('fetchTeams()') && store.includes('fetchAgentProfiles()'), 'Team UI must load the backend Team/Profile catalogs.');
+expect(store.includes('fetchTeams()') && store.includes('fetchAgentProfiles()'), 'Team UI must load the product Team/Profile catalogs.');
 expect(store.includes('saveAgentProfile(profile)') && store.includes('saveTeamDefinition(team)'), 'Team save must validate and persist profiles before the Team.');
 expect(app.includes('selectedTeamId: teamWorkspace.selectedTeamId'), 'Chat request context must receive the current Team selection.');
 expect(app.includes("section === 'team'") && app.includes('activeTeam?.name.trim()'), 'The Team page title must use the active Team name.');
 
 const api = readFileSync(new URL('../src/backend/api.ts', import.meta.url), 'utf8');
+const runtimeChat = readFileSync(new URL('../src/backend/runtimeChat.ts', import.meta.url), 'utf8');
 const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8');
 const hook = readFileSync(new URL('../src/hooks/useCardbushChat.ts', import.meta.url), 'utf8');
-expect(api.includes("url('/v1/teams')") && api.includes("url('/v1/agent-profiles')"), 'Team configuration APIs must be connected.');
-expect(api.includes('body.teamId = teamId'), 'Team activation must use the top-level teamId request field.');
+expect(
+  api.includes('readProductTeams()') &&
+    api.includes('readProductAgentProfiles()') &&
+    api.includes('replaceProductTeamConfiguration(runtime.client'),
+  'Team configuration must use the product snapshot and typed Runtime boundary.',
+);
+expect(!api.includes('/v1/teams') && !api.includes('/v1/agent-profiles'), 'Team configuration must not depend on the retired HTTP service.');
+expect(runtimeChat.includes('teamId: request.teamId'), 'Team activation must be part of the typed Turn request.');
 expect(composer.includes("id: '/team'") && composer.includes('<ComposerTeamPicker'), '/team must open the frontend Team picker.');
 expect(hook.includes('teamId: turnTeamId'), 'Each new Turn must snapshot the selected Team.');
 

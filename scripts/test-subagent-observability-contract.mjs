@@ -5,21 +5,22 @@ import path from 'node:path';
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 
 const api = read('src', 'backend', 'api.ts');
+const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
+const protocol = read('packages', 'bush-protocol', 'src', 'delegation.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
 const summary = read('src', 'features', 'chat', 'ConversationWorkSummary.tsx');
 const inspector = read('src', 'features', 'chat', 'WorkSummaryInspector.tsx');
 const events = read('src', 'features', 'subagents', 'subagentObservabilityEvents.ts');
 const app = read('src', 'App.tsx');
 
-assert.match(api, /eventName === 'subagent_dispatch'/);
-assert.match(api, /request\.onSubagentDispatch\?\./);
-assert.match(api, /subagentDispatchEventFromPayload/);
-assert.match(api, /event\.protocol === SUBAGENT_DISPATCH_EVENT_PROTOCOL/);
-assert.match(api, /\/v1\/subagent-tasks\?*/);
-assert.match(api, /\/v1\/subagent-tasks\/\$\{encodeURIComponent\(normalizedTaskId\)\}/);
-assert.match(api, /\/v1\/turns\/\$\{encodeURIComponent\(normalizedTurnId\)\}/);
-assert.doesNotMatch(api, /\/subagent-completions/);
-assert.match(api, /subagent_observability/);
+assert.match(runtimeChat, /record\.toolCall\.name === 'subagent'/);
+assert.match(runtimeChat, /request\.onSubagentDispatch\?\.\(subagentDispatch\(record, event\)\)/);
+assert.match(runtimeChat, /protocol: 'bush\.subagent_task\.v1'/);
+assert.match(api, /runtime\.client\.listSubagentTasks\(/);
+assert.match(api, /runtime\.client\.getSubagentTask\(\s*\{/);
+assert.match(api, /session\.turns\.find\(\s*\(item\) => item\.turnId === normalizedTurnId/);
+assert.doesNotMatch(api, /\/v1\/subagent-tasks|\/subagent-completions/);
+assert.match(protocol, /BUSH_SUBAGENT_TASK_PROTOCOL = "bush\.subagent_task\.v1"/);
 assert.match(hook, /emitSubagentDispatch/);
 assert.match(events, /cardbush:subagent-dispatch/);
 

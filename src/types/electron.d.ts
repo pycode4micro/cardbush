@@ -42,7 +42,6 @@ declare global {
       wallpaperPath: () => Promise<string>;
       wallpaperDataUrl: () => Promise<string>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
-      bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
       productHostCommand: (command: unknown) => Promise<unknown>;
       a2aInspect: (agentUrl: string) => Promise<unknown>;
       a2aDispatch: (input: {

@@ -59,9 +59,18 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /max_completion_tokens: item\.maxCompletionTokens/);
-assert.match(apiSource, /body\.max_completion_tokens = Math\.floor\(config\.maxCompletionTokens\)/);
-assert.match(apiSource, /reasoning-budget-exhausted-before-action/);
+const modelStoreSource = fs.readFileSync(
+  path.join(process.cwd(), 'packages', 'cardbush-product-host', 'src', 'modelConfigStore.ts'),
+  'utf8',
+);
+const runtimeChatSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'runtimeChat.ts'),
+  'utf8',
+);
+assert.match(apiSource, /item\.maxCompletionTokens[\s\S]*?item\.max_output_tokens/);
+assert.match(modelStoreSource, /config\.maxOutputTokens \?\? config\.maxCompletionTokens \?\? config\.max_completion_tokens/);
+assert.match(modelStoreSource, /maxCompletionTokens: config\.maxOutputTokens/);
+assert.match(runtimeChatSource, /request\.modelConfig\?\.maxCompletionTokens \?\? resolvedModel\.maxOutputTokens/);
 assert.match(apiSource, /kind: 'models\.get'/);
 assert.match(apiSource, /kind: 'models\.update'/);
 assert.doesNotMatch(apiSource, /cardbush_runtime_default_model_id/);
