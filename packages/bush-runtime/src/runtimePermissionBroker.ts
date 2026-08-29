@@ -26,6 +26,7 @@ export interface RuntimePermissionBrokerOptions {
 
 interface PendingPermission {
   toolCallId: string;
+  capabilityIds: string[];
   resolve: (answer: RuntimePermissionAnswer) => void;
   reject: (error: Error) => void;
   removeAbortListener: () => void;
@@ -75,6 +76,7 @@ export class RuntimePermissionBroker implements PermissionResolver {
         signal?.removeEventListener("abort", onAbort);
       this.#pending.set(permissionId, {
         toolCallId: request.toolCallId,
+        capabilityIds: request.capabilityIds,
         resolve,
         reject,
         removeAbortListener,
@@ -95,6 +97,14 @@ export class RuntimePermissionBroker implements PermissionResolver {
     const pending = this.#pending.get(answer.permissionId);
     if (!pending) {
       throw new Error(`Permission ${answer.permissionId} is not pending.`);
+    }
+    if (
+      (answer.decision === "allow_once" || answer.decision === "allow_session") &&
+      !sameSet(answer.grantedCapabilityIds, pending.capabilityIds)
+    ) {
+      throw new Error(
+        `Permission ${answer.permissionId} must grant exactly the requested capabilities.`,
+      );
     }
     this.#pending.delete(answer.permissionId);
     pending.removeAbortListener();
@@ -121,14 +131,27 @@ function normalizeRequest(
   const toolCallId = input.toolCallId.trim();
   const actions = uniqueNonempty(input.actions);
   const resources = uniqueNonempty(input.resources);
-  if (!reason || !toolCallId || actions.length === 0 || resources.length === 0) {
+  const capabilityIds = uniqueNonempty(input.capabilityIds);
+  if (
+    !reason ||
+    !toolCallId ||
+    actions.length === 0 ||
+    resources.length === 0 ||
+    capabilityIds.length === 0
+  ) {
     throw new Error(
       "Permission requests require a reason, tool call, action, and resource.",
     );
   }
-  return { reason, toolCallId, actions, resources };
+  return { reason, toolCallId, actions, resources, capabilityIds };
 }
 
 function uniqueNonempty(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function sameSet(left: string[], right: string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === rightSet.size && [...leftSet].every((item) => rightSet.has(item));
 }

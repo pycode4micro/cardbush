@@ -15,6 +15,7 @@ export interface ToolPermissionRequest {
   reason: string;
   actions: string[];
   resources: string[];
+  capabilityIds: string[];
 }
 
 export type ToolAdmissionDecision =
@@ -30,15 +31,15 @@ export interface ToolAdmissionContext<TInput = unknown> {
   input: TInput;
   actionManifest: ActionManifest;
   signal?: AbortSignal;
+  turn?: {
+    request: ModelRequest;
+    contextMessages: ModelMessage[];
+  };
 }
 
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
-  turn?: {
-    request: ModelRequest;
-    contextMessages: ModelMessage[];
-  };
 }
 
 export interface ToolRegistration<TInput = unknown> {

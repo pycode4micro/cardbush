@@ -121,6 +121,7 @@ export class ToolExecutionCoordinator {
           input,
           actionManifest,
           signal,
+          turn,
         });
       } catch (error) {
         return failedResult(

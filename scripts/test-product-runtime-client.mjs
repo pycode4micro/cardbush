@@ -474,6 +474,7 @@ function toolPermissionLifecycleEvents() {
       reason: 'The Action Manifest requires workspace write access.',
       actions: ['write'],
       resources: ['workspace/file.txt'],
+      requestedCapabilityIds: ['capability.files.write'],
     }),
     base(3, 'permission_answered', {
       permissionId: 'permission_write_1',

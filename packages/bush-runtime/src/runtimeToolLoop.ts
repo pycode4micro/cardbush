@@ -57,6 +57,7 @@ export class RuntimeToolLoop {
             reason: permission.reason,
             actions: permission.actions,
             resources: permission.resources,
+            requestedCapabilityIds: permission.capabilityIds,
           },
         });
       },

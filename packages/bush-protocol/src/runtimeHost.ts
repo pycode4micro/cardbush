@@ -184,6 +184,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       reason: z.string().min(1),
       actions: z.array(z.string().min(1)),
       resources: z.array(z.string().min(1)),
+      requestedCapabilityIds: z.array(z.string().min(1)).default([]),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({

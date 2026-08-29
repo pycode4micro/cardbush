@@ -25,3 +25,4 @@ export * from "./toolCallAccumulator.js";
 export * from "./toolExecutionCoordinator.js";
 export * from "./toolExecutionStore.js";
 export * from "./toolRegistry.js";
+export * from "./workspaceTools.js";

@@ -49,6 +49,7 @@ import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerSubagentTool } from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
+import { registerWorkspaceTools, WorkspaceObservationStore } from "./workspaceTools.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -108,6 +109,8 @@ export interface InMemoryRuntimeHostOptions {
   durableCoordination?: boolean;
   subagentTaskStore?: SubagentTaskStore;
   durableSubagentTasks?: boolean;
+  workspaceObservationStore?: WorkspaceObservationStore;
+  registerDefaultWorkspaceTools?: boolean;
   additionalSupportedCommands?: string[];
 }
 
@@ -139,6 +142,7 @@ export class InMemoryRuntimeHost {
   readonly #toolExecutions: ToolExecutionStore;
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
+  readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -172,6 +176,11 @@ export class InMemoryRuntimeHost {
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
+    this.#workspaceObservations =
+      options.workspaceObservationStore ?? new WorkspaceObservationStore();
+    if (options.registerDefaultWorkspaceTools !== false) {
+      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations);
+    }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     registerSubagentTool(
       this.#toolRegistry,

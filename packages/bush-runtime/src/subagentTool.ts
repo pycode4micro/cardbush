@@ -136,6 +136,7 @@ export function registerSubagentTool(
           parentSessionId: context.sessionId,
           parentTurnId: context.turnId,
           subagentTaskId: taskId,
+          inheritedObservationSessionId: context.sessionId,
         },
       };
 

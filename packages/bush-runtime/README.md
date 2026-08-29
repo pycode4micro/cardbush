@@ -52,3 +52,18 @@ parallel safety; Runtime does not derive either property. Child terminal output
 returns through ToolResult `guidance` as a User message after the complete Tool
 receipt batch. Subagent lifecycle facts are stored in a checksummed append-only
 journal and are queryable through typed commands.
+
+The default workspace Tool set provides exact file reads, ripgrep search, guarded
+file creation/replacement, exact-text edits, and terminal execution. Existing
+files can be changed only after the current SHA-256 revision has been observed by
+that Agent context; a Subagent may inherit unchanged observations from its parent
+fork. Canonical paths and linked directories are resolved before deciding whether
+an operation is inside the workspace. External access requests one capability
+bound to the exact action and canonical resource, and an allow answer must grant
+exactly that requested capability set.
+
+Runtime does not parse, classify, or rewrite terminal commands. It records the
+selected working directory, complete output, exit code, and timeout as Tool facts.
+Consequently this workspace permission protocol controls declared paths and the
+terminal working directory; it is not an operating-system sandbox and does not
+claim to constrain paths that a command itself may access.

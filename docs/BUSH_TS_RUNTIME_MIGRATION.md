@@ -188,3 +188,27 @@ elapsed-time, action-count, token-percentage or semantic completion classifier.
 
 Each Turn retains its own stream and durable commit, so interruption never hides
 the last completed Turn and the UI can display progress one Turn at a time.
+
+## Workspace execution checkpoint
+
+The Runtime now registers `read_file`, `search_file_content`, `write_file`,
+`edit_file`, and `terminal_exec` from one typed workspace Tool module. Paths are
+canonicalized before workspace admission, including linked workspace roots and
+linked-directory escapes. Existing file writes require a matching SHA-256 read
+observation from the current Agent context or its explicit parent fork. An
+external modification invalidates that observation without a text or language
+classifier.
+
+External operations request action-and-resource-bound capability IDs. The
+permission broker accepts an allow answer only when it grants exactly the set the
+Tool requested; replacing the resource or capability keeps the request pending.
+Workspace changes contain authoritative paths and revision hashes. Line counts
+are omitted for modified files until an exact diff producer is attached rather
+than publishing approximate facts.
+
+Terminal execution remains intentionally transparent: Runtime performs no shell,
+language, command, or intent rewriting and returns complete stdout, stderr, exit
+code, and timeout facts. Permission admission covers the selected canonical cwd,
+not the effects inferred from command text. This checkpoint therefore preserves
+the product's explicit non-sandbox boundary instead of implying an enforcement
+guarantee that the process host does not provide.

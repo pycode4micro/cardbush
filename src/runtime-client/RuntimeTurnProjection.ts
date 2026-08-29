@@ -65,6 +65,7 @@ export interface RuntimePermissionView {
   resources: string[];
   answerId?: string;
   grantedCapabilityIds: string[];
+  requestedCapabilityIds: string[];
 }
 
 export interface RuntimeTurnView {
@@ -161,6 +162,7 @@ export class RuntimeTurnProjection {
           actions: [...event.payload.actions],
           resources: [...event.payload.resources],
           grantedCapabilityIds: [],
+          requestedCapabilityIds: [...event.payload.requestedCapabilityIds],
         });
         break;
       case 'permission_answered':
@@ -382,6 +384,7 @@ function updatePermission(
     actions: current?.actions ?? [],
     resources: current?.resources ?? [],
     grantedCapabilityIds: current?.grantedCapabilityIds ?? [],
+    requestedCapabilityIds: current?.requestedCapabilityIds ?? [],
     ...extra,
   });
 }
@@ -392,5 +395,6 @@ function clonePermission(permission: RuntimePermissionView): RuntimePermissionVi
     actions: [...permission.actions],
     resources: [...permission.resources],
     grantedCapabilityIds: [...permission.grantedCapabilityIds],
+    requestedCapabilityIds: [...permission.requestedCapabilityIds],
   };
 }

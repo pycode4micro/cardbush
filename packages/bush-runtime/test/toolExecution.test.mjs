@@ -236,6 +236,7 @@ test("requires an explicit permission answer before running a protected tool", a
           reason: "Read the selected external fixture.",
           actions: ["read"],
           resources: ["file:///external/fixture.txt"],
+          capabilityIds: ["capability_fixture"],
         },
       };
     },
@@ -252,6 +253,19 @@ test("requires an explicit permission answer before running a protected tool", a
 
   const running = host.runModelTurn(request());
   await waitForEvent(host, "permission_requested");
+  await assert.rejects(
+    host.sendCommand({
+      kind: ANSWER_RUNTIME_PERMISSION_COMMAND,
+      payload: {
+        protocol: BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+        permissionId: "permission_fixture",
+        answerId: "answer_wrong",
+        decision: "allow_once",
+        grantedCapabilityIds: ["capability_wrong"],
+      },
+    }),
+    /exactly the requested capabilities/,
+  );
   await host.sendCommand({
     kind: ANSWER_RUNTIME_PERMISSION_COMMAND,
     payload: {
@@ -267,6 +281,10 @@ test("requires an explicit permission answer before running a protected tool", a
 
   assert.equal(terminal.payload.status, "completed");
   assert.deepEqual(executionCapabilities, ["capability_fixture"]);
+  assert.deepEqual(
+    events.find((event) => event.kind === "permission_requested").payload.requestedCapabilityIds,
+    ["capability_fixture"],
+  );
   assert.ok(events.find((event) => event.kind === "permission_answered"));
   assert.ok(events.find((event) => event.kind === "tool_running"));
 });
@@ -281,6 +299,7 @@ test("a rejected permission never invokes the tool handler", async () => {
           reason: "Read the selected external fixture.",
           actions: ["read"],
           resources: ["file:///external/fixture.txt"],
+          capabilityIds: ["capability_fixture"],
         },
       };
     },
@@ -327,6 +346,7 @@ test("cancelling while permission is pending closes both permission and Turn fac
           reason: "Read the selected external fixture.",
           actions: ["read"],
           resources: ["file:///external/fixture.txt"],
+          capabilityIds: ["capability_fixture"],
         },
       };
     },
