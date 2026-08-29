@@ -1,6 +1,7 @@
 export * from "./cacheChain.js";
 export * from "./coordination.js";
 export * from "./delegation.js";
+export * from "./mcp.js";
 export * from "./model.js";
 export * from "./providerBinding.js";
 export * from "./recovery.js";

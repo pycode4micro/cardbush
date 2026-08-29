@@ -2,6 +2,8 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
+  APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   createProtocolVersionMismatchError,
@@ -28,8 +30,10 @@ import {
   SessionStore,
   SubagentTaskStore,
   ToolExecutionStore,
+  ToolRegistry,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
+import { McpClientManager } from '@cardbush/bush-mcp-client';
 import {
   OpenAICompatibleProvider,
   OpenAICompatibleProviderRegistry,
@@ -45,6 +49,7 @@ const operations = new Map<string, AbortController>();
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAICompatibleProviderRegistry;
+let mcp: McpClientManager;
 
 async function handleMessage(input: unknown) {
   let message;
@@ -189,6 +194,12 @@ async function executeRuntimeCommand(
   if (command.kind === REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND) {
     return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
   }
+  if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND) {
+    return mcp.apply(command.payload);
+  }
+  if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
+    return mcp.snapshot() ?? null;
+  }
   return host.sendCommand(command, signal);
 }
 
@@ -246,8 +257,10 @@ providers = new OpenAICompatibleProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
 });
 
+const toolRegistry = new ToolRegistry();
 host = new InMemoryRuntimeHost({
   provider: providers,
+  toolRegistry,
   eventLog,
   checkpointStore,
   sessionStore: new SessionStore({ persistence: sessionPersistence }),
@@ -267,7 +280,10 @@ host = new InMemoryRuntimeHost({
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+    APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+    GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   ],
+  additionalFeatures: ["product_mcp_snapshot", "mcp_protocol_2"],
   hostId: `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
   maxAttempts: positiveInteger(
@@ -279,6 +295,10 @@ host = new InMemoryRuntimeHost({
       `${JSON.stringify({ code: 'runtime_checkpoint_cleanup_failed', message: error.message })}\n`,
     );
   },
+});
+mcp = new McpClientManager({
+  registry: toolRegistry,
+  canApply: () => !host.hasActiveTurns(),
 });
 
 parentPort.on('message', (messageEvent) => {

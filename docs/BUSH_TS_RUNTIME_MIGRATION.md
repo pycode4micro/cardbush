@@ -212,3 +212,22 @@ code, and timeout facts. Permission admission covers the selected canonical cwd,
 not the effects inferred from command text. This checkpoint therefore preserves
 the product's explicit non-sandbox boundary instead of implying an enforcement
 guarantee that the process host does not provide.
+
+## MCP client checkpoint
+
+MCP configuration is a product-owned `bush.mcp_snapshot.v1` fact. The Electron
+Runtime accepts a complete snapshot only between Turns, connects it with the
+official TypeScript MCP 2.x client using `auto` negotiation by default, and
+atomically replaces the corresponding Tool registrations. Modern
+`2026-07-28` and legacy servers therefore share the SDK negotiation path instead
+of a CardBush compatibility parser.
+
+Each configured server supplies explicit default and per-Tool permission,
+parallel-safety, and child-visibility policy. Runtime never derives those values
+from the Tool name, description, annotations, task text, or lifecycle-state
+combinations. Remote Tool names receive a deterministic server namespace. MCP
+results are preserved as structured output and wrapped in one authoritative
+Execution Fact; Runtime does not scrape result prose for paths, Artifacts, or
+workspace changes. Reusing a snapshot revision with different content, moving a
+revision backwards, changing configuration during a Turn, or colliding with a
+Tool owned by another source fails closed while the previous snapshot stays live.

@@ -52,6 +52,7 @@ export interface ToolRegistration<TInput = unknown> {
   execute: (context: ToolHandlerContext<TInput>) => ToolResult | Promise<ToolResult>;
   parallelSafe?: boolean;
   visibleToChild?: boolean;
+  registrationOwner?: string;
 }
 
 export interface PermissionResolver {
@@ -67,20 +68,47 @@ export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
 
   register<TInput>(candidate: ToolRegistration<TInput>): this {
-    const definition = toolDefinitionSchema.parse(candidate.definition);
-    const manifest = actionManifestTemplateSchema.parse(candidate.manifest);
+    const registration = normalizeRegistration(candidate);
+    const definition = registration.definition;
     if (this.#registrations.has(definition.name)) {
       throw new Error(`Tool ${definition.name} is already registered.`);
     }
-    this.#registrations.set(definition.name, {
-      definition,
-      manifest,
-      decodeInput: candidate.decodeInput as (input: unknown) => unknown,
-      authorize: candidate.authorize as AnyToolRegistration["authorize"],
-      execute: candidate.execute as AnyToolRegistration["execute"],
-      parallelSafe: candidate.parallelSafe ?? false,
-      visibleToChild: candidate.visibleToChild ?? true,
-    });
+    this.#registrations.set(definition.name, registration);
+    return this;
+  }
+
+  replaceOwned<TInput>(owner: string, candidates: ToolRegistration<TInput>[]): this {
+    const normalizedOwner = owner.trim();
+    if (!normalizedOwner) throw new Error("Tool registration owner is required.");
+    const replacements = candidates.map((candidate) =>
+      normalizeRegistration({ ...candidate, registrationOwner: normalizedOwner }),
+    );
+    const names = new Set<string>();
+    for (const replacement of replacements) {
+      if (names.has(replacement.definition.name)) {
+        throw new Error(`Tool ${replacement.definition.name} occurs more than once.`);
+      }
+      names.add(replacement.definition.name);
+      const existing = this.#registrations.get(replacement.definition.name);
+      if (existing && existing.registrationOwner !== normalizedOwner) {
+        throw new Error(`Tool ${replacement.definition.name} is owned by another registration source.`);
+      }
+    }
+    for (const [name, registration] of this.#registrations) {
+      if (registration.registrationOwner === normalizedOwner) {
+        this.#registrations.delete(name);
+      }
+    }
+    for (const replacement of replacements) {
+      this.#registrations.set(replacement.definition.name, replacement);
+    }
+    return this;
+  }
+
+  removeOwned(owner: string): this {
+    for (const [name, registration] of this.#registrations) {
+      if (registration.registrationOwner === owner) this.#registrations.delete(name);
+    }
     return this;
   }
 
@@ -103,4 +131,17 @@ export class ToolRegistry {
   isParallelSafe(name: string): boolean {
     return this.#registrations.get(name)?.parallelSafe === true;
   }
+}
+
+function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): AnyToolRegistration {
+  return {
+    definition: toolDefinitionSchema.parse(candidate.definition),
+    manifest: actionManifestTemplateSchema.parse(candidate.manifest),
+    decodeInput: candidate.decodeInput as (input: unknown) => unknown,
+    authorize: candidate.authorize as AnyToolRegistration["authorize"],
+    execute: candidate.execute as AnyToolRegistration["execute"],
+    parallelSafe: candidate.parallelSafe ?? false,
+    visibleToChild: candidate.visibleToChild ?? true,
+    registrationOwner: candidate.registrationOwner?.trim() || undefined,
+  };
 }

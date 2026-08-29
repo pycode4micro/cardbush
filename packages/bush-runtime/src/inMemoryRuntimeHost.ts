@@ -112,6 +112,7 @@ export interface InMemoryRuntimeHostOptions {
   workspaceObservationStore?: WorkspaceObservationStore;
   registerDefaultWorkspaceTools?: boolean;
   additionalSupportedCommands?: string[];
+  additionalFeatures?: string[];
 }
 
 export interface RuntimeHostStreamRequest {
@@ -265,12 +266,17 @@ export class InMemoryRuntimeHost {
         ...(options.durableCoordination ? ["durable_coordination"] : []),
         "subagent_context_fork",
         ...(options.durableSubagentTasks ? ["durable_subagent_tasks"] : []),
+        ...(options.additionalFeatures ?? []),
       ],
     };
   }
 
   capabilities(): RuntimeCapabilities {
     return structuredClone(this.#capabilities);
+  }
+
+  hasActiveTurns(): boolean {
+    return this.#activeTurns.size > 0;
   }
 
   events(

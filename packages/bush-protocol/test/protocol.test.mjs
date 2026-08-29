@@ -7,6 +7,7 @@ import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
+  BUSH_MCP_SNAPSHOT_PROTOCOL,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
@@ -19,6 +20,7 @@ import {
   decodeRuntimeEvent,
   modelEventSchema,
   modelRequestSchema,
+  mcpSnapshotSchema,
   outcomeFinalizerSchema,
   runtimePermissionAnswerSchema,
   runtimeRecoveryInspectionSchema,
@@ -329,4 +331,27 @@ test("provider binding commands validate secrets but return only opaque referenc
 
   assert.equal(config.apiKey, "secret-value");
   assert.equal("apiKey" in result, false);
+});
+
+test("MCP snapshots carry explicit transport and Tool policy without task semantics", () => {
+  const snapshot = mcpSnapshotSchema.parse({
+    protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
+    snapshotId: "product-config",
+    revision: 1,
+    servers: [{
+      id: "desktop_tools",
+      transport: {
+        kind: "stdio",
+        command: "desktop-mcp",
+      },
+    }],
+  });
+
+  assert.equal(snapshot.servers[0].versionMode, "auto");
+  assert.equal(snapshot.servers[0].defaultToolPolicy.permission, "ask");
+  assert.equal(snapshot.servers[0].defaultToolPolicy.parallelSafe, false);
+  assert.throws(() => mcpSnapshotSchema.parse({
+    ...snapshot,
+    servers: [{ ...snapshot.servers[0], id: "invalid server id" }],
+  }));
 });

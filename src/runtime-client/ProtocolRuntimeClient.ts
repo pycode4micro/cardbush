@@ -1,8 +1,10 @@
 import {
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
+  APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
+  GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
@@ -26,6 +28,8 @@ import {
   updateRuntimeGoalRequestSchema,
   planStateSchema,
   goalStateSchema,
+  mcpSnapshotResultSchema,
+  mcpSnapshotSchema,
   sessionSnapshotSchema,
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
@@ -41,6 +45,8 @@ import {
   type RuntimeSessionTurnRequest,
   type PlanState,
   type GoalState,
+  type McpSnapshot,
+  type McpSnapshotResult,
   type SessionSnapshot,
   type ToolExecutionRecord,
   type ToolDefinition,
@@ -133,6 +139,26 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
       (value) => toolDefinitionSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  applyMcpSnapshot(
+    input: McpSnapshot,
+    signal?: AbortSignal,
+  ): Promise<McpSnapshotResult> {
+    const payload = mcpSnapshotSchema.parse(input);
+    return this.command(
+      { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload },
+      (value) => mcpSnapshotResultSchema.parse(value),
+      signal,
+    );
+  }
+
+  getMcpSnapshot(signal?: AbortSignal): Promise<McpSnapshotResult | null> {
+    return this.command(
+      { kind: GET_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {} },
+      (value) => value == null ? null : mcpSnapshotResultSchema.parse(value),
       signal,
     );
   }
