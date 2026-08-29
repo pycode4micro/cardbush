@@ -3,6 +3,7 @@ import {
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
@@ -26,6 +27,7 @@ import {
   sessionSnapshotSchema,
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
+  toolDefinitionSchema,
   turnToolExecutionsIdentitySchema,
   type ContextSnapshot,
   type RuntimeCapabilities,
@@ -36,6 +38,7 @@ import {
   type GoalState,
   type SessionSnapshot,
   type ToolExecutionRecord,
+  type ToolDefinition,
 } from '@cardbush/bush-protocol';
 import {
   FixtureRuntimeTransport,
@@ -116,6 +119,14 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, payload },
       (value) => toolExecutionRecordSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  getToolCatalog(signal?: AbortSignal): Promise<ToolDefinition[]> {
+    return this.command(
+      { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
+      (value) => toolDefinitionSchema.array().parse(value),
       signal,
     );
   }

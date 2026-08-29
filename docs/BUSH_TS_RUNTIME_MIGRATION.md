@@ -146,5 +146,11 @@ but does not interpret it.
 Goal status and reason are caller-declared facts. Runtime validates their schema,
 identity, and revision, then preserves them verbatim. It does not inspect user or
 assistant prose, Tool names, Plan-node combinations, or Execution Facts to decide
-whether a Goal is complete. Automatic Goal continuation and the model-facing
-coordination Tools remain a later behavior checkpoint built on these facts.
+whether a Goal is complete. Automatic Goal continuation remains a later behavior
+checkpoint built on these facts.
+
+The model-facing `update_task_plan` and `update_goal` registrations inject
+Session identity, stable Plan/Goal identity, and optimistic revision inside the
+Runtime. Models submit only their declared state. A typed Tool Catalog exposes the
+actual registered schemas to the product; React does not duplicate them and the
+Runtime does not discover them by parsing prompt text.

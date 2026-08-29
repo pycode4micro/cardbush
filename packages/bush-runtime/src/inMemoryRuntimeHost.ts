@@ -6,6 +6,7 @@ import {
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
@@ -41,6 +42,7 @@ import {
 import { executeModelRound } from "./modelRound.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
 import { CoordinationStore } from "./coordinationStore.js";
+import { registerCoordinationTools } from "./coordinationTools.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -160,6 +162,7 @@ export class InMemoryRuntimeHost {
     });
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
+    registerCoordinationTools(this.#toolRegistry, this.#coordination);
     this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
@@ -203,6 +206,7 @@ export class InMemoryRuntimeHost {
         RUN_RUNTIME_SESSION_TURN_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+        GET_RUNTIME_TOOL_CATALOG_COMMAND,
         GET_RUNTIME_PLAN_COMMAND,
         SET_RUNTIME_PLAN_COMMAND,
         GET_RUNTIME_GOAL_COMMAND,
@@ -294,6 +298,8 @@ export class InMemoryRuntimeHost {
         const identity = turnToolExecutionsIdentitySchema.parse(command.payload);
         return this.#toolExecutions.listTurn(identity.sessionId, identity.turnId);
       }
+      case GET_RUNTIME_TOOL_CATALOG_COMMAND:
+        return this.#toolRegistry.definitions();
       case GET_RUNTIME_PLAN_COMMAND: {
         const identity = runtimeCoordinationSessionSchema.parse(command.payload);
         return this.#coordination.getPlan(identity.sessionId) ?? null;

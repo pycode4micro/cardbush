@@ -11,6 +11,7 @@ export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
   "runtime.get_tool_execution" as const;
 export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
   "runtime.list_turn_tool_executions" as const;
+export const GET_RUNTIME_TOOL_CATALOG_COMMAND = "runtime.get_tool_catalog" as const;
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),

@@ -41,3 +41,7 @@ The store enforces only protocol identities, monotonic revisions, stable Plan
 node IDs, and explicit scope-change declarations. Semantic completion remains a
 model/caller declaration; Runtime does not derive it from prose or lifecycle
 state combinations.
+
+`update_task_plan` and `update_goal` are ordinary registered Tools. Their Session,
+identity and revision fields are supplied by Runtime rather than the model. The
+typed Tool Catalog is the sole source of their model-visible definitions.

@@ -116,7 +116,9 @@ export class CoordinationStore {
       objective: request.objective,
       status: "active",
       statusReason: "",
-      tokenBudget: request.tokenBudget,
+      ...(request.tokenBudget === undefined
+        ? {}
+        : { tokenBudget: request.tokenBudget }),
       consumedTokens: 0,
       linkedA2ATaskIds: request.linkedA2ATaskIds,
       revision: 1,
@@ -138,8 +140,9 @@ export class CoordinationStore {
       );
     }
     const now = this.#now();
+    const { completedAt: _completedAt, ...stableFacts } = before;
     const state = goalStateSchema.parse({
-      ...before,
+      ...stableFacts,
       status: request.status,
       statusReason: request.statusReason,
       consumedTokens: request.consumedTokens,
@@ -147,7 +150,7 @@ export class CoordinationStore {
       revision: before.revision + 1,
       updatedAt: now,
       ...(request.status === "active"
-        ? { completedAt: undefined }
+        ? {}
         : { completedAt: now }),
     });
     this.#append(request.sessionId, "goal_set", state);

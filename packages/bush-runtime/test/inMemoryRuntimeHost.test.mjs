@@ -8,6 +8,7 @@ import {
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
 } from "@cardbush/bush-protocol";
@@ -148,6 +149,14 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
     2,
   );
   assert.ok(host.capabilities().features.includes("explicit_goal_facts"));
+  const catalog = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_CATALOG_COMMAND,
+    payload: {},
+  });
+  assert.deepEqual(catalog.map((definition) => definition.name), [
+    "update_task_plan",
+    "update_goal",
+  ]);
 });
 
 test("projects explicit cancellation as a stopped terminal fact", async () => {

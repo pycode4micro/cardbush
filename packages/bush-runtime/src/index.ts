@@ -1,6 +1,7 @@
 export * from "./cacheChainTracker.js";
 export * from "./contextAssembler.js";
 export * from "./coordinationStore.js";
+export * from "./coordinationTools.js";
 export * from "./fileCoordinationPersistence.js";
 export * from "./inMemoryRuntimeHost.js";
 export * from "./fileRuntimeEventPersistence.js";
