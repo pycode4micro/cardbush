@@ -13,6 +13,33 @@ const profilesKey = 'cardbush_product_agent_profiles_v1';
 const revisionKey = 'cardbush_product_team_revision_v1';
 const snapshotId = 'cardbush-product-teams';
 
+const bundledGeneralProfile: AgentProfileDefinition = {
+  protocol: 'bush.agent_profile.v1',
+  id: 'general',
+  name: 'General Agent',
+  description: 'General-purpose collaborator for delegated work.',
+  disabledTools: [],
+  skills: [],
+  hooks: [],
+  guards: [],
+  prompts: {
+    instructions: 'Handle the delegated task carefully and return concrete evidence to the parent Agent.',
+  },
+};
+
+const bundledGeneralTeam: TeamDefinition = {
+  protocol: 'bush.team.v1',
+  id: 'general',
+  name: 'General Team',
+  description: 'A minimal Team with one general-purpose fallback member.',
+  members: [{
+    id: 'general',
+    agentProfileId: 'general',
+    responsibility: 'Handle general delegated work.',
+    fallback: true,
+  }],
+};
+
 export function readProductTeams(): TeamDefinition[] {
   return readArray(teamsKey) as TeamDefinition[];
 }
@@ -63,6 +90,17 @@ export async function replaceProductTeamConfiguration(
   }
 }
 
+export async function resetProductTeamConfiguration(
+  client: Pick<ProtocolRuntimeClient, 'applyTeamSnapshot'>,
+  tools: ToolDefinition[],
+): Promise<TeamSnapshotResult> {
+  return replaceProductTeamConfiguration(client, {
+    teams: [structuredClone(bundledGeneralTeam)],
+    profiles: [structuredClone(bundledGeneralProfile)],
+    tools,
+  });
+}
+
 export function validateProductTeamConfiguration(input: {
   teams: TeamDefinition[];
   profiles: AgentProfileDefinition[];
@@ -92,15 +130,16 @@ function snapshot(
       teamId: team.id,
       name: team.name,
       instructions: team.description,
-      conference: {
-        enabled: team.conferenceEnabled === true,
-        instructions: team.conferenceInstructions ?? '',
-      },
       members: team.members.map((member) => {
         const profile = profilesById.get(member.agentProfileId);
         if (!profile) {
           throw new Error(
             `Team ${team.id} member ${member.id} references missing Agent configuration ${member.agentProfileId}.`,
+          );
+        }
+        if (profile.hooks.length > 0 || profile.guards.length > 0) {
+          throw new Error(
+            `Agent configuration ${profile.id} references Hook/Guard ids, but this CardBush Runtime has no trusted Hook/Guard registrations.`,
           );
         }
         return {
@@ -112,6 +151,12 @@ function snapshot(
             .filter(Boolean)
             .join('\n\n'),
           toolNames: toolNames.filter((name) => !profile.disabledTools.includes(name)),
+          agentProfileId: profile.id,
+          fallback: member.fallback === true,
+          skills: profile.skills,
+          hooks: profile.hooks ?? [],
+          guards: profile.guards ?? [],
+          promptInstructions: profile.prompts.instructions,
         };
       }),
     })),

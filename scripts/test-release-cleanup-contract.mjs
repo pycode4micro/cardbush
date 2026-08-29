@@ -41,7 +41,9 @@ assert(
 assert(
   app.includes('onToggleWorkSummary={renderMessages.length > 0') &&
     app.includes('onOpenReview={changeReports.length > 0 ? onOpenChangeReview : undefined}') &&
-    app.includes('{conversationContentAvailable && activeConversationId?.trim() && ('),
+    app.includes('conversationContentAvailable={renderMessages.length > 0}') &&
+    app.includes('{conversationContentAvailable && onToggleWorkSummary && (') &&
+    app.includes('{conversationContentAvailable && onOpenReview && reviewAvailable && ('),
   'conversation-only topbar actions must stay hidden on the welcome screen',
 );
 assert(

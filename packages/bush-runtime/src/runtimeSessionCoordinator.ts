@@ -102,6 +102,7 @@ export class RuntimeSessionCoordinator {
       prefix: input.prefix,
       current: input.current,
       throughTurnSequence: input.throughTurnSequence,
+      maxChars: input.maxChars,
     });
   }
 
@@ -121,6 +122,7 @@ export class RuntimeSessionCoordinator {
       session,
       prefix: request.prefixMessages,
       current: request.inputMessages.map((item) => item.message),
+      maxChars: contextLimit(request.metadata),
     });
     const modelRequest = modelRequestSchema.parse({
       ...request,
@@ -191,6 +193,12 @@ export class RuntimeSessionCoordinator {
       }
     };
   }
+}
+
+function contextLimit(metadata: Record<string, unknown>): number | undefined {
+  const tokens = Number(metadata.contextWindowTokens);
+  if (!Number.isFinite(tokens) || tokens <= 0) return undefined;
+  return Math.max(8_000, Math.trunc(tokens * 4 * 0.85));
 }
 
 function validateSessionCheckpoint(

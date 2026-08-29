@@ -11,18 +11,27 @@ export const teamMemberSchema = z.object({
   role: z.string().min(1),
   instructions: z.string().default(""),
   toolNames: z.array(z.string().min(1)).default([]),
+  agentProfileId: z.string().min(1),
+  fallback: z.boolean(),
+  skills: z.array(z.string().min(1)).optional(),
+  hooks: z.array(z.string().min(1)).default([]),
+  guards: z.array(z.string().min(1)).default([]),
+  promptInstructions: z.string().default(""),
 });
 
 export const teamDefinitionSchema = z.object({
   teamId: z.string().min(1),
   name: z.string().min(1),
   instructions: z.string().default(""),
-  conference: z.object({
-    enabled: z.boolean(),
-    instructions: z.string().default(""),
-  }),
   members: z.array(teamMemberSchema).min(1),
 }).superRefine((team, context) => {
+  if (team.members.filter((member) => member.fallback).length !== 1) {
+    context.addIssue({
+      code: "custom",
+      path: ["members"],
+      message: "Each Team must contain exactly one fallback member.",
+    });
+  }
   const memberIds = new Set<string>();
   for (const [index, member] of team.members.entries()) {
     if (memberIds.has(member.memberId)) {

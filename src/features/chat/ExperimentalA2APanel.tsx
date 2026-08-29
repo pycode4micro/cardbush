@@ -102,7 +102,7 @@ export function ExperimentalA2APanel({
 
       <div className="experimental-a2a-agent">
         <div className="experimental-section-title"><img className="a2a-official-icon" src="./a2a-icon.svg" alt="" /><strong>A2A Agent</strong></div>
-        <div className="experimental-agent-url"><input value={agentUrl} onChange={(event) => { setAgentUrl(event.currentTarget.value); setAgent(null); }} placeholder="http://127.0.0.1:51717" /><button type="button" disabled={busy || !agentUrl.trim()} onClick={() => void inspectAgent()}><ExternalLink size={12} />{language === 'zh' ? '探测' : 'Inspect'}</button></div>
+        <div className="experimental-agent-url"><input value={agentUrl} onChange={(event) => { setAgentUrl(event.currentTarget.value); setAgent(null); }} placeholder="http://127.0.0.1:51718" /><button type="button" disabled={busy || !agentUrl.trim()} onClick={() => void inspectAgent()}><ExternalLink size={12} />{language === 'zh' ? '探测' : 'Inspect'}</button></div>
         {agent && <div className="experimental-agent-card"><strong>{agent.name}</strong><small>{agent.description}</small><span>{agent.protocolVersions.join(', ')} · {agent.skills.length} skills{agent.streaming ? ' · stream' : ''}</span></div>}
         <textarea rows={3} value={taskText} onChange={(event) => setTaskText(event.currentTarget.value)} placeholder={language === 'zh' ? '发送给远端 Agent 的任务' : 'Task for the remote agent'} />
         <button className="experimental-a2a-send" type="button" disabled={busy || !agentUrl.trim() || !taskText.trim()} onClick={() => void dispatchTask()}>{busy ? <LoaderCircle className="spin" size={13} /> : <Send size={13} />}{language === 'zh' ? '派发任务' : 'Dispatch task'}</button>

@@ -1,93 +1,77 @@
-import { realpath, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import {
+  cp,
+  mkdir,
+  readdir,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 
 import {
-  BotConfigStore,
-  BotSupervisor,
+  CardbushAppsConfigStore,
   ProductHost,
   ProductHostProtocolError,
   ProductModelConfigStore,
-  LinkedConversationBackend,
-  SessionLinkStore,
-  WeixinAccountManager,
-  WeixinAccountStore,
-  WeixinApiClient,
-  createDiscordAdapterFactory,
-  createFeishuAdapterFactory,
-  createTelegramAdapterFactory,
-  createWeixinAdapterFactory,
+  ProductMcpConfigStore,
   type ProductModelConfigSnapshot,
+  type RuntimeAssetCategory,
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
 import {
+  DELETE_RUNTIME_SESSION_COMMAND,
+  LIST_RUNTIME_SESSIONS_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
+  SHUTDOWN_RUNTIME_COMMAND,
   runtimeProviderBindingResultSchema,
+  runtimeSessionIdentitySchema,
+  runtimeSessionListRequestSchema,
+  sessionSnapshotSchema,
 } from '@cardbush/bush-protocol';
 
-import {
-  ProductRuntimeConversationBackend,
-  type ProductRuntimeModelConfig,
-} from './productRuntimeConversationBackend.mjs';
+interface ProductRuntimeModelConfig {
+  bindingId: string;
+  provider: string;
+  model: string;
+  apiKey: string;
+  baseURL?: string;
+  defaultHeaders?: Record<string, string>;
+  maxOutputTokens?: number;
+}
 
 export interface ElectronProductHostControllerOptions {
   dataRoot: string;
+  runtimeStateRoot: string;
+  bundledSkillRoot: string;
+  userSkillRoot: string;
   runtimeBridge: ElectronRuntimeBridge;
-  fetch?: typeof globalThis.fetch;
 }
 
 export class ElectronProductHostController {
-  readonly #config: BotConfigStore;
   readonly #models: ProductModelConfigStore;
+  readonly #apps: CardbushAppsConfigStore;
+  readonly #mcp: ProductMcpConfigStore;
   readonly #runtime: ElectronRuntimeTransport;
-  readonly #bots: BotSupervisor;
+  readonly #runtimeStateRoot: string;
+  readonly #bundledSkillRoot: string;
+  readonly #userSkillRoot: string;
+  readonly #dataRoot: string;
   readonly #host: ProductHost;
   #model?: ProductRuntimeModelConfig;
   #startup?: Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
     const dataRoot = resolve(options.dataRoot);
-    const fetcher = options.fetch ?? globalThis.fetch;
+    this.#dataRoot = dataRoot;
+    this.#runtimeStateRoot = resolve(options.runtimeStateRoot);
+    this.#bundledSkillRoot = resolve(options.bundledSkillRoot);
+    this.#userSkillRoot = resolve(options.userSkillRoot);
     this.#runtime = new ElectronRuntimeTransport(options.runtimeBridge);
-    this.#config = new BotConfigStore(join(dataRoot, 'config', 'bots.json'));
     this.#models = new ProductModelConfigStore(join(dataRoot, 'config', 'models.json'));
-    const accountStore = new WeixinAccountStore(join(dataRoot, 'weixin'));
-    const links = new SessionLinkStore(join(dataRoot, 'config', 'session-links.json'));
-    const runtimeBackend = new ProductRuntimeConversationBackend({
-      bridge: options.runtimeBridge,
-      modelConfig: () => this.#model,
-      policy: async (envelope) => {
-        const config = await this.#config.read(platformFromEnvelope(envelope.platform));
-        return {
-          projectDir: optionalString(config.project_dir),
-          permissionMode: optionalString(config.permission_mode) ?? 'task_free',
-          disabledTools: strings(config.disabled_tools),
-          allowedSkills: strings(config.allowed_skills),
-          subagentEnabled: config.subagent_enabled !== false,
-        };
-      },
-    });
-    const backend = new LinkedConversationBackend(runtimeBackend, links);
-    this.#bots = new BotSupervisor({
-      configStore: this.#config,
-      dataDir: join(dataRoot, 'bots'),
-      adapterFactories: {
-        discord: createDiscordAdapterFactory({ backend, fetch: fetcher }),
-        feishu: createFeishuAdapterFactory({ backend }),
-        telegram: createTelegramAdapterFactory({ backend, fetch: fetcher }),
-        weixin: createWeixinAdapterFactory({
-          backend,
-          store: accountStore,
-          createClient: (config) => new WeixinApiClient(config, fetcher),
-        }),
-      },
-    });
-    const weixin = new WeixinAccountManager({
-      store: accountStore,
-      config: () => this.#config.read('weixin'),
-      createClient: (config) => new WeixinApiClient(config, fetcher),
-    });
-    this.#host = new ProductHost(this.#config, this.#bots, weixin, {
+    this.#apps = new CardbushAppsConfigStore(join(dataRoot, 'config', 'apps.json'));
+    this.#mcp = new ProductMcpConfigStore(join(dataRoot, 'config', 'mcp-servers.json'));
+    this.#host = new ProductHost({
       get: async () => {
         const snapshot = await this.#models.read();
         await this.#activateModels(snapshot);
@@ -100,10 +84,17 @@ export class ElectronProductHostController {
       },
       resolve: (modelId) => this.#resolveModel(modelId),
     }, {
-      issue: async (input) => ({
-        ...(await links.issue(input)),
-        platform: input.platform ?? '',
-      }),
+      clearConversations: () => this.#clearConversations(),
+      clearLogsCache: () => this.#clearLogsCache(),
+      runtimeAssetPlan: () => Promise.resolve(this.#runtimeAssetPlan()),
+      resetRuntimeAssets: (categories) => this.#resetRuntimeAssets(categories),
+      diagnostics: () => this.#diagnostics(),
+    }, {
+      get: async () => this.#apps.read(),
+      update: async (config) => this.#apps.write(config),
+    }, {
+      get: async () => this.#mcp.read(),
+      update: async (config) => this.#mcp.write(config),
     });
   }
 
@@ -111,56 +102,154 @@ export class ElectronProductHostController {
     return this.#host.execute(command);
   }
 
-  async executeTool(request: { toolName: string; input: unknown }): Promise<unknown> {
-    if (request.toolName !== 'transport_deliver') {
-      throw new ProductHostProtocolError(
-        'unknown_product_host_tool',
-        `Unknown Product Host tool: ${request.toolName}`,
-      );
+  async shutdown(): Promise<void> {
+    await Promise.race([
+      this.#runtime.sendCommand({ kind: SHUTDOWN_RUNTIME_COMMAND, payload: {} }),
+      new Promise((resolve) => setTimeout(resolve, 6_000)),
+    ]).catch(() => undefined);
+  }
+
+  async #clearConversations(): Promise<Record<string, unknown>> {
+    const sessions = sessionSnapshotSchema.array().parse(
+      await this.#runtime.sendCommand({
+        kind: LIST_RUNTIME_SESSIONS_COMMAND,
+        payload: runtimeSessionListRequestSchema.parse({}),
+      }),
+    );
+    let deleted = 0;
+    for (const session of sessions) {
+      const result = objectValue(await this.#runtime.sendCommand({
+        kind: DELETE_RUNTIME_SESSION_COMMAND,
+        payload: runtimeSessionIdentitySchema.parse({ sessionId: session.sessionId }),
+      }), 'delete session result');
+      if (result.deleted === true) deleted += 1;
     }
-    const input = objectValue(request.input, 'transport_deliver input');
-    const sessionId = requiredString(input.sessionId, 'sessionId');
-    const platform = platformFromEnvelope(sessionId.split(':', 1)[0] ?? '');
-    const requestedChannel = optionalString(input.channel);
-    if (requestedChannel && requestedChannel !== platform) {
-      throw new ProductHostProtocolError(
-        'transport_channel_mismatch',
-        `Requested channel ${requestedChannel} does not match Session ${platform}`,
-      );
-    }
-    if (!Array.isArray(input.paths) || input.paths.length < 1 || input.paths.length > 6) {
-      throw new ProductHostProtocolError(
-        'invalid_transport_delivery',
-        'paths must contain between 1 and 6 files',
-      );
-    }
-    const paths: string[] = [];
-    for (const value of input.paths) {
-      const path = await realpath(requiredString(value, 'path'));
-      if (!(await stat(path)).isFile()) {
-        throw new ProductHostProtocolError('invalid_transport_delivery', `Not a file: ${path}`);
-      }
-      paths.push(path);
-    }
-    const delivered = await this.#bots.deliver(platform, {
-      sessionId,
-      paths: [...new Set(paths)],
-      text: optionalString(input.text),
-    });
     return {
-      success: true,
-      output: {
-        protocol: 'cardbush.transport_delivery.v1',
-        state: 'delivered',
-        send_confirmed: true,
-        ...delivered,
+      target: 'conversation-history',
+      cleared: deleted > 0,
+      counts: {
+        sessions: deleted,
+        turns: sessions.reduce((total, session) => total + session.turns.length, 0),
+        messages: sessions.reduce(
+          (total, session) => total + session.turns.reduce(
+            (subtotal, turn) => subtotal + turn.messages.length,
+            0,
+          ),
+          0,
+        ),
       },
-      paths: delivered.delivered,
     };
   }
 
-  async shutdown(): Promise<void> {
-    await this.#bots.shutdown();
+  async #clearLogsCache(): Promise<Record<string, unknown>> {
+    const logsRoot = join(this.#dataRoot, 'logs');
+    const counts = await treeCounts(logsRoot);
+    await rm(logsRoot, { recursive: true, force: true });
+    await mkdir(logsRoot, { recursive: true });
+    return {
+      target: 'logs-cache',
+      cleared: counts.files > 0,
+      counts: {
+        log_files: counts.files,
+        log_directories: counts.directories,
+        log_bytes: counts.bytes,
+      },
+    };
+  }
+
+  #runtimeAssetPlan(): Record<string, unknown> {
+    return {
+      protocol: 'cardbush.runtime_asset_reset.v1',
+      target: 'runtime-assets',
+      categories: {
+        prompts: { authority: 'typescript_runtime', reset_mode: 'compiled_defaults' },
+        skills: {
+          authority: 'product_host',
+          source_path: this.#bundledSkillRoot,
+          target_path: this.#userSkillRoot,
+        },
+        agent_profiles: {
+          authority: 'product_configuration',
+          reset_mode: 'bundled_defaults',
+          target_path: 'product-host/agent-profiles',
+        },
+        teams: {
+          authority: 'product_configuration',
+          reset_mode: 'bundled_defaults',
+          target_path: 'product-host/teams',
+        },
+      },
+      requires_confirmation: true,
+      requires_idle_runtime: true,
+      destructive: true,
+      removes_runtime_customizations: true,
+      restart_required_after_change: false,
+    };
+  }
+
+  async #resetRuntimeAssets(
+    categories: RuntimeAssetCategory[],
+  ): Promise<Record<string, unknown>> {
+    const selected = [...new Set(categories)];
+    let changed = false;
+    const categoryResults: Record<string, unknown> = {};
+    for (const category of selected) {
+      if (category === 'skills') {
+        const before = await treeCounts(this.#userSkillRoot);
+        await replaceDirectoryFromSeed(this.#bundledSkillRoot, this.#userSkillRoot);
+        const after = await treeCounts(this.#userSkillRoot);
+        const skillChanged = before.files !== after.files ||
+          before.bytes !== after.bytes || before.directories !== after.directories;
+        changed ||= skillChanged;
+        categoryResults.skills = {
+          changed: skillChanged,
+          files: after.files,
+          bytes: after.bytes,
+        };
+      } else if (category === 'agent_profiles' || category === 'teams') {
+        // These categories are applied atomically by the renderer configuration adapter
+        // after this authoritative, confirmed maintenance command succeeds.
+        changed = true;
+        categoryResults[category] = {
+          changed: true,
+          reset_mode: 'bundled_defaults',
+          renderer_apply_required: true,
+        };
+      } else {
+        // Prompt defaults are compiled into the Agent package.
+        categoryResults[category] = { changed: false, reset_mode: 'compiled_or_product_policy' };
+      }
+    }
+    return {
+      protocol: 'cardbush.runtime_asset_reset.v1',
+      target: 'runtime-assets',
+      selected_categories: selected,
+      changed,
+      restart_required: false,
+      categories: categoryResults,
+    };
+  }
+
+  async #diagnostics(): Promise<Record<string, unknown>> {
+    const [runtime, product] = await Promise.all([
+      treeCounts(this.#runtimeStateRoot),
+      treeCounts(this.#dataRoot),
+    ]);
+    const logFiles = await recentFiles(join(this.#dataRoot, 'logs'), 50);
+    return {
+      protocol: 'cardbush.product_diagnostics.v1',
+      chain: [{
+        source: 'electron_runtime',
+        root: this.#runtimeStateRoot,
+        files: runtime.files,
+        bytes: runtime.bytes,
+      }],
+      toolFailures: logFiles.map((file) => ({ source: 'product_host', file })),
+      storage: {
+        runtime,
+        product,
+      },
+    };
   }
 
   async #activateModels(snapshot: ProductModelConfigSnapshot): Promise<void> {
@@ -175,10 +264,6 @@ export class ElectronProductHostController {
       defaultHeaders: selected.defaultHeaders,
       maxOutputTokens: selected.maxOutputTokens,
     } : undefined;
-    if (this.#model && !this.#startup) {
-      this.#startup = this.#bots.startup();
-      await this.#startup;
-    }
   }
 
   async #resolveModel(modelId: string): Promise<Record<string, unknown>> {
@@ -229,19 +314,6 @@ export class ElectronProductHostController {
   }
 }
 
-function platformFromEnvelope(value: string): 'weixin' | 'feishu' | 'telegram' | 'discord' {
-  if (value === 'weixin' || value === 'feishu' || value === 'telegram' || value === 'discord') {
-    return value;
-  }
-  throw new ProductHostProtocolError('unsupported_bot_platform', `Unsupported Bot platform: ${value}`);
-}
-
-function strings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : [];
-}
-
 function objectValue(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ProductHostProtocolError('invalid_product_host_tool', `${label} must be an object`);
@@ -249,15 +321,85 @@ function objectValue(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requiredString(value: unknown, field: string): string {
-  const result = optionalString(value);
-  if (!result) {
-    throw new ProductHostProtocolError('invalid_product_model_config', `${field} is required`);
-  }
-  return result;
+
+interface TreeCounts {
+  files: number;
+  directories: number;
+  bytes: number;
 }
 
-function optionalString(value: unknown): string | undefined {
-  const result = typeof value === 'string' ? value.trim() : '';
-  return result || undefined;
+async function treeCounts(root: string): Promise<TreeCounts> {
+  const counts: TreeCounts = { files: 0, directories: 0, bytes: 0 };
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return counts;
+    throw error;
+  }
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
+      counts.directories += 1;
+      const child = await treeCounts(path);
+      counts.files += child.files;
+      counts.directories += child.directories;
+      counts.bytes += child.bytes;
+    } else if (entry.isFile()) {
+      counts.files += 1;
+      counts.bytes += (await stat(path)).size;
+    }
+  }
+  return counts;
+}
+
+async function replaceDirectoryFromSeed(source: string, target: string): Promise<void> {
+  const parent = dirname(target);
+  await mkdir(parent, { recursive: true });
+  const temporary = join(parent, `.${target.split(/[\\/]/).at(-1)}.${process.pid}.tmp`);
+  const backup = join(parent, `.${target.split(/[\\/]/).at(-1)}.${process.pid}.bak`);
+  await rm(temporary, { recursive: true, force: true });
+  await rm(backup, { recursive: true, force: true });
+  await mkdir(temporary, { recursive: true });
+  try {
+    if ((await stat(source)).isDirectory()) {
+      await cp(source, temporary, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let movedExisting = false;
+  try {
+    await rename(target, backup);
+    movedExisting = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  try {
+    await rename(temporary, target);
+  } catch (error) {
+    if (movedExisting) await rename(backup, target).catch(() => undefined);
+    throw error;
+  }
+  if (movedExisting) await rm(backup, { recursive: true, force: true });
+}
+
+async function recentFiles(root: string, limit: number): Promise<string[]> {
+  const files: Array<{ path: string; time: number }> = [];
+  async function visit(directory: string) {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory() && !entry.isSymbolicLink()) await visit(path);
+      else if (entry.isFile()) files.push({ path, time: (await stat(path)).mtimeMs });
+    }
+  }
+  await visit(root);
+  return files.sort((left, right) => right.time - left.time).slice(0, limit).map((item) => item.path);
 }

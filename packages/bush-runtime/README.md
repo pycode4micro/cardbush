@@ -18,14 +18,18 @@ fact is identical. Replacing history requires an explicit
 2. ordered committed messages that were not explicitly superseded;
 3. the current Turn input.
 
-`assembleContext` performs no summarization, relevance classification,
-language-specific routing, percentage threshold, read-count limit or implicit
-message removal. Tool call/result adjacency is validated mechanically.
+`assembleContext` performs no semantic summarization, relevance classification,
+language-specific routing, percentage threshold or read-count routing. When a
+caller supplies a context budget it retains the newest complete Turns and drops
+only whole oldest Turns; Tool call/result adjacency is validated mechanically.
+It reports estimated tokens and whether truncation occurred.
 
 Session events are checksummed JSONL records. Complete corruption fails closed;
 only an incomplete final record may be removed after a crash. A Session-aware
 checkpoint also retains generated-message identity and accumulated usage, so a
-Turn interrupted after tool execution can resume and commit exactly once.
+Turn interrupted after tool execution can resume and commit exactly once. The
+desktop Product Host settles checkpoints orphaned by a process crash as stopped
+Turns during startup and releases the Session single-active-Turn gate.
 
 The live Utility Process stores Runtime events, checkpoints and Session facts
 under separate directories beneath its explicit state root. Tool execution also
@@ -33,7 +37,10 @@ has a checksummed journal containing the admitted manifest, exact result,
 Execution Facts, Artifacts and Workspace Changes. Event references come only
 from those declared facts; Runtime never extracts paths or effects from output
 text. The Electron product chat path now consumes these typed Session and Tool
-facts directly; ordinary Turns no longer need a Python HTTP/SSE adapter.
+facts directly; ordinary Turns no longer need a Python HTTP/SSE adapter. Large
+Tool results remain complete in that journal; the model sees a bounded projection
+and can retrieve exact excerpts from a stable `tool-result://` locator through
+`ked_read_temp_object`.
 
 Plan and Goal state is stored separately in an append-only Coordination journal.
 The store enforces only protocol identities, monotonic revisions, stable Plan
@@ -45,21 +52,17 @@ state combinations.
 identity and revision fields are supplied by Runtime rather than the model. The
 typed Tool Catalog is the sole source of their model-visible definitions.
 
-`declare_turn_outcome` is the only product Turn-finalization protocol. The model
-declares the disposition and complete visible response; Runtime validates cited
-receipts against authoritative records and projects the response without
-classifying its prose. `effect_complete` requires a successful cited Action
-Manifest that explicitly declares an effect. A missing declaration receives one
-protocol reminder, whose count is included in the recovery checkpoint, then
-fails explicitly if omitted again. The legacy Python outcome-finalizer semantic
-classification shape is intentionally not part of the TypeScript protocol.
+Normal assistant terminal text completes the Turn. Runtime keeps Tool execution
+receipts authoritative for effects, artifacts, and workspace changes; terminal
+prose is never promoted into an execution receipt.
 
 Subagent execution forks the exact pre-dispatch conversation into an ordinary
-child Session Turn. Tool registrations explicitly declare child visibility and
-parallel safety; Runtime does not derive either property. Child terminal output
-returns through ToolResult `guidance` as a User message after the complete Tool
-receipt batch. Subagent lifecycle facts are stored in a checksummed append-only
-journal and are queryable through typed commands.
+child Session Turn. Dispatch returns a submitted fact immediately and child work
+runs in the background. Tool registrations explicitly declare child visibility
+and parallel safety; Runtime does not derive either property. Child terminal
+output returns as User guidance to the same parent Turn. Subagent lifecycle facts
+are stored in a checksummed append-only journal and are queryable through typed
+commands.
 
 The default workspace Tool set provides exact file reads, ripgrep search, guarded
 file creation/replacement, exact-text edits, and terminal execution. Existing

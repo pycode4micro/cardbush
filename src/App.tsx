@@ -2,10 +2,8 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
-  Bot,
   Check,
   CheckCircle2,
-  ChevronDown,
   Clipboard,
   ExternalLink,
   Flag,
@@ -29,7 +27,6 @@ import {
   Settings2,
   Sparkles,
   Terminal,
-  Wrench,
   X,
 } from 'lucide-react';
 import {
@@ -56,19 +53,18 @@ import {
   closeShadowConversation,
   createShadowConversation,
   fetchBackendCapabilities,
+  fetchBackendReadiness,
   fetchModelConfigs,
   fetchProjectContext,
-  fetchRuntimeToolInventory,
+  fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
   saveModelConfigs,
   saveProjectContext,
   streamShadowConversationMessage,
-  type SessionShareLinkResult,
   type ShadowConversationRecord,
   type ExperimentalGoal,
 } from './backend/api';
-import { standardImageInputToolDefaultName } from './backend/toolVisibility';
 import {
   normalizeChatMessagesForDisplay,
   normalizeActiveTurnTranscriptForDisplay,
@@ -76,7 +72,6 @@ import {
   type QueuedChatMessage,
 } from './hooks/useCardbushChat';
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
-import { BotPlatformIcon } from './components/BotPlatformIcon';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import {
@@ -202,12 +197,12 @@ import type {
   CompanionSettings,
   CompanionSize,
   ConversationSummary,
-  BotPlatform,
   LightThemeStyle,
   ManagedModelConfig,
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
+  RuntimeAssetCategory,
   RuntimeContextWindowUsage,
   RuntimeConnectionUpdate,
   PendingInteraction,
@@ -293,19 +288,6 @@ type WallpaperAccent = {
   b: number;
   hex: string;
   source: 'wallpaper' | 'fallback';
-};
-
-type BotShareTarget = {
-  title: { zh: string; en: string };
-  subtitle: { zh: string; en: string };
-  platform?: BotPlatform;
-  icon: ReactNode;
-};
-
-type SessionShareLinkRequest = {
-  sessionId: string;
-  platform?: string;
-  expiresSeconds?: number;
 };
 
 type RefreshActiveSession = (options?: { silent?: boolean }) => Promise<void>;
@@ -410,41 +392,6 @@ const defaultAppSettings: AppSettingsState = {
   },
 };
 
-const botShareTargets: BotShareTarget[] = [
-  {
-    title: { zh: '任意 Bot', en: 'Any Bot' },
-    subtitle: {
-      zh: '微信 / 飞书 / Discord / Telegram',
-      en: 'WeChat / Feishu / Discord / Telegram',
-    },
-    icon: <BotPlatformIcon platform="any" />,
-  },
-  {
-    title: { zh: '微信', en: 'WeChat' },
-    subtitle: { zh: '仅微信可使用此绑定码', en: 'Limit this code to WeChat' },
-    platform: 'weixin',
-    icon: <BotPlatformIcon platform="weixin" />,
-  },
-  {
-    title: { zh: '飞书', en: 'Feishu' },
-    subtitle: { zh: '仅飞书可使用此绑定码', en: 'Limit this code to Feishu' },
-    platform: 'feishu',
-    icon: <BotPlatformIcon platform="feishu" />,
-  },
-  {
-    title: { zh: 'Discord', en: 'Discord' },
-    subtitle: { zh: '仅 Discord 可使用此绑定码', en: 'Limit this code to Discord' },
-    platform: 'discord',
-    icon: <BotPlatformIcon platform="discord" />,
-  },
-  {
-    title: { zh: 'Telegram', en: 'Telegram' },
-    subtitle: { zh: '仅 Telegram 可使用此绑定码', en: 'Limit this code to Telegram' },
-    platform: 'telegram',
-    icon: <BotPlatformIcon platform="telegram" />,
-  },
-];
-
 export function App() {
   return (
     <AppErrorBoundary>
@@ -497,12 +444,6 @@ function CardbushApp() {
   const [disabledSkillNames, setDisabledSkillNames] = useState<Set<string>>(
     readDisabledSkillNames,
   );
-  const [disabledToolNames, setDisabledToolNames] = useState<Set<string>>(
-    readDisabledToolNames,
-  );
-  const [protectedCoreToolNames, setProtectedCoreToolNames] = useState<Set<string>>(
-    () => new Set(),
-  );
   const [visualInputEnabledSetting, setVisualInputEnabledSetting] = useState(
     readVisualInputEnabled,
   );
@@ -531,7 +472,6 @@ function CardbushApp() {
   const lastSavedModelConfigSignatureRef = useRef('');
   const osStartupHandledRef = useRef(false);
   const conversationBeforeOsRef = useRef('');
-  const permissionBeforeOsRef = useRef<PermissionMode>('task_free');
   const reasoningBeforeOsRef = useRef<ReasoningLevel>('medium');
   const projectItemsRef = useRef(projectItems);
   const theme = resolveTheme(themePreference, lightThemeStyle, systemDark);
@@ -637,9 +577,21 @@ function CardbushApp() {
           return;
         }
         if (remote.models.length > 0) {
-          const normalized = normalizeManagedModelConfigs(remote.models);
+          const remoteModels = normalizeManagedModelConfigs(remote.models);
+          const legacyModels = normalizeManagedModelConfigs(readManagedModelConfigs());
+          const migrated = mergeLegacyModelCredentials(remoteModels, legacyModels);
+          const snapshot = migrated.changed
+            ? await saveModelConfigs({
+                defaultModelId: remote.defaultModelId,
+                models: migrated.models,
+              })
+            : remote;
+          if (cancelled) {
+            return;
+          }
+          const normalized = normalizeManagedModelConfigs(snapshot.models);
           const defaultConfig =
-            normalized.find((item) => item.id === remote.defaultModelId) ??
+            normalized.find((item) => item.id === snapshot.defaultModelId) ??
             normalized[0];
           lastSavedModelConfigSignatureRef.current = modelConfigSignature(
             normalized,
@@ -723,48 +675,12 @@ function CardbushApp() {
     () => effectiveModels(appSettings.managedModelConfigs),
     [appSettings.managedModelConfigs],
   );
-  const standardImageInputToolName =
-    backendCapabilities.standardImageInputToolName.trim() ||
-    standardImageInputToolDefaultName;
   const visualInputAvailable = backendCapabilities.standardImageInputTool;
   const visualInputEnabled = visualInputAvailable && visualInputEnabledSetting;
   const browserPrivacyModeEnabled =
     backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const reasoningTraceVisible =
     backendCapabilities.reasoningStream && appSettings.thinking.visible;
-  const effectiveDisabledToolNames = useMemo(
-    () =>
-      new Set(
-        [...disabledToolNames].filter(
-          (toolName) =>
-            toolName.trim() !== standardImageInputToolName
-            && !protectedCoreToolNames.has(toolName),
-        ),
-      ),
-    [disabledToolNames, protectedCoreToolNames, standardImageInputToolName],
-  );
-  useEffect(() => {
-    let active = true;
-    void fetchRuntimeToolInventory()
-      .then((inventory) => {
-        if (!active) return;
-        const protectedNames = new Set(
-          inventory.installed
-            .filter((tool) => tool.injection.core)
-            .map((tool) => tool.name),
-        );
-        setProtectedCoreToolNames(protectedNames);
-        setDisabledToolNames((current) => {
-          const next = new Set([...current].filter((name) => !protectedNames.has(name)));
-          if (next.size !== current.size) persistDisabledToolNames(next);
-          return next;
-        });
-      })
-      .catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, []);
   const fallbackProjectDir = useMemo(() => {
     const available = projectItems.filter((project) => !project.archived);
     return (
@@ -781,7 +697,6 @@ function CardbushApp() {
     language,
     projectContexts,
     disabledSkillNames,
-    disabledToolNames: effectiveDisabledToolNames,
     standardImageInputEnabled: visualInputEnabled,
     browserPrivacyMode: browserPrivacyModeEnabled,
     selectedTeamId: teamWorkspace.selectedTeamId,
@@ -820,6 +735,31 @@ function CardbushApp() {
     () => new Set(Object.keys(chat.runningByConversation)),
     [chat.runningByConversation],
   );
+  const reloadRuntimeAssetConfiguration = useCallback(async (
+    categories: RuntimeAssetCategory[],
+  ) => {
+    const readiness = await fetchBackendReadiness();
+    if (readiness.ready !== true) {
+      throw new Error(
+        language === 'zh'
+          ? 'CardBush Runtime 尚未就绪，请完成重启后再验证。'
+          : 'CardBush Runtime is not ready. Finish restarting it before verification.',
+      );
+    }
+    const [capabilities] = await Promise.all([
+      fetchBackendCapabilities(),
+      fetchSkills(),
+    ]);
+    setBackendCapabilities(capabilities);
+    if (categories.includes('skills')) {
+      const next = new Set<string>();
+      setDisabledSkillNames(next);
+      persistDisabledSkillNames(next);
+    }
+    if (categories.includes('agent_profiles') || categories.includes('teams')) {
+      await loadTeamWorkspace(true);
+    }
+  }, [language]);
   useEffect(() => {
     activeConversationForThinkingRef.current = chat.activeConversationId;
     setThinkingNotice(null);
@@ -1429,14 +1369,6 @@ function CardbushApp() {
     };
   }, [section]);
 
-  useEffect(() => {
-    if (section !== 'os') {
-      return;
-    }
-    chat.setPermissionMode('all_free');
-    chat.setReasoningLevel(highestReasoningLevel(backendCapabilities.reasoningLevels));
-  }, [backendCapabilities.reasoningLevels, chat.setPermissionMode, chat.setReasoningLevel, section]);
-
   const createConversation = useCallback(
     (projectDir?: string | null) => {
       const resolvedProjectDir = projectDir === undefined
@@ -1512,10 +1444,8 @@ function CardbushApp() {
   const enterOsMode = useCallback(async () => {
     if (section !== 'os') {
       conversationBeforeOsRef.current = chat.activeConversationId;
-      permissionBeforeOsRef.current = chat.permissionMode;
       reasoningBeforeOsRef.current = chat.reasoningLevel;
     }
-    chat.setPermissionMode('all_free');
     chat.setReasoningLevel(highestReasoningLevel(backendCapabilities.reasoningLevels));
     setSection('os');
     const storedId = window.localStorage.getItem(osConversationStorageKey)?.trim() ?? '';
@@ -1529,10 +1459,9 @@ function CardbushApp() {
     );
     window.localStorage.setItem(osConversationStorageKey, conversation.id);
     return conversation.id;
-  }, [backendCapabilities.reasoningLevels, chat.activeConversationId, chat.conversations, chat.openConversation, chat.permissionMode, chat.reasoningLevel, chat.setPermissionMode, chat.setReasoningLevel, chat.startConversation, language, section]);
+  }, [backendCapabilities.reasoningLevels, chat.activeConversationId, chat.conversations, chat.openConversation, chat.reasoningLevel, chat.setReasoningLevel, chat.startConversation, language, section]);
 
   const exitOsMode = useCallback(() => {
-    chat.setPermissionMode(permissionBeforeOsRef.current);
     chat.setReasoningLevel(reasoningBeforeOsRef.current);
     setSection('chat');
     const previousId = conversationBeforeOsRef.current.trim();
@@ -1541,7 +1470,7 @@ function CardbushApp() {
       return;
     }
     void chat.startConversation();
-  }, [chat.conversations, chat.openConversation, chat.setPermissionMode, chat.setReasoningLevel, chat.startConversation]);
+  }, [chat.conversations, chat.openConversation, chat.setReasoningLevel, chat.startConversation]);
 
   useEffect(() => {
     const enabled = section === 'os';
@@ -2020,20 +1949,6 @@ function CardbushApp() {
     });
   }, []);
 
-  const toggleToolEnabled = useCallback((toolName: string, enabled: boolean) => {
-    const normalized = toolName.trim();
-    if (!normalized) return;
-    setDisabledToolNames((current) => {
-      const next = new Set(current);
-      if (enabled) {
-        next.delete(normalized);
-      } else {
-        next.add(normalized);
-      }
-      persistDisabledToolNames(next);
-      return next;
-    });
-  }, []);
 
   const setVisualInputEnabled = useCallback(
     (enabled: boolean) => {
@@ -2053,13 +1968,8 @@ function CardbushApp() {
       {(section !== 'os' || settingsOpen) && (
         <WindowFrame
           language={language}
-          onOpenBotSettings={() => openSettings('bots')}
           onOpenCacheSettings={() => openSettings('cache')}
           onOpenPluginSettings={() => openSettings('mcp')}
-          onOpenTools={() => {
-            setSettingsOpen(false);
-            setSection('tools');
-          }}
           onOpenSkills={() => {
             setSettingsOpen(false);
             setSection('skills');
@@ -2090,6 +2000,7 @@ function CardbushApp() {
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
             conversations={chat.conversations}
+            runtimeBusy={runningConversationIds.size > 0}
             initialSection={settingsInitialSection}
             onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
@@ -2103,6 +2014,7 @@ function CardbushApp() {
             onUseModel={chat.setSelectedModel}
             onSidebarWidthChange={setSidebarWidth}
             onConversationHistoryCleared={() => chat.reloadConversations()}
+            onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
           />
         </Suspense>
       )}
@@ -2290,7 +2202,6 @@ function CardbushApp() {
                 reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection}
                 reasoningLevel={chat.reasoningLevel}
                 reasoningLevels={backendCapabilities.reasoningLevels}
-                botHandoffAvailable={backendCapabilities.sessionShareLinks}
                 gitAvailable={section === 'chat' && backendCapabilities.git}
                 terminalAvailable={section === 'chat' && backendCapabilities.terminal}
                 onModelChange={chat.setSelectedModel}
@@ -2304,7 +2215,6 @@ function CardbushApp() {
                 onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
                 onVisualInputEnabledChange={setVisualInputEnabled}
-                onCreateSessionShareLink={chat.createSessionShareLink}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
                 onRetryMessage={chat.retryFailedUserMessage}
@@ -2350,9 +2260,7 @@ function CardbushApp() {
                 conversations={chat.conversations}
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
-                disabledToolNames={disabledToolNames}
                 onToggleSkill={toggleSkillEnabled}
-                onToggleTool={toggleToolEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
                 onCreateConversation={() =>
@@ -2657,30 +2565,6 @@ function readDisabledSkillNames() {
 function persistDisabledSkillNames(value: Set<string>) {
   window.localStorage.setItem(
     'cardbush_disabled_skills',
-    JSON.stringify([...value].sort()),
-  );
-}
-
-function readDisabledToolNames() {
-  const raw = window.localStorage.getItem('cardbush_disabled_tools');
-  if (!raw?.trim()) {
-    return new Set<string>();
-  }
-  try {
-    const decoded: unknown = JSON.parse(raw);
-    return new Set(
-      Array.isArray(decoded)
-        ? decoded.map((item) => String(item)).filter((item) => item.trim())
-        : [],
-    );
-  } catch {
-    return new Set<string>();
-  }
-}
-
-function persistDisabledToolNames(value: Set<string>) {
-  window.localStorage.setItem(
-    'cardbush_disabled_tools',
     JSON.stringify([...value].sort()),
   );
 }
@@ -3220,6 +3104,41 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
   return result;
 }
 
+function mergeLegacyModelCredentials(
+  productHostModels: ManagedModelConfig[],
+  legacyModels: ManagedModelConfig[],
+) {
+  let changed = false;
+  const models = productHostModels.map((model) => {
+    if (model.hasApiKey === true || model.apiKey.trim()) {
+      return model;
+    }
+    const id = model.id.trim().toLowerCase();
+    const provider = normalizeProvider(model.provider);
+    const modelName = model.modelName.trim().toLowerCase();
+    const baseUrl = model.baseUrl.trim().toLowerCase();
+    const candidates = legacyModels.filter((legacy) =>
+      legacy.apiKey.trim() &&
+      normalizeProvider(legacy.provider) === provider &&
+      legacy.modelName.trim().toLowerCase() === modelName
+    );
+    const legacy = legacyModels.find((candidate) =>
+      id && candidate.id.trim().toLowerCase() === id && candidate.apiKey.trim()
+    ) ?? candidates.find((candidate) => candidate.baseUrl.trim().toLowerCase() === baseUrl)
+      ?? (candidates.length === 1 ? candidates[0] : undefined);
+    if (!legacy) {
+      return model;
+    }
+    changed = true;
+    return {
+      ...model,
+      apiKey: legacy.apiKey.trim(),
+      hasApiKey: true,
+    };
+  });
+  return { models, changed };
+}
+
 function normalizeProvider(value: string) {
   const normalized = value.trim().toLowerCase();
   return normalized === 'google' ? 'gemini' : normalized;
@@ -3299,19 +3218,15 @@ function cachedBackgroundFileName(value: string) {
 
 function WindowFrame({
   language,
-  onOpenBotSettings,
   onOpenCacheSettings,
   onOpenPluginSettings,
-  onOpenTools,
   onOpenSkills,
   onOpenOs,
   onOpenTeam,
 }: {
   language: AppLanguage;
-  onOpenBotSettings: () => void;
   onOpenCacheSettings: () => void;
   onOpenPluginSettings: () => void;
-  onOpenTools: () => void;
   onOpenSkills: () => void;
   onOpenOs: () => void;
   onOpenTeam: () => void;
@@ -3367,11 +3282,8 @@ function WindowFrame({
         <span>cardbush</span>
       </div>
       <div className="window-separator">|</div>
-      <button className="bot-chip no-drag" type="button" onClick={onOpenBotSettings}>
-        BOT
-      </button>
       <button
-        className="bot-chip cache-chip no-drag"
+        className="frame-chip cache-chip no-drag"
         type="button"
         onClick={onOpenCacheSettings}
       >
@@ -3387,11 +3299,6 @@ function WindowFrame({
             icon={<Plug size={14} />}
             label={language === 'zh' ? '插件管理' : 'Plugin management'}
             onClick={() => runMenuAction(onOpenPluginSettings)}
-          />
-          <WindowFrameMenuItem
-            icon={<Wrench size={14} />}
-            label={language === 'zh' ? '工具管理' : 'Tool management'}
-            onClick={() => runMenuAction(onOpenTools)}
           />
           <WindowFrameMenuItem
             icon={<Puzzle size={14} />}
@@ -3461,7 +3368,7 @@ function WindowFrameMenu({
   return (
     <div className="window-frame-menu">
       <button
-        className="bot-chip window-frame-menu-trigger no-drag"
+        className="frame-chip window-frame-menu-trigger no-drag"
         type="button"
         aria-expanded={open}
         onClick={onToggle}
@@ -3757,7 +3664,6 @@ function ChatPanel({
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
-  botHandoffAvailable,
   gitAvailable,
   terminalAvailable,
   onModelChange,
@@ -3769,7 +3675,6 @@ function ChatPanel({
   onSaveProjectContext,
   onToggleSkill,
   onVisualInputEnabledChange,
-  onCreateSessionShareLink,
   onRefreshActiveSession,
   onSend,
   onRetryMessage,
@@ -3848,7 +3753,6 @@ function ChatPanel({
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
-  botHandoffAvailable: boolean;
   gitAvailable: boolean;
   terminalAvailable: boolean;
   onModelChange: (value: string) => void;
@@ -3860,9 +3764,6 @@ function ChatPanel({
   onSaveProjectContext: (value: string) => Promise<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
-  onCreateSessionShareLink: (
-    request: SessionShareLinkRequest,
-  ) => Promise<SessionShareLinkResult>;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void>;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
@@ -6116,23 +6017,9 @@ function ChatPanel({
         <TopBar
           title={title}
           sidebarCollapsed={sidebarCollapsed}
-          botShareLabel={
-            messages.length === 0
-              ? language === 'zh'
-                ? '发送到 Bot'
-                : 'Send to Bot'
-              : language === 'zh'
-                ? '继续到 Bot'
-                : 'Continue to Bot'
-          }
           language={language}
-          activeConversationId={activeConversationId}
-          botHandoffAvailable={botHandoffAvailable}
-          onCreateSessionShareLink={
-            botHandoffAvailable ? onCreateSessionShareLink : undefined
-          }
-          onRefreshActiveSession={refreshBackendWithFeedback}
           conversationContentAvailable={renderMessages.length > 0}
+          onRefreshActiveSession={refreshBackendWithFeedback}
           activeConsole={consoleMode}
           onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
           onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
@@ -7000,234 +6887,6 @@ function WelcomeProjectSwitcher({
   );
 }
 
-function botTargetKey(target: BotShareTarget) {
-  return target.platform ?? 'any';
-}
-
-function botUiError(caught: unknown, fallback: string, language: AppLanguage) {
-  const message = caught instanceof Error ? caught.message : '';
-  if (!message) {
-    return fallback;
-  }
-  if (language === 'zh' && /failed to fetch|networkerror/i.test(message)) {
-    return fallback;
-  }
-  return message;
-}
-
-function formatBotExpiry(value: string, language: AppLanguage) {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value || (language === 'zh' ? '15 分钟后' : 'in 15 minutes');
-  }
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
-}
-
-function BotShareMenu({
-  language,
-  sessionId,
-  onCreateLink,
-  onRefreshSession,
-  onClose,
-}: {
-  language: AppLanguage;
-  sessionId: string;
-  onCreateLink: (
-    request: SessionShareLinkRequest,
-  ) => Promise<SessionShareLinkResult>;
-  onRefreshSession: RefreshActiveSession;
-  onClose: () => void;
-}) {
-  const [link, setLink] = useState<SessionShareLinkResult | null>(null);
-  const [selectedTarget, setSelectedTarget] = useState<BotShareTarget | null>(null);
-  const [creatingTarget, setCreatingTarget] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [error, setError] = useState('');
-
-  const activeTarget = selectedTarget ?? botShareTargets[0];
-  const command = link ? `/link ${link.code}` : '';
-
-  const createLink = useCallback(
-    async (target: BotShareTarget) => {
-      const targetKey = botTargetKey(target);
-      setCreatingTarget(targetKey);
-      setError('');
-      setCopied(false);
-      try {
-        const nextLink = await onCreateLink({
-          sessionId,
-          platform: target.platform,
-          expiresSeconds: 900,
-        });
-        setSelectedTarget(target);
-        setLink(nextLink);
-        await onRefreshSession({ silent: true }).catch(() => undefined);
-      } catch (caught) {
-        setError(
-          botUiError(
-            caught,
-            language === 'zh' ? '创建 Bot 绑定码失败' : 'Failed to create Bot link',
-            language,
-          ),
-        );
-      } finally {
-        setCreatingTarget(null);
-      }
-    },
-    [language, onCreateLink, onRefreshSession, sessionId],
-  );
-
-  const refreshSession = useCallback(
-    async (silent = false) => {
-      if (!silent) {
-        setRefreshing(true);
-        setError('');
-      }
-      try {
-        await onRefreshSession({ silent: true });
-      } catch (caught) {
-        if (!silent) {
-          setError(
-            botUiError(
-              caught,
-              language === 'zh' ? '刷新会话失败' : 'Failed to refresh chat',
-              language,
-            ),
-          );
-        }
-      } finally {
-        if (!silent) {
-          setRefreshing(false);
-        }
-      }
-    },
-    [language, onRefreshSession],
-  );
-
-  const copyCommand = useCallback(async () => {
-    if (!command) {
-      return;
-    }
-    try {
-      await copyText(command);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1400);
-    } catch (caught) {
-      setError(
-        botUiError(
-          caught,
-          language === 'zh' ? '复制命令失败' : 'Failed to copy command',
-          language,
-        ),
-      );
-    }
-  }, [command, language]);
-
-  return (
-    <div className="bot-share-menu" role="dialog" aria-label={language === 'zh' ? 'Bot 绑定' : 'Bot link'}>
-      <header>
-        <span className="bot-share-icon">
-          {link ? activeTarget.icon : <BotPlatformIcon platform="any" />}
-        </span>
-        <div>
-          <strong>
-            {link
-              ? language === 'zh'
-                ? `继续到 ${activeTarget.title.zh}`
-                : `Continue in ${activeTarget.title.en}`
-              : language === 'zh'
-                ? '发送到 Bot'
-                : 'Send to Bot'}
-          </strong>
-          <small>
-            {language === 'zh'
-              ? '绑定码有效 15 分钟'
-              : 'The binding code is valid for 15 minutes'}
-          </small>
-        </div>
-        <button type="button" title={language === 'zh' ? '关闭' : 'Close'} onClick={onClose}>
-          <X size={15} />
-        </button>
-      </header>
-      {!link ? (
-        <div className="bot-share-targets">
-          <p>
-            {language === 'zh'
-              ? '选择一个 Bot 平台，然后把生成的 /link 命令发送给 Bot。'
-              : 'Choose a Bot platform, then send the generated /link command to the Bot.'}
-          </p>
-          {botShareTargets.map((target) => {
-            const key = botTargetKey(target);
-            const creating = creatingTarget === key;
-            return (
-              <button
-                className="bot-share-target"
-                key={key}
-                type="button"
-                disabled={creatingTarget !== null}
-                onClick={() => void createLink(target)}
-              >
-                <span className="bot-share-target-icon">
-                  {creating ? <LoaderCircle size={16} /> : target.icon}
-                </span>
-                <span>
-                  <strong>{target.title[language]}</strong>
-                  <small>{target.subtitle[language]}</small>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="bot-share-detail">
-          <p>
-            {language === 'zh'
-              ? '在 Bot 对话里发送下面命令，即可接管当前会话；回到 CardBush 后点“刷新 Bot 内容”拉回新历史。'
-              : 'Send this command in the Bot chat to take over the current session; use Refresh Bot content to pull updates back.'}
-          </p>
-          <button className="bot-link-command" type="button" onClick={() => void copyCommand()}>
-            <code>{command}</code>
-            <span>{copied ? (language === 'zh' ? '已复制' : 'Copied') : (language === 'zh' ? '复制' : 'Copy')}</span>
-          </button>
-          <div className="bot-share-meta">
-            <span>
-              {language === 'zh' ? '过期时间' : 'Expires'}: {formatBotExpiry(link.expiresAt, language)}
-            </span>
-            <span>
-              {language === 'zh' ? '平台' : 'Platform'}: {activeTarget.title[language]}
-            </span>
-          </div>
-          <div className="bot-share-actions">
-            <button className="secondary-button" type="button" onClick={() => void refreshSession(false)}>
-              {refreshing ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-              <span>{language === 'zh' ? '刷新 Bot 内容' : 'Refresh Bot content'}</span>
-            </button>
-            <button className="secondary-button" type="button" onClick={() => setLink(null)}>
-              <Bot size={14} />
-              <span>{language === 'zh' ? '换一个 Bot' : 'Choose another'}</span>
-            </button>
-            <button className="primary-button" type="button" onClick={() => void copyCommand()}>
-              <Clipboard size={14} />
-              <span>{copied ? (language === 'zh' ? '已复制' : 'Copied') : (language === 'zh' ? '复制命令' : 'Copy command')}</span>
-            </button>
-          </div>
-          <div className="bot-share-hint">
-            {language === 'zh'
-              ? '需要断开时，在 Bot 中发送 /unlink。'
-              : 'To unlink later, send /unlink in the Bot.'}
-          </div>
-        </div>
-      )}
-      {error && <p className="bot-share-error">{error}</p>}
-    </div>
-  );
-}
-
 function OsShellBar({
   language,
   runtimeAvailable,
@@ -7555,12 +7214,8 @@ function OsControlCenter({
 function TopBar({
   title,
   sidebarCollapsed,
-  botShareLabel,
   language,
-  activeConversationId,
   conversationContentAvailable = false,
-  botHandoffAvailable,
-  onCreateSessionShareLink,
   onRefreshActiveSession,
   activeConsole,
   onToggleGit,
@@ -7573,14 +7228,8 @@ function TopBar({
 }: {
   title: string;
   sidebarCollapsed: boolean;
-  botShareLabel: string;
   language: AppLanguage;
-  activeConversationId?: string;
   conversationContentAvailable?: boolean;
-  botHandoffAvailable: boolean;
-  onCreateSessionShareLink?: (
-    request: SessionShareLinkRequest,
-  ) => Promise<SessionShareLinkResult>;
   onRefreshActiveSession?: RefreshActiveSession;
   activeConsole?: ConsoleMode | null;
   onToggleGit?: () => void;
@@ -7591,53 +7240,19 @@ function TopBar({
   onOpenReview?: () => void;
   onRevealSidebar: () => void;
 }) {
-  const [botMenuOpen, setBotMenuOpen] = useState(false);
-  const [botHistoryRefreshing, setBotHistoryRefreshing] = useState(false);
-  const botShareRef = useRef<HTMLDivElement>(null);
-  const botShareEnabled = Boolean(
-    conversationContentAvailable &&
-    activeConversationId?.trim() &&
-      onCreateSessionShareLink &&
-      onRefreshActiveSession,
-  );
+  const [historyRefreshing, setHistoryRefreshing] = useState(false);
 
-  useEffect(() => {
-    if (!botMenuOpen) {
-      return undefined;
-    }
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!botShareRef.current?.contains(event.target as Node)) {
-        setBotMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setBotMenuOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [botMenuOpen]);
-
-  useEffect(() => {
-    setBotMenuOpen(false);
-  }, [activeConversationId]);
-
-  const refreshBotHistory = useCallback(async () => {
+  const refreshHistory = useCallback(async () => {
     if (!onRefreshActiveSession) {
       return;
     }
-    setBotHistoryRefreshing(true);
+    setHistoryRefreshing(true);
     try {
       await onRefreshActiveSession({ silent: true });
     } catch {
       // The shared runtime status banner owns the visible failure state.
     } finally {
-      setBotHistoryRefreshing(false);
+      setHistoryRefreshing(false);
     }
   }, [onRefreshActiveSession]);
 
@@ -7649,7 +7264,7 @@ function TopBar({
         </button>
       )}
       <h1>{title}</h1>
-      {onToggleWorkSummary && (
+      {conversationContentAvailable && onToggleWorkSummary && (
         <button
           className={`topbar-inspector-action ${workSummaryVisible ? 'active' : ''}`}
           type="button"
@@ -7661,7 +7276,7 @@ function TopBar({
           <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
         </button>
       )}
-      {onOpenReview && reviewAvailable && (
+      {conversationContentAvailable && onOpenReview && reviewAvailable && (
         <button
           className="topbar-inspector-action"
           type="button"
@@ -7672,56 +7287,16 @@ function TopBar({
           <span>{language === 'zh' ? '审查' : 'Review'}</span>
         </button>
       )}
-      {conversationContentAvailable && activeConversationId?.trim() && (
-      <div className="bot-share-wrap" ref={botShareRef}>
-        <button
-          className="topbar-native-menu"
-          type="button"
-          disabled={!botShareEnabled}
-          aria-expanded={botMenuOpen}
-          aria-label={botShareLabel}
-          title={
-            botShareEnabled
-              ? botShareLabel
-              : !botHandoffAvailable
-                ? language === 'zh'
-                  ? 'Product Host 尚未提供 Bot 会话交接能力'
-                  : 'Product Host does not expose Bot session handoff yet'
-              : language === 'zh'
-                ? '请先创建会话'
-                : 'Create a chat first'
-          }
-          onClick={() => setBotMenuOpen((current) => !current)}
-        >
-          <span className="native-bot-share-icon">
-            <BotPlatformIcon platform="any" />
-          </span>
-          <ChevronDown className="native-chevron-icon" size={14} />
-        </button>
-        {botMenuOpen &&
-          activeConversationId &&
-          onCreateSessionShareLink &&
-          onRefreshActiveSession && (
-            <BotShareMenu
-              language={language}
-              sessionId={activeConversationId}
-              onCreateLink={onCreateSessionShareLink}
-              onRefreshSession={onRefreshActiveSession}
-              onClose={() => setBotMenuOpen(false)}
-            />
-          )}
-      </div>
-      )}
       <button
         className="topbar-square native-refresh-square"
         type="button"
-        disabled={!onRefreshActiveSession || botHistoryRefreshing}
-        onClick={() => void refreshBotHistory()}
+        disabled={!onRefreshActiveSession || historyRefreshing}
+        onClick={() => void refreshHistory()}
         title={language === 'zh'
           ? '重新连接后端并刷新会话'
           : 'Reconnect backend and refresh sessions'}
       >
-        {botHistoryRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
+        {historyRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
       </button>
       {onToggleGit && (
         <button
@@ -8187,9 +7762,7 @@ function FeaturePanel({
   conversations,
   skills,
   disabledSkillNames,
-  disabledToolNames,
   onToggleSkill,
-  onToggleTool,
   onReloadSkills,
   onLoadSkillDetail,
   onCreateConversation,
@@ -8204,9 +7777,7 @@ function FeaturePanel({
   conversations: ConversationSummary[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
-  disabledToolNames: Set<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onToggleTool: (toolName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onCreateConversation: () => void;
@@ -8222,9 +7793,7 @@ function FeaturePanel({
       <TopBar
         title={label}
         sidebarCollapsed={sidebarCollapsed}
-        botShareLabel={language === 'zh' ? '继续到 Bot' : 'Continue to Bot'}
         language={language}
-        botHandoffAvailable={false}
         activeConsole={null}
         onRevealSidebar={onRevealSidebar}
       />
@@ -8237,9 +7806,7 @@ function FeaturePanel({
           conversations={conversations}
           skills={skills}
           disabledSkillNames={disabledSkillNames}
-          disabledToolNames={disabledToolNames}
           onToggleSkill={onToggleSkill}
-          onToggleTool={onToggleTool}
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onCreateConversation={onCreateConversation}

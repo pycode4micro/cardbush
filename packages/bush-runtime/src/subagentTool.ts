@@ -36,6 +36,13 @@ export function registerSubagentTool(
     createTurnId?: () => string;
     createMessageId?: () => string;
     createReceiptId?: () => string;
+    asyncDispatch?: boolean;
+    onAsyncResult?: (input: {
+      parentSessionId: string;
+      parentTurnId: string;
+      taskId: string;
+      result: Promise<{ role: "user"; name: "subagent_result"; content: string } | null>;
+    }) => void;
   } = {},
 ): void {
   if (registry.resolve(SUBAGENT_TOOL)) return;
@@ -110,31 +117,97 @@ export function registerSubagentTool(
         metadata: { subagentTaskId: taskId },
       });
 
-      let status: "completed" | "failed" | "stopped" = "failed";
-      let finalResponse = "";
-      let errorMessage = "";
-      let usage: SessionSnapshot["turns"][number]["usage"] = {};
-      try {
-        const result = await runChild(childRequest, context.signal);
-        ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(
-          result,
-          childTurnId,
-        ));
-      } catch (error) {
-        status = context.signal?.aborted ? "stopped" : "failed";
-        errorMessage = error instanceof Error ? error.message : String(error);
-      }
-      const task = tasks.finish({
+      const completion = finishTask({
+        runChild,
+        childRequest,
+        signal: context.signal,
+        childTurnId,
+        tasks,
         parentSessionId: context.sessionId,
         taskId,
-        status,
-        finalResponse,
-        errorMessage,
-        usage,
       });
-      return result(context, task, createReceiptId());
+      if (options.asyncDispatch) {
+        options.onAsyncResult?.({
+          parentSessionId: context.sessionId,
+          parentTurnId: context.turnId,
+          taskId,
+          result: completion.then((task) => task.finalResponse
+            ? { role: "user", name: "subagent_result", content: task.finalResponse }
+            : task.errorMessage
+              ? { role: "user", name: "subagent_result", content: `Subagent ${task.status}: ${task.errorMessage}` }
+              : null),
+        });
+        return submittedResult(context, tasks.get(context.sessionId, taskId)!, createReceiptId());
+      }
+      return result(context, await completion, createReceiptId());
     },
   });
+}
+
+async function finishTask(input: {
+  runChild: SubagentChildRunner;
+  childRequest: Parameters<SubagentChildRunner>[0];
+  signal?: AbortSignal;
+  childTurnId: string;
+  tasks: SubagentTaskStore;
+  parentSessionId: string;
+  taskId: string;
+}) {
+  let status: "completed" | "failed" | "stopped" = "failed";
+  let finalResponse = "";
+  let errorMessage = "";
+  let usage: SessionSnapshot["turns"][number]["usage"] = {};
+  try {
+    const child = await input.runChild(input.childRequest, input.signal);
+    ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(child, input.childTurnId));
+  } catch (error) {
+    status = input.signal?.aborted ? "stopped" : "failed";
+    errorMessage = error instanceof Error ? error.message : String(error);
+  }
+  return input.tasks.finish({
+    parentSessionId: input.parentSessionId,
+    taskId: input.taskId,
+    status,
+    finalResponse,
+    errorMessage,
+    usage,
+  });
+}
+
+function submittedResult(
+  context: ToolHandlerContext<SubagentInput>,
+  task: ReturnType<SubagentTaskStore["start"]>,
+  receiptId: string,
+): ToolResult {
+  return {
+    protocol: BUSH_TOOL_RESULT_PROTOCOL,
+    tool_call_id: context.toolCall.id,
+    success: true,
+    output: {
+      taskId: task.taskId,
+      status: "submitted",
+      childSessionId: task.childSessionId,
+      childTurnId: task.childTurnId,
+      inheritedMessageCount: task.inheritedMessageCount,
+    },
+    facts: [{
+      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
+      receipt_id: receiptId,
+      action_manifest_id: context.actionManifest.manifest_id,
+      status: "submitted",
+      operation: context.actionManifest.operation,
+      effect_kind: context.actionManifest.effect_kind,
+      owner: context.actionManifest.owner,
+      dispatch_scope: context.actionManifest.dispatch_scope,
+      categories: ["subagent_task"],
+      paths: [],
+      execution_success: true,
+      semantic_success: true,
+      verification_state: "verified",
+      error_code: "",
+    }],
+    artifacts: [], workspace_changes: [], guidance: [],
+  };
 }
 
 function result(

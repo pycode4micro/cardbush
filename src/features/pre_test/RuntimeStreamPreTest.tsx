@@ -264,8 +264,14 @@ function ConnectedRuntimeLivePreTest({
         providerBinding: configured.binding,
         messages: [{ role: 'user', content }],
         tools: [],
-        toolChoice: 'auto',
-        metadata: {},
+      toolChoice: 'auto',
+      requestCapabilities: {
+        vision: false,
+        interactiveRequests: true,
+        userChoice: false,
+      },
+      permissionMode: 'task_free',
+      metadata: {},
       });
     } catch (caught) {
       setError(errorMessage(caught));

@@ -66,7 +66,7 @@ export function registerTeamTool(
     definition: {
       name: TEAM_DELEGATE_TOOL,
       description:
-        "Dispatch explicit assignments to members of a product-configured Team. The Runtime follows the Team's configured conference phase exactly, freezes its transcript, then runs member assignments concurrently; it does not infer roles, dependencies or task semantics.",
+        "Dispatch explicit assignments to members of a product-configured Team. Members run independently with shrink-only Profile tools, skills, hooks, guards, and instructions. The Runtime does not invent a DAG, peer conference, fallback route, or retry.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -116,33 +116,6 @@ export function registerTeamTool(
       const assignments = resolveAssignments(team, context.input.assignments);
       const inherited = inheritedChildMessages(context, context.input.inheritContext);
 
-      let transcript: ReadonlyArray<{ memberId: string; response: string }> = [];
-      let discussion: PhaseResult[] = [];
-      if (team.conference.enabled) {
-        discussion = await Promise.all(assignments.map(({ assignment, member }) =>
-          runPhase({
-            context,
-            registry,
-            tasks,
-            runChild,
-            team,
-            member,
-            assignment,
-            phase: "discussion",
-            inherited,
-            prompt: discussionPrompt(team, context.input.sharedBrief, assignment),
-            toolNames: [],
-            ids: { createTaskId, createRequestId, createSessionId, createTurnId, createMessageId },
-          })
-        ));
-        const failed = discussion.find(({ task }) => task.status !== "completed");
-        if (failed) return toolResult(context, team, discussion, [], createReceiptId());
-        transcript = Object.freeze(discussion.map(({ member, task }) => Object.freeze({
-          memberId: member.memberId,
-          response: task.finalResponse,
-        })));
-      }
-
       const execution = await Promise.all(assignments.map(({ assignment, member }) =>
         runPhase({
           context,
@@ -154,12 +127,14 @@ export function registerTeamTool(
           assignment,
           phase: "execution",
           inherited,
-          prompt: executionPrompt(context.input.sharedBrief, assignment, transcript),
-          toolNames: member.toolNames,
+          prompt: executionPrompt(context.input.sharedBrief, assignment),
+          toolNames: member.toolNames.filter((name) =>
+            context.turn!.request.tools.some((tool) => tool.name === name),
+          ),
           ids: { createTaskId, createRequestId, createSessionId, createTurnId, createMessageId },
         })
       ));
-      return toolResult(context, team, discussion, execution, createReceiptId());
+      return toolResult(context, team, [], execution, createReceiptId());
     },
   });
 }
@@ -199,6 +174,7 @@ async function runPhase(input: {
     origin: "team",
     teamId: input.team.teamId,
     teamMemberId: input.member.memberId,
+    agentProfileId: input.member.agentProfileId,
     phase: input.phase,
   });
   let status: "completed" | "failed" | "stopped" = "failed";
@@ -225,6 +201,12 @@ async function runPhase(input: {
         teamMemberId: input.member.memberId,
         teamPhase: input.phase,
         teamTaskId: taskId,
+        allowedSkills: narrowedSkills(
+          input.context.turn?.request.metadata.allowedSkills,
+          input.member.skills,
+        ),
+        teamHooks: input.member.hooks,
+        teamGuards: input.member.guards,
       },
     });
     ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(
@@ -260,36 +242,31 @@ function memberMessage(
       `Role: ${member.role}.`,
       team.instructions,
       member.instructions,
-      phase === "discussion" ? team.conference.instructions : "",
+      member.promptInstructions,
+      member.skills?.length ? `Allowed skills: ${member.skills.join(", ")}.` : "",
+      member.hooks.length ? `Required hooks: ${member.hooks.join(", ")}.` : "",
+      member.guards.length ? `Required guards: ${member.guards.join(", ")}.` : "",
     ].filter(Boolean).join("\n"),
   };
 }
 
-function discussionPrompt(
-  team: TeamDefinition,
-  sharedBrief: string,
-  assignment: TeamAssignment,
-): string {
-  return [
-    "This is the configured Team discussion phase. Do not execute Tools or mutate external state.",
-    `Shared brief:\n${sharedBrief}`,
-    `Your assignment:\n${assignment.prompt}`,
-    team.conference.instructions,
-    "Return a concise proposal, relevant evidence, dependencies and conflicts for the other members.",
-  ].filter(Boolean).join("\n\n");
+function narrowedSkills(parent: unknown, member: string[] | undefined): string[] {
+  if (!Array.isArray(parent)) return member ?? [];
+  const parentSkills = Array.isArray(parent)
+    ? parent.filter((item): item is string => typeof item === "string")
+    : [];
+  if (member === undefined) return parentSkills;
+  const allowed = new Set(parentSkills);
+  return member.filter((name) => allowed.has(name));
 }
 
 function executionPrompt(
   sharedBrief: string,
   assignment: TeamAssignment,
-  transcript: ReadonlyArray<{ memberId: string; response: string }>,
 ): string {
   return [
     `Shared brief:\n${sharedBrief}`,
     `Your assignment:\n${assignment.prompt}`,
-    transcript.length > 0
-      ? `Frozen Team discussion transcript (identical for every member):\n${JSON.stringify(transcript)}`
-      : "",
     "Execute only your assigned scope. Return the completed result, verification, risks, and absolute paths for local deliverables.",
   ].filter(Boolean).join("\n\n");
 }
@@ -319,6 +296,7 @@ function toolResult(
   const error = tasks.find(({ task }) => task.status !== "completed")?.task.errorMessage ?? "";
   const members = execution.map(({ member, task }) => ({
     memberId: member.memberId,
+    agentProfileId: member.agentProfileId,
     taskId: task.taskId,
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
@@ -333,8 +311,7 @@ function toolResult(
     success: completed,
     output: {
       teamId: team.teamId,
-      conferenceEnabled: team.conference.enabled,
-      discussionTaskIds: discussion.map(({ task }) => task.taskId),
+      fallbackMemberId: team.members.find((member) => member.fallback)?.memberId,
       members,
     },
     facts: [{

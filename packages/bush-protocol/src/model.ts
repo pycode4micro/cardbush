@@ -55,6 +55,21 @@ export const modelMessageSchema = z.union([
 
 export type ModelMessage = z.infer<typeof modelMessageSchema>;
 
+export const requestCapabilitiesSchema = z.object({
+  vision: z.boolean().default(false),
+  interactiveRequests: z.boolean().default(false),
+  userChoice: z.boolean().default(false),
+});
+
+export const permissionModeSchema = z.enum([
+  "task_free",
+  "user_free",
+  "all_free",
+]);
+
+export type RequestCapabilities = z.infer<typeof requestCapabilitiesSchema>;
+export type RuntimePermissionMode = z.infer<typeof permissionModeSchema>;
+
 export const modelRequestSchema = z.object({
   protocol: z.literal(BUSH_MODEL_REQUEST_PROTOCOL),
   requestId: z.string().min(1),
@@ -69,6 +84,12 @@ export const modelRequestSchema = z.object({
   temperature: z.number().finite().optional(),
   topP: z.number().finite().optional(),
   reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+  requestCapabilities: requestCapabilitiesSchema.default({
+    vision: false,
+    interactiveRequests: false,
+    userChoice: false,
+  }),
+  permissionMode: permissionModeSchema.default("task_free"),
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 

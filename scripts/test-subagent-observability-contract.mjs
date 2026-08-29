@@ -14,7 +14,7 @@ const events = read('src', 'features', 'subagents', 'subagentObservabilityEvents
 const app = read('src', 'App.tsx');
 
 assert.match(runtimeChat, /record\.toolCall\.name === 'subagent'/);
-assert.match(runtimeChat, /request\.onSubagentDispatch\?\.\(subagentDispatch\(record, event\)\)/);
+assert.match(runtimeChat, /subagentDispatches\(record, event\)\.forEach\(\(dispatch\) =>\s*request\.onSubagentDispatch\?\.\(dispatch\)/);
 assert.match(runtimeChat, /protocol: 'bush\.subagent_task\.v1'/);
 assert.match(api, /runtime\.client\.listSubagentTasks\(/);
 assert.match(api, /runtime\.client\.getSubagentTask\(\s*\{/);

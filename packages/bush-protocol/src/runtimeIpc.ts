@@ -77,17 +77,6 @@ export const runtimeIpcInboundMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("stop_stream"),
     subscriptionId: z.string().min(1),
   }),
-  runtimeIpcBaseSchema.extend({
-    type: z.literal("host_tool_response"),
-    requestId: z.string().min(1),
-    ok: z.boolean(),
-    result: z.unknown().optional(),
-    error: runtimeProtocolErrorSchema.optional(),
-  }).superRefine((value, context) => {
-    if (!value.ok && !value.error) {
-      context.addIssue({ code: "custom", message: "failed host tool response requires error" });
-    }
-  }),
 ]);
 
 export type RuntimeIpcInboundMessage = z.infer<
@@ -131,18 +120,6 @@ export const runtimeIpcOutboundMessageSchema = z.union([
   runtimeIpcBaseSchema.extend({
     type: z.literal("protocol_error"),
     error: runtimeProtocolErrorSchema,
-  }),
-  runtimeIpcBaseSchema.extend({
-    type: z.literal("host_tool_request"),
-    requestId: z.string().min(1),
-    toolName: z.string().min(1),
-    input: z.unknown(),
-    context: z.object({
-      sessionId: z.string().min(1),
-      turnId: z.string().min(1),
-      toolCallId: z.string().min(1),
-      capabilityIds: z.array(z.string()),
-    }),
   }),
 ]);
 

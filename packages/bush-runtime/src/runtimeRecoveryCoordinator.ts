@@ -50,7 +50,6 @@ export class RuntimeRecoveryCoordinator {
     messages: ModelMessage[];
     nextRound: number;
     completedReceiptIds: string[];
-    outcomeReminderCount?: number;
     cacheChainState: CacheChainState;
     sessionCommit?: RuntimeSessionCommitCheckpoint;
   }): RuntimeCheckpoint {
@@ -70,7 +69,6 @@ export class RuntimeRecoveryCoordinator {
       lastEventSequence: cursor.sequence,
       lastEventId: cursor.eventId,
       completedReceiptIds: [...new Set(input.completedReceiptIds)],
-      outcomeReminderCount: input.outcomeReminderCount,
       cacheChainState: input.cacheChainState,
       sessionCommit: input.sessionCommit,
       createdAt: this.#now(),
@@ -81,6 +79,15 @@ export class RuntimeRecoveryCoordinator {
 
   remove(sessionId: string, turnId: string): void {
     this.#checkpoints.remove(sessionId, turnId);
+  }
+
+  orphanedCheckpoints(): RuntimeCheckpoint[] {
+    return this.#checkpoints.list().filter((checkpoint) =>
+      this.#eventLog.replay(
+        checkpoint.request.sessionId,
+        checkpoint.request.turnId,
+      ).at(-1)?.kind !== "turn_terminal",
+    );
   }
 
   inspect(sessionId: string, turnId: string): RuntimeRecoveryInspection {

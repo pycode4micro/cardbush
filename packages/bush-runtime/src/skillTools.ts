@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 
 import {
   BUSH_EXECUTION_FACT_PROTOCOL,
@@ -20,7 +20,6 @@ interface SkillCard {
 export function registerSkillTools(registry: ToolRegistry, roots: string[]): void {
   const normalizedRoots = [...new Set(roots.map((root) => resolve(root)).filter(isAbsolute))];
   registry.register(searchRegistration(normalizedRoots));
-  registry.register(readRegistration(normalizedRoots));
 }
 
 function searchRegistration(roots: string[]): ToolRegistration<{ query: string; limit: number }> {
@@ -50,58 +49,19 @@ function searchRegistration(roots: string[]): ToolRegistration<{ query: string; 
     },
     execute: async (context) => {
       const terms = tokens(context.input.query);
-      const skills = await loadCards(roots);
+      const configured = context.turn?.request.metadata.allowedSkills;
+      const allowed = Array.isArray(configured)
+        ? new Set(configured.filter((item): item is string => typeof item === "string"))
+        : undefined;
+      const skills = (await loadCards(roots)).filter((skill) =>
+        allowed === undefined || allowed.has(skill.name),
+      );
       const matches = skills
         .map((skill) => ({ ...skill, score: score(skill, terms) }))
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
         .slice(0, context.input.limit);
       return success(context, { query: context.input.query, matches }, matches.map((item) => item.packageDir));
-    },
-  };
-}
-
-function readRegistration(roots: string[]): ToolRegistration<{ name: string; resource: string }> {
-  return {
-    definition: {
-      name: "read_skill",
-      description: "Read an installed Skill instruction file or one referenced resource. Omit resource to read SKILL.md; use relative resource paths returned or referenced by the Skill.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", minLength: 1 },
-          resource: { type: "string", default: "SKILL.md" },
-        },
-        required: ["name"],
-        additionalProperties: false,
-      },
-    },
-    manifest: manifest("skills.read"),
-    parallelSafe: true,
-    visibleToChild: true,
-    decodeInput: (value) => {
-      const input = object(value);
-      const name = String(input.name ?? "").trim();
-      const resource = String(input.resource ?? "SKILL.md").trim() || "SKILL.md";
-      if (!name) throw new Error("name is required.");
-      if (isAbsolute(resource)) throw new Error("resource must be relative to the Skill package.");
-      return { name, resource };
-    },
-    execute: async (context) => {
-      const skill = (await loadCards(roots)).find((item) => item.name === context.input.name);
-      if (!skill) throw new Error(`Skill ${context.input.name} is not installed.`);
-      const packageDir = await realpath(skill.packageDir);
-      const target = await realpath(join(packageDir, context.input.resource));
-      const escaped = relative(packageDir, target);
-      if (escaped.startsWith("..") || isAbsolute(escaped)) {
-        throw new Error("Skill resource escapes its package directory.");
-      }
-      return success(context, {
-        name: skill.name,
-        resource: context.input.resource,
-        path: target,
-        content: await readFile(target, "utf8"),
-      }, [target]);
     },
   };
 }

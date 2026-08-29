@@ -10,15 +10,6 @@ import type {
   McpServerValidationResult,
   McpTransport,
   PendingInteraction,
-  BotConfigResult,
-  BotPlatform,
-  BotPlatformOverview,
-  BotServiceLogsResult,
-  BotServiceStatus,
-  BotStatusResult,
-  WeixinLoginStartResult,
-  WeixinLoginStatus,
-  WeixinLoginStatusResult,
   SkillDetail,
   SkillSummary,
   TeamFlowActionType,
@@ -41,6 +32,9 @@ import type {
   ReferencePlanMode,
   RuntimeContextWindowUsage,
   RuntimeConnectionUpdate,
+  RuntimeAssetCategory,
+  RuntimeAssetResetPlan,
+  RuntimeAssetResetResult,
   SessionTokenUsage,
   CapabilityCandidatesUpdate,
   TerminalRuntime,
@@ -48,6 +42,8 @@ import type {
   AgentProfileDefinition,
   TeamDefinition,
   TeamConfigurationCapabilities,
+  CardbushAppsConfiguration,
+  CardbushAppPlugin,
 } from '../types';
 import type {
   GoalState as RuntimeGoalState,
@@ -66,6 +62,7 @@ import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
+  CARDBUSH_APPS_MCP_SERVER_ID,
   readProductMcpServers,
   replaceProductMcpServers,
   synchronizeProductMcpSnapshot,
@@ -75,11 +72,14 @@ import {
   readProductAgentProfiles,
   readProductTeams,
   replaceProductTeamConfiguration,
+  resetProductTeamConfiguration,
   validateProductTeamConfiguration,
 } from './productTeams';
 import {
   answerRuntimeInteraction,
-  enqueueRuntimeGuidance,
+  answerRuntimeGenericInteraction,
+  hasRuntimeGenericInteraction,
+  registerRuntimeGenericInteraction,
   hasRuntimeInteraction,
   pendingRuntimeInteraction,
   stopActiveRuntimeTurn,
@@ -91,6 +91,8 @@ import {
   streamRuntimeShadowConversationMessage,
 } from './shadowRuntime';
 
+export const RUNTIME_ASSET_RESET_PROTOCOL = 'cardbush.runtime_asset_reset.v1';
+
 function localizedClientMessage(zh: string, en: string): string {
   if (
     typeof document !== 'undefined' &&
@@ -99,18 +101,6 @@ function localizedClientMessage(zh: string, en: string): string {
     return en;
   }
   return zh;
-}
-
-export interface SessionShareLinkResult {
-  code: string;
-  sessionId: string;
-  platform: string;
-  expiresAt: string;
-}
-
-export interface SaveBotConfigRequest {
-  platform: BotPlatform;
-  config: Record<string, unknown>;
 }
 
 export interface BackendModelConfigsResult {
@@ -168,52 +158,6 @@ export interface A2ATask {
   artifactText: string;
   revision: number;
   raw: Record<string, unknown>;
-}
-
-export interface RuntimeToolInventoryEntry {
-  name: string;
-  package: string;
-  description: string;
-  enabled: boolean;
-  runtimeLoaded: boolean;
-  schemaAvailable: boolean;
-  inputSchema?: Record<string, unknown>;
-  dispatch?: Record<string, unknown>;
-  injection: {
-    core: boolean;
-    default: boolean;
-  };
-  category: 'default' | 'discoverable_plugin' | 'disabled' | string;
-}
-
-export interface RuntimeToolInventory {
-  protocol: string;
-  tools: string[];
-  installed: RuntimeToolInventoryEntry[];
-  modelVisibleDefault: string[];
-  modelVisibleThisTurn: string[];
-  modelVisibleSource: string;
-  modelVisibleSnapshot: {
-    requestId: string;
-    sessionId: string;
-    turnId: string;
-    loopIndex?: number;
-    provider: string;
-    model: string;
-    completedAt: string;
-  } | null;
-  conditional: Array<{ name: string; reason: string }>;
-  turnAdded: string[];
-  discoverablePlugins: string[];
-  disabled: string[];
-  internalGuardEvents: Array<{
-    name: string;
-    kind: string;
-    modelVisible: boolean;
-    frontendVisible: boolean;
-    description: string;
-  }>;
-  loadErrors: Array<Record<string, unknown>>;
 }
 
 export interface ChatStreamRequest {
@@ -471,7 +415,9 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   runtimeInspection: true,
   maintenanceConversationHistoryClear: false,
   maintenanceLogsCacheClear: false,
-  sessionShareLinks: false,
+  maintenanceRuntimeAssetsReset: false,
+  runtimeAssetResetProtocol: '',
+  runtimeAssetResetCategories: [],
   messageEditRegenerate: false,
   turnRegenerate: false,
   stableMessageIds: false,
@@ -631,7 +577,8 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       ...defaultBackendCapabilities,
       chatStream: features.has('turn_stream'),
       sessions: features.has('append_only_session_context'),
-      interactions: features.has('interactive_permissions'),
+      interactions:
+        features.has('interactive_permissions') || features.has('generic_user_choice'),
       interactiveRequests: features.has('interactive_permissions'),
       permissionRequests: features.has('interactive_permissions'),
       turnStop: true,
@@ -640,7 +587,10 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       messageEditRegenerate: true,
       turnRegenerate: true,
       maintenanceConversationHistoryClear: true,
-      sessionShareLinks: true,
+      maintenanceLogsCacheClear: true,
+      maintenanceRuntimeAssetsReset: true,
+      runtimeAssetResetProtocol: RUNTIME_ASSET_RESET_PROTOCOL,
+      runtimeAssetResetCategories: ['prompts', 'skills', 'agent_profiles', 'teams'],
       shadowConversationActivation: true,
       standardImageInputTool: features.has('native_image_inputs'),
       projects: true,
@@ -654,13 +604,15 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
         : '',
       teamMode: features.has('product_team_snapshot'),
       teamAgentFlow: features.has('team_concurrent_execution'),
-      contextWindowUsage: true,
-      workspaceChanges: features.has('authoritative_tool_execution_records'),
+      contextWindowUsage: features.has('append_only_session_context'),
+      workspaceChanges:
+        features.has('authoritative_tool_execution_records') &&
+        features.has('workspace_revert'),
       sessionContextSearch: true,
       sessionActivityOrdering: true,
       capabilityDiscovery: commands.has('runtime.get_tool_catalog_details'),
-      osMode: features.has('product_host_tools'),
-      desktopAutomation: features.has('product_host_tools'),
+      osMode: true,
+      desktopAutomation: features.has('bundled_cardbush_apps_mcp'),
       taskPlan: features.has('explicit_plan_facts'),
       reasoningStream: features.has('reasoning_segments'),
       reasoningLevelSelection: true,
@@ -897,106 +849,20 @@ export async function fetchTeamConfigurationCapabilities(signal?: AbortSignal) {
     contextProtocol: 'bush.session_snapshot.v1',
     delegationTool: 'team_delegate',
     ordinarySubagentProfileArgument: false,
-    memberCapabilities: ['instructions', 'tools', 'conference'],
+    memberCapabilities: [
+      'responsibility',
+      'disabled_tools',
+      'skills',
+      'hooks',
+      'guards',
+      'prompts.instructions',
+      'fallback',
+    ],
     toolPolicy: 'explicit_snapshot',
-    fallbackMemberRequired: false,
+    fallbackMemberRequired: true,
     fixedDag: false,
     profileOnlyHooks: [],
   } satisfies TeamConfigurationCapabilities;
-}
-
-export async function fetchRuntimeToolInventory(filters?: {
-  sessionId?: string;
-  turnId?: string;
-}): Promise<RuntimeToolInventory> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const [catalog, mcp] = await Promise.all([
-      runtime.client.getToolCatalogDetails(),
-      runtime.client.getMcpSnapshot(),
-    ]);
-    const mcpOwners = new Map(
-      (mcp?.servers ?? []).flatMap((server) =>
-        server.tools.map((tool) => [tool.runtimeName, server.id] as const),
-      ),
-    );
-    const installed = catalog.map((entry): RuntimeToolInventoryEntry => {
-      const mcpOwner = mcpOwners.get(entry.definition.name);
-      return {
-        name: entry.definition.name,
-        package: mcpOwner
-          ? `mcp:${mcpOwner}`
-          : (entry.registrationOwner ?? 'runtime'),
-        description: entry.definition.description,
-        enabled: true,
-        runtimeLoaded: true,
-        schemaAvailable: true,
-        inputSchema: entry.definition.inputSchema,
-        dispatch: entry.manifest,
-        injection: { core: !mcpOwner, default: true },
-        category: mcpOwner ? 'discoverable_plugin' : 'default',
-      };
-    });
-    const names = installed.map((tool) => tool.name);
-    void filters;
-    return {
-      protocol: 'bush.tool_catalog.v1',
-      tools: names,
-      installed,
-      modelVisibleDefault: names,
-      modelVisibleThisTurn: names,
-      modelVisibleSource: 'electron_runtime_catalog',
-      modelVisibleSnapshot: null,
-      conditional: [],
-      turnAdded: [],
-      discoverablePlugins: [...mcpOwners.keys()],
-      disabled: [],
-      internalGuardEvents: [],
-      loadErrors: [],
-    };
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function manageRuntimeTool(request: {
-  action:
-    | 'user_ask_list'
-    | 'install'
-    | 'install_from_seed'
-    | 'register'
-    | 'uninstall'
-    | 'update'
-    | 'enable'
-    | 'disable'
-    | 'check'
-    | 'update_injection';
-  toolName?: string;
-  sourcePath?: string;
-  replace?: boolean;
-  enabled?: boolean;
-  default?: boolean;
-}): Promise<Record<string, unknown>> {
-  if (
-    request.action === 'enable' ||
-    request.action === 'disable' ||
-    request.action === 'update_injection' ||
-    request.action === 'check' ||
-    request.action === 'user_ask_list'
-  ) {
-    return {
-      source: 'cardbush_product_policy',
-      action: request.action,
-      toolName: request.toolName ?? '',
-    };
-  }
-  throw new Error(
-    localizedClientMessage(
-      '工具安装与卸载已迁移到 CardBush MCP 配置，请在 MCP 设置中管理。',
-      'Tool installation is managed through CardBush MCP settings.',
-    ),
-  );
 }
 
 export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoalA2AStatus> {
@@ -1193,26 +1059,82 @@ export async function saveModelConfigs(request: {
   );
 }
 
+export async function fetchCardbushAppsConfiguration(): Promise<CardbushAppsConfiguration> {
+  return cardbushAppsConfigurationFromPayload(
+    await productHostValue({ kind: 'apps.get' }),
+  );
+}
+
+export async function saveCardbushAppsConfiguration(
+  configuration: CardbushAppsConfiguration,
+): Promise<CardbushAppsConfiguration> {
+  const saved = cardbushAppsConfigurationFromPayload(
+    await productHostValue({
+      kind: 'apps.update',
+      config: {
+        serviceEnabled: configuration.serviceEnabled,
+        plugins: configuration.plugins.map((plugin) => ({
+          id: plugin.id,
+          installed: plugin.installed,
+          enabled: plugin.enabled,
+          config: plugin.config,
+        })),
+      },
+    }),
+  );
+  const runtime = createDesktopRuntimeSession();
+  try {
+    await synchronizeProductMcpSnapshot(runtime.client);
+  } catch {
+    // A running turn can temporarily lock the MCP catalog. The persisted Product Host
+    // configuration is applied by the mandatory snapshot sync before the next turn.
+  } finally {
+    runtime.dispose();
+  }
+  return saved;
+}
+
 export async function fetchMcpServers(): Promise<McpServersResult> {
   const runtime = createDesktopRuntimeSession();
   try {
-    const servers = readProductMcpServers();
+    const apps = await fetchCardbushAppsConfiguration();
+    const servers = await readProductMcpServers();
     const result = await synchronizeProductMcpSnapshot(runtime.client).catch(
       () => null,
     );
     const toolCounts = new Map(
       result?.servers.map((server) => [server.id, server.tools.length]) ?? [],
     );
+    const bundledApps = result?.servers.find((server) => server.id === 'cardbush_apps');
     return {
-      servers: servers.map((server) => ({
-        ...server,
-        toolCount: toolCounts.get(server.id) ?? 0,
-        status: result
-          ? server.enabled
-            ? 'connected'
-            : 'disabled'
-          : 'unavailable',
-      })),
+      servers: [
+        ...([{
+          id: 'cardbush_apps',
+          name: 'CardBush Apps',
+          description: 'Bundled independent MCP host for CardBush app plugins.',
+          enabled: apps.serviceEnabled,
+          transport: 'stdio' as const,
+          args: [],
+          toolCount: bundledApps?.tools.length ?? 0,
+          status: apps.serviceEnabled ? (bundledApps ? 'connected' : 'unavailable') : 'disabled',
+          raw: {
+            source: 'cardbush_builtin_plugin',
+            bundled: true,
+            readOnly: true,
+            tools: bundledApps?.tools ?? [],
+            apps,
+          },
+        }]),
+        ...servers.map((server) => ({
+          ...server,
+          toolCount: toolCounts.get(server.id) ?? 0,
+          status: result
+            ? server.enabled
+              ? 'connected'
+              : 'disabled'
+            : 'unavailable',
+        })),
+      ],
       protocolVersions: ['2025-11-25', '2025-06-18'],
       raw: { source: 'cardbush_product', snapshot: result },
     };
@@ -1225,6 +1147,22 @@ export async function validateMcpServerConfig(
   input: McpServerConfigInput,
 ): Promise<McpServerValidationResult> {
   const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
+  if (candidate.id === CARDBUSH_APPS_MCP_SERVER_ID) {
+    return {
+      ok: false,
+      serverId: candidate.id,
+      tools: [],
+      messages: [{
+        path: 'id',
+        message: localizedClientMessage(
+          'cardbush_apps 是内置插件服务的保留 ID',
+          'cardbush_apps is reserved for the bundled plugin server',
+        ),
+        severity: 'error',
+      }],
+      raw: { source: 'cardbush_product', reserved: true },
+    };
+  }
   const result = validateProductMcpServer(candidate);
   return {
     ok: result.success,
@@ -1252,8 +1190,16 @@ export async function saveMcpServerConfig(
       localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
     );
   }
+  if (normalized === CARDBUSH_APPS_MCP_SERVER_ID) {
+    throw new Error(
+      localizedClientMessage(
+        'cardbush_apps 是内置插件服务的保留 ID',
+        'cardbush_apps is reserved for the bundled plugin server',
+      ),
+    );
+  }
   const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
-  const servers = readProductMcpServers();
+  const servers = await readProductMcpServers();
   const index = servers.findIndex((server) => server.id === normalized);
   if (index >= 0) servers[index] = candidate;
   else servers.push(candidate);
@@ -1283,7 +1229,7 @@ export async function setMcpServerEnabled(
       localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
     );
   }
-  const servers = readProductMcpServers();
+  const servers = await readProductMcpServers();
   const index = servers.findIndex((server) => server.id === normalized);
   if (index < 0) {
     throw new Error(
@@ -1316,7 +1262,7 @@ export async function deleteMcpServerConfig(
       localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
     );
   }
-  const servers = readProductMcpServers();
+  const servers = await readProductMcpServers();
   const exists = servers.some((server) => server.id === normalized);
   if (!exists)
     return { id: normalized, deleted: false, source: 'cardbush_product' };
@@ -1914,134 +1860,46 @@ export async function deleteConversationApi(sessionId: string) {
   }
 }
 
-export async function createSessionShareLink({
-  sessionId,
-  platform,
-  expiresSeconds = 900,
-}: {
-  sessionId: string;
-  platform?: string;
-  expiresSeconds?: number;
-}): Promise<SessionShareLinkResult> {
-  const normalizedSessionId = sessionId.trim();
-  if (!normalizedSessionId) {
-    throw new Error(
-      localizedClientMessage('会话 ID 为空', 'Conversation ID is empty'),
-    );
-  }
-  const normalizedPlatform = platform?.trim().toLowerCase();
-  const payload = await productHostValue({
-    kind: 'session_link.create',
-    sessionId: normalizedSessionId,
-    expiresSeconds,
-    ...(normalizedPlatform ? { platform: normalizedPlatform } : {}),
-  });
-  const result = shareLinkFromPayload({
-    ...payload,
-    session_id: payload.sessionId ?? normalizedSessionId,
-    expires_at: payload.expiresAt,
-  });
-  if (!result.code.trim()) {
-    throw new Error(
-      localizedClientMessage('Bot 绑定码为空', 'Bot link code is empty'),
-    );
-  }
-  return result;
-}
-
-export async function fetchBots(): Promise<BotPlatformOverview[]> {
-  const payload = await productHostValue({ kind: 'bots.list' });
-  const candidates =
-    payload.bots ?? payload.items ?? payload.platforms ?? payload.data ?? [];
-  if (Array.isArray(candidates)) {
-    return candidates
-      .map(botOverviewFromPayload)
-      .filter((item): item is BotPlatformOverview => item != null);
-  }
-  const record = asRecord(candidates);
-  return Object.entries(record)
-    .map(([platform, value]) =>
-      botOverviewFromPayload({ platform, ...asRecord(value) }),
-    )
-    .filter((item): item is BotPlatformOverview => item != null);
-}
-
-export async function fetchBotConfig(
-  platform: BotPlatform,
-): Promise<BotConfigResult> {
-  const payload = await productHostValue({ kind: 'bot.config.get', platform });
-  return botConfigFromPayload(platform, payload);
-}
-
-export async function saveBotConfig({
-  platform,
-  config,
-}: SaveBotConfigRequest): Promise<BotConfigResult> {
-  const payload = await productHostValue({
-    kind: 'bot.config.update',
-    platform,
-    config,
-  });
-  return botConfigFromPayload(platform, payload);
-}
-
-export async function fetchBotStatus(
-  platform: BotPlatform,
-): Promise<BotStatusResult> {
-  const payload = await productHostValue({ kind: 'bot.status', platform });
-  return botStatusFromPayload(platform, payload);
-}
-
-export async function startWeixinLogin(): Promise<WeixinLoginStartResult> {
-  const payload = await productHostValue({ kind: 'weixin.login.start' });
-  return weixinLoginStartFromPayload(payload);
-}
-
-export async function fetchWeixinLoginStatus(
-  loginId: string,
-): Promise<WeixinLoginStatusResult> {
-  const payload = await productHostValue({
-    kind: 'weixin.login.status',
-    loginId,
-  });
-  return weixinLoginStatusFromPayload(loginId, payload);
-}
-
-export async function deleteWeixinAccount(accountId: string): Promise<void> {
-  await productHostValue({ kind: 'weixin.account.delete', accountId });
-}
-
-export async function controlBotService(
-  platform: BotPlatform,
-  action: 'start' | 'stop' | 'restart',
-): Promise<BotStatusResult> {
-  const payload = await productHostValue({
-    kind: 'bot.service.control',
-    platform,
-    action,
-  });
-  return botStatusFromPayload(platform, payload);
-}
-
-export async function fetchBotServiceLogs({
-  platform,
-  tail = 200,
-  since,
-}: {
-  platform: BotPlatform;
-  tail?: number;
-  since?: string;
-}): Promise<BotServiceLogsResult> {
-  const payload = await productHostValue({
-    kind: 'bot.logs',
-    platform,
-    tail,
-    ...(since?.trim() ? { since: since.trim() } : {}),
-  });
-  return botLogsFromPayload(platform, payload);
-}
-
 const productHostProtocol = 'cardbush.product_host_ipc.v1';
+
+export class ProductHostCommandError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'ProductHostCommandError';
+    this.code = code;
+  }
+}
+
+function cardbushAppsConfigurationFromPayload(
+  payload: Record<string, unknown>,
+): CardbushAppsConfiguration {
+  const plugins = arrayFrom(payload.plugins).map((candidate): CardbushAppPlugin => {
+    const value = asRecord(candidate);
+    return {
+      id: String(value.id ?? ''),
+      name: String(value.name ?? value.id ?? ''),
+      description: String(value.description ?? ''),
+      installed: value.installed === true,
+      enabled: value.enabled === true,
+      config: asRecord(value.config),
+    };
+  });
+  return {
+    protocol: String(payload.protocol ?? ''),
+    revision: finiteNumber(payload.revision),
+    serviceEnabled: payload.serviceEnabled === true,
+    plugins,
+  };
+}
+
+export function isProductHostCommandError(
+  error: unknown,
+  code?: string,
+): error is ProductHostCommandError {
+  return error instanceof ProductHostCommandError && (code == null || error.code === code);
+}
 
 async function productHostValue(
   command: Record<string, unknown>,
@@ -2050,8 +1908,8 @@ async function productHostValue(
   if (execute == null) {
     throw new Error(
       localizedClientMessage(
-        'Bot 管理由 CardBush 桌面宿主提供，请在桌面客户端中使用。',
-        'Bot management is provided by the CardBush desktop host.',
+        'CardBush 产品宿主仅在桌面客户端中可用。',
+        'The CardBush Product Host is only available in the desktop client.',
       ),
     );
   }
@@ -2065,7 +1923,8 @@ async function productHostValue(
   }
   if (payload.ok !== true) {
     const error = asRecord(payload.error);
-    throw new Error(
+    throw new ProductHostCommandError(
+      String(error.code ?? 'product_host_command_failed'),
       String(error.message ?? error.code ?? 'Product Host command failed'),
     );
   }
@@ -2089,6 +1948,78 @@ export async function clearConversationHistory(): Promise<MaintenanceClearResult
   } finally {
     runtime.dispose();
   }
+}
+
+export async function clearLogsCache(): Promise<MaintenanceClearResult> {
+  return maintenanceClearResultFromPayload(
+    await productHostValue({ kind: 'maintenance.clear_logs_cache' }),
+  );
+}
+
+export async function fetchRuntimeAssetResetPlan(): Promise<RuntimeAssetResetPlan> {
+  const plan = runtimeAssetResetPlanFromPayload(
+    await productHostValue({ kind: 'maintenance.runtime_assets.plan' }),
+  );
+  assertRuntimeAssetResetProtocol(plan.protocol);
+  return plan;
+}
+
+export async function resetRuntimeAssets(
+  categories: RuntimeAssetCategory[],
+): Promise<RuntimeAssetResetResult> {
+  const selected = [...new Set(categories)];
+  const resetsTeams = selected.includes('teams') || selected.includes('agent_profiles');
+  if (resetsTeams && !(selected.includes('teams') && selected.includes('agent_profiles'))) {
+    throw new ProductHostCommandError(
+      'team_configuration_reset_pair_required',
+      localizedClientMessage(
+        'Teams 与 Agent Profiles 存在引用关系，必须一起恢复。',
+        'Teams and Agent Profiles reference each other and must be restored together.',
+      ),
+    );
+  }
+  const result = runtimeAssetResetResultFromPayload(
+    await productHostValue({
+      kind: 'maintenance.runtime_assets.reset',
+      categories: selected,
+      confirm: true,
+    }),
+  );
+  if (resetsTeams) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await synchronizeProductMcpSnapshot(runtime.client);
+      const tools = await runtime.client.getToolCatalog();
+      await resetProductTeamConfiguration(runtime.client, tools);
+      for (const category of ['agent_profiles', 'teams'] as const) {
+        const current = result.categories[category];
+        result.categories[category] = {
+          changed: true,
+          sourcePath: current?.sourcePath ?? 'bundled-defaults',
+          targetPath: current?.targetPath ?? 'product-configuration',
+          seedFileCount: 1,
+          restoredFileCount: 1,
+          removedRuntimeFileCount: 0,
+        };
+      }
+      result.changed = true;
+    } finally {
+      runtime.dispose();
+    }
+  }
+  assertRuntimeAssetResetProtocol(result.protocol);
+  return result;
+}
+
+export async function fetchRuntimeMaintenanceLogs(): Promise<{
+  chain: unknown[];
+  toolFailures: unknown[];
+}> {
+  const payload = await productHostValue({ kind: 'maintenance.diagnostics' });
+  return {
+    chain: arrayFrom(payload.chain),
+    toolFailures: arrayFrom(payload.toolFailures),
+  };
 }
 
 export async function createShadowConversation({
@@ -2259,20 +2190,24 @@ export async function fetchSessionContextWindowUsage(
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    const snapshot = await runtime.client.getSession(
-      normalizedSessionId,
-      signal,
-    );
+    const [snapshot, context] = await Promise.all([
+      runtime.client.getSession(normalizedSessionId, signal),
+      runtime.client.assembleSessionContext({ sessionId: normalizedSessionId }, signal),
+    ]);
     const latest = snapshot?.turns.at(-1);
     return {
       sessionId: normalizedSessionId,
       turnId: latest?.turnId ?? '',
       model: '',
-      usedTokens: latest?.usage.inputTokens,
+      usedTokens: context.estimatedTokens,
       measuredAt:
         latest?.completedAt ?? snapshot?.updatedAt ?? new Date().toISOString(),
       source: 'electron_runtime',
-      raw: { usage: latest?.usage ?? {} },
+      raw: {
+        usage: latest?.usage ?? {},
+        sourceMessageIds: context.sourceMessageIds,
+        truncated: context.truncated,
+      },
     };
   } finally {
     runtime.dispose();
@@ -2366,7 +2301,20 @@ export async function revertSessionWorkspaceChanges(
   if (!normalizedSession || normalizedTurns.length === 0) {
     throw new Error('session_id and turn_ids are required');
   }
-  throw new RuntimeWorkspaceSnapshotUnavailableError();
+  const runtime = createDesktopRuntimeSession();
+  try {
+    const result = await runtime.client.revertWorkspaceChanges({
+      sessionId: normalizedSession,
+      turnIds: normalizedTurns,
+    });
+    return {
+      revertedFiles: result.revertedFiles,
+      revertedAt: result.revertedAt,
+      turnIds: result.turnIds,
+    };
+  } finally {
+    runtime.dispose();
+  }
 }
 
 export async function fetchTeamFlow(
@@ -2603,6 +2551,18 @@ export async function fetchPendingInteraction(
   }
   const runtimeInteraction = pendingRuntimeInteraction(normalized);
   if (runtimeInteraction) return runtimeInteraction;
+  const runtime = createDesktopRuntimeSession();
+  try {
+    const pending = (await runtime.client.pendingInteractions({ sessionId: normalized }))[0];
+    if (pending) {
+      return registerRuntimeGenericInteraction(
+        pending,
+        (answer) => runtime.client.answerInteraction(answer),
+      );
+    }
+  } catch {
+    // Runtime may be unavailable while the app is still starting.
+  }
   return null;
 }
 
@@ -2648,6 +2608,19 @@ export async function replyInteraction({
     );
   }
   if (hasRuntimeInteraction(normalized)) {
+    if (hasRuntimeGenericInteraction(normalized)) {
+      await answerRuntimeGenericInteraction(normalized, {
+        decision: 'submit',
+        answers: (normalizedAnswers ?? []).map((answer) => ({
+          questionId: answer.question_id,
+          ...(answer.selected_option_id ? { selectedOptionId: answer.selected_option_id } : {}),
+          ...(answer.selected_option_ids ? { selectedOptionIds: answer.selected_option_ids } : {}),
+          ...(answer.input_text ? { inputText: answer.input_text } : {}),
+        })),
+        ...(trimmedRawText ? { rawText: trimmedRawText } : {}),
+      });
+      return;
+    }
     const candidate = String(
       normalizedAnswers?.find((answer) => answer.question_id === 'permission')
         ?.selected_option_id ?? trimmedRawText,
@@ -2680,6 +2653,10 @@ export async function cancelInteraction(interactionId: string) {
     return;
   }
   if (hasRuntimeInteraction(normalized)) {
+    if (hasRuntimeGenericInteraction(normalized)) {
+      await answerRuntimeGenericInteraction(normalized, { decision: 'cancel', answers: [] });
+      return;
+    }
     await answerRuntimeInteraction(normalized, 'cancel');
     return;
   }
@@ -2707,14 +2684,15 @@ export async function stopTurn(turnId: string): Promise<StopTurnResult> {
       raw: {},
     };
   }
-  if (stopActiveRuntimeTurn(normalized)) {
+  const receipt = await stopActiveRuntimeTurn(normalized);
+  if (receipt) {
     return {
       turnId: normalized,
-      accepted: true,
-      terminal: false,
-      alreadyInactive: false,
-      reason: 'runtime_stop_requested',
-      raw: { source: 'electron_runtime' },
+      accepted: receipt.accepted,
+      terminal: receipt.terminal,
+      alreadyInactive: !receipt.accepted && receipt.terminal,
+      reason: receipt.reason,
+      raw: { source: 'electron_runtime', receipt },
     };
   }
   const runtime = createDesktopRuntimeSession();
@@ -2822,11 +2800,19 @@ export async function sendGuidance(request: SendGuidanceRequest) {
       ),
     );
   }
-  enqueueRuntimeGuidance({
-    sessionId,
-    clientMessageId: request.clientMessageId.trim(),
-    content: guidance,
-  });
+  const runtime = createDesktopRuntimeSession();
+  try {
+    await runtime.client.enqueueGuidance({
+      protocol: 'bush.runtime_guidance.v1',
+      sessionId,
+      turnId,
+      messageId: request.clientMessageId.trim(),
+      content: guidance,
+      createdAt: new Date().toISOString(),
+    }, request.signal);
+  } finally {
+    runtime.dispose();
+  }
   return {
     continuationQueued: true,
     willContinueAfterCurrentRound: true,
@@ -2861,167 +2847,94 @@ function arrayFrom(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
-function shareLinkFromPayload(item: unknown): SessionShareLinkResult {
-  const value = asRecord(item);
-  return {
-    code: String(value.code ?? ''),
-    sessionId: String(value.session_id ?? value.sessionId ?? ''),
-    platform: String(value.platform ?? ''),
-    expiresAt: String(value.expires_at ?? value.expiresAt ?? ''),
-  };
-}
-
-function botOverviewFromPayload(item: unknown): BotPlatformOverview | null {
-  const value = asRecord(item);
-  const platform = normalizeBotPlatform(
-    value.platform ?? value.id ?? value.name,
-  );
-  if (!platform) {
-    return null;
-  }
-  return {
-    platform,
-    enabled: Boolean(
-      value.enabled ?? value.is_enabled ?? value.configured ?? false,
-    ),
-    configured: Boolean(value.configured ?? value.is_configured ?? false),
-    serviceStatus: normalizeBotServiceStatus(
-      value.service_status ??
-        value.serviceStatus ??
-        asRecord(value.service).status ??
-        value.status,
-    ),
-    accountCount: optionalNumber(
-      value.account_count ??
-        value.accountCount ??
-        (Array.isArray(value.accounts) ? value.accounts.length : undefined),
-    ),
-    displayName: optionalString(
-      value.display_name ?? value.displayName ?? value.title ?? value.label,
-    ),
-    lastError: optionalString(
-      value.last_error ?? value.lastError ?? value.error,
-    ),
-    missingRequiredFields: stringList(
-      value.missing_required_fields ?? value.missingRequiredFields,
-    ),
-    raw: value,
-  };
-}
-
-function botConfigFromPayload(
-  platform: BotPlatform,
+function maintenanceClearResultFromPayload(
   payload: Record<string, unknown>,
-): BotConfigResult {
-  const value = asRecord(payload);
+): MaintenanceClearResult {
+  const counts = asRecord(payload.counts);
   return {
-    platform: normalizeBotPlatform(value.platform) ?? platform,
-    enabled: Boolean(value.enabled ?? value.is_enabled ?? false),
-    configured: Boolean(value.configured ?? value.is_configured ?? false),
-    config: asRecord(value.config ?? value.values ?? value),
-    secrets: asRecord(
-      value.secrets ?? value.secret_fields ?? value.secretFields,
+    target: String(payload.target ?? ''),
+    cleared: Boolean(payload.cleared),
+    counts: Object.fromEntries(
+      Object.entries(counts).map(([key, value]) => {
+        const numeric = Number(value);
+        return [key, Number.isFinite(numeric) ? numeric : 0];
+      }),
     ),
-    missingRequiredFields: stringList(
-      value.missing_required_fields ?? value.missingRequiredFields,
-    ),
-    raw: value,
   };
 }
 
-function botStatusFromPayload(
-  platform: BotPlatform,
+function runtimeAssetResetPlanFromPayload(
   payload: Record<string, unknown>,
-): BotStatusResult {
-  const value = asRecord(payload);
+): RuntimeAssetResetPlan {
+  const categories = asRecord(payload.categories);
   return {
-    platform: normalizeBotPlatform(value.platform) ?? platform,
-    enabled: Boolean(
-      value.enabled ?? value.is_enabled ?? value.configured ?? false,
+    protocol: String(payload.protocol ?? ''),
+    categories: Object.fromEntries(
+      runtimeAssetCategories(Object.keys(categories)).map((category) => {
+        const item = asRecord(categories[category]);
+        return [category, {
+          sourcePath: String(item.source_path ?? item.sourcePath ?? ''),
+          targetPath: String(item.target_path ?? item.targetPath ?? ''),
+        }];
+      }),
     ),
-    configured: Boolean(value.configured ?? value.is_configured ?? false),
-    serviceStatus: normalizeBotServiceStatus(
-      value.service_status ??
-        value.serviceStatus ??
-        asRecord(value.service).status ??
-        value.status,
-    ),
-    accountCount: optionalNumber(
-      value.account_count ??
-        value.accountCount ??
-        (Array.isArray(value.accounts) ? value.accounts.length : undefined),
-    ),
-    pid: optionalNumber(value.pid),
-    returnCode: optionalNumber(value.returncode ?? value.returnCode),
-    startedAt: optionalString(value.started_at ?? value.startedAt),
-    stoppedAt: optionalString(value.stopped_at ?? value.stoppedAt),
-    logPath: optionalString(value.log_path ?? value.logPath),
-    accounts: recordList(value.accounts),
-    lastError: optionalString(
-      value.last_error ?? value.lastError ?? value.error,
-    ),
-    missingRequiredFields: stringList(
-      value.missing_required_fields ?? value.missingRequiredFields,
-    ),
-    raw: value,
+    requiresConfirmation: payload.requires_confirmation === true,
+    requiresIdleRuntime: payload.requires_idle_runtime === true,
+    destructive: payload.destructive === true,
+    restartRequiredAfterChange: payload.restart_required_after_change === true,
   };
 }
 
-function weixinLoginStartFromPayload(
+function runtimeAssetResetResultFromPayload(
   payload: Record<string, unknown>,
-): WeixinLoginStartResult {
-  const value = asRecord(payload);
-  const qrcodeSource =
-    value.qrcode_url ??
-    value.qrcodeUrl ??
-    value.qr_url ??
-    value.qrUrl ??
-    value.qr_code_url ??
-    value.qrCodeUrl ??
-    value.qrcode_img_content ??
-    value.qrcodeImgContent ??
-    value.qrcode_image ??
-    value.qrcodeImage ??
-    value.qrcode ??
-    value.qr_code ??
-    value.qrCode;
+): RuntimeAssetResetResult {
+  const categories = asRecord(payload.categories);
   return {
-    loginId: String(value.login_id ?? value.loginId ?? value.id ?? ''),
-    qrcodeUrl: normalizeImageSource(qrcodeSource),
-    expiresAt: optionalString(value.expires_at ?? value.expiresAt),
-    raw: value,
+    protocol: String(payload.protocol ?? ''),
+    selectedCategories: runtimeAssetCategories(
+      payload.selected_categories ?? payload.selectedCategories,
+    ),
+    categories: Object.fromEntries(
+      runtimeAssetCategories(Object.keys(categories)).map((category) => {
+        const item = asRecord(categories[category]);
+        return [category, {
+          changed: item.changed === true,
+          sourcePath: String(item.source_path ?? item.sourcePath ?? ''),
+          targetPath: String(item.target_path ?? item.targetPath ?? ''),
+          seedFileCount: finiteNumber(item.seed_file_count ?? item.seedFileCount),
+          restoredFileCount: finiteNumber(item.restored_file_count ?? item.restoredFileCount),
+          removedRuntimeFileCount: finiteNumber(
+            item.removed_runtime_file_count ?? item.removedRuntimeFileCount,
+          ),
+        }];
+      }),
+    ),
+    changed: payload.changed === true,
+    restartRequired: payload.restart_required === true,
+    effectiveAfter: String(payload.effective_after ?? payload.effectiveAfter ?? ''),
   };
 }
 
-function weixinLoginStatusFromPayload(
-  loginId: string,
-  payload: Record<string, unknown>,
-): WeixinLoginStatusResult {
-  const value = asRecord(payload);
-  return {
-    loginId: String(value.login_id ?? value.loginId ?? loginId),
-    status: normalizeWeixinLoginStatus(value.status),
-    account: asOptionalRecord(value.account),
-    message: optionalString(value.message ?? value.error ?? value.detail),
-    raw: value,
-  };
+function runtimeAssetCategories(value: unknown): RuntimeAssetCategory[] {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => String(item ?? '').trim().toLowerCase())
+    .filter((item): item is RuntimeAssetCategory => (
+      item === 'prompts' || item === 'skills' || item === 'agent_profiles' || item === 'teams'
+    ));
 }
 
-function botLogsFromPayload(
-  platform: BotPlatform,
-  payload: Record<string, unknown>,
-): BotServiceLogsResult {
-  const value = asRecord(payload);
-  const lines = Array.isArray(value.lines)
-    ? value.lines.map((item) => String(item))
-    : String(value.text ?? value.logs ?? '')
-        .split(/\r?\n/)
-        .filter(Boolean);
-  return {
-    platform: normalizeBotPlatform(value.platform) ?? platform,
-    lines,
-    raw: value,
-  };
+function assertRuntimeAssetResetProtocol(protocol: string) {
+  if (protocol === RUNTIME_ASSET_RESET_PROTOCOL) return;
+  throw new Error(localizedClientMessage(
+    `配置重置协议不兼容：${protocol || 'missing'}`,
+    `Incompatible runtime asset reset protocol: ${protocol || 'missing'}`,
+  ));
+}
+
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function skillDetailFromPayload(item: unknown): SkillDetail {
@@ -3215,58 +3128,6 @@ function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
     responsePrompt: task.finalResponse,
     report: task.finalResponse ? { finalResponse: task.finalResponse } : {},
   });
-}
-
-function normalizeBotPlatform(value: unknown): BotPlatform | null {
-  const text = String(value ?? '')
-    .trim()
-    .toLowerCase();
-  if (
-    text === 'weixin' ||
-    text === 'feishu' ||
-    text === 'telegram' ||
-    text === 'discord'
-  ) {
-    return text;
-  }
-  return null;
-}
-
-function normalizeBotServiceStatus(value: unknown): BotServiceStatus {
-  const text = String(value ?? '')
-    .trim()
-    .toLowerCase();
-  if (
-    text === 'starting' ||
-    text === 'running' ||
-    text === 'stopping' ||
-    text === 'failed'
-  ) {
-    return text;
-  }
-  return 'stopped';
-}
-
-function normalizeWeixinLoginStatus(value: unknown): WeixinLoginStatus {
-  const text = String(value ?? '')
-    .trim()
-    .toLowerCase();
-  if (
-    text === 'scanned' ||
-    text === 'scaned' ||
-    text === 'scaned_but_redirect'
-  ) {
-    return 'scanned';
-  }
-  if (
-    text === 'confirmed' ||
-    text === 'expired' ||
-    text === 'failed' ||
-    text === 'waiting'
-  ) {
-    return text;
-  }
-  return 'waiting';
 }
 
 function asRecord(value: unknown) {

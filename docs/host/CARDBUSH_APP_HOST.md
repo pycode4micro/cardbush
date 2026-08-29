@@ -1,41 +1,58 @@
-# CardBush Product Host
+# Independent Bot MCP boundary
 
-CardBush owns product integrations in the Electron main process. The Agent Runtime
-runs in an Electron Utility Process and communicates with the Product Host through
-the versioned typed IPC protocols in `@cardbush/bush-protocol`.
+CardBush does not own a Bot product, account store, login flow, channel adapter,
+management UI, process supervisor, or channel-specific configuration. A Bot is an
+independent project that users may install as an optional MCP server.
 
-The Product Host owns:
+The Bot project owns all of the following:
 
-- Bot configuration and lifecycle for Weixin, Feishu, Telegram and Discord;
-- Bot conversation routing into the shared Agent Runtime;
-- inbound media materialization and outbound file delivery;
-- native Computer Use execution;
-- the current default model snapshot used by Bot conversations.
+- account credentials and local secret storage;
+- login, QR confirmation, token refresh and account removal;
+- channel configuration and service lifecycle;
+- its own management HTML or desktop UI;
+- inbound polling/webhooks and channel-specific delivery semantics;
+- logs, upgrades and recovery.
 
-The Runtime owns Tool registration, admission, permissions, Execution Facts and
-Turn lifecycle. The Product Host executes only an already admitted typed request
-and returns structured results and Artifacts. It does not infer completion from
-text, select receipts, or classify tasks.
+None of those surfaces are proxied through CardBush settings or Product Host IPC.
+CardBush must not special-case a Bot MCP server ID or inspect its private config.
 
-Built-in product capabilities never connect back to CardBush over HTTP or MCP.
-External MCP servers remain independently configurable and are synchronized into
-the Runtime Tool Registry through their declared manifests.
+## MCP surface
 
-## IPC boundaries
+The recommended Bot MCP surface contains one model-visible tool named `deliver`.
+It sends text and/or already-created local artifacts through the Bot service. The
+Bot server declares the complete `cardbush/action_manifest` metadata required by
+the normal MCP Tool Registry. CardBush applies the same discovery, permission,
+receipt and execution-fact lifecycle used for every other external MCP tool.
 
-- Renderer to Product Host: `cardbush.product_host_ipc.v1` over
-  `cardbush-product-host:command`.
-- Runtime Utility Process to Electron Host: `host_tool_request` and
-  `host_tool_response` in `bush.runtime_ipc.v1`.
-- Runtime events to Renderer: `bush.runtime_event.v1`.
+The tool name is intentionally not registered by CardBush itself. If the Bot MCP
+is absent, `deliver` is absent. If multiple independent delivery plugins are
+installed, normal MCP namespacing keeps them distinct.
 
-Secrets are accepted only by typed configuration commands and are not projected
-back in responses. Bot state is stored under Electron `userData/product-host` with
-serialized writes and recoverable file replacement on Windows.
+An example input shape is:
 
-## Removed boundary
+```json
+{
+  "text": "任务已完成",
+  "deliverables": [
+    { "path": "D:/workspace/report.pdf" }
+  ],
+  "conversation_ref": "opaque-bot-owned-reference"
+}
+```
 
-The former Python `cardbush_app` child process, private `/host/v1/*` routes, local
-HTTP token, and built-in `cardbush_app` MCP self-registration are removed. Python
-BushServer remains a separately frozen reference implementation; it is not a
-CardBush production dependency.
+`conversation_ref` is opaque to CardBush. The Bot project validates it and owns
+the mapping to an account, channel and recipient. CardBush never stores channel
+tokens or derives a destination from a CardBush session ID.
+
+## CardBush-owned boundary
+
+CardBush still owns its TypeScript Agent Runtime, model configuration, sessions,
+permissions, and generic MCP snapshot loading. Desktop `computer_use` is provided
+by the separately launched, bundled `cardbush_apps` MCP server; it is not a Runtime
+Built-in Tool or a Product Host adapter. The former built-in
+Weixin/Feishu/Telegram/Discord adapters, BotSupervisor, Bot settings page,
+share-link handoff, and `transport_deliver` Product Host tool are intentionally
+removed.
+
+No localhost HTTP bridge is required. External MCP transport may be stdio or any
+other transport supported by the generic MCP client configuration.

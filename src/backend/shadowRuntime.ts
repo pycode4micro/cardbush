@@ -35,6 +35,7 @@ export async function createRuntimeShadowConversation(input: {
         shadowConversationId: id,
         shadowOfSessionId: input.sessionId,
         sourceTurnId,
+        sourceSessionRevision: source.revision,
       },
     });
     const now = new Date().toISOString();
@@ -47,7 +48,11 @@ export async function createRuntimeShadowConversation(input: {
       status: 'active',
       createdAt: now,
       updatedAt: now,
-      raw: { source: 'electron_runtime', temporary: true },
+      raw: {
+        source: 'electron_runtime',
+        temporary: true,
+        sourceSessionRevision: source.revision,
+      },
     };
     conversations.set(id, state);
     return publicRecord(state);
@@ -89,6 +94,12 @@ export async function streamRuntimeShadowConversationMessage(
       runtime.client.getToolCatalogDetails(controller.signal),
     ]);
     if (!source) throw new Error('The source conversation is no longer available.');
+    const frozenRevision = Number(state.raw.sourceSessionRevision);
+    if (Number.isSafeInteger(frozenRevision) && source.revision !== frozenRevision) {
+      state.status = 'stale';
+      state.updatedAt = new Date().toISOString();
+      throw new Error('The source conversation changed after this Shadow was created. Close it and open a new Shadow to use the updated project context.');
+    }
     const sourceTurnIndex = state.sourceTurnId
       ? source.turns.findIndex((turn) => turn.turnId === state.sourceTurnId)
       : -1;
@@ -111,9 +122,7 @@ export async function streamRuntimeShadowConversationMessage(
       model: resolved.model,
       providerBinding: resolved.binding,
       tools: catalog
-        .filter((entry) =>
-          entry.manifest.dispatch_side_effect === 'none' ||
-          entry.manifest.operation === 'turn.declare_outcome')
+        .filter((entry) => entry.manifest.dispatch_side_effect === 'none')
         .map((entry) => entry.definition),
       permissionMode: 'user_free',
       planEnabled: false,
@@ -185,7 +194,12 @@ async function resolveShadowState(
     status: 'active',
     createdAt: session.createdAt,
     updatedAt: now,
-    raw: { source: 'electron_runtime', temporary: true, restored: true },
+    raw: {
+      source: 'electron_runtime',
+      temporary: true,
+      restored: true,
+      sourceSessionRevision: Number(session.metadata?.sourceSessionRevision),
+    },
   };
   conversations.set(conversationId, state);
   return state;

@@ -1,0 +1,243 @@
+import { execFile } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { randomUUID } from 'node:crypto';
+
+import type { Artifact } from '@cardbush/bush-protocol';
+import type { ComputerUsePluginConfig } from '../config.js';
+
+const execFileAsync = promisify(execFile);
+
+export interface ComputerUseResult {
+  output: unknown;
+  paths: string[];
+  artifacts: Artifact[];
+}
+
+export async function executeComputerUse(
+  input: Record<string, unknown>,
+  config: ComputerUsePluginConfig,
+): Promise<ComputerUseResult> {
+  ensureWindows();
+  const action = String(input.action ?? '').trim();
+  if (action === 'observe' || action === 'screenshot') {
+    const capture = await captureDesktop(config.screenshotDirectory);
+    const windows = action === 'observe' ? await listWindows() : undefined;
+    return {
+      output: { ...capture.output, ...(windows ? { windows } : {}) },
+      paths: [capture.path],
+      artifacts: [capture.artifact],
+    };
+  }
+  if (action === 'open_app') {
+    if (!config.allowOpenApp) throw new Error('Opening applications is disabled in Computer Use settings.');
+    const app = requiredString(input.app, 'app');
+    await powershell(`Start-Process -FilePath $env:CARDBUSH_APP_TARGET`, {
+      CARDBUSH_APP_TARGET: app,
+    });
+    return plain({ action, app });
+  }
+  if (action === 'window') {
+    if (String(input.operation ?? '').trim().toLowerCase() === 'close' && !config.allowWindowClose) {
+      throw new Error('Closing windows is disabled in Computer Use settings.');
+    }
+    return plain(await controlWindow(input));
+  }
+  if (['click', 'type', 'key', 'scroll', 'drag'].includes(action)) {
+    return plain(await runInput(action, input));
+  }
+  throw new Error(`Unsupported computer_use action: ${action}`);
+}
+
+async function captureDesktop(configuredDirectory: string) {
+  const directory = configuredDirectory || join(tmpdir(), 'cardbush-apps', 'captures');
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, `capture-${Date.now()}-${randomUUID()}.png`);
+  const script = String.raw`
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+try {
+  $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+  $bitmap.Save($env:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
+  [PSCustomObject]@{ path=$env:CARDBUSH_CAPTURE_PATH; x=$bounds.Left; y=$bounds.Top; width=$bounds.Width; height=$bounds.Height } | ConvertTo-Json -Compress
+} finally {
+  $graphics.Dispose()
+  $bitmap.Dispose()
+}`;
+  const output = record(json(await powershell(script, { CARDBUSH_CAPTURE_PATH: path })));
+  const artifact: Artifact = {
+    artifact_id: `artifact_${randomUUID()}`,
+    type: 'image',
+    path,
+    media_type: 'image/png',
+    display: 'inline',
+    metadata: { model_input: true, read_only: true, source: 'cardbush_apps' },
+  };
+  return { path, output, artifact };
+}
+
+async function listWindows(): Promise<unknown[]> {
+  const output = await powershell(String.raw`
+$items = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.MainWindowTitle -ne 'Program Manager'
+} | ForEach-Object {
+  [PSCustomObject]@{ process_id=$_.Id; hwnd=$_.MainWindowHandle.ToInt64(); title=$_.MainWindowTitle; process_name=$_.ProcessName }
+}
+@($items) | ConvertTo-Json -Compress`);
+  if (!output.trim()) return [];
+  const value = json(output);
+  return Array.isArray(value) ? value : [value];
+}
+
+async function controlWindow(input: Record<string, unknown>) {
+  const operation = String(input.operation ?? 'activate').trim().toLowerCase();
+  const normalized = operation === 'activate' ? 'focus' : operation;
+  if (!['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize'].includes(normalized)) {
+    throw new Error(`Unsupported window operation: ${operation}`);
+  }
+  const windows = await listWindows() as Array<Record<string, unknown>>;
+  const hwnd = optionalInteger(input.hwnd);
+  const pattern = String(input.title_pattern ?? '').trim().toLowerCase();
+  const matches = windows.filter((window) => hwnd
+    ? Number(window.hwnd) === hwnd
+    : pattern && String(window.title ?? '').toLowerCase().includes(pattern));
+  if (matches.length !== 1) throw new Error(matches.length ? 'Window selector is ambiguous.' : 'Window was not found.');
+  const target = matches[0];
+  const bounds = {
+    x: optionalInteger(input.x),
+    y: optionalInteger(input.y),
+    width: optionalInteger(input.width),
+    height: optionalInteger(input.height),
+  };
+  if (normalized === 'move' && (bounds.x == null || bounds.y == null)) throw new Error('move requires x and y.');
+  if (normalized === 'resize' && (bounds.width == null || bounds.height == null)) throw new Error('resize requires width and height.');
+  await powershell(windowControlScript, {
+    CARDBUSH_WINDOW_HWND: String(target.hwnd),
+    CARDBUSH_WINDOW_OPERATION: normalized,
+    CARDBUSH_WINDOW_X: String(bounds.x ?? 0),
+    CARDBUSH_WINDOW_Y: String(bounds.y ?? 0),
+    CARDBUSH_WINDOW_WIDTH: String(bounds.width ?? 0),
+    CARDBUSH_WINDOW_HEIGHT: String(bounds.height ?? 0),
+  });
+  return { action: 'window', operation: normalized, target };
+}
+
+async function runInput(action: string, input: Record<string, unknown>) {
+  const payload = Buffer.from(JSON.stringify({ action, ...input }), 'utf8').toString('base64');
+  const output = await powershell(computerInputScript, { CARDBUSH_INPUT_BASE64: payload });
+  return output.trim() ? json(output) : { action };
+}
+
+const windowControlScript = String.raw`
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class CardBushWindowControl {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int h2, uint f);
+}
+'@
+$h = [IntPtr]([Int64]$env:CARDBUSH_WINDOW_HWND)
+$op = $env:CARDBUSH_WINDOW_OPERATION
+$rect = New-Object CardBushWindowControl+RECT
+[void][CardBushWindowControl]::GetWindowRect($h, [ref]$rect)
+switch ($op) {
+  'focus' { [void][CardBushWindowControl]::ShowWindow($h,9); [void][CardBushWindowControl]::SetForegroundWindow($h) }
+  'minimize' { [void][CardBushWindowControl]::ShowWindow($h,6) }
+  'maximize' { [void][CardBushWindowControl]::ShowWindow($h,3) }
+  'restore' { [void][CardBushWindowControl]::ShowWindow($h,9) }
+  'close' { [void][CardBushWindowControl]::PostMessage($h,0x0010,[IntPtr]::Zero,[IntPtr]::Zero) }
+  'move' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,[int]$env:CARDBUSH_WINDOW_X,[int]$env:CARDBUSH_WINDOW_Y,$rect.Right-$rect.Left,$rect.Bottom-$rect.Top,0x0014) }
+  'resize' { [void][CardBushWindowControl]::SetWindowPos($h,[IntPtr]::Zero,$rect.Left,$rect.Top,[int]$env:CARDBUSH_WINDOW_WIDTH,[int]$env:CARDBUSH_WINDOW_HEIGHT,0x0014) }
+}`;
+
+const computerInputScript = String.raw`
+$json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CARDBUSH_INPUT_BASE64))
+$p = $json | ConvertFrom-Json
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class CardBushInput {
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,int d,UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);
+  public static void Key(byte k,bool d){keybd_event(k,0,d?0u:2u,UIntPtr.Zero);}
+  public static void Drag(int x,int y,int tx,int ty,int steps,int duration){SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);for(int i=1;i<=steps;i++){SetCursorPos(x+(tx-x)*i/steps,y+(ty-y)*i/steps);if(duration>0)Thread.Sleep(duration/steps);}mouse_event(4,0,0,0,UIntPtr.Zero);}
+}
+'@
+function KeyCode([string]$key) {
+  $named = @{backspace=8;tab=9;enter=13;shift=16;ctrl=17;control=17;alt=18;escape=27;esc=27;space=32;pageup=33;pagedown=34;end=35;home=36;left=37;up=38;right=39;down=40;delete=46;win=91}
+  $lower = $key.ToLowerInvariant()
+  if ($named.ContainsKey($lower)) { return [byte]$named[$lower] }
+  if ($lower -match '^[a-z0-9]$') { return [byte][char]$lower.ToUpperInvariant() }
+  if ($lower -match '^f([1-9]|1[0-2])$') { return [byte](111 + [int]$Matches[1]) }
+  throw "Unsupported key: $key"
+}
+switch ($p.action) {
+  'click' { $b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[void][CardBushInput]::SetCursorPos([int]$p.x,[int]$p.y);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[UIntPtr]::Zero);[CardBushInput]::mouse_event($b[1],0,0,0,[UIntPtr]::Zero)} }
+  'scroll' { [CardBushInput]::mouse_event(2048,0,0,([int]$p.delta)*120,[UIntPtr]::Zero) }
+  'drag' { $steps=if($null -ne $p.steps){[int]$p.steps}else{20};$duration=if($null -ne $p.duration_ms){[int]$p.duration_ms}else{400};[CardBushInput]::Drag([int]$p.x,[int]$p.y,[int]$p.to_x,[int]$p.to_y,$steps,$duration) }
+  'type' { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait([string]$p.text) }
+  'key' { $keys=@($p.keys);if($keys.Count -eq 0 -or $null -eq $keys[0]){$keys=@($p.key)};$codes=@($keys|%{KeyCode ([string]$_)});$codes|%{[CardBushInput]::Key($_,$true)};[array]::Reverse($codes);$codes|%{[CardBushInput]::Key($_,$false)} }
+}
+[PSCustomObject]@{action=$p.action} | ConvertTo-Json -Compress`;
+
+async function powershell(script: string, extraEnv: Record<string, string> = {}): Promise<string> {
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    script,
+  ], {
+    windowsHide: true,
+    timeout: 15_000,
+    maxBuffer: 8 * 1024 * 1024,
+    env: { ...process.env, ...extraEnv },
+  });
+  return stdout;
+}
+
+function plain(output: unknown): ComputerUseResult {
+  return { output, paths: [], artifacts: [] };
+}
+
+function json(value: string): unknown {
+  return JSON.parse(value.trim());
+}
+
+function requiredString(value: unknown, label: string): string {
+  const result = typeof value === 'string' ? value.trim() : '';
+  if (!result) throw new Error(`${label} is required.`);
+  return result;
+}
+
+function optionalInteger(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const result = Number(value);
+  if (!Number.isSafeInteger(result)) throw new Error('Expected a safe integer.');
+  return result;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Expected a structured desktop result.');
+  }
+  return value as Record<string, unknown>;
+}
+
+function ensureWindows(): void {
+  if (process.platform !== 'win32') throw new Error('computer_use currently requires Windows.');
+}

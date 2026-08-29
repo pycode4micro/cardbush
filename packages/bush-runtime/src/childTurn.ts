@@ -90,6 +90,12 @@ export function buildChildTurnRequest(input: {
     temperature: parentRequest.temperature,
     topP: parentRequest.topP,
     reasoningEffort: parentRequest.reasoningEffort,
+    requestCapabilities: {
+      vision: parentRequest.requestCapabilities?.vision ?? false,
+      interactiveRequests: false,
+      userChoice: false,
+    },
+    permissionMode: parentRequest.permissionMode ?? "task_free",
     metadata: {
       ...parentRequest.metadata,
       agentRole: "child",

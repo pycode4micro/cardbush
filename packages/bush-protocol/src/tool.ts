@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { turnOutcomeDeclarationSchema } from "./turn.js";
 
 export const BUSH_TOOL_CALL_PROTOCOL = "bush.tool_call.v1" as const;
 export const BUSH_TOOL_RESULT_PROTOCOL = "bush.tool_result.v1" as const;
@@ -15,6 +14,13 @@ export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
 export const GET_RUNTIME_TOOL_CATALOG_COMMAND = "runtime.get_tool_catalog" as const;
 export const GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND =
   "runtime.get_tool_catalog_details" as const;
+export const REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND =
+  "runtime.revert_workspace_changes" as const;
+
+export const revertRuntimeWorkspaceChangesSchema = z.object({
+  sessionId: z.string().min(1),
+  turnIds: z.array(z.string().min(1)).min(1),
+});
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),
@@ -138,7 +144,6 @@ export const toolResultSchema = z.object({
       }),
     )
     .default([]),
-  turn_outcome: turnOutcomeDeclarationSchema.optional(),
   error: z
     .object({
       code: z.string().min(1),

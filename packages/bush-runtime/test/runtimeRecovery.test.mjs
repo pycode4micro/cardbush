@@ -226,6 +226,62 @@ test("resumes a Session Turn with prior tool messages and commits it exactly onc
   secondSessions.close();
 });
 
+test("settles an orphaned durable Session Turn as stopped during product startup", async (t) => {
+  const roots = stateRoots(t);
+  const firstEvents = new FileRuntimeEventPersistence({ root: roots.events });
+  const firstSessions = new FileSessionEventPersistence({ root: roots.sessions });
+  const firstLog = persistedEventLog(firstEvents);
+  const first = new InMemoryRuntimeHost({
+    provider: hangingProvider(),
+    eventLog: firstLog,
+    checkpointStore: new FileRuntimeCheckpointStore(roots.checkpoints),
+    sessionStore: new SessionStore({ persistence: firstSessions }),
+    sessionNow: () => "2026-08-29T00:00:00.000Z",
+    checkpointNow: () => "2026-08-29T00:00:00.000Z",
+  });
+  void first.runSessionTurn({
+    protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+    requestId: "request_session_recovery",
+    sessionId: "session_recovery",
+    turnId: "turn_recovery",
+    model: "fixture-model",
+    prefixMessages: [],
+    inputMessages: [{
+      messageId: "user_recovery",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      message: { role: "user", content: "recover this" },
+    }],
+    tools: [],
+  });
+  await waitForEvent(firstLog, "assistant_segment_delta");
+  firstEvents.close();
+  firstSessions.close();
+
+  const secondEvents = new FileRuntimeEventPersistence({ root: roots.events });
+  const secondSessions = new FileSessionEventPersistence({ root: roots.sessions });
+  const secondStore = new SessionStore({ persistence: secondSessions });
+  const secondLog = persistedEventLog(secondEvents);
+  new InMemoryRuntimeHost({
+    provider: providerWithRounds([]),
+    eventLog: secondLog,
+    checkpointStore: new FileRuntimeCheckpointStore(roots.checkpoints),
+    sessionStore: secondStore,
+    settleOrphanedTurns: true,
+    sessionNow: () => "2026-08-29T00:00:01.000Z",
+  });
+
+  const terminal = secondLog.replay("session_recovery", "turn_recovery").at(-1);
+  const committed = secondStore.snapshot("session_recovery").turns[0];
+  assert.equal(terminal.kind, "turn_terminal");
+  assert.equal(terminal.payload.status, "stopped");
+  assert.equal(terminal.payload.reason, "runtime_restart_interrupted");
+  assert.equal(committed.status, "stopped");
+  assert.equal(committed.reason, "runtime_restart_interrupted");
+  assert.equal(new FileRuntimeCheckpointStore(roots.checkpoints).list().length, 0);
+  secondEvents.close();
+  secondSessions.close();
+});
+
 test("atomically replaces checkpoints and fails closed after corruption", (t) => {
   const roots = stateRoots(t);
   const store = new FileRuntimeCheckpointStore(roots.checkpoints);

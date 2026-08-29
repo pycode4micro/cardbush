@@ -70,7 +70,7 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /enqueueRuntimeGuidance\(\{/);
+assert.match(apiSource, /runtime\.client\.enqueueGuidance\(\{/);
 assert.match(apiSource, /continuationQueued:\s*true/);
 assert.doesNotMatch(apiSource, /\/v1\/turns/);
 assert.doesNotMatch(apiSource, /BushServerHttpError/);

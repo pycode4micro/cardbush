@@ -1,0 +1,45 @@
+# CardBush Apps MCP boundary
+
+`cardbush_apps` is a standalone MCP 2.x stdio server bundled with the CardBush
+desktop distribution. Electron launches it as a child process and the Runtime
+connects through the same MCP client and Tool Registry used for user-installed
+servers. It does not open an HTTP port.
+
+## Ownership
+
+- `@cardbush/bush-runtime` owns immutable Built-in Tools, admission, permissions,
+  receipts, execution facts, Turn lifecycle and recovery.
+- `@cardbush/apps-mcp` owns CardBush-shipped app plugins. The initial plugin is
+  `computer_use`.
+- Product Host owns model and plugin configuration, but never plugin execution.
+- External Bot, Browser, Office and other products remain independent MCP servers.
+
+The Runtime must never hard-code a `computer_use` handler or a private
+`host_tool_request` transport. A plugin is visible only after MCP discovery and is
+namespaced by the MCP client. Every state-changing tool supplies a complete
+`cardbush/action_manifest`; results return the Runtime-issued receipt identity and
+normal artifacts.
+
+## Process lifecycle
+
+The bundled server ID `cardbush_apps` is reserved. Renderer-stored MCP
+configuration cannot replace it. When enabled, Runtime injects the server into its
+MCP snapshot, launches it with Electron's Node runtime, and closes it with the
+Runtime Utility Process. A Product Host revision participates in the Runtime MCP
+snapshot revision, so a service or plugin change reconnects the server without
+reusing an old snapshot identity.
+
+## Product settings
+
+The Product Host persists `product-host/config/apps.json` and exposes typed
+`apps.get` / `apps.update` commands. Settings support:
+
+- enabling or disabling the complete `cardbush_apps` MCP service;
+- installing, uninstalling, enabling and disabling individual bundled plugins;
+- plugin-owned configuration fields. `computer_use` currently supports a capture
+  directory and policy switches for opening applications and closing windows.
+
+Uninstall is a local catalog state change: the bundled package remains available
+for reinstall, while its Tool is not registered with MCP. Disabling the service
+removes the complete server from Runtime's MCP snapshot. Neither operation adds a
+Runtime Built-in or a private execution bridge.

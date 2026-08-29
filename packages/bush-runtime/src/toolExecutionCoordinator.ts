@@ -10,6 +10,7 @@ import {
 
 import type { PermissionResolver, ToolRegistry } from "./toolRegistry.js";
 import type { ToolHandlerContext } from "./toolRegistry.js";
+import { BUSH_TOOL_CALL_PROTOCOL } from "@cardbush/bush-protocol";
 
 export interface ToolExecutionIdentity {
   requestId: string;
@@ -204,6 +205,7 @@ export class ToolExecutionCoordinator {
     this.#observer.running?.(toolCall, identity);
     let candidate: ToolResult;
     try {
+      let nestedOrdinal = 0;
       candidate = toolResultSchema.parse(
         await registration.execute({
           requestId: identity.requestId,
@@ -215,6 +217,18 @@ export class ToolExecutionCoordinator {
           capabilityIds,
           signal,
           turn,
+          invokeTool: async (name, input) => {
+            const nested = await this.execute({
+              protocol: BUSH_TOOL_CALL_PROTOCOL,
+              id: `${toolCall.id}:child:${nestedOrdinal}`,
+              name,
+              argumentsText: JSON.stringify(input),
+            }, {
+              ...identity,
+              ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
+            }, signal, turn);
+            return nested.result;
+          },
         }),
       );
     } catch (error) {

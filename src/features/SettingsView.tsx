@@ -2,7 +2,6 @@ import {
   AlertCircle,
   Archive,
   ArrowLeft,
-  Bot,
   Check,
   CheckCircle2,
   ChevronUp,
@@ -17,11 +16,11 @@ import {
   Monitor,
   MonitorCog,
   Network,
+  PackageOpen,
   Plus,
   RefreshCw,
   RotateCcw,
   Settings,
-  Smartphone,
   Terminal,
   Trash2,
   Upload,
@@ -39,29 +38,29 @@ import {
 } from 'react';
 
 import {
+  RUNTIME_ASSET_RESET_PROTOCOL,
   clearConversationHistory,
-  controlBotService,
+  clearLogsCache,
   deleteMcpServerConfig,
-  deleteWeixinAccount,
-  fetchBotConfig,
-  fetchBots,
-  fetchBotServiceLogs,
-  fetchBotStatus,
+  fetchCardbushAppsConfiguration,
+  fetchMcpServers,
   fetchBackendCapabilities,
   fetchBackendReadiness,
-  fetchMcpServers,
+  fetchModelConfigs,
+  fetchRuntimeAssetResetPlan,
+  fetchRuntimeMaintenanceLogs,
   fetchSubagentRuntime,
-  fetchWeixinLoginStatus,
-  saveBotConfig,
+  isProductHostCommandError,
+  resetRuntimeAssets,
+  saveCardbushAppsConfiguration,
   saveMcpServerConfig,
   setMcpServerEnabled,
-  startWeixinLogin,
   validateMcpServerConfig,
   type MaintenanceClearResult,
   type McpServerConfigInput,
 } from '../backend/api';
+import packageMetadata from '../../package.json';
 import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
-import { BotPlatformIcon } from '../components/BotPlatformIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
 import { SubagentsPanel } from './SubagentsPanel';
@@ -74,25 +73,23 @@ import type {
   AppLanguageMode,
   AppSettingsState,
   BackendCapabilities,
-  BotConfigResult,
-  BotPlatform,
-  BotPlatformOverview,
-  BotServiceStatus,
-  BotStatusResult,
+  CardbushAppsConfiguration,
+  CardbushAppPlugin,
   ConversationSummary,
   LightThemeStyle,
   ManagedModelConfig,
   McpServerConfig,
   McpServerValidationResult,
   McpTransport,
+  RuntimeAssetCategory,
+  RuntimeAssetResetPlan,
+  RuntimeAssetResetResult,
   SettingsSection,
   ThemePreference,
-  WeixinLoginStartResult,
-  WeixinLoginStatus,
-  WeixinLoginStatusResult,
 } from '../types';
 
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
+const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const customProviderValue = '__custom_provider__';
 const defaultMaxContextTokens = 256_000;
 const suggestedProviders = [
@@ -116,13 +113,11 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
   'os',
   'runtime',
   'proxy',
-  'bots',
   'subagents',
   'mcp',
   'cache',
   'models',
   'diagnostics',
-  'mobile',
   'about',
 ];
 
@@ -131,13 +126,11 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   os: { zh: '桌面 OS', en: 'Desktop OS' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
-  bots: { zh: 'Bot 连接', en: 'Bot links' },
   subagents: { zh: '子任务运行态', en: 'Task runtime' },
   mcp: { zh: '插件与 MCP', en: 'Plugins & MCP' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
-  diagnostics: { zh: '连接诊断', en: 'Diagnostics' },
-  mobile: { zh: '手机连接', en: 'Mobile' },
+  diagnostics: { zh: '运行诊断', en: 'Runtime diagnostics' },
   about: { zh: '关于', en: 'About' },
 };
 
@@ -146,14 +139,12 @@ const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: str
   os: { zh: '配置桌面模式、开机启动和手柄操作。', en: 'Configure desktop mode, startup behavior, and controller input.' },
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
-  bots: { zh: '连接并管理外部消息平台。', en: 'Connect and manage external messaging platforms.' },
   subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
   mcp: { zh: '统一管理插件提供的连接和 MCP 服务。', en: 'Manage plugin-provided connections and MCP servers.' },
   cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
   models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
-  diagnostics: { zh: '检查后端、鉴权与模型请求配置。', en: 'Inspect backend, authentication, and model request settings.' },
-  mobile: { zh: '配置手机端访问和局域网连接。', en: 'Configure mobile access and local-network connectivity.' },
-  about: { zh: '查看版本、服务地址和项目链接。', en: 'View version, service endpoints, and project links.' },
+  diagnostics: { zh: '检查内嵌 Runtime、Product Host 与模型配置。', en: 'Inspect the embedded Runtime, Product Host, and model configuration.' },
+  about: { zh: '查看版本与本地运行架构。', en: 'View version and local runtime architecture.' },
 };
 
 const settingsNavigationGroups: Array<{
@@ -170,7 +161,7 @@ const settingsNavigationGroups: Array<{
   },
   {
     label: { zh: '连接', en: 'Connections' },
-    sections: ['proxy', 'bots', 'mobile'],
+    sections: ['proxy'],
   },
   {
     label: { zh: '系统', en: 'System' },
@@ -183,13 +174,11 @@ const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
   os: MonitorCog,
   runtime: Terminal,
   proxy: Monitor,
-  bots: SettingsBotIcon,
   subagents: Network,
   mcp: McpLogoIcon,
   cache: Archive,
   models: Cpu,
   diagnostics: Clipboard,
-  mobile: Smartphone,
   about: Circle,
 };
 
@@ -197,24 +186,6 @@ function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection 
   return visibleSettingsSections.includes(value as VisibleSettingsSection)
     ? (value as VisibleSettingsSection)
     : 'profile';
-}
-
-function SettingsBotIcon({
-  size = 18,
-  className,
-}: {
-  size?: number;
-  className?: string;
-}) {
-  return (
-    <span
-      className={`settings-bot-icon ${className ?? ''}`.trim()}
-      style={{ width: size, height: size }}
-      aria-hidden="true"
-    >
-      <BotPlatformIcon platform="any" />
-    </span>
-  );
 }
 
 function McpLogoIcon({
@@ -241,13 +212,6 @@ function McpLogoIcon({
   );
 }
 
-const botPlatforms: BotPlatform[] = ['weixin', 'feishu', 'telegram', 'discord'];
-const botPlatformLabels: Record<BotPlatform, { zh: string; en: string }> = {
-  weixin: { zh: '微信', en: 'WeChat' },
-  feishu: { zh: '飞书', en: 'Feishu' },
-  telegram: { zh: 'Telegram', en: 'Telegram' },
-  discord: { zh: 'Discord', en: 'Discord' },
-};
 export function SettingsView({
   active,
   onReady,
@@ -261,6 +225,7 @@ export function SettingsView({
   selectedModel,
   availableModels,
   backendCapabilities,
+  runtimeBusy,
   conversations,
   initialSection,
   onBack,
@@ -272,6 +237,7 @@ export function SettingsView({
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
+  onRuntimeAssetsReloaded,
 }: {
   active: boolean;
   onReady: () => void;
@@ -285,6 +251,7 @@ export function SettingsView({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
+  runtimeBusy: boolean;
   conversations: ConversationSummary[];
   initialSection: SettingsSection;
   onBack: () => void;
@@ -296,6 +263,7 @@ export function SettingsView({
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -606,8 +574,8 @@ export function SettingsView({
             title={language === 'zh' ? '运行环境' : 'Runtime environment'}
             subtitle={
               language === 'zh'
-                ? '选择终端命令默认在哪个环境中执行。该设置会传给内置 TypeScript Runtime。'
-                : 'Choose where terminal commands run by default. The setting is passed to the embedded TypeScript Runtime.'
+                ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给内嵌 Runtime。'
+                : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to the embedded Runtime with chat requests.'
             }
           >
             <SettingsRadio
@@ -842,8 +810,8 @@ export function SettingsView({
             <MonitorCog size={16} />
             <span>
               {language === 'zh'
-                ? '应用启动、软件识别、窗口控制和界面操作由桌面 Product Host 提供。'
-                : 'App launch, discovery, window control, and UI actions are provided by the desktop Product Host.'}
+                ? '应用启动、软件识别、窗口控制和界面操作由桌面端与内嵌 Runtime 共同提供。'
+                : 'App startup, discovery, window control, and UI actions are provided by the desktop host and embedded Runtime.'}
             </span>
           </div>
           <div className="settings-actions">
@@ -871,8 +839,8 @@ export function SettingsView({
             title={language === 'zh' ? '不使用代理' : 'No proxy'}
             subtitle={
               language === 'zh'
-                ? 'Runtime 使用进程内 IPC；代理设置只影响 Provider 与外部集成。'
-                : 'Runtime uses process IPC; proxy settings affect only providers and external integrations.'
+                ? '默认直连。代理仅用于模型提供商和远程 MCP 等外部网络请求，内嵌 Runtime 不经过代理。'
+                : 'Direct connection by default. Proxies only affect external provider and remote MCP traffic; the embedded Runtime does not use them.'
             }
             checked={settings.proxy.mode === 'none'}
             onChange={() => updateProxy({ mode: 'none' })}
@@ -940,8 +908,8 @@ export function SettingsView({
                   ? '开启后浏览器工具不会读取或保存 cookie/localStorage；默认关闭以保持登录态。'
                   : 'When enabled, browser tools do not read or save cookie/localStorage. Off keeps signed-in state.'
                 : language === 'zh'
-                  ? '当前 Runtime 未声明 browser_privacy_mode，因此不会发送该模式。'
-                  : 'The current Runtime does not advertise browser_privacy_mode, so this mode is not sent.'
+                  ? '当前内嵌 Runtime 未声明 browser_privacy_mode，前端不会发送该模式。'
+                  : 'The embedded Runtime does not advertise browser_privacy_mode, so this mode is not sent.'
             }
             checked={settings.browser.privacyMode}
             disabled={!backendCapabilities.browserPrivacyMode}
@@ -990,41 +958,6 @@ export function SettingsView({
         />
       );
     }
-    if (section === 'bots') {
-      if (window.cardbushDesktop?.productHostCommand == null) {
-        return (
-          <SettingsCard
-            title={language === 'zh' ? 'Bot 连接' : 'Bot links'}
-            subtitle={
-              language === 'zh'
-                ? 'Bot 的配置、进程与会话由 CardBush Product Host 管理。'
-                : 'Bot configuration, processes, and sessions are managed by CardBush Product Host.'
-            }
-          >
-            <div className="maintenance-action-row">
-              <AlertCircle size={18} />
-              <span>
-                <strong>
-                  {language === 'zh' ? '未连接 Bot 管理服务' : 'Bot manager not connected'}
-                </strong>
-                <small>
-                  {language === 'zh'
-                    ? '当前页面不在 CardBush 桌面宿主中运行，无法配置、登录或启停 Bot。'
-                    : 'This page is not running inside the CardBush desktop host, so Bot configuration and lifecycle controls are unavailable.'}
-                </small>
-              </span>
-            </div>
-          </SettingsCard>
-        );
-      }
-      return (
-        <BotSettingsPanel
-          language={language}
-          modelConfigs={settings.managedModelConfigs}
-          selectedModel={selectedModel}
-        />
-      );
-    }
     if (section === 'subagents') {
       return (
         <SubagentsPanel
@@ -1050,6 +983,8 @@ export function SettingsView({
           capabilities={backendCapabilities}
           onNotify={notify}
           onConversationHistoryCleared={onConversationHistoryCleared}
+          runtimeBusy={runtimeBusy}
+          onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
         />
       );
     }
@@ -1059,14 +994,16 @@ export function SettingsView({
           language={language}
           settings={settings}
           selectedModel={selectedModel}
-          onSettingsChange={updateSettings}
         />
       );
     }
-    if (section === 'mobile') {
-      return <MobileSettingsPanel language={language} />;
-    }
-    return <AboutSettingsPanel language={language} />;
+    return (
+      <AboutSettingsPanel
+        language={language}
+        settings={settings}
+        selectedModel={selectedModel}
+      />
+    );
   })();
   const SectionIcon = settingsIcons[section];
 
@@ -1925,73 +1862,606 @@ function CacheMaintenancePanel({
   capabilities,
   onNotify,
   onConversationHistoryCleared,
+  runtimeBusy,
+  onRuntimeAssetsReloaded,
 }: {
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
+  runtimeBusy: boolean;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busyTarget, setBusyTarget] = useState<'conversation' | 'logs' | ''>('');
   const [result, setResult] = useState<MaintenanceClearResult | null>(null);
   const [error, setError] = useState('');
-  const supported = capabilities.maintenanceConversationHistoryClear;
-  const runClear = useCallback(async () => {
-    if (busy || !supported) return;
-    const confirmed = window.confirm(language === 'zh'
-      ? '确定清空本地对话历史吗？这不会删除项目文件或 provider 侧缓存。'
-      : 'Clear local conversation history? Project files and provider-side caches are not deleted.');
-    if (!confirmed) return;
-    setBusy(true);
-    setError('');
+
+  const runClear = useCallback(
+    async (target: 'conversation' | 'logs') => {
+      if (busyTarget) {
+        return;
+      }
+      const supported =
+        target === 'conversation'
+          ? capabilities.maintenanceConversationHistoryClear
+          : capabilities.maintenanceLogsCacheClear;
+      if (!supported) {
+        setError(
+          language === 'zh'
+            ? 'Product Host 尚未提供这个缓存维护命令。'
+            : 'Product Host does not expose this cache maintenance command yet.',
+        );
+        return;
+      }
+      const confirmed = window.confirm(
+        target === 'conversation'
+          ? language === 'zh'
+            ? '确定清空本地对话历史吗？这会删除会话、轮次、摘要和 token usage，但不会删除项目文件或任务工作目录。'
+            : 'Clear local conversation history? This removes sessions, turns, summaries, and token usage, but not project files or task workspaces.'
+          : language === 'zh'
+            ? '确定清空本地日志缓存吗？这只会删除 chain logs 和 tool failure logs，不影响对话历史。'
+            : 'Clear local logs cache? This removes chain logs and tool failure logs without touching conversations.',
+      );
+      if (!confirmed) {
+        return;
+      }
+      setBusyTarget(target);
+      setError('');
+      try {
+        const cleared =
+          target === 'conversation'
+            ? await clearConversationHistory()
+            : await clearLogsCache();
+        setResult(cleared);
+        if (target === 'conversation') {
+          await onConversationHistoryCleared?.();
+        }
+        onNotify(
+          target === 'conversation'
+            ? language === 'zh'
+              ? '对话历史已清空'
+              : 'Conversation history cleared'
+            : language === 'zh'
+              ? '日志缓存已清空'
+              : 'Logs cache cleared',
+        );
+      } catch (caught) {
+        const message = errorMessage(caught);
+        setError(
+          message.includes('404')
+            ? language === 'zh'
+              ? 'Product Host 尚未提供缓存维护命令。'
+              : 'Product Host does not expose the cache maintenance command yet.'
+            : message,
+        );
+      } finally {
+        setBusyTarget('');
+      }
+    },
+    [busyTarget, capabilities, language, onConversationHistoryCleared, onNotify],
+  );
+  const conversationClearSupported = capabilities.maintenanceConversationHistoryClear;
+  const logsClearSupported = capabilities.maintenanceLogsCacheClear;
+
+  return (
+    <div className="settings-stack">
+      <SettingsCard
+        title={language === 'zh' ? '缓存维护' : 'Cache maintenance'}
+        subtitle={
+          language === 'zh'
+            ? '这些操作只清理 CardBush Runtime 本地数据库中的历史和诊断缓存，不会删除项目文件、任务工作目录或 provider 侧缓存。'
+            : 'These actions clear CardBush Runtime history and diagnostics cache only. Project files, task workspaces, and provider-side caches are untouched.'
+        }
+      >
+        <div className="maintenance-action-list">
+          <div className="maintenance-action-row">
+            <Archive size={18} />
+            <span>
+              <strong>
+                {language === 'zh' ? '清空对话历史' : 'Clear conversation history'}
+              </strong>
+              <small>
+                {language === 'zh'
+                  ? '清理 chat_messages、turns、turn_summaries、session_token_usage 和 chat_sessions。'
+                  : 'Clears chat messages, turns, summaries, token usage, and sessions.'}
+              </small>
+            </span>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={Boolean(busyTarget) || !conversationClearSupported}
+              onClick={() => void runClear('conversation')}
+              title={
+                conversationClearSupported
+                  ? undefined
+                  : language === 'zh'
+                    ? '后端尚未提供此接口'
+                    : 'Backend API is not available yet'
+              }
+            >
+              {busyTarget === 'conversation' ? (
+                <LoaderCircle size={14} />
+              ) : (
+                <Trash2 size={14} />
+              )}
+              {language === 'zh' ? '清空' : 'Clear'}
+            </button>
+          </div>
+          <div className="maintenance-action-row">
+            <Clipboard size={18} />
+            <span>
+              <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
+              <small>
+                {language === 'zh'
+                  ? '清理 chain_logs 和 tool_failure_logs，保留对话与 token usage。'
+                  : 'Clears chain logs and tool failure logs while keeping conversations and token usage.'}
+              </small>
+            </span>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={Boolean(busyTarget) || !logsClearSupported}
+              onClick={() => void runClear('logs')}
+              title={
+                logsClearSupported
+                  ? undefined
+                  : language === 'zh'
+                    ? '后端尚未提供此接口'
+                    : 'Backend API is not available yet'
+              }
+            >
+              {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
+              {language === 'zh' ? '清空' : 'Clear'}
+            </button>
+          </div>
+        </div>
+        {(!conversationClearSupported || !logsClearSupported) && (
+          <p className="settings-inline-error">
+            {language === 'zh'
+              ? '部分缓存维护能力尚未由 Product Host 暴露，已暂时禁用对应按钮。'
+              : 'Some cache maintenance capabilities are not exposed by Product Host yet, so the matching buttons are disabled.'}
+          </p>
+        )}
+        {error && <p className="settings-inline-error">{error}</p>}
+        {result && (
+          <div className="maintenance-result">
+            <strong>
+              {language === 'zh' ? '上次执行结果' : 'Last result'}
+              {result.target ? ` · ${result.target}` : ''}
+            </strong>
+            <div className="maintenance-count-grid">
+              {Object.entries(result.counts).length ? (
+                Object.entries(result.counts).map(([table, count]) => (
+                  <span key={table}>
+                    <code>{table}</code>
+                    <b>{count}</b>
+                  </span>
+                ))
+              ) : (
+                <em>{language === 'zh' ? '无计数返回' : 'No counts returned'}</em>
+              )}
+            </div>
+          </div>
+        )}
+      </SettingsCard>
+      <RuntimeAssetResetCard
+        language={language}
+        capabilities={capabilities}
+        runtimeBusy={runtimeBusy}
+        onNotify={onNotify}
+        onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
+      />
+    </div>
+  );
+}
+
+const runtimeAssetCategoryOrder: RuntimeAssetCategory[] = [
+  'prompts',
+  'skills',
+  'agent_profiles',
+  'teams',
+];
+
+function RuntimeAssetResetCard({
+  language,
+  capabilities,
+  runtimeBusy,
+  onNotify,
+  onRuntimeAssetsReloaded,
+}: {
+  language: AppLanguage;
+  capabilities: BackendCapabilities;
+  runtimeBusy: boolean;
+  onNotify: (message: string) => void;
+  onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
+}) {
+  const available = capabilities.maintenanceRuntimeAssetsReset &&
+    capabilities.runtimeAssetResetProtocol === RUNTIME_ASSET_RESET_PROTOCOL;
+  const supportedCategories = capabilities.runtimeAssetResetCategories.length > 0
+    ? capabilities.runtimeAssetResetCategories
+    : runtimeAssetCategoryOrder;
+  const [selected, setSelected] = useState<Set<RuntimeAssetCategory>>(
+    () => new Set(runtimeAssetCategoryOrder),
+  );
+  const [plan, setPlan] = useState<RuntimeAssetResetPlan | null>(null);
+  const [result, setResult] = useState<RuntimeAssetResetResult | null>(
+    readPendingRuntimeAssetReset,
+  );
+  const [activeChildTasks, setActiveChildTasks] = useState(0);
+  const [busy, setBusy] = useState<'inspect' | 'reset' | 'verify' | ''>('');
+  const [error, setError] = useState('');
+  const [restartVerified, setRestartVerified] = useState(false);
+  const [serviceLogs, setServiceLogs] = useState<{
+    chain: unknown[];
+    toolFailures: unknown[];
+  } | null>(null);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const refreshInspection = useCallback(async () => {
+    if (!available) return;
+    setBusy('inspect');
     try {
-      const next = await clearConversationHistory();
-      setResult(next);
-      await onConversationHistoryCleared?.();
-      onNotify(language === 'zh' ? '对话历史已清空' : 'Conversation history cleared');
+      const [nextPlan, runtime] = await Promise.all([
+        fetchRuntimeAssetResetPlan(),
+        capabilities.subagents
+          ? fetchSubagentRuntime().catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      setPlan(nextPlan);
+      setActiveChildTasks(runtime?.activeTasks.length ?? 0);
+      setError('');
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
-      setBusy(false);
+      setBusy('');
     }
-  }, [busy, language, onConversationHistoryCleared, onNotify, supported]);
+  }, [available, capabilities.subagents]);
+
+  useEffect(() => {
+    void refreshInspection();
+  }, [refreshInspection]);
+
+  useEffect(() => {
+    setSelected((current) => new Set(
+      [...current].filter((category) => supportedCategories.includes(category)),
+    ));
+  }, [supportedCategories.join('|')]);
+
+  const selectedCategories = runtimeAssetCategoryOrder.filter(
+    (category) => selected.has(category) && supportedCategories.includes(category),
+  );
+  const runtimeActive = runtimeBusy || activeChildTasks > 0;
+  const requiresRestart = Boolean(result?.restartRequired && !restartVerified);
+
+  const toggleCategory = (category: RuntimeAssetCategory) => {
+    if (busy || requiresRestart) return;
+    setSelected((current) => {
+      const next = new Set(current);
+      const teamConfigurationCategory = category === 'agent_profiles' || category === 'teams';
+      const affected = teamConfigurationCategory
+        ? (['agent_profiles', 'teams'] as RuntimeAssetCategory[])
+        : [category];
+      const remove = next.has(category);
+      for (const item of affected) {
+        if (remove) next.delete(item);
+        else if (supportedCategories.includes(item)) next.add(item);
+      }
+      return next;
+    });
+  };
+
+  const runReset = useCallback(async () => {
+    if (!available || busy || selectedCategories.length === 0 || runtimeActive) return;
+    setError('');
+    if (capabilities.subagents) {
+      try {
+        const runtime = await fetchSubagentRuntime();
+        setActiveChildTasks(runtime.activeTasks.length);
+        if (runtime.activeTasks.length > 0) {
+          setError(language === 'zh'
+            ? '仍有子 Agent 任务在运行，请等待或停止任务后再重置。'
+            : 'Subagent tasks are still active. Wait for or stop them before resetting.');
+          return;
+        }
+      } catch {
+        // The Product Host remains the final authority for runtime-idle checks.
+      }
+    }
+    const confirmed = window.confirm(
+      language === 'zh'
+          ? `确定恢复 ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join('、')} 吗？\n\n所选类别中的本地修改、运行时自定义包和过期文件将被永久移除。`
+          : `Restore ${selectedCategories.map((item) => runtimeAssetCategoryLabel(item, language)).join(', ')}?\n\nLocal edits, runtime-only packages, and stale files in the selected categories will be permanently removed.`,
+    );
+    if (!confirmed) return;
+    setBusy('reset');
+    try {
+      const next = await resetRuntimeAssets(selectedCategories);
+      setResult(next);
+      if (selectedCategories.includes('agent_profiles') || selectedCategories.includes('teams')) {
+        await onRuntimeAssetsReloaded?.(selectedCategories);
+      }
+      setRestartVerified(false);
+      persistPendingRuntimeAssetReset(next.restartRequired ? next : null);
+      onNotify(next.changed
+        ? language === 'zh' ? '内置配置已恢复' : 'Bundled runtime assets restored'
+        : language === 'zh' ? '配置已与内置版本一致' : 'Runtime assets already match the bundled version');
+    } catch (caught) {
+      if (
+        isProductHostCommandError(caught, 'runtime_asset_reset_requires_idle_runtime')
+      ) {
+        setError(language === 'zh'
+          ? '检测到主 Agent 或子 Agent 正在运行。请先结束所有任务，再重新手动执行重置。'
+          : 'A parent or child turn is active. Stop all tasks, then start the reset again manually.');
+      } else if (
+        isProductHostCommandError(caught, 'runtime_asset_reset_confirmation_required')
+      ) {
+        setError(language === 'zh'
+          ? 'Product Host 未收到有效确认，本次没有执行任何重置。'
+          : 'Product Host did not receive valid confirmation. Nothing was reset.');
+      } else {
+        setError(errorMessage(caught));
+      }
+    } finally {
+      setBusy('');
+    }
+  }, [
+    available,
+    busy,
+    capabilities.subagents,
+    language,
+    onNotify,
+    onRuntimeAssetsReloaded,
+    runtimeActive,
+    selectedCategories,
+  ]);
+
+  const verifyRestart = useCallback(async () => {
+    if (!result?.restartRequired || busy) return;
+    setBusy('verify');
+    setError('');
+    try {
+      await onRuntimeAssetsReloaded?.(result.selectedCategories);
+      setRestartVerified(true);
+      persistPendingRuntimeAssetReset(null);
+      await refreshInspection();
+      onNotify(language === 'zh'
+        ? 'CardBush 运行时已就绪，配置能力已重新加载'
+        : 'The CardBush Runtime is ready and its capabilities were reloaded');
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusy('');
+    }
+  }, [busy, language, onNotify, onRuntimeAssetsReloaded, refreshInspection, result]);
+
+  const loadServiceLogs = useCallback(async () => {
+    if (loadingLogs) return;
+    setLoadingLogs(true);
+    try {
+      setServiceLogs(await fetchRuntimeMaintenanceLogs());
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [loadingLogs]);
+
   return (
     <SettingsCard
-      title={language === 'zh' ? '会话维护' : 'Conversation maintenance'}
+      title={language === 'zh' ? '恢复内置配置包' : 'Restore bundled runtime assets'}
       subtitle={language === 'zh'
-        ? '清理 TypeScript Runtime 的会话历史，不影响项目文件。'
-        : 'Clear TypeScript Runtime conversation history without touching project files.'}
+        ? '将 Prompts、Skills、Agent Profiles 或 Teams 精确恢复为当前 CardBush 随附的内置版本。这是破坏性维护操作。'
+        : 'Restore Prompts, Skills, Agent Profiles, or Teams exactly to the versions bundled with the current CardBush build. This is destructive maintenance.'}
     >
-      <div className="maintenance-action-row">
-        <Archive size={18} />
-        <span><strong>{language === 'zh' ? '清空对话历史' : 'Clear conversation history'}</strong></span>
-        <button className="secondary-button" type="button" disabled={busy || !supported} onClick={() => void runClear()}>
-          {busy ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
-          {language === 'zh' ? '清空' : 'Clear'}
-        </button>
+      <div className="runtime-asset-reset-panel">
+        <div className="runtime-asset-category-grid">
+          {runtimeAssetCategoryOrder.map((category) => {
+            const supported = supportedCategories.includes(category);
+            return (
+              <label key={category} className={!supported ? 'disabled' : ''}>
+                <input
+                  type="checkbox"
+                  checked={supported && selected.has(category)}
+                  disabled={!available || !supported || Boolean(busy) || requiresRestart}
+                  onChange={() => toggleCategory(category)}
+                />
+                <span>
+                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
+                  <small>{runtimeAssetCategoryDescription(category, language)}</small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="runtime-asset-reset-warning">
+          <AlertCircle size={17} />
+          <span>{language === 'zh'
+            ? '会删除所选类别中的本地编辑、运行时安装包、过期文件和工具启用覆盖。项目文件与对话历史不受影响。'
+            : 'Removes local edits, runtime-installed packages, stale files, and tool enable overrides in selected categories. Project files and conversations are not affected.'}</span>
+        </div>
+
+        {runtimeActive && (
+          <p className="settings-inline-error">
+            {language === 'zh'
+              ? `运行时正忙${activeChildTasks > 0 ? `（${activeChildTasks} 个子任务）` : ''}，重置已禁用。`
+              : `The runtime is busy${activeChildTasks > 0 ? ` (${activeChildTasks} child tasks)` : ''}; reset is disabled.`}
+          </p>
+        )}
+        {!available && (
+          <p className="settings-inline-error">
+            {language === 'zh'
+              ? '当前 CardBush 产品宿主未声明 runtime asset reset 能力。'
+              : 'The current CardBush Product Host does not advertise runtime asset reset.'}
+          </p>
+        )}
+        {error && (
+          <div className="runtime-asset-reset-error">
+            <p className="settings-inline-error">{error}</p>
+            <button className="secondary-button" type="button" onClick={() => void loadServiceLogs()}>
+              {loadingLogs ? <LoaderCircle size={14} /> : <Clipboard size={14} />}
+              {language === 'zh' ? '查看服务日志' : 'View service logs'}
+            </button>
+          </div>
+        )}
+
+        {serviceLogs && (
+          <details className="runtime-asset-service-logs" open>
+            <summary>{language === 'zh' ? '最近服务日志' : 'Recent service logs'}</summary>
+            <pre>{JSON.stringify(serviceLogs, null, 2)}</pre>
+          </details>
+        )}
+
+        <div className="runtime-asset-reset-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!available || Boolean(busy) || runtimeActive || requiresRestart || selectedCategories.length === 0}
+            onClick={() => void runReset()}
+          >
+            {busy === 'reset' ? <LoaderCircle size={14} /> : <PackageOpen size={14} />}
+            {language === 'zh' ? '恢复所选配置' : 'Restore selected assets'}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={!available || Boolean(busy)}
+            onClick={() => void refreshInspection()}
+          >
+            {busy === 'inspect' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
+            {language === 'zh' ? '检查状态' : 'Inspect status'}
+          </button>
+        </div>
+
+        {result && <RuntimeAssetResetResultView result={result} language={language} />}
+
+        {requiresRestart && (
+          <div className="runtime-asset-restart-required" role="alert">
+            <RotateCcw size={18} />
+            <span>
+              <strong>{language === 'zh' ? '必须重启 CardBush' : 'CardBush restart required'}</strong>
+              <small>{language === 'zh'
+                ? '配置已经写入，但尚未激活。请先重启 CardBush，然后再验证。'
+                : 'Assets were written but are not active yet. Restart CardBush, then verify.'}</small>
+            </span>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={busy === 'verify' || !onRuntimeAssetsReloaded}
+              onClick={() => void verifyRestart()}
+            >
+              {busy === 'verify' ? <LoaderCircle size={14} /> : <Check size={14} />}
+              {language === 'zh' ? '我已重启，验证并加载' : 'Restarted — verify and reload'}
+            </button>
+          </div>
+        )}
+
+        {plan && (
+          <details className="runtime-asset-paths">
+            <summary>{language === 'zh' ? '查看内置来源与运行时路径' : 'View bundled source and runtime paths'}</summary>
+            {runtimeAssetCategoryOrder.map((category) => {
+              const location = plan.categories[category];
+              if (!location) return null;
+              return (
+                <div key={category}>
+                  <strong>{runtimeAssetCategoryLabel(category, language)}</strong>
+                  <code title={location.sourcePath}>{location.sourcePath}</code>
+                  <code title={location.targetPath}>{location.targetPath}</code>
+                </div>
+              );
+            })}
+          </details>
+        )}
       </div>
-      {!supported && <p className="bot-settings-error">{language === 'zh' ? '当前 Runtime 不支持会话清理。' : 'The current Runtime cannot clear conversation history.'}</p>}
-      {error && <p className="bot-settings-error">{error}</p>}
-      {result && <pre className="runtime-asset-service-logs">{JSON.stringify(result.counts, null, 2)}</pre>}
     </SettingsCard>
   );
+}
+
+function RuntimeAssetResetResultView({
+  result,
+  language,
+}: {
+  result: RuntimeAssetResetResult;
+  language: AppLanguage;
+}) {
+  return (
+    <div className="runtime-asset-reset-result">
+      <strong>{result.changed
+        ? language === 'zh' ? '恢复结果' : 'Restore result'
+        : language === 'zh' ? '已经是内置版本' : 'Already matches bundled assets'}</strong>
+      <div>
+        {result.selectedCategories.map((category) => {
+          const item = result.categories[category];
+          if (!item) return null;
+          return (
+            <span key={category}>
+              <b>{runtimeAssetCategoryLabel(category, language)}</b>
+              <small>
+                {language === 'zh'
+                  ? `恢复 ${item.restoredFileCount} · 删除 ${item.removedRuntimeFileCount} · 内置 ${item.seedFileCount}`
+                  : `restored ${item.restoredFileCount} · removed ${item.removedRuntimeFileCount} · bundled ${item.seedFileCount}`}
+              </small>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function runtimeAssetCategoryLabel(category: RuntimeAssetCategory, language: AppLanguage) {
+  const labels = {
+    prompts: { zh: 'Prompts', en: 'Prompts' },
+    skills: { zh: 'Skills', en: 'Skills' },
+    agent_profiles: { zh: 'Agent Profiles', en: 'Agent Profiles' },
+    teams: { zh: 'Teams', en: 'Teams' },
+  } as const;
+  return labels[category][language];
+}
+
+function runtimeAssetCategoryDescription(category: RuntimeAssetCategory, language: AppLanguage) {
+  const descriptions = {
+    prompts: { zh: '系统提示词与内置模板', en: 'System prompts and bundled templates' },
+    skills: { zh: '内置技能包及其文件', en: 'Bundled skill packages and files' },
+    agent_profiles: { zh: '内置 Agent 配置（与 Teams 联动恢复）', en: 'Bundled Agent profiles (restored with Teams)' },
+    teams: { zh: '内置 Team 配置（与 Profiles 联动恢复）', en: 'Bundled Team definitions (restored with Profiles)' },
+  } as const;
+  return descriptions[category][language];
+}
+
+function readPendingRuntimeAssetReset(): RuntimeAssetResetResult | null {
+  try {
+    const raw = window.localStorage.getItem(pendingRuntimeAssetResetStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RuntimeAssetResetResult;
+    return parsed?.restartRequired === true && Array.isArray(parsed.selectedCategories)
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistPendingRuntimeAssetReset(result: RuntimeAssetResetResult | null) {
+  if (!result) {
+    window.localStorage.removeItem(pendingRuntimeAssetResetStorageKey);
+    return;
+  }
+  window.localStorage.setItem(pendingRuntimeAssetResetStorageKey, JSON.stringify(result));
 }
 
 function DiagnosticsPanel({
   language,
   settings,
   selectedModel,
-  onSettingsChange: _onSettingsChange,
 }: {
   language: AppLanguage;
   settings: AppSettingsState;
   selectedModel: string;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
 }) {
   const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [diagnosticError, setDiagnosticError] = useState('');
+  const [result, setResult] = useState<DiagnosticResult | null>(null);
   const modelInfo = resolveEffectiveModelInfo(settings, selectedModel, language);
-  void _onSettingsChange;
 
   const runCheck = useCallback(async () => {
     if (checking) {
@@ -1999,14 +2469,48 @@ function DiagnosticsPanel({
     }
     setChecking(true);
     try {
-      const [readiness, capabilities] = await Promise.all([
-        fetchBackendReadiness(),
-        fetchBackendCapabilities(),
+      const [runtime, productHost, capabilities] = await Promise.all([
+        localDiagnosticProbe(
+          language === 'zh' ? '内嵌 Runtime' : 'Embedded Runtime',
+          async () => {
+            assertDesktopRuntime();
+            const readiness = await fetchBackendReadiness();
+            if (readiness.ready !== true) {
+              throw new Error(language === 'zh' ? 'Runtime 尚未就绪' : 'Runtime is not ready');
+            }
+            const versions = Array.isArray(readiness.protocolVersions)
+              ? readiness.protocolVersions.join(' / ')
+              : '';
+            return [String(readiness.runtimeVersion ?? '').trim(), versions]
+              .filter(Boolean)
+              .join(' · ') || (language === 'zh' ? '已就绪' : 'Ready');
+          },
+        ),
+        localDiagnosticProbe(
+          'Product Host',
+          async () => {
+            assertProductHost();
+            const snapshot = await fetchModelConfigs();
+            return language === 'zh'
+              ? `IPC 可用 · ${snapshot.models.length} 个模型配置`
+              : `IPC available · ${snapshot.models.length} model configurations`;
+          },
+        ),
+        localDiagnosticProbe(
+          language === 'zh' ? '能力契约' : 'Capability contract',
+          async () => {
+            assertDesktopRuntime();
+            const capabilities = await fetchBackendCapabilities();
+            if (!capabilities.chatStream || !capabilities.sessions) {
+              throw new Error(language === 'zh' ? '缺少核心对话能力' : 'Core chat capabilities are missing');
+            }
+            return language === 'zh'
+              ? '类型化命令、事件流与会话持久化已就绪'
+              : 'Typed commands, event streaming, and session persistence are ready';
+          },
+        ),
       ]);
-      setResult({ readiness, capabilities });
-      setDiagnosticError('');
-    } catch (caught) {
-      setDiagnosticError(errorMessage(caught));
+      setResult({ runtime, productHost, capabilities });
     } finally {
       setChecking(false);
     }
@@ -2019,13 +2523,16 @@ function DiagnosticsPanel({
   const copyDiagnostics = async () => {
     await copyText(
       [
-        'RUNTIME_TRANSPORT=electron_typed_ipc',
+        'runtime_transport=Electron typed IPC',
+        'product_host_transport=Electron IPC',
         `model_source=${modelInfo.source}`,
         `model=${modelInfo.model}`,
         `provider=${modelInfo.provider}`,
         `api_key=${modelInfo.apiKeyLabel}`,
         `base_url=${modelInfo.baseUrl}`,
-        result ? `runtime=${JSON.stringify(result)}` : '',
+        result ? `runtime=${diagnosticSummary(result.runtime)}` : '',
+        result ? `product_host=${diagnosticSummary(result.productHost)}` : '',
+        result ? `capabilities=${diagnosticSummary(result.capabilities)}` : '',
       ]
         .filter(Boolean)
         .join('\n'),
@@ -2034,11 +2541,11 @@ function DiagnosticsPanel({
 
   return (
     <SettingsCard
-      title={language === 'zh' ? '连接诊断' : 'Connection diagnostics'}
+      title={language === 'zh' ? '运行诊断' : 'Runtime diagnostics'}
       subtitle={
         language === 'zh'
-          ? '检查 Electron Utility Process Runtime、typed IPC 和实际模型配置。'
-          : 'Check the Electron Utility Process Runtime, typed IPC, and active model configuration.'
+          ? '检查内嵌 TypeScript Runtime、Product Host 与当前模型配置，不使用 localhost HTTP 端口。'
+          : 'Check the embedded TypeScript Runtime, Product Host, and current model configuration without a localhost HTTP port.'
       }
     >
       <div className="settings-subblock">
@@ -2048,18 +2555,20 @@ function DiagnosticsPanel({
         <InfoRow label={language === 'zh' ? '模型商' : 'Provider'} value={modelInfo.provider} />
         <InfoRow label="api_key" value={modelInfo.apiKeyLabel} />
         <InfoRow label="base_url" value={modelInfo.baseUrl} />
-        <InfoRow label={language === 'zh' ? '运行时传输' : 'Runtime transport'} value="Electron typed IPC" />
+        <InfoRow
+          label={language === 'zh' ? '运行传输' : 'Runtime transport'}
+          value="Electron typed IPC"
+        />
       </div>
       <SettingsDivider />
       <div className="settings-subblock">
-        <strong>{language === 'zh' ? '服务检查' : 'Service check'}</strong>
-        <p className="settings-muted">
-          {language === 'zh'
-            ? 'Renderer 不持有本地 HTTP 凭据；Provider 密钥只由 Product Host 写入 Utility Process。'
-            : 'The Renderer holds no local HTTP credential; Product Host installs provider secrets inside the Utility Process.'}
-        </p>
+        <strong>{language === 'zh' ? '本地组件检查' : 'Local component check'}</strong>
         {result ? (
-          <pre className="runtime-asset-service-logs">{JSON.stringify(result, null, 2)}</pre>
+          <>
+            <DiagnosticRow probe={result.runtime} />
+            <DiagnosticRow probe={result.productHost} />
+            <DiagnosticRow probe={result.capabilities} />
+          </>
         ) : (
           <p className="settings-muted">
             {checking
@@ -2071,7 +2580,6 @@ function DiagnosticsPanel({
                 : 'Not checked'}
           </p>
         )}
-        {diagnosticError && <p className="bot-settings-error">{diagnosticError}</p>}
         <div className="settings-actions">
           <button
             className="primary-button"
@@ -2097,27 +2605,25 @@ function DiagnosticsPanel({
     </SettingsCard>
   );
 }
-
-function MobileSettingsPanel({ language }: { language: AppLanguage }) {
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '手机连接' : 'Connect to phone'}
-      subtitle={
-        language === 'zh'
-          ? '生产 Runtime 已内聚到桌面进程；远程客户端需要单独的 typed remote host，不能复用已下线的本地 HTTP 服务。'
-          : 'The production Runtime is embedded in the desktop process. Remote clients require a separate typed remote host, not the retired local HTTP service.'
-      }
-    >
-      <p className="settings-muted">
-        {language === 'zh' ? '当前版本不开放局域网 Runtime 端口。' : 'This version exposes no LAN Runtime port.'}
-      </p>
-    </SettingsCard>
-  );
-}
-
-function AboutSettingsPanel({ language }: { language: AppLanguage }) {
+function AboutSettingsPanel({
+  language,
+  settings,
+  selectedModel,
+}: {
+  language: AppLanguage;
+  settings: AppSettingsState;
+  selectedModel: string;
+}) {
+  const modelInfo = resolveEffectiveModelInfo(settings, selectedModel, language);
   const copyEnvironment = async () => {
-    await copyText('RUNTIME_TRANSPORT=electron_typed_ipc\nRUNTIME_OWNER=cardbush');
+    await copyText([
+      `CARDBUSH_VERSION=${packageMetadata.version}`,
+      'RUNTIME=Embedded TypeScript Runtime',
+      'RUNTIME_TRANSPORT=Electron typed IPC',
+      `MODEL=${modelInfo.model}`,
+      `PROVIDER=${modelInfo.provider}`,
+      `MODEL_BASE_URL=${modelInfo.baseUrl}`,
+    ].join('\n'));
   };
   return (
     <SettingsCard
@@ -2129,14 +2635,14 @@ function AboutSettingsPanel({ language }: { language: AppLanguage }) {
       }
     >
       <InfoRow label={language === 'zh' ? '应用' : 'App'} value="cardbush" />
-      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value="0.1.0+1" />
-      <InfoRow label={language === 'zh' ? '运行时' : 'Runtime'} value="CardBush TypeScript Utility Process" />
+      <InfoRow label={language === 'zh' ? '版本' : 'Version'} value={packageMetadata.version} />
+      <InfoRow label="Runtime" value="Embedded TypeScript Runtime" />
+      <InfoRow label={language === 'zh' ? '通信方式' : 'Transport'} value="Electron typed IPC" />
       <InfoRow
-        label={language === 'zh' ? 'LLM 地址' : 'LLM address'}
-        value={
-          language === 'zh' ? '由 Product Host 模型配置决定' : 'Configured by Product Host'
-        }
+        label={language === 'zh' ? '当前模型' : 'Current model'}
+        value={`${modelInfo.provider} / ${modelInfo.model}`}
       />
+      <InfoRow label="base_url" value={modelInfo.baseUrl} />
       <div className="settings-actions">
         <button className="secondary-button" type="button" onClick={() => void copyEnvironment()}>
           <Clipboard size={14} />
@@ -2144,706 +2650,6 @@ function AboutSettingsPanel({ language }: { language: AppLanguage }) {
         </button>
       </div>
     </SettingsCard>
-  );
-}
-
-function BotSettingsPanel({
-  language,
-  modelConfigs,
-  selectedModel,
-}: {
-  language: AppLanguage;
-  modelConfigs: ManagedModelConfig[];
-  selectedModel: string;
-}) {
-  const [overviews, setOverviews] = useState<BotPlatformOverview[]>([]);
-  const [selectedPlatform, setSelectedPlatform] = useState<BotPlatform>('weixin');
-  const [statusByPlatform, setStatusByPlatform] = useState<
-    Partial<Record<BotPlatform, BotStatusResult>>
-  >({});
-  const [configByPlatform, setConfigByPlatform] = useState<
-    Partial<Record<BotPlatform, BotConfigResult>>
-  >({});
-  const [configDraftByPlatform, setConfigDraftByPlatform] = useState<
-    Partial<Record<BotPlatform, string>>
-  >({});
-  const [logsByPlatform, setLogsByPlatform] = useState<
-    Partial<Record<BotPlatform, string[]>>
-  >({});
-  const [loginStart, setLoginStart] = useState<WeixinLoginStartResult | null>(null);
-  const [loginStatus, setLoginStatus] = useState<WeixinLoginStatusResult | null>(null);
-  const [qrImageSrc, setQrImageSrc] = useState('');
-  const [qrImageFailed, setQrImageFailed] = useState(false);
-  const [busyKey, setBusyKey] = useState('');
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
-
-  const overviewByPlatform = useMemo(
-    () => new Map(overviews.map((item) => [item.platform, item] as const)),
-    [overviews],
-  );
-  const selectedOverview = overviewByPlatform.get(selectedPlatform);
-  const selectedStatus = statusByPlatform[selectedPlatform];
-  const selectedConfig = configByPlatform[selectedPlatform];
-  const selectedDraft = configDraftByPlatform[selectedPlatform] ?? '';
-  const selectedLogs = logsByPlatform[selectedPlatform] ?? [];
-  const selectedEnabled =
-    selectedStatus?.enabled ?? selectedOverview?.enabled ?? false;
-  const selectedConfigured =
-    selectedStatus?.configured ?? selectedOverview?.configured ?? false;
-  const selectedMissingFields =
-    selectedStatus?.missingRequiredFields ??
-    selectedOverview?.missingRequiredFields ??
-    [];
-  const selectedServiceStatus =
-    selectedStatus?.serviceStatus ?? selectedOverview?.serviceStatus ?? 'stopped';
-  const selectedLastError = botServiceDetailText(selectedStatus, selectedOverview, language);
-  const selectedModelConfig = useMemo(
-    () => modelConfigForBot(modelConfigs, selectedModel),
-    [modelConfigs, selectedModel],
-  );
-  const selectedModelInfo = selectedModelConfig
-    ? `${selectedModelConfig.provider} / ${selectedModelConfig.modelName}`
-    : selectedModel.trim() || (language === 'zh' ? '未选择' : 'not selected');
-
-  const notify = useCallback((message: string) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(''), 1800);
-  }, []);
-
-  const refreshBots = useCallback(async () => {
-    setBusyKey('bots:refresh');
-    setError('');
-    try {
-      setOverviews(await fetchBots());
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language]);
-
-  const refreshStatus = useCallback(
-    async (platform: BotPlatform) => {
-      setBusyKey(`status:${platform}`);
-      setError('');
-      try {
-        const status = await fetchBotStatus(platform);
-        setStatusByPlatform((current) => ({ ...current, [platform]: status }));
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language],
-  );
-
-  const loadConfig = useCallback(
-    async (platform: BotPlatform) => {
-      setBusyKey(`config:${platform}`);
-      setError('');
-      try {
-        const config = await fetchBotConfig(platform);
-        setConfigByPlatform((current) => ({ ...current, [platform]: config }));
-        setConfigDraftByPlatform((current) => ({
-          ...current,
-          [platform]: JSON.stringify(config.config, null, 2),
-        }));
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language],
-  );
-
-  const saveConfig = useCallback(async () => {
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(selectedDraft || '{}') as Record<string, unknown>;
-    } catch {
-      setError(language === 'zh' ? '配置 JSON 格式不正确' : 'Invalid config JSON');
-      return;
-    }
-    setBusyKey(`save:${selectedPlatform}`);
-    setError('');
-    try {
-      const saved = await saveBotConfig({
-        platform: selectedPlatform,
-        config: parsed,
-      });
-      setConfigByPlatform((current) => ({ ...current, [selectedPlatform]: saved }));
-      setConfigDraftByPlatform((current) => ({
-        ...current,
-        [selectedPlatform]: JSON.stringify(saved.config, null, 2),
-      }));
-      await refreshStatus(selectedPlatform).catch(() => undefined);
-      notify(language === 'zh' ? 'Bot 配置已保存' : 'Bot config saved');
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language, notify, refreshStatus, selectedDraft, selectedPlatform]);
-
-  const loadLogs = useCallback(
-    async (platform: BotPlatform, options?: { silent?: boolean }) => {
-      if (!options?.silent) {
-        setBusyKey(`logs:${platform}`);
-        setError('');
-      }
-      try {
-        const logs = await fetchBotServiceLogs({ platform, tail: 200 });
-        setLogsByPlatform((current) => ({ ...current, [platform]: logs.lines }));
-      } catch (caught) {
-        if (!options?.silent) {
-          setError(botPanelError(caught, language));
-        }
-      } finally {
-        if (!options?.silent) {
-          setBusyKey('');
-        }
-      }
-    },
-    [language],
-  );
-
-  const runServiceAction = useCallback(
-    async (platform: BotPlatform, action: 'start' | 'stop' | 'restart') => {
-      const status = statusByPlatform[platform];
-      const overview = overviewByPlatform.get(platform);
-      const platformEnabled = status?.enabled ?? overview?.enabled ?? false;
-      const platformConfigured = status?.configured ?? overview?.configured ?? false;
-      const missingFields =
-        status?.missingRequiredFields ?? overview?.missingRequiredFields ?? [];
-      if ((action === 'start' || action === 'restart') && !platformEnabled) {
-        setError(
-          language === 'zh'
-            ? `${botPlatformLabels[platform][language]} Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。`
-            : `${botPlatformLabels[platform][language]} bot is disabled. Load its config, set enabled to true, save it, then start the service.`,
-        );
-        return;
-      }
-      if ((action === 'start' || action === 'restart') && !platformConfigured) {
-        setError(botMissingConfigurationText(platform, missingFields, language));
-        return;
-      }
-      setBusyKey(`service:${platform}:${action}`);
-      setError('');
-      try {
-        const status = await controlBotService(platform, action);
-        setStatusByPlatform((current) => ({ ...current, [platform]: status }));
-        if (status.serviceStatus === 'failed') {
-          setError(botServiceDetailText(status, overviewByPlatform.get(platform), language));
-          void loadLogs(platform, { silent: true }).catch(() => undefined);
-        } else {
-          notify(
-            action === 'stop'
-              ? language === 'zh'
-                ? '停止请求已发送，服务状态已刷新'
-                : 'Stop request sent and service status refreshed'
-              : language === 'zh'
-                ? '服务命令已发送'
-                : 'Service command sent',
-          );
-        }
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [
-      language,
-      loadLogs,
-      notify,
-      overviewByPlatform,
-      statusByPlatform,
-    ],
-  );
-
-  const beginWeixinLogin = useCallback(async () => {
-    setBusyKey('weixin:login');
-    setLoginStart(null);
-    setLoginStatus(null);
-    setQrImageSrc('');
-    setQrImageFailed(false);
-    setError('');
-    try {
-      const started = await startWeixinLogin();
-      setLoginStart(started);
-      notify(language === 'zh' ? '微信登录已开始' : 'WeChat login started');
-    } catch (caught) {
-      setError(botPanelError(caught, language));
-    } finally {
-      setBusyKey('');
-    }
-  }, [language, notify]);
-
-  const clearWeixinAccount = useCallback(
-    async (accountId: string) => {
-      const normalized = accountId.trim();
-      if (!normalized) {
-        return;
-      }
-      setBusyKey(`weixin:clear:${normalized}`);
-      setError('');
-      try {
-        await deleteWeixinAccount(normalized);
-        await refreshStatus('weixin');
-        notify(language === 'zh' ? '微信账号已移除' : 'WeChat account removed');
-      } catch (caught) {
-        setError(botPanelError(caught, language));
-      } finally {
-        setBusyKey('');
-      }
-    },
-    [language, notify, refreshStatus],
-  );
-
-  useEffect(() => {
-    void refreshBots();
-  }, [refreshBots]);
-
-  useEffect(() => {
-    void refreshStatus(selectedPlatform);
-  }, [refreshStatus, selectedPlatform]);
-
-  useEffect(() => {
-    setQrImageFailed(false);
-    setQrImageSrc('');
-    const source = loginStart?.qrcodeUrl.trim() ?? '';
-    if (!source) {
-      return undefined;
-    }
-    let cancelled = false;
-    async function renderQr() {
-      if (isDirectImageSource(source)) {
-        setQrImageSrc(source);
-        return;
-      }
-      try {
-        const qrcode = await import('qrcode');
-        const image = await qrcode.toDataURL(source, {
-          errorCorrectionLevel: 'M',
-          margin: 2,
-          width: 512,
-          color: {
-            dark: '#111111',
-            light: '#ffffff',
-          },
-        });
-        if (!cancelled) {
-          setQrImageSrc(image);
-        }
-      } catch {
-        if (!cancelled) {
-          setQrImageFailed(true);
-        }
-      }
-    }
-    void renderQr();
-    return () => {
-      cancelled = true;
-    };
-  }, [loginStart?.qrcodeUrl]);
-
-  useEffect(() => {
-    if (!loginStart?.loginId) {
-      return undefined;
-    }
-    const loginId = loginStart.loginId;
-    let cancelled = false;
-    async function poll() {
-      try {
-        const next = await fetchWeixinLoginStatus(loginId);
-        if (cancelled) {
-          return;
-        }
-        setLoginStatus(next);
-        if (next.status === 'confirmed') {
-          await refreshStatus('weixin').catch(() => undefined);
-          notify(language === 'zh' ? '微信账号已连接' : 'WeChat account connected');
-        }
-      } catch (caught) {
-        if (!cancelled) {
-          setError(botPanelError(caught, language));
-        }
-      }
-    }
-    void poll();
-    const timer = window.setInterval(() => {
-      if (
-        loginStatus?.status === 'confirmed' ||
-        loginStatus?.status === 'expired' ||
-        loginStatus?.status === 'failed'
-      ) {
-        window.clearInterval(timer);
-        return;
-      }
-      void poll();
-    }, 1800);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [language, loginStart, loginStatus?.status, notify, refreshStatus]);
-
-  return (
-    <div className="settings-stack">
-      <SettingsCard
-        title={language === 'zh' ? 'Bot 连接' : 'Bot connections'}
-        subtitle={
-          language === 'zh'
-            ? 'CardBush Product Host 负责配置、密钥、登录状态与 adapter 生命周期；Agent Loop 位于 Utility Process。'
-            : 'CardBush Product Host owns configuration, secrets, login state, and adapter lifecycle; the Agent Loop runs in a Utility Process.'
-        }
-      >
-        <div className="bot-platform-grid">
-          {botPlatforms.map((platform) => {
-            const overview = overviewByPlatform.get(platform);
-            const status = statusByPlatform[platform];
-            const serviceStatus =
-              status?.serviceStatus ?? overview?.serviceStatus ?? 'stopped';
-            const enabled = status?.enabled ?? overview?.enabled ?? false;
-            const configured = status?.configured ?? overview?.configured ?? false;
-            const accountCount = status?.accountCount ?? overview?.accountCount;
-            return (
-              <button
-                className={`bot-platform-card ${
-                  selectedPlatform === platform ? 'active' : ''
-                }`}
-                key={platform}
-                type="button"
-                onClick={() => setSelectedPlatform(platform)}
-              >
-                <span className="bot-platform-icon-wrap">
-                  <BotPlatformIcon platform={platform} />
-                  <span className={`bot-status-dot ${botStatusTone(serviceStatus)}`} />
-                </span>
-                <span className="bot-platform-copy">
-                  <strong>{botPlatformLabels[platform][language]}</strong>
-                  <small>
-                    {!enabled
-                      ? language === 'zh'
-                        ? '未启用'
-                        : 'Disabled'
-                      : configured
-                      ? language === 'zh'
-                        ? '已配置'
-                        : 'Configured'
-                      : language === 'zh'
-                        ? '待配置'
-                        : 'Not configured'}
-                    {' · '}
-                    {botServiceStatusText(serviceStatus, language)}
-                    {accountCount != null ? ` · ${accountCount}` : ''}
-                  </small>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === 'bots:refresh'}
-            onClick={() => void refreshBots()}
-          >
-            {busyKey === 'bots:refresh' ? <LoaderCircle size={14} /> : <RefreshCw size={14} />}
-            {language === 'zh' ? '刷新平台' : 'Refresh platforms'}
-          </button>
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `status:${selectedPlatform}`}
-            onClick={() => void refreshStatus(selectedPlatform)}
-          >
-            {busyKey === `status:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Monitor size={14} />
-            )}
-            {language === 'zh' ? '刷新状态' : 'Refresh status'}
-          </button>
-        </div>
-        {error && <p className="bot-settings-error">{error}</p>}
-        {notice && <p className="bot-settings-notice">{notice}</p>}
-      </SettingsCard>
-
-      <SettingsCard
-        title={`${botPlatformLabels[selectedPlatform][language]} ${
-          language === 'zh' ? '服务' : 'service'
-        }`}
-        subtitle={
-          language === 'zh'
-            ? '服务状态来自 CardBush 桌面宿主；Bot 进程随 CardBush 启动和关闭。'
-            : 'Service state comes from the CardBush desktop host; Bot processes follow the CardBush lifecycle.'
-        }
-      >
-        <div className="bot-service-row">
-          <span className={`bot-status-dot ${botStatusTone(selectedServiceStatus)}`} />
-          <div>
-            <strong>
-              {botServiceStatusText(selectedServiceStatus, language)}
-            </strong>
-            <small>
-              {selectedLastError ||
-                (language === 'zh'
-                  ? '暂无错误信息'
-                  : 'No error reported')}
-            </small>
-          </div>
-        </div>
-        <InfoRow
-          label={language === 'zh' ? '使用模型' : 'Model'}
-          value={selectedModelInfo}
-        />
-        {selectedModelConfig && (
-          <p className="settings-muted">
-            {language === 'zh'
-              ? 'CardBush 启动 Bot 后直接连接内置 Runtime，并使用 Product Host 默认模型。'
-              : 'CardBush connects Bots directly to the embedded Runtime and uses the Product Host default model.'}
-          </p>
-        )}
-        {(!selectedEnabled || !selectedConfigured) && (
-          <p className="bot-settings-warning">
-            {!selectedEnabled
-              ? language === 'zh'
-                ? '当前平台未启用，CardBush 桌面宿主会拒绝启动请求。请先在配置中将 enabled 设置为 true 并保存。'
-                : 'This platform is disabled, so the CardBush desktop host will reject start requests. Set enabled to true and save it first.'
-              : botMissingConfigurationText(
-                  selectedPlatform,
-                  selectedMissingFields,
-                  language,
-                )}
-          </p>
-        )}
-        <div className="settings-actions">
-          {(['start', 'stop', 'restart'] as const).map((action) => (
-            <button
-              className="secondary-button"
-              key={action}
-              type="button"
-              disabled={
-                busyKey === `service:${selectedPlatform}:${action}` ||
-                ((!selectedEnabled || !selectedConfigured) && action !== 'stop')
-              }
-              onClick={() => void runServiceAction(selectedPlatform, action)}
-            >
-              {busyKey === `service:${selectedPlatform}:${action}` ? (
-                <LoaderCircle size={14} />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {botServiceActionText(action, language)}
-            </button>
-          ))}
-        </div>
-      </SettingsCard>
-
-      {selectedPlatform === 'weixin' && (
-        <SettingsCard
-          title={language === 'zh' ? '微信扫码登录' : 'WeChat QR login'}
-          subtitle={
-            language === 'zh'
-              ? '扫码状态机由 Product Host 管理，Renderer 只显示二维码和状态。'
-              : 'Product Host manages the QR login state machine; the Renderer only displays the code and status.'
-          }
-        >
-          <div className="settings-actions">
-            <button
-              className="primary-button"
-              type="button"
-              disabled={busyKey === 'weixin:login'}
-              onClick={() => void beginWeixinLogin()}
-            >
-              {busyKey === 'weixin:login' ? <LoaderCircle size={14} /> : <Bot size={14} />}
-              {language === 'zh' ? '开始扫码登录' : 'Start QR login'}
-            </button>
-          </div>
-          {loginStart?.qrcodeUrl && (
-            <div className="weixin-login-box">
-              <div
-                className={`weixin-qr-frame ${
-                  qrImageSrc && !qrImageFailed ? '' : 'failed'
-                }`}
-              >
-                {qrImageSrc && (
-                  <img
-                    src={qrImageSrc}
-                    alt="WeChat login QR code"
-                    onLoad={() => setQrImageFailed(false)}
-                    onError={() => setQrImageFailed(true)}
-                  />
-                )}
-                {(!qrImageSrc || qrImageFailed) && (
-                  <span>
-                    {language === 'zh'
-                      ? '正在生成二维码；如果长时间不显示，请复制链接在浏览器打开，或重新开始扫码。'
-                      : 'Generating QR code. If it does not appear, copy the link or start again.'}
-                  </span>
-                )}
-              </div>
-              <button
-                className="settings-copyline"
-                type="button"
-                onClick={() => void copyText(loginStart.qrcodeUrl)}
-              >
-                <Clipboard size={15} />
-                <span>
-                  {language === 'zh' ? '复制二维码链接' : 'Copy QR link'}
-                </span>
-              </button>
-              <InfoRow
-                label={language === 'zh' ? '登录状态' : 'Login status'}
-                value={botLoginStatusText(loginStatus?.status ?? 'waiting', language)}
-              />
-              {loginStart.expiresAt && (
-                <InfoRow
-                  label={language === 'zh' ? '过期时间' : 'Expires'}
-                  value={formatBotExpiry(loginStart.expiresAt, language)}
-                />
-              )}
-              {loginStatus?.message && (
-                <p className="settings-muted">{loginStatus.message}</p>
-              )}
-            </div>
-          )}
-          {(selectedStatus?.accounts ?? []).length > 0 && (
-            <div className="bot-account-list">
-              {(selectedStatus?.accounts ?? []).map((account, index) => {
-                const accountId = String(
-                  account.account_id ?? account.accountId ?? account.id ?? '',
-                );
-                return (
-                  <div className="bot-account-row" key={`${accountId || index}`}>
-                    <div>
-                      <strong>{accountId || (language === 'zh' ? '未知账号' : 'Unknown account')}</strong>
-                      <small>
-                        {String(account.user_id ?? account.userId ?? '') ||
-                          (language === 'zh' ? '未返回 user_id' : 'No user_id')}
-                      </small>
-                    </div>
-                    <button
-                      className="secondary-button danger"
-                      type="button"
-                      disabled={!accountId || busyKey === `weixin:clear:${accountId}`}
-                      onClick={() => void clearWeixinAccount(accountId)}
-                    >
-                      {busyKey === `weixin:clear:${accountId}` ? (
-                        <LoaderCircle size={14} />
-                      ) : (
-                        <Trash2 size={14} />
-                      )}
-                      {language === 'zh' ? '移除' : 'Remove'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </SettingsCard>
-      )}
-
-      <SettingsCard
-        title={language === 'zh' ? '配置' : 'Configuration'}
-        subtitle={
-          language === 'zh'
-            ? '配置由 Product Host 原子落盘。secret 只返回脱敏值；修改时需重新输入。'
-            : 'Product Host persists configuration atomically. Secrets are masked on read and must be re-entered to change them.'
-        }
-      >
-        {!selectedConfig ? (
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `config:${selectedPlatform}`}
-            onClick={() => void loadConfig(selectedPlatform)}
-          >
-            {busyKey === `config:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Settings size={14} />
-            )}
-            {language === 'zh' ? '加载配置' : 'Load config'}
-          </button>
-        ) : (
-          <>
-            <textarea
-              className="settings-json-editor"
-              spellCheck={false}
-              value={selectedDraft}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                setConfigDraftByPlatform((current) => ({
-                  ...current,
-                  [selectedPlatform]: value,
-                }));
-              }}
-            />
-            <div className="settings-actions">
-              <button
-                className="primary-button"
-                type="button"
-                disabled={busyKey === `save:${selectedPlatform}`}
-                onClick={() => void saveConfig()}
-              >
-                {busyKey === `save:${selectedPlatform}` ? (
-                  <LoaderCircle size={14} />
-                ) : (
-                  <Check size={14} />
-                )}
-                {language === 'zh' ? '保存配置' : 'Save config'}
-              </button>
-              <button
-                className="secondary-button"
-                type="button"
-                onClick={() => void loadConfig(selectedPlatform)}
-              >
-                <RefreshCw size={14} />
-                {language === 'zh' ? '重新加载' : 'Reload'}
-              </button>
-            </div>
-          </>
-        )}
-      </SettingsCard>
-
-      <SettingsCard
-        title={language === 'zh' ? '日志' : 'Logs'}
-        subtitle={
-          language === 'zh'
-            ? '读取 Product Host adapter 的日志尾部。'
-            : 'Read the Product Host adapter log tail.'
-        }
-      >
-        <div className="settings-actions">
-          <button
-            className="secondary-button"
-            type="button"
-            disabled={busyKey === `logs:${selectedPlatform}`}
-            onClick={() => void loadLogs(selectedPlatform)}
-          >
-            {busyKey === `logs:${selectedPlatform}` ? (
-              <LoaderCircle size={14} />
-            ) : (
-              <Clipboard size={14} />
-            )}
-            {language === 'zh' ? '加载最近 200 行' : 'Load last 200 lines'}
-          </button>
-        </div>
-        <pre className="bot-log-view">
-          {selectedLogs.length > 0
-            ? selectedLogs.join('\n')
-            : language === 'zh'
-              ? '暂无日志'
-              : 'No logs loaded'}
-        </pre>
-      </SettingsCard>
-    </div>
   );
 }
 
@@ -3051,7 +2857,6 @@ function McpServersPanel({
   );
 
   const selectedServer = servers.find((server) => server.id === selectedId);
-  const pluginServers = servers.filter(mcpServerIsFromPlugin);
   const userServers = servers.filter((server) => !mcpServerIsFromPlugin(server));
   const capabilityUndeclared = !capabilities.mcpServers;
 
@@ -3077,13 +2882,13 @@ function McpServersPanel({
       </header>
 
       {capabilityUndeclared && (
-        <p className="bot-settings-error">
+        <p className="settings-inline-error">
           {language === 'zh'
-            ? '当前 Runtime 未声明 MCP snapshot 能力。'
-            : 'The current Runtime does not advertise MCP snapshot support.'}
+            ? '当前 /v1/capabilities 未声明 mcp_servers；后端接口上线后这里会直接可用。'
+            : '/v1/capabilities does not declare mcp_servers yet. This panel will work once backend endpoints are exposed.'}
         </p>
       )}
-      {error && <p className="bot-settings-error">{error}</p>}
+      {error && <p className="settings-inline-error">{error}</p>}
 
       <section className="mcp-simple-section">
         <div className="mcp-section-title">
@@ -3131,29 +2936,7 @@ function McpServersPanel({
         </div>
       </section>
 
-      {pluginServers.length > 0 && (
-        <section className="mcp-simple-section">
-          <div className="mcp-section-title">
-            <strong>{language === 'zh' ? '来自插件' : 'From plugins'}</strong>
-          </div>
-          <div className="mcp-simple-list">
-            {pluginServers.map((server) => (
-              <div className="mcp-simple-row plugin" key={server.id}>
-                <McpLogoIcon className="mcp-logo-icon" size={18} />
-                <strong>{server.name || server.id}</strong>
-                <button
-                  className={`mcp-toggle ${server.enabled ? 'on' : ''}`}
-                  type="button"
-                  disabled={Boolean(busyKey)}
-                  onClick={() => void toggleServer(server)}
-                >
-                  <span />
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      <CardbushAppsPanel language={language} onNotify={onNotify} />
 
       {editorOpen && (
         <section className="mcp-editor-panel">
@@ -3314,6 +3097,222 @@ function McpServersPanel({
         </section>
       )}
     </div>
+  );
+}
+
+function CardbushAppsPanel({
+  language,
+  onNotify,
+}: {
+  language: AppLanguage;
+  onNotify: (message: string) => void;
+}) {
+  const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
+  const [expandedPluginId, setExpandedPluginId] = useState('');
+  const [busyKey, setBusyKey] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setBusyKey('load');
+    setError('');
+    try {
+      setConfiguration(await fetchCardbushAppsConfiguration());
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setBusyKey('');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const persist = useCallback(async (
+    next: CardbushAppsConfiguration,
+    key: string,
+    zh: string,
+    en: string,
+  ) => {
+    setBusyKey(key);
+    setError('');
+    try {
+      const saved = await saveCardbushAppsConfiguration(next);
+      setConfiguration(saved);
+      onNotify(language === 'zh' ? zh : en);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      await load();
+    } finally {
+      setBusyKey('');
+    }
+  }, [language, load, onNotify]);
+
+  const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
+    setConfiguration((current) => current ? {
+      ...current,
+      plugins: current.plugins.map((item) => item.id === plugin.id ? plugin : item),
+    } : current);
+  }, []);
+
+  const serviceEnabled = configuration?.serviceEnabled === true;
+
+  return (
+    <section className="mcp-simple-section cardbush-apps-section">
+      <div className="mcp-section-title">
+        <div>
+          <strong>CardBush Apps</strong>
+          <small>{language === 'zh'
+            ? '独立 MCP 插件服务；插件只在该服务内注册和执行。'
+            : 'Independent MCP plugin service; apps register and run only inside it.'}</small>
+        </div>
+        <button
+          className={`mcp-toggle ${serviceEnabled ? 'on' : ''}`}
+          type="button"
+          disabled={!configuration || Boolean(busyKey)}
+          title={serviceEnabled
+            ? language === 'zh' ? '停用 CardBush Apps' : 'Disable CardBush Apps'
+            : language === 'zh' ? '启用 CardBush Apps' : 'Enable CardBush Apps'}
+          onClick={() => configuration && void persist(
+            { ...configuration, serviceEnabled: !configuration.serviceEnabled },
+            'service',
+            configuration.serviceEnabled ? 'CardBush Apps 已停用' : 'CardBush Apps 已启用',
+            configuration.serviceEnabled ? 'CardBush Apps disabled' : 'CardBush Apps enabled',
+          )}
+        >
+          <span />
+        </button>
+      </div>
+
+      {error && <p className="settings-inline-error">{error}</p>}
+      <div className="cardbush-app-list">
+        {!configuration || busyKey === 'load' ? (
+          <div className="mcp-empty-row"><LoaderCircle size={16} /><span>{language === 'zh' ? '正在加载' : 'Loading'}</span></div>
+        ) : configuration.plugins.map((plugin) => {
+          const expanded = expandedPluginId === plugin.id;
+          return (
+            <article className={`cardbush-app-card ${!plugin.installed ? 'not-installed' : ''}`} key={plugin.id}>
+              <div className="cardbush-app-summary">
+                <div className="cardbush-app-copy">
+                  <strong>{plugin.name}</strong>
+                  <small>{plugin.description}</small>
+                </div>
+                {plugin.installed && (
+                  <button
+                    className="mcp-icon-button"
+                    type="button"
+                    title={language === 'zh' ? '插件配置' : 'Plugin settings'}
+                    onClick={() => setExpandedPluginId(expanded ? '' : plugin.id)}
+                  >
+                    <Settings size={16} />
+                  </button>
+                )}
+                {plugin.installed ? (
+                  <>
+                    <button
+                      className={`mcp-toggle ${plugin.enabled ? 'on' : ''}`}
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      title={plugin.enabled ? (language === 'zh' ? '停用插件' : 'Disable plugin') : (language === 'zh' ? '启用插件' : 'Enable plugin')}
+                      onClick={() => void persist({
+                        ...configuration,
+                        plugins: configuration.plugins.map((item) => item.id === plugin.id
+                          ? { ...item, enabled: !item.enabled }
+                          : item),
+                      }, `toggle:${plugin.id}`, plugin.enabled ? '插件已停用' : '插件已启用', plugin.enabled ? 'Plugin disabled' : 'Plugin enabled')}
+                    >
+                      <span />
+                    </button>
+                    <button
+                      className="secondary-button compact danger"
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() => {
+                        const confirmed = window.confirm(language === 'zh'
+                          ? `确定卸载 ${plugin.name} 吗？插件配置会保留，重新安装后可以继续使用。`
+                          : `Uninstall ${plugin.name}? Its settings will be retained for reinstall.`);
+                        if (!confirmed) return;
+                        void persist({
+                          ...configuration,
+                          plugins: configuration.plugins.map((item) => item.id === plugin.id
+                            ? { ...item, installed: false, enabled: false }
+                            : item),
+                        }, `uninstall:${plugin.id}`, '插件已卸载', 'Plugin uninstalled');
+                      }}
+                    >
+                      {language === 'zh' ? '卸载' : 'Uninstall'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={Boolean(busyKey)}
+                    onClick={() => void persist({
+                      ...configuration,
+                      plugins: configuration.plugins.map((item) => item.id === plugin.id
+                        ? { ...item, installed: true, enabled: true }
+                        : item),
+                    }, `install:${plugin.id}`, '插件已安装', 'Plugin installed')}
+                  >
+                    <Plus size={14} />
+                    {language === 'zh' ? '安装' : 'Install'}
+                  </button>
+                )}
+              </div>
+
+              {expanded && plugin.id === 'computer_use' && (
+                <div className="cardbush-app-config">
+                  <label className="settings-field cardbush-app-path-field">
+                    <span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span>
+                    <input
+                      value={String(plugin.config.screenshotDirectory ?? '')}
+                      placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Leave empty to use the system temp directory'}
+                      onChange={(event) => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, screenshotDirectory: event.currentTarget.value },
+                      })}
+                    />
+                  </label>
+                  <label className="cardbush-app-option">
+                    <input
+                      type="checkbox"
+                      checked={plugin.config.allowOpenApp !== false}
+                      onChange={(event) => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, allowOpenApp: event.currentTarget.checked },
+                      })}
+                    />
+                    <span>{language === 'zh' ? '允许启动应用' : 'Allow opening applications'}</span>
+                  </label>
+                  <label className="cardbush-app-option">
+                    <input
+                      type="checkbox"
+                      checked={plugin.config.allowWindowClose !== false}
+                      onChange={(event) => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, allowWindowClose: event.currentTarget.checked },
+                      })}
+                    />
+                    <span>{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</span>
+                  </label>
+                  <div className="cardbush-app-config-actions">
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() => void persist(configuration, `config:${plugin.id}`, '插件配置已保存', 'Plugin settings saved')}
+                    >
+                      {language === 'zh' ? '保存配置' : 'Save settings'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -3480,185 +3479,14 @@ function mcpServerIsFromPlugin(server: McpServerConfig) {
   );
 }
 
-function botPanelError(caught: unknown, language: AppLanguage) {
-  const message = caught instanceof Error ? caught.message : String(caught);
-  if (message.includes('Failed to fetch')) {
-    return language === 'zh'
-      ? 'Product Host 不可用，请重启 CardBush 后重试。'
-      : 'Product Host is unavailable. Restart CardBush and retry.';
-  }
-  if (message.includes('404')) {
-    return language === 'zh'
-      ? '当前地址没有 Bot 管理 API。请连接独立 Bot 管理服务。'
-      : 'This endpoint has no Bot management API. Connect an independent Bot manager.';
-  }
-  if (/bot is disabled/i.test(message)) {
-    return language === 'zh'
-      ? 'Bot 当前未启用。请先加载配置，将 enabled 设置为 true 并保存，然后再启动服务。'
-      : 'Bot is disabled. Load its config, set enabled to true, save it, then start the service.';
-  }
-  if (/weixin bot has no logged-in account/i.test(message)) {
-    return language === 'zh'
-      ? '微信 Bot 还没有已登录账号。请先完成微信扫码确认，再启动服务。'
-      : 'The WeChat bot has no logged-in account. Complete QR login before starting the service.';
-  }
-  return message;
-}
-
 function mcpErrorText(caught: unknown, language: AppLanguage) {
   const message = errorMessage(caught);
-  if (message.includes('Failed to fetch')) {
-    return language === 'zh'
-      ? 'Product Host 不可用，请重启 CardBush 后重试。'
-      : 'Product Host is unavailable. Restart CardBush and retry.';
-  }
-  if (message.includes('404')) {
-    return language === 'zh'
-      ? 'Runtime 尚未提供 MCP snapshot 能力。'
-      : 'The Runtime does not provide MCP snapshot support.';
-  }
   if (/mcp/i.test(message) && /transport/i.test(message)) {
     return language === 'zh'
       ? `MCP transport 配置无效：${message}`
       : `Invalid MCP transport config: ${message}`;
   }
   return message;
-}
-
-function modelConfigForBot(
-  configs: ManagedModelConfig[],
-  selectedModel: string,
-) {
-  const normalized = selectedModel.trim().toLowerCase();
-  if (!normalized) {
-    return configs.length === 1 ? configs[0] : undefined;
-  }
-  return configs.find(
-    (config) => config.id.trim().toLowerCase() === normalized,
-  ) ?? configs.find(
-    (config) => config.modelName.trim().toLowerCase() === normalized,
-  ) ?? (configs.length === 1 ? configs[0] : undefined);
-}
-
-function botServiceDetailText(
-  status: BotStatusResult | undefined,
-  overview: BotPlatformOverview | undefined,
-  language: AppLanguage,
-) {
-  const explicitError = status?.lastError ?? overview?.lastError ?? '';
-  if (explicitError) {
-    return explicitError;
-  }
-  if (status?.serviceStatus === 'failed') {
-    if (status.returnCode != null) {
-      return language === 'zh'
-        ? `服务进程已退出，退出码 ${status.returnCode}。停止请求已送达，但进程此前/当前以失败状态结束；可查看下方日志或重新启动。`
-        : `The service process exited with code ${status.returnCode}. The stop request was accepted, but the process ended in a failed state. Check logs or restart.`;
-    }
-    return language === 'zh'
-      ? '服务处于失败状态，但后端没有返回错误详情；可加载日志查看原因。'
-      : 'The service failed without an error detail. Load Product Host logs to inspect it.';
-  }
-  if (status?.serviceStatus === 'stopped' && status.stoppedAt) {
-    return language === 'zh'
-      ? `已停止于 ${formatBotStatusTime(status.stoppedAt)}`
-      : `Stopped at ${formatBotStatusTime(status.stoppedAt)}`;
-  }
-  if (status?.serviceStatus === 'running' && status.pid != null) {
-    return language === 'zh'
-      ? `运行中，PID ${status.pid}`
-      : `Running, PID ${status.pid}`;
-  }
-  return language === 'zh' ? '暂无错误信息' : 'No error reported';
-}
-
-function formatBotStatusTime(value: string) {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value;
-  }
-  return new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
-}
-
-function isDirectImageSource(value: string) {
-  const source = value.trim();
-  return (
-    /^data:image\//i.test(source) ||
-    /^(blob:|file:)/i.test(source) ||
-    /\.(png|jpe?g|gif|webp|svg)([?#].*)?$/i.test(source)
-  );
-}
-
-function botMissingConfigurationText(
-  platform: BotPlatform,
-  missingFields: string[],
-  language: AppLanguage,
-) {
-  if (platform === 'weixin' && missingFields.includes('weixin_account')) {
-    return language === 'zh'
-      ? '微信 Bot 还没有已登录账号。请先在“微信扫码登录”里扫码并确认，成功连接后再启动服务。'
-      : 'The WeChat bot has no logged-in account. Scan and confirm the QR login first, then start the service.';
-  }
-  if (missingFields.length > 0) {
-    const fields = missingFields.join(', ');
-    return language === 'zh'
-      ? `当前平台缺少必填配置：${fields}。请加载配置、补齐并保存后再启动服务。`
-      : `This platform is missing required config: ${fields}. Load, complete, and save the config before starting.`;
-  }
-  return language === 'zh'
-    ? '当前平台配置尚未完成。请加载配置、补齐并保存后再启动服务。'
-    : 'This platform is not fully configured. Load, complete, and save the config before starting.';
-}
-
-function botStatusTone(status: BotServiceStatus) {
-  if (status === 'running') {
-    return 'running';
-  }
-  if (status === 'starting' || status === 'stopping') {
-    return 'pending';
-  }
-  if (status === 'failed') {
-    return 'failed';
-  }
-  return 'stopped';
-}
-
-function botServiceStatusText(status: BotServiceStatus, language: AppLanguage) {
-  const labels: Record<BotServiceStatus, { zh: string; en: string }> = {
-    stopped: { zh: '已停止', en: 'Stopped' },
-    starting: { zh: '启动中', en: 'Starting' },
-    running: { zh: '运行中', en: 'Running' },
-    stopping: { zh: '停止中', en: 'Stopping' },
-    failed: { zh: '失败', en: 'Failed' },
-  };
-  return labels[status][language];
-}
-
-function botServiceActionText(
-  action: 'start' | 'stop' | 'restart',
-  language: AppLanguage,
-) {
-  const labels = {
-    start: { zh: '启动', en: 'Start' },
-    stop: { zh: '停止', en: 'Stop' },
-    restart: { zh: '重启', en: 'Restart' },
-  } as const;
-  return labels[action][language];
-}
-
-function botLoginStatusText(status: WeixinLoginStatus, language: AppLanguage) {
-  const labels: Record<WeixinLoginStatus, { zh: string; en: string }> = {
-    waiting: { zh: '等待扫码', en: 'Waiting' },
-    scanned: { zh: '已扫码，等待确认', en: 'Scanned' },
-    confirmed: { zh: '已确认', en: 'Confirmed' },
-    expired: { zh: '已过期', en: 'Expired' },
-    failed: { zh: '失败', en: 'Failed' },
-  };
-  return labels[status][language];
 }
 
 const emptyCumulativeUsageStatistics: CumulativeUsageStatistics = {
@@ -4072,6 +3900,33 @@ function ModelConfigRow({
   );
 }
 
+function DiagnosticRow({ probe }: { probe: DiagnosticProbe }) {
+  return (
+    <div className={`diagnostic-row ${probe.ok ? 'ok' : 'fail'}`}>
+      {probe.ok ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+      <div>
+        <strong>{probe.label}</strong>
+        <span>{probe.detail}</span>
+      </div>
+      <small>{probe.elapsedMs}ms</small>
+    </div>
+  );
+}
+
+type DiagnosticResult = {
+  runtime: DiagnosticProbe;
+  productHost: DiagnosticProbe;
+  capabilities: DiagnosticProbe;
+};
+
+type DiagnosticProbe = {
+  label: string;
+  ok: boolean;
+  elapsedMs: number;
+  detail: string;
+  statusCode?: number;
+};
+
 type EffectiveModelInfo = {
   source: string;
   model: string;
@@ -4202,7 +4057,7 @@ function resolveEffectiveModelInfo(
   selectedModel: string,
   language: AppLanguage,
 ): EffectiveModelInfo {
-  const determinedByServer =
+  const determinedByHost =
     language === 'zh' ? '(由 Product Host 决定)' : '(determined by Product Host)';
   const config = settings.managedModelConfigs.find(
     (item) => item.id.trim().toLowerCase() === selectedModel.trim().toLowerCase(),
@@ -4212,10 +4067,10 @@ function resolveEffectiveModelInfo(
   if (!config || !shouldUseManagedConfig(config)) {
     return {
       source: language === 'zh' ? 'Product Host 默认配置' : 'Product Host default config',
-      model: config?.modelName || selectedModel || determinedByServer,
-      provider: determinedByServer,
-      apiKeyLabel: determinedByServer,
-      baseUrl: determinedByServer,
+      model: config?.modelName || selectedModel || determinedByHost,
+      provider: determinedByHost,
+      apiKeyLabel: determinedByHost,
+      baseUrl: determinedByHost,
     };
   }
   return {
@@ -4250,6 +4105,44 @@ function maskSecret(value: string, language: AppLanguage) {
     return `${raw[0]}${'*'.repeat(Math.max(0, raw.length - 1))}`;
   }
   return `${raw.slice(0, 4)}****${raw.slice(-4)}`;
+}
+
+async function localDiagnosticProbe(
+  label: string,
+  action: () => Promise<string> | string,
+): Promise<DiagnosticProbe> {
+  const started = performance.now();
+  try {
+    return {
+      label,
+      ok: true,
+      elapsedMs: Math.round(performance.now() - started),
+      detail: await action(),
+    };
+  } catch (caught) {
+    return {
+      label,
+      ok: false,
+      elapsedMs: Math.round(performance.now() - started),
+      detail: caught instanceof Error ? caught.message : String(caught),
+    };
+  }
+}
+
+function assertDesktopRuntime() {
+  if (!window.cardbushDesktop?.runtime) {
+    throw new Error('Electron Runtime bridge is unavailable.');
+  }
+}
+
+function assertProductHost() {
+  if (!window.cardbushDesktop?.productHostCommand) {
+    throw new Error('CardBush Product Host is unavailable.');
+  }
+}
+
+function diagnosticSummary(probe: DiagnosticProbe) {
+  return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
 }
 
 function cssImageUrl(value: string) {
@@ -4328,18 +4221,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function formatBotExpiry(value: string, language: AppLanguage) {
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return value || (language === 'zh' ? '15 分钟后' : 'in 15 minutes');
-  }
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).format(timestamp);
 }
 
 async function copyText(value: string) {

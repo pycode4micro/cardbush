@@ -118,6 +118,8 @@ export const contextSnapshotSchema = z.object({
   throughTurnSequence: z.number().int().nonnegative(),
   sourceMessageIds: z.array(z.string().min(1)),
   messages: z.array(modelMessageSchema),
+  estimatedTokens: z.number().int().nonnegative().default(0),
+  truncated: z.boolean().default(false),
 });
 
 export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
@@ -193,4 +195,5 @@ export const assembleRuntimeSessionContextRequestSchema = z.object({
   prefixMessages: z.array(modelMessageSchema).default([]),
   currentMessages: z.array(modelMessageSchema).default([]),
   throughTurnSequence: z.number().int().nonnegative().optional(),
+  maxChars: z.number().int().positive().optional(),
 });

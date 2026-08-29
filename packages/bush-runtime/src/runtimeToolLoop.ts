@@ -5,7 +5,6 @@ import {
   type RuntimePermissionAnswer,
   type ToolCall,
   type ToolResult,
-  type TurnOutcomeDeclaration,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -35,7 +34,6 @@ export interface RuntimeToolLoopOptions {
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
   receiptIds: string[];
-  turnOutcomes: TurnOutcomeDeclaration[];
 }
 
 export class RuntimeToolLoop {
@@ -117,7 +115,6 @@ export class RuntimeToolLoop {
     const toolMessages: ModelMessage[] = [];
     const guidanceMessages: ModelMessage[] = [];
     const receiptIds: string[] = [];
-    const turnOutcomes: TurnOutcomeDeclaration[] = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const outcome = await this.#coordinator.execute(
@@ -140,11 +137,15 @@ export class RuntimeToolLoop {
     for (const [ordinal, outcome] of outcomes.entries()) {
       const toolCall = toolCalls[ordinal]!;
       receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
-      if (outcome.result.turn_outcome) turnOutcomes.push(outcome.result.turn_outcome);
       toolMessages.push({
         role: "tool",
         toolCallId: toolCall.id,
-        content: JSON.stringify({ ...outcome.result, guidance: [] }),
+        content: JSON.stringify(projectToolResult(
+          { ...outcome.result, guidance: [] },
+          this.#identity.sessionId,
+          this.#identity.turnId,
+          toolCall.id,
+        )),
       });
       guidanceMessages.push(...outcome.result.guidance);
     }
@@ -152,7 +153,6 @@ export class RuntimeToolLoop {
     return {
       messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : []), ...guidanceMessages],
       receiptIds,
-      turnOutcomes,
     };
   }
 
@@ -237,16 +237,46 @@ export class RuntimeToolLoop {
   }
 }
 
+function projectToolResult(
+  result: ToolResult,
+  sessionId: string,
+  turnId: string,
+  toolCallId: string,
+  maxChars = 16_000,
+): ToolResult {
+  const serialized = JSON.stringify(result);
+  if (serialized.length <= maxChars) return result;
+  const locator = `tool-result://${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}/${encodeURIComponent(toolCallId)}`;
+  return {
+    ...result,
+    output: {
+      archived: true,
+      locator,
+      originalChars: serialized.length,
+      preview: JSON.stringify(result.output).slice(0, Math.max(2_000, maxChars - 6_000)),
+      note: "The complete authoritative Tool result is archived. Use ked_read_temp_object with the locator for exact excerpts.",
+    },
+  };
+}
+
 function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
   const images = results.flatMap((result) => result.artifacts)
     .filter((artifact) =>
       artifact.type === "image" &&
       artifact.metadata?.model_input === true &&
-      typeof artifact.path === "string" &&
-      artifact.path.trim().length > 0,
+      (
+        typeof artifact.path === "string" && artifact.path.trim().length > 0 ||
+        typeof artifact.uri === "string" && artifact.uri.trim().length > 0
+      ),
     )
     .slice(0, 4)
-    .map((artifact) => ({ url: artifact.path! }));
+    .map((artifact): { url: string; detail?: "auto" | "low" | "high" } => {
+      const detail = artifact.metadata?.detail;
+      return {
+        url: artifact.path ?? artifact.uri!,
+        ...(detail === "low" || detail === "high" ? { detail } : {}),
+      };
+    });
   if (!images.length) return undefined;
   return {
     role: "user",

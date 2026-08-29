@@ -22,9 +22,10 @@ import type {
 import {
   registerActiveRuntimeTurn,
   registerRuntimePermission,
+  registerRuntimeGenericInteraction,
+  removeRuntimeGenericInteraction,
   removeRuntimePermission,
   removeRuntimePermissionsForTurn,
-  takeRuntimeGuidance,
 } from '../runtime-client/RuntimeInteractionBridge';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type {
@@ -58,14 +59,24 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     );
     await synchronizeProductMcpSnapshot(runtime.client);
     const catalog = await runtime.client.getToolCatalogDetails(controller.signal);
+    const activeGoal = await runtime.client.getGoal(request.sessionId, controller.signal);
     await synchronizeProductTeamSnapshot(
       runtime.client,
       catalog.map((entry) => entry.definition),
     );
     const disabled = new Set(request.disabledTools ?? []);
     const hasWorkspace = Boolean(request.projectDir?.trim());
+    const permissionMode = request.permissionMode ?? 'task_free';
+    const interactiveRequests = request.interactiveRequestsEnabled === true;
+    const vision = request.standardImageInputEnabled === true;
+    const userChoice = false;
+    const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
     const tools = catalog.filter((entry) =>
       !disabled.has(entry.definition.name) &&
+      (entry.definition.name !== 'request_permission' || (interactiveRequests && permissionMode !== 'all_free')) &&
+      (entry.definition.name !== 'request_user_choice' || (interactiveRequests && userChoice)) &&
+      (entry.definition.name !== 'inject_image_input' || vision) &&
+      (entry.definition.name !== 'update_goal' || goalAvailable) &&
       (hasWorkspace || entry.manifest.dispatch_scope !== 'resource') &&
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
       (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
@@ -86,13 +97,17 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       projectInstructions: request.projectUserPrompt,
       files: request.files,
       images: request.images?.map((image) => image.path),
-      permissionMode: request.permissionMode ?? 'task_free',
+      permissionMode,
+      interactiveRequestsEnabled: request.interactiveRequestsEnabled,
+      userChoiceEnabled: userChoice,
+      visionEnabled: vision,
       teamId: request.teamId,
       allowedSkills: request.allowedSkills,
       planEnabled: request.referencePlanMode !== 'off',
       maxOutputTokens: positiveInteger(
         request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
       ),
+      maxContextTokens: positiveInteger(request.modelConfig?.maxContextTokens),
       reasoningEffort: reasoningEffort(request.reasoningLevel),
     });
     if (goalCommand) {
@@ -110,7 +125,10 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       const unregisterTurn = registerActiveRuntimeTurn(
         currentRequest.turnId,
         request.sessionId,
-        () => controller.abort(),
+        () => runtime.client.stopTurn({
+          sessionId: request.sessionId,
+          turnId: currentRequest.turnId,
+        }),
       );
       try {
         const stream = consumeRuntimeEvents(
@@ -137,9 +155,8 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         unregisterTurn();
       }
 
-      const guidance = takeRuntimeGuidance(request.sessionId);
       const goal = await runtime.client.getGoal(request.sessionId, controller.signal);
-      if (!guidance && (goal?.status !== 'active' || terminal.payload.status !== 'completed')) {
+      if (goal?.status !== 'active' || terminal.payload.status !== 'completed') {
         break;
       }
       currentRequest = {
@@ -147,12 +164,12 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         requestId: `request_${crypto.randomUUID()}`,
         turnId: `turn_${crypto.randomUUID()}`,
         inputMessages: [{
-          messageId: guidance?.clientMessageId || `message_${crypto.randomUUID()}`,
+          messageId: `message_${crypto.randomUUID()}`,
           createdAt: new Date().toISOString(),
           message: {
             role: 'user',
-            name: guidance ? 'turn_guidance' : 'goal_continuation',
-            content: guidance?.content ?? GOAL_CONTINUATION_PROMPT,
+            name: 'goal_continuation',
+            content: GOAL_CONTINUATION_PROMPT,
           },
         }],
         sessionMetadata: {},
@@ -354,7 +371,9 @@ async function consumeRuntimeEvents(
               if (plan) request.onTaskPlanUpdate?.(planUpdate(plan.plan, event));
             }
             if (record && (record.toolCall.name === 'subagent' || record.toolCall.name === 'team_delegate')) {
-              request.onSubagentDispatch?.(subagentDispatch(record, event));
+              subagentDispatches(record, event).forEach((dispatch) =>
+                request.onSubagentDispatch?.(dispatch),
+              );
             }
           })
           .finally(() => pendingToolLoads.delete(loading));
@@ -374,6 +393,30 @@ async function consumeRuntimeEvents(
       case 'permission_cancelled':
       case 'permission_expired':
         removeRuntimePermission(event.payload.permissionId);
+        break;
+      case 'interaction_requested': {
+        const interaction = registerRuntimeGenericInteraction({
+          protocol: 'bush.runtime_interaction.v1',
+          interactionId: event.payload.interactionId,
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          toolCallId: event.payload.toolCallId,
+          title: event.payload.title,
+          description: event.payload.description,
+          reason: event.payload.reason,
+          questions: event.payload.questions,
+          submitLabel: event.payload.submitLabel,
+          cancelLabel: event.payload.cancelLabel,
+          createdAt: event.createdAt,
+          expiresAt: event.payload.expiresAt,
+        }, (answer) => runtime.client.answerInteraction(answer));
+        request.onInteractiveRequest?.(interaction);
+        break;
+      }
+      case 'interaction_answered':
+      case 'interaction_cancelled':
+      case 'interaction_expired':
+        removeRuntimeGenericInteraction(event.payload.interactionId);
         break;
       case 'provider_retry':
         request.onConnectionState?.({
@@ -558,28 +601,40 @@ function planUpdate(
   };
 }
 
-function subagentDispatch(
+function subagentDispatches(
   record: ToolExecutionRecord,
   event: Extract<RuntimeEvent, { kind: 'tool_completed' | 'tool_failed' }>,
 ) {
   const output = object(record.result.output);
-  return {
+  const members = Array.isArray(output.members)
+    ? output.members.map((item) => object(item))
+    : [];
+  const items = record.toolCall.name === 'team_delegate' && members.length > 0
+    ? members
+    : [output];
+  return items.map((item) => {
+    const status = String(item.status ?? output.status ?? (record.result.success ? 'completed' : 'failed'));
+    const terminal = ['completed', 'failed', 'stopped', 'cancelled'].includes(status);
+    return {
     protocol: 'bush.subagent_task.v1',
     phase: record.result.success ? 'dispatched' as const : 'failed' as const,
-    status: String(output.status ?? (record.result.success ? 'completed' : 'failed')),
-    terminal: true,
+    status,
+    terminal,
     accepted: record.result.success,
-    taskId: optionalString(output.taskId),
+    taskId: optionalString(item.taskId),
     toolCallId: record.toolCall.id,
     parentSessionId: event.sessionId,
     parentTurnId: event.turnId,
-    childSessionId: optionalString(output.childSessionId),
-    childTurnId: optionalString(output.childTurnId),
+    childSessionId: optionalString(item.childSessionId),
+    childTurnId: optionalString(item.childTurnId),
     origin: record.toolCall.name === 'team_delegate' ? 'team' : 'subagent',
     teamId: optionalString(output.teamId),
+    teamMemberId: optionalString(item.memberId),
+    agentProfileId: optionalString(item.agentProfileId),
     errorCode: record.result.error?.code,
-    raw: output,
-  };
+    raw: item,
+    };
+  });
 }
 
 function terminalSnapshot(

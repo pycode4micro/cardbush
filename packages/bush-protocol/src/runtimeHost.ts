@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
+import { interactionQuestionSchema } from "./interaction.js";
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -10,6 +11,7 @@ export const GET_RUNTIME_CAPABILITIES_COMMAND =
 export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 export const ANSWER_RUNTIME_PERMISSION_COMMAND =
   "runtime.answer_permission" as const;
+export const SHUTDOWN_RUNTIME_COMMAND = "runtime.shutdown" as const;
 export const BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL =
   "bush.runtime_permission_answer.v1" as const;
 
@@ -53,6 +55,10 @@ export const runtimeEventKindSchema = z.enum([
   "permission_rejected",
   "permission_expired",
   "permission_cancelled",
+  "interaction_requested",
+  "interaction_answered",
+  "interaction_cancelled",
+  "interaction_expired",
   "cache_chain_observed",
   "provider_retry",
   "connection_interrupted",
@@ -205,6 +211,44 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("permission_cancelled"),
     payload: permissionIdentitySchema.extend({ reason: z.string().min(1) }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("interaction_requested"),
+    payload: z.object({
+      interactionId: z.string().min(1),
+      toolCallId: z.string().min(1),
+      title: z.string().min(1),
+      description: z.string(),
+      reason: z.string(),
+      questions: z.array(interactionQuestionSchema).min(1).max(3),
+      submitLabel: z.string(),
+      cancelLabel: z.string(),
+      expiresAt: z.string().min(1),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("interaction_answered"),
+    payload: z.object({
+      interactionId: z.string().min(1),
+      toolCallId: z.string().min(1),
+      answerId: z.string().min(1),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("interaction_cancelled"),
+    payload: z.object({
+      interactionId: z.string().min(1),
+      toolCallId: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("interaction_expired"),
+    payload: z.object({
+      interactionId: z.string().min(1),
+      toolCallId: z.string().min(1),
+      reason: z.string().min(1),
+    }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("cache_chain_observed"),

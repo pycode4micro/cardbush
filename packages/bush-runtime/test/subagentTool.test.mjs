@@ -68,7 +68,7 @@ test("forks the pre-dispatch context, hides root-only tools and returns user gui
     { request: parentRequest, contextMessages },
   );
 
-  assert.equal(outcome.kind, "completed");
+  assert.equal(outcome.kind, "completed", JSON.stringify(outcome.result));
   assert.deepEqual(childRequest.prefixMessages.map((message) => message.content), [
     "child-only system",
     "original objective",

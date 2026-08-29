@@ -5,6 +5,7 @@ import {
 
 export interface RuntimeCheckpointStore {
   load(sessionId: string, turnId: string): RuntimeCheckpoint | undefined;
+  list(): RuntimeCheckpoint[];
   save(checkpoint: RuntimeCheckpoint): void;
   remove(sessionId: string, turnId: string): void;
 }
@@ -15,6 +16,10 @@ export class InMemoryRuntimeCheckpointStore implements RuntimeCheckpointStore {
   load(sessionId: string, turnId: string): RuntimeCheckpoint | undefined {
     const checkpoint = this.#checkpoints.get(key(sessionId, turnId));
     return checkpoint ? structuredClone(checkpoint) : undefined;
+  }
+
+  list(): RuntimeCheckpoint[] {
+    return [...this.#checkpoints.values()].map((checkpoint) => structuredClone(checkpoint));
   }
 
   save(candidate: RuntimeCheckpoint): void {

@@ -6,6 +6,7 @@ import {
   realpath,
   writeFile,
 } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import {
@@ -48,21 +49,91 @@ interface Observation {
 
 export class WorkspaceObservationStore {
   readonly #observations = new Map<string, Map<string, Observation>>();
+  readonly #projectObservations = new Map<string, Map<string, Observation>>();
+  readonly #mutations = new Set<string>();
+  readonly #persistencePath?: string;
 
-  record(sessionId: string, path: string, sha256: string): void {
+  constructor(options: { persistencePath?: string } = {}) {
+    this.#persistencePath = options.persistencePath;
+    if (this.#persistencePath) this.#load();
+  }
+
+  record(sessionId: string, path: string, sha256: string, projectRoot?: string): void {
     const session = this.#observations.get(sessionId) ?? new Map<string, Observation>();
     session.set(normalizeIdentity(path), { sha256, observedAt: new Date().toISOString() });
     this.#observations.set(sessionId, session);
+    if (projectRoot) {
+      const project = this.#projectObservations.get(normalizeIdentity(projectRoot)) ?? new Map<string, Observation>();
+      project.set(normalizeIdentity(path), { sha256, observedAt: new Date().toISOString() });
+      this.#projectObservations.set(normalizeIdentity(projectRoot), project);
+      this.#persist();
+    }
   }
 
-  matches(sessionId: string, path: string, sha256: string, inheritedSessionId?: string): boolean {
+  matches(sessionId: string, path: string, sha256: string, inheritedSessionId?: string, projectRoot?: string): boolean {
     const identity = normalizeIdentity(path);
     return (
       this.#observations.get(sessionId)?.get(identity)?.sha256 === sha256 ||
       (inheritedSessionId
         ? this.#observations.get(inheritedSessionId)?.get(identity)?.sha256 === sha256
+        : false) ||
+      (projectRoot
+        ? this.#projectObservations.get(normalizeIdentity(projectRoot))?.get(identity)?.sha256 === sha256
         : false)
     );
+  }
+
+  acquireMutation(path: string): () => void {
+    const identity = normalizeIdentity(path);
+    if (this.#mutations.has(identity)) {
+      throw new Error(`A concurrent mutation already holds the resource lease for ${path}.`);
+    }
+    this.#mutations.add(identity);
+    return () => this.#mutations.delete(identity);
+  }
+
+  #load(): void {
+    let input: unknown;
+    try {
+      input = JSON.parse(readFileSync(this.#persistencePath!, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw new Error(`Project cognition store is invalid: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error("Project cognition store must be an object.");
+    }
+    for (const [root, records] of Object.entries(input as Record<string, unknown>)) {
+      if (!records || typeof records !== "object" || Array.isArray(records)) {
+        throw new Error(`Project cognition records for ${root} are invalid.`);
+      }
+      const project = new Map<string, Observation>();
+      for (const [path, value] of Object.entries(records as Record<string, unknown>)) {
+        const item = value as Partial<Observation> | null;
+        if (!item || typeof item.sha256 !== "string" || typeof item.observedAt !== "string") {
+          throw new Error(`Project cognition observation for ${path} is invalid.`);
+        }
+        project.set(path, { sha256: item.sha256, observedAt: item.observedAt });
+      }
+      this.#projectObservations.set(root, project);
+    }
+  }
+
+  #persist(): void {
+    if (!this.#persistencePath) return;
+    const value = Object.fromEntries([...this.#projectObservations].map(([root, entries]) => [
+      root,
+      Object.fromEntries(entries),
+    ]));
+    mkdirSync(dirname(this.#persistencePath), { recursive: true });
+    const temporary = `${this.#persistencePath}.tmp-${process.pid}`;
+    writeFileSync(temporary, JSON.stringify(value), "utf8");
+    try {
+      renameSync(temporary, this.#persistencePath);
+    } catch {
+      rmSync(this.#persistencePath, { force: true });
+      renameSync(temporary, this.#persistencePath);
+    }
   }
 }
 
@@ -91,7 +162,7 @@ export function registerWorkspaceTools(
       const path = await resolveToolPath(context, context.input.path);
       const bytes = await readFile(path);
       const sha256 = digest(bytes);
-      observations.record(context.sessionId, path, sha256);
+      observations.record(context.sessionId, path, sha256, workspaceRoot(context));
       return successResult(context, {
         path,
         sha256,
@@ -152,22 +223,27 @@ export function registerWorkspaceTools(
     authorize: authorizePath("write"),
     execute: async (context: ToolHandlerContext<WriteFileInput>) => {
       const path = await resolveToolPath(context, context.input.path, true);
-      const before = await optionalBytes(path);
-      assertObservedIfExisting(context, observations, path, before);
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, context.input.content, { encoding: context.input.encoding });
-      const after = await readFile(path);
-      const afterHash = digest(after);
-      observations.record(context.sessionId, path, afterHash);
-      return changeResult(
-        context,
-        path,
-        before,
-        after,
-        before ? "modified" : "added",
-        createReceiptId(),
-        createChangeId(),
-      );
+      const release = observations.acquireMutation(path);
+      try {
+        const before = await optionalBytes(path);
+        assertObservedIfExisting(context, observations, path, before);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, context.input.content, { encoding: context.input.encoding });
+        const after = await readFile(path);
+        const afterHash = digest(after);
+        observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
+        return changeResult(
+          context,
+          path,
+          before,
+          after,
+          before ? "modified" : "added",
+          createReceiptId(),
+          createChangeId(),
+        );
+      } finally {
+        release();
+      }
     },
   });
 
@@ -188,30 +264,35 @@ export function registerWorkspaceTools(
     authorize: authorizePath("write"),
     execute: async (context: ToolHandlerContext<EditFileInput>) => {
       const path = await resolveToolPath(context, context.input.path);
-      const before = await readFile(path);
-      assertObservedIfExisting(context, observations, path, before);
-      const source = before.toString(context.input.encoding);
-      const count = occurrences(source, context.input.oldText);
-      if (count === 0) throw new Error("old_text was not found in the current file revision.");
-      if (!context.input.replaceAll && count !== 1) {
-        throw new Error(`old_text matched ${count} times; set replace_all or provide a unique value.`);
+      const release = observations.acquireMutation(path);
+      try {
+        const before = await readFile(path);
+        assertObservedIfExisting(context, observations, path, before);
+        const source = before.toString(context.input.encoding);
+        const count = occurrences(source, context.input.oldText);
+        if (count === 0) throw new Error("old_text was not found in the current file revision.");
+        if (!context.input.replaceAll && count !== 1) {
+          throw new Error(`old_text matched ${count} times; set replace_all or provide a unique value.`);
+        }
+        const next = context.input.replaceAll
+          ? source.split(context.input.oldText).join(context.input.newText)
+          : source.replace(context.input.oldText, context.input.newText);
+        await writeFile(path, next, { encoding: context.input.encoding });
+        const after = await readFile(path);
+        const afterHash = digest(after);
+        observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
+        return changeResult(
+          context,
+          path,
+          before,
+          after,
+          "modified",
+          createReceiptId(),
+          createChangeId(),
+        );
+      } finally {
+        release();
       }
-      const next = context.input.replaceAll
-        ? source.split(context.input.oldText).join(context.input.newText)
-        : source.replace(context.input.oldText, context.input.newText);
-      await writeFile(path, next, { encoding: context.input.encoding });
-      const after = await readFile(path);
-      const afterHash = digest(after);
-      observations.record(context.sessionId, path, afterHash);
-      return changeResult(
-        context,
-        path,
-        before,
-        after,
-        "modified",
-        createReceiptId(),
-        createChangeId(),
-      );
     },
   });
 
@@ -295,7 +376,7 @@ function authorizePath(action: "read" | "write") {
   };
 }
 
-function pathAdmission(
+async function pathAdmission(
   context: ToolAdmissionContext<unknown>,
   path: string,
   action: string,
@@ -311,25 +392,41 @@ function pathAdmission(
       };
     }
 > {
-  return canonicalPath(workspaceRoot(context)).then((root) => {
-    if (isWithin(root, path) || permissionMode(context) === "all_free") {
-      return { kind: "allow" } as const;
-    }
-    const capabilityId = capability(action, path);
-    return {
-      kind: "ask" as const,
-      request: {
-        reason: `${action} requires access outside the active workspace.`,
-        actions: [action],
-        resources: [path],
-        capabilityIds: [capabilityId],
-      },
-    };
-  });
+  const mode = permissionMode(context);
+  if (mode === "all_free") return { kind: "allow" } as const;
+  const roots = await Promise.all(allowedRoots(context, mode).map(canonicalPath));
+  if (roots.some((root) => isWithin(root, path))) return { kind: "allow" } as const;
+  const capabilityId = capability(action, path);
+  return {
+    kind: "ask" as const,
+    request: {
+      reason: `${action} requires access outside the ${mode === "user_free" ? "user" : "task"} roots.`,
+      actions: [action],
+      resources: [path],
+      capabilityIds: [capabilityId],
+    },
+  };
 }
 
-function permissionMode(context: ToolAdmissionContext<unknown>): string {
-  return String(context.turn?.request.metadata.permissionMode ?? "workspace_free");
+function permissionMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" | "all_free" {
+  const candidate = context.turn?.request.permissionMode;
+  return candidate === "user_free" || candidate === "all_free" ? candidate : "task_free";
+}
+
+function allowedRoots(
+  context: ToolAdmissionContext<unknown>,
+  mode: "task_free" | "user_free",
+): string[] {
+  const metadata = context.turn?.request.metadata ?? {};
+  const taskRoots = rootStringArray(metadata.taskRoots);
+  const userRoots = mode === "user_free" ? rootStringArray(metadata.userRoots) : [];
+  return [...new Set([workspaceRoot(context), ...taskRoots, ...userRoots].map((item) => resolve(item)))];
+}
+
+function rootStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
 }
 
 async function resolveToolPath(
@@ -384,6 +481,7 @@ function assertObservedIfExisting(
       path,
       sha256,
       inheritedObservationSessionId(context),
+      workspaceRoot(context),
     )
   ) {
     throw new Error(
@@ -428,7 +526,9 @@ function changeResult(
       ...(before ? {} : { additions: countLines(after) }),
       ...(before ? { before_hash: digest(before) } : {}),
       after_hash: digest(after),
-      metadata: {},
+      metadata: {
+        ...(before ? { beforeContentBase64: before.toString("base64") } : {}),
+      },
     }],
   };
 }

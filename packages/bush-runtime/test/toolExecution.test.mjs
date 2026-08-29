@@ -90,80 +90,6 @@ test("returns malformed JSON as one factual tool failure and lets the model reco
   assert.doesNotMatch(failed.payload.error.message, /fixture_tool/);
 });
 
-test("accepts effect_complete only when a cited successful manifest declares an effect", async () => {
-  const provider = providerWithRounds([
-    toolRound(),
-    outcomeRound({
-      callId: "call_outcome",
-      disposition: "effect_complete",
-      receiptIds: ["receipt_call_fixture"],
-      finalResponse: "effect delivered",
-    }),
-  ]);
-  const registry = registryWithExecution({
-    manifest: {
-      ...manifest,
-      effect_kind: "fixture_effect",
-      dispatch_side_effect: "fixture_effect",
-      dispatch_mutating: true,
-    },
-  });
-  const host = createHost(provider, registry, { requireOutcomeDeclaration: true });
-  const catalog = await host.sendCommand({
-    kind: "runtime.get_tool_catalog",
-    payload: {},
-  });
-  const outcomeTool = catalog.find((definition) => definition.name === "declare_turn_outcome");
-  assert.ok(outcomeTool);
-
-  const terminal = await host.runModelTurn({
-    ...request(),
-    tools: [toolDefinition, outcomeTool],
-  });
-
-  assert.equal(terminal.payload.status, "completed");
-  assert.equal(terminal.payload.reason, "model_declared_effect_complete");
-  assert.deepEqual(terminal.payload.details.receiptIds, ["receipt_call_fixture"]);
-});
-
-test("rejects effect_complete when cited receipts are observations only", async () => {
-  const provider = providerWithRounds([
-    toolRound(),
-    outcomeRound({
-      callId: "call_invalid_outcome",
-      disposition: "effect_complete",
-      receiptIds: ["receipt_call_fixture"],
-      finalResponse: "unsupported effect claim",
-    }),
-    outcomeRound({
-      callId: "call_answer_outcome",
-      disposition: "answer",
-      receiptIds: [],
-      finalResponse: "observation reported",
-    }),
-  ]);
-  const host = createHost(provider, registryWithExecution(), {
-    requireOutcomeDeclaration: true,
-  });
-  const catalog = await host.sendCommand({
-    kind: "runtime.get_tool_catalog",
-    payload: {},
-  });
-  const outcomeTool = catalog.find((definition) => definition.name === "declare_turn_outcome");
-  assert.ok(outcomeTool);
-
-  const terminal = await host.runModelTurn({
-    ...request(),
-    tools: [toolDefinition, outcomeTool],
-  });
-  const failed = host.events("session_tools", "turn_tools")
-    .find((event) => event.kind === "tool_failed" && event.payload.toolName === "declare_turn_outcome");
-
-  assert.equal(failed?.payload.error.code, "tool_execution_exception");
-  assert.match(failed?.payload.error.message ?? "", /declares an effect/);
-  assert.equal(terminal.payload.reason, "model_declared_answer");
-});
-
 test("projects only tool-declared Artifact and Workspace Change references", async () => {
   const registry = registryWithExecution({
     execute({ toolCall, actionManifest }) {
@@ -599,23 +525,6 @@ function answerRound(text) {
   ];
 }
 
-function outcomeRound({ callId, disposition, receiptIds, finalResponse }) {
-  return [
-    event(0, "response_started"),
-    event(1, "tool_call_delta", {
-      index: 0,
-      toolCallId: callId,
-      nameDelta: "declare_turn_outcome",
-      argumentsDelta: JSON.stringify({
-        disposition,
-        receipt_ids: receiptIds,
-        final_response: finalResponse,
-      }),
-    }),
-    event(2, "response_completed", { finishReason: "tool_calls" }),
-  ];
-}
-
 function twoToolRound() {
   return [
     event(0, "response_started"),
@@ -662,7 +571,6 @@ function createHost(provider, registry, options = {}) {
     provider,
     toolRegistry: registry,
     createPermissionId: options.createPermissionId,
-    requireOutcomeDeclaration: options.requireOutcomeDeclaration,
     eventLogOptions: {
       createEventId: ({ turnId, sequence }) => `event_${turnId}_${sequence}`,
       now: () => "2026-08-29T00:00:00.000Z",

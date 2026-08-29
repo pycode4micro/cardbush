@@ -1,17 +1,15 @@
-export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'tools' | 'subagents' | 'team';
+export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
   | 'companion'
   | 'os'
   | 'runtime'
   | 'proxy'
-  | 'bots'
   | 'subagents'
   | 'mcp'
   | 'cache'
   | 'models'
   | 'diagnostics'
-  | 'mobile'
   | 'about';
 export type ThemeMode = 'parchment' | 'bright' | 'dark';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -24,6 +22,7 @@ type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type ReasoningLevel = 'low' | 'medium' | 'high' | 'max';
 export type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
+export type RuntimeAssetCategory = 'prompts' | 'skills' | 'agent_profiles' | 'teams';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
 type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
 export type CompanionSize = 'compact' | 'normal' | 'large';
@@ -36,19 +35,6 @@ export type CompanionStatus =
   | 'queued'
   | 'complete'
   | 'error';
-export type BotPlatform = 'weixin' | 'feishu' | 'telegram' | 'discord';
-export type BotServiceStatus =
-  | 'stopped'
-  | 'starting'
-  | 'running'
-  | 'stopping'
-  | 'failed';
-export type WeixinLoginStatus =
-  | 'waiting'
-  | 'scanned'
-  | 'confirmed'
-  | 'expired'
-  | 'failed';
 
 interface ProxySettings {
   mode: ProxyMode;
@@ -87,7 +73,9 @@ export interface BackendCapabilities {
   runtimeInspection: boolean;
   maintenanceConversationHistoryClear: boolean;
   maintenanceLogsCacheClear: boolean;
-  sessionShareLinks: boolean;
+  maintenanceRuntimeAssetsReset: boolean;
+  runtimeAssetResetProtocol: string;
+  runtimeAssetResetCategories: RuntimeAssetCategory[];
   messageEditRegenerate: boolean;
   turnRegenerate: boolean;
   stableMessageIds: boolean;
@@ -387,6 +375,57 @@ export interface ChatToolArtifact extends ChatAttachment {
   readOnly?: boolean;
 }
 
+export interface CardbushAppPlugin {
+  id: string;
+  name: string;
+  description: string;
+  installed: boolean;
+  enabled: boolean;
+  config: {
+    screenshotDirectory?: string;
+    allowOpenApp?: boolean;
+    allowWindowClose?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+export interface CardbushAppsConfiguration {
+  protocol: string;
+  revision: number;
+  serviceEnabled: boolean;
+  plugins: CardbushAppPlugin[];
+}
+
+interface RuntimeAssetLocation {
+  sourcePath: string;
+  targetPath: string;
+}
+
+export interface RuntimeAssetResetPlan {
+  protocol: string;
+  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetLocation>>;
+  requiresConfirmation: boolean;
+  requiresIdleRuntime: boolean;
+  destructive: boolean;
+  restartRequiredAfterChange: boolean;
+}
+
+interface RuntimeAssetResetCategoryResult extends RuntimeAssetLocation {
+  changed: boolean;
+  seedFileCount: number;
+  restoredFileCount: number;
+  removedRuntimeFileCount: number;
+}
+
+export interface RuntimeAssetResetResult {
+  protocol: string;
+  selectedCategories: RuntimeAssetCategory[];
+  categories: Partial<Record<RuntimeAssetCategory, RuntimeAssetResetCategoryResult>>;
+  changed: boolean;
+  restartRequired: boolean;
+  effectiveAfter: string;
+}
+
 export interface SessionTokenUsage {
   sessionId: string;
   promptTokens: number;
@@ -636,66 +675,6 @@ export interface InteractionReplyAnswer {
   inputText?: string;
 }
 
-export interface BotPlatformOverview {
-  platform: BotPlatform;
-  enabled: boolean;
-  configured: boolean;
-  serviceStatus: BotServiceStatus;
-  accountCount?: number;
-  displayName?: string;
-  lastError?: string;
-  missingRequiredFields: string[];
-  raw: Record<string, unknown>;
-}
-
-export interface BotConfigResult {
-  platform: BotPlatform;
-  enabled: boolean;
-  configured: boolean;
-  config: Record<string, unknown>;
-  secrets: Record<string, unknown>;
-  missingRequiredFields: string[];
-  raw: Record<string, unknown>;
-}
-
-export interface BotStatusResult {
-  platform: BotPlatform;
-  enabled: boolean;
-  configured: boolean;
-  serviceStatus: BotServiceStatus;
-  pid?: number;
-  returnCode?: number;
-  startedAt?: string;
-  stoppedAt?: string;
-  logPath?: string;
-  accountCount?: number;
-  accounts?: Array<Record<string, unknown>>;
-  lastError?: string;
-  missingRequiredFields: string[];
-  raw: Record<string, unknown>;
-}
-
-export interface WeixinLoginStartResult {
-  loginId: string;
-  qrcodeUrl: string;
-  expiresAt?: string;
-  raw: Record<string, unknown>;
-}
-
-export interface WeixinLoginStatusResult {
-  loginId: string;
-  status: WeixinLoginStatus;
-  account?: Record<string, unknown>;
-  message?: string;
-  raw: Record<string, unknown>;
-}
-
-export interface BotServiceLogsResult {
-  platform: BotPlatform;
-  lines: string[];
-  raw: Record<string, unknown>;
-}
-
 export interface SkillSummary {
   name: string;
   description: string;
@@ -811,8 +790,6 @@ export interface TeamDefinition {
   id: string;
   name: string;
   description: string;
-  conferenceEnabled?: boolean;
-  conferenceInstructions?: string;
   members: TeamMemberDefinition[];
 }
 

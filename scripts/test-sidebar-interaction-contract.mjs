@@ -105,9 +105,10 @@ assert.match(
 assert.match(stylesSource, /\.window-button\.danger:hover\s*\{[\s\S]*?background:\s*#c42b1c/);
 assert.match(
   appSource,
-  /label=\{language === 'zh' \? '插件' : 'Plugins'\}[\s\S]*?插件管理[\s\S]*?工具管理[\s\S]*?技能管理/,
-  'The native title bar must group plugin, tool, and skill management together',
+  /label=\{language === 'zh' \? '插件' : 'Plugins'\}[\s\S]*?插件管理[\s\S]*?技能管理/,
+  'The native title bar must group plugin and skill management together',
 );
+assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
   appSource,
   /label="Beta"[\s\S]*?label="OS"[\s\S]*?label="Team"/,

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   cancelInteraction,
   createConversation,
-  createSessionShareLink as createSessionShareLinkApi,
   deleteConversationApi,
   editMessage,
   fetchConversations,
@@ -1229,12 +1228,6 @@ export function useCardbushChat(
     persistAutoConversationTitle,
     requestContext.workspaceChangesAvailable,
   ]);
-
-  const createSessionShareLink = useCallback(
-    (request: { sessionId: string; platform?: string; expiresSeconds?: number }) =>
-      createSessionShareLinkApi(request),
-    [],
-  );
 
   useEffect(() => {
     const sessionId = activeConversationId.trim();
@@ -3421,7 +3414,6 @@ export function useCardbushChat(
     reloadConversations,
     reloadSkills,
     loadSkillDetail,
-    createSessionShareLink,
     refreshActiveSession,
     loadTeamFlow,
     submitTeamFlowAction,
@@ -6464,12 +6456,6 @@ function shouldAutoTitleConversation(title: string | undefined, sessionId?: stri
   const lower = normalized.toLowerCase();
   return (
     lower.startsWith('local-') ||
-    lower.startsWith('weixin:') ||
-    lower.startsWith('feishu:') ||
-    lower.startsWith('telegram:') ||
-    lower.startsWith('discord:') ||
-    lower.includes('@im.bot') ||
-    lower.includes('@im.wechat') ||
     /^cardbush-\d/.test(lower)
   );
 }

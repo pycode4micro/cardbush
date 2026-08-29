@@ -252,12 +252,22 @@ function explicitActionManifest(
     : {};
   const candidate = policy.actionManifest ?? metadata["cardbush/action_manifest"];
   const parsed = actionManifestTemplateSchema.safeParse(candidate);
-  if (!parsed.success) {
-    throw new Error(
-      `MCP Tool ${serverId}/${remote.name} must provide a complete cardbush/action_manifest or product policy manifest.`,
-    );
-  }
-  return parsed.data;
+  if (parsed.success) return parsed.data;
+  return {
+    effect_kind: "external_mcp",
+    operation: `mcp.${serverId}.${remote.name}`,
+    risk: policy.permission === "allow" ? "configured_allow" : "requires_user_permission",
+    owner: `mcp:${serverId}`,
+    dispatch_phase: "execution",
+    dispatch_scope: "external",
+    dispatch_side_effect: "unknown",
+    dispatch_mutating: true,
+    dispatch_source: "product_mcp_policy",
+    stage_modes: ["mixed"],
+    output_kinds: ["mcp_content"],
+    handoff_exports: [],
+    evidence_hints: ["mcp_standard_content"],
+  };
 }
 
 function createClient(server: McpServerSnapshot): Client {
@@ -311,15 +321,36 @@ function strictMcpToolResult(
   }
   const parsed = toolResultSchema.safeParse(output.structuredContent);
   if (!parsed.success) {
-    return mcpProtocolFailure(
-      context,
-      output,
-      resource,
-      receiptId,
-      "mcp_tool_result_protocol_invalid",
-      `MCP tool ${resource} did not return a complete ${BUSH_TOOL_RESULT_PROTOCOL} structured result.`,
-      { issues: parsed.error.issues },
-    );
+    return {
+      protocol: BUSH_TOOL_RESULT_PROTOCOL,
+      tool_call_id: context.toolCall.id,
+      success: true,
+      output: {
+        authority: "display_only",
+        content: output.content ?? [],
+        structuredContent: output.structuredContent ?? null,
+        resource,
+      },
+      facts: [{
+        protocol: BUSH_EXECUTION_FACT_PROTOCOL,
+        receipt_id: receiptId,
+        action_manifest_id: context.actionManifest.manifest_id,
+        status: "completed",
+        operation: context.actionManifest.operation,
+        effect_kind: context.actionManifest.effect_kind,
+        owner: context.actionManifest.owner,
+        dispatch_scope: context.actionManifest.dispatch_scope,
+        categories: ["mcp_standard_content", "non_authoritative"],
+        paths: [],
+        execution_success: true,
+        semantic_success: true,
+        verification_state: "attempted",
+        error_code: "",
+      }],
+      artifacts: [],
+      workspace_changes: [],
+      guidance: [],
+    };
   }
   if (!parsed.data.facts.some((fact) => fact.receipt_id === receiptId)) {
     return mcpProtocolFailure(

@@ -12,13 +12,11 @@ const expectedSections = [
   'os',
   'runtime',
   'proxy',
-  'bots',
   'subagents',
   'mcp',
   'cache',
   'models',
   'diagnostics',
-  'mobile',
   'about',
 ].sort();
 const navigationBlock = settings.match(

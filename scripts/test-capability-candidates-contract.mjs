@@ -38,9 +38,9 @@ const update = plain(capabilityCandidatesFromPayload({
     matched_fields: ['identity'],
   }],
   tools: [{
-    name: 'ocr_image',
+    name: 'example_extension',
     type: 'tool',
-    description: 'Extract image text',
+    description: 'Example extension capability',
     score: 0.75,
     matched_fields: ['capability'],
   }],
@@ -59,9 +59,9 @@ assert.deepEqual(update.skills[0], {
   matchedFields: ['identity'],
 });
 assert.deepEqual(update.tools[0], {
-  name: 'ocr_image',
+  name: 'example_extension',
   type: 'tool',
-  description: 'Extract image text',
+  description: 'Example extension capability',
   score: 0.75,
   matchedFields: ['capability'],
 });

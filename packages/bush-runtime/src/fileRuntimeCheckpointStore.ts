@@ -7,6 +7,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeSync,
@@ -54,16 +55,25 @@ export class FileRuntimeCheckpointStore implements RuntimeCheckpointStore {
   load(sessionId: string, turnId: string): RuntimeCheckpoint | undefined {
     const path = this.#path(sessionId, turnId);
     if (!existsSync(path)) return undefined;
+    return this.#read(path, sessionId, turnId);
+  }
+
+  list(): RuntimeCheckpoint[] {
+    return readdirSync(this.#root, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => this.#read(resolve(this.#root, entry.name)))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  #read(path: string, sessionId?: string, turnId?: string): RuntimeCheckpoint {
     try {
       const record = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
       if (record.protocol !== RECORD_PROTOCOL) {
         throw new Error("checkpoint record protocol mismatch");
       }
       const checkpoint = runtimeCheckpointSchema.parse(record.checkpoint);
-      if (
-        checkpoint.request.sessionId !== sessionId ||
-        checkpoint.request.turnId !== turnId
-      ) {
+      if ((sessionId && checkpoint.request.sessionId !== sessionId) ||
+          (turnId && checkpoint.request.turnId !== turnId)) {
         throw new Error("checkpoint identity mismatch");
       }
       if (record.checksum !== checksum(JSON.stringify(checkpoint))) {

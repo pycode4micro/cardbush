@@ -42,6 +42,7 @@ export class SubagentTaskStore {
     origin?: "subagent" | "team";
     teamId?: string;
     teamMemberId?: string;
+    agentProfileId?: string;
     phase?: "discussion" | "execution";
   }): SubagentTask {
     const existing = this.get(input.parentSessionId, input.taskId);
@@ -173,6 +174,7 @@ export function projectSubagentTasks(
         "origin",
         "teamId",
         "teamMemberId",
+        "agentProfileId",
         "phase",
         "createdAt",
       ] as const) {

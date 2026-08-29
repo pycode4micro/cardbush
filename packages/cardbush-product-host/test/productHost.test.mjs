@@ -1,42 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 
 import {
-  BotConfigStore,
-  BotSupervisor,
   PRODUCT_HOST_IPC_PROTOCOL,
   ProductHost,
-  LinkedConversationBackend,
-  SessionLinkStore,
 } from "../dist/index.js";
 
-test("exposes typed Product Host commands without an HTTP route parser", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const config = new BotConfigStore(join(root, "bots.json"));
-  const bots = new BotSupervisor({ configStore: config, dataDir: root });
-  const host = new ProductHost(config, bots);
-  const update = await host.execute({
-    protocol: PRODUCT_HOST_IPC_PROTOCOL,
-    kind: "bot.config.update",
-    platform: "discord",
-    config: { application_id: "app", bot_token: "secret" },
-  });
-  assert.equal(update.ok, true);
-  assert.equal(update.value.config.bot_token, "••••cret");
-
-  const list = await host.execute({ protocol: PRODUCT_HOST_IPC_PROTOCOL, kind: "bots.list" });
-  assert.equal(list.ok, true);
-  assert.equal(list.value.bots.length, 4);
-});
-
 test("rejects protocol mismatch and unavailable optional capability as facts", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const config = new BotConfigStore(join(root, "bots.json"));
-  const host = new ProductHost(config, new BotSupervisor({ configStore: config, dataDir: root }));
-  const mismatch = await host.execute({ protocol: "old", kind: "bots.list" });
+  const host = new ProductHost();
+  const mismatch = await host.execute({ protocol: "old", kind: "models.get" });
   assert.deepEqual(mismatch, {
     protocol: PRODUCT_HOST_IPC_PROTOCOL,
     ok: false,
@@ -45,22 +17,17 @@ test("rejects protocol mismatch and unavailable optional capability as facts", a
       message: `Expected ${PRODUCT_HOST_IPC_PROTOCOL}`,
     },
   });
-  const login = await host.execute({
+  const models = await host.execute({
     protocol: PRODUCT_HOST_IPC_PROTOCOL,
-    kind: "weixin.login.start",
+    kind: "models.get",
   });
-  assert.equal(login.ok, false);
-  assert.equal(login.error.code, "weixin_account_host_unavailable");
+  assert.equal(models.ok, false);
+  assert.equal(models.error.code, "product_model_host_unavailable");
 });
 
 test("reads and updates model configuration through a typed host", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const config = new BotConfigStore(join(root, "bots.json"));
   const snapshots = [];
   const host = new ProductHost(
-    config,
-    new BotSupervisor({ configStore: config, dataDir: root }),
-    undefined,
     {
       async get() { return { defaultModelId: "", models: [] }; },
       async update(value) { snapshots.push(value); return { defaultModelId: "vision", models: [] }; },
@@ -91,93 +58,42 @@ test("reads and updates model configuration through a typed host", async () => {
   assert.equal(resolved.value.modelId, "vision");
 });
 
-test("issues and consumes a durable Bot session link without an HTTP service", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const links = new SessionLinkStore(join(root, "session-links.json"));
-  const calls = [];
-  const backend = new LinkedConversationBackend({
-    async respond(envelope) {
-      calls.push(envelope);
-      return { text: envelope.sessionId };
-    },
-  }, links);
-  const issued = await links.issue({
-    sessionId: "local-session",
-    platform: "telegram",
-    expiresSeconds: 900,
+test("reads and updates CardBush Apps through the independent apps host", async () => {
+  const updates = [];
+  const host = new ProductHost(undefined, undefined, {
+    async get() { return { serviceEnabled: true, plugins: [] }; },
+    async update(value) { updates.push(value); return { ...value, revision: 2 }; },
   });
-  const envelope = {
-    platform: "telegram",
-    sessionId: "telegram:channel:user",
-    userId: "user",
-    channelId: "channel",
-    text: issued.code.toLowerCase(),
-    rawEvent: {},
-  };
-  const linked = await backend.respond(envelope);
-  assert.equal(linked.metadata.linked, true);
-  assert.equal(calls.length, 0);
-  const continued = await backend.respond({ ...envelope, text: "continue" });
-  assert.equal(continued.text, "local-session");
-  assert.equal(calls[0].sessionId, "local-session");
+  const initial = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "apps.get",
+  });
+  assert.equal(initial.ok, true);
+  assert.equal(initial.value.serviceEnabled, true);
+  const updated = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "apps.update",
+    config: { serviceEnabled: false, plugins: [] },
+  });
+  assert.equal(updated.ok, true);
+  assert.deepEqual(updates, [{ serviceEnabled: false, plugins: [] }]);
 });
 
-test("serializes concurrent session-link updates without losing issued codes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const path = join(root, "session-links.json");
-  const issuer = new SessionLinkStore(path);
-  const issued = await Promise.all(Array.from({ length: 24 }, (_, index) =>
-    issuer.issue({
-      sessionId: `local-${index}`,
-      platform: "discord",
-      expiresSeconds: 900,
-    })));
-  assert.equal(new Set(issued.map((item) => item.code)).size, issued.length);
-
-  const resolver = new SessionLinkStore(path);
-  const resolved = await Promise.all(issued.map((item, index) => resolver.resolve({
-    platform: "discord",
-    sessionId: `discord:channel:${index}`,
-    userId: `user-${index}`,
-    channelId: "channel",
-    text: item.code,
-    rawEvent: {},
-  })));
-  assert.deepEqual(resolved.map((item) => item.sessionId),
-    issued.map((_, index) => `local-${index}`));
-  assert.ok(resolved.every((item) => item.linked));
-});
-
-test("validates the typed session-link Product Host command", async () => {
-  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
-  const config = new BotConfigStore(join(root, "bots.json"));
-  const requests = [];
-  const host = new ProductHost(
-    config,
-    new BotSupervisor({ configStore: config, dataDir: root }),
-    undefined,
-    undefined,
-    { async issue(input) { requests.push(input); return { code: "ABC12345" }; } },
-  );
+test("accepts Teams and Agent Profiles as reset categories", async () => {
+  const resetCalls = [];
+  const host = new ProductHost(undefined, {
+    async clearConversations() { return {}; },
+    async clearLogsCache() { return {}; },
+    async runtimeAssetPlan() { return {}; },
+    async resetRuntimeAssets(categories) { resetCalls.push(categories); return { categories }; },
+    async diagnostics() { return {}; },
+  });
   const result = await host.execute({
     protocol: PRODUCT_HOST_IPC_PROTOCOL,
-    kind: "session_link.create",
-    sessionId: "local-session",
-    platform: "TELEGRAM",
-    expiresSeconds: 900,
+    kind: "maintenance.runtime_assets.reset",
+    categories: ["agent_profiles", "teams"],
+    confirm: true,
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(requests, [{
-    sessionId: "local-session",
-    platform: "telegram",
-    expiresSeconds: 900,
-  }]);
-  const invalid = await host.execute({
-    protocol: PRODUCT_HOST_IPC_PROTOCOL,
-    kind: "session_link.create",
-    sessionId: "local-session",
-    expiresSeconds: 1,
-  });
-  assert.equal(invalid.ok, false);
-  assert.equal(invalid.error.code, "invalid_product_host_command");
+  assert.deepEqual(resetCalls, [["agent_profiles", "teams"]]);
 });

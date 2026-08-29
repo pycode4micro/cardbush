@@ -2,162 +2,92 @@
 
 [English](README.md)
 
-CardBush Desktop 是 BushServer 的 Electron 客户端。桌面端负责界面、项目、会话、本地桌面能力和后端能力发现；BushServer 负责模型调用、Agent 编排、Skills、Tools、权限、持久化和任务委派。
+CardBush 是一款 Electron 桌面 Agent 应用，生产 Agent Runtime 已使用
+TypeScript 内聚到应用中。普通对话、会话、模型调用、工具、权限、Goal、
+Plan、Subagent、Team 与持久化均通过 Electron 类型化 IPC 在 CardBush 内部
+运行，不再要求 BushServer HTTP 进程或 localhost 端口。
 
-## 发布状态
+## 当前状态
 
-当前前端开发基线版本为 `1.0.0-dev`。
-
-- 产品功能与交付完整性仍处于内部验证阶段。
-- 源码构建和前端契约已经可以继续进行一体化联调。
-- Windows 一体化安装程序尚未完成；剩余交付工作是 Electron 托管 BushServer 生命周期、运行时版本握手和安装程序打包。
-- RC 版本号与功能冻结时点将在一体化打包验证完成后决定。
-
-## 当前能力
-
-- SSE 对话流、思考与工具输出、停止、重新生成、消息编辑和回合引导。
-- 项目会话、历史记录、运行状态和工作区修改审查。
-- 附件、本地文件引用、图片输入、权限模式、终端运行时、Skills、Tools 和模型选择。
-- 文本、图片、Word、Excel 和 PowerPoint 文件的本地只读预览。
-- 个性化设置提供累计 Token/活跃度统计，并覆盖外观、语言、代理、模型、MCP、Bot、运行诊断和本地维护。
-- Team 工作流和后端托管子任务状态界面。
-
-## 开发要求
-
-- Windows 开发环境
-- Node.js `>=22.12.0`
-- npm `>=10`
-- 兼容版本的 BushServer 源码或服务
-
-未来安装程序的最终用户不需要安装 Node.js 或 Python；这些要求只适用于一体化打包完成前的源码开发。
+当前开发基线为 `1.0.0-dev`。产品功能仍在一体化验证中，安装程序和版本
+冻结时点尚未确定。
 
 ## 开发启动
 
-安装依赖，并启动 Vite、TypeScript 和 Electron 开发进程：
+要求 Windows、Node.js `>=22.12.0` 与 npm `>=10`。
 
 ```powershell
 npm install
 npm run dev
 ```
 
-如果 Electron 安装后缺少 binary 或 `path.txt`：
-
-```powershell
-npm run fix:electron
-```
-
-构建并从源码打开桌面端：
+构建并打开桌面应用：
 
 ```powershell
 npm run gui
 ```
 
-## BushServer 连接
-
-开发构建默认连接 `http://127.0.0.1:51717`，可以在构建前覆盖：
+Electron binary 缺失时运行：
 
 ```powershell
-$env:VITE_BACKEND_BASE_URL='http://127.0.0.1:51717'
+npm run fix:electron
 ```
 
-`51717` 只作为开发默认端口。正式 RC 安装包将由 Electron 主进程选择可用的 localhost 端口，启动内置 BushServer，并向渲染进程注入运行时地址。
+## Runtime 架构
 
-前端以 `GET /v1/capabilities` 作为可选能力的唯一来源。一体化打包还将使用 `GET /readyz` 完成服务版本和兼容性握手。
+- `@cardbush/bush-runtime`：与 Provider 无关的 Agent Loop；
+- `@cardbush/bush-protocol`：命令、事件与 IPC 类型契约；
+- `@cardbush/bush-provider-openai`：OpenAI 兼容 Provider 传输；
+- Electron Utility Process：Runtime 执行与持久化；
+- Electron 主进程：原生桌面能力和 Product Host 配置；
+- React：消费类型化 Runtime 事件，不从模型正文猜测终态。
+
+独立 BushServer 仓库只作为参考实现和迁移对照，不是 CardBush 的生产依赖。
+
+## 可选 MCP 扩展
+
+外部扩展通过统一 MCP 配置安装。工具必须提供完整的
+`cardbush/action_manifest`，从而复用 Runtime 的权限、回执和执行事实链路。
+
+CardBush 随应用提供一个独立 stdio MCP 服务 `cardbush_apps`，内置的
+`computer_use` 等插件由该服务承载；它们不是 Runtime Built-in Tool，也不通过
+私有 Product Host 桥接执行。边界说明见
+[`docs/host/CARDBUSH_APPS_MCP.md`](docs/host/CARDBUSH_APPS_MCP.md)。
+
+Bot 产品保持完全独立。CardBush 不管理 Bot 账号、凭据、登录、配置、进程、
+日志或管理界面。Bot 项目可以自行提供管理 HTML，并通过一个 MCP `deliver`
+工具接入；CardBush 不识别固定服务 ID，也不存储 Bot 私密配置。完整边界见
+[`docs/host/CARDBUSH_APP_HOST.md`](docs/host/CARDBUSH_APP_HOST.md)。
 
 ## 验证
-
-运行完整前端发布门禁：
 
 ```powershell
 npm run test:all
 ```
 
-该命令会依次运行全部 `test:*` 契约测试（不包含自身）、两套 TypeScript 检查、生产构建和最终生产包清理检查。
-
-快速开发检查：
+快速检查：
 
 ```powershell
 npm run typecheck
 npm run build
-npm run test:release-cleanup
+npm run test:runtime
 ```
 
-## 运行数据和诊断
+## 数据与安全
 
-一体化安装程序将使用以下 Windows 目录：
+Runtime 状态、日志和大型缓存位于 Electron 本地 `userData`。小型用户设置由
+桌面产品层管理。Provider 凭据仅通过类型化 binding 命令进入 Utility Process，
+不会写入 Model Request、事件日志、检查点或渲染层数据。
 
-```text
-%LOCALAPPDATA%\CardBush\
-├─ server-data\
-├─ logs\
-└─ crash\
-
-%APPDATA%\CardBush\
-└─ config\
-```
-
-大型运行数据、日志、缓存和崩溃信息放在 `%LOCALAPPDATA%`；只有需要漫游的小型用户配置放在 `%APPDATA%`。
-
-生产环境默认关闭滚动诊断。只有临时诊断时，才通过 local storage 将 `cardbush_scroll_debug` 显式设为 `true`。
-
-## 前后端边界
-
-- 前端不选择或注册主 Agent Profile。
-- BushServer 决定任务委派并拥有 Agent 运行时。
-- BushServer 加载和管理 MCP；前端只负责编辑配置与展示状态。
-- 项目模式将工作区路径传给 BushServer，前端不自行拼装项目上下文。
-- 本地资源路径通过请求 metadata 传递，并继续受后端权限边界约束。
-- 功能是否显示以 `/v1/capabilities` 为准，不根据 Provider 名称或接口 404 猜测。
-
-当前前端使用的主要接口：
-
-- `GET /healthz`
-- `GET /v1/capabilities`
-- `POST /v1/chat/stream`
-- `GET /v1/sessions`
-- `GET /v1/sessions/{session_id}`
-- `POST /v1/turns/{turn_id}/stop`
-- `GET /v1/skills`
-- `GET /v1/model-configs`
-- `GET /v1/team-flows/{session_id}`
-- `GET /v1/team-flows/{session_id}/graph`
-- `POST /v1/team-flows/{flow_id}/actions`
-- `GET /v1/subagents/capabilities`
-- `GET /v1/subagents/runtime`
-- `POST /v1/sessions/{session_id}/subagents/dispatch`
-- `GET /v1/mcp/servers`
-
-## 常见问题
-
-### 桌面端无法连接 BushServer
-
-1. 确认 BushServer 已经运行。
-2. 打开设置中的连接诊断。
-3. 检查开发地址的 `/healthz` 和 `/v1/capabilities`。
-4. 确认代理绕过列表包含 `127.0.0.1`、`localhost` 和 `::1`。
-5. 重启前先检查桌面端与 BushServer 日志。
-
-### 某项功能没有显示
-
-检查 `/v1/capabilities`。连接的后端未声明某项可选能力时，前端会主动隐藏或禁用对应功能。
-
-### Electron 安装后无法启动
-
-源码开发环境运行 `npm run fix:electron`。安装包问题需要同时提供应用版本、后端版本、Windows 版本以及 `%LOCALAPPDATA%\CardBush\logs` 中的日志。
+渲染进程启用 context isolation，且不开放 Node.js integration。提交问题时
+不要附带凭据、`.env`、未脱敏日志或用户会话数据。
 
 ## 目录结构
 
 ```text
-electron/   Electron 主进程、preload 桥接和本地桌面能力
-src/        React 界面、功能模块和 BushServer API 客户端
-scripts/    开发辅助脚本和发布契约测试
-public/     运行时静态资源
-docs/       前后端契约与实现检查清单
+electron/   Electron 主进程、Utility Runtime Host 与原生能力
+packages/   Runtime、协议、Provider、MCP Client 与 Product Host
+src/        React UI 与类型化 Runtime Client 接入
+scripts/    开发辅助与契约/发布检查
+docs/       Runtime、产品与扩展契约
 ```
-
-## 安全说明
-
-- Electron 渲染进程启用 context isolation 和 sandbox，并关闭 Node.js integration。
-- 安装版 BushServer 必须只监听 localhost，并要求每次安装生成的本地请求密钥保护 API 与 SSE。
-- 凭据和本地请求密钥不能写入日志，也不能通过进程命令行参数传递。
-- 提交问题时不要附带 `.env`、凭据、未经清理的完整日志或用户会话数据库。

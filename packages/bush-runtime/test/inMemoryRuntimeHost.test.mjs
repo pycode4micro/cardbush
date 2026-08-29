@@ -11,6 +11,7 @@ import {
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
   SET_RUNTIME_PLAN_COMMAND,
   UPDATE_RUNTIME_GOAL_COMMAND,
+  STOP_RUNTIME_TURN_COMMAND,
 } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost } from "../dist/index.js";
 
@@ -153,18 +154,21 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
     kind: GET_RUNTIME_TOOL_CATALOG_COMMAND,
     payload: {},
   });
-  assert.deepEqual(catalog.map((definition) => definition.name), [
-    "declare_turn_outcome",
+  const names = catalog.map((definition) => definition.name);
+  for (const required of [
+    "request_permission",
+    "consult_logic",
+    "ked_knowledge",
+    "inject_image_input",
+    "parallel_tools",
     "update_task_plan",
-    "update_goal",
     "read_file",
-    "search_file_content",
-    "write_file",
-    "edit_file",
-    "terminal_exec",
     "subagent",
     "team_delegate",
-  ]);
+  ]) assert.ok(names.includes(required), required);
+  for (const excluded of ["ocr_image", "browser_ops", "declare_turn_outcome"]) {
+    assert.equal(names.includes(excluded), false, excluded);
+  }
 });
 
 test("projects explicit cancellation as a stopped terminal fact", async () => {
@@ -175,6 +179,41 @@ test("projects explicit cancellation as a stopped terminal fact", async () => {
   const terminal = await host.runModelTurn(request, { signal: controller.signal });
   assert.equal(terminal.payload.status, "stopped");
   assert.equal(terminal.payload.reason, "user_stop_requested");
+});
+
+test("accepts Stop independently and keeps the stream authoritative until terminal", async () => {
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async *stream(_request, options) {
+        yield { ...base, sequence: 0, kind: "response_started" };
+        yield { ...base, sequence: 1, kind: "text_delta", delta: "partial" };
+        await new Promise((resolve) => {
+          if (options?.signal?.aborted) resolve();
+          else options?.signal?.addEventListener("abort", resolve, { once: true });
+        });
+      },
+    },
+    eventLogOptions: deterministicEventLogOptions(),
+  });
+  const running = host.runModelTurn(request);
+  await waitFor(() => host.events(request.sessionId, request.turnId)
+    .some((event) => event.kind === "assistant_segment_delta"));
+  const receipt = await host.sendCommand({
+    kind: STOP_RUNTIME_TURN_COMMAND,
+    payload: { sessionId: request.sessionId, turnId: request.turnId },
+  });
+  const terminal = await running;
+
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.terminal, false);
+  assert.equal(terminal.payload.status, "stopped");
+  assert.equal(host.events(request.sessionId, request.turnId).at(-1).kind, "turn_terminal");
+  const repeated = await host.sendCommand({
+    kind: STOP_RUNTIME_TURN_COMMAND,
+    payload: { sessionId: request.sessionId, turnId: request.turnId },
+  });
+  assert.equal(repeated.accepted, false);
+  assert.equal(repeated.terminal, true);
 });
 
 test("records failed attempt supersession and an observable provider retry", async () => {
@@ -240,46 +279,6 @@ test("turns an unexpected provider exception into one terminal fact", async () =
   );
 });
 
-test("requires one explicit outcome declaration and projects its final response", async () => {
-  const host = hostWithAttempts([
-    answerRound("draft"),
-    outcomeRound({ disposition: "answer", finalResponse: "final answer" }),
-  ], { requireOutcomeDeclaration: true });
-  const catalog = await host.sendCommand({
-    kind: GET_RUNTIME_TOOL_CATALOG_COMMAND,
-    payload: {},
-  });
-  const outcomeTool = catalog.find((definition) => definition.name === "declare_turn_outcome");
-  assert.ok(outcomeTool);
-
-  const terminal = await host.runModelTurn({
-    ...request,
-    tools: [outcomeTool],
-  });
-  const events = host.events(request.sessionId, request.turnId);
-
-  assert.equal(terminal.payload.status, "completed");
-  assert.equal(terminal.payload.reason, "model_declared_answer");
-  assert.equal(terminal.payload.details.rounds, 2);
-  assert.equal(
-    events.filter((event) => event.kind === "assistant_segment_completed").at(-1)?.payload.content,
-    "final answer",
-  );
-});
-
-test("fails after one reminder when the model omits the outcome declaration twice", async () => {
-  const host = hostWithAttempts([
-    answerRound("first omission"),
-    answerRound("second omission"),
-  ], { requireOutcomeDeclaration: true });
-
-  const terminal = await host.runModelTurn(request);
-
-  assert.equal(terminal.payload.status, "failed");
-  assert.equal(terminal.payload.reason, "outcome_declaration_missing");
-  assert.equal(terminal.payload.details.reminders, 1);
-});
-
 function hostWithAttempts(attempts, options = {}) {
   let index = 0;
   return new InMemoryRuntimeHost({
@@ -289,7 +288,6 @@ function hostWithAttempts(attempts, options = {}) {
       },
     },
     maxAttempts: options.maxAttempts,
-    requireOutcomeDeclaration: options.requireOutcomeDeclaration,
     retryDelayMs: () => 0,
     wait: async () => {},
     eventLogOptions: deterministicEventLogOptions(),
@@ -305,26 +303,6 @@ function answerRound(text) {
     { ...base, sequence: 0, kind: "response_started" },
     { ...base, sequence: 1, kind: "text_delta", delta: text },
     { ...base, sequence: 2, kind: "response_completed", finishReason: "stop" },
-  ];
-}
-
-function outcomeRound({ disposition, finalResponse }) {
-  return [
-    { ...base, sequence: 0, kind: "response_started" },
-    {
-      ...base,
-      sequence: 1,
-      kind: "tool_call_delta",
-      index: 0,
-      toolCallId: "call_outcome",
-      nameDelta: "declare_turn_outcome",
-      argumentsDelta: JSON.stringify({
-        disposition,
-        receipt_ids: [],
-        final_response: finalResponse,
-      }),
-    },
-    { ...base, sequence: 2, kind: "response_completed", finishReason: "tool_calls" },
   ];
 }
 
@@ -344,4 +322,12 @@ async function collect(events) {
   const values = [];
   for await (const event of events) values.push(event);
   return values;
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error("Timed out waiting for Runtime state.");
 }

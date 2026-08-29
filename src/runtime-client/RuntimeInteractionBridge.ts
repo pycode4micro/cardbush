@@ -1,4 +1,9 @@
-import type { RuntimePermissionAnswer } from '@cardbush/bush-protocol';
+import type {
+  RuntimeInteraction,
+  RuntimeInteractionAnswer,
+  RuntimePermissionAnswer,
+  RuntimeStopReceipt,
+} from '@cardbush/bush-protocol';
 
 import type { PendingInteraction } from '../types';
 
@@ -9,11 +14,14 @@ interface RuntimePermissionEntry {
 }
 
 const permissions = new Map<string, RuntimePermissionEntry>();
-const activeTurns = new Map<string, { sessionId: string; stop: () => void }>();
-const guidanceBySession = new Map<string, Array<{
-  clientMessageId: string;
-  content: string;
-}>>();
+const genericInteractions = new Map<string, {
+  interaction: PendingInteraction;
+  answer: (answer: RuntimeInteractionAnswer) => Promise<unknown>;
+}>();
+const activeTurns = new Map<string, {
+  sessionId: string;
+  stop: () => Promise<RuntimeStopReceipt>;
+}>();
 
 export function registerRuntimePermission(input: {
   permissionId: string;
@@ -75,11 +83,62 @@ export function pendingRuntimeInteraction(sessionId: string): PendingInteraction
   const entry = [...permissions.values()].find(
     ({ interaction }) => interaction.sessionId === sessionId,
   );
-  return entry ? structuredClone(entry.interaction) : null;
+  if (entry) return structuredClone(entry.interaction);
+  const generic = [...genericInteractions.values()].find(
+    ({ interaction }) => interaction.sessionId === sessionId,
+  );
+  return generic ? structuredClone(generic.interaction) : null;
 }
 
 export function hasRuntimeInteraction(interactionId: string): boolean {
-  return permissions.has(interactionId);
+  return permissions.has(interactionId) || genericInteractions.has(interactionId);
+}
+
+export function hasRuntimeGenericInteraction(interactionId: string): boolean {
+  return genericInteractions.has(interactionId);
+}
+
+export function registerRuntimeGenericInteraction(
+  input: RuntimeInteraction,
+  answer: (answer: RuntimeInteractionAnswer) => Promise<unknown>,
+): PendingInteraction {
+  const interaction: PendingInteraction = {
+    id: input.interactionId,
+    type: 'user_choice',
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    title: input.title,
+    reason: input.reason,
+    message: input.reason,
+    description: input.description,
+    submitLabel: input.submitLabel,
+    cancelLabel: input.cancelLabel,
+    replyMode: 'structured',
+    toolName: 'request_user_choice',
+    questions: input.questions,
+    raw: input,
+  };
+  genericInteractions.set(input.interactionId, { interaction, answer });
+  return structuredClone(interaction);
+}
+
+export async function answerRuntimeGenericInteraction(
+  interactionId: string,
+  input: Omit<RuntimeInteractionAnswer, 'protocol' | 'interactionId' | 'answerId'>,
+): Promise<void> {
+  const entry = genericInteractions.get(interactionId);
+  if (!entry) throw new Error(`Runtime interaction ${interactionId} is not pending.`);
+  await entry.answer({
+    protocol: 'bush.runtime_interaction.v1',
+    interactionId,
+    answerId: `runtime_answer_${crypto.randomUUID()}`,
+    ...input,
+  });
+  genericInteractions.delete(interactionId);
+}
+
+export function removeRuntimeGenericInteraction(interactionId: string): void {
+  genericInteractions.delete(interactionId);
 }
 
 export async function answerRuntimeInteraction(
@@ -110,37 +169,33 @@ export function removeRuntimePermissionsForTurn(turnId: string): void {
   for (const [permissionId, entry] of permissions) {
     if (entry.interaction.turnId === turnId) permissions.delete(permissionId);
   }
+  for (const [interactionId, entry] of genericInteractions) {
+    if (entry.interaction.turnId === turnId) genericInteractions.delete(interactionId);
+  }
 }
 
 export function registerActiveRuntimeTurn(
   turnId: string,
   sessionId: string,
-  stop: () => void,
+  stop: () => Promise<RuntimeStopReceipt>,
 ): () => void {
   activeTurns.set(turnId, { sessionId, stop });
   return () => activeTurns.delete(turnId);
 }
 
-export function stopActiveRuntimeTurn(turnId: string): boolean {
+export async function stopActiveRuntimeTurn(
+  turnId: string,
+): Promise<RuntimeStopReceipt | undefined> {
   const active = activeTurns.get(turnId);
-  if (!active) return false;
-  active.stop();
-  return true;
+  if (!active) return undefined;
+  return active.stop();
 }
 
-export function enqueueRuntimeGuidance(input: {
-  sessionId: string;
-  clientMessageId: string;
-  content: string;
-}): void {
-  const queue = guidanceBySession.get(input.sessionId) ?? [];
-  queue.push({ clientMessageId: input.clientMessageId, content: input.content });
-  guidanceBySession.set(input.sessionId, queue);
-}
-
-export function takeRuntimeGuidance(sessionId: string) {
-  const queue = guidanceBySession.get(sessionId);
-  const next = queue?.shift();
-  if (queue && queue.length === 0) guidanceBySession.delete(sessionId);
-  return next;
+export function hasActiveRuntimeTurn(sessionId: string, turnId?: string): boolean {
+  const normalizedSessionId = sessionId.trim();
+  const normalizedTurnId = turnId?.trim();
+  return [...activeTurns.entries()].some(([activeTurnId, active]) =>
+    active.sessionId === normalizedSessionId &&
+    (!normalizedTurnId || activeTurnId === normalizedTurnId),
+  );
 }

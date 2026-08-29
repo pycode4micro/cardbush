@@ -22,7 +22,6 @@ import {
   modelEventSchema,
   modelRequestSchema,
   mcpSnapshotSchema,
-  turnOutcomeDeclarationSchema,
   runtimePermissionAnswerSchema,
   runtimeRecoveryInspectionSchema,
   runtimeProviderBindingConfigSchema,
@@ -193,17 +192,6 @@ test("task plan preserves the reference runtime invariants", () => {
   );
 });
 
-test("turn outcome declaration exposes only model-declared terminal facts", () => {
-  assert.throws(() =>
-    turnOutcomeDeclarationSchema.parse({
-      protocol: "bush.turn_outcome_declaration.v1",
-      disposition: "guessed_complete",
-      receipt_ids: [],
-      final_response: "done",
-    }),
-  );
-});
-
 test("cache chain state contains only structural request hashes", () => {
   const parsed = cacheChainStateSchema.parse({
     protocol: BUSH_CACHE_CHAIN_STATE_PROTOCOL,
@@ -308,7 +296,7 @@ test("Subagent task facts keep parent and child identities explicit", () => {
   assert.throws(() => subagentTaskSchema.parse({ ...task, status: "guessed" }));
 });
 
-test("Team snapshots keep membership, Tool access and conference behavior explicit", () => {
+test("Team snapshots keep Profile constraints and one fallback member explicit", () => {
   const snapshot = teamSnapshotSchema.parse({
     protocol: BUSH_TEAM_SNAPSHOT_PROTOCOL,
     snapshotId: "team-config",
@@ -317,7 +305,6 @@ test("Team snapshots keep membership, Tool access and conference behavior explic
       teamId: "delivery",
       name: "Delivery",
       instructions: "Share verified facts.",
-      conference: { enabled: true, instructions: "Identify conflicts first." },
       members: [
         {
           memberId: "builder",
@@ -325,6 +312,12 @@ test("Team snapshots keep membership, Tool access and conference behavior explic
           role: "implementation",
           instructions: "Own the assigned files.",
           toolNames: ["read_file", "edit_file"],
+          agentProfileId: "builder",
+          fallback: true,
+          skills: ["implementation"],
+          hooks: [],
+          guards: ["verify"],
+          promptInstructions: "Return evidence.",
         },
         {
           memberId: "reviewer",
@@ -332,11 +325,18 @@ test("Team snapshots keep membership, Tool access and conference behavior explic
           role: "review",
           instructions: "Verify the result.",
           toolNames: ["read_file"],
+          agentProfileId: "reviewer",
+          fallback: false,
+          skills: [],
+          hooks: [],
+          guards: [],
+          promptInstructions: "",
         },
       ],
     }],
   });
-  assert.equal(snapshot.teams[0].conference.enabled, true);
+  assert.equal(snapshot.teams[0].members[0].fallback, true);
+  assert.equal(snapshot.teams[0].members[0].agentProfileId, "builder");
   assert.deepEqual(snapshot.teams[0].members[0].toolNames, ["read_file", "edit_file"]);
   assert.throws(() => teamSnapshotSchema.parse({
     ...snapshot,

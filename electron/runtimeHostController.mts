@@ -27,17 +27,6 @@ export interface RuntimeHostControllerOptions {
   env?: NodeJS.ProcessEnv;
   onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
-  executeHostTool?: (request: {
-    requestId: string;
-    toolName: string;
-    input: unknown;
-    context: {
-      sessionId: string;
-      turnId: string;
-      toolCallId: string;
-      capabilityIds: string[];
-    };
-  }) => Promise<unknown>;
 }
 
 interface PendingOperation {
@@ -99,10 +88,6 @@ export class RuntimeUtilityProcessController {
         }
         if (message.type === 'stream_frame') {
           for (const listener of this.#frameListeners) listener(message);
-          return;
-        }
-        if (message.type === 'host_tool_request') {
-          void this.#executeHostTool(message);
           return;
         }
         const failure = new RuntimeHostControllerError(message.error);
@@ -235,35 +220,6 @@ export class RuntimeUtilityProcessController {
     this.#pending.clear();
   }
 
-  async #executeHostTool(
-    message: Extract<RuntimeIpcOutboundMessage, { type: 'host_tool_request' }>,
-  ) {
-    try {
-      if (!this.#options.executeHostTool) {
-        throw new Error('The Electron host did not register a product tool executor.');
-      }
-      const result = await this.#options.executeHostTool(message);
-      this.#post({
-        protocol: BUSH_RUNTIME_IPC_PROTOCOL,
-        type: 'host_tool_response',
-        requestId: message.requestId,
-        ok: true,
-        result,
-      });
-    } catch (error) {
-      this.#post({
-        protocol: BUSH_RUNTIME_IPC_PROTOCOL,
-        type: 'host_tool_response',
-        requestId: message.requestId,
-        ok: false,
-        error: runtimeError(
-          'host_tool_execution_failed',
-          errorMessage(error),
-          message.requestId,
-        ),
-      });
-    }
-  }
 }
 
 export class RuntimeHostControllerError extends Error {

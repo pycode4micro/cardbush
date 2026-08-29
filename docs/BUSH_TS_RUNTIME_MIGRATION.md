@@ -12,8 +12,9 @@ reference and differential-test oracle during migration.
 - `@cardbush/bush-provider-openai` adapts OpenAI-compatible wire protocols. It
   disables SDK retries so Runtime recovery remains observable and authoritative.
 - React, `src/backend/api.ts`, and Electron `main.ts` do not own the Agent Loop.
-- Product integrations such as Browser, Bot, Computer Use, and Office remain MCP
-  or CardBush application capabilities rather than Runtime branches.
+- Product integrations such as Browser and Office remain optional MCP or CardBush
+  application capabilities rather than Runtime branches. Bot products are fully
+  independent MCP projects; CardBush neither embeds nor manages them.
 
 ## Migration order
 
@@ -55,9 +56,10 @@ parses JSON, validates the registration's decoder, verifies Tool Call / Manifest
 Execution Fact identities, and projects lifecycle facts. It never infers effects
 from a Tool name or output prose. Interactive permission decisions use a separate
 command and concrete capability identifiers; denied or cancelled requests never
-invoke the handler. CardBush Product Host adapters now expose Computer Use and Bot
-delivery through the same typed Tool boundary; Browser and other optional product
-integrations remain external MCP installations.
+invoke the handler. Product extensions do not enter through a private host-tool
+bridge. The bundled `cardbush_apps` process provides Computer Use through the
+same MCP Tool Registry used by external extensions. Bot delivery, Browser, and
+other optional integrations also enter through MCP.
 
 ## Durable recovery and Cache Chain checkpoint
 
@@ -238,18 +240,16 @@ Tool owned by another source fails closed while the previous snapshot stays live
 
 Team configuration is likewise a product-owned, revisioned
 `bush.team_snapshot.v1` fact. It explicitly names Teams, members, roles,
-instructions, child-visible Tool allowlists, and whether the Team uses a
-conference phase. Runtime does not infer any of these from the task or member
-prose, and configuration cannot change while a Turn is active.
+fallback membership, Profile instructions, disabled Tools, Skills, trusted
+Hooks/Guards, and child-visible Tool allowlists. Runtime does not infer any of
+these from the task or member prose, and configuration cannot change while a
+Turn is active.
 
 `subagent` and `team_delegate` share one child-Turn builder and the same durable
-Session, Provider, Tool, permission, and task-journal path. A configured
-conference runs all assigned members concurrently without Tools, freezes their
-complete responses as one immutable transcript, and then gives that identical
-transcript to every independently executing member. With conferencing disabled,
-the explicit assignments begin directly. Runtime performs only mechanical
-identity, phase, exposure, and all-assignment completion checks; it does not
-classify dependencies, choose members, or interpret whether their prose is good.
+Session, Provider, Tool, permission, and task-journal path. Explicit assignments
+run independently; the parent model owns selection and sequencing. Runtime has
+no conference, peer chat, implicit DAG, fallback routing or semantic retry. It
+performs only mechanical identity, exposure and completion checks.
 
 Older Subagent journals remain byte-compatible: Team origin and phase fields are
 optional when reading historical records and are written explicitly for every
@@ -257,11 +257,12 @@ new task, so schema evolution does not invalidate existing checksums.
 
 ## Product Host and secret ownership checkpoint
 
-Bot configuration, Bot adapter lifecycle, inbound media materialization, Computer
-Use, external delivery and provider credentials are owned by the typed Electron
-Product Host. The former Python `cardbush_app` process and its private HTTP routes
-are removed. Runtime Tool requests cross Utility Process IPC and return explicit
-Artifacts and Execution Facts without self-registering CardBush as an MCP server.
+Provider credentials are owned by the typed Electron Product Host. Computer Use
+is owned by the independent bundled `cardbush_apps` MCP process and returns
+explicit Artifacts and Execution Facts through the normal MCP Tool Registry. Bot
+configuration, adapters, inbound media, delivery, accounts and management UI are
+not CardBush product capabilities; an independent Bot may expose `deliver`
+through that same generic registry.
 
 Provider keys are atomically persisted under the Product Host data root. Renderer
 configuration reads contain only `hasApiKey` and a masked value. Before a desktop
@@ -271,10 +272,8 @@ not enter Renderer persistence, Model Requests, Session journals or Cache Chain
 observations.
 
 Dynamic per-Turn facts such as local date, project path, project instructions and
-attachments are committed as a named internal User message immediately before the
-real User input. The fixed prefix therefore contains only the stable System prompt.
-Product projections hide the internal message, while provider context remains
-append-only across Turns.
+attachments are added as a non-persisted developer prefix for the current request.
+They are never represented as user intent or committed into Session history.
 
 ## Live provider checkpoint
 
@@ -288,29 +287,28 @@ Completions services reject the newer `developer` role used by an internal
 Runtime reminder. The adapter now projects that internal role mechanically to
 the universally supported `system` role without changing the Runtime protocol.
 
-A post-fix write Turn completed through an explicit `effect_complete` declaration
-in 83 seconds with no provider retry, returned the authoritative write receipt,
-and reported the delivery path as an absolute path. The original source project
-was not modified by either run.
+A post-fix write Turn completed naturally in 83 seconds with no provider retry,
+returned the authoritative write receipt, and reported the output path as an
+absolute path. The original source project was not modified by either run.
 
 ## Product cutover completion checkpoint
 
 The CardBush production path no longer connects to the Python service for Agent
 execution, Session history, Shadow conversations, workspace changes, context
-usage, Goal/A2A, Plan, Subagent, Team, Bot session links, permissions or provider
+usage, Goal/A2A, Plan, Subagent, Team, permissions or provider
 recovery. React uses one typed Runtime Client; Electron owns the Utility Process
 Runtime Host and typed Product Host commands. The removed HTTP/SSE payload
 parsers and backend settings are not retained as a compatibility layer.
 
 Shadow conversations are hidden, temporary Runtime Sessions with an explicit
-source-Turn boundary and a read-only Tool selection. Bot link codes are stored by
-the Product Host with atomic updates, expiry, identity binding and one-time
-consumption. Assistant timing comes from committed Runtime Turn timestamps, and
-media comes from validated ToolResult Artifacts rather than response-text or
-arbitrary JSON inference.
+source-Turn boundary, frozen source revision and a read-only Tool selection.
+Assistant timing comes from committed Runtime Turn timestamps, and media comes
+from validated ToolResult Artifacts rather than response-text or arbitrary JSON
+inference. Bot/channel ownership is outside CardBush and may integrate only as an
+independent MCP server.
 
 The complete product release gate passes after the cutover, including protocol,
-Runtime, provider, MCP, Electron IPC, Product Host, Bot, Goal/A2A, Shadow,
+Runtime, provider, MCP, Electron IPC, Product Host, Goal/A2A, Shadow,
 Subagent, Team, permission, recovery, typecheck, production build and packaged
 release-cleanup checks.
 

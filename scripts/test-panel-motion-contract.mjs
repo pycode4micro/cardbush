@@ -210,17 +210,8 @@ assert.match(
   /\.conversation-work-summary\.soft-panel-hidden[\s\S]*?translateX\(14px\)/,
   'Maximized summary must keep the existing right-side exit motion',
 );
-assert.match(featureContent, /className="tool-install-action-options"[\s\S]*?role="radiogroup"/);
-assert.doesNotMatch(
-  featureContent,
-  /tool-install-form[\s\S]{0,300}<select/,
-  'Short fixed action lists must not depend on an OS-native popup menu',
-);
-assert.match(
-  css,
-  /\.skill-detail-dialog\.tool-install-dialog\s*\{[\s\S]*?height:\s*auto;/,
-  'Compact tool installation dialogs must override the fixed detail-dialog height',
-);
+assert.doesNotMatch(featureContent, /tool-install|tool-manager/);
+assert.doesNotMatch(css, /tool-install|tool-manager|tools-manager/);
 assert.match(theme, /\.app\.theme-dark select,[\s\S]*?color-scheme:\s*dark/);
 assert.match(theme, /\.app select option,[\s\S]*?background-color:\s*var\(--surface-strong\)/);
 

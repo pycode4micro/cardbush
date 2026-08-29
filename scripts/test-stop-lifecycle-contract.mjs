@@ -18,9 +18,10 @@ const bubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 
 assert.match(types, /export interface TurnTerminalSnapshot/);
 assert.match(api, /export interface StopTurnResult/);
-assert.match(api, /if \(stopActiveRuntimeTurn\(normalized\)\)/);
-assert.match(api, /reason: ["']runtime_stop_requested["']/);
-assert.match(runtimeBridge, /export function stopActiveRuntimeTurn/);
+assert.match(api, /const receipt = await stopActiveRuntimeTurn\(normalized\)/);
+assert.match(api, /accepted: receipt\.accepted/);
+assert.match(runtimeBridge, /export async function stopActiveRuntimeTurn/);
+assert.match(runtimeBridge, /return active\.stop\(\)/);
 assert.match(api, /onDone\?: \(terminal: TurnTerminalSnapshot\) => void/);
 assert.match(runtimeChat, /request\.onDone\?\.\(terminalSnapshot\(terminal\)\)/);
 assert.match(runtimeChat, /case 'turn_terminal'/);

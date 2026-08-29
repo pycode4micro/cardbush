@@ -47,9 +47,10 @@ export interface ElectronRuntimeSessionOptions {
  * Product-side coordinator for one live Electron Runtime Turn at a time.
  *
  * It subscribes before dispatching the Turn command so even an immediate
- * provider failure remains visible as ordered Runtime events. A user stop only
- * cancels the command operation; the event stream stays attached long enough to
- * receive the Runtime-owned `turn_terminal` fact.
+ * provider failure remains visible as ordered Runtime events. Product Stop uses
+ * the typed `runtime.stop_turn` command; operation cancellation here is reserved
+ * for coordinator disposal while the event stream awaits Runtime-owned terminal
+ * facts.
  */
 export class ElectronRuntimeSession {
   readonly client: ElectronProtocolRuntimeClient;

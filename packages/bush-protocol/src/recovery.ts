@@ -11,6 +11,9 @@ export const BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL =
 export const INSPECT_RUNTIME_RECOVERY_COMMAND =
   "runtime.inspect_recovery" as const;
 export const RESUME_MODEL_TURN_COMMAND = "runtime.resume_model_turn" as const;
+export const STOP_RUNTIME_TURN_COMMAND = "runtime.stop_turn" as const;
+export const BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL =
+  "bush.runtime_stop_receipt.v1" as const;
 
 export const runtimeTurnIdentitySchema = z.object({
   sessionId: z.string().min(1),
@@ -19,6 +22,15 @@ export const runtimeTurnIdentitySchema = z.object({
 
 export type RuntimeTurnIdentity = z.infer<typeof runtimeTurnIdentitySchema>;
 
+export const runtimeStopReceiptSchema = runtimeTurnIdentitySchema.extend({
+  protocol: z.literal(BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL),
+  accepted: z.boolean(),
+  terminal: z.boolean(),
+  reason: z.string().min(1),
+});
+
+export type RuntimeStopReceipt = z.infer<typeof runtimeStopReceiptSchema>;
+
 export const runtimeCheckpointSchema = z.object({
   protocol: z.literal(BUSH_RUNTIME_CHECKPOINT_PROTOCOL),
   request: modelRequestSchema,
@@ -26,7 +38,6 @@ export const runtimeCheckpointSchema = z.object({
   lastEventSequence: z.number().int().nonnegative(),
   lastEventId: z.string().min(1),
   completedReceiptIds: z.array(z.string().min(1)),
-  outcomeReminderCount: z.number().int().nonnegative().optional(),
   cacheChainState: cacheChainStateSchema,
   sessionCommit: runtimeSessionCommitCheckpointSchema.optional(),
   createdAt: z.string().min(1),

@@ -8,48 +8,47 @@ import {
 import type { McpServerConfig, McpTransport } from '../types';
 import type { ProtocolRuntimeClient } from '../runtime-client/ProtocolRuntimeClient';
 
-const serverStorageKey = 'cardbush_product_mcp_servers_v1';
-const revisionStorageKey = 'cardbush_product_mcp_revision_v1';
 const snapshotId = 'cardbush-product-mcp';
+export const CARDBUSH_APPS_MCP_SERVER_ID = 'cardbush_apps';
 
-export function readProductMcpServers(): McpServerConfig[] {
-  const raw = window.localStorage.getItem(serverStorageKey);
-  if (!raw?.trim()) return [];
-  try {
-    const decoded: unknown = JSON.parse(raw);
-    return Array.isArray(decoded)
-      ? decoded.map(serverFromStored).filter((value): value is McpServerConfig => value != null)
-      : [];
-  } catch {
-    return [];
-  }
+export async function readProductMcpServers(): Promise<McpServerConfig[]> {
+  const stored = await productHostMcp('mcp.get');
+  return (Array.isArray(stored.servers) ? stored.servers : [])
+    .map(serverFromStored)
+    .filter((value): value is McpServerConfig => (
+      value != null && value.id !== CARDBUSH_APPS_MCP_SERVER_ID
+    ));
 }
 
 export async function synchronizeProductMcpSnapshot(
   client: Pick<ProtocolRuntimeClient, 'applyMcpSnapshot'>,
 ): Promise<McpSnapshotResult> {
-  return client.applyMcpSnapshot(snapshot(readProductMcpServers(), readRevision()));
+  const stored = await productHostMcp('mcp.get');
+  const servers = (Array.isArray(stored.servers) ? stored.servers : [])
+    .map(serverFromStored).filter((value): value is McpServerConfig => value != null);
+  return client.applyMcpSnapshot(snapshot(servers, Number(stored.revision) || 1));
 }
 
 export async function replaceProductMcpServers(
   client: Pick<ProtocolRuntimeClient, 'applyMcpSnapshot'>,
   servers: McpServerConfig[],
 ): Promise<McpSnapshotResult> {
-  const previousServers = window.localStorage.getItem(serverStorageKey);
-  const previousRevision = window.localStorage.getItem(revisionStorageKey);
-  const revision = readRevision() + 1;
-  window.localStorage.setItem(serverStorageKey, JSON.stringify(servers.map(storedServer)));
-  window.localStorage.setItem(revisionStorageKey, String(revision));
-  try {
-    return await client.applyMcpSnapshot(snapshot(servers, revision));
-  } catch (error) {
-    restore(serverStorageKey, previousServers);
-    restore(revisionStorageKey, previousRevision);
-    throw error;
+  if (servers.some((server) => server.id === CARDBUSH_APPS_MCP_SERVER_ID)) {
+    throw new Error(`${CARDBUSH_APPS_MCP_SERVER_ID} is a reserved bundled MCP server ID.`);
   }
+  const saved = await productHostMcp('mcp.update', {
+    servers: servers.map(storedServer),
+  });
+  return client.applyMcpSnapshot(snapshot(servers, Number(saved.revision) || 1));
 }
 
 export function validateProductMcpServer(server: McpServerConfig) {
+  if (server.id === CARDBUSH_APPS_MCP_SERVER_ID) {
+    return mcpSnapshotSchema.safeParse({
+      ...snapshot([], 1),
+      servers: [{ id: '', transport: { kind: 'stdio', command: '' } }],
+    });
+  }
   return mcpSnapshotSchema.safeParse(snapshot([server], 1));
 }
 
@@ -82,11 +81,6 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
       toolPolicies: {},
     })),
   };
-}
-
-function readRevision() {
-  const value = Number(window.localStorage.getItem(revisionStorageKey));
-  return Number.isInteger(value) && value > 0 ? value : 1;
 }
 
 function storedServer(server: McpServerConfig) {
@@ -156,7 +150,28 @@ function positiveInteger(value: unknown) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function restore(key: string, value: string | null) {
-  if (value == null) window.localStorage.removeItem(key);
-  else window.localStorage.setItem(key, value);
+async function productHostMcp(
+  kind: 'mcp.get' | 'mcp.update',
+  config?: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const execute = window.cardbushDesktop?.productHostCommand;
+  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  const response = await execute({
+    protocol: 'cardbush.product_host_ipc.v1',
+    kind,
+    ...(config ? { config } : {}),
+  });
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('CardBush Product Host returned an invalid MCP response.');
+  }
+  const envelope = response as Record<string, unknown>;
+  if (envelope.ok !== true) {
+    const error = envelope.error && typeof envelope.error === 'object'
+      ? envelope.error as Record<string, unknown> : {};
+    throw new Error(String(error.message ?? 'Product MCP configuration failed.'));
+  }
+  if (!envelope.value || typeof envelope.value !== 'object' || Array.isArray(envelope.value)) {
+    throw new Error('Product MCP configuration payload is invalid.');
+  }
+  return envelope.value as Record<string, unknown>;
 }

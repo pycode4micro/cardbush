@@ -9,7 +9,7 @@ import {
   registerTeamTool,
 } from "../dist/index.js";
 
-test("runs configured Team discussion and execution as concurrent immutable phases", async () => {
+test("runs configured Team assignments concurrently with immutable Profile constraints", async () => {
   const registry = new ToolRegistry();
   const teams = new TeamSnapshotStore();
   teams.apply(snapshot());
@@ -90,21 +90,17 @@ test("runs configured Team discussion and execution as concurrent immutable phas
   assert.equal(outcome.kind, "completed");
   assert.equal(outcome.result.success, true);
   assert.equal(peak, 2);
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 2);
   assert.deepEqual(requests.map((request) => request.metadata.teamPhase), [
-    "discussion", "discussion", "execution", "execution",
+    "execution", "execution",
   ]);
-  const executionPrompts = requests.slice(2).map((request) => request.inputMessages[0].message.content);
-  const frozen = executionPrompts.map((prompt) => prompt.match(/\[\{.*\}\]/s)?.[0]);
-  assert.equal(frozen[0], frozen[1]);
-  assert.match(frozen[0], /discussion:builder/);
-  assert.match(frozen[0], /discussion:reviewer/);
+  assert.deepEqual(requests.map((request) => request.metadata.allowedSkills), [
+    ["implementation"], ["review"],
+  ]);
   assert.deepEqual(outcome.result.guidance.map((message) => message.name), [
     "team_result_builder", "team_result_reviewer",
   ]);
   assert.deepEqual(tasks.list("parent_session").map((task) => [task.origin, task.phase]), [
-    ["team", "discussion"],
-    ["team", "discussion"],
     ["team", "execution"],
     ["team", "execution"],
   ]);
@@ -167,10 +163,9 @@ function snapshot() {
       teamId: "delivery",
       name: "Delivery",
       instructions: "Share only facts.",
-      conference: { enabled: true, instructions: "Resolve conflicts." },
       members: [
-        { memberId: "builder", name: "Builder", role: "build", instructions: "", toolNames: [] },
-        { memberId: "reviewer", name: "Reviewer", role: "review", instructions: "", toolNames: [] },
+        { memberId: "builder", name: "Builder", role: "build", instructions: "", toolNames: [], agentProfileId: "builder", fallback: true, skills: ["implementation"], hooks: [], guards: [], promptInstructions: "" },
+        { memberId: "reviewer", name: "Reviewer", role: "review", instructions: "", toolNames: [], agentProfileId: "reviewer", fallback: false, skills: ["review"], hooks: [], guards: [], promptInstructions: "" },
       ],
     }],
   };

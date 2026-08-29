@@ -61,7 +61,7 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
         metadata: {
           mcpContext: {
             filesystemRoots: ["C:\\workspace"],
-            transportChannel: "weixin",
+            transportChannel: "external",
           },
         },
       },
@@ -73,7 +73,7 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   assert.equal(fake.calls[0].name, "echo.tool");
   assert.deepEqual(fake.calls[0].arguments, { value: "ping" });
   assert.deepEqual(fake.calls[0]._meta.filesystem_roots, ["C:\\workspace"]);
-  assert.equal(fake.calls[0]._meta.transport_channel, "weixin");
+  assert.equal(fake.calls[0]._meta.transport_channel, "external");
   assert.equal(fake.calls[0]._meta.runtime_tool_result_protocol, "bush.tool_result.v1");
   assert.equal(fake.calls[0]._meta.receipt_id, "receipt_mcp");
   assert.equal(fake.calls[0]._meta.action_manifest.protocol, "bush.tool.action_manifest.v1");
@@ -125,7 +125,7 @@ test("binds default MCP permission to one exact server Tool resource", async () 
   assert.equal(requested.capabilityIds.length, 1);
 });
 
-test("rejects a successful MCP response that omits the Runtime Tool Result protocol", async () => {
+test("normalizes a standard successful MCP response without a private Runtime envelope", async () => {
   const registry = new ToolRegistry();
   const manager = new McpClientManager({
     registry,
@@ -153,8 +153,10 @@ test("rejects a successful MCP response that omits the Runtime Tool Result proto
       ordinal: 0,
     },
   );
-  assert.equal(outcome.kind, "failed");
-  assert.equal(outcome.result.error.code, "mcp_tool_result_protocol_invalid");
+  assert.equal(outcome.kind, "completed");
+  assert.equal(outcome.result.success, true);
+  assert.equal(outcome.result.output.content[0].text, "untrusted");
+  assert.equal(outcome.result.facts[0].verification_state, "attempted");
 });
 
 test("rejects snapshot mutation during a Turn and conflicting revision reuse", async () => {
@@ -182,15 +184,18 @@ test("rejects snapshot mutation during a Turn and conflicting revision reuse", a
   assert.ok(registry.resolve("mcp__server__echo_tool"));
 });
 
-test("rejects an MCP Tool that does not declare an Action Manifest", async () => {
+test("synthesizes a conservative Action Manifest for a standard MCP Tool", async () => {
   const registry = new ToolRegistry();
   const manager = new McpClientManager({
     registry,
     createClient: () => fakeClient({ content: [] }, { includeManifest: false }),
     createTransport: () => ({}),
   });
-  await assert.rejects(manager.apply(snapshot()), /must provide a complete/);
-  assert.equal(registry.resolve("mcp__server__echo_tool"), undefined);
+  await manager.apply(snapshot());
+  const registered = registry.resolve("mcp__server__echo_tool");
+  assert.ok(registered);
+  assert.equal(registered.manifest.effect_kind, "external_mcp");
+  assert.equal(registered.manifest.dispatch_mutating, true);
 });
 
 function snapshot(policy) {

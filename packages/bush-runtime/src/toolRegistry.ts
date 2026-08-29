@@ -41,6 +41,7 @@ export interface ToolAdmissionContext<TInput = unknown> {
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
+  invokeTool: (name: string, input: unknown) => Promise<ToolResult>;
 }
 
 export interface ToolRegistration<TInput = unknown> {

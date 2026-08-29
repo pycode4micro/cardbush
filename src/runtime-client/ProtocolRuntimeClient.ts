@@ -2,6 +2,9 @@ import {
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
+  ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
+  ANSWER_RUNTIME_INTERACTION_COMMAND,
+  GET_PENDING_RUNTIME_INTERACTIONS_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
@@ -17,6 +20,7 @@ import {
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
+  STOP_RUNTIME_TURN_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
   CREATE_RUNTIME_SESSION_COMMAND,
   DELETE_RUNTIME_SESSION_COMMAND,
@@ -32,6 +36,13 @@ import {
   runtimeSessionIdentitySchema,
   runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
+  runtimeTurnIdentitySchema,
+  runtimeStopReceiptSchema,
+  runtimeGuidanceRequestSchema,
+  runtimeGuidanceReceiptSchema,
+  runtimeInteractionAnswerSchema,
+  runtimeInteractionSchema,
+  pendingRuntimeInteractionsRequestSchema,
   runtimeCoordinationSessionSchema,
   setRuntimePlanRequestSchema,
   updateRuntimeGoalRequestSchema,
@@ -56,6 +67,11 @@ import {
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimeSessionTurnRequest,
+  type RuntimeStopReceipt,
+  type RuntimeGuidanceRequest,
+  type RuntimeGuidanceReceipt,
+  type RuntimeInteraction,
+  type RuntimeInteractionAnswer,
   type PlanState,
   type GoalState,
   type McpSnapshot,
@@ -67,6 +83,8 @@ import {
   type ToolDefinition,
   type ToolCatalogEntry,
   type SubagentTask,
+  REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+  revertRuntimeWorkspaceChangesSchema,
 } from '@cardbush/bush-protocol';
 import {
   RuntimeClient,
@@ -183,6 +201,54 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: RUN_RUNTIME_SESSION_TURN_COMMAND, payload },
       decodeRuntimeEvent,
+      signal,
+    );
+  }
+
+  stopTurn(
+    input: { sessionId: string; turnId: string },
+    signal?: AbortSignal,
+  ): Promise<RuntimeStopReceipt> {
+    const payload = runtimeTurnIdentitySchema.parse(input);
+    return this.command(
+      { kind: STOP_RUNTIME_TURN_COMMAND, payload },
+      (value) => runtimeStopReceiptSchema.parse(value),
+      signal,
+    );
+  }
+
+  enqueueGuidance(
+    input: RuntimeGuidanceRequest,
+    signal?: AbortSignal,
+  ): Promise<RuntimeGuidanceReceipt> {
+    const payload = runtimeGuidanceRequestSchema.parse(input);
+    return this.command(
+      { kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload },
+      (value) => runtimeGuidanceReceiptSchema.parse(value),
+      signal,
+    );
+  }
+
+  pendingInteractions(
+    input: { sessionId?: string; turnId?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<RuntimeInteraction[]> {
+    const payload = pendingRuntimeInteractionsRequestSchema.parse(input);
+    return this.command(
+      { kind: GET_PENDING_RUNTIME_INTERACTIONS_COMMAND, payload },
+      (value) => runtimeInteractionSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  answerInteraction(
+    input: RuntimeInteractionAnswer,
+    signal?: AbortSignal,
+  ): Promise<RuntimeInteractionAnswer> {
+    const payload = runtimeInteractionAnswerSchema.parse(input);
+    return this.command(
+      { kind: ANSWER_RUNTIME_INTERACTION_COMMAND, payload },
+      (value) => runtimeInteractionAnswerSchema.parse(value),
       signal,
     );
   }
@@ -332,6 +398,18 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: UPDATE_RUNTIME_GOAL_COMMAND, payload },
       (value) => goalStateSchema.parse(value),
+      signal,
+    );
+  }
+
+  revertWorkspaceChanges(
+    input: { sessionId: string; turnIds: string[] },
+    signal?: AbortSignal,
+  ): Promise<{ sessionId: string; turnIds: string[]; revertedFiles: number; revertedAt: string }> {
+    const payload = revertRuntimeWorkspaceChangesSchema.parse(input);
+    return this.command(
+      { kind: REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND, payload },
+      (value) => value as { sessionId: string; turnIds: string[]; revertedFiles: number; revertedAt: string },
       signal,
     );
   }

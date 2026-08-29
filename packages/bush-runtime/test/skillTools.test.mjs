@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { registerSkillTools, ToolRegistry } from '../dist/index.js';
 
-test('searches Skill cards generically and reads only package-contained resources', async () => {
+test('registers only the published Skill discovery tool', async () => {
   const root = await mkdtemp(join(tmpdir(), 'cardbush-skills-'));
   try {
     const packageDir = join(root, 'sheets');
@@ -30,15 +30,7 @@ test('searches Skill cards generically and reads only package-contained resource
     assert.equal(searchResult.success, true);
     assert.equal(searchResult.output.matches[0].name, 'xlsx');
 
-    const read = registry.resolve('read_skill');
-    const readInput = read.decodeInput({ name: 'xlsx', resource: 'references/style.md' });
-    const readResult = await read.execute(context(readInput, 'read_skill'));
-    assert.equal(readResult.output.content, '# Style');
-
-    assert.throws(
-      () => read.decodeInput({ name: 'xlsx', resource: join(root, 'outside') }),
-      /relative/,
-    );
+    assert.equal(registry.resolve('read_skill'), undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

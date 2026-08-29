@@ -60,7 +60,6 @@ if (configured.status !== 'configured' || !configured.binding) {
 const host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry: new ToolRegistry(),
-  requireOutcomeDeclaration: true,
   maxAttempts: 5,
   hostId: 'live-game-validation',
 });

@@ -84,6 +84,13 @@ assert.match(
   /JSON\.stringify\(settings\.managedModelConfigs\.map\(\(config\) => \(\{[\s\S]*?apiKey: ''/,
   'Renderer persistence must strip provider secrets',
 );
+assert.match(appSource, /mergeLegacyModelCredentials\(remoteModels, legacyModels\)/);
+assert.match(
+  appSource,
+  /migrated\.changed[\s\S]*?saveModelConfigs\([\s\S]*?models: migrated\.models/,
+  'Missing Product Host credentials must be migrated once from the legacy local store',
+);
+assert.match(appSource, /model\.hasApiKey === true \|\| model\.apiKey\.trim\(\)/);
 
 const composerSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),

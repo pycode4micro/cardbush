@@ -1,8 +1,6 @@
 import { z } from "zod";
 
 export const BUSH_TASK_PLAN_PROTOCOL = "bush.task_plan.v1" as const;
-export const BUSH_TURN_OUTCOME_DECLARATION_PROTOCOL =
-  "bush.turn_outcome_declaration.v1" as const;
 
 export const taskNodeSchema = z.object({
   id: z.string().optional(),
@@ -46,12 +44,3 @@ export const taskPlanSchema = z
   });
 
 export type TaskPlan = z.infer<typeof taskPlanSchema>;
-
-export const turnOutcomeDeclarationSchema = z.object({
-  protocol: z.literal(BUSH_TURN_OUTCOME_DECLARATION_PROTOCOL),
-  disposition: z.enum(["answer", "effect_complete", "blocked", "awaiting_input"]),
-  receipt_ids: z.array(z.string().min(1)).default([]),
-  final_response: z.string().min(1),
-});
-
-export type TurnOutcomeDeclaration = z.infer<typeof turnOutcomeDeclarationSchema>;

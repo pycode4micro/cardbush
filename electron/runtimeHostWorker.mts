@@ -4,6 +4,7 @@ import {
   BUSH_RUNTIME_IPC_PROTOCOL,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  SHUTDOWN_RUNTIME_COMMAND,
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   createProtocolVersionMismatchError,
@@ -40,10 +41,7 @@ import {
   OpenAICompatibleProviderRegistry,
 } from '@cardbush/bush-provider-openai';
 import { isAbsolute, join } from 'node:path';
-import {
-  registerProductHostTools,
-  type ProductHostToolResponse,
-} from './runtimeProductTools.mjs';
+import { readFileSync } from 'node:fs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -52,10 +50,6 @@ if (!parentPort) {
 
 const operations = new Map<string, AbortController>();
 const subscriptions = new Map<string, AbortController>();
-const hostToolRequests = new Map<string, {
-  resolve: (value: ProductHostToolResponse) => void;
-  reject: (error: Error) => void;
-}>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAICompatibleProviderRegistry;
 let mcp: McpClientManager;
@@ -140,14 +134,6 @@ async function handleMessage(input: unknown) {
       subscriptions.get(message.subscriptionId)?.abort();
       subscriptions.delete(message.subscriptionId);
       return;
-    case 'host_tool_response': {
-      const pending = hostToolRequests.get(message.requestId);
-      if (!pending) return;
-      hostToolRequests.delete(message.requestId);
-      if (message.ok) pending.resolve(message.result as ProductHostToolResponse);
-      else pending.reject(new Error(message.error?.message ?? 'Product Host tool failed'));
-      return;
-    }
   }
 }
 
@@ -205,6 +191,18 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
+  if (command.kind === SHUTDOWN_RUNTIME_COMMAND) {
+    for (const controller of operations.values()) {
+      if (controller.signal !== signal) controller.abort();
+    }
+    await host.sendCommand(command, signal);
+    const deadline = Date.now() + 5_000;
+    while (host.hasActiveTurns() && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    await mcp.close();
+    return { accepted: true, drained: !host.hasActiveTurns() };
+  }
   if (command.kind === UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND) {
     return providers.upsert(runtimeProviderBindingConfigSchema.parse(command.payload));
   }
@@ -212,12 +210,84 @@ async function executeRuntimeCommand(
     return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
   }
   if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND) {
-    return mcp.apply(command.payload);
+    return mcp.apply(withBundledAppsServer(command.payload));
   }
   if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
     return mcp.snapshot() ?? null;
   }
   return host.sendCommand(command, signal);
+}
+
+function withBundledAppsServer(input: unknown): unknown {
+  const entry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
+  if (!entry) return input;
+  const snapshot = object(input, 'MCP snapshot must be an object.');
+  const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
+  if (configured.some((candidate) =>
+    candidate && typeof candidate === 'object' && (candidate as { id?: unknown }).id === 'cardbush_apps'
+  )) {
+    throw new Error('cardbush_apps is a bundled MCP server id and cannot be overridden.');
+  }
+  const appsConfigPath = process.env.CARDBUSH_APPS_CONFIG_PATH?.trim();
+  const appsConfig = readBundledAppsConfig(appsConfigPath);
+  const sourceRevision = Number(snapshot.revision);
+  if (!Number.isSafeInteger(sourceRevision) || sourceRevision <= 0) {
+    throw new Error('MCP snapshot revision must be a positive integer.');
+  }
+  const revision = sourceRevision * 1_000_000 + appsConfig.revision;
+  if (!appsConfig.serviceEnabled) return { ...snapshot, revision, servers: configured };
+  return {
+    ...snapshot,
+    revision,
+    servers: [
+      {
+        id: 'cardbush_apps',
+        transport: {
+          kind: 'stdio',
+          command: process.execPath,
+          args: [entry],
+          env: {
+            ELECTRON_RUN_AS_NODE: '1',
+            ...(appsConfigPath ? { CARDBUSH_APPS_CONFIG_PATH: appsConfigPath } : {}),
+          },
+        },
+        versionMode: 'auto',
+        defaultToolPolicy: {
+          permission: 'ask',
+          parallelSafe: false,
+          visibleToChild: true,
+        },
+        toolPolicies: {},
+      },
+      ...configured,
+    ],
+  };
+}
+
+function readBundledAppsConfig(path: string | undefined): { serviceEnabled: boolean; revision: number } {
+  if (!path) return { serviceEnabled: true, revision: 1 };
+  if (!isAbsolute(path)) throw new Error('CARDBUSH_APPS_CONFIG_PATH must be absolute.');
+  try {
+    const value = object(JSON.parse(readFileSync(path, 'utf8')), 'Apps config must be an object.');
+    if (typeof value.serviceEnabled !== 'boolean') {
+      throw new Error('Apps config serviceEnabled must be a boolean.');
+    }
+    const revision = Number(value.revision);
+    if (!Number.isSafeInteger(revision) || revision <= 0 || revision >= 1_000_000) {
+      throw new Error('Apps config revision must be a positive integer below 1000000.');
+    }
+    return { serviceEnabled: value.serviceEnabled, revision };
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return { serviceEnabled: true, revision: 1 };
+    }
+    throw error;
+  }
+}
+
+function object(value: unknown, message: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(message);
+  return value as Record<string, unknown>;
 }
 
 const runtimeStateRoot = process.env.CARDBUSH_RUNTIME_STATE_ROOT?.trim();
@@ -275,12 +345,13 @@ providers = new OpenAICompatibleProviderRegistry({
 });
 
 const toolRegistry = new ToolRegistry();
-registerProductHostTools(toolRegistry, invokeProductHostTool);
 const skillRoots = skillRootsFromEnvironment();
 if (skillRoots.length > 0) registerSkillTools(toolRegistry, skillRoots);
 host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry,
+  dataRoot: runtimeStateRoot,
+  skillRoots,
   eventLog,
   checkpointStore,
   sessionStore: new SessionStore({ persistence: sessionPersistence }),
@@ -297,7 +368,7 @@ host = new InMemoryRuntimeHost({
   durableSessions: Boolean(runtimeStateRoot),
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
-  requireOutcomeDeclaration: true,
+  settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
@@ -307,7 +378,7 @@ host = new InMemoryRuntimeHost({
   additionalFeatures: [
     "product_mcp_snapshot",
     "mcp_protocol_2",
-    "product_host_tools",
+    "bundled_cardbush_apps_mcp",
     "native_image_inputs",
   ],
   hostId: `electron-utility-${process.pid}`,
@@ -326,46 +397,6 @@ mcp = new McpClientManager({
   registry: toolRegistry,
   canApply: () => !host.hasActiveTurns(),
 });
-
-function invokeProductHostTool(request: {
-  toolName: string;
-  input: unknown;
-  context: {
-    sessionId: string;
-    turnId: string;
-    toolCallId: string;
-    capabilityIds: string[];
-  };
-  signal?: AbortSignal;
-}): Promise<ProductHostToolResponse> {
-  if (request.signal?.aborted) return Promise.reject(request.signal.reason);
-  const requestId = `host_tool_${crypto.randomUUID()}`;
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      hostToolRequests.delete(requestId);
-      reject(request.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
-    };
-    request.signal?.addEventListener('abort', abort, { once: true });
-    hostToolRequests.set(requestId, {
-      resolve: (value) => {
-        request.signal?.removeEventListener('abort', abort);
-        resolve(value);
-      },
-      reject: (error) => {
-        request.signal?.removeEventListener('abort', abort);
-        reject(error);
-      },
-    });
-    post({
-      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
-      type: 'host_tool_request',
-      requestId,
-      toolName: request.toolName,
-      input: request.input,
-      context: request.context,
-    });
-  });
-}
 
 function skillRootsFromEnvironment(): string[] {
   const raw = process.env.CARDBUSH_RUNTIME_SKILL_ROOTS?.trim();
