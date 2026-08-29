@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { normalizeChatCompletionChunk, toChatCompletionCreateParams } from "../dist/index.js";
+import { normalizeChatCompletionChunk, resolveLocalImageInputs, toChatCompletionCreateParams } from "../dist/index.js";
 
 test("normalizes text, reasoning, parallel tool deltas and cache usage", () => {
   const state = { requestId: "req_1", sequence: 0, started: false };
@@ -91,4 +94,79 @@ test("forwards explicit output and reasoning controls without adding local defau
   });
   assert.equal(explicit.max_completion_tokens, 32768);
   assert.equal(explicit.reasoning_effort, "xhigh");
+});
+
+test("projects the internal developer role to universally compatible system messages", () => {
+  const request = toChatCompletionCreateParams({
+    protocol: "bush.model_request.v1",
+    requestId: "request_developer",
+    sessionId: "session_developer",
+    turnId: "turn_developer",
+    model: "compatible-model",
+    messages: [
+      { role: "system", content: "stable prefix" },
+      { role: "developer", name: "runtime_protocol", content: "declare the outcome" },
+      { role: "user", content: "hello" },
+    ],
+    tools: [],
+    toolChoice: "auto",
+    metadata: {},
+  });
+
+  assert.deepEqual(request.messages.map((message) => message.role), ["system", "system", "user"]);
+  assert.equal(request.messages[1].name, "runtime_protocol");
+  assert.equal(request.messages[1].content, "declare the outcome");
+});
+
+test("projects explicit image inputs without inferring them from text", () => {
+  const request = toChatCompletionCreateParams({
+    protocol: "bush.model_request.v1",
+    requestId: "request_image",
+    sessionId: "session_image",
+    turnId: "turn_image",
+    model: "vision-model",
+    messages: [{
+      role: "user",
+      content: "inspect this",
+      images: [{ url: "data:image/png;base64,aGVsbG8=", detail: "high" }],
+    }],
+    tools: [],
+    toolChoice: "auto",
+    metadata: {},
+  });
+  assert.deepEqual(request.messages[0].content, [
+    { type: "text", text: "inspect this" },
+    {
+      type: "image_url",
+      image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "high" },
+    },
+  ]);
+});
+
+test("validates and resolves an explicit local image path before provider submission", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "bush-provider-image-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "image.png");
+  await writeFile(path, Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  ));
+  const request = await resolveLocalImageInputs({
+    protocol: "bush.model_request.v1",
+    requestId: "request_local_image",
+    sessionId: "session_local_image",
+    turnId: "turn_local_image",
+    model: "vision-model",
+    messages: [{ role: "user", content: "inspect", images: [{ url: path }] }],
+    tools: [],
+    toolChoice: "auto",
+    metadata: {},
+  });
+  assert.match(request.messages[0].images[0].url, /^data:image\/png;base64,/);
+  const textPath = join(root, "not-image.txt");
+  await writeFile(textPath, "not an image", "utf8");
+  await assert.rejects(() => resolveLocalImageInputs({
+    ...request,
+    messages: [{ role: "user", content: "inspect", images: [{ url: textPath }] }],
+  }), /supported raster image/);
 });

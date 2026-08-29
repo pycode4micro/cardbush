@@ -100,8 +100,8 @@ assert.match(typesSource, /export interface ChatToolArtifact extends ChatAttachm
 assert.match(typesSource, /artifacts\?: ChatToolArtifact\[\]/);
 assert.equal(
   (apiSource.match(/toolArtifactsFromPayload\(/g) ?? []).length,
-  2,
-  'Live SSE and restored history must use the same artifact parser',
+  3,
+  'Runtime history, live SSE and restored HTTP history must use the same artifact parser',
 );
 assert.match(hookSource, /mergeToolArtifacts\(current\.artifacts, incoming\.artifacts\)/);
 assert.doesNotMatch(bubbleSource, /toolArtifactPaths/);

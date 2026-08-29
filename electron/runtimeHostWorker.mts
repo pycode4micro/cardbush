@@ -40,6 +40,10 @@ import {
   OpenAICompatibleProviderRegistry,
 } from '@cardbush/bush-provider-openai';
 import { isAbsolute, join } from 'node:path';
+import {
+  registerProductHostTools,
+  type ProductHostToolResponse,
+} from './runtimeProductTools.mjs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -48,6 +52,10 @@ if (!parentPort) {
 
 const operations = new Map<string, AbortController>();
 const subscriptions = new Map<string, AbortController>();
+const hostToolRequests = new Map<string, {
+  resolve: (value: ProductHostToolResponse) => void;
+  reject: (error: Error) => void;
+}>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAICompatibleProviderRegistry;
 let mcp: McpClientManager;
@@ -132,6 +140,14 @@ async function handleMessage(input: unknown) {
       subscriptions.get(message.subscriptionId)?.abort();
       subscriptions.delete(message.subscriptionId);
       return;
+    case 'host_tool_response': {
+      const pending = hostToolRequests.get(message.requestId);
+      if (!pending) return;
+      hostToolRequests.delete(message.requestId);
+      if (message.ok) pending.resolve(message.result as ProductHostToolResponse);
+      else pending.reject(new Error(message.error?.message ?? 'Product Host tool failed'));
+      return;
+    }
   }
 }
 
@@ -259,6 +275,7 @@ providers = new OpenAICompatibleProviderRegistry({
 });
 
 const toolRegistry = new ToolRegistry();
+registerProductHostTools(toolRegistry, invokeProductHostTool);
 const skillRoots = skillRootsFromEnvironment();
 if (skillRoots.length > 0) registerSkillTools(toolRegistry, skillRoots);
 host = new InMemoryRuntimeHost({
@@ -287,7 +304,12 @@ host = new InMemoryRuntimeHost({
     APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
     GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   ],
-  additionalFeatures: ["product_mcp_snapshot", "mcp_protocol_2"],
+  additionalFeatures: [
+    "product_mcp_snapshot",
+    "mcp_protocol_2",
+    "product_host_tools",
+    "native_image_inputs",
+  ],
   hostId: `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
   maxAttempts: positiveInteger(
@@ -304,6 +326,46 @@ mcp = new McpClientManager({
   registry: toolRegistry,
   canApply: () => !host.hasActiveTurns(),
 });
+
+function invokeProductHostTool(request: {
+  toolName: string;
+  input: unknown;
+  context: {
+    sessionId: string;
+    turnId: string;
+    toolCallId: string;
+    capabilityIds: string[];
+  };
+  signal?: AbortSignal;
+}): Promise<ProductHostToolResponse> {
+  if (request.signal?.aborted) return Promise.reject(request.signal.reason);
+  const requestId = `host_tool_${crypto.randomUUID()}`;
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      hostToolRequests.delete(requestId);
+      reject(request.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    };
+    request.signal?.addEventListener('abort', abort, { once: true });
+    hostToolRequests.set(requestId, {
+      resolve: (value) => {
+        request.signal?.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      reject: (error) => {
+        request.signal?.removeEventListener('abort', abort);
+        reject(error);
+      },
+    });
+    post({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: 'host_tool_request',
+      requestId,
+      toolName: request.toolName,
+      input: request.input,
+      context: request.context,
+    });
+  });
+}
 
 function skillRootsFromEnvironment(): string[] {
   const raw = process.env.CARDBUSH_RUNTIME_SKILL_ROOTS?.trim();

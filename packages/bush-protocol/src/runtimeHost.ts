@@ -5,7 +5,6 @@ import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
   "bush.runtime_capabilities.v1" as const;
-export const BUSH_RUNTIME_FIXTURE_PROTOCOL = "bush.runtime_fixture.v1" as const;
 export const GET_RUNTIME_CAPABILITIES_COMMAND =
   "runtime.get_capabilities" as const;
 export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
@@ -280,24 +279,4 @@ export type RuntimeCapabilities = z.infer<typeof runtimeCapabilitiesSchema>;
 
 export function decodeRuntimeCapabilities(input: unknown): RuntimeCapabilities {
   return runtimeCapabilitiesSchema.parse(input);
-}
-
-const runtimeFixtureFrameSchema = z.object({
-  event: runtimeEventSchema,
-  delayMs: z.number().int().nonnegative().optional(),
-});
-
-export const runtimeFixtureSchema = z.object({
-  protocol: z.literal(BUSH_RUNTIME_FIXTURE_PROTOCOL),
-  name: z.string().min(1),
-  events: z.array(runtimeFixtureFrameSchema).min(1),
-  commandResponses: z.object({
-    [GET_RUNTIME_CAPABILITIES_COMMAND]: runtimeCapabilitiesSchema,
-  }),
-});
-
-export type RuntimeFixture = z.infer<typeof runtimeFixtureSchema>;
-
-export function decodeRuntimeFixture(input: unknown): RuntimeFixture {
-  return runtimeFixtureSchema.parse(input);
 }

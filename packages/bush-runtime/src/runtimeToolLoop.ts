@@ -148,8 +148,9 @@ export class RuntimeToolLoop {
       });
       guidanceMessages.push(...outcome.result.guidance);
     }
+    const imageFollowup = toolImageFollowup(outcomes.map((outcome) => outcome.result));
     return {
-      messages: [...toolMessages, ...guidanceMessages],
+      messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : []), ...guidanceMessages],
       receiptIds,
       turnOutcomes,
     };
@@ -234,6 +235,28 @@ export class RuntimeToolLoop {
       },
     });
   }
+}
+
+function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
+  const images = results.flatMap((result) => result.artifacts)
+    .filter((artifact) =>
+      artifact.type === "image" &&
+      artifact.metadata?.model_input === true &&
+      typeof artifact.path === "string" &&
+      artifact.path.trim().length > 0,
+    )
+    .slice(0, 4)
+    .map((artifact) => ({ url: artifact.path! }));
+  if (!images.length) return undefined;
+  return {
+    role: "user",
+    name: "tool_image_observation",
+    content: [
+      "Visual observations produced by the preceding Tool are attached.",
+      "Inspect their pixels before making visual claims or deciding the next visual action.",
+    ].join(" "),
+    images,
+  };
 }
 
 async function sequential<TInput, TOutput>(

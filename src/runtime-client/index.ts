@@ -13,11 +13,9 @@ export type {
   RuntimeStreamRequest,
   RuntimeTransport,
 } from './RuntimeClient';
-export {
-  ProtocolRuntimeClient,
-  createRuntimeFixtureClient,
-} from './ProtocolRuntimeClient';
-export type { RuntimeFixtureClient } from './ProtocolRuntimeClient';
+export { ProtocolRuntimeClient } from './ProtocolRuntimeClient';
+export { createRuntimeFixtureClient } from './RuntimeFixtureClient';
+export type { RuntimeFixtureClient } from './RuntimeFixtureClient';
 export { RuntimeTurnProjection } from './RuntimeTurnProjection';
 export type {
   RuntimePermissionPhase,

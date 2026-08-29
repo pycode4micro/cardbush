@@ -6,10 +6,24 @@ import { runtimeProviderBindingRefSchema } from "./providerBinding.js";
 export const BUSH_MODEL_REQUEST_PROTOCOL = "bush.model_request.v1" as const;
 export const BUSH_MODEL_EVENT_PROTOCOL = "bush.model_event.v1" as const;
 
-const plainModelMessageSchema = z.object({
-  role: z.enum(["system", "developer", "user"]),
+export const modelImageInputSchema = z.object({
+  url: z.string().min(1),
+  detail: z.enum(["auto", "low", "high"]).optional(),
+});
+
+export type ModelImageInput = z.infer<typeof modelImageInputSchema>;
+
+const instructionModelMessageSchema = z.object({
+  role: z.enum(["system", "developer"]),
   content: z.string(),
   name: z.string().optional(),
+});
+
+const userModelMessageSchema = z.object({
+  role: z.literal("user"),
+  content: z.string(),
+  name: z.string().optional(),
+  images: z.array(modelImageInputSchema).max(4).optional(),
 });
 
 const assistantModelMessageSchema = z.object({
@@ -33,7 +47,8 @@ const toolModelMessageSchema = z.object({
 });
 
 export const modelMessageSchema = z.union([
-  plainModelMessageSchema,
+  instructionModelMessageSchema,
+  userModelMessageSchema,
   assistantModelMessageSchema,
   toolModelMessageSchema,
 ]);

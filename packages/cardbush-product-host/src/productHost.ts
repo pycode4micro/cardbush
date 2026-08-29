@@ -26,6 +26,17 @@ export type ProductHostCommand =
       platform: BotPlatform;
       tail?: number;
     }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "models.get" }
+  | {
+      protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
+      kind: "models.update";
+      config: Record<string, unknown>;
+    }
+  | {
+      protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
+      kind: "model.resolve";
+      modelId: string;
+    }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "weixin.login.start" }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
@@ -42,6 +53,12 @@ export interface WeixinAccountHost {
   startLogin(): Promise<Record<string, unknown>>;
   loginStatus(loginId: string): Promise<Record<string, unknown>>;
   deleteAccount(accountId: string): Promise<Record<string, unknown>>;
+}
+
+export interface ProductModelHost {
+  get(): Promise<Record<string, unknown>>;
+  update(config: Record<string, unknown>): Promise<Record<string, unknown>>;
+  resolve(modelId: string): Promise<Record<string, unknown>>;
 }
 
 export interface ProductHostResult {
@@ -61,6 +78,7 @@ export class ProductHost {
     readonly config: BotConfigStore,
     readonly bots: BotSupervisor,
     readonly weixin?: WeixinAccountHost,
+    readonly model?: ProductModelHost,
   ) {}
 
   async execute(input: unknown): Promise<ProductHostResult | ProductHostFailure> {
@@ -97,6 +115,30 @@ export class ProductHost {
         return this.bots.restart(command.platform);
       case "bot.logs":
         return this.bots.logs(command.platform, command.tail);
+      case "models.get":
+        if (!this.model) {
+          throw new ProductHostProtocolError(
+            "product_model_host_unavailable",
+            "The Product Model Host is not installed",
+          );
+        }
+        return this.model.get();
+      case "models.update":
+        if (!this.model) {
+          throw new ProductHostProtocolError(
+            "product_model_host_unavailable",
+            "The Product Model Host is not installed",
+          );
+        }
+        return this.model.update(command.config);
+      case "model.resolve":
+        if (!this.model) {
+          throw new ProductHostProtocolError(
+            "product_model_host_unavailable",
+            "The Product Model Host is not installed",
+          );
+        }
+        return this.model.resolve(command.modelId);
       case "weixin.login.start":
         return this.#weixin().startLogin();
       case "weixin.login.status":
@@ -135,8 +177,21 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
   const kind = requiredString(value.kind, "kind");
   switch (kind) {
     case "bots.list":
+    case "models.get":
     case "weixin.login.start":
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind };
+    case "models.update":
+      return {
+        protocol: PRODUCT_HOST_IPC_PROTOCOL,
+        kind,
+        config: record(value.config, "config must be an object"),
+      };
+    case "model.resolve":
+      return {
+        protocol: PRODUCT_HOST_IPC_PROTOCOL,
+        kind,
+        modelId: requiredString(value.modelId, "modelId"),
+      };
     case "bot.config.get":
     case "bot.status":
       return { protocol: PRODUCT_HOST_IPC_PROTOCOL, kind, platform: platform(value.platform) };

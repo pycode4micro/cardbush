@@ -50,3 +50,41 @@ test("rejects protocol mismatch and unavailable optional capability as facts", a
   assert.equal(login.ok, false);
   assert.equal(login.error.code, "weixin_account_host_unavailable");
 });
+
+test("reads and updates model configuration through a typed host", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-product-host-"));
+  const config = new BotConfigStore(join(root, "bots.json"));
+  const snapshots = [];
+  const host = new ProductHost(
+    config,
+    new BotSupervisor({ configStore: config, dataDir: root }),
+    undefined,
+    {
+      async get() { return { defaultModelId: "", models: [] }; },
+      async update(value) { snapshots.push(value); return { defaultModelId: "vision", models: [] }; },
+      async resolve(modelId) { return { modelId, binding: { bindingId: modelId, revision: "1" } }; },
+    },
+  );
+  const initial = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "models.get",
+  });
+  assert.equal(initial.ok, true);
+  const result = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "models.update",
+    config: { defaultModelId: "vision", models: [{ id: "vision", apiKey: "secret" }] },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(snapshots, [{
+    defaultModelId: "vision",
+    models: [{ id: "vision", apiKey: "secret" }],
+  }]);
+  const resolved = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "model.resolve",
+    modelId: "vision",
+  });
+  assert.equal(resolved.ok, true);
+  assert.equal(resolved.value.modelId, "vision");
+});

@@ -29,7 +29,6 @@ import {
   decodeContextSnapshot,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
-  decodeRuntimeFixture,
   runtimeSessionIdentitySchema,
   runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
@@ -56,7 +55,6 @@ import {
   type ContextSnapshot,
   type RuntimeCapabilities,
   type RuntimeEvent,
-  type RuntimeFixture,
   type RuntimeSessionTurnRequest,
   type PlanState,
   type GoalState,
@@ -70,11 +68,6 @@ import {
   type ToolCatalogEntry,
   type SubagentTask,
 } from '@cardbush/bush-protocol';
-import {
-  FixtureRuntimeTransport,
-  type RuntimeFixtureScenario,
-  type RuntimeFixtureTransportOptions,
-} from './FixtureRuntimeTransport';
 import {
   RuntimeClient,
   type RuntimeTransport,
@@ -342,24 +335,4 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       signal,
     );
   }
-}
-
-export interface RuntimeFixtureClient {
-  client: ProtocolRuntimeClient;
-  fixture: RuntimeFixture;
-}
-
-export function createRuntimeFixtureClient(
-  input: unknown,
-  options?: RuntimeFixtureTransportOptions,
-): RuntimeFixtureClient {
-  const fixture = decodeRuntimeFixture(input);
-  const transport = new FixtureRuntimeTransport(
-    fixture satisfies RuntimeFixtureScenario,
-    options,
-  );
-  return {
-    client: new ProtocolRuntimeClient(transport),
-    fixture,
-  };
 }

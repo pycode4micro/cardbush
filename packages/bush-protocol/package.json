@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./runtime-fixture": {
+      "types": "./dist/runtimeFixture.d.ts",
+      "import": "./dist/runtimeFixture.js"
     }
   },
   "scripts": {

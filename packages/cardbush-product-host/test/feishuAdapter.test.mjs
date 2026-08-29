@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { FeishuLongConnectionAdapter } from "../dist/index.js";
@@ -97,6 +100,46 @@ test("Feishu adapter ignores unauthorized and unmentioned group messages", async
   await handler(event("denied", "p2p", []));
   await handler(event("allowed", "group", []));
   assert.equal(backendCalls, 0);
+  await adapter.stop();
+});
+
+test("Feishu adapter materializes explicit image resources for the Runtime", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-feishu-media-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  let handler;
+  const envelopes = [];
+  const adapter = new FeishuLongConnectionAdapter({
+    platform: "feishu",
+    config: { ack_mode: "none" },
+    dataDir: root,
+    signal: new AbortController().signal,
+    async log() {},
+  }, {
+    backend: { async respond(envelope) { envelopes.push(envelope); return { text: "done" }; } },
+    createConnector: () => ({
+      async start(next) { handler = next; },
+      async stop() {},
+      status() { return { state: "connected" }; },
+      async replyText() {},
+      async addReaction() {},
+      async downloadResource(_messageId, _key, _type, path) { await writeFile(path, "image"); },
+    }),
+  });
+  await adapter.start();
+  await handler({
+    sender: { sender_type: "user", sender_id: { open_id: "user" } },
+    message: {
+      message_id: "message-image",
+      chat_id: "chat",
+      chat_type: "p2p",
+      message_type: "image",
+      content: JSON.stringify({ image_key: "image-key" }),
+    },
+  });
+  assert.equal(envelopes.length, 1);
+  assert.equal(envelopes[0].text, "The user sent the attached resources.");
+  assert.equal(envelopes[0].images.length, 1);
+  assert.equal(envelopes[0].images[0].startsWith(root), true);
   await adapter.stop();
 });
 

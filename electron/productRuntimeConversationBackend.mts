@@ -115,6 +115,8 @@ export class ProductRuntimeConversationBackend implements ConversationBackend {
         createdAt: new Date().toISOString(),
         localDate: this.#localDate(),
         userText: envelope.text,
+        files: envelope.files,
+        images: envelope.images,
         userMessageName: `${envelope.platform}_bot_user`,
         model: model.model,
         providerBinding,

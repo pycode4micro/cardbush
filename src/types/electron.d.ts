@@ -43,12 +43,7 @@ declare global {
       wallpaperDataUrl: () => Promise<string>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
       bushHeaders: (targetUrl: string, json?: boolean) => Promise<Record<string, string>>;
-      cardbushAppRequest: (request: {
-        path: string;
-        method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-        body?: unknown;
-      }) => Promise<unknown>;
-      cardbushAppMcpServer: () => Promise<unknown>;
+      productHostCommand: (command: unknown) => Promise<unknown>;
       a2aInspect: (agentUrl: string) => Promise<unknown>;
       a2aDispatch: (input: {
         agentUrl: string;

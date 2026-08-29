@@ -1,7 +1,11 @@
+import { createReadStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+
 import { Client, EventDispatcher, WSClient } from "@larksuiteoapi/node-sdk";
 
 import type { BotAdapter, BotAdapterContext, BotAdapterFactory, BotRuntimeStatus } from "./botSupervisor.js";
-import type { ChatEnvelope, ConversationBackend } from "./conversation.js";
+import type { BotDeliveryRequest, BotDeliveryResult, ChatEnvelope, ConversationBackend } from "./conversation.js";
 import { identityIsAllowed } from "./conversation.js";
 
 export interface FeishuMessageEvent {
@@ -27,6 +31,8 @@ export interface FeishuConnector {
   status(): { state: string };
   replyText(messageId: string, text: string): Promise<void>;
   addReaction(messageId: string, emoji: string): Promise<void>;
+  sendFile(chatId: string, path: string): Promise<string>;
+  downloadResource(messageId: string, resourceKey: string, type: "file" | "image", path: string): Promise<void>;
 }
 
 export interface FeishuAdapterDependencies {
@@ -88,6 +94,15 @@ export class FeishuLongConnectionAdapter implements BotAdapter {
     };
   }
 
+  async deliver(request: BotDeliveryRequest): Promise<BotDeliveryResult> {
+    const chatId = sessionPart(request.sessionId, "feishu", 1);
+    const messageIds: string[] = [];
+    for (const path of request.paths) {
+      messageIds.push(await this.#connector.sendFile(chatId, path));
+    }
+    return { channel: "feishu", delivered: [...request.paths], messageIds };
+  }
+
   async #handle(event: FeishuMessageEvent): Promise<void> {
     const message = event.message;
     if (!message?.message_id || !message.chat_id) return;
@@ -105,17 +120,13 @@ export class FeishuLongConnectionAdapter implements BotAdapter {
       allowedChannelIds: strings(this.#context.config.allowed_channel_ids),
     })) return;
     if (!this.#dedup.take(message.message_id || event.event_id || "")) return;
-    if (message.message_type !== "text") {
-      await this.#connector.replyText(message.message_id, "当前仅支持文本消息。");
-      return;
-    }
-    const source = parseTextContent(message.content);
     const mentions = message.mentions ?? [];
     if (message.chat_type !== "p2p" && mentions.length === 0) return;
-    const text = mentions.reduce(
-      (value, mention) => value.replaceAll(mention.key, ""),
-      source,
-    ).trim();
+    const content = parseContent(message.content);
+    const media = await this.#downloadMessageResource(message, content);
+    const source = String(content.text ?? "");
+    const text = mentions.reduce((value, mention) => value.replaceAll(mention.key, ""), source).trim()
+      || (media.length ? "The user sent the attached resources." : "");
     if (!text) return;
     const ackMode = String(this.#context.config.ack_mode ?? "reaction");
     if (ackMode === "reaction") {
@@ -130,6 +141,8 @@ export class FeishuLongConnectionAdapter implements BotAdapter {
       userId,
       channelId: message.chat_id,
       text,
+      files: media.filter((item) => item.type === "file").map((item) => item.path),
+      images: media.filter((item) => item.type === "image").map((item) => item.path),
       messageId: message.message_id,
       ...(message.thread_id ? { threadId: message.thread_id } : {}),
       rawEvent: event as unknown as Record<string, unknown>,
@@ -147,6 +160,26 @@ export class FeishuLongConnectionAdapter implements BotAdapter {
       await this.#context.log("error", `message failed: ${errorMessage(error)}`);
       await this.#connector.replyText(message.message_id, `执行失败：${errorMessage(error)}`);
     }
+  }
+
+  async #downloadMessageResource(
+    message: FeishuMessageEvent["message"],
+    content: Record<string, unknown>,
+  ): Promise<Array<{ type: "file" | "image"; path: string }>> {
+    const type = message.message_type === "image" ? "image"
+      : message.message_type === "file" || message.message_type === "audio" || message.message_type === "media"
+        ? "file"
+        : undefined;
+    if (!type) return [];
+    const key = String(type === "image" ? content.image_key : content.file_key ?? content.file_token ?? "").trim();
+    if (!key) throw new Error(`Feishu ${type} message omitted its resource key`);
+    const rawName = String(content.file_name ?? content.name ?? `${type}-${message.message_id}`).trim();
+    const name = safeFileName(rawName, type === "image" ? ".png" : "");
+    const directory = join(this.#context.dataDir, "inbound", message.message_id);
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `${crypto.randomUUID()}-${name}`);
+    await this.#connector.downloadResource(message.message_id, key, type, path);
+    return [{ type, path }];
   }
 }
 
@@ -204,7 +237,42 @@ function createSdkConnector(context: BotAdapterContext): FeishuConnector {
       });
       if ((result.code ?? 0) !== 0) throw new Error(`Feishu reaction failed (${result.code}): ${result.msg ?? ""}`);
     },
+    async sendFile(chatId, path) {
+      const uploaded = await client.im.file.create({
+        data: {
+          file_type: "stream",
+          file_name: basename(path),
+          file: createReadStream(path),
+        },
+      });
+      if (!uploaded?.file_key) throw new Error("Feishu file upload returned no file key");
+      const sent = await client.im.message.create({
+        params: { receive_id_type: "chat_id" },
+        data: {
+          receive_id: chatId,
+          msg_type: "file",
+          content: JSON.stringify({ file_key: uploaded.file_key }),
+        },
+      });
+      if ((sent.code ?? 0) !== 0) {
+        throw new Error(`Feishu file delivery failed (${sent.code}): ${sent.msg ?? ""}`);
+      }
+      return String(sent.data?.message_id ?? "");
+    },
+    async downloadResource(messageId, resourceKey, type, path) {
+      const result = await client.im.messageResource.get({
+        path: { message_id: messageId, file_key: resourceKey },
+        params: { type },
+      });
+      await result.writeFile(path);
+    },
   };
+}
+
+function sessionPart(sessionId: string, platform: string, index: number): string {
+  const parts = sessionId.split(":");
+  if (parts[0] !== platform || !parts[index]) throw new Error(`Invalid ${platform} Session identity`);
+  return parts[index];
 }
 
 class ExpiringSet {
@@ -227,17 +295,20 @@ class ExpiringSet {
   }
 }
 
-function parseTextContent(content: string): string {
+function parseContent(content: string): Record<string, unknown> {
   try {
     const payload: unknown = JSON.parse(content);
-    return String(
-      payload && typeof payload === "object" && !Array.isArray(payload)
-        ? (payload as Record<string, unknown>).text ?? ""
-        : "",
-    );
+    return payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as Record<string, unknown>
+      : {};
   } catch {
-    return "";
+    return {};
   }
+}
+
+function safeFileName(value: string, extension: string): string {
+  const name = basename(value).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim() || `attachment${extension}`;
+  return name.includes(".") || !extension ? name : `${name}${extension}`;
 }
 
 function strings(value: unknown): string[] {

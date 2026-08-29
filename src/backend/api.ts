@@ -809,6 +809,9 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
         turnStop: true,
         turnEventReplay: features.has('cursor_replay'),
         stableMessageIds: true,
+        messageEditRegenerate: true,
+        turnRegenerate: true,
+        standardImageInputTool: features.has('native_image_inputs'),
         projects: true,
         git: true,
         terminal: true,
@@ -822,6 +825,11 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
         teamAgentFlow: features.has('team_concurrent_execution'),
         contextWindowUsage: true,
         workspaceChanges: features.has('authoritative_tool_execution_records'),
+        sessionContextSearch: true,
+        sessionActivityOrdering: true,
+        capabilityDiscovery: commands.has('runtime.get_tool_catalog_details'),
+        osMode: features.has('product_host_tools'),
+        desktopAutomation: features.has('product_host_tools'),
         taskPlan: features.has('explicit_plan_facts'),
         reasoningStream: features.has('reasoning_segments'),
         reasoningLevelSelection: true,
@@ -1380,27 +1388,7 @@ export async function dispatchExperimentalA2ATask(request: {
 
 export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
   if (window.cardbushDesktop?.runtime) {
-    const raw = window.localStorage.getItem('cardbush_managed_model_configs');
-    let models: unknown = [];
-    if (raw?.trim()) {
-      try {
-        models = JSON.parse(raw) as unknown;
-      } catch {
-        models = [];
-      }
-    }
-    const normalized = Array.isArray(models)
-      ? models
-          .map(managedModelConfigFromPayload)
-          .filter((item): item is ManagedModelConfig => item !== null)
-      : [];
-    const defaultModelId =
-      window.localStorage.getItem('cardbush_runtime_default_model_id') ?? '';
-    return {
-      defaultModelId,
-      models: normalized,
-      raw: { defaultModelId, models: normalized, source: 'cardbush_product' },
-    };
+    return modelConfigsFromPayload(await productHostValue({ kind: 'models.get' }));
   }
   const payload = await readJson<unknown>(url('/v1/model-configs'));
   return modelConfigsFromPayload(payload);
@@ -1431,20 +1419,14 @@ export async function saveModelConfigs(request: {
   models: ManagedModelConfig[];
 }): Promise<BackendModelConfigsResult> {
   if (window.cardbushDesktop?.runtime) {
-    const models = request.models
-      .map(managedModelConfigFromPayload)
-      .filter((item): item is ManagedModelConfig => item !== null);
-    const defaultModelId = request.defaultModelId?.trim() || models[0]?.id || '';
-    window.localStorage.setItem(
-      'cardbush_managed_model_configs',
-      JSON.stringify(models),
-    );
-    window.localStorage.setItem('cardbush_runtime_default_model_id', defaultModelId);
-    return {
-      defaultModelId,
-      models,
-      raw: { defaultModelId, models, source: 'cardbush_product' },
-    };
+    return modelConfigsFromPayload(await productHostValue({
+      kind: 'models.update',
+      config: {
+        version: 1,
+        defaultModelId: request.defaultModelId?.trim() ?? '',
+        models: request.models,
+      },
+    }));
   }
   const payload = await readJson<unknown>(url('/v1/model-configs'), {
     method: 'PUT',
@@ -2095,6 +2077,7 @@ export async function fetchSessionMessages(
       const messages = snapshot.turns.flatMap((turn) =>
         turn.messages
           .filter((message) => !superseded.has(message.messageId))
+          .filter((message) => !isInternalRuntimeMessage(message))
           .map((message) => runtimeMessage(message, snapshot.sessionId)),
       );
       const records = (
@@ -2179,9 +2162,10 @@ export async function fetchSessionMessages(
 function runtimeConversation(snapshot: RuntimeSessionSnapshot): ConversationSummary {
   const visibleMessages = snapshot.turns
     .flatMap((turn) => turn.messages)
-    .filter((message) => !snapshot.supersededMessageIds.includes(message.messageId));
+    .filter((message) => !snapshot.supersededMessageIds.includes(message.messageId))
+    .filter((message) => !isInternalRuntimeMessage(message));
   const firstUserMessage = visibleMessages.find(
-    (message) => message.message.role === 'user' && message.message.name !== 'runtime_context',
+    (message) => message.message.role === 'user',
   );
   const lastAssistantMessage = [...visibleMessages]
     .reverse()
@@ -2251,6 +2235,10 @@ function runtimeMessage(
     messageIndex: message.messageIndex,
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
+}
+
+function isInternalRuntimeMessage(message: RuntimeSessionMessage): boolean {
+  return message.message.role === 'user' && message.message.name === 'runtime_context';
 }
 
 function runtimeHistoryToolExecution(
@@ -2487,7 +2475,7 @@ export async function createSessionShareLink({
 }
 
 export async function fetchBots(): Promise<BotPlatformOverview[]> {
-  const payload = await readCardbushAppJson('/host/v1/bots');
+  const payload = await productHostValue({ kind: 'bots.list' });
   const candidates =
     payload.bots ?? payload.items ?? payload.platforms ?? payload.data ?? [];
   if (Array.isArray(candidates)) {
@@ -2504,9 +2492,7 @@ export async function fetchBots(): Promise<BotPlatformOverview[]> {
 export async function fetchBotConfig(
   platform: BotPlatform,
 ): Promise<BotConfigResult> {
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/${encodeURIComponent(platform)}/config`,
-  );
+  const payload = await productHostValue({ kind: 'bot.config.get', platform });
   return botConfigFromPayload(platform, payload);
 }
 
@@ -2514,53 +2500,39 @@ export async function saveBotConfig({
   platform,
   config,
 }: SaveBotConfigRequest): Promise<BotConfigResult> {
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/${encodeURIComponent(platform)}/config`, {
-    method: 'PUT',
-    body: config,
-  });
+  const payload = await productHostValue({ kind: 'bot.config.update', platform, config });
   return botConfigFromPayload(platform, payload);
 }
 
 export async function fetchBotStatus(platform: BotPlatform): Promise<BotStatusResult> {
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/${encodeURIComponent(platform)}/status`,
-  );
+  const payload = await productHostValue({ kind: 'bot.status', platform });
   return botStatusFromPayload(platform, payload);
 }
 
 export async function startWeixinLogin(): Promise<WeixinLoginStartResult> {
-  const payload = await readCardbushAppJson('/host/v1/bots/weixin/login/start', {
-    method: 'POST',
-    body: {},
-  });
+  const payload = await productHostValue({ kind: 'weixin.login.start' });
   return weixinLoginStartFromPayload(payload);
 }
 
 export async function fetchWeixinLoginStatus(
   loginId: string,
 ): Promise<WeixinLoginStatusResult> {
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/weixin/login/${encodeURIComponent(loginId)}/status`,
-  );
+  const payload = await productHostValue({ kind: 'weixin.login.status', loginId });
   return weixinLoginStatusFromPayload(loginId, payload);
 }
 
 export async function deleteWeixinAccount(accountId: string): Promise<void> {
-  await readCardbushAppJson(
-    `/host/v1/bots/weixin/accounts/${encodeURIComponent(accountId)}`, {
-    method: 'DELETE',
-  });
+  await productHostValue({ kind: 'weixin.account.delete', accountId });
 }
 
 export async function controlBotService(
   platform: BotPlatform,
   action: 'start' | 'stop' | 'restart',
 ): Promise<BotStatusResult> {
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/${encodeURIComponent(platform)}/service/${action}`, {
-    method: 'POST',
-    body: {},
+  const payload = await productHostValue({
+    kind: 'bot.service.control',
+    platform,
+    action,
   });
   return botStatusFromPayload(platform, payload);
 }
@@ -2574,25 +2546,22 @@ export async function fetchBotServiceLogs({
   tail?: number;
   since?: string;
 }): Promise<BotServiceLogsResult> {
-  const query = new URLSearchParams({ tail: String(tail) });
-  if (since?.trim()) {
-    query.set('since', since.trim());
-  }
-  const payload = await readCardbushAppJson(
-    `/host/v1/bots/${encodeURIComponent(platform)}/service/logs?${query}`,
-  );
+  const payload = await productHostValue({
+    kind: 'bot.logs',
+    platform,
+    tail,
+    ...(since?.trim() ? { since: since.trim() } : {}),
+  });
   return botLogsFromPayload(platform, payload);
 }
 
-async function readCardbushAppJson(
-  path: string,
-  init?: {
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-    body?: unknown;
-  },
+const productHostProtocol = 'cardbush.product_host_ipc.v1';
+
+async function productHostValue(
+  command: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const request = window.cardbushDesktop?.cardbushAppRequest;
-  if (request == null) {
+  const execute = window.cardbushDesktop?.productHostCommand;
+  if (execute == null) {
     throw new Error(
       localizedClientMessage(
         'Bot 管理由 CardBush 桌面宿主提供，请在桌面客户端中使用。',
@@ -2600,8 +2569,15 @@ async function readCardbushAppJson(
       ),
     );
   }
-  const payload = await request({ path, ...init });
-  return asRecord(payload);
+  const payload = asRecord(await execute({ protocol: productHostProtocol, ...command }));
+  if (payload.protocol !== productHostProtocol) {
+    throw new Error('CardBush Product Host returned an incompatible protocol response.');
+  }
+  if (payload.ok !== true) {
+    const error = asRecord(payload.error);
+    throw new Error(String(error.message ?? error.code ?? 'Product Host command failed'));
+  }
+  return asRecord(payload.value);
 }
 
 export async function clearConversationHistory(): Promise<MaintenanceClearResult> {
@@ -2870,6 +2846,7 @@ export async function searchSessionContext({
       const offset = Math.max(0, Number(cursor) || 0);
       const items = (snapshot?.turns.flatMap((turn) => turn.messages) ?? [])
         .filter((message) => !excluded.has(message.messageId))
+        .filter((message) => !isInternalRuntimeMessage(message))
         .map((message) => ({ message, projected: runtimeMessage(message, sessionId) }))
         .filter(({ projected }) => roles.includes(projected.role))
         .map(({ message, projected }) => ({
@@ -2947,7 +2924,8 @@ export async function fetchSessionMessageWindow({
     const runtime = createDesktopRuntimeSession();
     try {
       const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
-      const messages = snapshot?.turns.flatMap((turn) => turn.messages) ?? [];
+      const messages = (snapshot?.turns.flatMap((turn) => turn.messages) ?? [])
+        .filter((message) => !isInternalRuntimeMessage(message));
       const anchor = messages.findIndex((message) => message.messageId === messageId.trim());
       if (anchor < 0) {
         throw new Error(localizedClientMessage('消息不存在', 'Message does not exist'));
@@ -3708,9 +3686,14 @@ export async function editMessage(request: EditMessageRequest) {
       if (index < 0) {
         throw new Error(localizedClientMessage('消息不存在', 'Message does not exist'));
       }
+      const supersedeFrom = index > 0 &&
+          messages[index - 1]?.turnId === messages[index]?.turnId &&
+          isInternalRuntimeMessage(messages[index - 1]!)
+        ? index - 1
+        : index;
       await runtime.client.supersedeSessionMessages({
         sessionId,
-        messageIds: messages.slice(index).map((message) => message.messageId),
+        messageIds: messages.slice(supersedeFrom).map((message) => message.messageId),
         reason: 'user_edit_regenerate',
       }, request.signal);
     } finally {

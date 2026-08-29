@@ -1,8 +1,10 @@
 import type {
   RuntimeEvent,
+  RuntimeProviderBindingRef,
   RuntimeSessionTurnRequest,
   ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
+import { runtimeProviderBindingRefSchema } from '@cardbush/bush-protocol';
 import {
   GOAL_CONTINUATION_PROMPT,
   createProductAgentTurnRequest,
@@ -18,13 +20,13 @@ import type {
   TurnTerminalSnapshot,
 } from '../types';
 import {
-  createDesktopRuntimeSession,
   registerActiveRuntimeTurn,
   registerRuntimePermission,
   removeRuntimePermission,
   removeRuntimePermissionsForTurn,
   takeRuntimeGuidance,
-} from '../runtime-client';
+} from '../runtime-client/RuntimeInteractionBridge';
+import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
 import type {
   ChatStreamEventHandlers,
   ChatStreamRequest,
@@ -51,19 +53,9 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   let terminal: Extract<RuntimeEvent, { kind: 'turn_terminal' }> | undefined;
   let lastAssistantMessageId = '';
   try {
-    const configured = request.modelConfig?.apiKey.trim()
-    ? await runtime.configureProvider({
-        protocol: 'bush.provider_binding_config.v1',
-        bindingId: request.modelConfig.id || request.model,
-        adapter: 'openai_compatible',
-        apiKey: request.modelConfig.apiKey,
-        baseURL: request.modelConfig.baseUrl.trim() || undefined,
-        defaultHeaders: {},
-      }, controller.signal)
-    : undefined;
-    const providerBinding = configured?.status === 'configured'
-    ? configured.binding
-    : undefined;
+    const resolvedModel = await resolveProductModel(
+      request.modelConfig?.id.trim() || request.model,
+    );
     await synchronizeProductMcpSnapshot(runtime.client);
     const catalog = await runtime.client.getToolCatalogDetails(controller.signal);
     await synchronizeProductTeamSnapshot(
@@ -87,8 +79,8 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       localDate: new Date().toLocaleDateString('en-CA'),
       userText: effectiveUserInput,
       ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
-      model: request.modelConfig?.modelName.trim() || request.model,
-      providerBinding,
+      model: resolvedModel.model,
+      providerBinding: resolvedModel.binding,
       tools,
       projectDir: request.projectDir,
       projectInstructions: request.projectUserPrompt,
@@ -98,7 +90,9 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       teamId: request.teamId,
       allowedSkills: request.allowedSkills,
       planEnabled: request.referencePlanMode !== 'off',
-      maxOutputTokens: positiveInteger(request.modelConfig?.maxCompletionTokens),
+      maxOutputTokens: positiveInteger(
+        request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
+      ),
       reasoningEffort: reasoningEffort(request.reasoningLevel),
     });
     if (goalCommand) {
@@ -202,6 +196,44 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     detachAbort();
     runtime.dispose();
   }
+}
+
+interface ResolvedProductModel {
+  model: string;
+  binding: RuntimeProviderBindingRef;
+  maxOutputTokens?: number;
+}
+
+async function resolveProductModel(modelId: string): Promise<ResolvedProductModel> {
+  const execute = window.cardbushDesktop?.productHostCommand;
+  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  const response = await execute({
+    protocol: 'cardbush.product_host_ipc.v1',
+    kind: 'model.resolve',
+    modelId,
+  });
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('CardBush Product Host returned an invalid model resolution.');
+  }
+  const envelope = response as Record<string, unknown>;
+  if (envelope.ok !== true) {
+    const error = envelope.error && typeof envelope.error === 'object'
+      ? envelope.error as Record<string, unknown>
+      : {};
+    throw new Error(String(error.message ?? 'Product model resolution failed.'));
+  }
+  const value = envelope.value && typeof envelope.value === 'object' && !Array.isArray(envelope.value)
+    ? envelope.value as Record<string, unknown>
+    : {};
+  const model = String(value.model ?? '').trim();
+  if (!model) throw new Error('Product model resolution omitted the model name.');
+  return {
+    model,
+    binding: runtimeProviderBindingRefSchema.parse(value.binding),
+    ...(positiveInteger(value.maxOutputTokens) ? {
+      maxOutputTokens: positiveInteger(value.maxOutputTokens),
+    } : {}),
+  };
 }
 
 export async function streamRuntimeTurnEvents(
@@ -549,7 +581,7 @@ function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
     : undefined;
 }
 
-function positiveInteger(value: number | undefined): number | undefined {
+function positiveInteger(value: unknown): number | undefined {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 

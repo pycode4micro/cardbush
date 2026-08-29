@@ -55,7 +55,9 @@ parses JSON, validates the registration's decoder, verifies Tool Call / Manifest
 Execution Fact identities, and projects lifecycle facts. It never infers effects
 from a Tool name or output prose. Interactive permission decisions use a separate
 command and concrete capability identifiers; denied or cancelled requests never
-invoke the handler. Real application Tool adapters are still pending.
+invoke the handler. CardBush Product Host adapters now expose Computer Use and Bot
+delivery through the same typed Tool boundary; Browser and other optional product
+integrations remain external MCP installations.
 
 ## Durable recovery and Cache Chain checkpoint
 
@@ -146,8 +148,8 @@ but does not interpret it.
 Goal status and reason are caller-declared facts. Runtime validates their schema,
 identity, and revision, then preserves them verbatim. It does not inspect user or
 assistant prose, Tool names, Plan-node combinations, or Execution Facts to decide
-whether a Goal is complete. Automatic Goal continuation remains a later behavior
-checkpoint built on these facts.
+whether a Goal is complete. Goal continuation is implemented by the product caller
+as consecutive normal Session Turns built on these facts.
 
 The model-facing `update_task_plan` and `update_goal` registrations inject
 Session identity, stable Plan/Goal identity, and optimistic revision inside the
@@ -252,3 +254,41 @@ classify dependencies, choose members, or interpret whether their prose is good.
 Older Subagent journals remain byte-compatible: Team origin and phase fields are
 optional when reading historical records and are written explicitly for every
 new task, so schema evolution does not invalidate existing checksums.
+
+## Product Host and secret ownership checkpoint
+
+Bot configuration, Bot adapter lifecycle, inbound media materialization, Computer
+Use, external delivery and provider credentials are owned by the typed Electron
+Product Host. The former Python `cardbush_app` process and its private HTTP routes
+are removed. Runtime Tool requests cross Utility Process IPC and return explicit
+Artifacts and Execution Facts without self-registering CardBush as an MCP server.
+
+Provider keys are atomically persisted under the Product Host data root. Renderer
+configuration reads contain only `hasApiKey` and a masked value. Before a desktop
+Turn, the Product Host resolves the selected model, installs the credential inside
+the Utility Process and returns only an opaque provider binding reference. Keys do
+not enter Renderer persistence, Model Requests, Session journals or Cache Chain
+observations.
+
+Dynamic per-Turn facts such as local date, project path, project instructions and
+attachments are committed as a named internal User message immediately before the
+real User input. The fixed prefix therefore contains only the stable System prompt.
+Product projections hide the internal message, while provider context remains
+append-only across Turns.
+
+## Live provider checkpoint
+
+The TypeScript Runtime was exercised against the configured
+`deepseek-v4-flash-vision-exp` provider on a system-temporary copy of the Game
+project. The complex run produced Python and Rust transcript implementations;
+independent verification passed 42 Rust unit tests, 5 Rust integration tests,
+and byte-identical cross-language JSON for six deterministic seeds. That run also
+exposed one provider-boundary incompatibility: some OpenAI-compatible Chat
+Completions services reject the newer `developer` role used by an internal
+Runtime reminder. The adapter now projects that internal role mechanically to
+the universally supported `system` role without changing the Runtime protocol.
+
+A post-fix write Turn completed through an explicit `effect_complete` declaration
+in 83 seconds with no provider retry, returned the authoritative write receipt,
+and reported the delivery path as an absolute path. The original source project
+was not modified by either run.

@@ -3,9 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
-  GET_RUNTIME_CAPABILITIES_COMMAND,
   decodeRuntimeFixture,
-} from "../dist/index.js";
+} from "../dist/runtimeFixture.js";
+import { GET_RUNTIME_CAPABILITIES_COMMAND } from "../dist/index.js";
 
 const fixtureUrl = new URL(
   "../reference-fixtures/single-turn-stream.v1.json",

@@ -28,8 +28,17 @@ export {
 } from "./discordAdapter.js";
 export type { DiscordAdapterDependencies } from "./discordAdapter.js";
 export { identityIsAllowed } from "./conversation.js";
+export { downloadInboundMedia } from "./inboundMedia.js";
+export type { InboundMedia } from "./inboundMedia.js";
+export { ProductModelConfigStore } from "./modelConfigStore.js";
+export type {
+  ProductModelConfig,
+  ProductModelConfigSnapshot,
+} from "./modelConfigStore.js";
 export type {
   BotPermissionRequest,
+  BotDeliveryRequest,
+  BotDeliveryResult,
   ChatEnvelope,
   ChatReply,
   ConversationBackend,
@@ -54,9 +63,15 @@ export type {
   FeishuConnector,
   FeishuMessageEvent,
 } from "./feishuAdapter.js";
+export {
+  TelegramPollingAdapter,
+  createTelegramAdapterFactory,
+} from "./telegramAdapter.js";
+export type { TelegramAdapterDependencies } from "./telegramAdapter.js";
 export type {
   ProductHostCommand,
   ProductHostFailure,
+  ProductModelHost,
   ProductHostResult,
   WeixinAccountHost,
 } from "./productHost.js";

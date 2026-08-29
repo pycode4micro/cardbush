@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { replaceFile } from "./atomicFiles.js";
 
 export type BotPlatform = "weixin" | "feishu" | "telegram" | "discord";
 
@@ -73,10 +74,16 @@ export const botPlatformSpecs: Record<BotPlatform, BotPlatformSpec> = {
   telegram: {
     platform: "telegram",
     displayName: "Telegram",
-    supported: false,
-    defaults: { enabled: false },
-    secretFields: [],
-    requiredFields: ["adapter_package"],
+    supported: true,
+    defaults: {
+      ...sharedDefaults,
+      bot_token: "",
+      api_base: "https://api.telegram.org",
+      poll_timeout_seconds: 35,
+      api_timeout_seconds: 15,
+    },
+    secretFields: ["bot_token"],
+    requiredFields: ["bot_token"],
   },
   discord: {
     platform: "discord",
@@ -238,7 +245,7 @@ export class BotConfigStore {
     await mkdir(dirname(this.#path), { recursive: true });
     const temporary = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, "utf8");
-    await rename(temporary, this.#path);
+    await replaceFile(temporary, this.#path);
     return structuredClone(current);
   }
 }

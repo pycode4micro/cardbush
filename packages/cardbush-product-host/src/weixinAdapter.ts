@@ -1,10 +1,12 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve } from "node:path";
 
 import type { BotAdapter, BotAdapterContext, BotAdapterFactory, BotRuntimeStatus } from "./botSupervisor.js";
-import type { ChatEnvelope, ConversationBackend } from "./conversation.js";
+import type { BotDeliveryRequest, BotDeliveryResult, ChatEnvelope, ConversationBackend } from "./conversation.js";
 import { identityIsAllowed } from "./conversation.js";
 import type { WeixinAccountHost } from "./productHost.js";
+import { replaceFile } from "./atomicFiles.js";
 
 const SESSION_EXPIRED = -14;
 
@@ -196,7 +198,7 @@ export class WeixinAccountStore {
     await mkdir(dirname(path), { recursive: true });
     const temporary = `${path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await rename(temporary, path);
+    await replaceFile(temporary, path);
   }
 
   #serialize<T>(action: () => Promise<T>): Promise<T> {
@@ -275,6 +277,156 @@ export class WeixinApiClient {
         base_info: { channel_version: stringConfig(this.#config, "app_version", "2.1.7") },
       },
     });
+  }
+
+  async sendPath(input: {
+    account: WeixinAccount;
+    userId: string;
+    path: string;
+    caption?: string;
+    contextToken?: string;
+    signal: AbortSignal;
+  }): Promise<string> {
+    const content = await readFile(input.path);
+    const key = randomBytes(16);
+    const cipher = createCipheriv("aes-128-ecb", key, null);
+    cipher.setAutoPadding(true);
+    const encrypted = Buffer.concat([cipher.update(content), cipher.final()]);
+    const filekey = randomBytes(16).toString("hex");
+    const kind = outboundKind(input.path);
+    const upload = await this.#request(
+      new URL("ilink/bot/getuploadurl", `${trailing(input.account.baseUrl)}/`),
+      {
+        method: "POST",
+        signal: input.signal,
+        timeoutMs: numberConfig(this.#config, "media_timeout_seconds", 90) * 1000,
+        token: input.account.token,
+        body: {
+          filekey,
+          media_type: kind === "image" ? 1 : kind === "video" ? 2 : 3,
+          to_user_id: input.userId,
+          rawsize: content.length,
+          rawfilemd5: createHash("md5").update(content).digest("hex"),
+          filesize: encrypted.length,
+          no_need_thumb: true,
+          aeskey: key.toString("hex"),
+          base_info: { channel_version: stringConfig(this.#config, "app_version", "2.1.7") },
+        },
+      },
+    );
+    const uploadUrl = String(upload.upload_full_url ?? "").trim() || cdnUploadUrl(
+      stringConfig(this.#config, "cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c"),
+      String(upload.upload_param ?? ""),
+      filekey,
+    );
+    const uploaded = await this.#fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(encrypted.length),
+      },
+      body: encrypted,
+      signal: AbortSignal.any([
+        input.signal,
+        AbortSignal.timeout(numberConfig(this.#config, "media_timeout_seconds", 90) * 1000),
+      ]),
+    });
+    const encryptedParam = uploaded.headers.get("x-encrypted-param")?.trim() ?? "";
+    if (!uploaded.ok || !encryptedParam) {
+      throw new Error(`Weixin CDN upload failed (${uploaded.status})`);
+    }
+    const media = {
+      encrypt_query_param: encryptedParam,
+      aes_key: Buffer.from(key.toString("hex"), "ascii").toString("base64"),
+      encrypt_type: 1,
+    };
+    const mediaItem = kind === "image"
+      ? { type: 2, image_item: { media, mid_size: encrypted.length } }
+      : kind === "video"
+        ? { type: 5, video_item: { media, video_size: encrypted.length } }
+        : {
+            type: 4,
+            file_item: { media, file_name: basename(input.path), len: String(content.length) },
+          };
+    const items = [
+      ...(input.caption?.trim() ? [{ type: 1, text_item: { text: input.caption.trim() } }] : []),
+      mediaItem,
+    ];
+    for (const item of items) {
+      await this.#request(
+        new URL("ilink/bot/sendmessage", `${trailing(input.account.baseUrl)}/`),
+        {
+          method: "POST",
+          signal: input.signal,
+          timeoutMs: numberConfig(this.#config, "media_timeout_seconds", 90) * 1000,
+          token: input.account.token,
+          body: {
+            msg: {
+              from_user_id: "",
+              to_user_id: input.userId,
+              client_id: `cardbush-weixin-${crypto.randomUUID()}`,
+              message_type: 2,
+              message_state: 2,
+              item_list: [item],
+              ...(input.contextToken ? { context_token: input.contextToken } : {}),
+            },
+            base_info: { channel_version: stringConfig(this.#config, "app_version", "2.1.7") },
+          },
+        },
+      );
+    }
+    return kind;
+  }
+
+  async downloadMediaItem(
+    item: Record<string, unknown>,
+    directory: string,
+    signal: AbortSignal,
+  ): Promise<{ kind: "image" | "file"; path: string } | undefined> {
+    const itemType = Number(item.type);
+    const field = itemType === 2 ? "image_item"
+      : itemType === 3 ? "voice_item"
+      : itemType === 4 ? "file_item"
+      : itemType === 5 ? "video_item"
+      : "";
+    if (!field) return undefined;
+    const source = record(item[field]);
+    const media = record(source.media);
+    const parameter = String(media.encrypt_query_param ?? "").trim();
+    const fullUrl = String(media.full_url ?? "").trim();
+    if (!parameter && !fullUrl) return undefined;
+    const url = fullUrl || cdnDownloadUrl(
+      stringConfig(this.#config, "cdn_base_url", "https://novac2c.cdn.weixin.qq.com/c2c"),
+      parameter,
+    );
+    const response = await this.#fetch(url, {
+      signal: AbortSignal.any([
+        signal,
+        AbortSignal.timeout(numberConfig(this.#config, "media_timeout_seconds", 90) * 1000),
+      ]),
+    });
+    if (!response.ok) throw new Error(`Weixin CDN download failed (${response.status})`);
+    let content = Buffer.from(await response.arrayBuffer());
+    const maxBytes = 50 * 1024 * 1024;
+    if (!content.length || content.length > maxBytes) {
+      throw new Error(`Weixin inbound media must contain 1-${maxBytes} bytes.`);
+    }
+    const hexKey = String(source.aeskey ?? "").trim();
+    const encodedKey = String(media.aes_key ?? "").trim();
+    if (hexKey || encodedKey) {
+      const key = hexKey ? Buffer.from(hexKey, "hex") : decodedWeixinAesKey(encodedKey);
+      if (key.length !== 16) throw new Error("Weixin media AES key must contain 16 bytes.");
+      const decipher = createDecipheriv("aes-128-ecb", key, null);
+      decipher.setAutoPadding(true);
+      content = Buffer.concat([decipher.update(content), decipher.final()]);
+    }
+    const extension = itemType === 2 ? ".png" : itemType === 3 ? ".silk" : itemType === 5 ? ".mp4" : "";
+    const rawName = String(source.file_name ?? `${field}-${item.msg_id ?? crypto.randomUUID()}${extension}`).trim();
+    const name = safeWeixinName(rawName, extension);
+    await mkdir(directory, { recursive: true });
+    const path = join(directory, `${crypto.randomUUID()}-${name}`);
+    await writeFile(path, content, { flag: "wx" });
+    return { kind: itemType === 2 ? "image" : "file", path };
   }
 
   async #request(
@@ -467,6 +619,27 @@ export class WeixinPollingAdapter implements BotAdapter {
     };
   }
 
+  async deliver(request: BotDeliveryRequest): Promise<BotDeliveryResult> {
+    const accountId = sessionPart(request.sessionId, "weixin", 1);
+    const userId = sessionPart(request.sessionId, "weixin", 2);
+    const account = this.#accounts.find((item) => item.accountId === accountId);
+    if (!account || this.#expired.has(accountId)) throw new Error("Weixin account is not available");
+    const contextToken = await this.#store.contextToken(accountId, userId);
+    const messageIds: string[] = [];
+    for (let index = 0; index < request.paths.length; index += 1) {
+      const kind = await this.#client.sendPath({
+        account,
+        userId,
+        path: request.paths[index],
+        caption: index === 0 ? request.text : undefined,
+        contextToken: contextToken || undefined,
+        signal: this.#context.signal,
+      });
+      messageIds.push(kind);
+    }
+    return { channel: "weixin", delivered: [...request.paths], messageIds };
+  }
+
   async #poll(account: WeixinAccount): Promise<void> {
     let sync = await this.#store.loadSync(account.accountId);
     let failures = 0;
@@ -521,7 +694,8 @@ export class WeixinPollingAdapter implements BotAdapter {
     if (message.context_token) {
       await this.#store.setContextToken(account.accountId, userId, String(message.context_token));
     }
-    const text = extractMessageText(message);
+    const media = await this.#downloadMessageMedia(message, messageId);
+    const text = extractMessageText(message) || (media.length ? "The user sent the attached resources." : "");
     if (!text) {
       await this.#send(account, userId, stringConfig(this.#context.config, "unsupported_message_text", "当前仅支持文本消息。"), contextToken);
       if (messageId) {
@@ -536,6 +710,8 @@ export class WeixinPollingAdapter implements BotAdapter {
       userId,
       channelId: account.accountId,
       text,
+      files: media.filter((item) => item.kind === "file").map((item) => item.path),
+      images: media.filter((item) => item.kind === "image").map((item) => item.path),
       ...(messageId ? { messageId } : {}),
       rawEvent: message,
     };
@@ -559,6 +735,24 @@ export class WeixinPollingAdapter implements BotAdapter {
       await this.#send(account, userId, `执行失败：${errorMessage(error)}`, contextToken);
       throw error;
     }
+  }
+
+  async #downloadMessageMedia(message: Record<string, unknown>, messageId: string) {
+    const items = Array.isArray(message.item_list)
+      ? message.item_list.filter((item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        ).filter((item) => [2, 3, 4, 5].includes(Number(item.type))).slice(0, 4)
+      : [];
+    const media = [];
+    for (const item of items) {
+      const downloaded = await this.#client.downloadMediaItem(
+        item,
+        join(this.#context.dataDir, "inbound", messageId || crypto.randomUUID()),
+        this.#context.signal,
+      );
+      if (downloaded) media.push(downloaded);
+    }
+    return media;
   }
 
   async #send(account: WeixinAccount, userId: string, text: string, contextToken: string): Promise<void> {
@@ -594,6 +788,51 @@ function extractMessageText(message: Record<string, unknown>): string {
     }
   }
   return "";
+}
+
+function outboundKind(path: string): "image" | "video" | "file" {
+  const extension = extname(path).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"].includes(extension)) return "image";
+  if ([".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"].includes(extension)) return "video";
+  return "file";
+}
+
+function cdnUploadUrl(base: string, parameter: string, filekey: string): string {
+  if (!parameter.trim()) throw new Error("Weixin upload response omitted its target URL");
+  const url = new URL("upload", `${trailing(base)}/`);
+  url.searchParams.set("encrypted_query_param", parameter);
+  url.searchParams.set("filekey", filekey);
+  return url.toString();
+}
+
+function cdnDownloadUrl(base: string, parameter: string): string {
+  const url = new URL("download", `${trailing(base)}/`);
+  url.searchParams.set("encrypted_query_param", parameter);
+  return url.toString();
+}
+
+function decodedWeixinAesKey(value: string): Buffer {
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.length === 16) return decoded;
+  const text = decoded.toString("ascii");
+  return /^[0-9a-f]{32}$/i.test(text) ? Buffer.from(text, "hex") : decoded;
+}
+
+function safeWeixinName(value: string, extension: string): string {
+  const name = basename(value).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim() || `attachment${extension}`;
+  return extname(name) || !extension ? name : `${name}${extension}`;
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function sessionPart(sessionId: string, platform: string, index: number): string {
+  const parts = sessionId.split(":");
+  if (parts[0] !== platform || !parts[index]) throw new Error(`Invalid ${platform} Session identity`);
+  return parts[index];
 }
 
 function buildClientVersion(version: string): number {

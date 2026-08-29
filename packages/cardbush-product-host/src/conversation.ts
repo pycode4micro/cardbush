@@ -4,6 +4,8 @@ export interface ChatEnvelope {
   userId: string;
   channelId: string;
   text: string;
+  files?: string[];
+  images?: string[];
   messageId?: string;
   threadId?: string;
   rawEvent: Record<string, unknown>;
@@ -32,6 +34,18 @@ export interface BotPermissionRequest {
   actions: string[];
   resources: string[];
   requestedCapabilityIds: string[];
+}
+
+export interface BotDeliveryRequest {
+  sessionId: string;
+  paths: string[];
+  text?: string;
+}
+
+export interface BotDeliveryResult {
+  channel: string;
+  delivered: string[];
+  messageIds: string[];
 }
 
 export function identityIsAllowed(input: {

@@ -62,6 +62,19 @@ const apiSource = fs.readFileSync(
 assert.match(apiSource, /max_completion_tokens: item\.maxCompletionTokens/);
 assert.match(apiSource, /body\.max_completion_tokens = Math\.floor\(config\.maxCompletionTokens\)/);
 assert.match(apiSource, /reasoning-budget-exhausted-before-action/);
+assert.match(apiSource, /kind: 'models\.get'/);
+assert.match(apiSource, /kind: 'models\.update'/);
+assert.doesNotMatch(apiSource, /cardbush_runtime_default_model_id/);
+
+const appSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'App.tsx'),
+  'utf8',
+);
+assert.match(
+  appSource,
+  /JSON\.stringify\(settings\.managedModelConfigs\.map\(\(config\) => \(\{[\s\S]*?apiKey: ''/,
+  'Renderer persistence must strip provider secrets',
+);
 
 const composerSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'composer', 'Composer.tsx'),

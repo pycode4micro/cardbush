@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { DiscordGatewayAdapter } from "../dist/index.js";
 
-test("Discord adapter connects, enforces identity facts, deduplicates, and delivers Agent output", async () => {
+test("Discord adapter connects, enforces identity facts, downloads media, deduplicates, and delivers Agent output", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-discord-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
   const calls = [];
   const envelopes = [];
   let socket;
@@ -17,7 +22,7 @@ test("Discord adapter connects, enforces identity facts, deduplicates, and deliv
       allowed_user_ids: ["user-1"],
       allowed_channel_ids: ["channel-1"],
     },
-    dataDir: "C:\\tmp\\discord",
+    dataDir: root,
     signal: controller.signal,
     async log() {},
   }, {
@@ -31,6 +36,12 @@ test("Discord adapter connects, enforces identity facts, deduplicates, and deliv
       calls.push({ url: String(url), init });
       if (String(url).endsWith("/gateway/bot")) {
         return response(200, { url: "wss://gateway.test" });
+      }
+      if (String(url) === "https://media.test/screen.png") {
+        return new Response(Buffer.from([137, 80, 78, 71]), {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
       }
       return response(200, { id: "response" });
     },
@@ -54,6 +65,7 @@ test("Discord adapter connects, enforces identity facts, deduplicates, and deliv
       channel_type: 0,
       content: "<@bot-1> inspect this",
       mentions: [{ id: "bot-1" }],
+      attachments: [{ url: "https://media.test/screen.png", filename: "screen.png", content_type: "image/png" }],
       author: { id: "user-1", bot: false },
     },
   });
@@ -72,6 +84,8 @@ test("Discord adapter connects, enforces identity facts, deduplicates, and deliv
   await eventually(() => calls.some((call) => call.url.includes("/channels/channel-1/messages")));
   assert.equal(envelopes.length, 1);
   assert.equal(envelopes[0].text, "inspect this");
+  assert.equal(envelopes[0].images.length, 1);
+  assert.equal(envelopes[0].images[0].startsWith(root), true);
   const delivery = calls.find((call) => call.url.includes("/channels/channel-1/messages"));
   assert.equal(JSON.parse(delivery.init.body).content, "done");
   assert.equal(adapter.status().healthStatus, "healthy");

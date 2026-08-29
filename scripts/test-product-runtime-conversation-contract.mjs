@@ -147,6 +147,8 @@ function envelope(text) {
     userId: 'user',
     channelId: 'channel',
     text,
+    files: ['C:\\workspace\\input.txt'],
+    images: ['C:\\workspace\\image.png'],
     rawEvent: {},
   };
 }
@@ -191,8 +193,14 @@ async function main() {
   assert.equal(result.text, 'completed through Runtime');
   assert.equal(bridge.providerConfigured, true);
   assert.equal(bridge.lastTurnRequest.prefixMessages[0].role, 'system');
-  assert.equal(bridge.lastTurnRequest.inputMessages[0].message.name, 'discord_bot_user');
+  assert.equal(bridge.lastTurnRequest.prefixMessages.length, 1);
+  assert.equal(bridge.lastTurnRequest.inputMessages[0].message.name, 'runtime_context');
+  assert.equal(bridge.lastTurnRequest.inputMessages[1].message.name, 'discord_bot_user');
   assert.equal(bridge.lastTurnRequest.metadata.permissionMode, 'task_free');
+  assert.deepEqual(bridge.lastTurnRequest.inputMessages[1].message.images, [
+    { url: 'C:\\workspace\\image.png' },
+  ]);
+  assert.match(bridge.lastTurnRequest.inputMessages[0].message.content, /C:\\workspace\\input\.txt/);
 
   process.stdout.write('product Runtime conversation contract passed\n');
 }

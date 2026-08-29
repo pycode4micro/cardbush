@@ -55,19 +55,26 @@ export function createProductAgentTurnRequest(
     turnId: input.turnId,
     model: input.model,
     providerBinding: input.providerBinding,
-    prefixMessages: [
-      { role: "system", content: ROOT_AGENT_SYSTEM_PROMPT },
-      ...(context ? [{ role: "user" as const, name: "runtime_context", content: context }] : []),
-    ],
-    inputMessages: [{
-      messageId: input.messageId,
-      createdAt: input.createdAt,
-      message: {
-        role: "user",
-        ...(input.userMessageName ? { name: input.userMessageName } : {}),
-        content: input.userText,
+    prefixMessages: [{ role: "system", content: ROOT_AGENT_SYSTEM_PROMPT }],
+    inputMessages: [
+      ...(context ? [{
+        messageId: `runtime_context_${input.messageId}`,
+        createdAt: input.createdAt,
+        message: { role: "user" as const, name: "runtime_context", content: context },
+      }] : []),
+      {
+        messageId: input.messageId,
+        createdAt: input.createdAt,
+        message: {
+          role: "user",
+          ...(input.userMessageName ? { name: input.userMessageName } : {}),
+          content: input.userText,
+          ...(input.images?.length
+            ? { images: input.images.slice(0, 4).map((url) => ({ url })) }
+            : {}),
+        },
       },
-    }],
+    ],
     sessionMetadata: input.sessionMetadata ?? {
       title: input.sessionTitle ?? initialTitle(input.userText),
       ...(projectDir ? { projectDir } : {}),

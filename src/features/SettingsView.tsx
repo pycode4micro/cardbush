@@ -1007,7 +1007,7 @@ export function SettingsView({
       );
     }
     if (section === 'bots') {
-      if (window.cardbushDesktop?.cardbushAppRequest == null) {
+      if (window.cardbushDesktop?.productHostCommand == null) {
         return (
           <SettingsCard
             title={language === 'zh' ? 'Bot 连接' : 'Bot links'}

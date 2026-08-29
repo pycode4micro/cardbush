@@ -1,6 +1,10 @@
+import { readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+
 import type { BotAdapter, BotAdapterContext, BotAdapterFactory, BotRuntimeStatus } from "./botSupervisor.js";
-import type { ChatEnvelope, ConversationBackend } from "./conversation.js";
+import type { BotDeliveryRequest, BotDeliveryResult, ChatEnvelope, ConversationBackend } from "./conversation.js";
 import { identityIsAllowed } from "./conversation.js";
+import { downloadInboundMedia } from "./inboundMedia.js";
 
 const OP_DISPATCH = 0;
 const OP_HEARTBEAT = 1;
@@ -79,6 +83,36 @@ export class DiscordGatewayAdapter implements BotAdapter {
       lastError: this.#lastError,
       errorCode: this.#lastError ? "discord_gateway_error" : "",
     };
+  }
+
+  async deliver(request: BotDeliveryRequest): Promise<BotDeliveryResult> {
+    const channelId = sessionPart(request.sessionId, "discord", 1);
+    const messageIds: string[] = [];
+    for (let index = 0; index < request.paths.length; index += 1) {
+      const path = request.paths[index];
+      const form = new FormData();
+      form.append("payload_json", JSON.stringify({
+        content: index === 0 ? request.text ?? "" : "",
+        attachments: [{ id: 0, filename: basename(path) }],
+      }));
+      form.append("files[0]", new Blob([await readFile(path)]), basename(path));
+      const response = await this.#fetch(
+        `${stringConfig(this.#context.config, "api_base")}/channels/${encodeURIComponent(channelId)}/messages`,
+        {
+          method: "POST",
+          headers: { authorization: `Bot ${stringConfig(this.#context.config, "bot_token")}` },
+          body: form,
+          signal: this.#context.signal,
+        },
+      );
+      const source = await response.text();
+      if (!response.ok) throw new Error(`Discord file delivery failed (${response.status}): ${source.slice(0, 500)}`);
+      try {
+        const payload = JSON.parse(source) as Record<string, unknown>;
+        if (payload.id) messageIds.push(String(payload.id));
+      } catch {}
+    }
+    return { channel: "discord", delivered: [...request.paths], messageIds };
   }
 
   async #run(firstConnection: Deferred<void>): Promise<void> {
@@ -197,7 +231,8 @@ export class DiscordGatewayAdapter implements BotAdapter {
     })) return;
     const dedupKey = messageId || String(data.nonce ?? "").trim();
     if (!this.#dedup.take(dedupKey)) return;
-    const text = this.#messageText(data);
+    const media = await this.#downloadAttachments(data, messageId);
+    const text = this.#messageText(data) || (media.length ? "The user sent the attached resources." : "");
     if (!text) return;
     const envelope: ChatEnvelope = {
       platform: "discord",
@@ -205,6 +240,8 @@ export class DiscordGatewayAdapter implements BotAdapter {
       userId,
       channelId,
       text,
+      files: media.filter((item) => item.kind === "file").map((item) => item.path),
+      images: media.filter((item) => item.kind === "image").map((item) => item.path),
       ...(messageId ? { messageId } : {}),
       rawEvent: data,
     };
@@ -220,6 +257,28 @@ export class DiscordGatewayAdapter implements BotAdapter {
       await this.#context.log("error", `message failed: ${errorMessage(error)}`);
       await this.#sendText(channelId, `执行失败：${errorMessage(error)}`, messageId);
     }
+  }
+
+  async #downloadAttachments(data: Record<string, unknown>, messageId: string) {
+    const attachments = Array.isArray(data.attachments)
+      ? data.attachments.filter((item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        ).slice(0, 4)
+      : [];
+    const media = [];
+    for (const attachment of attachments) {
+      const url = String(attachment.url ?? attachment.proxy_url ?? "").trim();
+      if (!url) continue;
+      media.push(await downloadInboundMedia({
+        url,
+        directory: join(this.#context.dataDir, "inbound", messageId || crypto.randomUUID()),
+        name: String(attachment.filename ?? "attachment"),
+        mediaType: String(attachment.content_type ?? ""),
+        fetch: this.#fetch,
+        signal: this.#context.signal,
+      }));
+    }
+    return media;
   }
 
   #messageText(data: Record<string, unknown>): string {
@@ -266,6 +325,12 @@ export class DiscordGatewayAdapter implements BotAdapter {
   #stopped(): boolean {
     return this.#stopRequested || this.#context.signal.aborted;
   }
+}
+
+function sessionPart(sessionId: string, platform: string, index: number): string {
+  const parts = sessionId.split(":");
+  if (parts[0] !== platform || !parts[index]) throw new Error(`Invalid ${platform} Session identity`);
+  return parts[index];
 }
 
 class ExpiringSet {

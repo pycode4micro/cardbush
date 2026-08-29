@@ -170,6 +170,46 @@ test("Weixin polling exposes session expiration as a factual runtime state", asy
   await adapter.stop();
 });
 
+test("Weixin polling projects downloaded image facts into the Runtime envelope", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-weixin-media-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const store = new WeixinAccountStore(root);
+  await store.save({ accountId: "account-1", token: "token", baseUrl: "https://weixin.test" });
+  const controller = new AbortController();
+  const envelopes = [];
+  let updates = 0;
+  const imagePath = join(root, "downloaded.png");
+  const adapter = new WeixinPollingAdapter({
+    ...botContext(controller),
+    dataDir: root,
+  }, {
+    store,
+    createClient: () => ({
+      async updates(_account, _sync, signal) {
+        updates += 1;
+        if (updates === 1) return {
+          ret: 0,
+          msgs: [{
+            message_id: "media-message",
+            from_user_id: "user-1",
+            item_list: [{ type: 2, image_item: { media: { full_url: "https://media.test/image" } } }],
+          }],
+        };
+        return untilAbort(signal);
+      },
+      async downloadMediaItem() { return { kind: "image", path: imagePath }; },
+      async sendText() {},
+    }),
+    backend: { async respond(envelope) { envelopes.push(envelope); return { text: "done" }; } },
+  });
+  await adapter.start();
+  await eventually(() => envelopes.length === 1);
+  assert.equal(envelopes[0].text, "The user sent the attached resources.");
+  assert.deepEqual(envelopes[0].images, [imagePath]);
+  controller.abort();
+  await adapter.stop();
+});
+
 function botContext(controller, config = {}) {
   return {
     platform: "weixin",

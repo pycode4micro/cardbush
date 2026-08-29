@@ -918,6 +918,24 @@ function CardbushApp() {
     void saveModelConfigs({
       defaultModelId: defaultId,
       models: appSettings.managedModelConfigs,
+    }).then((saved) => {
+      const sanitized = normalizeManagedModelConfigs(saved.models);
+      const savedDefaultId = defaultModelConfigId(sanitized, saved.defaultModelId || defaultId);
+      lastSavedModelConfigSignatureRef.current = modelConfigSignature(
+        sanitized,
+        savedDefaultId,
+      );
+      setAppSettings((current) => {
+        if (modelConfigSignature(current.managedModelConfigs, defaultId) !== signature) {
+          return current;
+        }
+        const next = normalizeAppSettings({
+          ...current,
+          managedModelConfigs: sanitized,
+        });
+        persistAppSettings(next);
+        return next;
+      });
     }).catch(() => {
       lastSavedModelConfigSignatureRef.current = '';
     });
@@ -3185,8 +3203,14 @@ function persistAppSettings(settings: AppSettingsState) {
   );
   window.localStorage.setItem(
     'cardbush_managed_model_configs',
-    JSON.stringify(settings.managedModelConfigs),
+    JSON.stringify(settings.managedModelConfigs.map((config) => ({
+      ...config,
+      apiKey: '',
+      hasApiKey: config.hasApiKey === true || Boolean(config.apiKey),
+      apiKeyMasked: config.apiKeyMasked,
+    }))),
   );
+  window.localStorage.removeItem('cardbush_runtime_default_model_id');
   window.localStorage.setItem('cardbush_background_image_path', settings.backgroundImagePath);
   window.localStorage.setItem(
     'cardbush_cardling_enabled',
@@ -3229,7 +3253,9 @@ function normalizeManagedModelConfigs(source: ManagedModelConfig[]) {
     if (!provider || !modelName) {
       continue;
     }
-    const key = `${provider.toLowerCase()}\u0000${modelName.toLowerCase()}\u0000${apiKey.toLowerCase()}\u0000${baseUrl.toLowerCase()}`;
+    const key = raw.id.trim()
+      ? `id:${raw.id.trim().toLowerCase()}`
+      : `model:${provider.toLowerCase()}\u0000${modelName.toLowerCase()}\u0000${baseUrl.toLowerCase()}`;
     if (!seen.add(key)) {
       continue;
     }

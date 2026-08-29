@@ -8,6 +8,7 @@ import {
   botPlatformSpecs,
   type BotPlatform,
 } from "./botConfigStore.js";
+import type { BotDeliveryRequest, BotDeliveryResult } from "./conversation.js";
 
 export type BotServiceStatus =
   | "stopped"
@@ -36,6 +37,7 @@ export interface BotAdapter {
   start(): Promise<void>;
   stop(): Promise<void>;
   status?(): BotRuntimeStatus | Promise<BotRuntimeStatus>;
+  deliver?(request: BotDeliveryRequest): Promise<BotDeliveryResult>;
 }
 
 export type BotAdapterFactory = (context: BotAdapterContext) => BotAdapter;
@@ -258,6 +260,20 @@ export class BotSupervisor {
       platform,
       lines: lines.slice(-bounded).map((line) => redactLogLine(line)),
     };
+  }
+
+  async deliver(platform: BotPlatform, request: BotDeliveryRequest): Promise<BotDeliveryResult> {
+    const state = this.#state(platform);
+    if (state.serviceStatus !== "running" || !state.adapter) {
+      throw new BotSupervisorError("bot_not_running", `${platform} bot is not running`);
+    }
+    if (!state.adapter.deliver) {
+      throw new BotSupervisorError(
+        "bot_delivery_unavailable",
+        `${platform} adapter does not support file delivery`,
+      );
+    }
+    return state.adapter.deliver(request);
   }
 
   #serialize<T>(platform: BotPlatform, action: () => Promise<T>): Promise<T> {

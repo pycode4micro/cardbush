@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { readFile, stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import type {
   ChatCompletionChunk,
   ChatCompletionCreateParamsStreaming,
@@ -144,9 +146,22 @@ function toOpenAIMessage(message: ModelMessage): ChatCompletionMessageParam {
         : undefined,
     };
   }
+  const content = message.role === "user" && message.images?.length
+    ? [
+        { type: "text" as const, text: message.content },
+        ...message.images.map((image) => ({
+          type: "image_url" as const,
+          image_url: { url: image.url, ...(image.detail ? { detail: image.detail } : {}) },
+        })),
+      ]
+    : message.content;
   return {
-    role: message.role,
-    content: message.content,
+    // `developer` is an internal Bush protocol role. OpenAI-compatible Chat
+    // Completions providers do not agree on whether that newer role exists,
+    // while all of them accept `system`. Keep the distinction inside Runtime
+    // and project it mechanically at the provider boundary.
+    role: message.role === "developer" ? "system" : message.role,
+    content,
     name: message.name,
   } as ChatCompletionMessageParam;
 }
@@ -163,6 +178,74 @@ function toOpenAITools(request: ModelRequest): ChatCompletionTool[] | undefined 
       parameters: tool.inputSchema,
     },
   }));
+}
+
+export async function resolveLocalImageInputs(request: ModelRequest): Promise<ModelRequest> {
+  const messages = await Promise.all(request.messages.map(async (message) => {
+    if (!("images" in message) || !message.images?.length) return message;
+    return {
+      ...message,
+      images: await Promise.all(message.images.map(async (image) => ({
+        ...image,
+        url: await resolvedImageUrl(image.url),
+      }))),
+    };
+  }));
+  return { ...request, messages };
+}
+
+async function resolvedImageUrl(source: string): Promise<string> {
+  const value = source.trim();
+  if (/^https?:\/\//i.test(value) || /^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
+    return value;
+  }
+  if (!isAbsolute(value)) throw new Error("Model image path must be absolute.");
+  const info = await stat(value);
+  if (!info.isFile()) throw new Error(`Model image is not a file: ${value}`);
+  const maxBytes = 9_000_000;
+  if (info.size > maxBytes) throw new Error(`Model image exceeds ${maxBytes} bytes: ${value}`);
+  const content = await readFile(value);
+  return `data:${imageMime(content)};base64,${content.toString("base64")}`;
+}
+
+function imageMime(content: Buffer): string {
+  if (
+    content.length >= 32 &&
+    content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
+    content.subarray(-12, -8).readUInt32BE(0) === 0 &&
+    content.subarray(-8, -4).toString("ascii") === "IEND"
+  ) {
+    return "image/png";
+  }
+  if (
+    content.length >= 4 &&
+    content[0] === 0xff && content[1] === 0xd8 &&
+    content.at(-2) === 0xff && content.at(-1) === 0xd9
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    content.length >= 14 &&
+    ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii")) &&
+    content.at(-1) === 0x3b
+  ) {
+    return "image/gif";
+  }
+  if (
+    content.length >= 12 &&
+    content.subarray(0, 4).toString("ascii") === "RIFF" &&
+    content.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  if (
+    content.length >= 26 &&
+    content.subarray(0, 2).toString("ascii") === "BM" &&
+    content.readUInt32LE(2) <= content.length
+  ) {
+    return "image/bmp";
+  }
+  throw new Error("Model image content is not a supported raster image.");
 }
 
 export function toChatCompletionCreateParams(
@@ -257,7 +340,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     let completed = false;
     try {
       const stream = await this.#client.chat.completions.create(
-        toChatCompletionCreateParams(request),
+        toChatCompletionCreateParams(await resolveLocalImageInputs(request)),
         { signal: options.signal },
       );
       for await (const chunk of stream) {
