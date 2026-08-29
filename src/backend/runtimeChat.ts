@@ -3,6 +3,10 @@ import type {
   RuntimeSessionTurnRequest,
   ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
+import {
+  GOAL_CONTINUATION_PROMPT,
+  createProductAgentTurnRequest,
+} from '@cardbush/bush-product-agent';
 
 import type {
   AssistantStreamChunk,
@@ -30,16 +34,6 @@ import { synchronizeProductMcpSnapshot } from './productMcp';
 import { synchronizeProductTeamSnapshot } from './productTeams';
 import { parseGoalCommand } from './goalCommand';
 
-const ROOT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
-
-For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
-
-Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure.
-
-End every Turn by calling declare_turn_outcome exactly once. Put the complete user-visible response in final_response. Use answer when no external effect is being claimed. Use effect_complete only with the successful receipt_ids returned by the effects completed in this Turn. Use blocked or awaiting_input when those are the accurate states. In Goal mode, update_goal before declaring the Turn outcome.`;
-
-const CHILD_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables. End the Turn by calling declare_turn_outcome exactly once; use effect_complete only with successful receipt_ids returned by completed effects, and put the complete parent-visible report in final_response.`;
-const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
     throw new Error('Electron Runtime bridge is unavailable.');
@@ -84,54 +78,29 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
       (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
     ).map((entry) => entry.definition);
-    const contextMessage = runtimeContext(request);
-    const runtimeRequest: RuntimeSessionTurnRequest = {
-    protocol: 'bush.session_turn_request.v1',
-    requestId,
-    sessionId: request.sessionId,
-    turnId,
-    model: request.modelConfig?.modelName.trim() || request.model,
-    providerBinding,
-    prefixMessages: [
-      { role: 'system', content: ROOT_SYSTEM_PROMPT },
-      ...(contextMessage
-        ? [{ role: 'user' as const, name: 'runtime_context', content: contextMessage }]
-        : []),
-    ],
-    inputMessages: [{
+    const runtimeRequest = createProductAgentTurnRequest({
+      requestId,
+      sessionId: request.sessionId,
+      turnId,
       messageId: userMessageId,
       createdAt: new Date().toISOString(),
-      message: {
-        role: 'user',
-        ...(goalCommand ? { name: 'goal_request' } : {}),
-        content: effectiveUserInput,
-      },
-    }],
-    sessionMetadata: {
-      title: initialTitle(effectiveUserInput),
-      ...(request.projectDir?.trim() ? { projectDir: request.projectDir.trim() } : {}),
-    },
-    tools,
-    toolChoice: 'auto',
-    maxOutputTokens: positiveInteger(request.modelConfig?.maxCompletionTokens),
-    reasoningEffort: reasoningEffort(request.reasoningLevel),
-      metadata: {
-      source: 'cardbush_electron_runtime',
-      ...(request.projectDir?.trim()
-        ? {
-            workspaceDir: request.projectDir.trim(),
-            projectDir: request.projectDir.trim(),
-          }
-        : {}),
+      localDate: new Date().toLocaleDateString('en-CA'),
+      userText: effectiveUserInput,
+      ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
+      model: request.modelConfig?.modelName.trim() || request.model,
+      providerBinding,
+      tools,
+      projectDir: request.projectDir,
+      projectInstructions: request.projectUserPrompt,
+      files: request.files,
+      images: request.images?.map((image) => image.path),
       permissionMode: request.permissionMode ?? 'task_free',
-      mcpContext: {
-        filesystemRoots: request.projectDir?.trim() ? [request.projectDir.trim()] : [],
-      },
       teamId: request.teamId,
-      allowedSkills: request.allowedSkills ?? [],
-      subagentChildPrefixMessages: [{ role: 'system', content: CHILD_SYSTEM_PROMPT }],
-      },
-    };
+      allowedSkills: request.allowedSkills,
+      planEnabled: request.referencePlanMode !== 'off',
+      maxOutputTokens: positiveInteger(request.modelConfig?.maxCompletionTokens),
+      reasoningEffort: reasoningEffort(request.reasoningLevel),
+    });
     if (goalCommand) {
       await runtime.client.createGoal({
         goalId: `goal_${crypto.randomUUID()}`,
@@ -572,25 +541,6 @@ function terminalSnapshot(
     terminalEventSequence: event.sequence,
     raw: event,
   };
-}
-
-function runtimeContext(request: ChatStreamRequest): string {
-  const context = [
-    request.projectDir?.trim() ? `Workspace: ${request.projectDir.trim()}` : '',
-    `Local date: ${new Date().toLocaleDateString('en-CA')}`,
-    request.projectUserPrompt?.trim()
-      ? `Project instructions:\n${request.projectUserPrompt.trim()}`
-      : '',
-    request.files?.length ? `Attached files:\n${request.files.join('\n')}` : '',
-    request.images?.length
-      ? `Attached images:\n${request.images.map((image) => image.path).join('\n')}`
-      : '',
-  ].filter(Boolean).join('\n');
-  return context ? `<runtime_context>\n${context}\n</runtime_context>` : '';
-}
-
-function initialTitle(input: string): string {
-  return input.trim().replace(/\s+/g, ' ').slice(0, 80) || 'New conversation';
 }
 
 function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
