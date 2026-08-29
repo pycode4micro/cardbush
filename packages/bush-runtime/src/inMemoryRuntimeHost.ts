@@ -1,12 +1,18 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
+  ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
+  GET_RUNTIME_SESSION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
+  RUN_RUNTIME_SESSION_TURN_COMMAND,
+  assembleRuntimeSessionContextRequestSchema,
   modelRequestSchema,
   runtimePermissionAnswerSchema,
+  runtimeSessionIdentitySchema,
+  runtimeSessionTurnRequestSchema,
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
   type ModelRequest,
@@ -15,6 +21,8 @@ import {
   type RuntimeCapabilities,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
+  type RuntimeSessionCommitCheckpoint,
+  type RuntimeSessionTurnRequest,
 } from "@cardbush/bush-protocol";
 
 import { executeModelRound } from "./modelRound.js";
@@ -37,6 +45,13 @@ import {
   type RuntimeCheckpointStore,
 } from "./runtimeCheckpointStore.js";
 import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
+import { SessionStore } from "./sessionStore.js";
+import {
+  RuntimeSessionCoordinator,
+  type GeneratedMessageFact,
+  type TurnFinalizedObserver,
+  type TurnTerminalPayload,
+} from "./runtimeSessionCoordinator.js";
 
 export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 
@@ -62,6 +77,9 @@ export interface InMemoryRuntimeHostOptions {
   checkpointNow?: () => string;
   onRecoveryError?: (error: Error) => void;
   durableRecovery?: boolean;
+  sessionStore?: SessionStore;
+  durableSessions?: boolean;
+  sessionNow?: () => string;
   additionalSupportedCommands?: string[];
 }
 
@@ -88,6 +106,8 @@ export class InMemoryRuntimeHost {
   readonly #toolRegistry: ToolRegistry;
   readonly #createPermissionId?: () => string;
   readonly #recovery: RuntimeRecoveryCoordinator;
+  readonly #sessions: RuntimeSessionCoordinator;
+  readonly #sessionNow: () => string;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
@@ -112,6 +132,11 @@ export class InMemoryRuntimeHost {
       eventLog: this.#eventLog,
       checkpoints: options.checkpointStore ?? new InMemoryRuntimeCheckpointStore(),
       now: options.checkpointNow,
+    });
+    this.#sessionNow = options.sessionNow ?? (() => new Date().toISOString());
+    this.#sessions = new RuntimeSessionCoordinator({
+      store: options.sessionStore,
+      now: this.#sessionNow,
     });
     this.#onRecoveryError = options.onRecoveryError;
     this.#capabilities = {
@@ -151,6 +176,9 @@ export class InMemoryRuntimeHost {
         ANSWER_RUNTIME_PERMISSION_COMMAND,
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
+        GET_RUNTIME_SESSION_COMMAND,
+        ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
+        RUN_RUNTIME_SESSION_TURN_COMMAND,
         ...(options.additionalSupportedCommands ?? []),
       ],
       features: [
@@ -164,6 +192,8 @@ export class InMemoryRuntimeHost {
         "checkpoint_recovery",
         "cache_chain_observation",
         ...(options.durableRecovery ? ["durable_restart_recovery"] : []),
+        "append_only_session_context",
+        ...(options.durableSessions ? ["durable_sessions"] : []),
       ],
     };
   }
@@ -201,6 +231,24 @@ export class InMemoryRuntimeHost {
         return this.capabilities();
       case RUN_MODEL_TURN_COMMAND:
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
+      case GET_RUNTIME_SESSION_COMMAND: {
+        const identity = runtimeSessionIdentitySchema.parse(command.payload);
+        return this.#sessions.snapshot(identity.sessionId) ?? null;
+      }
+      case ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND: {
+        const input = assembleRuntimeSessionContextRequestSchema.parse(command.payload);
+        return this.#sessions.assemble({
+          sessionId: input.sessionId,
+          prefix: input.prefixMessages,
+          current: input.currentMessages,
+          throughTurnSequence: input.throughTurnSequence,
+        });
+      }
+      case RUN_RUNTIME_SESSION_TURN_COMMAND:
+        return this.runSessionTurn(
+          runtimeSessionTurnRequestSchema.parse(command.payload),
+          { signal },
+        );
       case ANSWER_RUNTIME_PERMISSION_COMMAND:
         return this.#answerPermission(
           runtimePermissionAnswerSchema.parse(command.payload),
@@ -221,6 +269,35 @@ export class InMemoryRuntimeHost {
   async runModelTurn(
     input: ModelRequest,
     options: { signal?: AbortSignal } = {},
+  ): Promise<RuntimeEvent> {
+    return this.#runModelTurn(input, options);
+  }
+
+  async runSessionTurn(
+    input: RuntimeSessionTurnRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<RuntimeEvent> {
+    const prepared = this.#sessions.prepare(
+      runtimeSessionTurnRequestSchema.parse(input),
+    );
+    try {
+      return await this.#runModelTurn(prepared.modelRequest, {
+        signal: options.signal,
+        sessionCommit: prepared.sessionCommit,
+      });
+    } catch (error) {
+      this.#sessions.abandon(input.sessionId, input.turnId);
+      throw error;
+    }
+  }
+
+  async #runModelTurn(
+    input: ModelRequest,
+    options: {
+      signal?: AbortSignal;
+      onFinalized?: TurnFinalizedObserver;
+      sessionCommit?: RuntimeSessionCommitCheckpoint;
+    } = {},
   ): Promise<RuntimeEvent> {
     const request = modelRequestSchema.parse(input);
     const identity: RuntimeEventIdentity = {
@@ -251,6 +328,7 @@ export class InMemoryRuntimeHost {
         nextRound: 1,
         completedReceiptIds: [],
         cacheChainState: new CacheChainTracker().snapshot(),
+        sessionCommit: options.sessionCommit,
       });
     } catch (error) {
       this.#activeTurns.delete(turnKey);
@@ -264,6 +342,12 @@ export class InMemoryRuntimeHost {
       completedReceiptIds: [],
       cacheChainState: new CacheChainTracker().snapshot(),
       signal: options.signal,
+      sessionCommit: options.sessionCommit,
+      onFinalized:
+        options.onFinalized ??
+        (options.sessionCommit
+          ? this.#sessions.finalizer(request, options.sessionCommit)
+          : undefined),
     });
   }
 
@@ -292,6 +376,13 @@ export class InMemoryRuntimeHost {
       completedReceiptIds: recovery.checkpoint.completedReceiptIds,
       cacheChainState: recovery.checkpoint.cacheChainState,
       signal: options.signal,
+      sessionCommit: recovery.checkpoint.sessionCommit,
+      onFinalized: recovery.checkpoint.sessionCommit
+        ? this.#sessions.finalizer(
+            recovery.checkpoint.request,
+            recovery.checkpoint.sessionCommit,
+          )
+        : undefined,
     });
   }
 
@@ -303,6 +394,8 @@ export class InMemoryRuntimeHost {
     completedReceiptIds: string[];
     cacheChainState: CacheChainState;
     signal?: AbortSignal;
+    onFinalized?: TurnFinalizedObserver;
+    sessionCommit?: RuntimeSessionCommitCheckpoint;
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
@@ -318,10 +411,29 @@ export class InMemoryRuntimeHost {
     let completedReceiptIds = [...input.completedReceiptIds];
     let round = input.nextRound - 1;
     const cacheChain = new CacheChainTracker(input.cacheChainState);
+    const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
+      ? structuredClone(input.sessionCommit.generatedMessages)
+      : [];
+    const usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      cachedInputTokens?: number;
+    } = input.sessionCommit ? { ...input.sessionCommit.usage } : {};
+    const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
+      input.onFinalized?.(payload, generatedMessages, usage);
+      return this.#finishTurn(identity, payload);
+    };
+    const stop = (finalMessageId?: string): RuntimeEvent =>
+      finalize({
+        status: "stopped",
+        reason: "user_stop_requested",
+        finalMessageId,
+        details: {},
+      });
     try {
       while (true) {
         round += 1;
-        if (input.signal?.aborted) return this.#stopped(identity);
+        if (input.signal?.aborted) return stop();
 
         let completedRound:
           | Extract<
@@ -343,6 +455,9 @@ export class InMemoryRuntimeHost {
             nextRound: round,
             completedReceiptIds,
             cacheChainState: cacheChain.snapshot(),
+            sessionCommit: input.sessionCommit
+              ? { ...input.sessionCommit, generatedMessages, usage }
+              : undefined,
           });
           const projector = new RuntimeEventProjector(
             this.#eventLog,
@@ -370,9 +485,9 @@ export class InMemoryRuntimeHost {
           } catch (error) {
             projector.completeOpenSegment();
             if (input.signal?.aborted) {
-              return this.#stopped(identity, projector.finalMessageId);
+              return stop(projector.finalMessageId);
             }
-            return this.#finishTurn(identity, {
+            return finalize({
               status: "failed",
               reason: "provider_stream_exception",
               details: {
@@ -381,6 +496,7 @@ export class InMemoryRuntimeHost {
             });
           }
           projector.completeOpenSegment();
+          mergeUsage(usage, result.usage);
           if (result.status === "completed") {
             completedRound = result;
             completedProjector = projector;
@@ -422,11 +538,11 @@ export class InMemoryRuntimeHost {
             });
             await this.#wait(nextRetryMs, input.signal);
             if (input.signal?.aborted) {
-              return this.#stopped(identity, projector.finalMessageId);
+              return stop(projector.finalMessageId);
             }
             continue;
           }
-          return this.#finishTurn(identity, {
+          return finalize({
             status: "failed",
             reason: result.error.code,
             finalMessageId: projector.finalMessageId,
@@ -442,7 +558,18 @@ export class InMemoryRuntimeHost {
           throw new Error("Runtime retry loop exited without a model result.");
         }
         if (completedRound.toolCalls.length === 0) {
-          return this.#finishTurn(identity, {
+          if (completedRound.text) {
+            generatedMessages.push({
+              messageId: completedProjector.messageId,
+              createdAt: this.#sessionNow(),
+              message: {
+                role: "assistant",
+                content: completedRound.text,
+                toolCalls: [],
+              },
+            });
+          }
+          return finalize({
             status: "completed",
             reason: "model_response_completed",
             finalMessageId: completedProjector.finalMessageId,
@@ -458,19 +585,32 @@ export class InMemoryRuntimeHost {
           assistantMessageId: completedProjector.messageId,
           signal: input.signal,
         });
+        const assistantMessage: ModelMessage = {
+          role: "assistant",
+          content: completedRound.text,
+          toolCalls: completedRound.toolCalls.map((call) => ({
+            id: call.id,
+            name: call.name,
+            argumentsText: call.argumentsText,
+          })),
+        };
         messages = [
           ...messages,
-          {
-            role: "assistant",
-            content: completedRound.text,
-            toolCalls: completedRound.toolCalls.map((call) => ({
-              id: call.id,
-              name: call.name,
-              argumentsText: call.argumentsText,
-            })),
-          },
+          assistantMessage,
           ...toolRound.messages,
         ];
+        generatedMessages.push({
+          messageId: completedProjector.messageId,
+          createdAt: this.#sessionNow(),
+          message: assistantMessage,
+        });
+        toolRound.messages.forEach((message, index) => {
+          generatedMessages.push({
+            messageId: `msg_tool_${request.turnId}_${round}_${index}_${completedRound.toolCalls[index]!.id}`,
+            createdAt: this.#sessionNow(),
+            message,
+          });
+        });
         completedReceiptIds = [
           ...new Set([...completedReceiptIds, ...toolRound.receiptIds]),
         ];
@@ -480,6 +620,9 @@ export class InMemoryRuntimeHost {
           nextRound: round + 1,
           completedReceiptIds,
           cacheChainState: cacheChain.snapshot(),
+          sessionCommit: input.sessionCommit
+            ? { ...input.sessionCommit, generatedMessages, usage }
+            : undefined,
         });
       }
     } finally {
@@ -519,17 +662,6 @@ export class InMemoryRuntimeHost {
     return terminal;
   }
 
-  #stopped(
-    identity: RuntimeEventIdentity,
-    finalMessageId?: string,
-  ): RuntimeEvent {
-    return this.#finishTurn(identity, {
-      status: "stopped",
-      reason: "user_stop_requested",
-      finalMessageId,
-      details: {},
-    });
-  }
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
@@ -543,4 +675,13 @@ function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
     const timeout = setTimeout(complete, milliseconds);
     signal?.addEventListener("abort", complete, { once: true });
   });
+}
+
+function mergeUsage(
+  target: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number },
+  source: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number },
+): void {
+  for (const key of ["inputTokens", "outputTokens", "cachedInputTokens"] as const) {
+    if (source[key] !== undefined) target[key] = (target[key] ?? 0) + source[key];
+  }
 }

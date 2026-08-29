@@ -50,6 +50,22 @@ try {
   assert.ok(capabilities.features.includes('reasoning_segments'));
   assert.ok(capabilities.features.includes('assistant_segments'));
 
+  const typedSessionClient = new runtimeClientModule.ProtocolRuntimeClient(
+    createSessionCommandTransport(),
+  );
+  assert.equal((await typedSessionClient.getSession('session_typed')).turns.length, 1);
+  assert.deepEqual(
+    (await typedSessionClient.assembleSessionContext({
+      sessionId: 'session_typed',
+      currentMessages: [{ role: 'user', content: 'current' }],
+    })).messages.map((message) => message.content),
+    ['stored', 'current'],
+  );
+  assert.equal(
+    (await typedSessionClient.runSessionTurn(sessionTurnRequest())).kind,
+    'turn_terminal',
+  );
+
   const projection = new runtimeClientModule.RuntimeTurnProjection();
   const eventKinds = [];
   let view = projection.snapshot();
@@ -503,5 +519,88 @@ function lifecycleEvent(identity, sequence, kind, payload) {
     createdAt: `2026-08-29T00:02:0${sequence}.000Z`,
     kind,
     payload,
+  };
+}
+
+function createSessionCommandTransport() {
+  const committedTurn = {
+    turnId: 'turn_typed_1',
+    turnSequence: 1,
+    createdAt: '2026-08-29T00:00:00.000Z',
+    completedAt: '2026-08-29T00:00:01.000Z',
+    status: 'completed',
+    reason: 'model_response_completed',
+    messages: [{
+      messageId: 'message_typed_1',
+      turnId: 'turn_typed_1',
+      turnSequence: 1,
+      messageIndex: 0,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      message: { role: 'user', content: 'stored' },
+    }],
+    usage: {},
+  };
+  return {
+    async *openEventStream() {},
+    async sendCommand(command) {
+      if (command.kind === 'runtime.get_session') {
+        return {
+          protocol: 'bush.session_snapshot.v1',
+          sessionId: 'session_typed',
+          revision: 2,
+          createdAt: '2026-08-29T00:00:00.000Z',
+          updatedAt: '2026-08-29T00:00:01.000Z',
+          turns: [committedTurn],
+          supersededMessageIds: [],
+        };
+      }
+      if (command.kind === 'runtime.assemble_session_context') {
+        return {
+          protocol: 'bush.context_snapshot.v1',
+          sessionId: 'session_typed',
+          sessionRevision: 2,
+          throughTurnSequence: 1,
+          sourceMessageIds: ['message_typed_1'],
+          messages: [
+            committedTurn.messages[0].message,
+            ...command.payload.currentMessages,
+          ],
+        };
+      }
+      if (command.kind === 'runtime.run_session_turn') {
+        return {
+          protocol: 'bush.runtime_event.v1',
+          eventId: 'event_typed_terminal',
+          sequence: 1,
+          requestId: command.payload.requestId,
+          sessionId: command.payload.sessionId,
+          turnId: command.payload.turnId,
+          createdAt: '2026-08-29T00:00:02.000Z',
+          kind: 'turn_terminal',
+          payload: {
+            status: 'completed',
+            reason: 'model_response_completed',
+            details: {},
+          },
+        };
+      }
+      throw new Error(`Unexpected command ${command.kind}`);
+    },
+  };
+}
+
+function sessionTurnRequest() {
+  return {
+    protocol: 'bush.session_turn_request.v1',
+    requestId: 'request_typed_2',
+    sessionId: 'session_typed',
+    turnId: 'turn_typed_2',
+    model: 'model',
+    prefixMessages: [],
+    inputMessages: [{
+      messageId: 'message_typed_2',
+      message: { role: 'user', content: 'next' },
+    }],
+    tools: [],
   };
 }

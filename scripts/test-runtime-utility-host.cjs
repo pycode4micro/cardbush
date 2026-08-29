@@ -16,8 +16,11 @@ async function run() {
     BUSH_MODEL_REQUEST_PROTOCOL,
     BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
     BUSH_RUNTIME_IPC_PROTOCOL,
+    BUSH_SESSION_TURN_REQUEST_PROTOCOL,
     GET_RUNTIME_CAPABILITIES_COMMAND,
+    GET_RUNTIME_SESSION_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
+    RUN_RUNTIME_SESSION_TURN_COMMAND,
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
   } = await import('@cardbush/bush-protocol');
   const { RUN_MODEL_TURN_COMMAND } = await import('@cardbush/bush-runtime');
@@ -57,6 +60,7 @@ async function run() {
     assert.equal(ready.type, 'ready');
     assert.equal(ready.capabilities.eventProtocol, 'bush.runtime_event.v1');
     assert.ok(ready.capabilities.features.includes('durable_restart_recovery'));
+    assert.ok(ready.capabilities.features.includes('durable_sessions'));
     assert.ok(
       ready.capabilities.supportedCommands.includes(
         UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
@@ -221,6 +225,30 @@ async function run() {
     );
     assert.ok(readdirSync(path.join(runtimeStateRoot, 'events')).length >= 2);
     assert.deepEqual(readdirSync(path.join(runtimeStateRoot, 'checkpoints')), []);
+    const sessionTurn = await controller.command({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: 'command',
+      operationId: 'operation_session_turn',
+      command: {
+        kind: RUN_RUNTIME_SESSION_TURN_COMMAND,
+        payload: {
+          protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+          requestId: 'request_session_turn',
+          sessionId: 'session_durable',
+          turnId: 'turn_durable',
+          model: 'unconfigured-model',
+          prefixMessages: [{ role: 'system', content: 'fixed' }],
+          inputMessages: [{
+            messageId: 'user_durable',
+            message: { role: 'user', content: 'persist me' },
+          }],
+          tools: [],
+        },
+      },
+    });
+    assert.equal(sessionTurn.ok, true);
+    assert.equal(sessionTurn.result.payload.status, 'failed');
+    assert.equal(readdirSync(path.join(runtimeStateRoot, 'sessions')).length, 1);
     const removedProvider = await controller.command({
       protocol: BUSH_RUNTIME_IPC_PROTOCOL,
       type: 'command',
@@ -265,6 +293,39 @@ async function run() {
     } finally {
       unregisterIpc();
       testWindow?.destroy();
+    }
+    controller.stop();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const restartedController = new RuntimeUtilityProcessController({
+      modulePath: path.join(
+        repositoryRoot,
+        'dist-electron',
+        'runtimeHostWorker.mjs',
+      ),
+      env: {
+        ...withoutProviderConfiguration(process.env),
+        CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
+      },
+    });
+    try {
+      await within(restartedController.start(), 15_000, 'restarted Runtime Host');
+      const recoveredSession = await restartedController.command({
+        protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+        type: 'command',
+        operationId: 'operation_recovered_session',
+        command: {
+          kind: GET_RUNTIME_SESSION_COMMAND,
+          payload: { sessionId: 'session_durable' },
+        },
+      });
+      assert.equal(recoveredSession.ok, true);
+      assert.equal(recoveredSession.result.turns.length, 1);
+      assert.equal(
+        recoveredSession.result.turns[0].messages[0].message.content,
+        'persist me',
+      );
+    } finally {
+      restartedController.stop();
     }
     console.log('Electron Utility Runtime Host contract passed.');
   } finally {

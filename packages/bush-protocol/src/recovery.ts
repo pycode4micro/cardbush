@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { modelRequestSchema } from "./model.js";
 import { cacheChainStateSchema } from "./cacheChain.js";
+import { runtimeSessionCommitCheckpointSchema } from "./session.js";
 
 export const BUSH_RUNTIME_CHECKPOINT_PROTOCOL =
   "bush.runtime_checkpoint.v1" as const;
@@ -26,6 +27,7 @@ export const runtimeCheckpointSchema = z.object({
   lastEventId: z.string().min(1),
   completedReceiptIds: z.array(z.string().min(1)),
   cacheChainState: cacheChainStateSchema,
+  sessionCommit: runtimeSessionCommitCheckpointSchema.optional(),
   createdAt: z.string().min(1),
 });
 

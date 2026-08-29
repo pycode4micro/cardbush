@@ -18,8 +18,10 @@ import {
 import {
   FileRuntimeCheckpointStore,
   FileRuntimeEventPersistence,
+  FileSessionEventPersistence,
   InMemoryRuntimeEventLog,
   InMemoryRuntimeHost,
+  SessionStore,
   type ModelProvider,
 } from '@cardbush/bush-runtime';
 import {
@@ -201,6 +203,14 @@ const eventLog = runtimeStateRoot
 const checkpointStore = runtimeStateRoot
   ? new FileRuntimeCheckpointStore(join(runtimeStateRoot, 'checkpoints'))
   : undefined;
+const sessionPersistence = runtimeStateRoot
+  ? new FileSessionEventPersistence({
+      root: join(runtimeStateRoot, 'sessions'),
+      onRecoveryIssue: (issue) => {
+        process.stderr.write(`${JSON.stringify(issue)}\n`);
+      },
+    })
+  : undefined;
 
 providers = new OpenAICompatibleProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
@@ -210,7 +220,9 @@ host = new InMemoryRuntimeHost({
   provider: providers,
   eventLog,
   checkpointStore,
+  sessionStore: new SessionStore({ persistence: sessionPersistence }),
   durableRecovery: Boolean(runtimeStateRoot),
+  durableSessions: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,

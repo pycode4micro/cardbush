@@ -54,3 +54,10 @@ an active Turn cannot silently switch provider configuration between rounds.
 The revision is a deterministic one-way fingerprint of the exact configuration:
 registering the same configuration after an app restart restores the same
 checkpoint reference without persisting the credential in Runtime state.
+
+Session history is exposed only through typed Runtime commands.
+`ProtocolRuntimeClient.getSession`, `assembleSessionContext` and
+`runSessionTurn` decode `bush.session_*` contracts; they do not read the Runtime
+journal or assemble messages in the renderer. The Runtime owns append order,
+explicit supersession, crash recovery and atomic Turn commit. The existing
+product chat path is not switched by merely exposing these methods.

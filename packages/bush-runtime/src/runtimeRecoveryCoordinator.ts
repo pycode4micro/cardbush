@@ -7,6 +7,7 @@ import {
   type CacheChainState,
   type RuntimeCheckpoint,
   type RuntimeRecoveryInspection,
+  type RuntimeSessionCommitCheckpoint,
 } from "@cardbush/bush-protocol";
 
 import type { RuntimeCheckpointStore } from "./runtimeCheckpointStore.js";
@@ -50,6 +51,7 @@ export class RuntimeRecoveryCoordinator {
     nextRound: number;
     completedReceiptIds: string[];
     cacheChainState: CacheChainState;
+    sessionCommit?: RuntimeSessionCommitCheckpoint;
   }): RuntimeCheckpoint {
     const events = this.#eventLog.replay(
       input.request.sessionId,
@@ -68,6 +70,7 @@ export class RuntimeRecoveryCoordinator {
       lastEventId: cursor.eventId,
       completedReceiptIds: [...new Set(input.completedReceiptIds)],
       cacheChainState: input.cacheChainState,
+      sessionCommit: input.sessionCommit,
       createdAt: this.#now(),
     });
     this.#checkpoints.save(checkpoint);
