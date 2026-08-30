@@ -4,6 +4,7 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const sidebar = readFileSync(new URL('../src/features/team/TeamSidebar.tsx', import.meta.url), 'utf8');
 const panel = readFileSync(new URL('../src/features/team/TeamWorkflowPanel.tsx', import.meta.url), 'utf8');
 const store = readFileSync(new URL('../src/features/team/teamWorkspaceStore.ts', import.meta.url), 'utf8');
+const productTeams = readFileSync(new URL('../src/backend/productTeams.ts', import.meta.url), 'utf8');
 
 function expect(value, message) {
   if (!value) throw new Error(message);
@@ -29,6 +30,11 @@ expect(store.includes("type TeamWorkspaceView = 'agent' | 'manage' | 'install'")
 expect(store.includes("type TeamSidebarDisplayMode = 'name' | 'description'"), 'Team sidebar must support name and description labels.');
 expect(store.includes('displayModeStorageKey'), 'Team sidebar display preference must persist.');
 expect(store.includes('fetchTeams()') && store.includes('fetchAgentProfiles()'), 'Team UI must load the product Team/Profile catalogs.');
+expect(
+  productTeams.includes('readArrayOrDefault(teamsKey, [bundledGeneralTeam])') &&
+    productTeams.includes('readArrayOrDefault(profilesKey, [bundledGeneralProfile])'),
+  'A fresh CardBush profile must expose the bundled General Team and Agent profile.',
+);
 expect(store.includes('saveAgentProfile(profile)') && store.includes('saveTeamDefinition(team)'), 'Team save must validate and persist profiles before the Team.');
 expect(app.includes('selectedTeamId: teamWorkspace.selectedTeamId'), 'Chat request context must receive the current Team selection.');
 expect(app.includes("section === 'team'") && app.includes('activeTeam?.name.trim()'), 'The Team page title must use the active Team name.');

@@ -68,12 +68,22 @@ const styles = fs.readFileSync(
   'utf8',
 );
 
-assert.match(iconSource, /const iconsByKind: Record<SkillIconKind, LucideIcon>/);
+assert.match(iconSource, /const generatedLogos: Record<SkillIconKind, string>/);
+assert.match(iconSource, /skill\.logoPath \? fileUrl\(skill\.logoPath\) : generatedLogo/);
+assert.match(iconSource, /skill\.logoDarkPath \|\| skill\.logoPath/);
+for (const kind of [
+  'document', 'spreadsheet', 'presentation', 'pdf', 'image', 'web', 'computer',
+  'security', 'integration', 'tooling', 'design', 'data', 'research', 'workflow',
+  'code', 'generic',
+]) {
+  assert.ok(fs.existsSync(path.join(process.cwd(), 'src', 'assets', 'skill-logos', `${kind}.svg`)), `${kind} Skill logo must exist`);
+}
 assert.match(composerSource, /<SkillIcon skill=\{skill\} compact \/>/);
 assert.match(panelSource, /<SkillIcon skill=\{skill\} \/>/);
 assert.match(panelSource, /<SkillIcon skill=\{detail\} compact \/>/);
 assert.match(styles, /\.skill-icon-spreadsheet\s*\{/);
 assert.match(styles, /\.skill-icon-presentation\s*\{/);
 assert.match(styles, /\.skill-icon-pdf\s*\{/);
+assert.match(styles, /\.skill-icon img\s*\{/);
 
 console.log('skill icon contract tests passed');

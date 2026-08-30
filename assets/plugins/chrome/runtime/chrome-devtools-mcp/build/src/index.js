@@ -1,0 +1,190 @@
+/**
+ * @license
+ * Copyright 2026 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import { ensureBrowserConnected, ensureBrowserLaunched } from './browser.js';
+import { loadIssueDescriptions } from './devtools/issueDescriptions.js';
+import { McpContext } from './McpContext.js';
+import { ClearcutLogger } from './telemetry/ClearcutLogger.js';
+import { FilePersistence } from './telemetry/persistence.js';
+import { McpServer, SetLevelRequestSchema, ListRootsResultSchema, RootsListChangedNotificationSchema, } from './third_party/index.js';
+import { ToolHandler } from './ToolHandler.js';
+import { createTools } from './tools/tools.js';
+import { logger } from './utils/logger.js';
+import { Mutex, puppeteer } from './third_party/index.js';
+import { VERSION } from './version.js';
+export { buildFlag } from './ToolHandler.js';
+puppeteer.setFollowSymlinks(false);
+/**
+ * Timeout for a `roots/list` that a tool call is waiting on, matching the 5s
+ * default used for page operations. `getContext()` awaits it while
+ * `ToolHandler` holds the tool mutex, so leaving it unbounded lets a client
+ * that negotiates `roots` but does not answer block every tool for the SDK's
+ * default of 60s. Background refreshes are not bounded by this, so roots a
+ * slow client sends late still land.
+ */
+const ROOTS_REQUEST_TIMEOUT = 5_000;
+export async function createMcpServer(serverArgs, options) {
+    if (serverArgs.usageStatistics) {
+        ClearcutLogger.initialize({
+            persistence: new FilePersistence(),
+            logFile: serverArgs.logFile,
+            appVersion: VERSION,
+            clearcutEndpoint: serverArgs.clearcutEndpoint,
+            clearcutForceFlushIntervalMs: serverArgs.clearcutForceFlushIntervalMs,
+            clearcutIncludePidHeader: serverArgs.clearcutIncludePidHeader,
+        });
+    }
+    const server = new McpServer({
+        name: 'chrome_devtools',
+        title: 'Chrome DevTools MCP server',
+        version: VERSION,
+    }, { capabilities: { logging: {} } });
+    server.server.setRequestHandler(SetLevelRequestSchema, () => {
+        return {};
+    });
+    // Roots are client state rather than browser state, so the last listing stays
+    // valid across browser reconnects and only the client can invalidate it, via
+    // the `roots/list_changed` notification handled below
+    let lastRoots;
+    // `timeout` is only passed where a tool call is waiting on the result – the
+    // background refreshes below block nobody, so bounding them would just discard
+    // roots a slow client was about to send
+    const updateRoots = async (timeout) => {
+        if (!server.server.getClientCapabilities()?.roots) {
+            return;
+        }
+        try {
+            const roots = await server.server.request({ method: 'roots/list' }, ListRootsResultSchema, timeout === undefined ? undefined : { timeout });
+            lastRoots = roots.roots;
+            context?.setRoots(lastRoots);
+        }
+        catch (e) {
+            logger?.('Failed to list roots', e);
+        }
+    };
+    server.server.oninitialized = () => {
+        const clientName = server.server.getClientVersion()?.name;
+        if (clientName) {
+            ClearcutLogger.get()?.setClientName(clientName);
+        }
+        if (server.server.getClientCapabilities()?.roots) {
+            void updateRoots();
+            server.server.setNotificationHandler(RootsListChangedNotificationSchema, () => {
+                void updateRoots();
+            });
+        }
+        else if (!serverArgs.allowUnrestrictedPaths) {
+            console.warn('[chrome-devtools-mcp] The connecting client did not negotiate the MCP roots ' +
+                'capability. File-writing tools will be restricted to the OS temp directory. ' +
+                'To restore the previous unrestricted behavior, start the server with ' +
+                '--allow-unrestricted-paths.');
+        }
+    };
+    let context;
+    async function getContext() {
+        const chromeArgs = (serverArgs.chromeArg ?? []).map(String);
+        const ignoreDefaultChromeArgs = (serverArgs.ignoreDefaultChromeArg ?? []).map(String);
+        if (serverArgs.proxyServer) {
+            chromeArgs.push(`--proxy-server=${serverArgs.proxyServer}`);
+        }
+        const devtools = serverArgs.experimentalDevtools ?? false;
+        const blocklist = serverArgs.blockedUrlPattern
+            ? serverArgs.blockedUrlPattern.map(String)
+            : undefined;
+        const allowlist = serverArgs.allowedUrlPattern
+            ? serverArgs.allowedUrlPattern.map(String)
+            : undefined;
+        const browser = serverArgs.browserUrl || serverArgs.wsEndpoint || serverArgs.autoConnect
+            ? await ensureBrowserConnected({
+                browserURL: serverArgs.browserUrl,
+                wsEndpoint: serverArgs.wsEndpoint,
+                wsHeaders: serverArgs.wsHeaders,
+                // Important: only pass channel, if autoConnect is true.
+                channel: serverArgs.autoConnect
+                    ? serverArgs.channel
+                    : undefined,
+                userDataDir: serverArgs.userDataDir,
+                devtools,
+                blocklist,
+                allowlist,
+            })
+            : await ensureBrowserLaunched({
+                headless: serverArgs.headless,
+                executablePath: serverArgs.executablePath,
+                channel: serverArgs.channel,
+                isolated: serverArgs.isolated ?? false,
+                userDataDir: serverArgs.userDataDir,
+                logFile: options.logFile,
+                viewport: serverArgs.viewport,
+                chromeArgs,
+                ignoreDefaultChromeArgs,
+                acceptInsecureCerts: serverArgs.acceptInsecureCerts,
+                devtools,
+                enableExtensions: serverArgs.categoryExtensions,
+                viaCli: serverArgs.viaCli,
+                blocklist,
+                allowlist,
+            });
+        if (context?.browser !== browser) {
+            context?.dispose();
+            context = await McpContext.from(browser, logger, {
+                experimentalDevToolsDebugging: devtools,
+                experimentalIncludeAllPages: serverArgs.experimentalIncludeAllPages,
+                performanceCrux: serverArgs.performanceCrux,
+                allowList: allowlist,
+                blocklist: blocklist,
+                allowUnrestrictedPaths: serverArgs.allowUnrestrictedPaths,
+                // Surfaces a one-time note in the next response after a reconnect.
+                reconnected: context !== undefined,
+            });
+            if (lastRoots === undefined) {
+                // Nothing listed yet, so this call has to wait – bounded, since it is
+                // holding the tool mutex, and a later background refresh still lands
+                await updateRoots(ROOTS_REQUEST_TIMEOUT);
+            }
+            else {
+                // Carry the known roots over and refresh out of band, so a reconnect
+                // never pays for a client round-trip
+                context.setRoots(lastRoots);
+                void updateRoots();
+            }
+        }
+        return context;
+    }
+    const toolMutex = new Mutex();
+    function registerTool(tool) {
+        const toolHandler = new ToolHandler(tool, serverArgs, getContext, toolMutex);
+        if (!toolHandler.shouldRegister) {
+            return;
+        }
+        server.registerTool(tool.name, {
+            description: tool.description,
+            inputSchema: toolHandler.registeredInputSchema,
+            annotations: tool.annotations,
+        }, async (params) => {
+            return await toolHandler.handle(params);
+        });
+    }
+    const tools = createTools(serverArgs);
+    for (const tool of tools) {
+        registerTool(tool);
+    }
+    await loadIssueDescriptions();
+    return { server };
+}
+export const logDisclaimers = (args) => {
+    console.error(`chrome-devtools-mcp exposes content of the browser instance to the MCP clients allowing them to inspect,
+debug, and modify any data in the browser or DevTools.
+Avoid sharing sensitive or personal information that you do not want to share with MCP clients.`);
+    if (!args.slim && args.performanceCrux) {
+        console.error(`Performance tools may send trace URLs to the Google CrUX API to fetch real-user experience data. To disable, run with --no-performance-crux.`);
+    }
+    if (!args.slim && args.usageStatistics) {
+        console.error(`
+Google collects usage statistics to improve Chrome DevTools MCP. To opt-out, run with --no-usage-statistics.
+For more details, visit: https://github.com/ChromeDevTools/chrome-devtools-mcp#usage-statistics`);
+    }
+};
+//# sourceMappingURL=index.js.map

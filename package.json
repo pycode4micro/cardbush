@@ -1,6 +1,10 @@
 {
   "name": "cardbush-electron",
   "version": "1.0.0-dev",
+  "description": "CardBush desktop AI workspace",
+  "author": {
+    "name": "CardBush"
+  },
   "private": true,
   "workspaces": [
     "packages/*"
@@ -18,6 +22,8 @@
     "build": "tsc -p tsconfig.node.json && vite build",
     "build:runtime": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && npm run build --workspace @cardbush/product-host && npm run build --workspace @cardbush/bush-provider-openai && npm run build --workspace @cardbush/bush-mcp-client && npm run build --workspace @cardbush/apps-mcp && npm run build --workspace @cardbush/bush-runtime-electron",
     "gui": "npm run build && node scripts/run-electron-gui.mjs",
+    "package:dir": "npm run build && electron-builder --dir",
+    "package:win": "npm run build && electron-builder --win nsis",
     "icon:generate": "electron scripts/generate-cardbush-icon.cjs",
     "fix:electron": "node scripts/install-electron.mjs",
     "preview": "vite preview --host 127.0.0.1",
@@ -26,6 +32,8 @@
     "test:skill-selection": "node scripts/test-skill-selection-metadata.mjs",
     "test:skill-icons": "node scripts/test-skill-icons-contract.mjs",
     "test:product-skills": "tsc -p tsconfig.node.json && node scripts/test-product-skills-contract.mjs",
+    "test:product-plugins": "npm run build --workspace @cardbush/product-host && tsc -p tsconfig.node.json && node scripts/test-product-plugins-contract.mjs",
+    "test:chrome-mcp": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-mcp-client && node scripts/test-chrome-mcp-bundle.mjs",
     "test:task-plan": "node scripts/test-task-plan-contract.mjs",
     "test:turn-guidance": "node scripts/test-turn-guidance-contract.mjs",
     "test:composer-actions": "node scripts/test-composer-quick-actions-contract.mjs",
@@ -63,6 +71,7 @@
     "test:runtime": "npm run build:runtime && npm run test:unit --workspace @cardbush/bush-protocol && npm run test:unit --workspace @cardbush/bush-runtime && npm run test --workspace @cardbush/bush-product-agent && npm run test --workspace @cardbush/product-host && npm run test:unit --workspace @cardbush/bush-provider-openai && npm run test:unit --workspace @cardbush/bush-mcp-client && npm run test --workspace @cardbush/apps-mcp && npm run test:unit --workspace @cardbush/bush-runtime-electron",
     "test:runtime-utility": "npm run build:runtime && tsc -p tsconfig.node.json && electron scripts/test-runtime-utility-host.cjs",
     "test:runtime-product-tools": "npm run build:runtime && tsc -p tsconfig.node.json && node scripts/test-runtime-product-tools-contract.mjs",
+    "test:startup-runtime": "node scripts/test-startup-runtime-contract.mjs",
     "live:runtime-game": "npm run build:runtime && node scripts/live-runtime-game.mjs",
     "typecheck:runtime": "npm run typecheck --workspace @cardbush/bush-protocol && npm run typecheck --workspace @cardbush/bush-runtime && npm run typecheck --workspace @cardbush/bush-provider-openai && npm run typecheck --workspace @cardbush/bush-mcp-client && npm run typecheck --workspace @cardbush/apps-mcp && npm run typecheck --workspace @cardbush/bush-runtime-electron",
     "pretypecheck": "npm run build:runtime",
@@ -70,6 +79,14 @@
     "test:all": "node scripts/run-release-checks.mjs"
   },
   "dependencies": {
+    "@cardbush/apps-mcp": "0.1.0",
+    "@cardbush/bush-mcp-client": "0.1.0",
+    "@cardbush/bush-product-agent": "0.1.0",
+    "@cardbush/bush-protocol": "0.1.0",
+    "@cardbush/bush-provider-openai": "0.1.0",
+    "@cardbush/bush-runtime": "0.1.0",
+    "@cardbush/bush-runtime-electron": "0.1.0",
+    "@cardbush/product-host": "0.1.0",
     "@jvmr/pptx-to-html": "^1.1.1",
     "@xterm/xterm": "^6.0.0",
     "docx-preview": "^0.4.0",
@@ -89,6 +106,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^10.0.4",
     "electron": "^42.8.1",
+    "electron-builder": "^26.15.3",
     "resedit": "^3.1.0",
     "typescript": "^6.0.3",
     "vite": "^8.2.1",

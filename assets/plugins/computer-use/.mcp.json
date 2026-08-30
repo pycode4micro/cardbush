@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cardbush_apps": {
+      "type": "stdio",
+      "command": "cardbush-apps-mcp"
+    }
+  }
+}

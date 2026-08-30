@@ -1,0 +1,20 @@
+{
+  "name": "computer-use",
+  "version": "1.0.0",
+  "description": "Control Windows desktop applications.",
+  "author": { "name": "CardBush" },
+  "license": "Proprietary",
+  "keywords": ["desktop", "windows", "automation"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Computer Use",
+    "shortDescription": "控制 Windows 桌面应用",
+    "longDescription": "通过明确的权限请求观察桌面、操作窗口并控制本机应用。",
+    "developerName": "CardBush",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["查看当前桌面并说明可见内容", "打开应用并完成这个操作"],
+    "brandColor": "#8B7CF6",
+    "logo": "./assets/logo.svg"
+  }
+}

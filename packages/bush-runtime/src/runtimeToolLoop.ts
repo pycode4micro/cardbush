@@ -281,6 +281,7 @@ function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
   return {
     role: "user",
     name: "tool_image_observation",
+    visibility: "internal",
     content: [
       "Visual observations produced by the preceding Tool are attached.",
       "Inspect their pixels before making visual claims or deciding the next visual action.",

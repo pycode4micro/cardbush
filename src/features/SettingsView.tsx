@@ -64,6 +64,7 @@ import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
 import { SubagentsPanel } from './SubagentsPanel';
+import { PluginManagementPanel } from './plugins/PluginManagementPanel';
 import {
   loadCumulativeUsageStatistics,
   type CumulativeUsageStatistics,
@@ -85,6 +86,8 @@ import type {
   RuntimeAssetResetPlan,
   RuntimeAssetResetResult,
   SettingsSection,
+  SkillDetail,
+  SkillSummary,
   ThemePreference,
 } from '../types';
 
@@ -127,7 +130,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   subagents: { zh: '子任务运行态', en: 'Task runtime' },
-  mcp: { zh: '插件与 MCP', en: 'Plugins & MCP' },
+  mcp: { zh: '插件', en: 'Plugins' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
   diagnostics: { zh: '运行诊断', en: 'Runtime diagnostics' },
@@ -140,7 +143,7 @@ const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: str
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
   subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
-  mcp: { zh: '统一管理插件提供的连接和 MCP 服务。', en: 'Manage plugin-provided connections and MCP servers.' },
+  mcp: { zh: '管理由 Skill、MCP 与应用组成的 CardBush 插件。', en: 'Manage CardBush plugins composed of Skills, MCP servers, and apps.' },
   cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
   models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
   diagnostics: { zh: '检查内嵌 Runtime、Product Host 与模型配置。', en: 'Inspect the embedded Runtime, Product Host, and model configuration.' },
@@ -227,7 +230,10 @@ export function SettingsView({
   backendCapabilities,
   runtimeBusy,
   conversations,
+  skills,
+  disabledSkillNames,
   initialSection,
+  initialPluginTab,
   onBack,
   onThemePreferenceChange,
   onLightThemeStyleChange,
@@ -238,6 +244,9 @@ export function SettingsView({
   onSidebarWidthChange,
   onConversationHistoryCleared,
   onRuntimeAssetsReloaded,
+  onToggleSkill,
+  onReloadSkills,
+  onLoadSkillDetail,
 }: {
   active: boolean;
   onReady: () => void;
@@ -253,7 +262,10 @@ export function SettingsView({
   backendCapabilities: BackendCapabilities;
   runtimeBusy: boolean;
   conversations: ConversationSummary[];
+  skills: SkillSummary[];
+  disabledSkillNames: Set<string>;
   initialSection: SettingsSection;
+  initialPluginTab: 'plugins' | 'skills';
   onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
   onLightThemeStyleChange: (value: LightThemeStyle) => void;
@@ -264,6 +276,9 @@ export function SettingsView({
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
   onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
+  onToggleSkill: (skillName: string, enabled: boolean) => void;
+  onReloadSkills: () => Promise<SkillSummary[]>;
+  onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -281,6 +296,7 @@ export function SettingsView({
   const [maxCompletionTokens, setMaxCompletionTokens] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
+  const [pluginMcpOpen, setPluginMcpOpen] = useState(false);
   const providerOptions = useMemo(
     () => collectProviderOptions(settings.managedModelConfigs),
     [settings.managedModelConfigs],
@@ -292,6 +308,7 @@ export function SettingsView({
 
   useEffect(() => {
     setSection(visibleSettingsSection(initialSection));
+    setPluginMcpOpen(false);
   }, [initialSection]);
 
   useEffect(() => {
@@ -968,10 +985,28 @@ export function SettingsView({
       );
     }
     if (section === 'mcp') {
-      return (
-        <McpServersPanel
+      return pluginMcpOpen ? (
+        <div className="plugin-mcp-settings">
+          <button className="plugin-back" type="button" onClick={() => setPluginMcpOpen(false)}>
+            <ArrowLeft size={17} />
+            {language === 'zh' ? '返回插件' : 'Back to plugins'}
+          </button>
+          <McpServersPanel
+            language={language}
+            capabilities={backendCapabilities}
+            onNotify={notify}
+          />
+        </div>
+      ) : (
+        <PluginManagementPanel
           language={language}
-          capabilities={backendCapabilities}
+          initialTab={initialPluginTab}
+          skills={skills}
+          disabledSkillNames={disabledSkillNames}
+          onToggleSkill={onToggleSkill}
+          onReloadSkills={onReloadSkills}
+          onLoadSkillDetail={onLoadSkillDetail}
+          onOpenMcp={() => setPluginMcpOpen(true)}
           onNotify={notify}
         />
       );
@@ -1044,14 +1079,14 @@ export function SettingsView({
       </aside>
       <SidebarResizer language={language} onWidthChange={onSidebarWidthChange} />
       <section className="settings-content">
-        <div className="settings-track">
-          <header className="settings-page-header">
+        <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
+          {section !== 'mcp' && <header className="settings-page-header">
             <span className="settings-page-icon"><SectionIcon size={20} /></span>
             <div>
               <h2>{settingsLabels[section][language]}</h2>
               <p>{settingsDescriptions[section][language]}</p>
             </div>
-          </header>
+          </header>}
           {content}
         </div>
       </section>
@@ -2884,8 +2919,8 @@ function McpServersPanel({
       {capabilityUndeclared && (
         <p className="settings-inline-error">
           {language === 'zh'
-            ? '当前 /v1/capabilities 未声明 mcp_servers；后端接口上线后这里会直接可用。'
-            : '/v1/capabilities does not declare mcp_servers yet. This panel will work once backend endpoints are exposed.'}
+            ? '当前 TypeScript Runtime 未声明 MCP 快照能力。'
+            : 'The TypeScript Runtime does not expose MCP snapshot capability.'}
         </p>
       )}
       {error && <p className="settings-inline-error">{error}</p>}

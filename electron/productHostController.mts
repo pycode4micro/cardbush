@@ -2,6 +2,7 @@ import {
   cp,
   mkdir,
   readdir,
+  readFile,
   rename,
   rm,
   stat,
@@ -19,6 +20,7 @@ import {
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
+import { loadProductPluginCatalog } from './productPlugins.js';
 import {
   DELETE_RUNTIME_SESSION_COMMAND,
   LIST_RUNTIME_SESSIONS_COMMAND,
@@ -45,6 +47,9 @@ export interface ElectronProductHostControllerOptions {
   runtimeStateRoot: string;
   bundledSkillRoot: string;
   userSkillRoot: string;
+  bundledPluginRoot: string;
+  userPluginRoot: string;
+  legacyModelConfigPaths?: string[];
   runtimeBridge: ElectronRuntimeBridge;
 }
 
@@ -56,10 +61,12 @@ export class ElectronProductHostController {
   readonly #runtimeStateRoot: string;
   readonly #bundledSkillRoot: string;
   readonly #userSkillRoot: string;
+  readonly #legacyModelConfigPaths: string[];
   readonly #dataRoot: string;
   readonly #host: ProductHost;
   #model?: ProductRuntimeModelConfig;
   #startup?: Promise<void>;
+  #legacyCredentialMigration?: Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
     const dataRoot = resolve(options.dataRoot);
@@ -67,9 +74,17 @@ export class ElectronProductHostController {
     this.#runtimeStateRoot = resolve(options.runtimeStateRoot);
     this.#bundledSkillRoot = resolve(options.bundledSkillRoot);
     this.#userSkillRoot = resolve(options.userSkillRoot);
+    this.#legacyModelConfigPaths = [...new Set(
+      (options.legacyModelConfigPaths ?? []).map((candidate) => resolve(candidate)),
+    )];
     this.#runtime = new ElectronRuntimeTransport(options.runtimeBridge);
     this.#models = new ProductModelConfigStore(join(dataRoot, 'config', 'models.json'));
-    this.#apps = new CardbushAppsConfigStore(join(dataRoot, 'config', 'apps.json'));
+    this.#apps = new CardbushAppsConfigStore(join(dataRoot, 'config', 'apps.json'), {
+      loadCatalog: () => loadProductPluginCatalog([
+        { path: options.bundledPluginRoot, source: 'bundled' },
+        { path: options.userPluginRoot, source: 'user' },
+      ]),
+    });
     this.#mcp = new ProductMcpConfigStore(join(dataRoot, 'config', 'mcp-servers.json'));
     this.#host = new ProductHost({
       get: async () => {
@@ -98,7 +113,8 @@ export class ElectronProductHostController {
     });
   }
 
-  execute(command: unknown): Promise<unknown> {
+  async execute(command: unknown): Promise<unknown> {
+    await this.#ensureLegacyModelCredentials();
     return this.#host.execute(command);
   }
 
@@ -107,6 +123,31 @@ export class ElectronProductHostController {
       this.#runtime.sendCommand({ kind: SHUTDOWN_RUNTIME_COMMAND, payload: {} }),
       new Promise((resolve) => setTimeout(resolve, 6_000)),
     ]).catch(() => undefined);
+  }
+
+  async #ensureLegacyModelCredentials(): Promise<void> {
+    this.#legacyCredentialMigration ??= this.#migrateLegacyModelCredentials();
+    await this.#legacyCredentialMigration;
+  }
+
+  async #migrateLegacyModelCredentials(): Promise<void> {
+    for (const legacyPath of this.#legacyModelConfigPaths) {
+      try {
+        const payload = JSON.parse(await readFile(legacyPath, 'utf8')) as unknown;
+        const imported = await this.#models.migrateMissingCredentials(payload);
+        if (imported > 0) {
+          console.info(
+            `[product-host] imported ${imported} missing model credential(s) from legacy storage`,
+          );
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        console.warn(
+          '[product-host] legacy model credential migration skipped:',
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
   }
 
   async #clearConversations(): Promise<Record<string, unknown>> {
@@ -195,6 +236,13 @@ export class ElectronProductHostController {
     const categoryResults: Record<string, unknown> = {};
     for (const category of selected) {
       if (category === 'skills') {
+        const seed = await treeCounts(this.#bundledSkillRoot);
+        if (seed.files === 0) {
+          throw new ProductHostProtocolError(
+            'runtime_asset_seed_unavailable',
+            'The bundled Skill seed is unavailable; existing Product Skills were not changed.',
+          );
+        }
         const before = await treeCounts(this.#userSkillRoot);
         await replaceDirectoryFromSeed(this.#bundledSkillRoot, this.#userSkillRoot);
         const after = await treeCounts(this.#userSkillRoot);

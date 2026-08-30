@@ -87,6 +87,70 @@ const apiSource = fs.readFileSync(
 assert.match(apiSource, /runtime\.client\.listTurnToolExecutions\(\{/);
 assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(messages, toolExecutions\)/);
 assert.match(apiSource, /options\.includeSuperseded === false \? snapshot\.supersededMessageIds : \[\]/);
+assert.match(
+  apiSource,
+  /assistantDisplayTurnStatus\(turn\.status\)/,
+  'Persisted Runtime Turn status must be projected into the assistant display status.',
+);
+assert.match(
+  apiSource,
+  /\.filter\(\(message\) => !isInternalRuntimeMessage\(message\)\)/,
+  'Internal model-only messages must not enter the visible conversation transcript.',
+);
+
+const visibilitySource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'runtimeMessageVisibility.ts'),
+  'utf8',
+);
+const visibilityTranspiled = ts.transpileModule(visibilitySource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const visibilityModule = { exports: {} };
+vm.runInNewContext(visibilityTranspiled.outputText, {
+  module: visibilityModule,
+  exports: visibilityModule.exports,
+  Set,
+  Boolean,
+});
+const { isInternalRuntimeMessage } = visibilityModule.exports;
+const sessionMessage = (message) => ({
+  messageId: 'message',
+  turnId: 'turn',
+  turnSequence: 1,
+  messageIndex: 0,
+  createdAt: '2026-08-30T00:00:00.000Z',
+  message,
+});
+assert.equal(
+  isInternalRuntimeMessage(sessionMessage({
+    role: 'user',
+    content: 'model-only image follow-up',
+    name: 'tool_image_observation',
+    visibility: 'internal',
+  })),
+  true,
+);
+assert.equal(
+  isInternalRuntimeMessage(sessionMessage({
+    role: 'user',
+    content: 'legacy model-only image follow-up',
+    name: 'tool_image_observation',
+  })),
+  true,
+  'Already persisted image follow-ups must also be hidden.',
+);
+assert.equal(
+  isInternalRuntimeMessage(sessionMessage({
+    role: 'user',
+    content: 'real user guidance',
+    name: 'turn_guidance',
+  })),
+  false,
+  'User-authored turn guidance must remain visible.',
+);
 
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
@@ -292,6 +356,16 @@ assert.match(
   bubbleSource,
   /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
   'The terminal turn must keep the processed header and final answer in chat',
+);
+assert.match(
+  bubbleSource,
+  /status === 'complete'[\s\S]{0,80}status === 'completed'/,
+  'Both legacy UI complete and Runtime completed must render as a visible final answer.',
+);
+assert.match(
+  chatHookSource,
+  /function isAssistantFinalTranscript[\s\S]*?status === 'complete'[\s\S]{0,80}status === 'completed'/,
+  'Runtime completed messages must remain the final transcript during history normalization.',
 );
 assert.doesNotMatch(
   bubbleSource,

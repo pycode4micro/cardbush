@@ -1,0 +1,625 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { overrideDevToolsGlobals } from './devtools/DevtoolsUtils.js';
+import { HeapSnapshotManager } from './processors/HeapSnapshotManager.js';
+import { McpPage } from './McpPage.js';
+import { ServiceWorkerConsoleCollector } from './collectors/ServiceWorkerCollector.js';
+import { Locator, } from './third_party/index.js';
+import { listPages } from './tools/pages.js';
+import { CLOSE_PAGE_ERROR } from './tools/ToolDefinition.js';
+import { getTempFilePath, resolveCanonicalPath } from './utils/files.js';
+// Page ids are handed out from a process-wide counter so they stay unique
+// across all contexts, in particular across browser reconnects. An id issued
+// before a reconnect then fails to resolve instead of hitting an unrelated
+// page of the reconnected browser.
+let nextPageId = 1;
+export class McpContext {
+    browser;
+    logger;
+    // Maps LLM-provided isolatedContext name → Puppeteer BrowserContext.
+    #isolatedContexts = new Map();
+    // Auto-generated name counter for when no name is provided.
+    #nextIsolatedContextId = 1;
+    #extensionServiceWorkers = [];
+    #mcpPages = new Map();
+    #selectedPage;
+    #selectedPageFallback;
+    #serviceWorkerConsoleCollector;
+    #isRunningTrace = false;
+    #screenRecorderData = null;
+    #reconnectNotice = false;
+    #extensionPages = new WeakMap();
+    #extensionServiceWorkerMap = new WeakMap();
+    #nextExtensionServiceWorkerId = 1;
+    #traceResults = [];
+    #locatorClass;
+    #options;
+    #heapSnapshotManager = new HeapSnapshotManager();
+    #roots = undefined;
+    #allowUnrestrictedPaths;
+    constructor(browser, logger, options, locatorClass) {
+        overrideDevToolsGlobals({
+            loadResource: (url) => {
+                return this.loadResource(url);
+            },
+        });
+        this.browser = browser;
+        this.logger = logger;
+        this.#locatorClass = locatorClass;
+        this.#options = options;
+        this.#allowUnrestrictedPaths = options.allowUnrestrictedPaths ?? false;
+        this.#reconnectNotice = options.reconnected ?? false;
+        this.#serviceWorkerConsoleCollector = new ServiceWorkerConsoleCollector(this.browser);
+    }
+    async #init() {
+        await this.createPagesSnapshot();
+        const workers = await this.createExtensionServiceWorkersSnapshot();
+        await this.#serviceWorkerConsoleCollector.init(workers);
+        this.browser.on('targetcreated', this.#onTargetCreated);
+        this.browser.on('targetdestroyed', this.#onTargetDestroyed);
+    }
+    dispose() {
+        this.browser.off('targetcreated', this.#onTargetCreated);
+        this.browser.off('targetdestroyed', this.#onTargetDestroyed);
+        this.#serviceWorkerConsoleCollector.dispose();
+        this.#heapSnapshotManager.dispose();
+        for (const mcpPage of this.#mcpPages.values()) {
+            mcpPage.dispose();
+        }
+        this.#mcpPages.clear();
+        // Isolated contexts are intentionally not closed here.
+        // Either the entire browser will be closed or we disconnect
+        // without destroying browser state.
+        this.#isolatedContexts.clear();
+    }
+    #onTargetCreated = async (target) => {
+        try {
+            const page = await target.page();
+            if (!page) {
+                return;
+            }
+            void this.#createMcpPage(page);
+        }
+        catch (err) {
+            this.logger?.('Error handling targetcreated', err);
+        }
+    };
+    #onTargetDestroyed = (target) => {
+        try {
+            let foundPage;
+            for (const page of this.#mcpPages.keys()) {
+                if (page.target() === target) {
+                    foundPage = page;
+                    break;
+                }
+            }
+            if (!foundPage) {
+                return;
+            }
+            const mcpPage = this.#mcpPages.get(foundPage);
+            if (mcpPage) {
+                mcpPage.dispose();
+                this.#mcpPages.delete(foundPage);
+            }
+        }
+        catch (err) {
+            this.logger?.('Error handling targetdestroyed', err);
+        }
+    };
+    static async from(browser, logger, opts, 
+    /* Let tests use unbundled Locator class to avoid overly strict checks within puppeteer that fail when mixing bundled and unbundled class instances */
+    locatorClass = Locator) {
+        const context = new McpContext(browser, logger, opts, locatorClass);
+        await context.#init();
+        return context;
+    }
+    static resetPageIdsForTesting() {
+        nextPageId = 1;
+    }
+    roots() {
+        return [
+            ...(this.#roots ?? []),
+            {
+                uri: pathToFileURL(os.tmpdir()).href,
+                name: 'temp',
+            },
+        ];
+    }
+    setRoots(roots) {
+        this.#roots = roots;
+    }
+    async validatePath(filePath) {
+        if (filePath === undefined) {
+            return undefined;
+        }
+        let canonicalPath;
+        try {
+            canonicalPath = await resolveCanonicalPath(filePath);
+        }
+        catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            console.error(`[MCP Context] Error resolving real path for ${filePath}: ${errMsg}`);
+            throw new Error(`Access denied: Cannot resolve base path for ${filePath}.`);
+        }
+        // If the client never negotiated roots and the operator has explicitly
+        // opted into unrestricted access via --allow-unrestricted-paths, restore
+        // the previous permissive behavior and skip validation.
+        if (this.#roots === undefined && this.#allowUnrestrictedPaths) {
+            // Canonical path might not exist yet so we fallback to
+            // path.resolve(filePath). Consumers should not follow symlinks.
+            return canonicalPath || path.resolve(filePath);
+        }
+        // roots() always returns at least the temp directory, even if the
+        // connecting client never negotiated the optional `roots` capability.
+        // Path validation must not be skipped just because no workspace roots
+        // were configured.
+        const roots = this.roots();
+        let allowed = false;
+        const resolvedRoots = await Promise.allSettled(roots.map(async (root) => {
+            const rootPathUri = root.uri;
+            const rootPath = path.resolve(fileURLToPath(rootPathUri));
+            return await fs.realpath(rootPath);
+        }));
+        for (let i = 0; i < roots.length; i++) {
+            const root = roots[i];
+            const result = resolvedRoots[i];
+            if (result.status === 'fulfilled') {
+                const canonicalRoot = result.value;
+                if (canonicalPath === canonicalRoot ||
+                    canonicalPath.startsWith(canonicalRoot + path.sep)) {
+                    allowed = true;
+                    break;
+                }
+            }
+            else {
+                const rootErr = result.reason;
+                const errMsg = rootErr instanceof Error ? rootErr.message : String(rootErr);
+                console.warn(`[MCP Context] Could not resolve configured root ${root.uri}: ${errMsg}`);
+                // Skip this root if it cannot be resolved.
+            }
+        }
+        if (!allowed) {
+            throw new Error(`Access denied: path ${filePath} (canonical: ${canonicalPath}) is not within any of the configured workspace roots.`);
+        }
+        return canonicalPath || path.resolve(filePath);
+    }
+    async ensureExtension(filePath, extension) {
+        const resolved = await this.validatePath(filePath);
+        const currentExtension = path.extname(resolved);
+        const outputPath = `${resolved.slice(0, resolved.length - currentExtension.length)}${extension}`;
+        return outputPath;
+    }
+    async newPage(background, isolatedContextName) {
+        let page;
+        if (isolatedContextName !== undefined) {
+            let ctx = this.#isolatedContexts.get(isolatedContextName);
+            if (!ctx) {
+                ctx = await this.browser.createBrowserContext();
+                this.#isolatedContexts.set(isolatedContextName, ctx);
+            }
+            page = await ctx.newPage();
+        }
+        else {
+            page = await this.browser.newPage({ background });
+        }
+        const mcpPage = await this.#createMcpPage(page);
+        await this.createPagesSnapshot();
+        this.selectPage(mcpPage);
+        return mcpPage;
+    }
+    async closePage(pageId) {
+        if (this.#mcpPages.size === 1) {
+            throw new Error(CLOSE_PAGE_ERROR);
+        }
+        const page = this.getPageById(pageId);
+        if (page) {
+            page.dispose();
+            this.#mcpPages.delete(page.pptrPage);
+        }
+        await page.pptrPage.close({ runBeforeUnload: false });
+    }
+    get #hasNetworkBlockOrAllowlist() {
+        return !!(this.#options.allowList || this.#options.blocklist);
+    }
+    installPWA(options) {
+        return this.browser.installPWA(options);
+    }
+    uninstallPWA(options) {
+        return this.browser.uninstallPWA(options);
+    }
+    launchPWA(options) {
+        return this.browser.launchPWA(options);
+    }
+    getPWAState(options) {
+        return this.browser.getPWAState(options);
+    }
+    setIsRunningPerformanceTrace(x) {
+        this.#isRunningTrace = x;
+    }
+    isRunningPerformanceTrace() {
+        return this.#isRunningTrace;
+    }
+    getScreenRecorder() {
+        return this.#screenRecorderData;
+    }
+    setScreenRecorder(data) {
+        this.#screenRecorderData = data;
+    }
+    isCruxEnabled() {
+        return this.#options.performanceCrux;
+    }
+    getPages() {
+        return Array.from(this.#mcpPages.values());
+    }
+    getSelectedMcpPage() {
+        const page = this.#selectedPage;
+        if (!page) {
+            throw new Error('No page selected');
+        }
+        if (page.pptrPage.isClosed()) {
+            throw new Error(`The selected page has been closed. Call ${listPages().name} to see open pages.`);
+        }
+        return page;
+    }
+    getSelectedMcpPageUrl(page) {
+        let targetPage = page;
+        if (!targetPage) {
+            try {
+                targetPage = this.getSelectedMcpPage();
+            }
+            catch {
+                return undefined;
+            }
+        }
+        if (targetPage?.pptrPage?.isClosed() === false) {
+            return targetPage.pptrPage.url();
+        }
+        return undefined;
+    }
+    async getDevToolsData(page) {
+        const targetPage = page ?? this.#selectedPage;
+        if (!targetPage) {
+            return undefined;
+        }
+        let timeoutId;
+        const timeoutPromise = new Promise(resolve => {
+            timeoutId = setTimeout(() => resolve(undefined), 500);
+        });
+        const dataPromise = targetPage.getDevToolsData();
+        try {
+            return await Promise.race([dataPromise, timeoutPromise]);
+        }
+        catch {
+            return undefined;
+        }
+        finally {
+            clearTimeout(timeoutId);
+        }
+    }
+    /**
+     * Returns true once if this context was created by reconnecting after the
+     * previous browser connection was lost, so the next response can surface a
+     * note. Cleared on first call.
+     */
+    consumeReconnectNotice() {
+        const notice = this.#reconnectNotice;
+        this.#reconnectNotice = false;
+        return notice;
+    }
+    getPageById(pageId) {
+        const page = this.#mcpPages.values().find(mcpPage => mcpPage.id === pageId);
+        if (!page) {
+            throw new Error('No page found');
+        }
+        return page;
+    }
+    isPageSelected(page) {
+        return this.#selectedPage === page;
+    }
+    selectPage(newPage) {
+        this.#selectedPage = newPage;
+        newPage.updateTimeouts();
+    }
+    /**
+     * Returns details about the last page snapshot automatically replacing the
+     * selection because the selected page disappeared from the page list, or
+     * `undefined` if the snapshot left the selection intact. Recomputed on every
+     * createPagesSnapshot() call.
+     */
+    getSelectedPageFallback() {
+        return this.#selectedPageFallback;
+    }
+    /**
+     * Creates a snapshot of the extension service workers.
+     */
+    async createExtensionServiceWorkersSnapshot() {
+        const allTargets = this.browser.targets();
+        const serviceWorkers = allTargets.filter(target => {
+            return (target.type() === 'service_worker' &&
+                target.url().includes('chrome-extension://'));
+        });
+        for (const serviceWorker of serviceWorkers) {
+            if (!this.#extensionServiceWorkerMap.has(serviceWorker)) {
+                this.#extensionServiceWorkerMap.set(serviceWorker, 'sw-' + this.#nextExtensionServiceWorkerId++);
+            }
+        }
+        this.#extensionServiceWorkers = serviceWorkers.map(serviceWorker => {
+            return {
+                target: serviceWorker,
+                id: this.#extensionServiceWorkerMap.get(serviceWorker),
+                url: serviceWorker.url(),
+            };
+        });
+        return this.#extensionServiceWorkers;
+    }
+    getServiceWorkerConsoleData(extensionId) {
+        return this.#serviceWorkerConsoleCollector.getData(extensionId);
+    }
+    #getBrowserContextToNameMap() {
+        // Build a reverse lookup from BrowserContext instance → name.
+        const contextToName = new Map();
+        for (const [name, ctx] of this.#isolatedContexts) {
+            contextToName.set(ctx, name);
+        }
+        const defaultCtx = this.browser.defaultBrowserContext();
+        // Auto-discover BrowserContexts not in our mapping (e.g., externally
+        // created incognito contexts) and assign generated names.
+        const knownContexts = new Set(this.#isolatedContexts.values());
+        for (const ctx of this.browser.browserContexts()) {
+            if (ctx !== defaultCtx && !ctx.closed && !knownContexts.has(ctx)) {
+                const name = `isolated-context-${this.#nextIsolatedContextId++}`;
+                this.#isolatedContexts.set(name, ctx);
+                contextToName.set(ctx, name);
+            }
+        }
+        return contextToName;
+    }
+    async #createMcpPage(page) {
+        let mcpPage = this.#mcpPages.get(page);
+        if (!mcpPage) {
+            mcpPage = new McpPage(page, nextPageId++, {
+                locatorClass: this.#locatorClass,
+                hasNetworkBlockOrAllowlist: this.#hasNetworkBlockOrAllowlist,
+                isolatedContextName: this.#getBrowserContextToNameMap().get(page.browserContext()),
+                navigationTimeout: this.#options.navigationTimeout,
+            });
+            this.#mcpPages.set(page, mcpPage);
+            await mcpPage.init();
+        }
+        return mcpPage;
+    }
+    async createPagesSnapshot() {
+        const allPages = await this.#fetchBrowserPages();
+        await Promise.allSettled(allPages.map(page => this.#createMcpPage(page)));
+        // Prune orphaned #mcpPages entries (pages that no longer exist).
+        const currentPages = new Set(allPages);
+        for (const [page, mcpPage] of this.#mcpPages) {
+            if (!currentPages.has(page)) {
+                mcpPage.dispose();
+                this.#mcpPages.delete(page);
+            }
+        }
+        const pages = Array.from(this.#mcpPages.values());
+        // Only fall back when the selected page is actually gone. Gating on
+        // `isClosed()` instead of `pages` membership avoids silently swapping a
+        // live page that is momentarily missing from the snapshot.
+        this.#selectedPageFallback = undefined;
+        if ((!this.#selectedPage || this.#selectedPage.pptrPage.isClosed()) &&
+            pages[0]) {
+            // Record the automatic change so the response can surface it. Skipped on
+            // first connect, when there was no prior selection to replace.
+            if (this.#selectedPage) {
+                this.#selectedPageFallback = {
+                    wasClosed: this.#selectedPage.pptrPage.isClosed(),
+                };
+            }
+            this.selectPage(pages[0]);
+        }
+        return pages.map(p => p.pptrPage);
+    }
+    async #fetchBrowserPages() {
+        const allPages = (await this.browser.pages(this.#options.experimentalIncludeAllPages)).filter(page => {
+            return (this.#options.experimentalDevToolsDebugging ||
+                !page.url().startsWith('devtools://'));
+        });
+        const allTargets = this.browser.targets();
+        const extensionTargets = allTargets.filter(target => {
+            return (target.url().startsWith('chrome-extension://') &&
+                target.type() === 'page');
+        });
+        await Promise.allSettled(extensionTargets.map(async (target) => {
+            try {
+                let page = await target.page();
+                if (!page) {
+                    page = await target.asPage();
+                }
+                this.#extensionPages.set(target, page);
+                if (page && !allPages.includes(page)) {
+                    allPages.push(page);
+                }
+            }
+            catch (e) {
+                this.logger?.('Failed to get page for extension target', e);
+            }
+        }));
+        return allPages;
+    }
+    getExtensionServiceWorkers() {
+        return this.#extensionServiceWorkers;
+    }
+    getExtensionServiceWorkerId(extensionServiceWorker) {
+        return this.#extensionServiceWorkerMap.get(extensionServiceWorker.target);
+    }
+    async #writeFile(filepath, data) {
+        const resolved = await this.validatePath(filepath);
+        try {
+            await fs.mkdir(path.dirname(resolved), { recursive: true });
+            // Open the file with flags to:
+            // - O_WRONLY: Write-only
+            // - O_CREAT: Create if it doesn't exist
+            // - O_TRUNC: Truncate to zero length if it exists
+            // - O_NOFOLLOW: DO NOT follow symlinks.
+            // - 0o600: Permissions: read/write for owner, no permissions for others.
+            await fs.writeFile(resolved, data, {
+                flag: fs.constants.O_WRONLY |
+                    fs.constants.O_CREAT |
+                    fs.constants.O_TRUNC |
+                    fs.constants.O_NOFOLLOW,
+                mode: 0o600,
+            });
+        }
+        catch (err) {
+            throw new Error(`Could not write ${filepath}`, { cause: err });
+        }
+    }
+    async saveTemporaryFile(data, filename) {
+        const filepath = await getTempFilePath(filename);
+        await this.#writeFile(filepath, data);
+        return { filepath };
+    }
+    async saveFile(data, clientProvidedFilePath, extension) {
+        const filePath = await this.ensureExtension(clientProvidedFilePath, extension);
+        await this.#writeFile(filePath, data);
+        return { filename: filePath };
+    }
+    storeTraceRecording(result) {
+        // Clear the trace results because we only consume the latest trace currently.
+        this.#traceResults = [];
+        this.#traceResults.push(result);
+    }
+    recordedTraces() {
+        return this.#traceResults;
+    }
+    async installExtension(extensionPath) {
+        const id = await Promise.race([
+            this.browser.installExtension(extensionPath),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout installing extension')), 30000)),
+        ]);
+        return id;
+    }
+    async uninstallExtension(id) {
+        await Promise.race([
+            this.browser.uninstallExtension(id),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout uninstalling extension')), 30000)),
+        ]);
+    }
+    async triggerExtensionAction(id) {
+        const extensions = await this.browser.extensions();
+        const extension = extensions.get(id);
+        if (!extension) {
+            throw new Error(`Extension with ID ${id} not found.`);
+        }
+        const page = this.getSelectedMcpPage().pptrPage;
+        await extension.triggerAction(page);
+    }
+    listExtensions() {
+        return this.browser.extensions();
+    }
+    async getExtension(id) {
+        const pptrExtensions = await this.browser.extensions();
+        return pptrExtensions.get(id);
+    }
+    async getHeapSnapshotAggregates(filePath, filterName, objectId) {
+        return await this.#heapSnapshotManager.getAggregates(filePath, filterName, objectId);
+    }
+    async getHeapSnapshotDuplicateStrings(filePath) {
+        return await this.#heapSnapshotManager.getDuplicateStrings(filePath);
+    }
+    async queryHeapSnapshotObjects(filePath, options) {
+        return await this.#heapSnapshotManager.queryObjects(filePath, options);
+    }
+    async getHeapSnapshotStats(filePath) {
+        return await this.#heapSnapshotManager.getStats(filePath);
+    }
+    async getHeapSnapshotStaticData(filePath) {
+        return await this.#heapSnapshotManager.getStaticData(filePath);
+    }
+    async getHeapSnapshotNativeContextSizes(filePath) {
+        return await this.#heapSnapshotManager.getNativeContextSizes(filePath);
+    }
+    async getHeapSnapshotRetainedByContextSummary(filePath) {
+        return await this.#heapSnapshotManager.getRetainedByContextSummary(filePath);
+    }
+    async getHeapSnapshotNodesById(filePath, id, filterName, objectId) {
+        return await this.#heapSnapshotManager.getNodesById(filePath, id, filterName, objectId);
+    }
+    async getHeapSnapshotRetainers(filePath, nodeId) {
+        return await this.#heapSnapshotManager.getRetainers(filePath, nodeId);
+    }
+    async getHeapSnapshotObjectDetails(filePath, nodeId) {
+        return await this.#heapSnapshotManager.getObjectInfo(filePath, nodeId);
+    }
+    async closeHeapSnapshot(filePath) {
+        return this.#heapSnapshotManager.disposeSnapshot(filePath);
+    }
+    hasHeapSnapshots() {
+        return this.#heapSnapshotManager.hasSnapshots();
+    }
+    async getHeapSnapshotRetainingPaths(filePath, nodeId, maxDepth, maxNodes, maxSiblings) {
+        return await this.#heapSnapshotManager.getRetainingPaths(filePath, nodeId, maxDepth, maxNodes, maxSiblings);
+    }
+    async getHeapSnapshotDominators(filePath, nodeId) {
+        return await this.#heapSnapshotManager.getDominatorsOf(filePath, nodeId);
+    }
+    #validateUrlNotBlocked(url) {
+        if (!this.#options.blocklist) {
+            return;
+        }
+        for (const block of this.#options.blocklist) {
+            const pattern = new URLPattern(block);
+            if (pattern.test(url)) {
+                throw new Error(`Blocked by blocklist: ${url}`);
+            }
+        }
+    }
+    #validateUrlAllowed(url) {
+        if (!this.#options.allowList) {
+            return;
+        }
+        for (const allow of this.#options.allowList) {
+            const pattern = new URLPattern(allow);
+            if (pattern.test(url)) {
+                return;
+            }
+        }
+        throw new Error(`Not allowed by allowlist: ${url}`);
+    }
+    async loadResource(path) {
+        const url = new URL(path);
+        this.#validateUrlNotBlocked(url);
+        switch (url.protocol) {
+            case 'https:':
+            case 'http:': {
+                this.#validateUrlAllowed(url);
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`Failed to load resource: ${url}`);
+                }
+                return response.text();
+            }
+            case 'file:': {
+                const resolved = await this.validatePath(fileURLToPath(url));
+                return await fs.readFile(resolved, 'utf-8');
+            }
+            default:
+                throw new Error(`Unsupported protocol for: ${url}`);
+        }
+    }
+    async getHeapSnapshotEdges(filePath, nodeId, options) {
+        return await this.#heapSnapshotManager.getEdges(filePath, nodeId, options);
+    }
+    async getHeapSnapshotClassDiffs(baseFilePath, currentFilePath) {
+        return await this.#heapSnapshotManager.getClassDiffs(baseFilePath, currentFilePath);
+    }
+    async getHeapSnapshotDetailedClassDiff(baseFilePath, currentFilePath, classIndex) {
+        return await this.#heapSnapshotManager.getDetailedClassDiff(baseFilePath, currentFilePath, classIndex);
+    }
+}
+//# sourceMappingURL=McpContext.js.map

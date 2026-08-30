@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "browser_ops": {
+      "type": "stdio",
+      "command": "cardbush-browser-ops"
+    }
+  }
+}

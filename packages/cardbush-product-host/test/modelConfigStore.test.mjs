@@ -39,3 +39,56 @@ test("persists model secrets in the Product Host and only exposes masked facts",
   });
   assert.equal(preserved.models[0].apiKey, "secret-provider-key");
 });
+
+test("imports only missing credentials from an identity-matched legacy snapshot", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-model-migration-"));
+  const path = join(root, "models.json");
+  const store = new ProductModelConfigStore(path);
+  await store.write({
+    defaultModelId: "vision",
+    models: [{
+      id: "vision",
+      provider: "deepseek",
+      modelName: "deepseek-v4-flash-vision-exp",
+      apiKey: "",
+      baseUrl: "https://api.deepseek.com",
+    }, {
+      id: "existing",
+      provider: "volcengine",
+      modelName: "glm-5.3",
+      apiKey: "current-secret",
+      baseUrl: "https://ark.example.test/v1",
+    }, {
+      id: "different-endpoint",
+      provider: "deepseek",
+      modelName: "deepseek-v4-flash-vision-exp",
+      apiKey: "",
+      baseUrl: "https://untrusted.example.test/v1",
+    }],
+  });
+
+  const imported = await store.migrateMissingCredentials({
+    version: 1,
+    default_model_id: "vision",
+    models: [{
+      id: "vision",
+      provider: "deepseek",
+      model: "deepseek-v4-flash-vision-exp",
+      api_key: "legacy-vision-secret",
+      base_url: "https://api.deepseek.com/",
+    }, {
+      id: "existing",
+      provider: "volcengine",
+      model: "glm-5.3",
+      api_key: "stale-secret",
+      base_url: "https://ark.example.test/v1",
+    }],
+  });
+
+  assert.equal(imported, 1);
+  const snapshot = await store.read();
+  assert.equal(snapshot.models[0].apiKey, "legacy-vision-secret");
+  assert.equal(snapshot.models[1].apiKey, "current-secret");
+  assert.equal(snapshot.models[2].apiKey, "");
+  assert.equal(JSON.stringify(store.publicPayload(snapshot)).includes("legacy-vision-secret"), false);
+});

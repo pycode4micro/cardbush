@@ -103,6 +103,7 @@ export function useCardbushChat(
   managedModelConfigs: ManagedModelConfig[] = [],
   availableModels: ManagedModelConfig[] = [],
   requestContext: {
+    runtimeReady?: boolean;
     language?: AppLanguage;
     projectContexts?: Record<string, string>;
     disabledSkillNames?: Set<string>;
@@ -436,6 +437,12 @@ export function useCardbushChat(
 
   useEffect(() => {
     let cancelled = false;
+    if (requestContext.runtimeReady === false) {
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
     async function load() {
       setLoading(true);
       try {
@@ -482,7 +489,7 @@ export function useCardbushChat(
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [requestContext.runtimeReady]);
 
   useEffect(() => {
     setSelectedModelState((current) => {
@@ -6228,6 +6235,7 @@ function isAssistantFinalTranscript(message: ChatMessage) {
   const transcriptKind = assistantTranscriptKind(message);
   return (
     status === 'complete' ||
+    status === 'completed' ||
     transcriptKind === 'assistant_final' ||
     (!status && !transcriptKind)
   );

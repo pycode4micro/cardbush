@@ -40,6 +40,27 @@ export class ProductModelConfigStore {
   async write(input: unknown): Promise<ProductModelConfigSnapshot> {
     const existing = await this.read();
     const snapshot = decodeUpdate(input, existing);
+    await this.#writeSnapshot(snapshot);
+    return snapshot;
+  }
+
+  async migrateMissingCredentials(input: unknown): Promise<number> {
+    const existing = await this.read();
+    const credentials = decodeLegacyCredentials(input);
+    let imported = 0;
+    const models = existing.models.map((config) => {
+      if (config.apiKey) return config;
+      const credential = matchingLegacyCredential(config, credentials);
+      if (!credential) return config;
+      imported += 1;
+      return { ...config, apiKey: credential.apiKey };
+    });
+    if (imported === 0) return 0;
+    await this.#writeSnapshot({ ...existing, models });
+    return imported;
+  }
+
+  async #writeSnapshot(snapshot: ProductModelConfigSnapshot): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true });
     const temp = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temp, `${JSON.stringify(snapshot, null, 2)}\n`, {
@@ -48,7 +69,6 @@ export class ProductModelConfigStore {
     });
     await replaceFile(temp, this.#path);
     await chmod(this.#path, 0o600).catch(() => undefined);
-    return snapshot;
   }
 
   publicPayload(snapshot: ProductModelConfigSnapshot): Record<string, unknown> {
@@ -68,6 +88,59 @@ export class ProductModelConfigStore {
       })),
     };
   }
+}
+
+interface LegacyModelCredential {
+  id: string;
+  provider: string;
+  model: string;
+  baseURL: string;
+  apiKey: string;
+}
+
+function decodeLegacyCredentials(input: unknown): LegacyModelCredential[] {
+  const value = record(input, "Legacy model configuration must be an object.");
+  if (!Array.isArray(value.models)) return [];
+  return value.models.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const config = candidate as Record<string, unknown>;
+    const apiKey = optionalString(config.apiKey ?? config.api_key);
+    const provider = optionalString(config.provider);
+    const model = optionalString(config.model ?? config.modelName ?? config.model_name);
+    if (!apiKey || !provider || !model) return [];
+    return [{
+      id: optionalString(config.id ?? config.modelId ?? config.model_id) ?? "",
+      provider,
+      model,
+      baseURL: optionalString(config.baseURL ?? config.baseUrl ?? config.base_url) ?? "",
+      apiKey,
+    }];
+  });
+}
+
+function matchingLegacyCredential(
+  config: ProductModelConfig,
+  credentials: LegacyModelCredential[],
+): LegacyModelCredential | undefined {
+  const provider = normalizedIdentity(config.provider);
+  const model = normalizedIdentity(config.model);
+  const baseURL = normalizedEndpoint(config.baseURL ?? "");
+  const candidates = credentials.filter((candidate) =>
+    normalizedIdentity(candidate.provider) === provider &&
+    normalizedIdentity(candidate.model) === model &&
+    normalizedEndpoint(candidate.baseURL) === baseURL
+  );
+  return candidates.find((candidate) => candidate.id && candidate.id === config.id)
+    ?? (candidates.length === 1 ? candidates[0] : undefined);
+}
+
+function normalizedIdentity(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "google" ? "gemini" : normalized;
+}
+
+function normalizedEndpoint(value: string): string {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
 }
 
 function decodeUpdate(

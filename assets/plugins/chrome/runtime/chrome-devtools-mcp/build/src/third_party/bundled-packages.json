@@ -1,0 +1,9 @@
+{
+  "@modelcontextprotocol/sdk": "1.30.0",
+  "core-js": "3.50.0",
+  "lighthouse": "13.4.1",
+  "semver": "7.8.5",
+  "yargs": "18.1.0",
+  "puppeteer-core": "25.8.0",
+  "https://github.com/ChromeDevTools/devtools-frontend": "6fdb53e0f7a5cb1ebf16e40c45439a5c8007d9be"
+}

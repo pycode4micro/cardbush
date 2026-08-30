@@ -1616,7 +1616,12 @@ function isFinalAssistantDisplayMessage(message: ChatMessage) {
   if (status === 'superseded' || transcriptKind === 'assistant_loop') {
     return false;
   }
-  return status === 'complete' || transcriptKind === 'assistant_final' || (!status && !transcriptKind);
+  return (
+    status === 'complete' ||
+    status === 'completed' ||
+    transcriptKind === 'assistant_final' ||
+    (!status && !transcriptKind)
+  );
 }
 
 function hasAssistantProgressSource(

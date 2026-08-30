@@ -26,7 +26,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
-import { listProductSkills, readProductSkill } from './productSkills';
+import {
+  listProductSkills,
+  migrateLegacyProductSkills,
+  readProductSkill,
+} from './productSkills';
+import { installProductPlugin } from './productPlugins';
 import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
@@ -47,6 +52,9 @@ const cardbushAppUserModelId = cardbushRuntimeIsPackaged
   ? cardbushProductionAppUserModelId
   : `${cardbushProductionAppUserModelId}.development.${cardbushDevelopmentRuntimeIdentity}`;
 const cardbushDisplayName = 'cardbush';
+const desktopStartupStartedAt = Date.now();
+const runtimeStartupStatusChannel = 'app:runtime-startup-status';
+const runtimeServicesStartupTimeoutMs = 15_000;
 // BrowserWindow#setIcon is most reliable on Windows when it receives a
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
 // shortcuts, where Windows explicitly requires an .ico file.
@@ -128,6 +136,21 @@ let startupRevealFallback: ReturnType<typeof setTimeout> | null = null;
 let osTaskbarWatchdog: ReturnType<typeof spawn> | null = null;
 let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null = null;
 let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
+let legacyProductSkillMigration: Promise<void> | null = null;
+type RuntimeStartupStatus = {
+  phase: 'initializing' | 'ready' | 'error';
+  attempt: number;
+  startedAt: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  error?: string;
+};
+let runtimeStartupStatus: RuntimeStartupStatus = {
+  phase: 'initializing',
+  attempt: 0,
+  startedAt: new Date(desktopStartupStartedAt).toISOString(),
+};
+let runtimeServicesInitialization: Promise<void> | null = null;
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
 if (process.platform === 'win32') {
@@ -1701,6 +1724,19 @@ ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   return appendDebugLog(scope, payload);
 });
 
+ipcMain.handle('app:runtime-startup-status', (event) => {
+  assertMainWindowSender(event.sender.id);
+  return { ...runtimeStartupStatus };
+});
+
+ipcMain.handle('app:retry-runtime', async (event) => {
+  assertMainWindowSender(event.sender.id);
+  if (runtimeStartupStatus.phase !== 'initializing') {
+    await startRuntimeServices(true);
+  }
+  return { ...runtimeStartupStatus };
+});
+
 ipcMain.handle('app:renderer-ready', (event) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
@@ -1718,6 +1754,12 @@ ipcMain.handle('app:renderer-ready', (event) => {
     'renderer-ready-before-show',
     loadedIcon.sourcePath,
   );
+  appendDebugLog('startup', {
+    stage: 'renderer-ready',
+    elapsedMs: Date.now() - desktopStartupStartedAt,
+    runtimePhase: runtimeStartupStatus.phase,
+    packaged: cardbushRuntimeIsPackaged,
+  });
   sourceWindow.show();
   // Windows can briefly restore the executable icon while creating the
   // taskbar button. Reapply once after the HWND has become visible.
@@ -1939,13 +1981,27 @@ ipcMain.handle('os:install-catalog-application', async (event, packageId: string
   return { installed: true, output: result.stdout.slice(-4000) };
 });
 
-ipcMain.handle('cardbush-product-host:command', (event, command: unknown) => {
+ipcMain.handle('cardbush-product-host:command', async (event, command: unknown) => {
   assertMainWindowSender(event.sender.id);
-  if (!productHostController) {
-    throw new Error('CardBush Product Host is unavailable.');
-  }
-  return productHostController.execute(command);
+  const controller = await ensureRuntimeServicesReady();
+  return controller.execute(command);
 });
+
+async function ensureRuntimeServicesReady(): Promise<NonNullable<typeof productHostController>> {
+  if (runtimeStartupStatus.phase !== 'ready' || !productHostController) {
+    await (runtimeServicesInitialization ?? startRuntimeServices());
+  }
+  if (runtimeStartupStatus.phase !== 'ready' || !productHostController) {
+    const error = new Error(
+      runtimeStartupStatus.error || 'CardBush Runtime failed to initialize.',
+    ) as Error & { code?: string };
+    error.code = runtimeStartupStatus.phase === 'error'
+      ? 'runtime_initialization_failed'
+      : 'product_host_unavailable';
+    throw error;
+  }
+  return productHostController;
+}
 
 ipcMain.handle(
   'network:set-proxy',
@@ -2036,11 +2092,28 @@ ipcMain.handle('a2a:dispatch', (event, input: {
   return productA2AClient.dispatch(input);
 });
 
-ipcMain.handle('skills:list', () => listProductSkills(productSkillRoots()));
+ipcMain.handle('skills:list', async () => {
+  await ensureLegacyProductSkillsMigrated();
+  return listProductSkills(productSkillRoots());
+});
 
-ipcMain.handle('skills:read', (_, skillName: string) =>
-  readProductSkill(productSkillRoots(), String(skillName ?? '')),
-);
+ipcMain.handle('skills:read', async (_, skillName: string) => {
+  await ensureLegacyProductSkillsMigrated();
+  return readProductSkill(productSkillRoots(), String(skillName ?? ''));
+});
+
+ipcMain.handle('plugins:install-local', async () => {
+  const options: OpenDialogOptions = {
+    title: 'Install CardBush plugin',
+    properties: ['openDirectory'],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options);
+  const sourcePath = result.canceled ? '' : result.filePaths[0] ?? '';
+  if (!sourcePath) return null;
+  return installProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
+});
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
   const options: OpenDialogOptions = {
@@ -2393,14 +2466,26 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
   }
-  await applyProxySettings({
+  registerLocalFileProtocol();
+  createWindow();
+  createTray();
+  appendDebugLog('startup', {
+    stage: 'window-created',
+    elapsedMs: Date.now() - desktopStartupStartedAt,
+    packaged: cardbushRuntimeIsPackaged,
+  });
+  void applyProxySettings({
     mode: 'none',
     httpProxy: '',
     httpsProxy: '',
     noProxy: '',
   }).catch(() => undefined);
-  const shortcutUpdated = ensureWindowsTaskbarShortcut();
-  if (process.platform === 'win32') {
+  void ensureLegacyProductSkillsMigrated();
+  void startRuntimeServices();
+  void listOsApplicationsCached().catch(() => undefined);
+  setImmediate(() => {
+    const shortcutUpdated = ensureWindowsTaskbarShortcut();
+    if (process.platform !== 'win32') return;
     const startupIcon = loadCardbushIconWithSource(256);
     appendDebugLog('taskbar', {
       stage: 'app-ready',
@@ -2419,12 +2504,7 @@ app.whenReady().then(async () => {
       nativeBackground: backgroundForMainWindowTheme(lastMainWindowTheme),
       contentViewBackgroundSynchronized: true,
     });
-  }
-  registerLocalFileProtocol();
-  await initializeRuntimeHost();
-  createWindow();
-  createTray();
-  void listOsApplicationsCached().catch(() => undefined);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -2435,14 +2515,86 @@ app.whenReady().then(async () => {
   });
 });
 
+function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
+  runtimeStartupStatus = next;
+  appendDebugLog('startup', {
+    stage: `runtime-${next.phase}`,
+    ...next,
+    processElapsedMs: Date.now() - desktopStartupStartedAt,
+  });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(runtimeStartupStatusChannel, { ...next });
+  }
+}
+
+async function startRuntimeServices(force = false): Promise<void> {
+  if (runtimeServicesInitialization) return runtimeServicesInitialization;
+  if (force) {
+    unregisterRuntimeHostIpc?.();
+    unregisterRuntimeHostIpc = null;
+    runtimeHostController?.stop();
+    runtimeHostController = null;
+    productHostController = null;
+  }
+  const attempt = runtimeStartupStatus.attempt + 1;
+  const startedAtMs = Date.now();
+  publishRuntimeStartupStatus({
+    phase: 'initializing',
+    attempt,
+    startedAt: new Date(startedAtMs).toISOString(),
+  });
+  runtimeServicesInitialization = initializeRuntimeHost()
+    .then(() => {
+      publishRuntimeStartupStatus({
+        phase: 'ready',
+        attempt,
+        startedAt: new Date(startedAtMs).toISOString(),
+        completedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAtMs,
+      });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[bush-runtime] IPC initialization failed', error);
+      publishRuntimeStartupStatus({
+        phase: 'error',
+        attempt,
+        startedAt: new Date(startedAtMs).toISOString(),
+        completedAt: new Date().toISOString(),
+        elapsedMs: Date.now() - startedAtMs,
+        error: message,
+      });
+    })
+    .finally(() => {
+      runtimeServicesInitialization = null;
+    });
+  return runtimeServicesInitialization;
+}
+
 async function initializeRuntimeHost() {
   try {
-    const controllerModuleUrl = pathToFileURL(
+    await withRuntimeStartupTimeout(
+      initializeRuntimeHostWithinDeadline(),
+      runtimeServicesStartupTimeoutMs,
+    );
+  } catch (error) {
+    unregisterRuntimeHostIpc?.();
+    unregisterRuntimeHostIpc = null;
+    runtimeHostController?.stop();
+    runtimeHostController = null;
+    productHostController = null;
+    throw error;
+  }
+}
+
+async function initializeRuntimeHostWithinDeadline() {
+  const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
     const controllerModule = await import(controllerModuleUrl);
     const controller = new controllerModule.RuntimeUtilityProcessController({
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
+      startupTimeoutMs: 12_000,
       env: {
         ...process.env,
         CARDBUSH_RUNTIME_STATE_ROOT: path.join(
@@ -2456,6 +2608,18 @@ async function initializeRuntimeHost() {
           'cardbush-apps-mcp',
           'dist',
           'index.js',
+        ),
+        CARDBUSH_CHROME_MCP_ENTRY: path.join(
+          app.getAppPath(),
+          'assets',
+          'plugins',
+          'chrome',
+          'runtime',
+          'chrome-devtools-mcp',
+          'build',
+          'src',
+          'bin',
+          'chrome-devtools-mcp.js',
         ),
         CARDBUSH_APPS_CONFIG_PATH: path.join(
           app.getPath('userData'),
@@ -2473,11 +2637,36 @@ async function initializeRuntimeHost() {
       (sender: Electron.WebContents) =>
         mainWindow != null && sender.id === mainWindow.webContents.id,
     );
-    await controller.start();
-    await initializeProductHost(controller);
-  } catch (error) {
-    console.error('[bush-runtime] IPC initialization failed', error);
-  }
+  await Promise.all([
+    controller.start(),
+    initializeProductHost(controller),
+  ]);
+  await productHostController?.execute({
+    protocol: 'cardbush.product_host_ipc.v1',
+    kind: 'apps.get',
+  });
+}
+
+function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error(
+        `Runtime services did not become ready within ${timeoutMs}ms`,
+      ) as Error & { code?: string };
+      error.code = 'runtime_services_startup_timeout';
+      reject(error);
+    }, timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 async function initializeProductHost(controller: RuntimeHostController) {
@@ -2488,18 +2677,72 @@ async function initializeProductHost(controller: RuntimeHostController) {
   const runtimeStateRoot = path.join(app.getPath('userData'), 'runtime-state');
   const bundledSkillRoot = path.join(app.getAppPath(), 'assets', 'skills');
   const userSkillRoot = path.join(app.getPath('userData'), 'skills');
+  const bundledPluginRoot = path.join(app.getAppPath(), 'assets', 'plugins');
+  const userPluginRoot = path.join(app.getPath('userData'), 'plugins');
   productHostController = new productModule.ElectronProductHostController({
     dataRoot: path.join(app.getPath('userData'), 'product-host'),
     runtimeStateRoot,
     bundledSkillRoot,
     userSkillRoot,
+    bundledPluginRoot,
+    userPluginRoot,
+    legacyModelConfigPaths: legacyBushserverModelConfigPaths(),
     runtimeBridge: controller,
-    fetch: net.fetch as typeof fetch,
   }) as {
     execute: (command: unknown) => Promise<unknown>;
     executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
     shutdown: () => Promise<void>;
   };
+}
+
+function legacyBushserverModelConfigPaths(): string[] {
+  const candidates = [
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'bushserver', 'config', 'model-configs.json')
+      : '',
+    process.env.APPDATA
+      ? path.join(process.env.APPDATA, 'bushserver', 'config', 'model-configs.json')
+      : '',
+    path.join(os.homedir(), '.local', 'share', 'bushserver', 'config', 'model-configs.json'),
+  ].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function legacyBushserverSkillRoots(): string[] {
+  const candidates = [
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, 'bushserver', 'skills')
+      : '',
+    process.env.APPDATA
+      ? path.join(process.env.APPDATA, 'bushserver', 'skills')
+      : '',
+    path.join(os.homedir(), '.local', 'share', 'bushserver', 'skills'),
+  ].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function ensureLegacyProductSkillsMigrated(): Promise<void> {
+  legacyProductSkillMigration ??= migrateLegacyProductSkills(
+    legacyBushserverSkillRoots(),
+    path.join(app.getPath('userData'), 'skills'),
+  ).then((result) => {
+    if (result.imported.length > 0) {
+      console.info(
+        `[product-host] imported ${result.imported.length} legacy Skill package(s)`,
+      );
+    }
+    for (const failure of result.failed) {
+      console.warn(
+        `[product-host] legacy Skill ${failure.name} migration skipped: ${failure.message}`,
+      );
+    }
+  }).catch((error) => {
+    console.warn(
+      '[product-host] legacy Skill migration skipped:',
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+  return legacyProductSkillMigration;
 }
 
 function productSkillRoots(): string[] {

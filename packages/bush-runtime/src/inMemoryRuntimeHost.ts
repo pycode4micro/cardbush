@@ -997,6 +997,7 @@ export class InMemoryRuntimeHost {
             const planMessage: ModelMessage = {
               role: "user",
               name: "task_plan_continuation",
+              visibility: "internal",
               content: "The active task plan still has open nodes. Continue the work or update_task_plan with accurate terminal node states before finishing this Turn.",
             };
             messages = [...messages, planMessage];
@@ -1013,6 +1014,7 @@ export class InMemoryRuntimeHost {
               const recoveryMessage: ModelMessage = {
                 role: "user",
                 name: "empty_stop_recovery",
+                visibility: "internal",
                 content: "The previous response ended without visible content or a Tool call. Produce one concise user-facing final response now, or call the required Tool. Do not emit an empty response.",
               };
               messages = [...messages, recoveryMessage];

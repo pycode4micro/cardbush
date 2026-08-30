@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readdirSync, rmSync } = require('node:fs');
+const { mkdtempSync, readdirSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -14,11 +14,14 @@ void run().catch((error) => {
 async function run() {
   const {
     BUSH_MODEL_REQUEST_PROTOCOL,
+    BUSH_MCP_SNAPSHOT_PROTOCOL,
     BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
     BUSH_RUNTIME_IPC_PROTOCOL,
     BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+    APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
     GET_RUNTIME_CAPABILITIES_COMMAND,
     GET_RUNTIME_SESSION_COMMAND,
+    GET_RUNTIME_TOOL_CATALOG_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
     RUN_MODEL_TURN_COMMAND,
     RUN_RUNTIME_SESSION_TURN_COMMAND,
@@ -31,6 +34,27 @@ async function run() {
   const runtimeStateRoot = mkdtempSync(
     path.join(tmpdir(), 'cardbush-runtime-utility-'),
   );
+  const appsConfigPath = path.join(runtimeStateRoot, 'apps.json');
+  writeFileSync(appsConfigPath, JSON.stringify({
+    protocol: 'cardbush.apps_config.v1',
+    revision: 1,
+    serviceEnabled: true,
+    plugins: [{
+      id: 'computer-use',
+      installed: true,
+      enabled: true,
+      config: {
+        screenshotDirectory: '',
+        allowOpenApp: true,
+        allowWindowClose: true,
+      },
+    }, {
+      id: 'chrome',
+      installed: true,
+      enabled: true,
+      config: {},
+    }],
+  }));
 
   await app.whenReady();
   const {
@@ -50,6 +74,26 @@ async function run() {
     env: {
       ...withoutProviderConfiguration(process.env),
       CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
+      CARDBUSH_APPS_CONFIG_PATH: appsConfigPath,
+      CARDBUSH_APPS_MCP_ENTRY: path.join(
+        repositoryRoot,
+        'packages',
+        'cardbush-apps-mcp',
+        'dist',
+        'index.js',
+      ),
+      CARDBUSH_CHROME_MCP_ENTRY: path.join(
+        repositoryRoot,
+        'assets',
+        'plugins',
+        'chrome',
+        'runtime',
+        'chrome-devtools-mcp',
+        'build',
+        'src',
+        'bin',
+        'chrome-devtools-mcp.js',
+      ),
     },
     onStdout: (text) => process.stdout.write(text),
     onStderr: (text) => process.stderr.write(text),
@@ -79,6 +123,39 @@ async function run() {
     );
     assert.equal(capabilityResponse.type, 'command_response');
     assert.equal(capabilityResponse.ok, true);
+    const mcpResponse = await within(
+      controller.command({
+        protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+        type: 'command',
+        operationId: 'operation_apply_bundled_mcp',
+        command: {
+          kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+          payload: {
+            protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
+            snapshotId: 'utility-bundled-plugins',
+            revision: 1,
+            servers: [],
+          },
+        },
+      }),
+      30_000,
+      'bundled MCP plugin startup',
+    );
+    assert.equal(mcpResponse.ok, true);
+    assert.deepEqual(
+      mcpResponse.result.servers.map((server) => server.id),
+      ['cardbush_apps', 'chrome_devtools'],
+    );
+    const toolCatalogResponse = await controller.command({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: 'command',
+      operationId: 'operation_bundled_tool_catalog',
+      command: { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
+    });
+    assert.equal(toolCatalogResponse.ok, true);
+    const toolNames = toolCatalogResponse.result.map((tool) => tool.name);
+    assert.ok(toolNames.includes('mcp__cardbush_apps__computer_use'));
+    assert.ok(toolNames.includes('mcp__chrome_devtools__navigate_page'));
     const configuredProvider = await controller.command({
       protocol: BUSH_RUNTIME_IPC_PROTOCOL,
       type: 'command',

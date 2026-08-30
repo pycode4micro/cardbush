@@ -1,0 +1,231 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+var __addDisposableResource = (this && this.__addDisposableResource) || function (env, value, async) {
+    if (value !== null && value !== void 0) {
+        if (typeof value !== "object" && typeof value !== "function") throw new TypeError("Object expected.");
+        var dispose, inner;
+        if (async) {
+            if (!Symbol.asyncDispose) throw new TypeError("Symbol.asyncDispose is not defined.");
+            dispose = value[Symbol.asyncDispose];
+        }
+        if (dispose === void 0) {
+            if (!Symbol.dispose) throw new TypeError("Symbol.dispose is not defined.");
+            dispose = value[Symbol.dispose];
+            if (async) inner = dispose;
+        }
+        if (typeof dispose !== "function") throw new TypeError("Object not disposable.");
+        if (inner) dispose = function() { try { inner.call(this); } catch (e) { return Promise.reject(e); } };
+        env.stack.push({ value: value, dispose: dispose, async: async });
+    }
+    else if (async) {
+        env.stack.push({ async: true });
+    }
+    return value;
+};
+var __disposeResources = (this && this.__disposeResources) || (function (SuppressedError) {
+    return function (env) {
+        function fail(e) {
+            env.error = env.hasError ? new SuppressedError(e, env.error, "An error was suppressed during disposal.") : e;
+            env.hasError = true;
+        }
+        var r, s = 0;
+        function next() {
+            while (r = env.stack.pop()) {
+                try {
+                    if (!r.async && s === 1) return s = 0, env.stack.push(r), Promise.resolve().then(next);
+                    if (r.dispose) {
+                        var result = r.dispose.call(r.value);
+                        if (r.async) return s |= 2, Promise.resolve(result).then(next, function(e) { fail(e); return next(); });
+                    }
+                    else s |= 1;
+                }
+                catch (e) {
+                    fail(e);
+                }
+            }
+            if (s === 1) return env.hasError ? Promise.reject(env.error) : Promise.resolve();
+            if (env.hasError) throw env.error;
+        }
+        return next();
+    };
+})(typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+    var e = new Error(message);
+    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+});
+import { zod } from '../third_party/index.js';
+import { ToolCategory } from './categories.js';
+import { defineTool, pageIdSchema } from './ToolDefinition.js';
+export const evaluateScript = defineTool(cliArgs => {
+    return {
+        name: 'evaluate_script',
+        description: `Evaluate a JavaScript function inside the target page${cliArgs?.categoryExtensions ? ' or service worker' : ''}. Returns the response as JSON, so returned values have to be JSON-serializable.`,
+        annotations: {
+            category: ToolCategory.DEBUGGING,
+            readOnlyHint: false,
+        },
+        schema: {
+            ...(cliArgs?.pageIdRouting
+                ? cliArgs.categoryExtensions
+                    ? {
+                        pageId: zod
+                            .number()
+                            .optional()
+                            .describe('Targets a specific page by ID. Required when not evaluating in a service worker.'),
+                    }
+                    : pageIdSchema
+                : {}),
+            function: zod.string().describe(`A JavaScript function declaration to be executed by the tool in the target page.
+Example without arguments: \`() => document.title\` or \`async () => await fetch("example.com")\`.
+Example with arguments: \`(el) => el.innerText\`
+`),
+            args: zod
+                .array(zod
+                .string()
+                .describe('The uid of an element on the page from the page content snapshot'))
+                .optional()
+                .describe(`An optional list of arguments to pass to the function.`),
+            filePath: zod
+                .string()
+                .optional()
+                .describe('The absolute or relative path to a file to save the script output to. If omitted, the output is returned inline.'),
+            dialogAction: zod
+                .string()
+                .optional()
+                .describe('Handle dialogs while execution. "accept", "dismiss", or string for response of window.prompt. Defaults to accept.'),
+            waitForStableDom: zod
+                .boolean()
+                .optional()
+                .describe('Whether to wait for the DOM to settle. Pass false if the script only reads data. Defaults to true.'),
+            ...(cliArgs?.categoryExtensions
+                ? {
+                    serviceWorkerId: zod
+                        .string()
+                        .optional()
+                        .describe(`The optional service worker id to evaluate the script in. If provided, 'pageId' should be omitted. Note: 'args' (element UIDs) cannot be used when evaluating in a service worker.`),
+                }
+                : {}),
+        },
+        blockedByDialog: true,
+        verifyFilesSchema: {
+            filePath: true,
+        },
+        handler: async (request, response, context) => {
+            const env_1 = { stack: [], error: void 0, hasError: false };
+            try {
+                const { serviceWorkerId, args: uidArgs, function: fnString, pageId, dialogAction, filePath, waitForStableDom, } = request.params;
+                if (cliArgs?.categoryExtensions && serviceWorkerId) {
+                    if (uidArgs && uidArgs.length > 0) {
+                        throw new Error('args (element uids) cannot be used when evaluating in a service worker.');
+                    }
+                    if (pageId) {
+                        throw new Error('specify either a pageId or a serviceWorkerId.');
+                    }
+                    const worker = await getWebWorker(context, serviceWorkerId);
+                    const result = await context
+                        .getSelectedMcpPage()
+                        .waitForEventsAfterAction(async () => {
+                        await performEvaluation(worker, fnString, [], response, {
+                            filePath,
+                            context,
+                        });
+                    }, 
+                    // Service workers cannot interact with the DOM, so never wait for it.
+                    { handleDialog: dialogAction ?? 'accept', waitForStableDom: false });
+                    if (result.dialogHandled) {
+                        context.getSelectedMcpPage().clearDialog();
+                    }
+                    response.attachWaitForResult(result);
+                    return;
+                }
+                if (cliArgs?.categoryExtensions && cliArgs?.pageIdRouting && !pageId) {
+                    throw new Error('specify either a pageId or a serviceWorkerId.');
+                }
+                const mcpPage = cliArgs?.pageIdRouting && request.params.pageId
+                    ? context.getPageById(request.params.pageId)
+                    : context.getSelectedMcpPage();
+                const page = mcpPage.pptrPage;
+                const args = [];
+                const stack = __addDisposableResource(env_1, new DisposableStack(), false);
+                const frames = new Set();
+                for (const uid of uidArgs ?? []) {
+                    const handle = await mcpPage.getElementByUid(uid);
+                    frames.add(handle.frame);
+                    stack.use(handle);
+                    args.push(handle);
+                }
+                const evaluatable = await getPageOrFrame(page, frames);
+                const result = await mcpPage.waitForEventsAfterAction(async () => {
+                    await performEvaluation(evaluatable, fnString, args, response, {
+                        filePath,
+                        context,
+                    });
+                }, { handleDialog: dialogAction ?? 'accept', waitForStableDom });
+                response.attachWaitForResult(result);
+            }
+            catch (e_1) {
+                env_1.error = e_1;
+                env_1.hasError = true;
+            }
+            finally {
+                __disposeResources(env_1);
+            }
+        },
+    };
+});
+const performEvaluation = async (evaluatable, fnString, args, response, options) => {
+    const env_2 = { stack: [], error: void 0, hasError: false };
+    try {
+        const fn = __addDisposableResource(env_2, await evaluatable.evaluateHandle(`(${fnString})`), false);
+        const result = await evaluatable.evaluate(async (fn, ...args) => {
+            // @ts-expect-error no types for function fn
+            return JSON.stringify(await fn(...args));
+        }, fn, ...args);
+        if (options?.filePath) {
+            const data = new TextEncoder().encode(result ?? 'undefined');
+            const { filename } = await options.context.saveFile(data, options.filePath, '.json');
+            response.appendResponseLine(`Script ran on page. Output saved to ${filename}.`);
+        }
+        else {
+            response.appendResponseLine('Script ran on page and returned:');
+            response.appendResponseLine('```json');
+            response.appendResponseLine(`${result}`);
+            response.appendResponseLine('```');
+        }
+    }
+    catch (e_2) {
+        env_2.error = e_2;
+        env_2.hasError = true;
+    }
+    finally {
+        __disposeResources(env_2);
+    }
+};
+const getPageOrFrame = async (page, frames) => {
+    let pageOrFrame;
+    // We can't evaluate the element handle across frames
+    if (frames.size > 1) {
+        throw new Error("Elements from different frames can't be evaluated together.");
+    }
+    else {
+        pageOrFrame = [...frames.values()][0] ?? page;
+    }
+    return pageOrFrame;
+};
+const getWebWorker = async (context, serviceWorkerId) => {
+    const serviceWorkers = context.getExtensionServiceWorkers();
+    const serviceWorker = serviceWorkers.find((sw) => context.getExtensionServiceWorkerId(sw) === serviceWorkerId);
+    if (serviceWorker && serviceWorker.target) {
+        const worker = await serviceWorker.target.worker();
+        if (!worker) {
+            throw new Error('Service worker target not found.');
+        }
+        return worker;
+    }
+    else {
+        throw new Error('Service worker not found.');
+    }
+};
+//# sourceMappingURL=script.js.map

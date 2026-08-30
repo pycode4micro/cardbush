@@ -45,23 +45,26 @@ export function readAppsRuntimeConfig(
   }
   const root = record(parsed, 'CardBush Apps configuration must be an object.');
   const plugins = Array.isArray(root.plugins) ? root.plugins : [];
-  const plugin = plugins.find((item) => record(item).id === 'computer_use');
-  if (!plugin) throw new Error('CardBush Apps configuration is missing computer_use.');
+  const plugin = plugins.find((item) => {
+    const id = record(item).id;
+    return id === 'computer-use' || id === 'computer_use';
+  });
+  if (!plugin) throw new Error('CardBush Apps configuration is missing computer-use.');
   const value = record(plugin);
   const config = record(value.config);
   const screenshotDirectory = string(config.screenshotDirectory);
   if (screenshotDirectory && !isAbsolute(screenshotDirectory)) {
-    throw new Error('computer_use screenshotDirectory must be absolute.');
+    throw new Error('computer-use screenshotDirectory must be absolute.');
   }
   return {
     serviceEnabled: bool(root.serviceEnabled, 'serviceEnabled'),
     computerUse: {
-      installed: bool(value.installed, 'computer_use.installed'),
-      enabled: bool(value.enabled, 'computer_use.enabled'),
+      installed: bool(value.installed, 'computer-use.installed'),
+      enabled: bool(value.enabled, 'computer-use.enabled'),
       config: {
         screenshotDirectory,
-        allowOpenApp: bool(config.allowOpenApp, 'computer_use.allowOpenApp'),
-        allowWindowClose: bool(config.allowWindowClose, 'computer_use.allowWindowClose'),
+        allowOpenApp: bool(config.allowOpenApp, 'computer-use.allowOpenApp'),
+        allowWindowClose: bool(config.allowWindowClose, 'computer-use.allowWindowClose'),
       },
     },
   };

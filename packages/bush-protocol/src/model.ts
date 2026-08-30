@@ -23,6 +23,7 @@ const userModelMessageSchema = z.object({
   role: z.literal("user"),
   content: z.string(),
   name: z.string().optional(),
+  visibility: z.enum(["conversation", "internal"]).optional(),
   images: z.array(modelImageInputSchema).max(4).optional(),
 });
 

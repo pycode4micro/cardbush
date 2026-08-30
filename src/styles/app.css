@@ -11603,15 +11603,14 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .skill-icon {
-  --skill-icon-accent: var(--accent);
   width: 30px;
   height: 30px;
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  color: var(--skill-icon-accent);
-  background: color-mix(in srgb, var(--skill-icon-accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--skill-icon-accent) 20%, transparent);
+  overflow: hidden;
+  background: #2b2e30;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 9px;
 }
 
@@ -11620,6 +11619,18 @@ body.right-inspector-resizing .right-inspector-resizer {
   height: 20px;
   border-radius: 6px;
 }
+
+.skill-icon img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  grid-area: 1 / 1;
+  object-fit: cover;
+}
+
+.skill-logo-dark { display: none !important; }
+.theme-dark .skill-logo-light { display: none !important; }
+.theme-dark .skill-logo-dark { display: block !important; }
 
 .skill-icon-document { --skill-icon-accent: #6f9ee8; }
 .skill-icon-spreadsheet { --skill-icon-accent: #5dad7c; }

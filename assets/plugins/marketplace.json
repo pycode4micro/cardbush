@@ -1,0 +1,32 @@
+{
+  "name": "cardbush-official",
+  "interface": {
+    "displayName": "CardBush Official"
+  },
+  "plugins": [
+    {
+      "name": "computer-use",
+      "source": { "source": "local", "path": "./computer-use" },
+      "policy": { "installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    },
+    {
+      "name": "cardbush-bot",
+      "source": { "source": "local", "path": "./cardbush-bot" },
+      "policy": { "installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_USE" },
+      "category": "Communication"
+    },
+    {
+      "name": "chrome",
+      "source": { "source": "local", "path": "./chrome" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    },
+    {
+      "name": "browser-ops",
+      "source": { "source": "local", "path": "./browser-ops" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}

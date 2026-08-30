@@ -5,19 +5,45 @@ import { replaceFile } from "./atomicFiles.js";
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
+export type CardbushPluginComponentKind = "skill" | "mcp" | "app";
+
+export interface CardbushPluginComponent {
+  kind: CardbushPluginComponentKind;
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface CardbushPluginCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  longDescription: string;
+  version: string;
+  developerName: string;
+  category: string;
+  capabilities: string[];
+  keywords: string[];
+  defaultPrompts: string[];
+  brandColor: string;
+  logoPath: string;
+  logoDarkPath: string;
+  manifestPath: string;
+  source: "bundled" | "user";
+  installation: "AVAILABLE" | "INSTALLED_BY_DEFAULT";
+  components: CardbushPluginComponent[];
+}
+
 export interface ComputerUsePluginConfig {
   screenshotDirectory: string;
   allowOpenApp: boolean;
   allowWindowClose: boolean;
 }
 
-export interface CardbushAppPluginConfig {
-  id: "computer_use";
-  name: string;
-  description: string;
+export interface CardbushAppPluginConfig extends CardbushPluginCatalogEntry {
   installed: boolean;
   enabled: boolean;
-  config: ComputerUsePluginConfig;
+  config: Record<string, unknown>;
 }
 
 export interface CardbushAppsConfigSnapshot {
@@ -27,12 +53,43 @@ export interface CardbushAppsConfigSnapshot {
   plugins: CardbushAppPluginConfig[];
 }
 
+export interface CardbushAppsConfigStoreOptions {
+  loadCatalog?: () => Promise<CardbushPluginCatalogEntry[]>;
+}
+
+const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
+  id: "computer-use",
+  name: "Computer Use",
+  description: "Control Windows desktop applications.",
+  longDescription: "Observe the local desktop and interact with applications through explicit, permission-aware actions.",
+  version: "1.0.0",
+  developerName: "CardBush",
+  category: "Productivity",
+  capabilities: ["Interactive", "Read", "Write"],
+  keywords: ["desktop", "windows", "automation"],
+  defaultPrompts: ["Inspect the current desktop", "Open an app and complete this task"],
+  brandColor: "#8b7cf6",
+  logoPath: "",
+  logoDarkPath: "",
+  manifestPath: "",
+  source: "bundled",
+  installation: "INSTALLED_BY_DEFAULT",
+  components: [{
+    kind: "mcp",
+    id: "cardbush_apps",
+    name: "Computer Use",
+    description: "Permission-aware desktop control MCP tools.",
+  }],
+};
+
 export class CardbushAppsConfigStore {
   readonly #path: string;
+  readonly #loadCatalog: () => Promise<CardbushPluginCatalogEntry[]>;
 
-  constructor(path: string) {
+  constructor(path: string, options: CardbushAppsConfigStoreOptions = {}) {
     if (!isAbsolute(path)) throw new Error("CardBush Apps config path must be absolute.");
     this.#path = resolve(path);
+    this.#loadCatalog = options.loadCatalog ?? (() => Promise.resolve([computerUseCatalogEntry]));
   }
 
   get path(): string {
@@ -40,10 +97,11 @@ export class CardbushAppsConfigStore {
   }
 
   async read(): Promise<CardbushAppsConfigSnapshot> {
+    const catalog = await this.#catalog();
     try {
-      return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")));
+      return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")), catalog);
     } catch (error) {
-      if (isMissing(error)) return defaultCardbushAppsConfig();
+      if (isMissing(error)) return defaultCardbushAppsConfig(catalog);
       throw error;
     }
   }
@@ -61,25 +119,32 @@ export class CardbushAppsConfigStore {
     await chmod(this.#path, 0o600).catch(() => undefined);
     return snapshot;
   }
+
+  async #catalog(): Promise<CardbushPluginCatalogEntry[]> {
+    const catalog = await this.#loadCatalog();
+    if (!catalog.length) throw new Error("CardBush plugin catalog is empty.");
+    const ids = new Set<string>();
+    for (const plugin of catalog) {
+      if (!plugin.id || ids.has(plugin.id)) throw new Error(`Duplicate or empty CardBush plugin id: ${plugin.id}`);
+      ids.add(plugin.id);
+    }
+    return catalog;
+  }
 }
 
-export function defaultCardbushAppsConfig(): CardbushAppsConfigSnapshot {
+export function defaultCardbushAppsConfig(
+  catalog: CardbushPluginCatalogEntry[] = [computerUseCatalogEntry],
+): CardbushAppsConfigSnapshot {
   return {
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: 1,
     serviceEnabled: true,
-    plugins: [{
-      id: "computer_use",
-      name: "Computer Use",
-      description: "Observe and interact with the local Windows desktop.",
-      installed: true,
-      enabled: true,
-      config: {
-        screenshotDirectory: "",
-        allowOpenApp: true,
-        allowWindowClose: true,
-      },
-    }],
+    plugins: catalog.map((entry) => ({
+      ...entry,
+      installed: entry.installation === "INSTALLED_BY_DEFAULT",
+      enabled: entry.installation === "INSTALLED_BY_DEFAULT",
+      config: defaultConfig(entry.id),
+    })),
   };
 }
 
@@ -89,63 +154,87 @@ function decodeUpdate(
 ): CardbushAppsConfigSnapshot {
   const value = record(input, "CardBush Apps configuration must be an object.");
   if (!Array.isArray(value.plugins)) throw new Error("plugins must be an array.");
-  const existingById = new Map(existing.plugins.map((plugin) => [plugin.id, plugin]));
-  const plugins = value.plugins.map((candidate) => decodePlugin(candidate, existingById));
-  ensureCatalog(plugins);
+  const candidates = new Map(value.plugins.map((candidate) => {
+    const item = record(candidate, "Plugin update must be an object.");
+    return [normalizePluginId(requiredString(item.id, "plugin.id")), item] as const;
+  }));
+  const known = new Set(existing.plugins.map((plugin) => plugin.id));
+  for (const id of candidates.keys()) {
+    if (!known.has(id)) throw new Error(`Unknown CardBush plugin: ${id}`);
+  }
   return {
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: existing.revision + 1,
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
-    plugins,
+    plugins: existing.plugins.map((plugin) => {
+      const candidate = candidates.get(plugin.id);
+      if (!candidate) return plugin;
+      const installed = boolean(candidate.installed, "plugin.installed");
+      return {
+        ...plugin,
+        installed,
+        enabled: installed && boolean(candidate.enabled, "plugin.enabled"),
+        config: decodeConfig(plugin.id, candidate.config ?? plugin.config),
+      };
+    }),
   };
 }
 
-function decodeSnapshot(input: unknown): CardbushAppsConfigSnapshot {
+function decodeSnapshot(
+  input: unknown,
+  catalog: CardbushPluginCatalogEntry[],
+): CardbushAppsConfigSnapshot {
   const value = record(input, "Stored CardBush Apps configuration must be an object.");
   if (value.protocol !== CARDBUSH_APPS_CONFIG_PROTOCOL || !Array.isArray(value.plugins)) {
     throw new Error("Stored CardBush Apps configuration has an unsupported schema.");
   }
-  const plugins = value.plugins.map((candidate) => decodePlugin(candidate));
-  ensureCatalog(plugins);
+  const stored = new Map(value.plugins.map((candidate) => {
+    const item = record(candidate, "Stored plugin state must be an object.");
+    return [normalizePluginId(requiredString(item.id, "plugin.id")), item] as const;
+  }));
   return {
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: positiveInteger(value.revision, "revision"),
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
-    plugins,
+    plugins: catalog.map((entry) => {
+      const state = stored.get(entry.id);
+      const installed = state
+        ? boolean(state.installed, "plugin.installed")
+        : entry.installation === "INSTALLED_BY_DEFAULT";
+      return {
+        ...entry,
+        installed,
+        enabled: installed && (state ? boolean(state.enabled, "plugin.enabled") : installed),
+        config: decodeConfig(entry.id, state?.config ?? defaultConfig(entry.id)),
+      };
+    }),
   };
 }
 
-function decodePlugin(
-  input: unknown,
-  existingById = new Map<CardbushAppPluginConfig["id"], CardbushAppPluginConfig>(),
-): CardbushAppPluginConfig {
-  const value = record(input, "CardBush App plugin configuration must be an object.");
-  const id = requiredString(value.id, "plugin.id");
-  if (id !== "computer_use") throw new Error(`Unknown CardBush App plugin: ${id}`);
-  const existing = existingById.get(id);
-  const config = record(value.config ?? existing?.config ?? {}, "plugin.config must be an object.");
+function defaultConfig(id: string): Record<string, unknown> {
+  return id === "computer-use" ? {
+    screenshotDirectory: "",
+    allowOpenApp: true,
+    allowWindowClose: true,
+  } : {};
+}
+
+function decodeConfig(id: string, input: unknown): Record<string, unknown> {
+  const config = record(input ?? {}, "plugin.config must be an object.");
+  if (id !== "computer-use") return structuredClone(config);
   const screenshotDirectory = optionalString(config.screenshotDirectory) ?? "";
   if (screenshotDirectory && !isAbsolute(screenshotDirectory)) {
-    throw new Error("computer_use screenshotDirectory must be an absolute path or empty.");
+    throw new Error("computer-use screenshotDirectory must be an absolute path or empty.");
   }
   return {
-    id,
-    name: existing?.name ?? "Computer Use",
-    description: existing?.description ?? "Observe and interact with the local Windows desktop.",
-    installed: boolean(value.installed, "plugin.installed"),
-    enabled: boolean(value.enabled, "plugin.enabled"),
-    config: {
-      screenshotDirectory,
-      allowOpenApp: boolean(config.allowOpenApp, "computer_use.allowOpenApp"),
-      allowWindowClose: boolean(config.allowWindowClose, "computer_use.allowWindowClose"),
-    },
+    screenshotDirectory,
+    allowOpenApp: boolean(config.allowOpenApp, "computer-use.allowOpenApp"),
+    allowWindowClose: boolean(config.allowWindowClose, "computer-use.allowWindowClose"),
   };
 }
 
-function ensureCatalog(plugins: CardbushAppPluginConfig[]): void {
-  if (plugins.length !== 1 || plugins[0]?.id !== "computer_use") {
-    throw new Error("CardBush Apps configuration must contain the complete bundled plugin catalog.");
-  }
+function normalizePluginId(value: string): string {
+  return value === "computer_use" ? "computer-use" : value;
 }
 
 function record(input: unknown, message: string): Record<string, unknown> {

@@ -32,6 +32,7 @@ test("projects only explicitly opted-in image artifacts into the next model step
   assert.deepEqual(result.messages[1], {
     role: "user",
     name: "tool_image_observation",
+    visibility: "internal",
     content: "Visual observations produced by the preceding Tool are attached. Inspect their pixels before making visual claims or deciding the next visual action.",
     images: [{ url: "C:\\captures\\screen.png" }],
   });

@@ -3,6 +3,7 @@ export {};
 import type {
   CardlingDesktopAction,
   CardlingDesktopState,
+  RuntimeStartupStatus,
 } from '../types';
 
 declare global {
@@ -17,6 +18,11 @@ declare global {
         onStreamFrame: (callback: (message: unknown) => void) => () => void;
       };
       rendererReady: () => Promise<void>;
+      runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
+      retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
+      onRuntimeStartupStatus: (
+        callback: (status: RuntimeStartupStatus) => void,
+      ) => () => void;
       minimize: () => Promise<void>;
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
@@ -52,6 +58,7 @@ declare global {
       }) => Promise<unknown>;
       listSkills: () => Promise<unknown[]>;
       readSkill: (skillName: string) => Promise<unknown>;
+      installLocalPlugin: () => Promise<{ id: string; manifestPath: string } | null>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

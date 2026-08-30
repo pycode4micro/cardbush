@@ -1,0 +1,21 @@
+{
+  "name": "chrome",
+  "version": "1.1.0",
+  "description": "Automate and inspect Chrome through the official Chrome DevTools MCP server.",
+  "author": { "name": "CardBush" },
+  "license": "Proprietary",
+  "keywords": ["chrome", "browser", "tabs"],
+  "apps": "./.app.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Chrome",
+    "shortDescription": "通过官方 Chrome DevTools MCP 自动化浏览器",
+    "longDescription": "随 CardBush 携带 Google ChromeDevTools 官方 MCP，在启用插件后提供页面导航、内容检查、交互、截图、网络与性能调试能力。",
+    "developerName": "Google ChromeDevTools / CardBush",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["打开网页并检查页面内容", "使用 Chrome 调试当前网页"],
+    "brandColor": "#4285F4",
+    "logo": "./assets/logo.svg"
+  }
+}

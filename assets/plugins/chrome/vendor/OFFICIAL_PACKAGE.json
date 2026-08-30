@@ -1,0 +1,10 @@
+{
+  "name": "chrome-devtools-mcp",
+  "version": "1.8.0",
+  "publisher": "Google LLC / ChromeDevTools",
+  "source": "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-1.8.0.tgz",
+  "repository": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+  "license": "Apache-2.0",
+  "integrity": "sha512-Wrm9z0/5WbVs778apjWgYRkpe9bvYQWjK2zVRwqoPAtz1IHQ5+GvotM07UGXJcfrA0rj6Gt1Pnn5+w/Tf1nU4w==",
+  "vendoredPath": "../runtime/chrome-devtools-mcp"
+}

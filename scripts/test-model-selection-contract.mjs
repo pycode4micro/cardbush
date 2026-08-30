@@ -70,6 +70,9 @@ const runtimeChatSource = fs.readFileSync(
 assert.match(apiSource, /item\.maxCompletionTokens[\s\S]*?item\.max_output_tokens/);
 assert.match(modelStoreSource, /config\.maxOutputTokens \?\? config\.maxCompletionTokens \?\? config\.max_completion_tokens/);
 assert.match(modelStoreSource, /maxCompletionTokens: config\.maxOutputTokens/);
+assert.match(modelStoreSource, /migrateMissingCredentials/);
+assert.match(modelStoreSource, /config\.apiKey\) return config/);
+assert.match(modelStoreSource, /normalizedEndpoint\(candidate\.baseURL\) === baseURL/);
 assert.match(runtimeChatSource, /request\.modelConfig\?\.maxCompletionTokens \?\? resolvedModel\.maxOutputTokens/);
 assert.match(apiSource, /kind: 'models\.get'/);
 assert.match(apiSource, /kind: 'models\.update'/);

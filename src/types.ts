@@ -379,6 +379,25 @@ export interface CardbushAppPlugin {
   id: string;
   name: string;
   description: string;
+  longDescription: string;
+  version: string;
+  developerName: string;
+  category: string;
+  capabilities: string[];
+  keywords: string[];
+  defaultPrompts: string[];
+  brandColor: string;
+  logoPath: string;
+  logoDarkPath: string;
+  manifestPath: string;
+  source: 'bundled' | 'user';
+  installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
+  components: Array<{
+    kind: 'skill' | 'mcp' | 'app';
+    id: string;
+    name: string;
+    description: string;
+  }>;
   installed: boolean;
   enabled: boolean;
   config: {
@@ -680,6 +699,17 @@ export interface SkillSummary {
   description: string;
   descriptionZh?: string;
   path: string;
+  logoPath?: string;
+  logoDarkPath?: string;
+}
+
+export interface RuntimeStartupStatus {
+  phase: 'initializing' | 'ready' | 'error';
+  attempt: number;
+  startedAt: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  error?: string;
 }
 
 export interface SkillDetail extends SkillSummary {

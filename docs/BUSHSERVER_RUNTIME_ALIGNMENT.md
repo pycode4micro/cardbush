@@ -78,9 +78,6 @@ subagent
 team_delegate
 request_permission
 request_user_choice
-interior_cad_inspect
-interior_cad_draw
-interior_design_validate
 ```
 
 Built-ins are code-owned and cannot be installed, removed, enabled, disabled or

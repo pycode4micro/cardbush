@@ -25,6 +25,7 @@ import {
 export interface RuntimeHostControllerOptions {
   modulePath: string;
   env?: NodeJS.ProcessEnv;
+  startupTimeoutMs?: number;
   onStdout?: (text: string) => void;
   onStderr?: (text: string) => void;
 }
@@ -47,13 +48,29 @@ export class RuntimeUtilityProcessController {
 
   start(): Promise<RuntimeIpcOutboundMessage> {
     if (this.#ready) return this.#ready;
-    this.#ready = new Promise((resolve, reject) => {
+    const ready = new Promise<RuntimeIpcOutboundMessage>((resolve, reject) => {
       const child = utilityProcess.fork(this.#options.modulePath, [], {
         env: this.#options.env,
         serviceName: 'CardBush Runtime Host',
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.#child = child;
+      const startupTimeoutMs = Math.max(1_000, this.#options.startupTimeoutMs ?? 12_000);
+      const startupTimeout = setTimeout(() => {
+        const failure = new RuntimeHostControllerError(
+          runtimeError(
+            'runtime_host_startup_timeout',
+            `Runtime Utility Process did not become ready within ${startupTimeoutMs}ms.`,
+          ),
+        );
+        if (this.#child === child) {
+          this.#child = undefined;
+          child.kill();
+        }
+        reject(failure);
+        this.#failAll(failure);
+      }, startupTimeoutMs);
+      const clearStartupTimeout = () => clearTimeout(startupTimeout);
       child.stdout?.on('data', (chunk) => {
         this.#options.onStdout?.(String(chunk));
       });
@@ -70,11 +87,13 @@ export class RuntimeUtilityProcessController {
             ? createProtocolVersionMismatchError(received)
             : runtimeError('invalid_runtime_host_message', errorMessage(error));
           const failure = new RuntimeHostControllerError(fact);
+          clearStartupTimeout();
           reject(failure);
           this.#failAll(failure);
           return;
         }
         if (message.type === 'ready') {
+          clearStartupTimeout();
           resolve(message);
           return;
         }
@@ -94,6 +113,7 @@ export class RuntimeUtilityProcessController {
         this.#failAll(failure);
       });
       child.on('exit', (code) => {
+        clearStartupTimeout();
         this.#child = undefined;
         this.#ready = undefined;
         const failure = new RuntimeHostControllerError(
@@ -106,6 +126,7 @@ export class RuntimeUtilityProcessController {
         this.#failAll(failure);
       });
       child.on('error', (_type, location, report) => {
+        clearStartupTimeout();
         const failure = new RuntimeHostControllerError(
           runtimeError(
             'runtime_host_fatal_error',
@@ -118,7 +139,11 @@ export class RuntimeUtilityProcessController {
         this.#failAll(failure);
       });
     });
-    return this.#ready;
+    this.#ready = ready;
+    void ready.catch(() => {
+      if (this.#ready === ready) this.#ready = undefined;
+    });
+    return ready;
   }
 
   async command(input: unknown): Promise<RuntimeIpcOutboundMessage> {

@@ -205,6 +205,7 @@ import type {
   RuntimeAssetCategory,
   RuntimeContextWindowUsage,
   RuntimeConnectionUpdate,
+  RuntimeStartupStatus,
   PendingInteraction,
   InteractionQuestion,
   InteractionReplyAnswer,
@@ -401,6 +402,11 @@ export function App() {
 }
 
 function CardbushApp() {
+  const [runtimeStartup, setRuntimeStartup] = useState<RuntimeStartupStatus>(() =>
+    window.cardbushDesktop?.runtimeStartupStatus
+      ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
+      : { phase: 'ready', attempt: 0, startedAt: new Date().toISOString() },
+  );
   const [themePreference, setThemePreferenceState] =
     useState<ThemePreference>(() => readInitialThemePreference());
   const [lightThemeStyle, setLightThemeStyleState] =
@@ -427,6 +433,7 @@ function CardbushApp() {
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
     useState<SettingsSection>('profile');
+  const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [recentProjectDir, setRecentProjectDir] = useState(
     () => window.localStorage.getItem(recentProjectStorageKey)?.trim() ?? '',
@@ -447,6 +454,26 @@ function CardbushApp() {
   const [visualInputEnabledSetting, setVisualInputEnabledSetting] = useState(
     readVisualInputEnabled,
   );
+
+  useEffect(() => {
+    const desktop = window.cardbushDesktop;
+    if (!desktop?.runtimeStartupStatus || !desktop.onRuntimeStartupStatus) return undefined;
+    let disposed = false;
+    const apply = (status: RuntimeStartupStatus) => {
+      if (!disposed) setRuntimeStartup(status);
+    };
+    const unsubscribe = desktop.onRuntimeStartupStatus(apply);
+    void desktop.runtimeStartupStatus().then(apply).catch((error) => apply({
+      phase: 'error',
+      attempt: 0,
+      startedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -694,6 +721,7 @@ function CardbushApp() {
     void loadTeamWorkspace().catch(() => undefined);
   }, []);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
+    runtimeReady: runtimeStartup.phase === 'ready',
     language,
     projectContexts,
     disabledSkillNames,
@@ -1267,6 +1295,10 @@ function CardbushApp() {
     : undefined;
 
   useEffect(() => {
+    if (runtimeStartup.phase !== 'ready') {
+      setBackendCapabilities(defaultBackendCapabilities);
+      return undefined;
+    }
     let cancelled = false;
     if (!customBackgroundImagePath || !window.cardbushDesktop?.cacheBackgroundImage) {
       return () => {
@@ -1540,7 +1572,7 @@ function CardbushApp() {
         ...current,
       ];
     });
-  }, []);
+  }, [runtimeStartup.phase]);
 
   const handleProjectAction = useCallback(
     async (action: ProjectAction, project: ProjectItem) => {
@@ -1866,8 +1898,12 @@ function CardbushApp() {
     ],
   );
 
-  const openSettings = useCallback((targetSection: SettingsSection = 'profile') => {
+  const openSettings = useCallback((
+    targetSection: SettingsSection = 'profile',
+    pluginTab: 'plugins' | 'skills' = 'plugins',
+  ) => {
     setSettingsInitialSection(targetSection);
+    setSettingsPluginTab(pluginTab);
     setSettingsMounted(true);
     setSettingsOpen(true);
   }, []);
@@ -1969,10 +2005,9 @@ function CardbushApp() {
         <WindowFrame
           language={language}
           onOpenCacheSettings={() => openSettings('cache')}
-          onOpenPluginSettings={() => openSettings('mcp')}
+          onOpenPluginSettings={() => openSettings('mcp', 'plugins')}
           onOpenSkills={() => {
-            setSettingsOpen(false);
-            setSection('skills');
+            openSettings('mcp', 'skills');
           }}
           onOpenOs={() => {
             setSettingsOpen(false);
@@ -2000,8 +2035,11 @@ function CardbushApp() {
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
             conversations={chat.conversations}
+            skills={chat.skills}
+            disabledSkillNames={disabledSkillNames}
             runtimeBusy={runningConversationIds.size > 0}
             initialSection={settingsInitialSection}
+            initialPluginTab={settingsPluginTab}
             onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
             onLightThemeStyleChange={setLightThemeStyle}
@@ -2015,6 +2053,9 @@ function CardbushApp() {
             onSidebarWidthChange={setSidebarWidth}
             onConversationHistoryCleared={() => chat.reloadConversations()}
             onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
+            onToggleSkill={toggleSkillEnabled}
+            onReloadSkills={chat.reloadSkills}
+            onLoadSkillDetail={chat.loadSkillDetail}
           />
         </Suspense>
       )}

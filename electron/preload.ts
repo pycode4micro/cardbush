@@ -37,6 +37,15 @@ type SessionAttentionPayload = {
   kind: 'completed' | 'waiting' | 'error';
 };
 
+type RuntimeStartupStatus = {
+  phase: 'initializing' | 'ready' | 'error';
+  attempt: number;
+  startedAt: string;
+  completedAt?: string;
+  elapsedMs?: number;
+  error?: string;
+};
+
 const desktopApi = {
   runtime: {
     command: (message: unknown) =>
@@ -55,6 +64,15 @@ const desktopApi = {
     },
   },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
+  runtimeStartupStatus: () =>
+    ipcRenderer.invoke('app:runtime-startup-status') as Promise<RuntimeStartupStatus>,
+  retryRuntimeStartup: () =>
+    ipcRenderer.invoke('app:retry-runtime') as Promise<RuntimeStartupStatus>,
+  onRuntimeStartupStatus: (callback: (status: RuntimeStartupStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: RuntimeStartupStatus) => callback(status);
+    ipcRenderer.on('app:runtime-startup-status', listener);
+    return () => ipcRenderer.removeListener('app:runtime-startup-status', listener);
+  },
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
@@ -213,6 +231,10 @@ const desktopApi = {
   listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
   readSkill: (skillName: string) =>
     ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
+  installLocalPlugin: () => ipcRenderer.invoke('plugins:install-local') as Promise<{
+    id: string;
+    manifestPath: string;
+  } | null>,
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,

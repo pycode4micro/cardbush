@@ -38,7 +38,7 @@ test('reads the Product Host lifecycle and Computer Use policy snapshot', async 
       revision: 4,
       serviceEnabled: false,
       plugins: [{
-        id: 'computer_use',
+        id: 'computer-use',
         installed: false,
         enabled: false,
         config: {

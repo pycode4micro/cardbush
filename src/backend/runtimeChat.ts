@@ -286,6 +286,9 @@ export async function streamRuntimeTurnEvents(
           conversationId: snapshot.sessionId,
           turnId: message.turnId,
           createdAt: message.createdAt,
+          ...(message.message.role === 'assistant' ? {
+            status: turn.status === 'completed' ? 'complete' : turn.status,
+          } : {}),
           turnSequence: message.turnSequence,
           messageIndex: message.messageIndex,
           ...(message.message.role === 'assistant' ? {

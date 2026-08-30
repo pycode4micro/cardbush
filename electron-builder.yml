@@ -1,0 +1,29 @@
+appId: com.cardbush.desktop
+productName: CardBush
+asar: true
+directories:
+  output: release
+  buildResources: assets
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - packages/*/dist/**/*
+  - packages/*/package.json
+  - assets/**/*
+  - package.json
+  - node_modules/**/*
+  - '!node_modules/.cache/**/*'
+  - '!**/*.map'
+win:
+  icon: assets/cardbush.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CardBush
+artifactName: CardBush-${version}-${arch}.${ext}

@@ -23,7 +23,6 @@ export function registerExtendedBuiltins(registry: ToolRegistry, options: Extend
   registerImageInput(registry);
   registerSchedule(registry, dataRoot);
   registerSkillsManager(registry, options.skillRoots ?? []);
-  registerCad(registry);
   registerParallel(registry);
 }
 
@@ -228,46 +227,6 @@ function registerSkillsManager(registry: ToolRegistry, roots: string[]) {
   });
 }
 
-function registerCad(registry: ToolRegistry) {
-  registry.register<Record<string, unknown>>({
-    definition: { name: "interior_cad_inspect", description: "Inspect an existing DXF floor plan and return compact entity, layer, bounds, text, and readiness facts.", inputSchema: objectSchema(["path"], { path: { type: "string" } }) },
-    manifest: manifest("cad.inspect", false, "resource"), parallelSafe: true,
-    decodeInput: object, authorize: (context) => pathAdmission(context, requiredText(context.input.path, "path"), "read"),
-    execute: async (context) => { const path = resolve(requiredText(context.input.path, "path")); const content = await readFile(path, "utf8"); const entities = [...content.matchAll(/\n(0)\r?\n([A-Z0-9_]+)/g)].map((match) => match[2]); return success(context, { path, bytes: Buffer.byteLength(content), entity_count: entities.length, entity_types: counts(entities), layers: dxfValues(content, "8"), text_samples: [...dxfValues(content, "1"), ...dxfValues(content, "3")].slice(0, 30), design_readiness: entities.length > 0 ? "inspectable" : "insufficient_evidence" }, [path], ["cad"]); },
-  });
-  registry.register<Record<string, unknown>>({
-    definition: { name: "interior_cad_draw", description: "Generate a deterministic DXF, SVG preview, and package manifest from structured interior rooms, walls, openings, furniture, constraints, and notes.", inputSchema: { type: "object", additionalProperties: true, required: ["output_dir"] } },
-    manifest: manifest("cad.draw", true, "resource"),
-    decodeInput: object, authorize: (context) => pathAdmission(context, requiredText(context.input.output_dir, "output_dir"), "write"),
-    execute: async (context) => {
-      const outputDir = resolve(requiredText(context.input.output_dir, "output_dir")); await mkdir(outputDir, { recursive: true });
-      const stem = safeName(text(context.input.name) || "interior-plan"); const dxf = join(outputDir, `${stem}.dxf`); const svg = join(outputDir, `${stem}.svg`); const packagePath = join(outputDir, "package_manifest.json");
-      const model = { rooms: context.input.rooms ?? [], walls: context.input.walls ?? [], openings: context.input.openings ?? [], furniture: context.input.furniture ?? [], constraints: context.input.constraints ?? [], notes: context.input.notes ?? [] };
-      await writeFile(dxf, `0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n999\n${JSON.stringify(model)}\n0\nENDSEC\n0\nEOF\n`, "utf8");
-      await writeFile(svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700"><rect width="1000" height="700" fill="#fff"/><text x="40" y="60" font-family="sans-serif" font-size="24">${escapeXml(stem)}</text><text x="40" y="100" font-family="sans-serif" font-size="14">Structured CAD package — inspect DXF/model manifest for geometry</text></svg>`, "utf8");
-      await writeFile(packagePath, JSON.stringify({ protocol: "cardbush.cad_package.v1", name: stem, model, files: [dxf, svg], created_at: new Date().toISOString() }, null, 2), "utf8");
-      return success(context, { output_dir: outputDir, dxf, preview: svg, package_manifest: packagePath }, [dxf, svg, packagePath], ["cad"], [{ artifact_id: `cad_${randomUUID()}`, type: "drawing", path: dxf, display: "attachment", metadata: {} }, { artifact_id: `preview_${randomUUID()}`, type: "image", path: svg, media_type: "image/svg+xml", display: "inline", metadata: {} }]);
-    },
-  });
-  registry.register<Record<string, unknown>>({
-    definition: { name: "interior_design_validate", description: "Validate an interior project model or CAD package for required files, structured model sections, and review readiness.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("cad.validate", false, "resource"), parallelSafe: true,
-    decodeInput: object,
-    authorize: async (context) => {
-      const candidates = [context.input.project_model_path, context.input.package_manifest_path, ...(Array.isArray(context.input.sheet_manifest_paths) ? context.input.sheet_manifest_paths : [])].map(text).filter(Boolean);
-      if (!candidates.length) throw new Error("Provide project_model_path or package_manifest_path.");
-      return combineAdmissions(await Promise.all(candidates.map((candidate) => pathAdmission(context, candidate, "read"))));
-    },
-    execute: async (context) => {
-      const candidates = [context.input.project_model_path, context.input.package_manifest_path, ...(Array.isArray(context.input.sheet_manifest_paths) ? context.input.sheet_manifest_paths : [])].map(text).filter(Boolean).map((item) => resolve(item));
-      if (!candidates.length) throw new Error("Provide project_model_path or package_manifest_path.");
-      const checks = await Promise.all(candidates.map(async (path) => { try { const content = await readFile(path, "utf8"); return { path, exists: true, parseable_json: path.endsWith(".json") ? Boolean(JSON.parse(content)) : undefined, bytes: Buffer.byteLength(content) }; } catch (error) { return { path, exists: false, error: error instanceof Error ? error.message : String(error) }; } }));
-      const valid = checks.every((item) => item.exists && item.parseable_json !== false);
-      return success(context, { valid, checks, blocking_issues: checks.filter((item) => !item.exists || item.parseable_json === false) }, candidates, ["validation", "cad"]);
-    },
-  });
-}
-
 function registerParallel(registry: ToolRegistry) {
   registry.register<{ calls: Array<{ name: string; arguments: unknown; reason: string }> }>({
     definition: {
@@ -372,6 +331,3 @@ function score(item: Record<string, unknown>, terms: string[]): number { const c
 function summary(item: Record<string, unknown>) { const { content: _content, ...rest } = item; return { ...rest, char_count: text(item.content).length }; }
 function safeName(value: string): string { const name = value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, ""); if (!name) throw new Error("A safe name is required."); return name; }
 async function listSkills(roots: string[]) { const result: Array<{ name: string; path: string }> = []; for (const root of roots) { try { for (const entry of await readdir(root, { withFileTypes: true })) if (entry.isDirectory()) result.push({ name: entry.name, path: join(root, entry.name) }); } catch {} } return result; }
-function counts(values: string[]) { return Object.fromEntries([...new Set(values)].map((value) => [value, values.filter((item) => item === value).length])); }
-function dxfValues(content: string, code: string) { const lines = content.split(/\r?\n/); const values: string[] = []; for (let index = 0; index < lines.length - 1; index += 1) if (lines[index]?.trim() === code) values.push(lines[index + 1]!.trim()); return [...new Set(values)].filter(Boolean); }
-function escapeXml(value: string) { return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[char]!); }

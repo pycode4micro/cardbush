@@ -1,0 +1,478 @@
+/**
+ * @license
+ * Copyright 2025 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+import { yargs, hideBin } from '../third_party/index.js';
+export const mcpOptions = {
+    autoConnect: {
+        type: 'boolean',
+        description: 'If specified, automatically connects to a browser (Chrome 144+) running locally from the user data directory identified by the channel param (default channel is stable). Requires the remote debugging server to be started in the Chrome instance via chrome://inspect/#remote-debugging.',
+        conflicts: ['isolated', 'executablePath'],
+        default: false,
+        coerce: (value) => {
+            if (!value) {
+                return;
+            }
+            return value;
+        },
+    },
+    browserUrl: {
+        type: 'string',
+        description: 'Connect to a running, debuggable Chrome instance (e.g. `http://127.0.0.1:9222`). For more details see: https://github.com/ChromeDevTools/chrome-devtools-mcp#connecting-to-a-running-chrome-instance.',
+        alias: 'u',
+        conflicts: ['wsEndpoint'],
+        coerce: (url) => {
+            if (!url) {
+                return;
+            }
+            try {
+                new URL(url);
+            }
+            catch {
+                throw new Error(`Provided browserUrl ${url} is not valid URL.`);
+            }
+            return url;
+        },
+    },
+    wsEndpoint: {
+        type: 'string',
+        description: 'WebSocket endpoint to connect to a running Chrome instance (e.g., ws://127.0.0.1:9222/devtools/browser/<id>). Alternative to --browserUrl.',
+        alias: 'w',
+        conflicts: ['browserUrl'],
+        coerce: (url) => {
+            if (!url) {
+                return;
+            }
+            try {
+                const parsed = new URL(url);
+                if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+                    throw new Error(`Provided wsEndpoint ${url} must use ws:// or wss:// protocol.`);
+                }
+                return url;
+            }
+            catch (error) {
+                if (error.message.includes('ws://')) {
+                    throw error;
+                }
+                throw new Error(`Provided wsEndpoint ${url} is not valid URL.`);
+            }
+        },
+    },
+    wsHeaders: {
+        type: 'string',
+        description: 'Custom headers for WebSocket connection in JSON format (e.g., \'{"Authorization":"Bearer token"}\'). Only works with --wsEndpoint.',
+        implies: 'wsEndpoint',
+        coerce: (val) => {
+            if (!val) {
+                return;
+            }
+            try {
+                const parsed = JSON.parse(val);
+                if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new Error('Headers must be a JSON object');
+                }
+                return parsed;
+            }
+            catch (error) {
+                throw new Error(`Invalid JSON for wsHeaders: ${error.message}`);
+            }
+        },
+    },
+    headless: {
+        type: 'boolean',
+        description: 'Whether to run in headless (no UI) mode.',
+        default: false,
+    },
+    executablePath: {
+        type: 'string',
+        description: 'Path to custom Chrome executable.',
+        conflicts: ['browserUrl', 'wsEndpoint'],
+        alias: 'e',
+    },
+    isolated: {
+        type: 'boolean',
+        description: 'If specified, creates a temporary user-data-dir that is automatically cleaned up after the browser is closed. Defaults to false.',
+    },
+    userDataDir: {
+        type: 'string',
+        description: 'Path to the user data directory for Chrome. Default is $HOME/.cache/chrome-devtools-mcp/chrome-profile$CHANNEL_SUFFIX_IF_NON_STABLE',
+        conflicts: ['browserUrl', 'wsEndpoint', 'isolated'],
+    },
+    channel: {
+        type: 'string',
+        description: 'Specify a different Chrome channel that should be used. The default is the stable channel version.',
+        choices: ['canary', 'dev', 'beta', 'stable'],
+        conflicts: ['browserUrl', 'wsEndpoint', 'executablePath'],
+    },
+    logFile: {
+        type: 'string',
+        describe: 'Path to a file to write debug logs to. Set the env variable `DEBUG` to `*` to enable verbose logs. Useful for submitting bug reports.',
+    },
+    viewport: {
+        type: 'string',
+        describe: 'Initial viewport size for the Chrome instances started by the server. For example, `1280x720`. In headless mode, max size is 3840x2160px.',
+        coerce: (arg) => {
+            if (arg === undefined) {
+                return;
+            }
+            const [width, height] = arg.split('x').map(Number);
+            if (!width || !height || Number.isNaN(width) || Number.isNaN(height)) {
+                throw new Error('Invalid viewport. Expected format is `1280x720`.');
+            }
+            return {
+                width,
+                height,
+            };
+        },
+    },
+    proxyServer: {
+        type: 'string',
+        description: `Proxy server configuration for Chrome passed as --proxy-server when launching the browser. See https://www.chromium.org/developers/design-documents/network-settings/ for details.`,
+    },
+    acceptInsecureCerts: {
+        type: 'boolean',
+        description: `If enabled, ignores errors relative to self-signed and expired certificates. Use with caution.`,
+    },
+    pageIdRouting: {
+        type: 'boolean',
+        describe: 'Require pageId on page-scoped tools and route requests by page ID (useful for concurrent agent sessions). Use --no-page-id-routing to disable.',
+        default: true,
+    },
+    experimentalDevtools: {
+        type: 'boolean',
+        describe: 'Whether to enable automation over DevTools targets',
+    },
+    experimentalVision: {
+        type: 'boolean',
+        describe: 'Whether to enable coordinate-based tools such as click_at(x,y). Usually requires a computer-use model able to produce accurate coordinates by looking at screenshots.',
+    },
+    memoryDebugging: {
+        type: 'boolean',
+        default: false,
+        describe: 'Whether to enable memory debugging tools.',
+        alias: 'experimentalMemory',
+    },
+    experimentalStructuredContent: {
+        type: 'boolean',
+        default: false,
+        describe: 'Whether to output structured formatted content.',
+    },
+    experimentalToonFormat: {
+        type: 'boolean',
+        describe: 'Deprecated: use --experimentalDataFormat=toon instead. Whether to format structured data using TOON (requires @toon-format/toon).',
+        hidden: true,
+    },
+    experimentalDataFormat: {
+        type: 'string',
+        describe: 'Override format for structured data in text responses. Default uses built-in formatters. "toon" (requires @toon-format/toon) or "gcf" (requires @blackwell-systems/gcf) replace structured content with the specified encoding.',
+        choices: ['default', 'toon', 'gcf'],
+        hidden: true,
+    },
+    experimentalIncludeAllPages: {
+        type: 'boolean',
+        describe: 'Whether to include all kinds of pages such as webviews or background pages as pages.',
+    },
+    experimentalInteropTools: {
+        type: 'boolean',
+        describe: 'Whether to enable interoperability tools',
+        hidden: true,
+    },
+    experimentalScreencast: {
+        type: 'boolean',
+        describe: 'Exposes experimental screencast tools (requires ffmpeg). Install ffmpeg https://www.ffmpeg.org/download.html and ensure it is available in the MCP server PATH.',
+    },
+    experimentalFfmpegPath: {
+        type: 'string',
+        describe: 'Path to ffmpeg executable for screencast recording.',
+        implies: 'experimentalScreencast',
+    },
+    categoryExperimentalWebmcp: {
+        type: 'boolean',
+        describe: 'Set to true to enable debugging WebMCP tools. Requires Chrome 150+ with the following flag: `--enable-features=WebMCP`',
+    },
+    chromeArg: {
+        type: 'array',
+        describe: 'Additional arguments for Chrome. Only applies when Chrome is launched by chrome-devtools-mcp.',
+    },
+    blockedUrlPattern: {
+        type: 'array',
+        describe: "Restricts browser's network access by blocking specified URL patterns (uses https://urlpattern.spec.whatwg.org/). Silently detaches from targets with blocked URLs upon connection, and blocks runtime requests (including navigations and subresources). Accepts an array of patterns.",
+        conflicts: ['allowedUrlPattern'],
+    },
+    allowedUrlPattern: {
+        type: 'array',
+        describe: "Restricts browser's network access by allowing only specified URL patterns (uses https://urlpattern.spec.whatwg.org/). Requires Chrome 149+. Silently detaches from targets with unallowed URLs upon connection, and blocks runtime requests (including navigations and subresources). Accepts an array of patterns.",
+        conflicts: ['blockedUrlPattern'],
+    },
+    ignoreDefaultChromeArg: {
+        type: 'array',
+        describe: 'Explicitly disable default arguments for Chrome. Only applies when Chrome is launched by chrome-devtools-mcp.',
+    },
+    categoryEmulation: {
+        type: 'boolean',
+        default: true,
+        describe: 'Set to false to exclude tools related to emulation.',
+    },
+    categoryPerformance: {
+        type: 'boolean',
+        default: true,
+        describe: 'Set to false to exclude tools related to performance.',
+    },
+    categoryNetwork: {
+        type: 'boolean',
+        default: true,
+        describe: 'Set to false to exclude tools related to network.',
+    },
+    categoryExtensions: {
+        type: 'boolean',
+        hidden: false,
+        default: false,
+        describe: 'Set to true to include tools related to extensions. Note: This feature is currently only supported with a pipe connection. autoConnect, browserUrl, and wsEndpoint are not supported with this feature until 149 will be released.',
+    },
+    categoryExperimentalThirdParty: {
+        type: 'boolean',
+        default: false,
+        describe: 'Set to true to enable third-party developer tools exposed by the inspected page itself',
+    },
+    categoryPwa: {
+        type: 'boolean',
+        hidden: false,
+        conflicts: ['autoConnect', 'browserUrl', 'wsEndpoint'],
+        describe: 'Set to true to include tools for automating Progressive Web Apps (install, launch, uninstall, and OS state). This feature is only supported with a pipe connection; autoConnect, browserUrl, and wsEndpoint are not supported.',
+    },
+    performanceCrux: {
+        type: 'boolean',
+        default: true,
+        describe: 'Set to false to disable sending URLs from performance traces to CrUX API to get field performance data.',
+    },
+    usageStatistics: {
+        type: 'boolean',
+        default: true,
+        describe: 'Set to false to opt-out of usage statistics collection. Google collects usage data to improve the tool, handled under the Google Privacy Policy (https://policies.google.com/privacy). This is independent from Chrome browser metrics. Disabled if `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS` or `CI` env variables are set.',
+    },
+    clearcutEndpoint: {
+        type: 'string',
+        hidden: true,
+        describe: 'Endpoint for Clearcut telemetry.',
+    },
+    clearcutForceFlushIntervalMs: {
+        type: 'number',
+        hidden: true,
+        describe: 'Force flush interval in milliseconds (for testing).',
+    },
+    clearcutIncludePidHeader: {
+        type: 'boolean',
+        hidden: true,
+        describe: 'Include watchdog PID in Clearcut request headers (for testing).',
+    },
+    screenshotFormat: {
+        type: 'string',
+        description: 'Override the default output format used by take_screenshot when the caller does not specify one. JPEG and WebP are ~3-5x smaller than PNG, which helps reduce context size in AI conversations. Unset preserves the existing default ("png").',
+        choices: ['jpeg', 'png', 'webp'],
+    },
+    screenshotQuality: {
+        type: 'number',
+        description: 'Override the default compression quality (0-100) used by take_screenshot for JPEG and WebP when the caller does not specify one. Lower values mean smaller files. Ignored for PNG. Unset preserves the Puppeteer default.',
+        coerce: (value) => {
+            if (value === undefined) {
+                return;
+            }
+            if (!Number.isInteger(value) || value < 0 || value > 100) {
+                throw new Error(`Invalid screenshotQuality ${value}. Expected an integer between 0 and 100.`);
+            }
+            return value;
+        },
+    },
+    screenshotMaxWidth: {
+        type: 'number',
+        description: 'Maximum width in pixels for screenshots. If the captured image is wider, it is downscaled (preserving aspect ratio) before being returned. Reduces context size in AI conversations. Unset means no resize.',
+        coerce: (value) => {
+            if (value === undefined) {
+                return;
+            }
+            if (!Number.isInteger(value) || value <= 0) {
+                throw new Error(`Invalid screenshotMaxWidth ${value}. Expected a positive integer.`);
+            }
+            return value;
+        },
+    },
+    screenshotMaxHeight: {
+        type: 'number',
+        description: 'Maximum height in pixels for screenshots. If the captured image is taller, it is downscaled (preserving aspect ratio) before being returned. Can be combined with --screenshot-max-width; the smaller scale factor wins. Unset means no resize.',
+        coerce: (value) => {
+            if (value === undefined) {
+                return;
+            }
+            if (!Number.isInteger(value) || value <= 0) {
+                throw new Error(`Invalid screenshotMaxHeight ${value}. Expected a positive integer.`);
+            }
+            return value;
+        },
+    },
+    slim: {
+        type: 'boolean',
+        describe: 'Exposes a "slim" set of 3 tools covering navigation, script execution and screenshots only. Useful for basic browser tasks.',
+    },
+    viaCli: {
+        type: 'boolean',
+        describe: 'Set by Chrome DevTools CLI if the MCP server is started via the CLI client (this arg exists for usage stats)',
+        hidden: true,
+    },
+    redactNetworkHeaders: {
+        type: 'boolean',
+        describe: 'If true, redacts some of the network headers considered sensitive before returning to the client.',
+        default: false,
+    },
+    allowUnrestrictedPaths: {
+        type: 'boolean',
+        default: false,
+        describe: 'If set, disables the default path restriction that applies when the MCP client does not negotiate ' +
+            'the roots capability. By default, file-writing tools are restricted to the OS temp directory when ' +
+            'no roots are configured. Use this only when connecting a trusted local client that does not implement ' +
+            'MCP roots and requires access to paths outside the temp directory.',
+    },
+};
+export function getMcpOptionsForViaCli() {
+    if (!('default' in mcpOptions.headless)) {
+        throw new Error('headless cli option unexpectedly does not have a default');
+    }
+    if (!('default' in mcpOptions.experimentalStructuredContent)) {
+        throw new Error('experimentalStructuredContent cli option unexpectedly does not have a default');
+    }
+    if ('default' in mcpOptions.isolated) {
+        throw new Error('isolated cli option unexpectedly has a default');
+    }
+    return {
+        ...mcpOptions,
+        headless: {
+            ...mcpOptions.headless,
+            default: true,
+        },
+        memoryDebugging: {
+            ...mcpOptions.memoryDebugging,
+            default: true,
+        },
+        categoryExtensions: {
+            ...mcpOptions.categoryExtensions,
+            default: true,
+        },
+        experimentalStructuredContent: {
+            ...mcpOptions.experimentalStructuredContent,
+            default: true,
+        },
+        isolated: {
+            ...mcpOptions.isolated,
+            description: 'If specified, creates a temporary user-data-dir that is automatically cleaned up after the browser is closed. Defaults to true unless userDataDir is provided.',
+        },
+    };
+}
+/**
+ * Exported only for testing to not trigger process exit.
+ */
+export function parser(version, argv = process.argv, env = process.env) {
+    const isViaCli = argv.includes('--viaCli') || argv.includes('--via-cli');
+    const options = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
+    const yargsInstance = yargs(hideBin(argv))
+        .scriptName('npx chrome-devtools-mcp@latest')
+        .parserConfiguration({
+        'strip-aliased': true,
+        'strip-dashed': true,
+    })
+        .options(options)
+        .showHelpOnFail(false, 'Specify --help for available options')
+        .middleware(args => {
+        // We can't set default in the options else
+        // Yargs will complain
+        if (!args.channel &&
+            !args.browserUrl &&
+            !args.wsEndpoint &&
+            !args.executablePath) {
+            args.channel = 'stable';
+        }
+        if (env['CI'] || env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS']) {
+            console.error("turning off usage statistics. process.env['CI'] || process.env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS'] is set.");
+            args.usageStatistics = false;
+        }
+        const cliOptionsAllowedArgs = [
+            ...Object.keys(options),
+            // Yargs populated with positional args
+            '_',
+            '$0',
+        ];
+        const unknownArgs = Object.keys(args).filter(arg => !cliOptionsAllowedArgs.includes(arg));
+        if (unknownArgs.length > 0) {
+            console.error(`Unknown arguments: ${unknownArgs.map(arg => `--${arg}`)}`);
+        }
+    })
+        .example([
+        [
+            '$0 --browserUrl http://127.0.0.1:9222',
+            'Connect to an existing browser instance via HTTP',
+        ],
+        [
+            '$0 --wsEndpoint ws://127.0.0.1:9222/devtools/browser/abc123',
+            'Connect to an existing browser instance via WebSocket',
+        ],
+        [
+            `$0 --wsEndpoint ws://127.0.0.1:9222/devtools/browser/abc123 --wsHeaders '{"Authorization":"Bearer token"}'`,
+            'Connect via WebSocket with custom headers',
+        ],
+        ['$0 --channel beta', 'Use Chrome Beta installed on this system'],
+        ['$0 --channel canary', 'Use Chrome Canary installed on this system'],
+        ['$0 --channel dev', 'Use Chrome Dev installed on this system'],
+        ['$0 --channel stable', 'Use stable Chrome installed on this system'],
+        ['$0 --logFile /tmp/log.txt', 'Save logs to a file'],
+        ['$0 --help', 'Print CLI options'],
+        [
+            '$0 --viewport 1280x720',
+            'Launch Chrome with the initial viewport size of 1280x720px',
+        ],
+        [
+            `$0 --chrome-arg='--no-sandbox' --chrome-arg='--disable-setuid-sandbox'`,
+            'Launch Chrome without sandboxes. Use with caution.',
+        ],
+        [
+            `$0 --ignore-default-chrome-arg='--disable-extensions'`,
+            'Disable the default arguments provided by Puppeteer. Use with caution.',
+        ],
+        ['$0 --no-category-emulation', 'Disable tools in the emulation category'],
+        [
+            '$0 --no-category-performance',
+            'Disable tools in the performance category',
+        ],
+        ['$0 --no-category-network', 'Disable tools in the network category'],
+        [
+            '$0 --user-data-dir=/tmp/user-data-dir',
+            'Use a custom user data directory',
+        ],
+        [
+            '$0 --auto-connect',
+            'Connect to a stable Chrome instance (Chrome 144+) running instead of launching a new instance',
+        ],
+        [
+            '$0 --auto-connect --channel=canary',
+            'Connect to a canary Chrome instance (Chrome 144+) running instead of launching a new instance',
+        ],
+        [
+            '$0 --no-usage-statistics',
+            'Do not send usage statistics https://github.com/ChromeDevTools/chrome-devtools-mcp#usage-statistics.',
+        ],
+        [
+            '$0 --no-performance-crux',
+            'Disable CrUX (field data) integration in performance tools.',
+        ],
+        [
+            '$0 --slim',
+            'Only 3 tools: navigation, JavaScript execution and screenshot',
+        ],
+    ]);
+    return yargsInstance
+        .wrap(Math.min(120, yargsInstance.terminalWidth()))
+        .help()
+        .version(version);
+}
+export function parseArguments(version, argv = process.argv, env = process.env) {
+    return parser(version, argv, env).parseSync();
+}
+//# sourceMappingURL=mcp-options.js.map

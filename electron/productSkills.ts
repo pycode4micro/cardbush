@@ -6,6 +6,8 @@ export interface ProductSkillSummary {
   description: string;
   descriptionZh: string;
   path: string;
+  logoPath: string;
+  logoDarkPath: string;
 }
 
 export interface ProductSkillDetail extends ProductSkillSummary {
@@ -22,6 +24,73 @@ export interface ProductSkillDetail extends ProductSkillSummary {
   requiredReads: string[];
   conditionalReads: string[];
   resourceQuickRefs: Array<Record<string, unknown>>;
+}
+
+export interface LegacyProductSkillMigrationResult {
+  imported: string[];
+  skipped: string[];
+  failed: Array<{ name: string; message: string }>;
+}
+
+/**
+ * Imports only catalogued legacy Skill packages that do not already exist in
+ * CardBush-owned storage. Existing Product Skills are never overwritten.
+ */
+export async function migrateLegacyProductSkills(
+  legacyRoots: string[],
+  userRoot: string,
+): Promise<LegacyProductSkillMigrationResult> {
+  const result: LegacyProductSkillMigrationResult = {
+    imported: [],
+    skipped: [],
+    failed: [],
+  };
+  const targetRoot = path.resolve(userRoot);
+  await fs.promises.mkdir(targetRoot, { recursive: true });
+
+  for (const configuredRoot of [...new Set(legacyRoots.map((root) => path.resolve(root)))]) {
+    const legacyRoot = await fs.promises.realpath(configuredRoot).catch(() => null);
+    if (!legacyRoot) continue;
+    const packageRoot = await fs.promises.realpath(path.join(legacyRoot, 'package')).catch(() => null);
+    if (!packageRoot || escapes(legacyRoot, packageRoot)) continue;
+    const names = await legacyCatalogSkillNames(path.join(legacyRoot, 'catalog.json'));
+    for (const name of names) {
+      const target = path.join(targetRoot, name);
+      if (await pathExists(target)) {
+        result.skipped.push(name);
+        continue;
+      }
+      const source = await fs.promises.realpath(path.join(packageRoot, name)).catch(() => null);
+      if (!source || escapes(packageRoot, source) || !await pathExists(path.join(source, 'SKILL.md'))) {
+        result.failed.push({ name, message: 'Catalogued Skill package is missing or unsafe.' });
+        continue;
+      }
+      const temporary = path.join(
+        targetRoot,
+        `.${name}.legacy-migration-${process.pid}-${Date.now()}`,
+      );
+      try {
+        await fs.promises.cp(source, temporary, {
+          recursive: true,
+          errorOnExist: true,
+          force: false,
+        });
+        await fs.promises.rename(temporary, target);
+        result.imported.push(name);
+      } catch (error) {
+        await fs.promises.rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+        if (await pathExists(target)) {
+          result.skipped.push(name);
+          continue;
+        }
+        result.failed.push({
+          name,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+  return result;
 }
 
 export async function listProductSkills(roots: string[]): Promise<ProductSkillSummary[]> {
@@ -59,11 +128,19 @@ async function loadProductSkills(roots: string[]): Promise<Map<string, ProductSk
       if (content == null) continue;
       const metadata = parseFrontmatter(content);
       const name = stringValue(metadata.name) || entry.name;
+      const logoPath = await resolveSkillLogo(packageDir, metadata.logo ?? metadata.icon);
+      const logoDarkPath = await resolveSkillLogo(
+        packageDir,
+        metadata.logo_dark ?? metadata.icon_dark,
+        true,
+      );
       skills.set(name, {
         name,
         description: stringValue(metadata.description),
         descriptionZh: stringValue(metadata.description_zh),
         path: skillPath,
+        logoPath,
+        logoDarkPath,
         packageDir,
         content,
         version: optionalString(metadata.version),
@@ -81,6 +158,42 @@ async function loadProductSkills(roots: string[]): Promise<Map<string, ProductSk
     }
   }
   return skills;
+}
+
+const skillLogoNames = [
+  'assets/logo.svg',
+  'assets/logo.png',
+  'assets/logo.webp',
+  'assets/icon.svg',
+  'assets/icon.png',
+  'assets/icon.webp',
+  'logo.svg',
+  'logo.png',
+  'logo.webp',
+  'icon.svg',
+  'icon.png',
+  'icon.webp',
+];
+
+async function resolveSkillLogo(
+  packageDir: string,
+  declared: unknown,
+  dark = false,
+): Promise<string> {
+  const explicit = stringValue(declared).trim();
+  const conventional = dark
+    ? skillLogoNames.map((name) => name.replace(/\.(svg|png|webp)$/i, '-dark.$1'))
+    : skillLogoNames;
+  for (const relativeLogo of [...(explicit ? [explicit] : []), ...conventional]) {
+    if (path.isAbsolute(relativeLogo)) continue;
+    const candidate = path.resolve(packageDir, relativeLogo);
+    if (escapes(packageDir, candidate)) continue;
+    const realPath = await fs.promises.realpath(candidate).catch(() => null);
+    if (!realPath || escapes(packageDir, realPath)) continue;
+    const file = await fs.promises.stat(realPath).catch(() => null);
+    if (file?.isFile() && /\.(?:svg|png|webp|jpe?g)$/i.test(realPath)) return realPath;
+  }
+  return '';
 }
 
 function parseFrontmatter(content: string): Record<string, unknown> {
@@ -157,4 +270,28 @@ function numberRecord(value: unknown): Record<string, number> | undefined {
   const entries = Object.entries(value)
     .filter((entry): entry is [string, number] => typeof entry[1] === 'number');
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+async function legacyCatalogSkillNames(catalogPath: string): Promise<string[]> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.promises.readFile(catalogPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    const skills = (parsed as Record<string, unknown>).skills;
+    if (!Array.isArray(skills)) return [];
+    return [...new Set(skills.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+      const name = stringValue((entry as Record<string, unknown>).name).trim();
+      return isSafePackageName(name) ? [name] : [];
+    }))];
+  } catch {
+    return [];
+  }
+}
+
+function isSafePackageName(name: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) && name !== '.' && name !== '..';
+}
+
+async function pathExists(candidate: string): Promise<boolean> {
+  return fs.promises.stat(candidate).then(() => true, () => false);
 }

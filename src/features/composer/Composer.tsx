@@ -26,6 +26,7 @@ import {
   Plus,
   Presentation,
   Puzzle,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   Sparkles,
@@ -62,6 +63,7 @@ import type {
   PermissionMode,
   ReasoningLevel,
   ReferencePlanMode,
+  RuntimeStartupStatus,
   SkillSummary,
 } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages';
@@ -95,6 +97,34 @@ type ImagePreview = {
   name: string;
   path?: string;
 };
+
+function useRuntimeStartupStatus(): RuntimeStartupStatus {
+  const [status, setStatus] = useState<RuntimeStartupStatus>(() =>
+    window.cardbushDesktop?.runtimeStartupStatus
+      ? { phase: 'initializing', attempt: 0, startedAt: new Date().toISOString() }
+      : { phase: 'ready', attempt: 0, startedAt: new Date().toISOString() },
+  );
+  useEffect(() => {
+    const desktop = window.cardbushDesktop;
+    if (!desktop?.runtimeStartupStatus || !desktop.onRuntimeStartupStatus) return undefined;
+    let disposed = false;
+    const apply = (next: RuntimeStartupStatus) => {
+      if (!disposed) setStatus(next);
+    };
+    const unsubscribe = desktop.onRuntimeStartupStatus(apply);
+    void desktop.runtimeStartupStatus().then(apply).catch((error) => apply({
+      phase: 'error',
+      attempt: 0,
+      startedAt: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
+  return status;
+}
 
 type ComposerQueuedMessage = {
   id: string;
@@ -377,6 +407,9 @@ export function Composer({
   onToggleShadow?: () => void;
   contextWindow?: ContextWindowUsage;
 }) {
+  const runtimeStartup = useRuntimeStartupStatus();
+  const runtimeReady = runtimeStartup.phase === 'ready';
+  const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
@@ -399,7 +432,11 @@ export function Composer({
     draft.trim().length > 0 ||
     imageAttachments.length > 0 ||
     fileAttachments.length > 0;
-  const sendButtonLabel = sending
+  const sendButtonLabel = !runtimeReady
+    ? runtimeStartupFailed
+      ? language === 'zh' ? 'Runtime 启动失败，点击重试' : 'Runtime failed to start. Click to retry'
+      : language === 'zh' ? 'Runtime 正在准备' : 'Runtime is preparing'
+    : sending
     ? hasContent
       ? guidanceDeliveryMode === 'immediate'
         ? language === 'zh' ? '马上发送引导' : 'Send guidance now'
@@ -494,6 +531,12 @@ export function Composer({
   ]);
 
   async function submit() {
+    if (!runtimeReady) {
+      if (runtimeStartupFailed) {
+        await window.cardbushDesktop?.retryRuntimeStartup?.();
+      }
+      return;
+    }
     if (sending && !hasContent) {
       if (!cancelReady) {
         return;
@@ -1178,7 +1221,11 @@ export function Composer({
             }
           }}
           placeholder={
-            shadowActive
+            !runtimeReady
+              ? runtimeStartupFailed
+                ? language === 'zh' ? 'Runtime 启动失败，点击发送按钮重试' : 'Runtime failed to start. Use Send to retry'
+                : language === 'zh' ? 'CardBush Runtime 正在准备…' : 'CardBush Runtime is preparing...'
+            : shadowActive
               ? language === 'zh'
                 ? `回复 ${shadowAgentName || 'Shadow Agent'}…`
                 : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
@@ -1281,12 +1328,16 @@ export function Composer({
             <button
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"
-              disabled={sending && !hasContent && (!cancelReady || stopping)}
+              disabled={(!runtimeReady && !runtimeStartupFailed) || (sending && !hasContent && (!cancelReady || stopping))}
               title={sendButtonLabel}
               aria-label={sendButtonLabel}
               onClick={() => void submit()}
             >
-              {sending && !hasContent ? (
+              {!runtimeReady ? (
+                runtimeStartupFailed
+                  ? <RefreshCw size={15} />
+                  : <LoaderCircle size={15} className="spin" />
+              ) : sending && !hasContent ? (
                 cancelReady && !stopping
                   ? <Square size={11} fill="currentColor" />
                   : <LoaderCircle size={15} className="spin" />

@@ -14,6 +14,10 @@ export {
 export type {
   CardbushAppPluginConfig,
   CardbushAppsConfigSnapshot,
+  CardbushAppsConfigStoreOptions,
+  CardbushPluginCatalogEntry,
+  CardbushPluginComponent,
+  CardbushPluginComponentKind,
   ComputerUsePluginConfig,
 } from "./appsConfigStore.js";
 export type {

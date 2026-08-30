@@ -59,6 +59,7 @@ import {
   saveProductProjectContext,
 } from './productProjectContext';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
+import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
@@ -1710,17 +1711,17 @@ function runtimeMessage(
     conversationId: sessionId,
     turnId: message.turnId,
     createdAt: message.createdAt,
+    ...(role === 'assistant' && turn
+      ? { status: assistantDisplayTurnStatus(turn.status) }
+      : {}),
     turnSequence: message.turnSequence,
     messageIndex: message.messageIndex,
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
 }
 
-function isInternalRuntimeMessage(message: RuntimeSessionMessage): boolean {
-  return (
-    message.message.role === 'user' &&
-    message.message.name === 'runtime_context'
-  );
+function assistantDisplayTurnStatus(status: string): string {
+  return status.trim().toLowerCase() === 'completed' ? 'complete' : status;
 }
 
 function runtimeHistoryToolExecution(
@@ -1881,6 +1882,31 @@ function cardbushAppsConfigurationFromPayload(
       id: String(value.id ?? ''),
       name: String(value.name ?? value.id ?? ''),
       description: String(value.description ?? ''),
+      longDescription: String(value.longDescription ?? value.description ?? ''),
+      version: String(value.version ?? ''),
+      developerName: String(value.developerName ?? ''),
+      category: String(value.category ?? ''),
+      capabilities: arrayFrom(value.capabilities).map(String).filter(Boolean),
+      keywords: arrayFrom(value.keywords).map(String).filter(Boolean),
+      defaultPrompts: arrayFrom(value.defaultPrompts).map(String).filter(Boolean),
+      brandColor: String(value.brandColor ?? ''),
+      logoPath: String(value.logoPath ?? ''),
+      logoDarkPath: String(value.logoDarkPath ?? ''),
+      manifestPath: String(value.manifestPath ?? ''),
+      source: value.source === 'user' ? 'user' : 'bundled',
+      installation: value.installation === 'INSTALLED_BY_DEFAULT'
+        ? 'INSTALLED_BY_DEFAULT'
+        : 'AVAILABLE',
+      components: arrayFrom(value.components).map((candidate) => {
+        const component = asRecord(candidate);
+        const kind = component.kind === 'skill' || component.kind === 'app' ? component.kind : 'mcp';
+        return {
+          kind,
+          id: String(component.id ?? ''),
+          name: String(component.name ?? component.id ?? ''),
+          description: String(component.description ?? ''),
+        };
+      }),
       installed: value.installed === true,
       enabled: value.enabled === true,
       config: asRecord(value.config),
@@ -2504,6 +2530,8 @@ export async function fetchSkills(): Promise<SkillSummary[]> {
       description: String(value.description ?? ''),
       descriptionZh: String(value.descriptionZh ?? value.description_zh ?? ''),
       path: String(value.path ?? ''),
+      logoPath: String(value.logoPath ?? value.logo_path ?? ''),
+      logoDarkPath: String(value.logoDarkPath ?? value.logo_dark_path ?? ''),
     };
   });
 }
@@ -2944,6 +2972,8 @@ function skillDetailFromPayload(item: unknown): SkillDetail {
     description: String(value.description ?? ''),
     descriptionZh: String(value.descriptionZh ?? value.description_zh ?? ''),
     path: String(value.path ?? ''),
+    logoPath: String(value.logoPath ?? value.logo_path ?? ''),
+    logoDarkPath: String(value.logoDarkPath ?? value.logo_dark_path ?? ''),
     packageDir: String(value.packageDir ?? value.package_dir ?? ''),
     content: String(value.content ?? ''),
     version: optionalString(value.version),

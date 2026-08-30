@@ -41,11 +41,11 @@ const bundledGeneralTeam: TeamDefinition = {
 };
 
 export function readProductTeams(): TeamDefinition[] {
-  return readArray(teamsKey) as TeamDefinition[];
+  return readArrayOrDefault(teamsKey, [bundledGeneralTeam]) as TeamDefinition[];
 }
 
 export function readProductAgentProfiles(): AgentProfileDefinition[] {
-  return readArray(profilesKey) as AgentProfileDefinition[];
+  return readArrayOrDefault(profilesKey, [bundledGeneralProfile]) as AgentProfileDefinition[];
 }
 
 export async function synchronizeProductTeamSnapshot(
@@ -163,14 +163,14 @@ function snapshot(
   };
 }
 
-function readArray(key: string): unknown[] {
+function readArrayOrDefault(key: string, fallback: unknown[]): unknown[] {
   const raw = window.localStorage.getItem(key);
-  if (!raw?.trim()) return [];
+  if (!raw?.trim()) return structuredClone(fallback);
   try {
     const value: unknown = JSON.parse(raw);
-    return Array.isArray(value) ? value : [];
+    return Array.isArray(value) ? value : structuredClone(fallback);
   } catch {
-    return [];
+    return structuredClone(fallback);
   }
 }
 
