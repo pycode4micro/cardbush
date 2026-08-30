@@ -135,6 +135,76 @@ test("large append-only history is not altered by thresholds", () => {
   assert.match(context.messages.at(-1).content, /^payload-80-/);
 });
 
+test("projects immutable Turn summaries without replacing durable messages", () => {
+  const store = deterministicStore();
+  store.commitTurn("session_1", turn("turn_1", 1, [
+    { role: "user", content: "inspect the project" },
+    { role: "assistant", content: "done", toolCalls: [] },
+  ]));
+  const before = store.commitTurn("session_1", turn("turn_2", 2, [
+    { role: "user", content: "run tests" },
+    { role: "assistant", content: "passed", toolCalls: [] },
+  ]));
+  const after = store.summarizeTurns({
+    sessionId: "session_1",
+    expectedRevision: before.revision,
+    summaries: [
+      { turnId: "turn_1", summary: "Inspected the project and completed the requested review." },
+      { turnId: "turn_2", summary: "Ran the requested tests; they passed." },
+    ],
+  });
+
+  assert.equal(after.revision, before.revision + 1);
+  assert.equal(after.turns[0].messages[0].message.content, "inspect the project");
+  assert.match(after.turns[0].contextSummary, /Inspected the project/);
+  const context = assembleContext({ session: after });
+  assert.equal(context.messages.length, 2);
+  assert.ok(context.messages.every((message) => message.name === "turn_context_summary"));
+  assert.deepEqual(context.sourceMessageIds, [
+    "turn_1_message_0",
+    "turn_1_message_1",
+    "turn_2_message_0",
+    "turn_2_message_1",
+  ]);
+  assert.throws(() => store.summarizeTurns({
+    sessionId: "session_1",
+    expectedRevision: after.revision,
+    summaries: [{ turnId: "turn_1", summary: "replacement" }],
+  }), /already has a context summary/);
+  const superseded = store.supersedeMessages({
+    sessionId: "session_1",
+    messageIds: ["turn_1_message_0", "turn_1_message_1"],
+    reason: "user_replaced_turn",
+  });
+  const supersededContext = assembleContext({ session: superseded });
+  assert.equal(supersededContext.messages.length, 1);
+  assert.match(supersededContext.messages[0].content, /Ran the requested tests/);
+});
+
+test("limits only projected summaries in the extreme fallback", () => {
+  const store = deterministicStore();
+  for (let sequence = 1; sequence <= 25; sequence += 1) {
+    store.commitTurn("session_1", turn(`turn_${sequence}`, sequence, [
+      { role: "user", content: `request ${sequence}` },
+    ]));
+  }
+  const before = store.snapshot("session_1");
+  const snapshot = store.summarizeTurns({
+    sessionId: "session_1",
+    expectedRevision: before.revision,
+    summaries: before.turns.map((item) => ({
+      turnId: item.turnId,
+      summary: `summary ${item.turnSequence}`,
+    })),
+  });
+
+  const context = assembleContext({ session: snapshot, maxSummaryTurns: 20 });
+  assert.equal(context.messages.length, 20);
+  assert.equal(context.truncated, true);
+  assert.match(context.messages[0].content, /summary 6/);
+  assert.equal(assembleContext({ session: snapshot, maxSummaryTurns: 0 }).messages.length, 0);
+});
+
 test("stores product-owned Session metadata with optimistic revisions", () => {
   const store = deterministicStore();
   const created = store.ensureSession("session_1", {

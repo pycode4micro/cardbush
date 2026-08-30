@@ -57,7 +57,10 @@ import {
   updateRuntimeSessionMetadataRequestSchema,
   supersedeRuntimeSessionMessagesRequestSchema,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
+  RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY,
   revertRuntimeWorkspaceChangesSchema,
+  runtimeLogicFeedbackRequestSchema,
   type ModelRequest,
   type ModelMessage,
   type CacheChainState,
@@ -67,10 +70,12 @@ import {
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
   type RuntimeInteraction,
+  type ToolExecutionRecord,
+  type WorkspaceChange,
 } from "@cardbush/bush-protocol";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { executeModelRound } from "./modelRound.js";
 import {
@@ -78,11 +83,23 @@ import {
   type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
+import {
+  CHECKPOINT_CONTEXT_TOOL,
+  CONTEXT_COMPACTION_HARD_PRESSURE,
+  CONTEXT_COMPACTION_SOFT_PRESSURE,
+  CONTEXT_SUMMARY_FALLBACK_TURNS,
+  contextPressureNotice,
+  decodeContextCheckpointInput,
+  estimateContextPressure,
+  registerContextCompactionTool,
+  type ContextCompactionState,
+} from "./contextCompaction.js";
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
 import { RuntimeInteractionStore } from "./runtimeInteractionStore.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
+import { LogicMemoryStore } from "./logicMemory.js";
 import {
   registerSubagentTool,
   type JoinedSubagentResult,
@@ -171,6 +188,46 @@ export interface RuntimeHostCommand {
   payload: unknown;
 }
 
+function logicIdsFromExecutions(records: ToolExecutionRecord[]): string[] {
+  const ids = new Set<string>();
+  for (const record of records) {
+    if (!record.result.success) continue;
+    const output = recordOutput(record.result.output);
+    if (record.toolCall.name === "consult_logic" && Array.isArray(output.matched_logic)) {
+      for (const candidate of output.matched_logic) {
+        if (!candidate || typeof candidate !== "object") continue;
+        const logicId = String((candidate as Record<string, unknown>).logic_id ?? "").trim();
+        if (logicId) ids.add(logicId);
+      }
+    }
+    if (
+      record.toolCall.name === "learn_logic" &&
+      String(output.status ?? "") === "learned"
+    ) {
+      const logicId = String(output.logic_id ?? "").trim();
+      if (logicId) ids.add(logicId);
+    }
+  }
+  return [...ids];
+}
+
+function recordOutput(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 interface PendingAgentGuidance {
   taskId: string;
   promise: Promise<JoinedSubagentResult["message"]>;
@@ -204,12 +261,14 @@ export class InMemoryRuntimeHost {
   readonly #activeTurnControllers = new Map<string, AbortController>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
   readonly #interactions: RuntimeInteractionStore;
+  readonly #logicMemory: LogicMemoryStore;
   readonly #guidanceQueues = new Map<string, Array<{
     messageId: string;
     content: string;
     createdAt: string;
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
+  readonly #contextCompactionAuthorizations = new Map<string, ContextCompactionState>();
   #shuttingDown = false;
 
   constructor(options: InMemoryRuntimeHostOptions) {
@@ -235,9 +294,14 @@ export class InMemoryRuntimeHost {
       onExpired: (item) => this.#appendInteractionEvent(item, "interaction_expired", "timeout"),
     });
     registerInteractionTools(this.#toolRegistry, this.#interactions);
+    const runtimeDataRoot = resolve(
+      options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
+    );
+    this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
       readToolResult: (locator) => this.#readArchivedToolResult(locator),
+      logicMemory: this.#logicMemory,
     });
     this.#createPermissionId = options.createPermissionId;
     this.#recovery = new RuntimeRecoveryCoordinator({
@@ -251,6 +315,9 @@ export class InMemoryRuntimeHost {
       store: options.sessionStore,
       now: this.#sessionNow,
     });
+    registerContextCompactionTool(this.#toolRegistry, (input) =>
+      this.#applyContextCheckpoint(input),
+    );
     if (options.settleOrphanedTurns === true) this.#settleOrphanedTurns();
     this.#coordination = options.coordinationStore ?? new CoordinationStore();
     registerCoordinationTools(this.#toolRegistry, this.#coordination);
@@ -363,6 +430,7 @@ export class InMemoryRuntimeHost {
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
+        RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
         REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
         LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
@@ -389,6 +457,7 @@ export class InMemoryRuntimeHost {
         "cache_chain_observation",
         ...(options.durableRecovery ? ["durable_restart_recovery"] : []),
         "append_only_session_context",
+        "semantic_turn_context_compaction",
         ...(options.durableSessions ? ["durable_sessions"] : []),
         "authoritative_tool_execution_records",
         "bounded_tool_result_projection",
@@ -474,6 +543,8 @@ export class InMemoryRuntimeHost {
           prefix: input.prefixMessages,
           current: input.currentMessages,
           throughTurnSequence: input.throughTurnSequence,
+          maxChars: input.maxChars,
+          maxSummaryTurns: input.maxSummaryTurns,
         });
       }
       case RUN_RUNTIME_SESSION_TURN_COMMAND:
@@ -498,6 +569,10 @@ export class InMemoryRuntimeHost {
         return this.#toolRegistry.definitions();
       case GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND:
         return this.#toolRegistry.catalog();
+      case RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND:
+        return this.#recordLogicFeedback(
+          runtimeLogicFeedbackRequestSchema.parse(command.payload),
+        );
       case REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND:
         return this.#revertWorkspaceChanges(
           revertRuntimeWorkspaceChangesSchema.parse(command.payload),
@@ -624,8 +699,18 @@ export class InMemoryRuntimeHost {
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
+    const candidate = runtimeSessionTurnRequestSchema.parse(input);
+    if (!candidate.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)) {
+      const maintenanceTool = this.#toolRegistry.definitions().find((tool) =>
+        tool.name === CHECKPOINT_CONTEXT_TOOL,
+      );
+      if (!maintenanceTool) {
+        throw new Error("Runtime context maintenance Tool is not registered.");
+      }
+      candidate.tools = [...candidate.tools, maintenanceTool];
+    }
     const prepared = this.#sessions.prepare(
-      runtimeSessionTurnRequestSchema.parse(input),
+      candidate,
     );
     try {
       return await this.#runModelTurn(prepared.modelRequest, {
@@ -775,6 +860,8 @@ export class InMemoryRuntimeHost {
     let round = input.nextRound - 1;
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
+    let contextCompactionFailures = 0;
+    let contextPressureNoticeRevision: number | undefined;
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
       ? structuredClone(input.sessionCommit.generatedMessages)
@@ -812,6 +899,62 @@ export class InMemoryRuntimeHost {
           );
         }
 
+        let contextCompactionRequired = false;
+        if (input.sessionCommit) {
+          let pressure = estimateContextPressure(request, messages);
+          let state = this.#sessions.contextCompactionState(request.sessionId);
+          if (
+            pressure &&
+            pressure.ratio >= CONTEXT_COMPACTION_SOFT_PRESSURE &&
+            state.unsummarizedTurnIds.length > 0
+          ) {
+            this.#contextCompactionAuthorizations.set(turnKey, state);
+            contextCompactionRequired =
+              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE;
+            if (contextPressureNoticeRevision !== state.revision) {
+              messages = [
+                ...messages,
+                contextPressureNotice(state, pressure, contextCompactionRequired),
+              ];
+              contextPressureNoticeRevision = state.revision;
+              pressure = estimateContextPressure(request, messages);
+              contextCompactionRequired =
+                contextCompactionRequired ||
+                Boolean(pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE);
+            }
+          } else if (state.unsummarizedTurnIds.length === 0) {
+            this.#contextCompactionAuthorizations.delete(turnKey);
+            if (pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE) {
+              let summaryLimit = Math.min(
+                CONTEXT_SUMMARY_FALLBACK_TURNS,
+                state.totalTurns,
+              );
+              do {
+                messages = this.#rebuildCompactedMessages(
+                  request.sessionId,
+                  input.sessionCommit,
+                  generatedMessages,
+                  summaryLimit,
+                );
+                pressure = estimateContextPressure(request, messages);
+                if (!pressure || pressure.ratio < CONTEXT_COMPACTION_HARD_PRESSURE) break;
+                summaryLimit -= 1;
+              } while (summaryLimit >= 0);
+              if (pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE) {
+                return finalize({
+                  status: "failed",
+                  reason: "current_turn_context_limit_exceeded",
+                  details: {
+                    estimatedPromptTokens: pressure.estimatedPromptTokens,
+                    usableInputTokens: pressure.usableInputTokens,
+                    preservedSummaryTurns: Math.max(0, summaryLimit),
+                  },
+                });
+              }
+            }
+          }
+        }
+
         let completedRound:
           | Extract<
               Awaited<ReturnType<typeof executeModelRound>>,
@@ -820,7 +963,21 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-          const roundRequest = { ...request, messages };
+          const roundRequest = contextCompactionRequired
+            ? {
+                ...request,
+                messages,
+                tools: request.tools.filter((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL),
+                toolChoice: "required" as const,
+              }
+            : { ...request, messages };
+          if (contextCompactionRequired && roundRequest.tools.length !== 1) {
+            return finalize({
+              status: "failed",
+              reason: "context_compaction_tool_unavailable",
+              details: {},
+            });
+          }
           const cacheObservation = cacheChain.observe(roundRequest);
           this.#eventLog.append(identity, {
             kind: "cache_chain_observed",
@@ -844,6 +1001,11 @@ export class InMemoryRuntimeHost {
           const attemptStartSequence =
             this.#eventLog.replay(request.sessionId, request.turnId).at(-1)
               ?.sequence ?? 0;
+          const deferProviderProjection =
+            this.#contextCompactionAuthorizations.has(turnKey);
+          const deferredProviderEvents: Array<
+            Parameters<RuntimeEventProjector["accept"]>[0]
+          > = [];
           let result;
           try {
             result = await executeModelRound(
@@ -855,7 +1017,8 @@ export class InMemoryRuntimeHost {
                   if (input.signal?.aborted) {
                     throw new Error("Runtime Turn was stopped.");
                   }
-                  projector.accept(event);
+                  if (deferProviderProjection) deferredProviderEvents.push(event);
+                  else projector.accept(event);
                 },
               },
             );
@@ -871,6 +1034,12 @@ export class InMemoryRuntimeHost {
                 message: error instanceof Error ? error.message : String(error),
               },
             });
+          }
+          const isMaintenanceResponse =
+            result.status === "completed" &&
+            result.toolCalls.some((call) => call.name === CHECKPOINT_CONTEXT_TOOL);
+          if (!contextCompactionRequired && !isMaintenanceResponse) {
+            deferredProviderEvents.forEach((event) => projector.accept(event));
           }
           projector.completeOpenSegment();
           mergeUsage(usage, result.usage);
@@ -936,6 +1105,109 @@ export class InMemoryRuntimeHost {
         }
         if (!completedRound || !completedProjector) {
           throw new Error("Runtime retry loop exited without a model result.");
+        }
+        const checkpointCalls = completedRound.toolCalls.filter((call) =>
+          call.name === CHECKPOINT_CONTEXT_TOOL,
+        );
+        if (contextCompactionRequired && checkpointCalls.length === 0) {
+          contextCompactionFailures += 1;
+          if (contextCompactionFailures >= 3) {
+            return finalize({
+              status: "failed",
+              reason: "context_compaction_required",
+              finalMessageId: completedProjector.finalMessageId,
+              details: { message: "The model did not produce the required context checkpoint." },
+            });
+          }
+          contextPressureNoticeRevision = undefined;
+          messages = [...messages, {
+            role: "user",
+            name: "context_compaction_correction",
+            visibility: "internal",
+            content: "Context compaction is mandatory before normal work can continue. Call checkpoint_context now and do not answer or call another Tool.",
+          }];
+          continue;
+        }
+        if (checkpointCalls.length > 0) {
+          if (checkpointCalls.length !== 1 || completedRound.toolCalls.length !== 1) {
+            contextCompactionFailures += 1;
+            if (contextCompactionFailures >= 3) {
+              return finalize({
+                status: "failed",
+                reason: "context_compaction_protocol_invalid",
+                finalMessageId: completedProjector.finalMessageId,
+                details: { message: "checkpoint_context must be called alone." },
+              });
+            }
+            messages = [...messages, {
+              role: "user",
+              name: "context_compaction_correction",
+              visibility: "internal",
+              content: "checkpoint_context must be the only Tool call in this maintenance round. Call it again alone with every requested Turn summary.",
+            }];
+            continue;
+          }
+          try {
+            const checkpoint = decodeContextCheckpointInput(
+              JSON.parse(checkpointCalls[0]!.argumentsText),
+            );
+            this.#applyContextCheckpoint({
+              sessionId: request.sessionId,
+              activeTurnId: request.turnId,
+              checkpoint,
+            });
+            this.#contextCompactionAuthorizations.delete(turnKey);
+            contextPressureNoticeRevision = undefined;
+            contextCompactionFailures = 0;
+            messages = this.#rebuildCompactedMessages(
+              request.sessionId,
+              input.sessionCommit!,
+              generatedMessages,
+            );
+            this.#recovery.save({
+              request,
+              messages,
+              nextRound: round + 1,
+              completedReceiptIds,
+              cacheChainState: cacheChain.snapshot(),
+              sessionCommit: { ...input.sessionCommit!, generatedMessages, usage },
+            });
+            continue;
+          } catch (error) {
+            contextCompactionFailures += 1;
+            if (contextCompactionFailures >= 3) {
+              return finalize({
+                status: "failed",
+                reason: "context_compaction_failed",
+                finalMessageId: completedProjector.finalMessageId,
+                details: {
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              });
+            }
+            const state = this.#sessions.contextCompactionState(request.sessionId);
+            const pressure = estimateContextPressure(request, messages);
+            const mayRetry = Boolean(
+              pressure &&
+              pressure.ratio >= CONTEXT_COMPACTION_SOFT_PRESSURE &&
+              state.unsummarizedTurnIds.length > 0,
+            );
+            if (mayRetry) {
+              this.#contextCompactionAuthorizations.set(turnKey, state);
+              contextPressureNoticeRevision = undefined;
+            } else {
+              this.#contextCompactionAuthorizations.delete(turnKey);
+            }
+            messages = [...messages, {
+              role: "user",
+              name: "context_compaction_correction",
+              visibility: "internal",
+              content: mayRetry
+                ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision and Turn order.`
+                : `The checkpoint_context call was rejected because Runtime has not authorized compaction at the current pressure. Continue the task normally and do not call checkpoint_context without a context_pressure notice.`,
+            }];
+            continue;
+          }
         }
         if (completedRound.toolCalls.length === 0) {
           if (
@@ -1145,10 +1417,53 @@ export class InMemoryRuntimeHost {
       this.#guidanceQueues.delete(turnKey);
       this.#pendingAgentGuidance.delete(turnKey);
       this.#toolLoops.delete(toolLoop);
+      this.#contextCompactionAuthorizations.delete(turnKey);
       this.#activeTurns.delete(turnKey);
       this.#activeTurnControllers.delete(turnKey);
       input.onSettled?.();
     }
+  }
+
+  #applyContextCheckpoint(input: {
+    sessionId: string;
+    activeTurnId: string;
+    checkpoint: ReturnType<typeof decodeContextCheckpointInput>;
+  }) {
+    const key = JSON.stringify([input.sessionId, input.activeTurnId]);
+    const authorized = this.#contextCompactionAuthorizations.get(key);
+    if (!authorized) {
+      throw new Error("Runtime has not authorized context compaction for this Turn.");
+    }
+    if (
+      input.checkpoint.sessionRevision !== authorized.revision ||
+      JSON.stringify(input.checkpoint.summaries.map((item) => item.turnId)) !==
+        JSON.stringify(authorized.unsummarizedTurnIds)
+    ) {
+      throw new Error("Context checkpoint does not match the authorized Session revision and Turn order.");
+    }
+    return this.#sessions.summarizeContext({
+      sessionId: input.sessionId,
+      activeTurnId: input.activeTurnId,
+      expectedRevision: input.checkpoint.sessionRevision,
+      summaries: input.checkpoint.summaries,
+    });
+  }
+
+  #rebuildCompactedMessages(
+    sessionId: string,
+    checkpoint: RuntimeSessionCommitCheckpoint,
+    generatedMessages: GeneratedMessageFact[],
+    maxSummaryTurns?: number,
+  ): ModelMessage[] {
+    return this.#sessions.rebuildActiveContext({
+      sessionId,
+      prefix: checkpoint.prefixMessages,
+      current: [
+        ...checkpoint.inputMessages.map((item) => item.message),
+        ...generatedMessages.map((item) => item.message),
+      ],
+      ...(maxSummaryTurns === undefined ? {} : { maxSummaryTurns }),
+    }).messages;
   }
 
   #trackAgentGuidance(
@@ -1309,31 +1624,144 @@ export class InMemoryRuntimeHost {
     return record.result;
   }
 
+  async #recordLogicFeedback(input: {
+    sessionId: string;
+    turnId: string;
+    messageId: string;
+    rating: "up" | "down" | null;
+  }) {
+    const snapshot = this.#sessions.snapshot(input.sessionId);
+    const turn = snapshot?.turns.find((candidate) => candidate.turnId === input.turnId);
+    if (!turn) throw new Error(`Turn ${input.turnId} does not exist in ${input.sessionId}.`);
+    const message = turn.messages.find((candidate) => candidate.messageId === input.messageId);
+    if (!message || message.message.role !== "assistant") {
+      throw new Error(`Message ${input.messageId} is not an assistant message in ${input.turnId}.`);
+    }
+    const associatedLogicIds = logicIdsFromExecutions(
+      this.#toolExecutions.listTurn(input.sessionId, input.turnId),
+    );
+    const feedback = await this.#logicMemory.recordFeedbackForLogicIds(
+      associatedLogicIds,
+      input.rating,
+      {
+        sourceId: `assistant:${input.sessionId}:${input.turnId}:${input.messageId}`,
+        source: "user_thumb",
+      },
+    );
+    return {
+      ...input,
+      associatedLogicIds,
+      updatedLogicIds: feedback.updatedLogicIds,
+      missingLogicIds: feedback.missingLogicIds,
+    };
+  }
+
   async #revertWorkspaceChanges(input: { sessionId: string; turnIds: string[] }) {
     if (this.#activeTurns.size > 0) throw new Error("Workspace changes cannot be reverted while a Turn is active.");
-    const records = input.turnIds.flatMap((turnId) => this.#toolExecutions.listTurn(input.sessionId, turnId))
-      .sort((left, right) => right.round - left.round || right.ordinal - left.ordinal);
-    let revertedFiles = 0;
-    for (const record of records) {
-      for (const change of [...record.result.workspace_changes].reverse()) {
-        const current = await readFile(change.path).catch(() => undefined);
-        const currentHash = current ? createHash("sha256").update(current).digest("hex") : undefined;
-        if (change.after_hash && currentHash !== change.after_hash) {
-          throw new Error(`Cannot revert ${change.path}; its current revision no longer matches the recorded change.`);
-        }
-        if (change.status === "added") {
-          await rm(change.path, { force: true });
-        } else {
-          const encoded = typeof change.metadata.beforeContentBase64 === "string"
-            ? change.metadata.beforeContentBase64 : "";
-          if (!encoded) throw new Error(`Cannot revert ${change.path}; no before-image was recorded.`);
-          await mkdir(dirname(change.path), { recursive: true });
-          await writeFile(change.path, Buffer.from(encoded, "base64"));
-        }
-        revertedFiles += 1;
-      }
+    const session = this.#sessions.snapshot(input.sessionId);
+    if (!session) {
+      throw workspaceSnapshotUnavailable(`Session ${input.sessionId} does not exist.`);
     }
-    return { sessionId: input.sessionId, turnIds: input.turnIds, revertedFiles, revertedAt: this.#sessionNow() };
+    const previouslyReverted = new Set(
+      stringArrayMetadata(
+        session.metadata?.[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY],
+      ),
+    );
+    let recordedChangeCount = 0;
+    const changes = [...new Set(input.turnIds)].flatMap((turnId) =>
+      this.#toolExecutions.listTurn(input.sessionId, turnId)
+        .reverse()
+        .flatMap((record) => {
+          recordedChangeCount += record.result.workspace_changes.length;
+          return [...record.result.workspace_changes].reverse();
+        }),
+    ).filter((change) => !previouslyReverted.has(change.change_id));
+    if (recordedChangeCount === 0) {
+      throw workspaceSnapshotUnavailable(
+        "No authoritative workspace changes were recorded for the requested Turn(s).",
+      );
+    }
+    if (changes.length === 0) {
+      return {
+        sessionId: input.sessionId,
+        turnIds: input.turnIds,
+        revertedFiles: 0,
+        revertedChangeIds: [],
+        revertedAt: this.#sessionNow(),
+      };
+    }
+
+    const paths = [...new Set(changes.map((change) => {
+      if (!isAbsolute(change.path)) {
+        throw new Error(`Cannot revert ${change.path}; workspace change paths must be absolute.`);
+      }
+      return resolve(change.path);
+    }))].sort();
+    const releases: Array<() => void> = [];
+    try {
+      for (const path of paths) releases.push(this.#workspaceObservations.acquireMutation(path));
+      const initial = new Map<string, WorkspaceFileSnapshot>();
+      for (const path of paths) initial.set(path, await readWorkspaceFile(path));
+      const virtual = new Map(initial);
+      const operations: WorkspaceRevertOperation[] = [];
+      for (const change of changes) {
+        const path = resolve(change.path);
+        const current = virtual.get(path) ?? { exists: false };
+        assertWorkspaceChangeRevision(change, current);
+        const restored = restoredWorkspaceSnapshot(change);
+        operations.push({ path, expected: current, restored });
+        virtual.set(path, restored);
+      }
+
+      try {
+        for (const operation of operations) {
+          const current = await readWorkspaceFile(operation.path);
+          assertSnapshotMatches(operation.path, operation.expected, current);
+          await restoreWorkspaceFile(operation.path, operation.restored);
+        }
+        const latestSession = this.#sessions.snapshot(input.sessionId);
+        if (!latestSession) {
+          throw new Error(`Session ${input.sessionId} disappeared during workspace revert.`);
+        }
+        const revertedChangeIds = changes.map((change) => change.change_id);
+        this.#sessions.updateMetadata({
+          sessionId: input.sessionId,
+          expectedRevision: latestSession.revision,
+          metadata: {
+            ...(latestSession.metadata ?? {}),
+            [RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY]: [
+              ...new Set([...previouslyReverted, ...revertedChangeIds]),
+            ],
+          },
+        });
+        return {
+          sessionId: input.sessionId,
+          turnIds: input.turnIds,
+          revertedFiles: paths.length,
+          revertedChangeIds,
+          revertedAt: this.#sessionNow(),
+        };
+      } catch (error) {
+        const rollbackErrors: string[] = [];
+        for (const [path, snapshot] of initial) {
+          try {
+            await restoreWorkspaceFile(path, snapshot);
+          } catch (rollbackError) {
+            rollbackErrors.push(
+              `${path}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            );
+          }
+        }
+        if (rollbackErrors.length > 0) {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)} Recovery also failed for ${rollbackErrors.join("; ")}`,
+          );
+        }
+        throw error;
+      }
+    } finally {
+      for (const release of releases.reverse()) release();
+    }
   }
 
   #finishTurn(
@@ -1354,6 +1782,99 @@ export class InMemoryRuntimeHost {
     return terminal;
 }
 
+}
+
+interface WorkspaceFileSnapshot {
+  exists: boolean;
+  content?: Buffer;
+  sha256?: string;
+}
+
+interface WorkspaceRevertOperation {
+  path: string;
+  expected: WorkspaceFileSnapshot;
+  restored: WorkspaceFileSnapshot;
+}
+
+function workspaceSnapshotUnavailable(message: string): Error {
+  return new Error(`runtime_workspace_snapshot_unavailable: ${message}`);
+}
+
+function stringArrayMetadata(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+    : [];
+}
+
+async function readWorkspaceFile(path: string): Promise<WorkspaceFileSnapshot> {
+  try {
+    const content = await readFile(path);
+    return {
+      exists: true,
+      content,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { exists: false };
+    throw error;
+  }
+}
+
+function assertWorkspaceChangeRevision(
+  change: WorkspaceChange,
+  current: WorkspaceFileSnapshot,
+): void {
+  if (change.status === "renamed") {
+    throw new Error(`Cannot revert ${change.path}; renamed workspace changes are not supported.`);
+  }
+  if (change.status === "deleted") {
+    if (current.exists) {
+      throw new Error(`Cannot revert ${change.path}; the recorded deletion no longer matches the workspace.`);
+    }
+    return;
+  }
+  if (!change.after_hash) {
+    throw new Error(`Cannot revert ${change.path}; no after-revision was recorded.`);
+  }
+  if (!current.exists || current.sha256 !== change.after_hash) {
+    throw new Error(`Cannot revert ${change.path}; its current revision no longer matches the recorded change.`);
+  }
+}
+
+function restoredWorkspaceSnapshot(change: WorkspaceChange): WorkspaceFileSnapshot {
+  if (change.status === "added") return { exists: false };
+  const encoded = typeof change.metadata.beforeContentBase64 === "string"
+    ? change.metadata.beforeContentBase64
+    : "";
+  if (!encoded) {
+    throw new Error(`Cannot revert ${change.path}; no before-image was recorded.`);
+  }
+  const content = Buffer.from(encoded, "base64");
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  if (change.before_hash && sha256 !== change.before_hash) {
+    throw new Error(`Cannot revert ${change.path}; the recorded before-image is corrupt.`);
+  }
+  return { exists: true, content, sha256 };
+}
+
+function assertSnapshotMatches(
+  path: string,
+  expected: WorkspaceFileSnapshot,
+  current: WorkspaceFileSnapshot,
+): void {
+  if (expected.exists !== current.exists || expected.sha256 !== current.sha256) {
+    throw new Error(`Cannot revert ${path}; it changed while the revert was being prepared.`);
+  }
+}
+
+async function restoreWorkspaceFile(path: string, snapshot: WorkspaceFileSnapshot): Promise<void> {
+  if (!snapshot.exists) {
+    await rm(path, { force: true });
+    return;
+  }
+  if (!snapshot.content) throw new Error(`Cannot restore ${path}; snapshot content is missing.`);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, snapshot.content);
 }
 
 function agentGuidanceFailure(

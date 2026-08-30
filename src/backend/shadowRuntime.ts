@@ -218,9 +218,9 @@ export async function streamRuntimeShadowConversationMessage(
     const workspaceDir = request.projectDir?.trim() || state.workspaceDir ||
       String(source.metadata?.projectDir ?? '');
     const tools = catalog
-      .filter((entry) => readOnly
+      .filter((entry) => entry.definition.name === 'checkpoint_context' || (readOnly
         ? entry.manifest.dispatch_side_effect === 'none'
-        : entry.visibleToChild && (Boolean(workspaceDir) || entry.manifest.dispatch_scope !== 'resource'))
+        : entry.visibleToChild && (Boolean(workspaceDir) || entry.manifest.dispatch_scope !== 'resource')))
       .map((entry) => entry.definition);
     const base = createProductAgentTurnRequest({
       requestId: `request_${crypto.randomUUID()}`,
@@ -240,6 +240,7 @@ export async function streamRuntimeShadowConversationMessage(
       permissionMode: 'task_free',
       planEnabled: false,
       maxOutputTokens: resolved.maxOutputTokens,
+      maxContextTokens: resolved.maxContextTokens,
       reasoningEffort: request.reasoningLevel,
       sessionMetadata: {
         parentSessionId: state.sessionId,

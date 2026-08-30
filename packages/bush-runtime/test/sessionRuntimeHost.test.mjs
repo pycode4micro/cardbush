@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -6,9 +9,10 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
   GET_RUNTIME_SESSION_COMMAND,
+  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
 } from "@cardbush/bush-protocol";
-import { InMemoryRuntimeHost } from "../dist/index.js";
+import { InMemoryRuntimeHost, LogicMemoryStore } from "../dist/index.js";
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
@@ -134,6 +138,157 @@ test("serializes Session Turn commits while allowing the next Turn after complet
   })).turns.length, 2);
 });
 
+test("associates assistant thumbs with LEM records used by that Turn", async (context) => {
+  const dataRoot = await mkdtemp(join(tmpdir(), "cardbush-runtime-lem-"));
+  context.after(() => rm(dataRoot, { recursive: true, force: true }));
+  const memory = new LogicMemoryStore(join(dataRoot, "lem", "logic.json"));
+  const learned = await memory.learn({
+    scenario: "before final verification",
+    bias: "claiming completion without tests",
+    correction: "run proportionate verification before final",
+    evidence_state: "verified",
+  });
+  let round = 0;
+  const host = new InMemoryRuntimeHost({
+    dataRoot,
+    provider: {
+      async *stream(request) {
+        round += 1;
+        yield event(request.requestId, 0, "response_started");
+        if (round === 1) {
+          yield event(request.requestId, 1, "tool_call_delta", {
+            index: 0,
+            toolCallId: "call_consult_logic",
+            nameDelta: "consult_logic",
+            argumentsDelta: JSON.stringify({ query: "final verification before completion" }),
+          });
+          yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          return;
+        }
+        yield event(request.requestId, 1, "text_delta", { delta: "verified answer" });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+    projectorOptions: {
+      createMessageId: counter("assistant_lem"),
+      createSegmentId: counter("segment_lem"),
+    },
+  });
+  const lemRequest = sessionRequest("request_lem", "turn_lem", "user_lem", "finish safely");
+  const catalog = await host.sendCommand({ kind: "runtime.get_tool_catalog", payload: {} });
+  lemRequest.tools = catalog.filter((definition) => definition.name === "consult_logic");
+  await host.runSessionTurn(lemRequest);
+  const snapshot = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1" },
+  });
+  const finalMessage = snapshot.turns[0].messages.find((message) =>
+    message.message.role === "assistant" && message.message.content === "verified answer");
+  assert.ok(finalMessage);
+  const feedback = await host.sendCommand({
+    kind: RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
+    payload: {
+      sessionId: "session_1",
+      turnId: "turn_lem",
+      messageId: finalMessage.messageId,
+      rating: "up",
+    },
+  });
+  assert.deepEqual(feedback.associatedLogicIds, [learned.logic_id]);
+  assert.deepEqual(feedback.updatedLogicIds, [learned.logic_id]);
+  const stored = JSON.parse(await readFile(memory.path, "utf8"))[0];
+  assert.equal(stored.positive_feedback_count, 1);
+});
+
+test("forces atomic context compaction and resumes the same active Turn", async () => {
+  const observedRequests = [];
+  let call = 0;
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async *stream(request) {
+        observedRequests.push(structuredClone(request));
+        call += 1;
+        yield event(request.requestId, 0, "response_started");
+        if (call === 1) {
+          yield event(request.requestId, 1, "text_delta", { delta: "first complete" });
+          yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+          return;
+        }
+        if (request.toolChoice === "required") {
+          const argumentsText = JSON.stringify({
+            session_revision: 2,
+            summaries: [{
+              turn_id: "turn_compact_1",
+              summary: "The user supplied a large prior payload; the Turn completed without external side effects.",
+            }],
+          });
+          yield event(request.requestId, 1, "tool_call_delta", {
+            index: 0,
+            toolCallId: "call_checkpoint",
+            nameDelta: "checkpoint_context",
+            argumentsDelta: argumentsText,
+          });
+          yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          return;
+        }
+        yield event(request.requestId, 1, "text_delta", { delta: "second complete" });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+    projectorOptions: {
+      createMessageId: counter("assistant_compact"),
+      createSegmentId: counter("segment_compact"),
+    },
+  });
+
+  await host.runSessionTurn(sessionRequest(
+    "request_compact_1",
+    "turn_compact_1",
+    "user_compact_1",
+    "x".repeat(20_000),
+  ));
+  const second = sessionRequest(
+    "request_compact_2",
+    "turn_compact_2",
+    "user_compact_2",
+    "continue",
+  );
+  second.tools = [checkpointToolDefinition()];
+  second.maxOutputTokens = 1000;
+  second.metadata = { contextWindowTokens: 4000 };
+  await host.runSessionTurn(second);
+
+  assert.equal(observedRequests.length, 3);
+  assert.equal(observedRequests[1].toolChoice, "required");
+  assert.deepEqual(observedRequests[1].tools.map((tool) => tool.name), ["checkpoint_context"]);
+  assert.match(
+    observedRequests[2].messages.find((message) => message.name === "turn_context_summary")?.content ?? "",
+    /large prior payload/,
+  );
+  const snapshot = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1" },
+  });
+  assert.match(snapshot.turns[0].contextSummary, /large prior payload/);
+  assert.equal(snapshot.turns[0].messages[0].message.content.length, 20_000);
+  assert.equal(snapshot.turns[1].messages.length, 2);
+  assert.equal(
+    snapshot.turns[1].messages.some((message) =>
+      message.message.role === "assistant" &&
+      message.message.toolCalls.some((toolCall) => toolCall.name === "checkpoint_context")),
+    false,
+  );
+  assert.equal(
+    host.events("session_1", "turn_compact_2")
+      .filter((event) => event.kind === "assistant_segment_started").length,
+    1,
+  );
+});
+
 function sessionRequest(requestId, turnId, messageId, content) {
   return {
     protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
@@ -157,6 +312,21 @@ function event(requestId, sequence, kind, payload = {}) {
     createdAt: NOW,
     kind,
     ...payload,
+  };
+}
+
+function checkpointToolDefinition() {
+  return {
+    name: "checkpoint_context",
+    description: "Checkpoint context.",
+    inputSchema: {
+      type: "object",
+      required: ["session_revision", "summaries"],
+      properties: {
+        session_revision: { type: "integer" },
+        summaries: { type: "array" },
+      },
+    },
   };
 }
 

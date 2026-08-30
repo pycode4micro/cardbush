@@ -41,8 +41,10 @@ test("requires an exact observed revision before edit and permits inherited fork
   assert.equal(edited.kind, "completed");
   assert.equal(readFileSync(path, "utf8"), "after\n");
   assert.equal(edited.result.workspace_changes[0].status, "modified");
-  assert.equal(edited.result.workspace_changes[0].additions, undefined);
-  assert.equal(edited.result.workspace_changes[0].deletions, undefined);
+  assert.equal(edited.result.workspace_changes[0].additions, 1);
+  assert.equal(edited.result.workspace_changes[0].deletions, 1);
+  assert.match(edited.result.workspace_changes[0].metadata.diff, /-before/);
+  assert.match(edited.result.workspace_changes[0].metadata.diff, /\+after/);
 });
 
 test("invalidates read evidence when the file changes outside Runtime", async (t) => {
@@ -99,6 +101,48 @@ test("writes new files, treats search no-match as a successful fact, and reports
   assert.equal(nonzero.result.output.exitCode, 7);
   assert.equal(nonzero.result.output.stdout, "out");
   assert.equal(nonzero.result.output.stderr, "err");
+});
+
+test("uses absolute filesystem paths safely when a Turn has no workspace", async (t) => {
+  const external = temporaryRoot(t);
+  const path = join(external, "desktop-file.txt");
+  const registry = new ToolRegistry();
+  registerWorkspaceTools(registry, new WorkspaceObservationStore());
+  const permissionRequests = [];
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: {
+      async request(input) {
+        permissionRequests.push(input);
+        return {
+          protocol: "bush.runtime_permission_answer.v1",
+          permissionId: `permission_${permissionRequests.length}`,
+          answerId: `answer_${permissionRequests.length}`,
+          decision: "allow_once",
+          grantedCapabilityIds: input.capabilityIds,
+        };
+      },
+    },
+  });
+
+  const written = await coordinator.execute(
+    call("write_file", { path, content: "hello world" }),
+    identity("session"),
+    undefined,
+    turn(registry, undefined, {}),
+  );
+  assert.equal(written.kind, "completed");
+  assert.equal(readFileSync(path, "utf8"), "hello world");
+  assert.deepEqual(permissionRequests[0].resources, [path]);
+
+  const relative = await coordinator.execute(
+    call("write_file", { path: "relative.txt", content: "blocked" }),
+    { ...identity("session"), ordinal: 1 },
+    undefined,
+    turn(registry, undefined, {}),
+  );
+  assert.equal(relative.kind, "failed");
+  assert.match(relative.result.error.message, /Relative paths require a workspaceDir/);
 });
 
 test("canonicalizes a linked workspace root and rejects a linked escape", async (t) => {

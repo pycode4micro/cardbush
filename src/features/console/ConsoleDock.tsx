@@ -1,297 +1,58 @@
 import type { Terminal as XTermInstance } from '@xterm/xterm';
 import {
-  ArrowUp,
-  CheckCircle2,
   ChevronDown,
-  GitBranch,
-  LoaderCircle,
   Plus,
-  RefreshCw,
   Terminal,
+  X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { compactPath } from '../../shared/localPaths';
 import type { AppLanguage, TerminalRuntime } from '../../types';
 
-export type ConsoleMode = 'git' | 'terminal';
-
-type GitInfo = {
-  branch: string;
-  root: string;
-  changedFiles: Array<{ path: string; status: string }>;
-  missing?: boolean;
-  error?: string;
-};
+export type ConsoleMode = 'terminal';
 
 type TerminalSessionInfo = {
   id: string;
   cwd: string;
   shell: string;
 };
+
+type TerminalTab = {
+  key: number;
+  session: TerminalSessionInfo | null;
+};
+
 export function ConsoleDock({
-  mode,
   language,
   activeProjectDir,
   terminalRuntime,
   onClose,
 }: {
-  mode: ConsoleMode;
   language: AppLanguage;
   activeProjectDir?: string;
   terminalRuntime: TerminalRuntime;
   onClose: () => void;
 }) {
-  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null);
-  const [gitError, setGitError] = useState('');
-  const [gitLoading, setGitLoading] = useState(false);
-  const [gitRefreshKey, setGitRefreshKey] = useState(0);
-  const [gitBranches, setGitBranches] = useState<string[]>([]);
-  const [targetBranch, setTargetBranch] = useState('');
-  const [commitMessage, setCommitMessage] = useState('');
-  const [gitActionOutput, setGitActionOutput] = useState('');
-  const [gitActionLoading, setGitActionLoading] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadGitInfo() {
-      if (mode !== 'git') {
-        return;
-      }
-      const root = activeProjectDir?.trim();
-      if (!root || !window.cardbushDesktop?.gitInfo) {
-        setGitInfo(null);
-        setGitError(language === 'zh' ? '请先打开一个 Git 项目' : 'Open a Git project first');
-        return;
-      }
-      setGitLoading(true);
-      try {
-        const info = await window.cardbushDesktop.gitInfo(root);
-        if (cancelled) {
-          return;
-        }
-        setGitInfo(info);
-        setGitError(info.error ?? '');
-        setTargetBranch(info.branch);
-        if (!info.error && window.cardbushDesktop?.gitBranches) {
-          const branches = await window.cardbushDesktop.gitBranches(root).catch(() => []);
-          if (!cancelled) {
-            setGitBranches(branches);
-          }
-        } else {
-          setGitBranches([]);
-        }
-      } catch (error) {
-        if (cancelled) {
-          return;
-        }
-        setGitInfo(null);
-        setGitError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (!cancelled) {
-          setGitLoading(false);
-        }
-      }
-    }
-    void loadGitInfo();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProjectDir, gitRefreshKey, language, mode]);
-
   const terminalTitle = language === 'zh' ? '终端控制台' : 'Terminal console';
-  const gitTitle = language === 'zh' ? 'Git 控制台' : 'Git console';
-  const canRunGitAction = Boolean(
-    mode === 'git' &&
-      activeProjectDir?.trim() &&
-      gitInfo &&
-      !gitInfo.missing &&
-      !gitInfo.error,
-  );
-
-  const runGitAction = useCallback(
-    async (
-      action: 'checkout' | 'commit' | 'push',
-      runner: () => Promise<{ output?: string; branch?: string } | void>,
-    ) => {
-      if (!canRunGitAction || gitActionLoading) {
-        return;
-      }
-      setGitActionLoading(action);
-      setGitActionOutput('');
-      setGitError('');
-      try {
-        const result = await runner();
-        setGitActionOutput(result?.output ?? '');
-        setGitRefreshKey((value) => value + 1);
-      } catch (error) {
-        setGitError(error instanceof Error ? error.message : String(error));
-      } finally {
-        setGitActionLoading('');
-      }
-    },
-    [canRunGitAction, gitActionLoading],
-  );
-
-  const checkoutBranch = useCallback(() => {
-    const root = activeProjectDir?.trim();
-    const branch = targetBranch.trim();
-    if (!root || !branch) {
-      setGitError(language === 'zh' ? '请输入要切换的分支' : 'Enter a branch to switch to');
-      return;
-    }
-    void runGitAction('checkout', () => window.cardbushDesktop!.gitCheckout(root, branch));
-  }, [activeProjectDir, language, runGitAction, targetBranch]);
-
-  const commitChanges = useCallback(() => {
-    const root = activeProjectDir?.trim();
-    const message = commitMessage.trim();
-    if (!root || !message) {
-      setGitError(language === 'zh' ? '请输入提交信息' : 'Enter a commit message');
-      return;
-    }
-    void runGitAction('commit', async () => {
-      const result = await window.cardbushDesktop!.gitCommit(root, message);
-      setCommitMessage('');
-      return result;
-    });
-  }, [activeProjectDir, commitMessage, language, runGitAction]);
-
-  const pushBranch = useCallback(() => {
-    const root = activeProjectDir?.trim();
-    if (!root) {
-      return;
-    }
-    void runGitAction('push', () => window.cardbushDesktop!.gitPush(root));
-  }, [activeProjectDir, runGitAction]);
 
   return (
-    <section className={`console-dock ${mode}`}>
+    <section className="console-dock terminal">
       <header className="console-header">
-        {mode === 'git' ? <GitBranch size={16} /> : <Terminal size={16} />}
-        <strong>{mode === 'git' ? gitTitle : terminalTitle}</strong>
+        <Terminal size={16} />
+        <strong>{terminalTitle}</strong>
         <span>
-          {mode === 'git'
-            ? gitInfo?.branch || gitError || activeProjectDir || ''
-            : activeProjectDir || (language === 'zh' ? '当前工作区' : 'Current workspace')}
+          {activeProjectDir || (language === 'zh' ? '当前工作区' : 'Current workspace')}
         </span>
-        {mode === 'git' && (
-          <button
-            type="button"
-            onClick={() => setGitRefreshKey((value) => value + 1)}
-            aria-label="refresh git"
-            disabled={gitLoading}
-          >
-            <RefreshCw size={15} />
-          </button>
-        )}
         <button type="button" onClick={onClose} aria-label="close console">
           <ChevronDown size={18} />
         </button>
       </header>
-      {mode === 'git' ? (
-        <div className="console-content git">
-          {gitInfo ? (
-            <>
-              <ConsoleRow label={language === 'zh' ? '仓库' : 'Repository'} value={gitInfo.root} />
-              <ConsoleRow label={language === 'zh' ? '分支' : 'Branch'} value={gitInfo.branch || 'HEAD'} />
-              <ConsoleRow
-                label={language === 'zh' ? '变更' : 'Changes'}
-                value={
-                  gitInfo.changedFiles.length === 0
-                    ? language === 'zh'
-                      ? '干净'
-                      : 'Clean'
-                    : language === 'zh'
-                      ? `${gitInfo.changedFiles.length} 个文件`
-                      : `${gitInfo.changedFiles.length} files`
-                }
-              />
-              {gitError && <p className="console-error">{gitError}</p>}
-              {!gitInfo.error && !gitInfo.missing && (
-                <div className="git-actions">
-                  <div className="git-action-row">
-                    <input
-                      list="git-branches"
-                      value={targetBranch}
-                      placeholder={language === 'zh' ? '分支名' : 'Branch name'}
-                      onChange={(event) => setTargetBranch(event.currentTarget.value)}
-                    />
-                    <datalist id="git-branches">
-                      {gitBranches.map((branch) => (
-                        <option key={branch} value={branch} />
-                      ))}
-                    </datalist>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={Boolean(gitActionLoading)}
-                      onClick={checkoutBranch}
-                    >
-                      {gitActionLoading === 'checkout' ? <LoaderCircle size={14} /> : <GitBranch size={14} />}
-                      {language === 'zh' ? '切换分支' : 'Switch'}
-                    </button>
-                  </div>
-                  <div className="git-action-row">
-                    <input
-                      value={commitMessage}
-                      placeholder={language === 'zh' ? '提交信息' : 'Commit message'}
-                      onChange={(event) => setCommitMessage(event.currentTarget.value)}
-                    />
-                    <button
-                      className="primary-button"
-                      type="button"
-                      disabled={Boolean(gitActionLoading)}
-                      onClick={commitChanges}
-                    >
-                      {gitActionLoading === 'commit' ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
-                      {language === 'zh' ? '提交' : 'Commit'}
-                    </button>
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={Boolean(gitActionLoading)}
-                      onClick={pushBranch}
-                    >
-                      {gitActionLoading === 'push' ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
-                      {language === 'zh' ? '推送' : 'Push'}
-                    </button>
-                  </div>
-                  {gitActionOutput && <pre className="git-action-output">{gitActionOutput}</pre>}
-                </div>
-              )}
-              {gitInfo.changedFiles.length > 0 ? (
-                <div className="git-file-list">
-                  {gitInfo.changedFiles.map((file) => (
-                    <div className="git-file-row" key={`${file.status}:${file.path}`}>
-                      <code>{file.status}</code>
-                      <span title={file.path}>{file.path}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="console-empty">
-                  {language === 'zh' ? '当前没有未提交变更。' : 'No uncommitted changes.'}
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="console-empty">
-              {gitLoading
-                ? language === 'zh'
-                  ? '正在读取 Git 信息...'
-                  : 'Reading Git info...'
-                : gitError}
-            </p>
-          )}
-        </div>
-      ) : (
-        <EmbeddedTerminal
-          language={language}
-          activeProjectDir={activeProjectDir}
-          terminalRuntime={terminalRuntime}
-        />
-      )}
+      <EmbeddedTerminal
+        language={language}
+        activeProjectDir={activeProjectDir}
+        terminalRuntime={terminalRuntime}
+      />
     </section>
   );
 }
@@ -305,11 +66,131 @@ function EmbeddedTerminal({
   activeProjectDir?: string;
   terminalRuntime: TerminalRuntime;
 }) {
+  const nextTabKeyRef = useRef(2);
+  const [tabs, setTabs] = useState<TerminalTab[]>([{ key: 1, session: null }]);
+  const [activeTabKey, setActiveTabKey] = useState<number | null>(1);
+
+  const addTerminal = () => {
+    const key = nextTabKeyRef.current;
+    nextTabKeyRef.current += 1;
+    setTabs((current) => [...current, { key, session: null }]);
+    setActiveTabKey(key);
+  };
+
+  const closeTerminal = (key: number) => {
+    const index = tabs.findIndex((tab) => tab.key === key);
+    if (index < 0) {
+      return;
+    }
+    const remaining = tabs.filter((tab) => tab.key !== key);
+    setTabs(remaining);
+    if (activeTabKey === key) {
+      setActiveTabKey(remaining[Math.min(index, remaining.length - 1)]?.key ?? null);
+    }
+  };
+
+  const updateSession = (key: number, session: TerminalSessionInfo | null) => {
+    setTabs((current) => current.map((tab) => (tab.key === key ? { ...tab, session } : tab)));
+  };
+
+  return (
+    <div className="console-content terminal native-terminal-shell">
+      <div className="native-terminal-tabs" role="tablist">
+        {tabs.map((tab, index) => (
+          <div
+            className={`native-terminal-tab ${activeTabKey === tab.key ? 'active' : ''}`}
+            key={tab.key}
+          >
+            <button
+              className="native-terminal-tab-select"
+              type="button"
+              role="tab"
+              aria-selected={activeTabKey === tab.key}
+              onClick={() => setActiveTabKey(tab.key)}
+            >
+              <Terminal size={14} />
+              <span>
+                {compactPath(tab.session?.cwd ?? activeProjectDir)
+                  ? `${compactPath(tab.session?.cwd ?? activeProjectDir)}${
+                      tabs.length > 1 ? ` · ${index + 1}` : ''
+                    }`
+                  : language === 'zh'
+                    ? `终端 ${index + 1}`
+                    : `Terminal ${index + 1}`}
+              </span>
+            </button>
+            <button
+              className="native-terminal-tab-close"
+              type="button"
+              aria-label={language === 'zh' ? '关闭终端' : 'Close terminal'}
+              title={language === 'zh' ? '关闭并结束该终端' : 'Close and terminate this terminal'}
+              onClick={() => closeTerminal(tab.key)}
+            >
+              <X size={13} />
+            </button>
+          </div>
+        ))}
+        <button
+          className="native-terminal-add"
+          type="button"
+          aria-label={language === 'zh' ? '新建终端' : 'New terminal'}
+          title={language === 'zh' ? '新建终端' : 'New terminal'}
+          onClick={addTerminal}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+      {tabs.length === 0 && (
+        <button className="native-terminal-empty" type="button" onClick={addTerminal}>
+          <Plus size={18} />
+          {language === 'zh' ? '新建终端' : 'New terminal'}
+        </button>
+      )}
+      {tabs.map((tab) => (
+        <TerminalSessionView
+          key={tab.key}
+          active={activeTabKey === tab.key}
+          language={language}
+          activeProjectDir={activeProjectDir}
+          terminalRuntime={terminalRuntime}
+          onSessionChange={(session) => updateSession(tab.key, session)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TerminalSessionView({
+  active,
+  language,
+  activeProjectDir,
+  terminalRuntime,
+  onSessionChange,
+}: {
+  active: boolean;
+  language: AppLanguage;
+  activeProjectDir?: string;
+  terminalRuntime: TerminalRuntime;
+  onSessionChange: (session: TerminalSessionInfo | null) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTermInstance | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const [session, setSession] = useState<TerminalSessionInfo | null>(null);
+  const resizeToContainerRef = useRef<(() => void) | null>(null);
+  const onSessionChangeRef = useRef(onSessionChange);
   const [status, setStatus] = useState('');
+  onSessionChangeRef.current = onSessionChange;
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      resizeToContainerRef.current?.();
+      terminalRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -411,6 +292,7 @@ function EmbeddedTerminal({
           terminal.resize(cols, rows);
         }
       }
+      resizeToContainerRef.current = resizeToContainer;
 
       resizeObserver = new ResizeObserver(resizeToContainer);
       resizeObserver.observe(terminalContainer);
@@ -424,10 +306,12 @@ function EmbeddedTerminal({
             return;
           }
           sessionIdRef.current = nextSession.id;
-          setSession(nextSession);
+          onSessionChangeRef.current(nextSession);
           setStatus('');
           resizeToContainer();
-          terminal?.focus();
+          if (active) {
+            terminal?.focus();
+          }
         })
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -446,7 +330,7 @@ function EmbeddedTerminal({
       disposed = true;
       const id = sessionIdRef.current;
       sessionIdRef.current = null;
-      setSession(null);
+      resizeToContainerRef.current = null;
       resizeObserver?.disconnect();
       offData?.();
       offExit?.();
@@ -461,27 +345,9 @@ function EmbeddedTerminal({
   }, [activeProjectDir, language, terminalRuntime]);
 
   return (
-    <div className="console-content terminal native-terminal-shell">
-      <div className="native-terminal-tabs">
-        <div className="native-terminal-tab active">
-          <Terminal size={14} />
-          <span>{compactPath(session?.cwd ?? activeProjectDir)}</span>
-        </div>
-        <button type="button" aria-label="new terminal tab" disabled>
-          <Plus size={16} />
-        </button>
-      </div>
+    <div className={`native-terminal-session ${active ? 'active' : ''}`}>
       <div className="native-terminal-viewport" ref={containerRef} />
       {status && <div className="native-terminal-status">{status}</div>}
-    </div>
-  );
-}
-
-function ConsoleRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="console-row">
-      <span>{label}</span>
-      <code>{value}</code>
     </div>
   );
 }

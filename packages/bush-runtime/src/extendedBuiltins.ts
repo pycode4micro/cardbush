@@ -1,6 +1,6 @@
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import {
@@ -10,133 +10,177 @@ import {
 } from "@cardbush/bush-protocol";
 
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import { LogicMemoryStore } from "./logicMemory.js";
 
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
   readToolResult?: (locator: string) => unknown;
+  logicMemory?: LogicMemoryStore;
 }
 
 export function registerExtendedBuiltins(registry: ToolRegistry, options: ExtendedBuiltinOptions = {}): void {
   const dataRoot = resolve(options.dataRoot || join(process.cwd(), ".cardbush-runtime"));
-  registerLogic(registry, dataRoot);
-  registerKed(registry, dataRoot, options.readToolResult);
+  registerLogic(registry, options.logicMemory ?? new LogicMemoryStore(join(dataRoot, "lem", "logic.json")));
+  registerArchivedToolResult(registry, options.readToolResult);
   registerImageInput(registry);
   registerSchedule(registry, dataRoot);
   registerParallel(registry);
 }
 
-function registerLogic(registry: ToolRegistry, dataRoot: string) {
-  const store = new JsonStore(join(dataRoot, "memory", "logic.json"));
+function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
   registry.register<Record<string, unknown>>({
-    definition: { name: "consult_logic", description: "Consult local reasoning memory before strong judgments, evidence conflicts, complex tradeoffs, delegation, or completion decisions. Advisory memories are not task facts.", inputSchema: objectSchema(["query"], { query: { type: "string" }, max_results: { type: "integer", minimum: 1, maximum: 10 } }) },
-    manifest: manifest("logic.consult", false, "session"), parallelSafe: true,
-    decodeInput: object,
-    execute: async (context) => {
-      const query = requiredText(context.input.query, "query");
-      const terms = tokens(query);
-      const records = await store.read();
-      const matches = records.map((item) => ({ ...item, score: score(item, terms) }))
-        .filter((item) => item.score > 0).sort((a, b) => b.score - a.score)
-        .slice(0, clamp(context.input.max_results, 1, 10, 5));
-      return success(context, { query, matches }, [], ["logic"]);
+    definition: {
+      name: "consult_logic",
+      description: "Consult local LEM advisory reasoning memory before consequential judgments, evidence conflicts, correction-direction decisions, complex tradeoffs, delegation, or uncertain completion criteria. Retrieved records are reflection candidates, not task answers or policy.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["query"],
+        properties: {
+          query: { type: "string", minLength: 1 },
+          scenario_conditions: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          decision_context: { type: "string" },
+          decision_phase: {
+            type: "string",
+            enum: ["before_action", "after_tool_result", "before_delegation", "before_final", "recovery", "postmortem"],
+          },
+          task_type: { type: "string" },
+          tool_focus: { type: "string" },
+          cognitive_patterns: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          max_results: { type: "integer", minimum: 1, maximum: 10, default: 5 },
+        },
+      },
     },
+    manifest: manifest("logic.consult", false, "session"),
+    parallelSafe: true,
+    visibleToChild: true,
+    decodeInput: (value) => {
+      const input = object(value);
+      requiredText(input.query, "query");
+      const conditions = [
+        ...stringList(input.scenario_conditions),
+        text(input.decision_phase),
+        text(input.task_type),
+        text(input.tool_focus),
+      ].filter(Boolean);
+      return { ...input, scenario_conditions: conditions };
+    },
+    execute: async (context) =>
+      success(context, await store.consult(context.input), [store.path], ["logic", "lem"]),
   });
   registry.register<Record<string, unknown>>({
-    definition: { name: "learn_logic", description: "Store a local reasoning lesson as scenario-bias-correction memory, or record feedback for an existing logic_id. Store how to reason, not task instructions.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("logic.learn", true, "session"), visibleToChild: true,
-    decodeInput: object,
-    execute: async (context) => {
-      const records = await store.read();
-      const logicId = text(context.input.logic_id) || `logic_${randomUUID()}`;
-      const existing = records.findIndex((item) => item.logic_id === logicId);
-      const hasReward = context.input.reward !== undefined && context.input.reward !== null && context.input.reward !== "";
-      const reward = hasReward ? Number(context.input.reward) : undefined;
-      const entry = { logic_id: logicId, scenario: text(context.input.scenario), bias: text(context.input.bias), correction: text(context.input.correction), lesson: text(context.input.lesson), ...(reward !== undefined ? { reward } : {}), updated_at: new Date().toISOString() };
-      if (!entry.lesson && !entry.correction && reward === undefined) throw new Error("lesson, correction, or reward is required.");
-      if (reward !== undefined && !Number.isFinite(reward)) throw new Error("reward must be a finite number.");
-      if (existing >= 0) records[existing] = { ...records[existing], ...entry };
-      else records.push(entry);
-      await store.write(records);
-      return success(context, entry, [store.path], ["logic"]);
+    definition: {
+      name: "learn_logic",
+      description: "Store a local LEM reasoning lesson as scenario-bias-correction memory, or record reward feedback for an existing logic_id. Store how to think, not task instructions or domain answers.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          action: { type: "string", enum: ["learn", "feedback"], default: "learn" },
+          logic_id: { type: "string" },
+          scenario: { type: "string" },
+          bias: { type: "string" },
+          correction: { type: "string" },
+          reflection_question: { type: "string" },
+          cognitive_patterns: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          conditions: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          chain: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          evidence: { type: "string" },
+          outcome: { type: "string" },
+          evidence_state: { type: "string", enum: ["verified", "unverified"] },
+          tags: {
+            oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          },
+          confidence: { type: "number", minimum: 0.1, maximum: 0.98, default: 0.76 },
+          background: { type: "boolean", default: false },
+          feedback: {
+            type: "string",
+            enum: ["thumbs_up", "thumbs_down", "helpful", "unhelpful", "success", "failure", "positive", "negative"],
+          },
+          reward: { type: "number", minimum: -1, maximum: 1 },
+          rating: { type: "number", minimum: -5, maximum: 5 },
+          source: { type: "string" },
+          source_id: { type: "string" },
+          note: { type: "string" },
+        },
+        oneOf: [
+          { required: ["scenario"] },
+          { required: ["action", "logic_id"] },
+          { required: ["logic_id", "feedback"] },
+          { required: ["logic_id", "reward"] },
+        ],
+      },
     },
+    manifest: manifest("logic.learn", true, "session"),
+    parallelSafe: false,
+    visibleToChild: true,
+    decodeInput: object,
+    execute: async (context) =>
+      success(context, await store.learn(context.input), [store.path], ["logic", "lem"]),
   });
 }
 
-function registerKed(
+function registerArchivedToolResult(
   registry: ToolRegistry,
-  dataRoot: string,
   readToolResult?: (locator: string) => unknown,
 ) {
-  const store = new JsonStore(join(dataRoot, "ked", "knowledge.json"));
-  registry.register<Record<string, unknown>>({
-    definition: { name: "ked_knowledge", description: "Ingest, search, read, list, and delete reusable local knowledge with traceable item identifiers.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("knowledge.manage", true, "session"),
-    decodeInput: object,
-    authorize: async (context) => text(context.input.action) === "ingest_file"
-      ? pathAdmission(context, requiredText(context.input.path, "path"), "read")
-      : { kind: "allow" },
-    execute: async (context) => {
-      const action = text(context.input.action) || "search";
-      const records = await store.read();
-      if (action === "ingest_text" || action === "ingest_file") {
-        const sourcePath = action === "ingest_file" ? requiredText(context.input.path, "path") : "";
-        const content = action === "ingest_file" ? await readFile(resolve(sourcePath), "utf8") : requiredText(context.input.content, "content");
-        const itemId = text(context.input.item_id) || `ked_${createHash("sha256").update(content).digest("hex").slice(0, 20)}`;
-        const item = { item_id: itemId, domain: text(context.input.domain), title: text(context.input.title) || basename(sourcePath) || itemId, source: text(context.input.source) || sourcePath, tags: stringList(context.input.tags), content, updated_at: new Date().toISOString() };
-        const index = records.findIndex((entry) => entry.item_id === itemId);
-        if (index >= 0) records[index] = item; else records.push(item);
-        await store.write(records);
-        return success(context, { status: "ingested", item_id: itemId, char_count: content.length }, [store.path, ...(sourcePath ? [resolve(sourcePath)] : [])], ["knowledge"]);
-      }
-      if (action === "delete") {
-        const itemId = requiredText(context.input.item_id, "item_id");
-        const next = records.filter((item) => item.item_id !== itemId);
-        await store.write(next);
-        return success(context, { status: next.length === records.length ? "not_found" : "deleted", item_id: itemId }, [store.path], ["knowledge"]);
-      }
-      if (action === "read") {
-        const itemId = requiredText(context.input.item_id, "item_id");
-        const item = records.find((entry) => entry.item_id === itemId);
-        return success(context, item ?? { status: "not_found", item_id: itemId }, [store.path], ["knowledge"]);
-      }
-      if (action === "list") return success(context, records.slice(0, clamp(context.input.limit, 1, 200, 50)).map(summary), [store.path], ["knowledge"]);
-      const query = requiredText(context.input.query, "query");
-      const terms = tokens(query);
-      const matches = records.map((item) => ({ ...summary(item), score: score(item, terms), snippet: text(item.content).slice(0, clamp(context.input.max_chars_per_result, 120, 4000, 900)) }))
-        .filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, clamp(context.input.top_k, 1, 30, 8));
-      return success(context, { query, matches }, [store.path], ["knowledge"]);
+  registry.register<{ locator: string; offset: number; maxChars: number }>({
+    definition: {
+      name: "read_archived_tool_result",
+      description: "Read an exact chunk from a complete Tool result archived by Runtime. Call only when a preceding Tool result explicitly provides a tool-result:// locator. Never pass a local path, file:// URL, Skill resource, or guessed locator.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["locator"],
+        properties: {
+          locator: {
+            type: "string",
+            minLength: 1,
+            pattern: "^tool-result://",
+            description: "Exact tool-result:// locator returned by a preceding Tool result.",
+          },
+          offset: { type: "integer", minimum: 0, default: 0 },
+          max_chars: { type: "integer", minimum: 500, maximum: 50000, default: 12000 },
+        },
+      },
     },
-  });
-  registry.register<Record<string, unknown>>({
-    definition: { name: "ked_read_temp_object", description: "Read exact excerpts from a KED temporary object or an archived Tool result using its stable locator.", inputSchema: { type: "object", additionalProperties: false, properties: { locator: { type: "string" }, temp_id: { type: "string" }, query: { type: "string" }, line_start: { type: "integer" }, line_end: { type: "integer" }, context_lines: { type: "integer" }, offset: { type: "integer", minimum: 0 }, max_chars: { type: "integer" } } } },
-    manifest: manifest("knowledge.temp.read", false, "session"), parallelSafe: true,
-    decodeInput: object,
-    execute: async (context) => {
-      const locator = text(context.input.locator);
-      if (locator.startsWith("tool-result://")) {
-        if (!readToolResult) throw new Error("Archived Tool result lookup is unavailable.");
-        const serialized = JSON.stringify(readToolResult(locator));
-        const offset = clamp(context.input.offset, 0, serialized.length, 0);
-        const maxChars = clamp(context.input.max_chars, 500, 50_000, 12_000);
-        return success(context, {
-          locator,
-          offset,
-          next_offset: Math.min(serialized.length, offset + maxChars),
-          complete: offset + maxChars >= serialized.length,
-          text: serialized.slice(offset, offset + maxChars),
-        }, [], ["tool_result_archive"]);
+    manifest: manifest("tool_result_archive.read", false, "session"),
+    parallelSafe: true,
+    decodeInput: (value) => {
+      const input = object(value);
+      const locator = requiredText(input.locator, "locator");
+      if (!locator.startsWith("tool-result://")) {
+        throw new Error("locator must be the exact tool-result:// value returned by a preceding Tool result.");
       }
-      const id = (locator || text(context.input.temp_id)).replace(/^ked-temp:\/\//, "");
-      if (!/^[a-fA-F0-9]{16,64}$/.test(id)) throw new Error("A valid ked-temp:// locator is required.");
-      const path = join(dataRoot, "ked", "temp", id, "content.txt");
-      const content = await readFile(path, "utf8");
-      const lines = content.split(/\r?\n/);
-      const query = text(context.input.query).toLocaleLowerCase();
-      const start = query ? Math.max(0, lines.findIndex((line) => line.toLocaleLowerCase().includes(query))) : Math.max(0, Number(context.input.line_start ?? 1) - 1);
-      const contextLines = clamp(context.input.context_lines, 0, 50, 3);
-      const from = Math.max(0, start - contextLines);
-      const to = Math.min(lines.length, Number(context.input.line_end ?? start + contextLines + 1) + contextLines);
-      return success(context, { locator: `ked-temp://${id}`, line_start: from + 1, line_end: to, text: lines.slice(from, to).join("\n").slice(0, clamp(context.input.max_chars, 500, 50000, 12000)) }, [path], ["knowledge"]);
+      return {
+        locator,
+        offset: clamp(input.offset, 0, Number.MAX_SAFE_INTEGER, 0),
+        maxChars: clamp(input.max_chars, 500, 50_000, 12_000),
+      };
+    },
+    execute: async (context) => {
+      if (!readToolResult) throw new Error("Archived Tool result lookup is unavailable.");
+      const archived = readToolResult(context.input.locator);
+      const serialized = JSON.stringify(archived);
+      if (typeof serialized !== "string") throw new Error("Archived Tool result could not be serialized.");
+      const offset = Math.min(context.input.offset, serialized.length);
+      return success(context, {
+        locator: context.input.locator,
+        offset,
+        next_offset: Math.min(serialized.length, offset + context.input.maxChars),
+        complete: offset + context.input.maxChars >= serialized.length,
+        text: serialized.slice(offset, offset + context.input.maxChars),
+      }, [], ["tool_result_archive"]);
     },
   });
 }
@@ -268,8 +312,5 @@ function object(value: unknown): Record<string, unknown> { if (!value || typeof 
 function objectSchema(required: string[], properties: Record<string, unknown>) { return { type: "object", additionalProperties: false, required, properties }; }
 function text(value: unknown): string { return String(value ?? "").trim(); }
 function requiredText(value: unknown, name: string): string { const result = text(value); if (!result) throw new Error(`${name} is required.`); return result; }
-function stringList(value: unknown): string[] { return Array.isArray(value) ? value.map(text).filter(Boolean) : []; }
+function stringList(value: unknown): string[] { return (Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,;\n]/) : []).map(text).filter(Boolean); }
 function clamp(value: unknown, min: number, max: number, fallback: number): number { const result = Number(value); return Number.isFinite(result) ? Math.max(min, Math.min(max, Math.trunc(result))) : fallback; }
-function tokens(value: string): string[] { return [...new Set(value.normalize("NFKC").toLocaleLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean))]; }
-function score(item: Record<string, unknown>, terms: string[]): number { const corpus = JSON.stringify(item).normalize("NFKC").toLocaleLowerCase(); return terms.reduce((sum, term) => sum + (corpus.includes(term) ? 1 : 0), 0); }
-function summary(item: Record<string, unknown>) { const { content: _content, ...rest } = item; return { ...rest, char_count: text(item.content).length }; }

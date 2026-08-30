@@ -7,6 +7,7 @@ const read = (path) => readFileSync(resolve(root, path), 'utf8');
 const app = read('src/App.tsx');
 const chat = read('src/hooks/useCardbushChat.ts');
 const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');
+const consoleDock = read('src/features/console/ConsoleDock.tsx');
 const api = read('src/backend/api.ts');
 const packageJson = JSON.parse(read('package.json'));
 const readme = read('README.md');
@@ -57,6 +58,19 @@ assert(
   'console titles must not be Chinese-only',
 );
 assert(
+  !app.includes('onToggleGit') &&
+    !consoleDock.includes("ConsoleMode = 'git'") &&
+    !consoleDock.includes('gitCheckout('),
+  'the retired topbar Git console must not return',
+);
+assert(
+  consoleDock.includes('className="native-terminal-add"') &&
+    consoleDock.includes('onClick={addTerminal}') &&
+    consoleDock.includes('className="native-terminal-tab-close"') &&
+    consoleDock.includes('terminalClose(id)'),
+  'the terminal dock must support creating and closing independent sessions',
+);
+assert(
   app.includes("language === 'zh' ? '缓存' : 'Cache'") &&
     app.includes("language === 'zh' ? '最小化' : 'Minimize'"),
   'window frame actions must support both UI languages',
@@ -64,6 +78,11 @@ assert(
 assert(
   messageBubble.includes("language === 'zh' ? '复制' : 'Copy'"),
   'markdown copy action must support both UI languages',
+);
+assert(
+  messageBubble.includes('onAssistantFeedback?.(message, nextRating)') &&
+    messageBubble.includes('反馈给 LEM'),
+  'assistant thumbs must remain connected to LEM feedback',
 );
 assert(
   chat.includes('language?: AppLanguage') && chat.includes('const localize = useCallback'),

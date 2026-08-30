@@ -463,6 +463,7 @@ function MessageBubbleView({
   onRevertChangeReport,
   onOpenChangeReview,
   onOpenScene,
+  onAssistantFeedback,
 }: {
   message: ChatMessage;
   language: AppLanguage;
@@ -486,6 +487,10 @@ function MessageBubbleView({
   ) => Promise<void>;
   onOpenChangeReview?: (filePath?: string) => void;
   onOpenScene: (scene: CardlingScene) => void;
+  onAssistantFeedback?: (
+    message: ChatMessage,
+    rating: AssistantFeedbackRating | null,
+  ) => void | Promise<unknown>;
 }) {
   const contentParts = splitMessageMedia(message.content);
   const userContentParts =
@@ -632,6 +637,7 @@ function MessageBubbleView({
     playAssistantFeedbackPulse(rating);
     setAssistantFeedback(nextRating);
     recordAssistantFeedback(message, nextRating);
+    void Promise.resolve(onAssistantFeedback?.(message, nextRating)).catch(() => undefined);
   }
 
   function playAssistantFeedbackPulse(rating: AssistantFeedbackRating) {
@@ -1042,8 +1048,9 @@ function MessageBubbleView({
                 feedbackPulse === 'up' ? 'feedback-pop' : ''
               }`}
               type="button"
+              disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'up'}
-              title={language === 'zh' ? '有帮助，记录给 LEM' : 'Helpful, record for LEM'}
+              title={language === 'zh' ? '有帮助，反馈给 LEM' : 'Helpful, send feedback to LEM'}
               onClick={() => toggleAssistantFeedback('up')}
             >
               <ThumbsUp size={14} />
@@ -1053,8 +1060,9 @@ function MessageBubbleView({
                 feedbackPulse === 'down' ? 'feedback-pop' : ''
               }`}
               type="button"
+              disabled={isActiveAssistantTurn}
               aria-pressed={assistantFeedback === 'down'}
-              title={language === 'zh' ? '不理想，记录给 LEM' : 'Needs improvement, record for LEM'}
+              title={language === 'zh' ? '不理想，反馈给 LEM' : 'Needs improvement, send feedback to LEM'}
               onClick={() => toggleAssistantFeedback('down')}
             >
               <ThumbsDown size={14} />

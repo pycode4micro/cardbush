@@ -84,7 +84,14 @@ import {
   type ToolCatalogEntry,
   type SubagentTask,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+  RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   revertRuntimeWorkspaceChangesSchema,
+  revertRuntimeWorkspaceChangesResultSchema,
+  runtimeLogicFeedbackRequestSchema,
+  runtimeLogicFeedbackResultSchema,
+  type RevertRuntimeWorkspaceChangesResult,
+  type RuntimeLogicFeedbackRequest,
+  type RuntimeLogicFeedbackResult,
 } from '@cardbush/bush-protocol';
 import {
   RuntimeClient,
@@ -293,6 +300,18 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     );
   }
 
+  recordLogicFeedback(
+    input: RuntimeLogicFeedbackRequest,
+    signal?: AbortSignal,
+  ): Promise<RuntimeLogicFeedbackResult> {
+    const payload = runtimeLogicFeedbackRequestSchema.parse(input);
+    return this.command(
+      { kind: RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND, payload },
+      (value) => runtimeLogicFeedbackResultSchema.parse(value),
+      signal,
+    );
+  }
+
   applyMcpSnapshot(
     input: McpSnapshot,
     signal?: AbortSignal,
@@ -405,11 +424,11 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
   revertWorkspaceChanges(
     input: { sessionId: string; turnIds: string[] },
     signal?: AbortSignal,
-  ): Promise<{ sessionId: string; turnIds: string[]; revertedFiles: number; revertedAt: string }> {
+  ): Promise<RevertRuntimeWorkspaceChangesResult> {
     const payload = revertRuntimeWorkspaceChangesSchema.parse(input);
     return this.command(
       { kind: REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND, payload },
-      (value) => value as { sessionId: string; turnIds: string[]; revertedFiles: number; revertedAt: string },
+      (value) => revertRuntimeWorkspaceChangesResultSchema.parse(value),
       signal,
     );
   }

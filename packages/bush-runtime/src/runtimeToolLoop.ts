@@ -273,7 +273,7 @@ function projectToolResult(
       locator,
       originalChars: serialized.length,
       preview: JSON.stringify(result.output).slice(0, Math.max(2_000, maxChars - 6_000)),
-      note: "The complete authoritative Tool result is archived. Use ked_read_temp_object with the locator for exact excerpts.",
+      note: "The complete authoritative Tool result is archived. Use read_archived_tool_result only with this exact locator to retrieve exact chunks.",
     },
   };
 }

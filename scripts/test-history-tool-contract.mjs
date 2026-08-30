@@ -601,6 +601,40 @@ const reviewReports = changeReportsFromMessages([
 ]);
 assert.equal(reviewReports[0].userPrompt, '第一轮');
 assert.equal(reviewReports[1].userPrompt, '第二轮');
+const runtimeWorkspaceReports = changeReportsFromMessages([
+  { id: 'user-runtime', role: 'user', content: '修改 Runtime 文件', turnId: 'turn-runtime' },
+  {
+    id: 'assistant-runtime',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-runtime',
+    toolExecutions: [{
+      id: 'runtime-change',
+      name: 'edit_file',
+      state: 'completed',
+      summary: 'edit_file',
+      output: '{"path":"src/runtime.ts"}',
+      success: true,
+      durationMs: 10,
+      createdAt: '2026-08-15T08:00:00Z',
+      contentOffset: 0,
+      metadata: {
+        workspaceChanges: [{
+          change_id: 'change-runtime',
+          path: 'src/runtime.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 1,
+          metadata: { diff: '@@ -1,1 +1,1 @@\n-before\n+after' },
+        }],
+      },
+    }],
+  },
+]);
+assert.equal(runtimeWorkspaceReports.length, 1, 'Native Runtime workspace_changes must reach review');
+assert.equal(runtimeWorkspaceReports[0].files[0].path, 'src/runtime.ts');
+assert.equal(runtimeWorkspaceReports[0].additions, 1);
+assert.equal(runtimeWorkspaceReports[0].deletions, 1);
 const reviewGroups = groupChangeReportsByTurn(reviewReports);
 assert.equal(reviewGroups.length, 2, 'Change history must group reports by conversation turn');
 assert.equal(reviewGroups[0].id, 'turn:turn-b', 'The latest turn must appear first');

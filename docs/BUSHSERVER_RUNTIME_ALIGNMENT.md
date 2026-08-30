@@ -22,6 +22,10 @@ as disabled or installable Built-ins.
 
 - Session history is append-only, checksummed and committed by stable Turn and
   message identities. Regenerate/edit uses explicit supersession.
+- Semantic context compaction is also append-only: `turn_context_summarized`
+  projects prior completed Turns as concise summaries for the model without
+  changing raw history replay. The active Turn remains exact, including Tool
+  calls and results, until it reaches its terminal state.
 - Stop has an independent typed acceptance receipt. The live event stream remains
   authoritative until `turn_terminal`; generated text, Tool facts, artifacts and
   workspace changes remain durable. Product startup settles orphaned checkpoints
@@ -38,7 +42,7 @@ as disabled or installable Built-ins.
   reasoning-budget exhaustion have separate bounded terminal failures.
 - Large Tool results remain complete in the durable Tool execution archive and
   receive a bounded model projection with a `tool-result://` locator readable by
-  `ked_read_temp_object`.
+  `read_archived_tool_result`.
 - Project file observations persist across Sessions, are validated by SHA-256,
   and share a same-resource mutation fence. Workspace revert verifies the current
   after-revision and uses recorded before-images.
@@ -73,8 +77,7 @@ schedule_task
 search_skills
 consult_logic
 learn_logic
-ked_knowledge
-ked_read_temp_object
+read_archived_tool_result
 subagent
 team_delegate
 request_permission

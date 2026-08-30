@@ -87,6 +87,62 @@ export class RuntimeSessionCoordinator {
     return this.#store.supersedeMessages(input);
   }
 
+  contextCompactionState(sessionId: string): {
+    revision: number;
+    unsummarizedTurnIds: string[];
+    totalTurns: number;
+  } {
+    const session = this.#store.ensureSession(sessionId);
+    const superseded = new Set(session.supersededMessageIds);
+    return {
+      revision: session.revision,
+      unsummarizedTurnIds: session.turns
+        .filter((turn) =>
+          !turn.contextSummary &&
+          turn.messages.some((message) => !superseded.has(message.messageId)),
+        )
+        .map((turn) => turn.turnId),
+      totalTurns: session.turns.length,
+    };
+  }
+
+  summarizeContext(input: {
+    sessionId: string;
+    activeTurnId: string;
+    expectedRevision: number;
+    summaries: Array<{ turnId: string; summary: string }>;
+  }): SessionSnapshot {
+    if (this.#activeSessions.get(input.sessionId) !== input.activeTurnId) {
+      throw new Error("Context summaries may only be committed by the active Turn.");
+    }
+    const state = this.contextCompactionState(input.sessionId);
+    const expectedIds = state.unsummarizedTurnIds;
+    const receivedIds = input.summaries.map((item) => item.turnId);
+    if (
+      input.expectedRevision !== state.revision ||
+      JSON.stringify(receivedIds) !== JSON.stringify(expectedIds)
+    ) {
+      throw new Error(
+        "Context checkpoint is stale or does not summarize every unsummarized preceding Turn in order.",
+      );
+    }
+    return this.#store.summarizeTurns(input);
+  }
+
+  rebuildActiveContext(input: {
+    sessionId: string;
+    prefix: ModelMessage[];
+    current: ModelMessage[];
+    maxSummaryTurns?: number;
+  }): ContextSnapshot {
+    return assembleContext({
+      session: this.#store.ensureSession(input.sessionId),
+      prefix: input.prefix,
+      current: input.current,
+      maxSummaryTurns: input.maxSummaryTurns,
+    });
+  }
+
   delete(sessionId: string): boolean {
     if (this.#activeSessions.has(sessionId)) {
       throw new Error("An active Session cannot be deleted.");
@@ -103,6 +159,7 @@ export class RuntimeSessionCoordinator {
       current: input.current,
       throughTurnSequence: input.throughTurnSequence,
       maxChars: input.maxChars,
+      maxSummaryTurns: input.maxSummaryTurns,
     });
   }
 
@@ -122,7 +179,6 @@ export class RuntimeSessionCoordinator {
       session,
       prefix: request.prefixMessages,
       current: request.inputMessages.map((item) => item.message),
-      maxChars: contextLimit(request.metadata),
     });
     const modelRequest = modelRequestSchema.parse({
       ...request,
@@ -136,6 +192,7 @@ export class RuntimeSessionCoordinator {
         turnSequence: (session.turns.at(-1)?.turnSequence ?? 0) + 1,
         createdAt,
         initialMessageCount: modelRequest.messages.length,
+        prefixMessages: request.prefixMessages,
         inputMessages: request.inputMessages.map((item) => ({
           messageId: item.messageId,
           createdAt: item.createdAt ?? createdAt,
@@ -193,12 +250,6 @@ export class RuntimeSessionCoordinator {
       }
     };
   }
-}
-
-function contextLimit(metadata: Record<string, unknown>): number | undefined {
-  const tokens = Number(metadata.contextWindowTokens);
-  if (!Number.isFinite(tokens) || tokens <= 0) return undefined;
-  return Math.max(8_000, Math.trunc(tokens * 4 * 0.85));
 }
 
 function validateSessionCheckpoint(

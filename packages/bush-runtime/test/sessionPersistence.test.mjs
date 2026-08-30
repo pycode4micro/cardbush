@@ -34,6 +34,27 @@ test("recovers committed Session facts after a process restart", () => {
   });
 });
 
+test("recovers append-only Turn context summaries without altering raw history", () => {
+  withRoot((root) => {
+    const persistence = new FileSessionEventPersistence({ root });
+    const store = deterministicStore(persistence);
+    const committed = store.commitTurn("session_1", turn("turn_1", 1, "hello"));
+    store.summarizeTurns({
+      sessionId: "session_1",
+      expectedRevision: committed.revision,
+      summaries: [{ turnId: "turn_1", summary: "The user said hello." }],
+    });
+    persistence.close();
+
+    const reopened = new FileSessionEventPersistence({ root });
+    const recovered = new SessionStore({ persistence: reopened }).snapshot("session_1");
+    assert.equal(recovered?.turns[0].messages[0].message.content, "hello");
+    assert.equal(recovered?.turns[0].contextSummary, "The user said hello.");
+    assert.equal(recovered?.revision, 3);
+    reopened.close();
+  });
+});
+
 test("removes an incomplete journal tail without inventing a Session event", () => {
   withRoot((root) => {
     const issues = [];

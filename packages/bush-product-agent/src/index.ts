@@ -8,6 +8,12 @@ import {
 
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
+For ordinary filesystem work, use the direct read_file, search_file_content, write_file and edit_file Tools when they are exposed. Do not inspect or operate the desktop, open a GUI editor, or search Skills merely to discover an OS path or perform a file operation that a direct filesystem Tool can complete. Use computer-use Tools only when the request requires interaction with visible application UI or no direct Tool can perform the operation. Use read_archived_tool_result only when a preceding Tool result explicitly supplies a tool-result:// locator; it is not a general file, Skill, temporary-object, or knowledge reader.
+
+LEM is advisory reasoning memory, not task facts or policy. Use consult_logic only at consequential judgment points and verify retrieved relevance against current evidence. Use learn_logic after a valuable verified reasoning correction; store how to think, not task instructions or domain answers. User thumbs are recorded by Runtime, so never fabricate or mirror user feedback with learn_logic.
+
+checkpoint_context is Runtime maintenance, not a task or memory Tool. Call it only after an internal context_pressure notice, include every requested preceding Turn in the exact listed order, and call it alone. Never summarize the active Turn.
+
 For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. A subagent dispatch is asynchronous and returns a task ID immediately: after dispatch, continue useful independent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several independent workstreams as separate subagent calls when useful. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
 Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.`;
@@ -32,6 +38,11 @@ export interface ProductAgentTurnInput {
   projectInstructions?: string;
   files?: string[];
   images?: string[];
+  filesystemLocations?: Array<{
+    id: string;
+    name: string;
+    path: string;
+  }>;
   permissionMode: string;
   subagentPermissionRouting?: "user" | "parent";
   childAgentPolicy?: Record<string, unknown>;
@@ -121,6 +132,11 @@ function runtimeContext(input: ProductAgentTurnInput, projectDir: string): strin
       : "",
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images:\n${input.images.join("\n")}` : "",
+    input.filesystemLocations?.length
+      ? `Filesystem locations:\n${input.filesystemLocations
+        .map((location) => `${location.name}: ${location.path}`)
+        .join("\n")}`
+      : "",
     `Local date: ${input.localDate}`,
   ].filter(Boolean).join("\n");
   return content ? `<runtime_context>\n${content}\n</runtime_context>` : "";

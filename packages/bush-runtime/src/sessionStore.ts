@@ -101,6 +101,9 @@ export class SessionStore {
   commitTurn(sessionId: string, candidate: CommittedTurn): SessionSnapshot {
     const normalized = requireIdentity(sessionId, "sessionId");
     const turn = committedTurnSchema.parse(candidate);
+    if (turn.contextSummary) {
+      throw new Error("A new Turn cannot be committed with a context summary.");
+    }
     const before = this.ensureSession(normalized);
     const existing = before.turns.find((item) => item.turnId === turn.turnId);
     if (existing) {
@@ -163,6 +166,41 @@ export class SessionStore {
           ? { replacementTurnId: requireIdentity(input.replacementTurnId, "replacementTurnId") }
           : {}),
       },
+    });
+    return this.snapshot(sessionId)!;
+  }
+
+  summarizeTurns(input: {
+    sessionId: string;
+    expectedRevision: number;
+    summaries: Array<{ turnId: string; summary: string }>;
+  }): SessionSnapshot {
+    const sessionId = requireIdentity(input.sessionId, "sessionId");
+    const before = this.snapshot(sessionId);
+    if (!before) throw new Error(`Session ${sessionId} does not exist.`);
+    if (before.revision !== input.expectedRevision) {
+      throw new Error(
+        `Session ${sessionId} revision ${before.revision} does not match ${input.expectedRevision}.`,
+      );
+    }
+    const summaries = input.summaries.map((item) => ({
+      turnId: requireIdentity(item.turnId, "turnId"),
+      summary: requireIdentity(item.summary, "summary"),
+    }));
+    const ids = new Set<string>();
+    const turns = new Map(before.turns.map((turn) => [turn.turnId, turn]));
+    for (const item of summaries) {
+      if (ids.has(item.turnId)) throw new Error(`Turn ${item.turnId} occurs more than once.`);
+      ids.add(item.turnId);
+      const turn = turns.get(item.turnId);
+      if (!turn) throw new Error(`Turn ${item.turnId} does not exist.`);
+      if (turn.contextSummary) {
+        throw new Error(`Turn ${item.turnId} already has a context summary.`);
+      }
+    }
+    this.#append(sessionId, {
+      kind: "turn_context_summarized",
+      payload: { expectedRevision: input.expectedRevision, summaries },
     });
     return this.snapshot(sessionId)!;
   }
@@ -250,6 +288,24 @@ export function projectSession(
           throw new Error(`Message ${messageId} was superseded more than once.`);
         }
         superseded.add(messageId);
+      }
+    }
+    if (event.kind === "turn_context_summarized") {
+      if (event.payload.expectedRevision !== index) {
+        throw new Error("Turn context summary expected revision does not match history.");
+      }
+      const localIds = new Set<string>();
+      for (const item of event.payload.summaries) {
+        if (localIds.has(item.turnId)) {
+          throw new Error(`Turn ${item.turnId} occurs more than once in a context summary event.`);
+        }
+        localIds.add(item.turnId);
+        const turn = turns.find((candidate) => candidate.turnId === item.turnId);
+        if (!turn) throw new Error(`Cannot summarize unknown Turn ${item.turnId}.`);
+        if (turn.contextSummary) {
+          throw new Error(`Turn ${item.turnId} was summarized more than once.`);
+        }
+        turn.contextSummary = item.summary;
       }
     }
     if (event.kind === "session_metadata_updated") {

@@ -18,11 +18,19 @@ fact is identical. Replacing history requires an explicit
 2. ordered committed messages that were not explicitly superseded;
 3. the current Turn input.
 
-`assembleContext` performs no semantic summarization, relevance classification,
-language-specific routing, percentage threshold or read-count routing. When a
-caller supplies a context budget it retains the newest complete Turns and drops
-only whole oldest Turns; Tool call/result adjacency is validated mechanically.
-It reports estimated tokens and whether truncation occurred.
+`assembleContext` never mutates committed messages. A Turn may later receive an
+immutable `contextSummary` through one append-only `turn_context_summarized`
+event; model context then projects that Turn as one internal semantic summary,
+while history replay, audit and Fork continue to read the original message and
+Tool facts. Tool call/result adjacency is validated mechanically.
+
+`checkpoint_context` is always present in the stable Tool schema. At 85% of the
+usable input budget Runtime emits one optional internal pressure notice; at 95%
+it temporarily requires that Tool before normal work can continue. One atomic
+checkpoint must summarize every still-unsummarized preceding Turn in order and
+never summarizes the active Turn. If fully summarized context later still
+reaches 95%, projection keeps the newest 20 summaries and drops older summaries
+from active model context only. Durable history is never deleted.
 
 Session events are checksummed JSONL records. Complete corruption fails closed;
 only an incomplete final record may be removed after a crash. A Session-aware
@@ -40,7 +48,8 @@ text. The Electron product chat path now consumes these typed Session and Tool
 facts directly; ordinary Turns no longer need a Python HTTP/SSE adapter. Large
 Tool results remain complete in that journal; the model sees a bounded projection
 and can retrieve exact excerpts from a stable `tool-result://` locator through
-`ked_read_temp_object`.
+`read_archived_tool_result`. That reader accepts only an exact locator emitted by
+the Runtime projection; it is not a general file, Skill or knowledge reader.
 
 Plan and Goal state is stored separately in an append-only Coordination journal.
 The store enforces only protocol identities, monotonic revisions, stable Plan

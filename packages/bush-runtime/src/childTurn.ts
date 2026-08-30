@@ -151,6 +151,8 @@ export function buildChildTurnRequest(input: {
       permissionRouting,
       childAgentModelMode: modelPolicy ? "fixed" : "inherit",
       childAgentModelId: modelPolicy?.modelId ?? "",
+      contextWindowTokens:
+        modelPolicy?.maxContextTokens ?? parentRequest.metadata.contextWindowTokens,
       disabledTools: [...disabledTools],
       permissionScopeSessionId,
       permissionEventRequestId: parentRequest.requestId,
@@ -258,6 +260,7 @@ function resolvedChildModel(input: unknown): {
   modelId: string;
   model: string;
   providerBinding: NonNullable<RuntimeSessionTurnRequest["providerBinding"]>;
+  maxContextTokens?: number;
   maxOutputTokens?: number;
 } | undefined {
   if (input === undefined) return undefined;
@@ -276,10 +279,12 @@ function resolvedChildModel(input: unknown): {
     throw new Error("Fixed Subagent model policy is missing modelId, model, or providerBinding.");
   }
   const maxOutputTokens = Number(value.maxOutputTokens);
+  const maxContextTokens = Number(value.maxContextTokens);
   return {
     modelId,
     model,
     providerBinding: binding.data,
+    ...(Number.isInteger(maxContextTokens) && maxContextTokens > 0 ? { maxContextTokens } : {}),
     ...(Number.isInteger(maxOutputTokens) && maxOutputTokens > 0 ? { maxOutputTokens } : {}),
   };
 }

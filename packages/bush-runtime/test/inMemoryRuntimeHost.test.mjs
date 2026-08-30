@@ -158,7 +158,8 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
   for (const required of [
     "request_permission",
     "consult_logic",
-    "ked_knowledge",
+    "learn_logic",
+    "read_archived_tool_result",
     "inject_image_input",
     "parallel_tools",
     "update_task_plan",

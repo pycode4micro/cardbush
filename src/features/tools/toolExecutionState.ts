@@ -34,13 +34,8 @@ export function displayToolName(value: string) {
     return 'Tool';
   }
   const lowered = text.toLowerCase();
-  if (lowered === 'ked' || lowered === 'lem') {
-    return lowered.toUpperCase();
-  }
-  if (lowered.startsWith('ked_') || lowered.startsWith('lem_')) {
-    const [service, ...actionParts] = lowered.split('_');
-    return `${service.toUpperCase()} ${actionParts.join('_') || 'tool'}`;
-  }
+  if (lowered === 'consult_logic') return 'LEM Consult';
+  if (lowered === 'learn_logic') return 'LEM Learn';
   for (const separator of [':', '.', '/']) {
     if (text.includes(separator)) {
       text = text.split(separator).pop() ?? text;

@@ -15,6 +15,10 @@ test("builds the same explicit product Turn for desktop and transport callers", 
     model: "fixture",
     tools: [],
     projectDir: "C:\\workspace",
+    filesystemLocations: [
+      { id: "home", name: "Home", path: "C:\\Users\\fixture" },
+      { id: "desktop", name: "Desktop", path: "C:\\Users\\fixture\\Desktop" },
+    ],
     permissionMode: "task_free",
     subagentPermissionRouting: "user",
     childAgentPolicy: {
@@ -28,12 +32,17 @@ test("builds the same explicit product Turn for desktop and transport callers", 
   assert.equal(request.prefixMessages[0].role, "system");
   assert.match(request.prefixMessages[0].content, /subagent dispatch is asynchronous/);
   assert.match(request.prefixMessages[0].content, /call await_subagents once; do not poll/);
+  assert.match(request.prefixMessages[0].content, /use the direct read_file, search_file_content, write_file and edit_file Tools/);
+  assert.match(request.prefixMessages[0].content, /Do not inspect or operate the desktop/);
+  assert.match(request.prefixMessages[0].content, /LEM is advisory reasoning memory/);
+  assert.match(request.prefixMessages[0].content, /User thumbs are recorded by Runtime/);
   assert.equal(request.prefixMessages.length, 2);
   assert.equal(request.prefixMessages[1].name, "runtime_context");
   assert.match(
     request.prefixMessages[1].content,
     /Local date: 2026-08-29\n<\/runtime_context>$/,
   );
+  assert.match(request.prefixMessages[1].content, /Desktop: C:\\Users\\fixture\\Desktop/);
   assert.deepEqual(request.metadata.mcpContext.filesystemRoots, ["C:\\workspace"]);
   assert.equal(request.inputMessages[0].message.content, "完成任务");
   assert.equal(request.metadata.subagentPermissionRouting, "user");

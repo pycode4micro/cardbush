@@ -9,7 +9,6 @@ import {
   Flag,
   Folder,
   Gamepad2,
-  GitBranch,
   LoaderCircle,
   LogOut,
   Menu,
@@ -57,6 +56,7 @@ import {
   fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
+  recordAssistantLogicFeedback,
   saveModelConfigs,
   saveProjectContext,
   type ExperimentalGoal,
@@ -1716,7 +1716,7 @@ function CardbushApp() {
       setRevertingChangeId(report.id);
       setChangeReviewNotice('');
       try {
-        let result: { revertedFiles: number };
+        let result: { revertedFiles: number; revertedChangeIds?: string[] };
         if (usesRecoverySnapshot) {
           try {
             result = await revertSessionWorkspaceChanges(conversationId, [turnId]);
@@ -1741,7 +1741,14 @@ function CardbushApp() {
         setChangeReviewNotice(message);
         setRevertedChangeKeys((current) => {
           const next = new Set(current);
-          next.add(`${conversationId}:${report.id}`);
+          const turnReports = turnId
+            ? (changeReportsByConversation[conversationId] ?? []).filter(
+                (candidate) => candidate.turnId?.trim() === turnId,
+              )
+            : [report];
+          for (const candidate of turnReports.length > 0 ? turnReports : [report]) {
+            next.add(`${conversationId}:${candidate.id}`);
+          }
           return next;
         });
         if (root) {
@@ -1762,6 +1769,7 @@ function CardbushApp() {
       activeProjectDir,
       chat.activeConversation,
       chat.conversations,
+      changeReportsByConversation,
       language,
       refreshProjectGitStatus,
     ],
@@ -5830,22 +5838,19 @@ function ChatPanel({
 
   const toggleConsole = useCallback(
     (mode: ConsoleMode) => {
-      if ((mode === 'git' && !gitAvailable) || (mode === 'terminal' && !terminalAvailable)) {
+      if (!terminalAvailable) {
         return;
       }
       setConsoleMode((current) => (current === mode ? null : mode));
     },
-    [gitAvailable, terminalAvailable],
+    [terminalAvailable],
   );
 
   useEffect(() => {
-    if (
-      (consoleMode === 'git' && !gitAvailable) ||
-      (consoleMode === 'terminal' && !terminalAvailable)
-    ) {
+    if (consoleMode && !terminalAvailable) {
       setConsoleMode(null);
     }
-  }, [consoleMode, gitAvailable, terminalAvailable]);
+  }, [consoleMode, terminalAvailable]);
 
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const [workSummaryAnchorRight, setWorkSummaryAnchorRight] = useState(12);
@@ -5963,7 +5968,6 @@ function ChatPanel({
           conversationContentAvailable={renderMessages.length > 0}
           onRefreshActiveSession={refreshBackendWithFeedback}
           activeConsole={consoleMode}
-          onToggleGit={gitAvailable ? () => toggleConsole('git') : undefined}
           onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
@@ -6175,6 +6179,7 @@ function ChatPanel({
                       onRevertChangeReport={onRevertChangeReport}
                       onOpenChangeReview={onOpenChangeReview}
                       onOpenScene={openScene}
+                      onAssistantFeedback={recordAssistantLogicFeedback}
                     />
                   </MessageFileReferenceScope>
                 </div>
@@ -6343,11 +6348,8 @@ function ChatPanel({
           <ArrowDown size={16} strokeWidth={1.8} />
         </button>
       </div>
-      {consoleMode &&
-        ((consoleMode === 'git' && gitAvailable) ||
-          (consoleMode === 'terminal' && terminalAvailable)) && (
+      {consoleMode && terminalAvailable && (
           <ConsoleDock
-            mode={consoleMode}
             language={language}
             activeProjectDir={activeProjectDir}
             terminalRuntime={terminalRuntime}
@@ -7149,7 +7151,6 @@ function TopBar({
   conversationContentAvailable = false,
   onRefreshActiveSession,
   activeConsole,
-  onToggleGit,
   onToggleTerminal,
   workSummaryVisible,
   reviewAvailable,
@@ -7163,7 +7164,6 @@ function TopBar({
   conversationContentAvailable?: boolean;
   onRefreshActiveSession?: RefreshActiveSession;
   activeConsole?: ConsoleMode | null;
-  onToggleGit?: () => void;
   onToggleTerminal?: () => void;
   workSummaryVisible?: boolean;
   reviewAvailable?: boolean;
@@ -7229,16 +7229,6 @@ function TopBar({
       >
         {historyRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
       </button>
-      {onToggleGit && (
-        <button
-          className={`topbar-square ${activeConsole === 'git' ? 'active' : ''}`}
-          type="button"
-          onClick={onToggleGit}
-          title={language === 'zh' ? 'Git 控制台' : 'Git console'}
-        >
-          <GitBranch size={16} />
-        </button>
-      )}
       {onToggleTerminal && (
         <button
           className={`topbar-square ${

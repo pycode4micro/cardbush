@@ -1,10 +1,6 @@
 import type { ChatToolExecution } from '../../types';
 import { textLength, truncateText } from '../../shared/text';
 
-type ToolOutputEnvelope = {
-  result?: unknown;
-};
-
 export function toolOutputNeedsCollapse(output: string) {
   if (!output.trim()) {
     return false;
@@ -23,17 +19,6 @@ export function compactToolOutput(output: string) {
 
 export function toolDisplayOutput(
   execution: ChatToolExecution,
-  envelope: ToolOutputEnvelope | null,
 ) {
-  if (!envelope || envelope.result == null || envelope.result === '') {
-    return execution.output;
-  }
-  if (typeof envelope.result === 'string') {
-    return envelope.result;
-  }
-  try {
-    return JSON.stringify(envelope.result, null, 2);
-  } catch {
-    return String(envelope.result);
-  }
+  return execution.output;
 }

@@ -76,7 +76,9 @@ export function toolChangeReportFromExecutions(
     return null;
   }
   const authoritativeChanges = relevant.filter(
-    (execution) => String(execution.metadata.kind ?? '').trim() === 'file_change',
+    (execution) =>
+      String(execution.metadata.kind ?? '').trim() === 'file_change' ||
+      runtimeWorkspaceChanges(execution.metadata).length > 0,
   );
   if (
     authoritativeChanges.length > 0 &&
@@ -270,6 +272,9 @@ function looksLikeFileChangeExecution(execution: ChatToolExecution) {
   if (String(execution.metadata.kind ?? '').trim() === 'file_change') {
     return true;
   }
+  if (runtimeWorkspaceChanges(execution.metadata).length > 0) {
+    return true;
+  }
   const name = execution.name.toLowerCase();
   const text = `${execution.summary}\n${execution.output}`.toLowerCase();
   return (
@@ -396,20 +401,26 @@ function parseToolFileChangeMetadata(
   execution: ChatToolExecution,
 ): ParsedToolFileChange | null {
   const metadata = execution.metadata;
-  if (String(metadata.kind ?? '').trim() !== 'file_change') {
+  const legacy = String(metadata.kind ?? '').trim() === 'file_change';
+  const runtimeChanges = runtimeWorkspaceChanges(metadata);
+  if (!legacy && runtimeChanges.length === 0) {
     return null;
   }
-  const filesRaw = Array.isArray(metadata.files) ? metadata.files : [];
+  const filesRaw = legacy && Array.isArray(metadata.files)
+    ? metadata.files
+    : runtimeChanges;
   const files: ToolFileChange[] = [];
   for (const rawFile of filesRaw) {
     const fileMap = asRecord(rawFile);
+    const changeMetadata = asRecord(fileMap.metadata);
     const path = cleanDiffPath(String(fileMap.path ?? ''));
     if (!path) {
       continue;
     }
     let additions = metadataInt(fileMap.additions);
     let deletions = metadataInt(fileMap.deletions);
-    const lines = diffLinesFromText(String(fileMap.diff ?? ''));
+    const diff = String(fileMap.diff ?? changeMetadata.diff ?? '');
+    const lines = diffLinesFromText(diff);
     if (additions === 0 && deletions === 0 && lines.length > 0) {
       additions = lines.filter((line) => line.kind === 'addition').length;
       deletions = lines.filter((line) => line.kind === 'deletion').length;
@@ -418,7 +429,7 @@ function parseToolFileChangeMetadata(
       path,
       additions,
       deletions,
-      diff: normalizeDiffText(String(fileMap.diff ?? '')),
+      diff: normalizeDiffText(diff),
       lines,
     });
   }
@@ -427,6 +438,10 @@ function parseToolFileChangeMetadata(
     fallbackAdditions: metadataInt(metadata.additions),
     fallbackDeletions: metadataInt(metadata.deletions),
   };
+}
+
+function runtimeWorkspaceChanges(metadata: Record<string, unknown>): unknown[] {
+  return Array.isArray(metadata.workspaceChanges) ? metadata.workspaceChanges : [];
 }
 
 function diffLinesFromText(diff: string): DiffLine[] {

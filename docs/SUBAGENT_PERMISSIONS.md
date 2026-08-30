@@ -29,7 +29,6 @@ Default configuration:
     "request_permission",
     "request_user_choice",
     "update_goal",
-    "learn_logic",
     "schedule_task"
   ]
 }

@@ -149,7 +149,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "read_file",
-      description: "Read one file exactly. Returns its absolute path, SHA-256 revision and complete content.",
+      description: "Read one file exactly. Returns its absolute path, SHA-256 revision and complete content. Use an absolute path when the Turn has no workspace.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         encoding: { type: "string", default: "utf8" },
@@ -194,7 +194,7 @@ export function registerWorkspaceTools(
       for (const glob of context.input.globs) args.push("--glob", glob);
       args.push("--", context.input.query, path);
       const execution = await runProcess("rg", args, {
-        cwd: workspaceRoot(context),
+        cwd: workspaceRoot(context) ?? dirname(path),
         signal: context.signal,
       });
       if (execution.exitCode !== 0 && execution.exitCode !== 1) {
@@ -212,7 +212,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "write_file",
-      description: "Create or replace one file. Existing files must have been read at their current SHA-256 revision first.",
+      description: "Create or replace one file. Existing files must have been read at their current SHA-256 revision first. Use an absolute path when the Turn has no workspace.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         content: { type: "string" },
@@ -239,6 +239,7 @@ export function registerWorkspaceTools(
           before,
           after,
           before ? "modified" : "added",
+          context.input.encoding,
           createReceiptId(),
           createChangeId(),
         );
@@ -288,6 +289,7 @@ export function registerWorkspaceTools(
           before,
           after,
           "modified",
+          context.input.encoding,
           createReceiptId(),
           createChangeId(),
         );
@@ -310,11 +312,11 @@ export function registerWorkspaceTools(
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: decodeTerminal,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
-      const cwd = await resolveToolPath(context, context.input.cwd || workspaceRoot(context), true);
+      const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       return pathAdmission(context, cwd, "execute");
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
-      const cwd = await resolveToolPath(context, context.input.cwd || workspaceRoot(context), true);
+      const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const execution = await runShell(context.input.command, {
         cwd,
         timeoutMs: context.input.timeoutMs,
@@ -424,7 +426,12 @@ function allowedRoots(
   const userRoots = mode === "user_free"
     ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()])
     : [];
-  return [...new Set([workspaceRoot(context), ...taskRoots, ...userRoots].map((item) => resolve(item)))];
+  const workspace = workspaceRoot(context);
+  return [...new Set([
+    ...(workspace ? [workspace] : []),
+    ...taskRoots,
+    ...userRoots,
+  ].map((item) => resolve(item)))];
 }
 
 function rootStringArray(value: unknown): string[] {
@@ -439,7 +446,14 @@ async function resolveToolPath(
   allowMissing = false,
 ): Promise<string> {
   const root = workspaceRoot(context);
-  const lexical = resolve(isAbsolute(candidate) ? candidate : resolve(root, candidate));
+  const normalized = candidate.trim();
+  if (!normalized) {
+    throw new Error("An absolute path is required when the Turn has no workspaceDir.");
+  }
+  if (!isAbsolute(normalized) && !root) {
+    throw new Error("Relative paths require a workspaceDir; use an absolute path instead.");
+  }
+  const lexical = resolve(isAbsolute(normalized) ? normalized : resolve(root!, normalized));
   try {
     return await realpath(lexical);
   } catch (error) {
@@ -458,12 +472,19 @@ async function resolveToolPath(
   }
 }
 
-function workspaceRoot(context: ToolAdmissionContext<unknown>): string {
+function workspaceRoot(context: ToolAdmissionContext<unknown>): string | undefined {
   const metadata = context.turn?.request.metadata ?? {};
   const candidate = [metadata.workspaceDir, metadata.projectDir, metadata.sessionWorkspaceDir]
     .find((value) => typeof value === "string" && value.trim());
-  if (typeof candidate !== "string") throw new Error("Runtime request has no workspaceDir.");
-  return resolve(candidate);
+  return typeof candidate === "string" ? resolve(candidate) : undefined;
+}
+
+function terminalWorkingDirectory(context: ToolAdmissionContext<TerminalInput>): string {
+  const candidate = context.input.cwd || workspaceRoot(context);
+  if (!candidate) {
+    throw new Error("terminal_exec requires an absolute cwd when the Turn has no workspaceDir.");
+  }
+  return candidate;
 }
 
 function inheritedObservationSessionId(context: ToolHandlerContext<unknown>): string | undefined {
@@ -518,23 +539,86 @@ function changeResult(
   before: Buffer | undefined,
   after: Buffer,
   status: "added" | "modified",
+  encoding: BufferEncoding,
   receiptId: string,
   changeId: string,
 ): ToolResult {
+  const beforeText = before?.toString(encoding) ?? "";
+  const afterText = after.toString(encoding);
+  const diff = createDisplayDiff(beforeText, afterText);
   return {
     ...successResult(context, { path, sha256: digest(after) }, receiptId, [path]),
     workspace_changes: [{
       change_id: changeId,
       path,
       status,
-      ...(before ? {} : { additions: countLines(after) }),
+      additions: diff.additions,
+      deletions: diff.deletions,
       ...(before ? { before_hash: digest(before) } : {}),
       after_hash: digest(after),
       metadata: {
         ...(before ? { beforeContentBase64: before.toString("base64") } : {}),
+        diff: diff.text,
       },
     }],
   };
+}
+
+function createDisplayDiff(before: string, after: string): {
+  text: string;
+  additions: number;
+  deletions: number;
+} {
+  const beforeLines = normalizedTextLines(before);
+  const afterLines = normalizedTextLines(after);
+  let prefix = 0;
+  while (
+    prefix < beforeLines.length &&
+    prefix < afterLines.length &&
+    beforeLines[prefix] === afterLines[prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < beforeLines.length - prefix &&
+    suffix < afterLines.length - prefix &&
+    beforeLines[beforeLines.length - 1 - suffix] ===
+      afterLines[afterLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const oldChangeEnd = beforeLines.length - suffix;
+  const newChangeEnd = afterLines.length - suffix;
+  const additions = newChangeEnd - prefix;
+  const deletions = oldChangeEnd - prefix;
+  if (additions === 0 && deletions === 0) {
+    return { text: "", additions: 0, deletions: 0 };
+  }
+  const context = 3;
+  const oldHunkStart = Math.max(0, prefix - context);
+  const newHunkStart = Math.max(0, prefix - context);
+  const oldHunkEnd = Math.min(beforeLines.length, oldChangeEnd + context);
+  const newHunkEnd = Math.min(afterLines.length, newChangeEnd + context);
+  const oldCount = oldHunkEnd - oldHunkStart;
+  const newCount = newHunkEnd - newHunkStart;
+  const oldStart = oldCount === 0 ? oldHunkStart : oldHunkStart + 1;
+  const newStart = newCount === 0 ? newHunkStart : newHunkStart + 1;
+  const lines = [
+    `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`,
+    ...beforeLines.slice(oldHunkStart, prefix).map((line) => ` ${line}`),
+    ...beforeLines.slice(prefix, oldChangeEnd).map((line) => `-${line}`),
+    ...afterLines.slice(prefix, newChangeEnd).map((line) => `+${line}`),
+    ...afterLines.slice(newChangeEnd, newHunkEnd).map((line) => ` ${line}`),
+  ];
+  return { text: lines.join("\n"), additions, deletions };
+}
+
+function normalizedTextLines(value: string): string[] {
+  if (!value) return [];
+  const lines = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
 }
 
 function executionFact(

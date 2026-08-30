@@ -16,11 +16,47 @@ export const GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND =
   "runtime.get_tool_catalog_details" as const;
 export const REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND =
   "runtime.revert_workspace_changes" as const;
+export const RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY =
+  "revertedWorkspaceChangeIds" as const;
+export const RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND =
+  "runtime.record_logic_feedback" as const;
+
+export const runtimeLogicFeedbackRequestSchema = z.object({
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  messageId: z.string().min(1),
+  rating: z.enum(["up", "down"]).nullable(),
+});
+
+export const runtimeLogicFeedbackResultSchema = z.object({
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  messageId: z.string().min(1),
+  rating: z.enum(["up", "down"]).nullable(),
+  associatedLogicIds: z.array(z.string()),
+  updatedLogicIds: z.array(z.string()),
+  missingLogicIds: z.array(z.string()),
+});
+
+export type RuntimeLogicFeedbackRequest = z.infer<typeof runtimeLogicFeedbackRequestSchema>;
+export type RuntimeLogicFeedbackResult = z.infer<typeof runtimeLogicFeedbackResultSchema>;
 
 export const revertRuntimeWorkspaceChangesSchema = z.object({
   sessionId: z.string().min(1),
   turnIds: z.array(z.string().min(1)).min(1),
 });
+
+export const revertRuntimeWorkspaceChangesResultSchema = z.object({
+  sessionId: z.string().min(1),
+  turnIds: z.array(z.string().min(1)).min(1),
+  revertedFiles: z.number().int().nonnegative(),
+  revertedChangeIds: z.array(z.string().min(1)),
+  revertedAt: z.string().min(1),
+});
+
+export type RevertRuntimeWorkspaceChangesResult = z.infer<
+  typeof revertRuntimeWorkspaceChangesResultSchema
+>;
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),

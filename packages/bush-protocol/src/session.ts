@@ -52,6 +52,7 @@ export const committedTurnSchema = z.object({
   reason: z.string().min(1),
   messages: z.array(sessionMessageSchema).min(1),
   usage: sessionUsageSchema.default({}),
+  contextSummary: z.string().min(1).optional(),
 });
 
 export type CommittedTurn = z.infer<typeof committedTurnSchema>;
@@ -81,6 +82,16 @@ export const sessionEventSchema = z.discriminatedUnion("kind", [
       messageIds: z.array(z.string().min(1)).min(1),
       reason: z.string().min(1),
       replacementTurnId: z.string().min(1).optional(),
+    }),
+  }),
+  sessionEventEnvelopeSchema.extend({
+    kind: z.literal("turn_context_summarized"),
+    payload: z.object({
+      expectedRevision: z.number().int().positive(),
+      summaries: z.array(z.object({
+        turnId: z.string().min(1),
+        summary: z.string().min(1),
+      })).min(1),
     }),
   }),
   sessionEventEnvelopeSchema.extend({
@@ -168,6 +179,7 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   turnSequence: z.number().int().positive(),
   createdAt: z.string().min(1),
   initialMessageCount: z.number().int().positive(),
+  prefixMessages: z.array(modelMessageSchema).default([]),
   inputMessages: z.array(runtimeSessionCheckpointMessageSchema).min(1),
   generatedMessages: z.array(runtimeSessionCheckpointMessageSchema).default([]),
   usage: sessionUsageSchema.default({}),
@@ -196,4 +208,5 @@ export const assembleRuntimeSessionContextRequestSchema = z.object({
   currentMessages: z.array(modelMessageSchema).default([]),
   throughTurnSequence: z.number().int().nonnegative().optional(),
   maxChars: z.number().int().positive().optional(),
+  maxSummaryTurns: z.number().int().nonnegative().optional(),
 });

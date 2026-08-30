@@ -56,9 +56,10 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   let lastAssistantMessageId = '';
   try {
     const rootModelId = request.modelConfig?.id.trim() || request.model;
-    const [resolvedModel, subagentConfig] = await Promise.all([
+    const [resolvedModel, subagentConfig, filesystemLocations] = await Promise.all([
       resolveProductModel(rootModelId),
       readProductSubagentConfig(),
+      readOsFilesystemLocations(),
     ]);
     const childModel = subagentConfig.model.mode === 'fixed'
       ? subagentConfig.model.modelId === rootModelId
@@ -75,6 +76,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
           : rootModelId,
         model: childModel.model,
         providerBinding: childModel.binding,
+        ...(childModel.maxContextTokens ? { maxContextTokens: childModel.maxContextTokens } : {}),
         ...(childModel.maxOutputTokens ? { maxOutputTokens: childModel.maxOutputTokens } : {}),
       } : { mode: 'inherit' },
       disabledTools: subagentConfig.disabledTools,
@@ -87,19 +89,17 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       catalog.map((entry) => entry.definition),
     );
     const disabled = new Set(request.disabledTools ?? []);
-    const hasWorkspace = Boolean(request.projectDir?.trim());
     const permissionMode = request.permissionMode ?? 'task_free';
     const interactiveRequests = request.interactiveRequestsEnabled === true;
     const vision = request.standardImageInputEnabled === true;
     const userChoice = false;
     const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
     const tools = catalog.filter((entry) =>
-      !disabled.has(entry.definition.name) &&
+      (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
       (entry.definition.name !== 'request_permission' || (interactiveRequests && permissionMode !== 'all_free')) &&
       (entry.definition.name !== 'request_user_choice' || (interactiveRequests && userChoice)) &&
       (entry.definition.name !== 'inject_image_input' || vision) &&
       (entry.definition.name !== 'update_goal' || goalAvailable) &&
-      (hasWorkspace || entry.manifest.dispatch_scope !== 'resource') &&
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
       (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
     ).map((entry) => entry.definition);
@@ -119,6 +119,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       projectInstructions: request.projectUserPrompt,
       files: request.files,
       images: request.images?.map((image) => image.path),
+      filesystemLocations,
       permissionMode,
       subagentPermissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
       childAgentPolicy,
@@ -131,7 +132,9 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       maxOutputTokens: positiveInteger(
         request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
       ),
-      maxContextTokens: positiveInteger(request.modelConfig?.maxContextTokens),
+      maxContextTokens: positiveInteger(
+        request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
+      ),
       reasoningEffort: reasoningEffort(request.reasoningLevel),
     });
     if (goalCommand) {
@@ -239,9 +242,24 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   }
 }
 
+async function readOsFilesystemLocations(): Promise<Array<{
+  id: string;
+  name: string;
+  path: string;
+}>> {
+  const read = window.cardbushDesktop?.osFilesystemLocations;
+  if (!read) return [];
+  try {
+    return await read();
+  } catch {
+    return [];
+  }
+}
+
 interface ResolvedProductModel {
   model: string;
   binding: RuntimeProviderBindingRef;
+  maxContextTokens?: number;
   maxOutputTokens?: number;
 }
 
@@ -271,6 +289,9 @@ export async function resolveProductModel(modelId: string): Promise<ResolvedProd
   return {
     model,
     binding: runtimeProviderBindingRefSchema.parse(value.binding),
+    ...(positiveInteger(value.maxContextTokens) ? {
+      maxContextTokens: positiveInteger(value.maxContextTokens),
+    } : {}),
     ...(positiveInteger(value.maxOutputTokens) ? {
       maxOutputTokens: positiveInteger(value.maxOutputTokens),
     } : {}),

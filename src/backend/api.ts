@@ -53,6 +53,7 @@ import type {
   SubagentTask as RuntimeSubagentTask,
   ToolExecutionRecord as RuntimeToolExecutionRecord,
 } from '@cardbush/bush-protocol';
+import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 import { AGENT_PROFILE_PROTOCOL } from '../types';
 import { standardImageInputToolDefaultName } from './toolVisibility';
 import {
@@ -1868,6 +1869,29 @@ export async function deleteConversationApi(sessionId: string) {
   }
 }
 
+export async function recordAssistantLogicFeedback(
+  message: ChatMessage,
+  rating: 'up' | 'down' | null,
+) {
+  const sessionId = message.conversationId?.trim() ?? '';
+  const turnId = message.turnId?.trim() ?? '';
+  const messageId = message.id.trim();
+  if (!sessionId || !turnId || !messageId || message.role !== 'assistant') {
+    return null;
+  }
+  const runtime = createDesktopRuntimeSession();
+  try {
+    return await runtime.client.recordLogicFeedback({
+      sessionId,
+      turnId,
+      messageId,
+      rating,
+    });
+  } finally {
+    runtime.dispose();
+  }
+}
+
 const productHostProtocol = 'cardbush.product_host_ipc.v1';
 
 export class ProductHostCommandError extends Error {
@@ -2321,7 +2345,22 @@ export async function fetchSessionWorkspaceChanges(
         ),
       )
     ).flat();
+    const revertedChangeIds = new Set(
+      Array.isArray(snapshot.metadata?.[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY])
+        ? snapshot.metadata[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY]
+            .filter((value): value is string => typeof value === 'string')
+        : [],
+    );
     return records
+      .map((record) => ({
+        ...record,
+        result: {
+          ...record.result,
+          workspace_changes: record.result.workspace_changes.filter(
+            (change) => !revertedChangeIds.has(change.change_id),
+          ),
+        },
+      }))
       .filter((record) => record.result.workspace_changes.length > 0)
       .map(runtimeHistoryToolExecution);
   } finally {
@@ -2343,6 +2382,7 @@ export async function revertSessionWorkspaceChanges(
   turnIds: string[],
 ): Promise<{
   revertedFiles: number;
+  revertedChangeIds: string[];
   revertedAt: string;
   turnIds: string[];
 }> {
@@ -2355,12 +2395,22 @@ export async function revertSessionWorkspaceChanges(
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    const result = await runtime.client.revertWorkspaceChanges({
-      sessionId: normalizedSession,
-      turnIds: normalizedTurns,
-    });
+    let result;
+    try {
+      result = await runtime.client.revertWorkspaceChanges({
+        sessionId: normalizedSession,
+        turnIds: normalizedTurns,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('runtime_workspace_snapshot_unavailable')) {
+        throw new RuntimeWorkspaceSnapshotUnavailableError();
+      }
+      throw error;
+    }
     return {
       revertedFiles: result.revertedFiles,
+      revertedChangeIds: result.revertedChangeIds,
       revertedAt: result.revertedAt,
       turnIds: result.turnIds,
     };

@@ -8,7 +8,6 @@ export const DEFAULT_CHILD_AGENT_DISABLED_TOOLS = [
   "request_permission",
   "request_user_choice",
   "update_goal",
-  "learn_logic",
   "schedule_task",
 ] as const;
 

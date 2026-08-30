@@ -97,7 +97,8 @@ export function registerComputerUsePlugin(
     title: 'Computer use',
     description: [
       "Observe and interact with the user's current desktop.",
-      'Use file tools for file content. Screenshots are returned as image artifacts.',
+      'Use direct filesystem tools instead of desktop applications to create, read, or edit files.',
+      'Use this Tool only when the task requires visible GUI interaction or no direct Tool can perform the operation. Screenshots are returned as image artifacts.',
       'For window actions, prefer app to target a process, or use hwnd from observe when more than one window matches.',
     ].join(' '),
     inputSchema,

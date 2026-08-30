@@ -22,7 +22,6 @@ import { PlanningAssessmentNotice, planningAssessmentFromExecution } from './Pla
 import { PlanVerificationPanel, normalizeAssertionResults, planVerificationInfoFromExecution, type VerificationAssertionItem } from './PlanVerificationPanel';
 import { SubagentAuditSignalsPanel, subagentAuditSignalsFromExecution } from './SubagentAuditSignalsPanel';
 import { SubagentChildTools, subagentChildToolExecutions } from './SubagentChildTools';
-import { ToolActionEnvelopeInfo, toolActionEnvelopeFromExecution } from './ToolActionEnvelopeInfo';
 import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
@@ -443,8 +442,7 @@ function ToolExecutionDetail({
   const duration = formatDuration(execution.durationMs);
   const summary = execution.summary.trim();
   const goalUpdate = goalToolUpdateFromExecution(execution);
-  const actionEnvelope = toolActionEnvelopeFromExecution(execution);
-  const output = toolDisplayOutput(execution, actionEnvelope);
+  const output = toolDisplayOutput(execution);
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
   const hookDecision = toolHookDecisionFromExecution(execution);
@@ -485,9 +483,6 @@ function ToolExecutionDetail({
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
       <WorkerProfileBadge info={workerInfo} />
-      {actionEnvelope && (
-        <ToolActionEnvelopeInfo envelope={actionEnvelope} language={language} />
-      )}
       {planningAssessment && (
         <PlanningAssessmentNotice language={language} />
       )}

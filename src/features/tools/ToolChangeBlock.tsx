@@ -71,7 +71,7 @@ export function ToolChangeBlock({
           <em>{expanded ? (language === 'zh' ? '收起' : 'Hide') : language === 'zh' ? '查看改动' : 'View diff'}</em>
           <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
         </button>
-        {onRevert && hasDetails && (
+        {onRevert && report.files.length > 0 && (
           <button
             className="tool-change-revert"
             type="button"

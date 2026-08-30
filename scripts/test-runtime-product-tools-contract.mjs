@@ -7,6 +7,9 @@ const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 
 const worker = read('electron', 'runtimeHostWorker.mts');
 const main = read('electron', 'main.ts');
+const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
+const productAgent = read('packages', 'bush-product-agent', 'src', 'index.ts');
+const extendedBuiltins = read('packages', 'bush-runtime', 'src', 'extendedBuiltins.ts');
 const appsPlugin = read(
   'packages',
   'cardbush-apps-mcp',
@@ -22,5 +25,18 @@ assert.match(worker, /id: 'cardbush_apps'/);
 assert.match(appsPlugin, /registerTool\('computer_use'/);
 assert.match(appsPlugin, /'cardbush\/action_manifest'/);
 assert.match(appsPlugin, /owner: 'cardbush_apps'/);
+assert.match(
+  appsPlugin,
+  /Use direct filesystem tools instead of desktop applications to create, read, or edit files/,
+);
+assert.doesNotMatch(runtimeChat, /entry\.manifest\.dispatch_scope !== 'resource'/);
+assert.match(runtimeChat, /filesystemLocations/);
+assert.match(
+  productAgent,
+  /Do not inspect or operate the desktop, open a GUI editor, or search Skills/,
+);
+assert.match(extendedBuiltins, /name: "consult_logic"/);
+assert.match(extendedBuiltins, /name: "learn_logic"/);
+assert.doesNotMatch(extendedBuiltins, /name: "ked_/);
 
 console.log('Runtime built-in/MCP tool boundary contract passed');
