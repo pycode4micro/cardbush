@@ -44,6 +44,7 @@ import type {
   PendingInteraction,
   InteractionReplyAnswer,
   PermissionMode,
+  SubagentPermissionRouting,
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
@@ -181,6 +182,8 @@ export function useCardbushChat(
   const [permissionMode, setPermissionModeState] = useState<PermissionMode>(
     readInitialPermissionMode,
   );
+  const [subagentPermissionRouting, setSubagentPermissionRoutingState] =
+    useState<SubagentPermissionRouting>(readInitialSubagentPermissionRouting);
   const [reasoningLevel, setReasoningLevelState] = useState<ReasoningLevel>(() =>
     readInitialReasoningLevel(
       requestContext.reasoningLevels,
@@ -527,6 +530,12 @@ export function useCardbushChat(
     const normalized = normalizePermissionMode(mode);
     setPermissionModeState(normalized);
     window.localStorage.setItem('cardbush.permission_mode', normalized);
+  }, []);
+
+  const setSubagentPermissionRouting = useCallback((routing: SubagentPermissionRouting) => {
+    const normalized = normalizeSubagentPermissionRouting(routing);
+    setSubagentPermissionRoutingState(normalized);
+    window.localStorage.setItem('cardbush.subagent_permission_routing', normalized);
   }, []);
 
   const setReasoningLevel = useCallback((level: ReasoningLevel) => {
@@ -991,7 +1000,6 @@ export function useCardbushChat(
       },
       onAssistantRevision: (revision) => {
         if (revision.channel && revision.channel !== 'assistant') return;
-        streamBuffer.flushToolBoundary();
         ensureAssistant();
         const route = {
           messageId: revision.messageId ?? '',
@@ -999,6 +1007,7 @@ export function useCardbushChat(
           turnId: revision.turnId ?? normalizedTurnId,
         };
         const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+        streamBuffer.flushToolBoundary(animateFinal ? route : undefined);
         streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
         setMessagesByConversation((state) =>
           applyAssistantRevision(
@@ -1063,8 +1072,17 @@ export function useCardbushChat(
           );
         });
       },
+      onDone: (terminal) => {
+        if (!terminal.stopped && terminal.status === 'completed') {
+          void streamBuffer.releaseTerminal();
+        } else {
+          void streamBuffer.flushAllStreaming();
+        }
+      },
       onMessages: (nextMessages, finalSnapshot) => {
-        void streamBuffer.flushAllStreaming().then(() => {
+        void (finalSnapshot
+          ? streamBuffer.releaseTerminal()
+          : streamBuffer.flushAllStreaming()).then(() => {
           setMessagesByConversation((state) =>
             finalSnapshot
               ? mergeFinalStreamMessages(state, normalizedSessionId, nextMessages, {
@@ -1755,6 +1773,7 @@ export function useCardbushChat(
             .filter((name) => !requestContext.disabledSkillNames?.has(name)),
           referencePlanMode,
           permissionMode,
+          subagentPermissionRouting,
           reasoningLevel,
           reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
           interactiveRequestsEnabled:
@@ -1812,13 +1831,13 @@ export function useCardbushChat(
             // A revision is a hard assistant-segment boundary. Drain any token
             // text already received for the prior segment before resetting its
             // animation buffer, otherwise a short pre-tool sentence can vanish.
-            streamBuffer.flushToolBoundary();
             const route = {
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
               turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
             };
             const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+            streamBuffer.flushToolBoundary(animateFinal ? route : undefined);
             streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(
@@ -1882,6 +1901,10 @@ export function useCardbushChat(
             if (terminalSnapshot.turnId) {
               terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
             }
+            const terminalReveal = !terminalSnapshot.stopped && terminalSnapshot.status === 'completed'
+              ? streamBuffer.releaseTerminal()
+              : streamBuffer.flushAllStreaming();
+            finalSnapshotPromise ??= terminalReveal;
             setMessagesByConversation((current) =>
               applyTurnTerminalSnapshot(
                 current,
@@ -1894,7 +1917,7 @@ export function useCardbushChat(
           onMessages: (nextMessages, finalSnapshot) => {
             if (finalSnapshot) {
               const turnId = activeTurnIdsRef.current[sessionId];
-              finalSnapshotPromise = streamBuffer.flushAllStreaming().then(() => {
+              finalSnapshotPromise = streamBuffer.releaseTerminal().then(() => {
                 setMessagesByConversation((current) =>
                   mergeFinalStreamMessages(current, sessionId, nextMessages, {
                     turnId,
@@ -2108,6 +2131,7 @@ export function useCardbushChat(
       requestContext.projectContexts,
       referencePlanMode,
       permissionMode,
+      subagentPermissionRouting,
       reasoningLevel,
       selectedModel,
       skills,
@@ -2280,13 +2304,13 @@ export function useCardbushChat(
             if (revision.channel && revision.channel !== 'assistant') {
               return;
             }
-            streamBuffer.flushToolBoundary();
             const route = {
               messageId: revision.messageId ?? '',
               assistantSegmentIndex: revision.assistantSegmentIndex,
               turnId: revision.turnId ?? activeTurnIdsRef.current[sessionId] ?? '',
             };
             const animateFinal = revision.reason === 'assistant_final' && Boolean(revision.content);
+            streamBuffer.flushToolBoundary(animateFinal ? route : undefined);
             streamBuffer.reset(route, animateFinal ? '' : revision.content ?? '');
             setMessagesByConversation((current) =>
               applyAssistantRevision(
@@ -2350,6 +2374,10 @@ export function useCardbushChat(
             if (terminalSnapshot.turnId) {
               terminalTurnIdsRef.current.add(terminalSnapshot.turnId);
             }
+            const terminalReveal = !terminalSnapshot.stopped && terminalSnapshot.status === 'completed'
+              ? streamBuffer.releaseTerminal()
+              : streamBuffer.flushAllStreaming();
+            finalSnapshotPromise ??= terminalReveal;
             setMessagesByConversation((current) =>
               applyTurnTerminalSnapshot(
                 current,
@@ -2363,7 +2391,7 @@ export function useCardbushChat(
             if (finalSnapshotEvent) {
               finalSnapshot = nextMessages;
               const turnId = activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId;
-              finalSnapshotPromise = streamBuffer.flushAllStreaming().then(() => {
+              finalSnapshotPromise = streamBuffer.releaseTerminal().then(() => {
                 setMessagesByConversation((current) =>
                   mergeFinalStreamMessages(current, sessionId, nextMessages, {
                     turnId,
@@ -2629,6 +2657,7 @@ export function useCardbushChat(
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
             permissionMode,
+            subagentPermissionRouting,
             reasoningLevel,
             reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
             interactiveRequestsEnabled:
@@ -2666,6 +2695,7 @@ export function useCardbushChat(
       requestContext.terminalRuntime,
       referencePlanMode,
       permissionMode,
+      subagentPermissionRouting,
       reasoningLevel,
       runControlAssistantStream,
       sendMessage,
@@ -2793,6 +2823,7 @@ export function useCardbushChat(
               .filter((name) => !requestContext.disabledSkillNames?.has(name)),
             referencePlanMode,
             permissionMode,
+            subagentPermissionRouting,
             reasoningLevel,
             reasoningTraceVisible: requestContext.reasoningTraceVisible === true,
             interactiveRequestsEnabled:
@@ -2832,6 +2863,7 @@ export function useCardbushChat(
       requestContext.terminalRuntime,
       referencePlanMode,
       permissionMode,
+      subagentPermissionRouting,
       reasoningLevel,
       runControlAssistantStream,
       selectedModel,
@@ -3410,6 +3442,8 @@ export function useCardbushChat(
     setReferencePlanMode,
     permissionMode,
     setPermissionMode,
+    subagentPermissionRouting,
+    setSubagentPermissionRouting,
     reasoningLevel,
     setReasoningLevel,
     openConversation,
@@ -3511,6 +3545,12 @@ function readInitialPermissionMode(): PermissionMode {
   );
 }
 
+function readInitialSubagentPermissionRouting(): SubagentPermissionRouting {
+  return normalizeSubagentPermissionRouting(
+    window.localStorage.getItem('cardbush.subagent_permission_routing') ?? 'user',
+  );
+}
+
 function readInitialReasoningLevel(
   available?: ReasoningLevel[],
   fallback?: ReasoningLevel,
@@ -3534,11 +3574,24 @@ function normalizePermissionMode(value: string): PermissionMode {
   return 'task_free';
 }
 
+function normalizeSubagentPermissionRouting(value: string): SubagentPermissionRouting {
+  return value.trim() === 'user' ? 'user' : 'parent';
+}
+
 function normalizeReasoningLevels(values?: ReasoningLevel[]): ReasoningLevel[] {
   const normalized = (values ?? [])
-    .filter((item) => item === 'low' || item === 'medium' || item === 'high' || item === 'max')
+    .filter((item) =>
+      item === 'none' ||
+      item === 'minimal' ||
+      item === 'low' ||
+      item === 'medium' ||
+      item === 'high' ||
+      item === 'xhigh' ||
+      item === 'max')
     .filter((item, index, all) => all.indexOf(item) === index);
-  return normalized.length > 0 ? normalized : ['low', 'medium', 'max'];
+  return normalized.length > 0
+    ? normalized
+    : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 }
 
 function normalizeReasoningLevel(
@@ -3633,84 +3686,23 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
   );
 }
 
-const streamSentenceFlushThreshold = 16;
-const streamForceFlushThreshold = 64;
-// Keep the foreground cadence deliberately calm. A short final answer should
-// unfold over roughly one to two seconds instead of arriving as a visual pop;
-// large backlogs still catch up progressively so long responses do not lag far
-// behind the provider stream.
-const streamFlushIntervalMs = 120;
-const streamBaseCharChunkSize = 4;
-const streamMediumCharChunkSize = 8;
-const streamFastCharChunkSize = 16;
-const streamCatchUpCharChunkSize = 28;
-
-type StreamReadySegment = {
-  text: string;
-  atomic: boolean;
-};
+// Final assistant text stays outside React while the Runtime is active. Once an
+// authoritative terminal fact arrives, reveal the frozen snapshot quickly on
+// animation frames. This trades first-token latency for stable Markdown and a
+// deterministic final-round transition.
+const terminalRevealMinDurationMs = 700;
+const terminalRevealMaxDurationMs = 2800;
+const terminalRevealCharactersPerSecond = 560;
 
 export function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
   let pending = '';
   let emitted = '';
-  const ready: StreamReadySegment[] = [];
-  let timer: number | undefined;
+  let terminalRequested = false;
+  let animationHandle: number | undefined;
+  let animationUsesFrame = false;
+  let animationCharacters: string[] = [];
+  let animationIndex = 0;
   const drainWaiters: Array<() => void> = [];
-
-  const clearTimer = () => {
-    if (!timer) {
-      return;
-    }
-    window.clearTimeout(timer);
-    timer = undefined;
-  };
-
-  const queueReady = () => {
-    for (;;) {
-      const release = streamBufferedRelease(pending);
-      if (release.index <= 0) {
-        return;
-      }
-      ready.push({
-        text: pending.slice(0, release.index),
-        atomic: release.atomic,
-      });
-      pending = pending.slice(release.index);
-    }
-  };
-
-  const schedule = () => {
-    if (timer) {
-      return;
-    }
-    timer = window.setTimeout(() => {
-      timer = undefined;
-      queueReady();
-      drainReadyChunk();
-      if (pending || ready.length > 0) {
-        schedule();
-        return;
-      }
-      resolveDrainWaiters();
-    }, streamFlushIntervalMs);
-  };
-
-  const drainReadyChunk = () => {
-    const segment = ready[0];
-    if (!segment) {
-      resolveDrainWaiters();
-      return;
-    }
-    const index = acceleratedCharacterChunkEnd(segment.text, readyBacklogLength());
-    if (segment.text.length <= index) {
-      ready.shift();
-      emit(segment.text);
-      resolveDrainWaiters();
-      return;
-    }
-    emit(segment.text.slice(0, index));
-    segment.text = segment.text.slice(index);
-  };
 
   const emit = (delta: string) => {
     if (!delta) {
@@ -3721,24 +3713,15 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
   };
 
   const bufferedText = () =>
-    emitted + ready.map((segment) => segment.text).join('') + pending;
-
-  const forceReleasePending = () => {
-    if (!pending) {
-      return;
-    }
-    ready.push({
-      text: pending,
-      atomic: false,
-    });
-    pending = '';
-  };
-
-  const readyBacklogLength = () =>
-    ready.reduce((total, segment) => total + segment.text.length, 0) + pending.length;
+    emitted + animationCharacters.slice(animationIndex).join('') + pending;
 
   const resolveDrainWaiters = () => {
-    if (pending || ready.length > 0 || drainWaiters.length === 0) {
+    if (
+      pending ||
+      animationHandle !== undefined ||
+      animationIndex < animationCharacters.length ||
+      drainWaiters.length === 0
+    ) {
       return;
     }
     const waiters = drainWaiters.splice(0);
@@ -3749,18 +3732,88 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
 
   const waitForDrain = () =>
     new Promise<void>((resolve) => {
-      if (!pending && ready.length === 0) {
+      if (
+        !pending &&
+        animationHandle === undefined &&
+        animationIndex >= animationCharacters.length
+      ) {
         resolve();
         return;
       }
       drainWaiters.push(resolve);
-      schedule();
     });
 
+  const cancelAnimation = () => {
+    if (animationHandle === undefined) return;
+    if (animationUsesFrame && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(animationHandle);
+    } else {
+      window.clearTimeout(animationHandle);
+    }
+    animationHandle = undefined;
+  };
+
+  const scheduleFrame = (callback: (now: number) => void) => {
+    if (typeof window.requestAnimationFrame === 'function') {
+      animationUsesFrame = true;
+      animationHandle = window.requestAnimationFrame(callback);
+    } else {
+      animationUsesFrame = false;
+      animationHandle = window.setTimeout(() => callback(Date.now()), 16);
+    }
+  };
+
   const flushAllStreaming = () => {
-    forceReleasePending();
-    drainReadyChunk();
-    return waitForDrain();
+    cancelAnimation();
+    const remainder = animationCharacters.slice(animationIndex).join('') + pending;
+    animationCharacters = [];
+    animationIndex = 0;
+    pending = '';
+    emit(remainder);
+    resolveDrainWaiters();
+    return Promise.resolve();
+  };
+
+  const startTerminalReveal = () => {
+    if (animationHandle !== undefined || !pending) {
+      resolveDrainWaiters();
+      return;
+    }
+    animationCharacters = Array.from(pending);
+    animationIndex = 0;
+    pending = '';
+    const duration = Math.max(
+      terminalRevealMinDurationMs,
+      Math.min(
+        terminalRevealMaxDurationMs,
+        (animationCharacters.length / terminalRevealCharactersPerSecond) * 1000,
+      ),
+    );
+    let startedAt: number | undefined;
+    const tick = (now: number) => {
+      animationHandle = undefined;
+      startedAt ??= now;
+      const progress = Math.min(1, Math.max(0, (now - startedAt) / duration));
+      const target = progress >= 1
+        ? animationCharacters.length
+        : Math.max(animationIndex + 1, Math.floor(animationCharacters.length * progress));
+      if (target > animationIndex) {
+        emit(animationCharacters.slice(animationIndex, target).join(''));
+        animationIndex = target;
+      }
+      if (animationIndex < animationCharacters.length) {
+        scheduleFrame(tick);
+        return;
+      }
+      animationCharacters = [];
+      animationIndex = 0;
+      if (terminalRequested && pending) {
+        startTerminalReveal();
+        return;
+      }
+      resolveDrainWaiters();
+    };
+    scheduleFrame(tick);
   };
 
   const completeFinalSnapshot = (finalText: string) => {
@@ -3769,22 +3822,23 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
     if (snapshot.startsWith(buffered)) {
       pending += snapshot.slice(buffered.length);
     } else if (snapshot.startsWith(emitted)) {
-      ready.length = 0;
+      cancelAnimation();
+      animationCharacters = [];
+      animationIndex = 0;
       pending = snapshot.slice(emitted.length);
+    } else {
+      cancelAnimation();
+      animationCharacters = [];
+      animationIndex = 0;
+      emitted = '';
+      pending = snapshot;
     }
-    return flushAllStreaming();
+    if (terminalRequested) startTerminalReveal();
+    return waitForDrain();
   };
 
   const flushToolBoundary = () => {
-    clearTimer();
-    forceReleasePending();
-    while (ready.length > 0) {
-      const segment = ready.shift();
-      if (segment?.text) {
-        emit(segment.text);
-      }
-    }
-    resolveDrainWaiters();
+    void flushAllStreaming();
   };
 
   return {
@@ -3793,10 +3847,7 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
         return;
       }
       pending += delta;
-      queueReady();
-      if (pending || ready.length > 0) {
-        schedule();
-      }
+      if (terminalRequested) startTerminalReveal();
     },
     flushAllStreaming() {
       return flushAllStreaming();
@@ -3804,19 +3855,28 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
     completeFinalSnapshot(finalText: string) {
       return completeFinalSnapshot(finalText);
     },
+    releaseTerminal() {
+      terminalRequested = true;
+      startTerminalReveal();
+      return waitForDrain();
+    },
     flushToolBoundary() {
       flushToolBoundary();
     },
     reset(nextEmitted = '') {
-      clearTimer();
-      ready.length = 0;
+      cancelAnimation();
+      terminalRequested = false;
+      animationCharacters = [];
+      animationIndex = 0;
       pending = '';
       emitted = nextEmitted;
       resolveDrainWaiters();
     },
     dispose() {
-      clearTimer();
-      ready.length = 0;
+      cancelAnimation();
+      terminalRequested = false;
+      animationCharacters = [];
+      animationIndex = 0;
       pending = '';
       emitted = '';
       resolveDrainWaiters();
@@ -3860,13 +3920,20 @@ function createSegmentedAssistantStreamBuffers(
     completeRoute(finalText: string, route: AssistantStreamRoute) {
       return bufferFor(route).completeFinalSnapshot(finalText);
     },
+    releaseTerminal() {
+      return Promise.all(
+        [...buffers.values()].map((buffer) => buffer.releaseTerminal()),
+      ).then(() => undefined);
+    },
     flushAllStreaming() {
       return Promise.all(
         [...buffers.values()].map((buffer) => buffer.flushAllStreaming()),
       ).then(() => undefined);
     },
-    flushToolBoundary() {
-      for (const buffer of buffers.values()) {
+    flushToolBoundary(exceptRoute?: AssistantStreamRoute) {
+      const exceptKey = exceptRoute ? routeKey(exceptRoute) : '';
+      for (const [key, buffer] of buffers) {
+        if (exceptKey && key === exceptKey) continue;
         buffer.flushToolBoundary();
       }
     },
@@ -3875,219 +3942,6 @@ function createSegmentedAssistantStreamBuffers(
       buffers.clear();
     },
   };
-}
-
-function acceleratedCharacterChunkEnd(value: string, backlogLength: number) {
-  const targetSize = streamCharacterChunkSize(backlogLength);
-  let index = 0;
-  let count = 0;
-  for (const char of value) {
-    index += char.length;
-    count += 1;
-    if (count >= targetSize) {
-      break;
-    }
-  }
-  return Math.max(1, Math.min(value.length, index));
-}
-
-function streamCharacterChunkSize(backlogLength: number) {
-  if (backlogLength >= 720) {
-    return streamCatchUpCharChunkSize;
-  }
-  if (backlogLength >= 280) {
-    return streamFastCharChunkSize;
-  }
-  if (backlogLength >= 96) {
-    return streamMediumCharChunkSize;
-  }
-  return streamBaseCharChunkSize;
-}
-
-function streamBufferedRelease(buffer: string): { index: number; atomic: boolean } {
-  if (!buffer) {
-    return { index: 0, atomic: false };
-  }
-  const incompleteTableStart = markdownIncompleteTableStart(buffer);
-  const completeTableEnd = markdownFirstCompleteTableEnd(buffer);
-  if (
-    completeTableEnd > 0 &&
-    (incompleteTableStart == null || completeTableEnd <= incompleteTableStart)
-  ) {
-    return { index: completeTableEnd, atomic: true };
-  }
-
-  const eligible =
-    incompleteTableStart == null ? buffer : buffer.slice(0, incompleteTableStart);
-  if (!eligible) {
-    return { index: 0, atomic: false };
-  }
-
-  if (eligible.length >= streamSentenceFlushThreshold) {
-    const sentenceEnd = lastSentenceBoundary(eligible);
-    if (sentenceEnd > 0) {
-      return { index: sentenceEnd, atomic: false };
-    }
-  }
-
-  const paragraphEnd = lastParagraphBoundary(eligible);
-  if (paragraphEnd >= streamSentenceFlushThreshold) {
-    return { index: paragraphEnd, atomic: false };
-  }
-
-  if (eligible.length >= streamForceFlushThreshold) {
-    return { index: relaxedTextBoundary(eligible), atomic: false };
-  }
-
-  return { index: 0, atomic: false };
-}
-
-function lastSentenceBoundary(value: string) {
-  let boundary = 0;
-  const pattern = /[。！？.!?](?:["'”’）)]|\s|$)*/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(value)) != null) {
-    boundary = match.index + match[0].length;
-  }
-  return boundary;
-}
-
-function lastParagraphBoundary(value: string) {
-  const index = Math.max(value.lastIndexOf('\n\n'), value.lastIndexOf('\r\n\r\n'));
-  return index >= 0 ? index + (value[index] === '\r' ? 4 : 2) : 0;
-}
-
-function relaxedTextBoundary(value: string) {
-  const sentenceEnd = lastSentenceBoundary(value);
-  if (sentenceEnd > 0) {
-    return sentenceEnd;
-  }
-  const newlineIndex = value.lastIndexOf('\n');
-  if (newlineIndex > 0) {
-    return newlineIndex + 1;
-  }
-  const whitespaceMatch = value.slice(0, streamForceFlushThreshold).match(/\s+\S*$/);
-  if (whitespaceMatch?.index != null && whitespaceMatch.index > 0) {
-    return whitespaceMatch.index + whitespaceMatch[0].length;
-  }
-  return Math.min(value.length, streamForceFlushThreshold);
-}
-
-type MarkdownLineSegment = {
-  text: string;
-  body: string;
-  start: number;
-  end: number;
-  hasLineBreak: boolean;
-};
-
-function markdownFirstCompleteTableEnd(value: string) {
-  const table = markdownTableRange(value);
-  return table?.complete ? table.end : 0;
-}
-
-function markdownIncompleteTableStart(value: string) {
-  const table = markdownTableRange(value);
-  return table && !table.complete ? table.start : undefined;
-}
-
-function markdownTableRange(value: string) {
-  const lines = markdownLineSegments(value);
-  for (let index = 0; index < lines.length - 1; index += 1) {
-    const header = lines[index];
-    const separator = lines[index + 1];
-    if (!isMarkdownTableRow(header.body) || !isMarkdownTableSeparator(separator.body)) {
-      continue;
-    }
-    if (!separator.hasLineBreak) {
-      return {
-        start: header.start,
-        end: value.length,
-        complete: false,
-      };
-    }
-    let endIndex = index + 2;
-    while (
-      endIndex < lines.length &&
-      isMarkdownTableRow(lines[endIndex].body)
-    ) {
-      if (!lines[endIndex].hasLineBreak && endIndex === lines.length - 1) {
-        return {
-          start: header.start,
-          end: value.length,
-          complete: false,
-        };
-      }
-      endIndex += 1;
-    }
-    if (endIndex >= lines.length) {
-      return {
-        start: header.start,
-        end: value.length,
-        complete: false,
-      };
-    }
-    return {
-      start: header.start,
-      end: lines[endIndex - 1]?.end ?? separator.end,
-      complete: true,
-    };
-  }
-  return null;
-}
-
-function markdownLineSegments(value: string): MarkdownLineSegment[] {
-  const lines: MarkdownLineSegment[] = [];
-  let start = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    if (char !== '\n') {
-      continue;
-    }
-    const end = index + 1;
-    const text = value.slice(start, end);
-    lines.push({
-      text,
-      body: text.replace(/\r?\n$/, ''),
-      start,
-      end,
-      hasLineBreak: true,
-    });
-    start = end;
-  }
-  if (start < value.length) {
-    const text = value.slice(start);
-    lines.push({
-      text,
-      body: text,
-      start,
-      end: value.length,
-      hasLineBreak: false,
-    });
-  }
-  return lines;
-}
-
-function isMarkdownTableRow(value: string) {
-  const text = value.trim();
-  if (!text.includes('|')) {
-    return false;
-  }
-  return text.startsWith('|') || text.endsWith('|') || text.split('|').length >= 3;
-}
-
-function isMarkdownTableSeparator(value: string) {
-  const text = value.trim();
-  if (!text.includes('|')) {
-    return false;
-  }
-  const cells = text
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim())
-    .filter(Boolean);
-  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
 export function appendAssistantDelta(
@@ -6236,6 +6090,9 @@ function isAssistantFinalTranscript(message: ChatMessage) {
   return (
     status === 'complete' ||
     status === 'completed' ||
+    status === 'stopped' ||
+    message.metadata?.stopped === true ||
+    message.metadata?.cardbush_terminal_stopped === true ||
     transcriptKind === 'assistant_final' ||
     (!status && !transcriptKind)
   );

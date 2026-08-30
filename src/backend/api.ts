@@ -28,6 +28,7 @@ import type {
   WorkspaceContext,
   InteractionReplyAnswer,
   PermissionMode,
+  SubagentPermissionRouting,
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeContextWindowUsage,
@@ -90,6 +91,7 @@ import {
   closeRuntimeShadowConversation,
   createRuntimeShadowConversation,
   streamRuntimeShadowConversationMessage,
+  updateRuntimeShadowConversationMode,
 } from './shadowRuntime';
 
 export const RUNTIME_ASSET_RESET_PROTOCOL = 'cardbush.runtime_asset_reset.v1';
@@ -171,6 +173,7 @@ export interface ChatStreamRequest {
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
+  subagentPermissionRouting?: SubagentPermissionRouting;
   reasoningLevel?: ReasoningLevel;
   reasoningTraceVisible?: boolean;
   interactiveRequestsEnabled?: boolean;
@@ -250,6 +253,7 @@ export interface ControlStreamRequest {
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
+  subagentPermissionRouting?: SubagentPermissionRouting;
   reasoningLevel?: ReasoningLevel;
   reasoningTraceVisible?: boolean;
   interactiveRequestsEnabled?: boolean;
@@ -321,7 +325,9 @@ export interface ShadowConversationRecord {
   id: string;
   sessionId: string;
   sourceTurnId: string;
+  workspaceDir: string;
   agentName: string;
+  mode: 'readonly' | 'fork';
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -334,6 +340,7 @@ export interface ShadowConversationStreamRequest {
   clientMessageId: string;
   modelConfig: ManagedModelConfig;
   reasoningLevel?: ReasoningLevel;
+  projectDir?: string;
   signal?: AbortSignal;
   onStart?: (messageId: string) => void;
   onDelta?: (delta: string) => void;
@@ -458,7 +465,7 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   taskPlan: false,
   reasoningStream: false,
   reasoningLevelSelection: false,
-  reasoningLevels: ['low', 'medium', 'max'],
+  reasoningLevels: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   defaultReasoningLevel: 'medium',
   terminalRuntimeSelection: false,
   terminalRuntimes: ['powershell', 'wsl'],
@@ -2052,10 +2059,12 @@ export async function createShadowConversation({
   sessionId,
   sourceTurnId,
   clientConversationId,
+  mode,
 }: {
   sessionId: string;
   sourceTurnId?: string;
   clientConversationId: string;
+  mode: 'readonly' | 'fork';
 }): Promise<ShadowConversationRecord> {
   const normalizedSessionId = sessionId.trim();
   if (!normalizedSessionId) {
@@ -2070,6 +2079,7 @@ export async function createShadowConversation({
     sessionId: normalizedSessionId,
     sourceTurnId,
     clientConversationId,
+    mode,
   });
 }
 
@@ -2079,6 +2089,22 @@ export async function closeShadowConversation(
   const normalizedConversationId = conversationId.trim();
   if (!normalizedConversationId) return;
   await closeRuntimeShadowConversation(normalizedConversationId);
+}
+
+export async function updateShadowConversationMode(
+  conversationId: string,
+  mode: 'readonly' | 'fork',
+): Promise<ShadowConversationRecord> {
+  const normalizedConversationId = conversationId.trim();
+  if (!normalizedConversationId) {
+    throw new Error(
+      localizedClientMessage(
+        'Shadow 会话不存在',
+        'The Shadow conversation does not exist',
+      ),
+    );
+  }
+  return updateRuntimeShadowConversationMode(normalizedConversationId, mode);
 }
 
 export async function streamShadowConversationMessage(

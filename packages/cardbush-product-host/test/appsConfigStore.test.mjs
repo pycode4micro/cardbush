@@ -40,3 +40,58 @@ test("persists service, plugin lifecycle, and plugin-specific configuration", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("defaults Chrome to a managed browser and persists existing-browser mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-chrome-config-"));
+  try {
+    const path = join(root, "apps.json");
+    const chrome = {
+      id: "chrome",
+      name: "Chrome",
+      description: "Chrome DevTools MCP",
+      longDescription: "Official Chrome DevTools MCP",
+      version: "1.8.0",
+      developerName: "Google",
+      category: "Productivity",
+      capabilities: ["Interactive"],
+      keywords: ["chrome"],
+      defaultPrompts: ["Open a page"],
+      brandColor: "#4285F4",
+      logoPath: "",
+      logoDarkPath: "",
+      manifestPath: "",
+      source: "bundled",
+      installation: "AVAILABLE",
+      components: [{ kind: "mcp", id: "chrome-devtools", name: "Chrome", description: "MCP service" }],
+    };
+    const store = new CardbushAppsConfigStore(path, {
+      loadCatalog: async () => [chrome],
+    });
+    const initial = await store.read();
+    assert.deepEqual(initial.plugins[0].config, { connectionMode: "managed" });
+    const saved = await store.write({
+      serviceEnabled: true,
+      plugins: [{
+        id: "chrome",
+        installed: true,
+        enabled: true,
+        config: { connectionMode: "existing" },
+      }],
+    });
+    assert.deepEqual(saved.plugins[0].config, { connectionMode: "existing" });
+    await assert.rejects(
+      () => store.write({
+        serviceEnabled: true,
+        plugins: [{
+          id: "chrome",
+          installed: true,
+          enabled: true,
+          config: { connectionMode: "shared-silently" },
+        }],
+      }),
+      /chrome\.connectionMode must be managed or existing/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

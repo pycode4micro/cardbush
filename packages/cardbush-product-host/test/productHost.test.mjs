@@ -97,3 +97,23 @@ test("accepts Teams and Agent Profiles as reset categories", async () => {
   assert.equal(result.ok, true);
   assert.deepEqual(resetCalls, [["agent_profiles", "teams"]]);
 });
+
+test("reads the shared Subagent and Team-child baseline through the Product Host", async () => {
+  const host = new ProductHost(undefined, undefined, undefined, undefined, {
+    async get() {
+      return {
+        protocol: "cardbush.subagent_configuration.v1",
+        permissionRouting: "user",
+        childPermissionMode: "task_free",
+        model: { mode: "inherit" },
+        disabledTools: ["subagent"],
+      };
+    },
+  });
+  const result = await host.execute({
+    protocol: PRODUCT_HOST_IPC_PROTOCOL,
+    kind: "subagents.get",
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.disabledTools, ["subagent"]);
+});

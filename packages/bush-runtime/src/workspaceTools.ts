@@ -8,6 +8,7 @@ import {
 } from "node:fs/promises";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
 
 import {
   BUSH_EXECUTION_FACT_PROTOCOL,
@@ -419,7 +420,10 @@ function allowedRoots(
 ): string[] {
   const metadata = context.turn?.request.metadata ?? {};
   const taskRoots = rootStringArray(metadata.taskRoots);
-  const userRoots = mode === "user_free" ? rootStringArray(metadata.userRoots) : [];
+  const configuredUserRoots = rootStringArray(metadata.userRoots);
+  const userRoots = mode === "user_free"
+    ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()])
+    : [];
   return [...new Set([workspaceRoot(context), ...taskRoots, ...userRoots].map((item) => resolve(item)))];
 }
 

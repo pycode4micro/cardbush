@@ -44,6 +44,7 @@ export interface ToolExecutionCoordinatorOptions {
   observer?: ToolExecutionObserver;
   existingReceiptIds?: string[];
   capabilities?: RuntimeCapabilityStore;
+  capabilitySessionId?: string;
 }
 
 export interface RuntimeCapabilityStore {
@@ -57,6 +58,7 @@ export class ToolExecutionCoordinator {
   readonly #observer: ToolExecutionObserver;
   readonly #receiptIds: Set<string>;
   readonly #capabilities?: RuntimeCapabilityStore;
+  readonly #capabilitySessionId?: string;
 
   constructor(options: ToolExecutionCoordinatorOptions) {
     this.#registry = options.registry;
@@ -64,6 +66,7 @@ export class ToolExecutionCoordinator {
     this.#observer = options.observer ?? {};
     this.#receiptIds = new Set(options.existingReceiptIds ?? []);
     this.#capabilities = options.capabilities;
+    this.#capabilitySessionId = options.capabilitySessionId?.trim() || undefined;
   }
 
   async execute(
@@ -150,7 +153,8 @@ export class ToolExecutionCoordinator {
         );
       }
       if (admission.kind === "ask") {
-        if (this.#capabilities?.hasAll(identity.sessionId, admission.request.capabilityIds)) {
+        const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
+        if (this.#capabilities?.hasAll(capabilitySessionId, admission.request.capabilityIds)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
           let answer: RuntimePermissionAnswer;
@@ -191,7 +195,7 @@ export class ToolExecutionCoordinator {
           }
           capabilityIds = [...answer.grantedCapabilityIds];
           if (answer.decision === "allow_session") {
-            this.#capabilities?.grant(identity.sessionId, capabilityIds);
+            this.#capabilities?.grant(capabilitySessionId, capabilityIds);
           }
         }
       } else {

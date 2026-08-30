@@ -60,6 +60,16 @@ assert.match(bubble, /message\.metadata\?\.cardbush_terminal_stopped === true/);
 assert.match(bubble, /const stoppedAssistantRound = isStoppedAssistantMessage\(message\)/);
 assert.match(
   bubble,
+  /const freezeStoppedTranscript = stoppedAssistantRound && loopHistory\.length > 0/,
+  'A stopped multi-segment Turn must keep the continuous transcript presentation it had when Stop settled.',
+);
+assert.match(
+  bubble,
+  /isActiveAssistantTurn \|\| freezeStoppedTranscript\s*\? activeAssistantTranscriptMessages/,
+  'Stopped transcript segments must render inside one assistant bubble with one action row.',
+);
+assert.match(
+  bubble,
   /showAssistantProgress\s*=\s*[\s\S]*?!stoppedAssistantRound/,
   'Stopped turns must not retain the processed/working progress header',
 );
@@ -101,7 +111,10 @@ vm.runInNewContext(hookTranspiled.outputText, {
   Set,
   window: { setTimeout, clearTimeout },
 });
-const { mergeLoadedMessagesPreservingLocalState } = hookModule.exports;
+const {
+  mergeLoadedMessagesPreservingLocalState,
+  normalizeChatMessagesForDisplay,
+} = hookModule.exports;
 
 const stoppedTranscript = mergeLoadedMessagesPreservingLocalState(
   [
@@ -153,5 +166,74 @@ assert.deepEqual(
   'Stop reconciliation must retain the established user → assistant transcript order',
 );
 assert.equal(stoppedTranscript[1].toolExecutions[0].id, 'tool-1');
+
+const stoppedMultiSegmentTranscript = normalizeChatMessagesForDisplay([
+  {
+    id: 'stopped-user',
+    role: 'user',
+    content: '创建演示文稿',
+    turnId: 'turn-stopped-multi-segment',
+    messageIndex: 0,
+  },
+  {
+    id: 'stopped-assistant-1',
+    role: 'assistant',
+    content: '先检查可用技能。',
+    turnId: 'turn-stopped-multi-segment',
+    messageIndex: 1,
+    status: 'stopped',
+    toolExecutions: [{
+      id: 'tool-search',
+      state: 'completed',
+      summary: '搜索技能',
+      output: '找到演示文稿技能',
+      metadata: {},
+    }],
+  },
+  {
+    id: 'stopped-assistant-2',
+    role: 'assistant',
+    content: '继续读取技能指南。',
+    turnId: 'turn-stopped-multi-segment',
+    messageIndex: 2,
+    status: 'stopped',
+    toolExecutions: [{
+      id: 'tool-read',
+      state: 'failed',
+      summary: '读取技能',
+      output: '参数错误',
+      metadata: {},
+    }],
+  },
+  {
+    id: 'stopped-assistant-3',
+    role: 'assistant',
+    content: '正在检查本地环境。',
+    turnId: 'turn-stopped-multi-segment',
+    messageIndex: 3,
+    status: 'stopped',
+    metadata: {
+      cardbush_terminal_snapshot: true,
+      cardbush_terminal_stopped: true,
+    },
+  },
+]);
+assert.deepEqual(
+  Array.from(stoppedMultiSegmentTranscript, (message) => message.role),
+  ['user', 'assistant'],
+  'A stopped Turn must freeze as one assistant interaction unit.',
+);
+assert.equal(stoppedMultiSegmentTranscript[1].status, 'stopped');
+assert.deepEqual(
+  Array.from(
+    stoppedMultiSegmentTranscript[1].loopHistory,
+    (message) => [message.content, message.toolExecutions?.[0]?.id ?? ''],
+  ),
+  [
+    ['先检查可用技能。', 'tool-search'],
+    ['继续读取技能指南。', 'tool-read'],
+  ],
+  'Stopped process segments and their execution records must remain inside the single assistant unit.',
+);
 
 console.log('Stop lifecycle frontend contract tests passed');

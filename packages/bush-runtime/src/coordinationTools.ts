@@ -117,7 +117,7 @@ export function registerCoordinationTools(
         },
       },
       manifest: coordinationManifest("goal.update"),
-      visibleToChild: false,
+      visibleToChild: true,
       decodeInput: decodeGoalInput,
       execute: (context) => {
         const before = store.getGoal(context.sessionId);

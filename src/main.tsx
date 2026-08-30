@@ -4,6 +4,7 @@ import '@xterm/xterm/css/xterm.css';
 
 import { App } from './App';
 import { CardlingWindow } from './CardlingWindow';
+import { ShadowWindow } from './ShadowWindow';
 import './styles/theme.css';
 import './styles/app.css';
 
@@ -13,6 +14,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {rendererWindow === 'cardling' ? (
       <CardlingWindow />
+    ) : rendererWindow === 'shadow' ? (
+      <ShadowWindow />
     ) : (
       <App />
     )}

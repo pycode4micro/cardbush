@@ -84,17 +84,15 @@ assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /isBushServerHttpError/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
-assert.match(hookSource, /const streamFlushIntervalMs = 120/);
-assert.match(hookSource, /const streamBaseCharChunkSize = 4/);
-assert.match(hookSource, /const streamMediumCharChunkSize = 8/);
-assert.match(hookSource, /const streamFastCharChunkSize = 16/);
-assert.match(hookSource, /const streamCatchUpCharChunkSize = 28/);
+assert.match(hookSource, /const terminalRevealMinDurationMs = 700/);
+assert.match(hookSource, /const terminalRevealMaxDurationMs = 2800/);
+assert.match(hookSource, /const terminalRevealCharactersPerSecond = 560/);
 assert.equal(
   (hookSource.match(
-    /streamBuffer\.flushToolBoundary\(\);[\s\S]{0,1000}?streamBuffer\.reset\(route,/g,
+    /streamBuffer\.flushToolBoundary\(animateFinal \? route : undefined\);[\s\S]{0,300}?streamBuffer\.reset\(route,/g,
   ) ?? []).length,
   3,
-  'foreground, control, and Goal streams must drain token text before an assistant revision resets the buffer',
+  'foreground, control, and Goal streams must preserve process boundaries without exposing the final route before terminal',
 );
 
 const appSource = fs.readFileSync(
@@ -267,12 +265,18 @@ eagerStreamBuffer.push('这是一个足够长的首段内容，用来验证持�
 assert.equal(
   eagerStreamChunks.length,
   0,
-  'incoming token events must be batched instead of forcing immediate Markdown reflow',
+  'incoming final text must remain outside React while the turn is active',
 );
 await new Promise((resolve) => setTimeout(resolve, 170));
-assert.ok(
-  eagerStreamChunks.length > 0,
-  'a complete opening sentence must start rendering without waiting for a large buffer',
+assert.equal(
+  eagerStreamChunks.length,
+  0,
+  'time alone must not make the frontend guess that buffered text is the final answer',
+);
+await eagerStreamBuffer.releaseTerminal();
+assert.equal(
+  eagerStreamChunks.join(''),
+  '这是一个足够长的首段内容，用来验证持续到达的 token 会尽早显示。',
 );
 eagerStreamBuffer.dispose();
 
@@ -280,20 +284,34 @@ const finalSnapshotChunks = [];
 const finalSnapshotBuffer = createAssistantStreamDeltaBuffer((delta) => {
   finalSnapshotChunks.push(delta);
 });
-const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端仍会分段加速呈现。'.repeat(24);
+const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端仍会分段加速呈现。'.repeat(4);
 const finalSnapshotDrain = finalSnapshotBuffer.completeFinalSnapshot(finalSnapshotText);
-assert.notEqual(
+assert.equal(
   finalSnapshotChunks.join(''),
-  finalSnapshotText,
-  'a final-only snapshot must not appear as one instantaneous replacement',
+  '',
+  'an authoritative final snapshot must remain frozen until the terminal event arrives',
 );
-await finalSnapshotDrain;
+const finalSnapshotReveal = finalSnapshotBuffer.releaseTerminal();
+await Promise.all([finalSnapshotDrain, finalSnapshotReveal]);
 assert.equal(finalSnapshotChunks.join(''), finalSnapshotText);
 assert.ok(
   finalSnapshotChunks.length > 2,
   'a final-only snapshot must use multiple accelerated rendering chunks',
 );
 finalSnapshotBuffer.dispose();
+
+const interruptedChunks = [];
+const interruptedBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  interruptedChunks.push(delta);
+});
+interruptedBuffer.push('停止前已经收到但尚未显示的内容。');
+await interruptedBuffer.flushAllStreaming();
+assert.equal(
+  interruptedChunks.join(''),
+  '停止前已经收到但尚未显示的内容。',
+  'Stop and failure terminals must preserve buffered output without waiting for reveal animation',
+);
+interruptedBuffer.dispose();
 
 const sessionId = 'session-1';
 const initialAssistantId = 'assistant-local';
@@ -542,6 +560,13 @@ assert.match(
   hookSource,
   /onFinalAssistantText: \(text, chunk\) => \{[\s\S]{0,180}streamBuffer\.completeRoute\(text, chunk\)/,
   'final assistant snapshots must pass through the animated stream buffer',
+);
+assert.equal(
+  (hookSource.match(
+    /!terminalSnapshot\.stopped && terminalSnapshot\.status === 'completed'[\s\S]{0,100}?streamBuffer\.releaseTerminal\(\)[\s\S]{0,100}?streamBuffer\.flushAllStreaming\(\)/g,
+  ) ?? []).length,
+  2,
+  'foreground and control streams must animate completed terminals and flush interrupted terminals immediately',
 );
 assert.doesNotMatch(
   hookSource,

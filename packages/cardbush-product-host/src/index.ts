@@ -5,6 +5,13 @@ export {
   decodeProductHostCommand,
 } from "./productHost.js";
 export { ProductModelConfigStore } from "./modelConfigStore.js";
+export {
+  CARDBUSH_SUBAGENT_CONFIG_PROTOCOL,
+  DEFAULT_SUBAGENT_DISABLED_TOOLS,
+  ProductSubagentConfigStore,
+  decodeProductSubagentConfig,
+  defaultProductSubagentConfig,
+} from "./subagentConfigStore.js";
 export { PRODUCT_MCP_CONFIG_PROTOCOL, ProductMcpConfigStore } from "./mcpConfigStore.js";
 export {
   CARDBUSH_APPS_CONFIG_PROTOCOL,
@@ -18,6 +25,7 @@ export type {
   CardbushPluginCatalogEntry,
   CardbushPluginComponent,
   CardbushPluginComponentKind,
+  ChromePluginConfig,
   ComputerUsePluginConfig,
 } from "./appsConfigStore.js";
 export type {
@@ -25,11 +33,16 @@ export type {
   ProductModelConfigSnapshot,
 } from "./modelConfigStore.js";
 export type {
+  ProductSubagentConfig,
+  ProductSubagentModelPolicy,
+} from "./subagentConfigStore.js";
+export type {
   ProductHostCommand,
   ProductHostFailure,
   ProductMaintenanceHost,
   ProductAppsHost,
   ProductMcpHost,
+  ProductSubagentHost,
   ProductModelHost,
   ProductHostResult,
   RuntimeAssetCategory,

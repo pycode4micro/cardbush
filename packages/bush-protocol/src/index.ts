@@ -1,4 +1,5 @@
 export * from "./cacheChain.js";
+export * from "./childAgent.js";
 export * from "./coordination.js";
 export * from "./delegation.js";
 export * from "./guidance.js";

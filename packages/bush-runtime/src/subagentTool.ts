@@ -12,16 +12,33 @@ import {
   inheritedChildMessages,
   resolveChildTurn,
   type ChildTurnRunner,
+  type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 
 export const SUBAGENT_TOOL = "subagent" as const;
+export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
 
 interface SubagentInput {
   prompt: string;
   inheritContext: boolean;
 }
+
+interface AwaitSubagentsInput {
+  taskIds: string[];
+}
+
+export interface JoinedSubagentResult {
+  taskId: string;
+  message: { role: "user"; name: "subagent_result"; content: string };
+}
+
+type AwaitAsyncSubagentResults = (input: {
+  parentSessionId: string;
+  parentTurnId: string;
+  taskIds: string[];
+}) => Promise<JoinedSubagentResult[]>;
 
 export type SubagentChildRunner = ChildTurnRunner;
 
@@ -43,6 +60,8 @@ export function registerSubagentTool(
       taskId: string;
       result: Promise<{ role: "user"; name: "subagent_result"; content: string } | null>;
     }) => void;
+    awaitAsyncResults?: AwaitAsyncSubagentResults;
+    permissionPolicy?: SubagentPermissionPolicy;
   } = {},
 ): void {
   if (registry.resolve(SUBAGENT_TOOL)) return;
@@ -57,7 +76,7 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Dispatch one substantial, bounded and independent workstream to a child Agent when parallel execution or context isolation outweighs delegation cost. Keep small, tightly coupled or sequential work with the parent. The child inherits the pre-dispatch conversation by default, cannot delegate again, and returns its terminal response as user guidance for parent reconciliation.",
+        "Asynchronously dispatch exactly one substantial, bounded and independent workstream to a child Agent. The call returns a task ID immediately: continue useful independent parent work instead of polling or waiting. Dispatch multiple independent workstreams as separate subagent calls in the same response. Completed child results are delivered at safe parent-round boundaries and must be reconciled before the parent Turn can finish. Keep small, tightly coupled or sequential work with the parent. The child inherits the pre-dispatch conversation by default and cannot delegate again.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -84,7 +103,7 @@ export function registerSubagentTool(
       evidence_hints: ["subagent_task"],
     },
     parallelSafe: true,
-    visibleToChild: false,
+    visibleToChild: true,
     decodeInput: decodeInput,
     execute: async (context) => {
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
@@ -115,6 +134,7 @@ export function registerSubagentTool(
         prompt: context.input.prompt,
         inherited,
         metadata: { subagentTaskId: taskId },
+        permissionPolicy: options.permissionPolicy,
       });
 
       const completion = finishTask({
@@ -131,17 +151,112 @@ export function registerSubagentTool(
           parentSessionId: context.sessionId,
           parentTurnId: context.turnId,
           taskId,
-          result: completion.then((task) => task.finalResponse
-            ? { role: "user", name: "subagent_result", content: task.finalResponse }
-            : task.errorMessage
-              ? { role: "user", name: "subagent_result", content: `Subagent ${task.status}: ${task.errorMessage}` }
-              : null),
+          result: completion.then(asyncResultMessage),
         });
         return submittedResult(context, tasks.get(context.sessionId, taskId)!, createReceiptId());
       }
       return result(context, await completion, createReceiptId());
     },
   });
+  if (options.awaitAsyncResults && !registry.resolve(AWAIT_SUBAGENTS_TOOL)) {
+    registerAwaitSubagentsTool(registry, options.awaitAsyncResults, createReceiptId);
+  }
+}
+
+function registerAwaitSubagentsTool(
+  registry: ToolRegistry,
+  awaitAsyncResults: AwaitAsyncSubagentResults,
+  createReceiptId: () => string,
+): void {
+  registry.register<AwaitSubagentsInput>({
+    definition: {
+      name: AWAIT_SUBAGENTS_TOOL,
+      description:
+        "Wait for explicitly selected outstanding Subagent tasks, or all outstanding tasks from this parent Turn when task_ids is omitted. Use this only when no useful independent parent work remains. This is a join operation, not polling. Completed results are returned as subagent_result guidance for reconciliation.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          task_ids: {
+            type: "array",
+            minItems: 1,
+            uniqueItems: true,
+            items: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    },
+    manifest: {
+      effect_kind: "observation",
+      operation: "agent.join",
+      risk: "low",
+      owner: "runtime_subagent",
+      dispatch_phase: "execution",
+      dispatch_scope: "child_session",
+      dispatch_side_effect: "none",
+      dispatch_mutating: false,
+      dispatch_source: "registered_tool",
+      stage_modes: ["execute"],
+      output_kinds: ["structured_data", "user_guidance"],
+      handoff_exports: ["terminal_response"],
+      evidence_hints: ["subagent_task"],
+    },
+    parallelSafe: false,
+    visibleToChild: true,
+    decodeInput: decodeAwaitInput,
+    execute: async (context) => {
+      if (!context.turn) throw new Error("Subagent join requires the parent Turn context.");
+      const joined = await awaitAsyncResults({
+        parentSessionId: context.sessionId,
+        parentTurnId: context.turnId,
+        taskIds: context.input.taskIds,
+      });
+      return {
+        protocol: BUSH_TOOL_RESULT_PROTOCOL,
+        tool_call_id: context.toolCall.id,
+        success: true,
+        output: {
+          status: "joined",
+          taskIds: joined.map((result) => result.taskId),
+          count: joined.length,
+        },
+        facts: [{
+          protocol: BUSH_EXECUTION_FACT_PROTOCOL,
+          receipt_id: createReceiptId(),
+          action_manifest_id: context.actionManifest.manifest_id,
+          status: "succeeded",
+          operation: context.actionManifest.operation,
+          effect_kind: context.actionManifest.effect_kind,
+          owner: context.actionManifest.owner,
+          dispatch_scope: context.actionManifest.dispatch_scope,
+          categories: ["subagent_task"],
+          paths: [],
+          execution_success: true,
+          semantic_success: true,
+          verification_state: "verified",
+          error_code: "",
+        }],
+        artifacts: [],
+        workspace_changes: [],
+        guidance: joined.map((result) => result.message),
+      };
+    },
+  });
+}
+
+function asyncResultMessage(
+  task: ReturnType<SubagentTaskStore["finish"]>,
+): { role: "user"; name: "subagent_result"; content: string } {
+  const body = task.finalResponse.trim()
+    ? task.finalResponse
+    : task.errorMessage.trim()
+      ? task.errorMessage
+      : "No terminal response was produced.";
+  return {
+    role: "user",
+    name: "subagent_result",
+    content: `<subagent_result task_id="${task.taskId}" status="${task.status}">\n${body}\n</subagent_result>`,
+  };
 }
 
 async function finishTask(input: {
@@ -277,4 +392,25 @@ function decodeInput(input: unknown): SubagentInput {
     throw new Error("inherit_context must be a boolean.");
   }
   return { prompt, inheritContext: object.inherit_context !== false };
+}
+
+function decodeAwaitInput(input: unknown): AwaitSubagentsInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("await_subagents input must be an object.");
+  }
+  const object = input as Record<string, unknown>;
+  const unexpected = Object.keys(object).filter((key) => key !== "task_ids");
+  if (unexpected.length > 0) {
+    throw new Error(`unsupported await_subagents arguments: ${unexpected.join(", ")}`);
+  }
+  if (object.task_ids === undefined) return { taskIds: [] };
+  if (!Array.isArray(object.task_ids) || object.task_ids.length === 0) {
+    throw new Error("task_ids must be a non-empty array when provided.");
+  }
+  const taskIds = object.task_ids.map((value) =>
+    typeof value === "string" ? value.trim() : ""
+  );
+  if (taskIds.some((value) => !value)) throw new Error("task_ids must contain non-empty strings.");
+  if (new Set(taskIds).size !== taskIds.length) throw new Error("task_ids must be unique.");
+  return { taskIds };
 }

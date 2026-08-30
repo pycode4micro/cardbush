@@ -97,6 +97,9 @@ test("runs configured Team assignments concurrently with immutable Profile const
   assert.deepEqual(requests.map((request) => request.metadata.allowedSkills), [
     ["implementation"], ["review"],
   ]);
+  assert.ok(requests.every((request) => request.metadata.disabledTools.includes("subagent")));
+  assert.ok(requests.every((request) => request.metadata.disabledTools.includes("team_delegate")));
+  assert.ok(requests.every((request) => request.tools.length === 0));
   assert.deepEqual(outcome.result.guidance.map((message) => message.name), [
     "team_result_builder", "team_result_reviewer",
   ]);
@@ -164,8 +167,8 @@ function snapshot() {
       name: "Delivery",
       instructions: "Share only facts.",
       members: [
-        { memberId: "builder", name: "Builder", role: "build", instructions: "", toolNames: [], agentProfileId: "builder", fallback: true, skills: ["implementation"], hooks: [], guards: [], promptInstructions: "" },
-        { memberId: "reviewer", name: "Reviewer", role: "review", instructions: "", toolNames: [], agentProfileId: "reviewer", fallback: false, skills: ["review"], hooks: [], guards: [], promptInstructions: "" },
+        { memberId: "builder", name: "Builder", role: "build", instructions: "", toolNames: ["subagent", "team_delegate"], agentProfileId: "builder", fallback: true, skills: ["implementation"], hooks: [], guards: [], promptInstructions: "" },
+        { memberId: "reviewer", name: "Reviewer", role: "review", instructions: "", toolNames: ["subagent", "team_delegate"], agentProfileId: "reviewer", fallback: false, skills: ["review"], hooks: [], guards: [], promptInstructions: "" },
       ],
     }],
   };

@@ -6,6 +6,18 @@ import * as ResEdit from 'resedit';
 
 const developmentExecutablePrefix = 'cardbush-dev-';
 
+export function cardbushElectronEnvironment(extra = {}) {
+  const environment = { ...process.env };
+  // Electron parses NODE_OPTIONS before CardBush main-process code runs and
+  // packaged/branded executables reject most Node flags. Keep the parent shell
+  // untouched while preventing unsupported Node-only options from leaking into
+  // the desktop process.
+  for (const key of Object.keys(environment)) {
+    if (key.toUpperCase() === 'NODE_OPTIONS') delete environment[key];
+  }
+  return { ...environment, ...extra };
+}
+
 export function resolveCardbushElectronExecutable(projectRoot) {
   const electronDist = path.join(projectRoot, 'node_modules', 'electron', 'dist');
   const electronExecutable = process.platform === 'win32'

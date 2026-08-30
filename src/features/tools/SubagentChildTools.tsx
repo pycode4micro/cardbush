@@ -1,6 +1,7 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
 import { displayToolName } from './toolExecutionState';
 import { asRecord } from './toolPayload';
+import { ToolLogo } from './ToolLogo';
 
 export function SubagentChildTools({
   executions,
@@ -24,6 +25,7 @@ export function SubagentChildTools({
             key={`${child.id}-${index}`}
             className={`subagent-child-tool ${isFailed(child) ? 'failed' : ''}`}
           >
+            <ToolLogo name={child.name} size={14} />
             <span>{displayToolName(child.name)}</span>
             <em>{child.summary || child.output || child.state}</em>
           </div>

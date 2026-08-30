@@ -6,7 +6,6 @@ import {
   Play,
   RefreshCw,
   Sparkles,
-  SquareTerminal,
   WrapText,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
@@ -40,6 +39,7 @@ import { asRecord } from './toolPayload';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
 import { GoalUpdateNotice } from './GoalUpdateNotice';
 import { ToolImageArtifactViewer } from './ToolImageArtifactViewer';
+import { ToolLogo } from './ToolLogo';
 export function ToolExecutionBlock({
   executions,
   language,
@@ -104,6 +104,9 @@ export function ToolExecutionBlock({
         running={running}
         tone={tone}
         language={language}
+        toolName={executions.find((execution) =>
+          ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
+        )?.name ?? executions[0]?.name ?? 'edit_file'}
         onRevert={() => onRevertChangeReport(messageChangeReport, message)}
       />
     );
@@ -124,6 +127,9 @@ export function ToolExecutionBlock({
       : `Execution history · ${runSummary}`
     : runSummary;
   const summary = historySummary;
+  const logoExecution = executions.find((execution) =>
+    isToolRunningInContext(execution, active),
+  ) ?? executions[0];
 
   return (
     <div
@@ -135,9 +141,7 @@ export function ToolExecutionBlock({
         type="button"
         onClick={toggleExpanded}
       >
-        <span className="tool-execution-mark" aria-hidden="true">
-          <SquareTerminal size={11} />
-        </span>
+        <ToolLogo name={logoExecution?.name ?? ''} size={16} />
         <span className="tool-execution-label">{summary}</span>
         <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
       </button>
@@ -471,6 +475,7 @@ function ToolExecutionDetail({
   return (
     <section className="tool-execution-detail">
       <header>
+        <ToolLogo name={execution.name} size={16} />
         <strong>{displayToolName(execution.name)}</strong>
         <span className={verificationInfo?.failed ? 'warning' : failed ? 'failed' : ''}>
           {duration ? `${status} · ${duration}` : status}

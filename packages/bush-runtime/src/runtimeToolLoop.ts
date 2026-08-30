@@ -29,6 +29,16 @@ export interface RuntimeToolLoopOptions {
   existingReceiptIds?: string[];
   executionStore?: ToolExecutionStore;
   capabilities?: RuntimeCapabilityStore;
+  capabilitySessionId?: string;
+  permissionEventIdentity?: RuntimeEventIdentity;
+  permissionSource?: {
+    sourceSessionId: string;
+    sourceTurnId: string;
+    parentSessionId: string;
+    parentTurnId: string;
+    subagentTaskId?: string;
+    permissionRouting: "user" | "parent";
+  };
 }
 
 export interface RuntimeToolRoundResult {
@@ -43,15 +53,19 @@ export class RuntimeToolLoop {
   readonly #coordinator: ToolExecutionCoordinator;
   readonly #executionStore?: ToolExecutionStore;
   readonly #registry: ToolRegistry;
+  readonly #permissionEventIdentity: RuntimeEventIdentity;
+  readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
 
   constructor(options: RuntimeToolLoopOptions) {
     this.#eventLog = options.eventLog;
     this.#identity = options.identity;
     this.#registry = options.registry;
+    this.#permissionEventIdentity = options.permissionEventIdentity ?? options.identity;
+    this.#permissionSource = options.permissionSource;
     this.#permissions = new RuntimePermissionBroker({
       createPermissionId: options.createPermissionId,
       onRequested: (permission) => {
-        this.#eventLog.append(this.#identity, {
+        this.#eventLog.append(this.#permissionEventIdentity, {
           kind: "permission_requested",
           payload: {
             permissionId: permission.permissionId,
@@ -60,14 +74,15 @@ export class RuntimeToolLoop {
             actions: permission.actions,
             resources: permission.resources,
             requestedCapabilityIds: permission.capabilityIds,
+            ...this.#permissionSource,
           },
         });
       },
       onAnswered: (answer) => this.#appendPermissionAnswer(answer),
       onCancelled: (permission) => {
-        this.#eventLog.append(this.#identity, {
+        this.#eventLog.append(this.#permissionEventIdentity, {
           kind: "permission_cancelled",
-          payload: permission,
+          payload: { ...permission, ...this.#permissionSource },
         });
       },
     });
@@ -84,6 +99,7 @@ export class RuntimeToolLoop {
       },
       existingReceiptIds: options.existingReceiptIds,
       capabilities: options.capabilities,
+      capabilitySessionId: options.capabilitySessionId,
     });
     this.#executionStore = options.executionStore;
   }
@@ -172,32 +188,35 @@ export class RuntimeToolLoop {
     answer: RuntimePermissionAnswer & { toolCallId: string },
   ): RuntimeEvent {
     if (answer.decision === "deny") {
-      return this.#eventLog.append(this.#identity, {
+      return this.#eventLog.append(this.#permissionEventIdentity, {
         kind: "permission_rejected",
         payload: {
           permissionId: answer.permissionId,
           toolCallId: answer.toolCallId,
           reason: "user_rejected",
+          ...this.#permissionSource,
         },
       });
     }
     if (answer.decision === "cancel") {
-      return this.#eventLog.append(this.#identity, {
+      return this.#eventLog.append(this.#permissionEventIdentity, {
         kind: "permission_cancelled",
         payload: {
           permissionId: answer.permissionId,
           toolCallId: answer.toolCallId,
           reason: "user_cancelled",
+          ...this.#permissionSource,
         },
       });
     }
-    return this.#eventLog.append(this.#identity, {
+    return this.#eventLog.append(this.#permissionEventIdentity, {
       kind: "permission_answered",
       payload: {
         permissionId: answer.permissionId,
         toolCallId: answer.toolCallId,
         answerId: answer.answerId,
         grantedCapabilityIds: answer.grantedCapabilityIds,
+        ...this.#permissionSource,
       },
     });
   }

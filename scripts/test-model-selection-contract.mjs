@@ -101,5 +101,24 @@ const composerSource = fs.readFileSync(
 );
 assert.match(composerSource, /key=\{config\.id\}/);
 assert.match(composerSource, /<small>\{config\.provider\}<\/small>/);
+assert.match(composerSource, /primary:\s*ordered\.slice\(primaryStart\)/);
+assert.match(composerSource, /secondary:\s*ordered\.slice\(0, primaryStart\)/);
+assert.match(composerSource, /className="model-reasoning-secondary-options"/);
+assert.match(composerSource, /aria-expanded=\{reasoningExpanded\}/);
+
+const styleSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'styles', 'app.css'),
+  'utf8',
+);
+assert.match(
+  styleSource,
+  /\.model-reasoning-pages \{[\s\S]*?width: 200%;[\s\S]*?transform: translateX\(0\)/,
+  'Reasoning levels must use a fixed-height horizontal slider.',
+);
+assert.match(
+  styleSource,
+  /\.model-reasoning-options\.expanded \.model-reasoning-pages \{[\s\S]*?transform: translateX\(-50%\)/,
+  'Additional reasoning levels must slide in from right to left.',
+);
 
 console.log('model selection identity contract tests passed');

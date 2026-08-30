@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  ChevronDown,
   Clock3,
   FileText,
   LoaderCircle,
@@ -10,6 +11,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -30,7 +32,7 @@ import {
   groupWorkSummaryHistoryByTurn,
   historyTurnLabel,
   historyTurnTimestamp,
-} from './ConversationWorkSummary';
+} from './workSummaryHistory';
 
 export function WorkSummaryInspector({
   detail,
@@ -67,6 +69,16 @@ function TurnHistoryInspector({
     if (!detail.turnId) return all;
     return all.filter((group) => (group.turnId || group.id) === detail.turnId);
   }, [detail.turnId, messages]);
+  const turnSelectorRef = useRef<HTMLDetailsElement | null>(null);
+  const turnNodesRef = useRef(new Map<string, HTMLElement>());
+
+  const jumpToTurn = useCallback((groupId: string) => {
+    turnNodesRef.current.get(groupId)?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+    turnSelectorRef.current?.removeAttribute('open');
+  }, []);
 
   return (
     <section className="work-summary-inspector work-summary-turn-inspector">
@@ -75,18 +87,47 @@ function TurnHistoryInspector({
         <div>
           <strong>{detail.title || (language === 'zh' ? '回合执行详情' : 'Turn execution details')}</strong>
           <small>
-            {groups.length} {language === 'zh' ? '个回合 · 完整消息、计划与工具记录' : 'turns · messages, plans, and tool activity'}
+            {language === 'zh' ? '完整消息、计划与工具记录' : 'Messages, plans, and tool activity'}
           </small>
         </div>
+        {groups.length > 1 && (
+          <details className="work-summary-turn-selector" ref={turnSelectorRef}>
+            <summary title={language === 'zh' ? '快速选择回合' : 'Quickly select a turn'}>
+              <span>{language === 'zh' ? '选择回合' : 'Select turn'}</span>
+              <ChevronDown size={13} />
+            </summary>
+            <div className="work-summary-turn-selector-menu">
+              {groups.map((group) => (
+                <button
+                  type="button"
+                  key={group.id}
+                  title={group.prompt}
+                  onClick={() => jumpToTurn(group.id)}
+                >
+                  <span>{historyTurnLabel(group, language)}</span>
+                  {historyTurnTimestamp(group.message, language) && (
+                    <small>{historyTurnTimestamp(group.message, language)}</small>
+                  )}
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
       </header>
       {groups.length > 0 ? (
         <div className="work-summary-inspector-turn-list">
           {groups.map((group) => (
-            <article className="work-summary-inspector-turn" key={group.id}>
+            <article
+              className="work-summary-inspector-turn"
+              key={group.id}
+              ref={(node) => {
+                if (node) turnNodesRef.current.set(group.id, node);
+                else turnNodesRef.current.delete(group.id);
+              }}
+            >
               <header>
                 <div>
-                  <strong>{historyTurnLabel(group, language)}</strong>
-                  {group.prompt && <small>{group.prompt}</small>}
+                  <strong title={group.prompt}>{historyTurnLabel(group, language)}</strong>
                 </div>
                 <span>{historyTurnTimestamp(group.message, language)}</span>
               </header>

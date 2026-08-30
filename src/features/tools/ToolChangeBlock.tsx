@@ -1,9 +1,10 @@
-import { ChevronDown, Edit3, LoaderCircle, RotateCcw } from 'lucide-react';
+import { ChevronDown, LoaderCircle, RotateCcw } from 'lucide-react';
 import { useCallback, useRef, useState } from 'react';
 
 import type { AppLanguage } from '../../types';
 import type { DiffLine, ToolChangeReport, ToolFileChange } from './toolChangeReports';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
+import { ToolLogo } from './ToolLogo';
 
 type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
 
@@ -12,12 +13,14 @@ export function ToolChangeBlock({
   running,
   tone,
   language,
+  toolName,
   onRevert,
 }: {
   report: ToolChangeReport;
   running: boolean;
   tone: ToolExecutionTone;
   language: AppLanguage;
+  toolName: string;
   onRevert?: () => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -51,7 +54,7 @@ export function ToolChangeBlock({
           disabled={!hasDetails}
           onClick={toggleExpanded}
         >
-          <Edit3 size={14} />
+          <ToolLogo name={toolName} size={16} />
           <span>
             <strong>{title}</strong>
             {report.additions > 0 && (

@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
@@ -127,6 +128,39 @@ let productHostController: {
 } | null = null;
 let cardlingWindow: BrowserWindow | null = null;
 const externalBrowserWindows = new Set<BrowserWindow>();
+type ShadowWindowMode = 'readonly' | 'fork';
+type ShadowWindowPayload = {
+  windowId: string;
+  sessionId: string;
+  sourceTurnId: string;
+  title: string;
+  language: 'zh' | 'en';
+  theme: AppThemeMode;
+  accentColor: string;
+  modelConfig: {
+    id: string;
+    provider: string;
+    apiKey: string;
+    hasApiKey?: boolean;
+    apiKeyMasked?: string;
+    modelName: string;
+    baseUrl: string;
+    maxContextTokens?: number;
+    maxCompletionTokens?: number;
+  };
+  reasoningLevel?: ReasoningEffort;
+  projectDir: string;
+  initialMode: ShadowWindowMode;
+};
+type ShadowWindowState = {
+  window: BrowserWindow;
+  key: string;
+  payload: ShadowWindowPayload;
+  allowClose: boolean;
+  closeFallbackTimer: ReturnType<typeof setTimeout> | null;
+};
+const shadowWindows = new Map<number, ShadowWindowState>();
+const shadowWindowIdsByKey = new Map<string, number>();
 let tray: Tray | null = null;
 let isQuitting = false;
 let hostShutdownComplete = false;
@@ -543,6 +577,144 @@ function createWindow() {
   });
 
   loadRenderer(window, 'main');
+}
+
+function shadowWindowKey(sessionId: string, sourceTurnId: string) {
+  return `${sessionId}\u0000${sourceTurnId}`;
+}
+
+function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 'windowId'> {
+  const input = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const model = input.modelConfig && typeof input.modelConfig === 'object'
+    ? input.modelConfig as Record<string, unknown>
+    : {};
+  const sessionId = String(input.sessionId ?? '').trim();
+  if (!sessionId) throw new Error('Shadow requires an existing conversation.');
+  const modelId = String(model.id ?? '').trim();
+  if (!modelId) throw new Error('Shadow requires a configured model.');
+  const optionalPositive = (candidate: unknown) => {
+    const number = Number(candidate);
+    return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
+  };
+  const theme = input.theme === 'bright' || input.theme === 'parchment' ? input.theme : 'dark';
+  const reasoningLevel = input.reasoningLevel === 'none' ||
+    input.reasoningLevel === 'minimal' ||
+    input.reasoningLevel === 'low' ||
+    input.reasoningLevel === 'medium' ||
+    input.reasoningLevel === 'high' ||
+    input.reasoningLevel === 'xhigh' ||
+    input.reasoningLevel === 'max'
+    ? input.reasoningLevel
+    : 'medium';
+  return {
+    sessionId,
+    sourceTurnId: String(input.sourceTurnId ?? '').trim(),
+    title: String(input.title ?? 'Shadow').trim().slice(0, 180) || 'Shadow',
+    language: input.language === 'en' ? 'en' : 'zh',
+    theme,
+    accentColor: String(input.accentColor ?? '').trim().slice(0, 32),
+    modelConfig: {
+      id: modelId,
+      provider: String(model.provider ?? '').trim(),
+      // The Shadow renderer resolves the opaque model id through Product Host;
+      // it never needs a provider secret in its window context.
+      apiKey: '',
+      ...(typeof model.hasApiKey === 'boolean' ? { hasApiKey: model.hasApiKey } : {}),
+      ...(typeof model.apiKeyMasked === 'string' ? { apiKeyMasked: model.apiKeyMasked } : {}),
+      modelName: String(model.modelName ?? '').trim(),
+      baseUrl: String(model.baseUrl ?? '').trim(),
+      ...(optionalPositive(model.maxContextTokens)
+        ? { maxContextTokens: optionalPositive(model.maxContextTokens) }
+        : {}),
+      ...(optionalPositive(model.maxCompletionTokens)
+        ? { maxCompletionTokens: optionalPositive(model.maxCompletionTokens) }
+        : {}),
+    },
+    reasoningLevel,
+    projectDir: String(input.projectDir ?? '').trim(),
+    initialMode: input.initialMode === 'fork' ? 'fork' : 'readonly',
+  };
+}
+
+function createShadowWindow(value: unknown) {
+  const payload = sanitizeShadowWindowPayload(value);
+  const key = shadowWindowKey(payload.sessionId, payload.sourceTurnId);
+  const existingId = shadowWindowIdsByKey.get(key);
+  const existing = existingId == null ? undefined : shadowWindows.get(existingId);
+  if (existing && !existing.window.isDestroyed()) {
+    if (existing.window.isMinimized()) existing.window.restore();
+    existing.window.show();
+    existing.window.focus();
+    return { windowId: existing.payload.windowId, reused: true };
+  }
+  if (existingId != null) {
+    shadowWindows.delete(existingId);
+    shadowWindowIdsByKey.delete(key);
+  }
+
+  const windowId = randomUUID();
+  const backgroundColor = mainWindowThemeBackgrounds[payload.theme];
+  const loadedWindowIcon = loadCardbushIconWithSource(128);
+  const shadowWindow = new BrowserWindow({
+    width: 640,
+    height: 720,
+    minWidth: 480,
+    minHeight: 520,
+    parent: mainWindow ?? undefined,
+    modal: false,
+    frame: false,
+    title: `Shadow · ${payload.title}`,
+    icon: loadedWindowIcon.image,
+    backgroundColor,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  // webContents is no longer readable after BrowserWindow emits `closed`.
+  // Capture the stable numeric identity while both objects are alive.
+  const shadowWebContentsId = shadowWindow.webContents.id;
+  const state: ShadowWindowState = {
+    window: shadowWindow,
+    key,
+    payload: { ...payload, windowId },
+    allowClose: false,
+    closeFallbackTimer: null,
+  };
+  shadowWindows.set(shadowWebContentsId, state);
+  shadowWindowIdsByKey.set(key, shadowWebContentsId);
+  applyCardbushWindowIcon(shadowWindow, loadedWindowIcon.image, 'shadow-window', loadedWindowIcon.sourcePath);
+  installMainWindowNavigationGuard(shadowWindow);
+  shadowWindow.once('ready-to-show', () => {
+    if (!shadowWindow.isDestroyed()) shadowWindow.show();
+  });
+  shadowWindow.on('close', (event) => {
+    if (isQuitting || state.allowClose || shadowWindow.webContents.isDestroyed()) return;
+    event.preventDefault();
+    shadowWindow.webContents.send('shadow:close-request');
+    if (state.closeFallbackTimer == null) {
+      state.closeFallbackTimer = setTimeout(() => {
+        state.closeFallbackTimer = null;
+        if (shadowWindow.isDestroyed()) return;
+        state.allowClose = true;
+        shadowWindow.close();
+      }, 2_000);
+    }
+  });
+  shadowWindow.on('closed', () => {
+    if (state.closeFallbackTimer != null) clearTimeout(state.closeFallbackTimer);
+    state.closeFallbackTimer = null;
+    shadowWindows.delete(shadowWebContentsId);
+    if (shadowWindowIdsByKey.get(key) === shadowWebContentsId) {
+      shadowWindowIdsByKey.delete(key);
+    }
+  });
+  loadRenderer(shadowWindow, 'shadow');
+  return { windowId, reused: false };
 }
 
 function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMode) {
@@ -1021,7 +1193,7 @@ function createCardlingWindow() {
   return cardlingWindow;
 }
 
-function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling') {
+function loadRenderer(target: BrowserWindow, mode: 'main' | 'cardling' | 'shadow') {
   if (devServerUrl) {
     const url = new URL(devServerUrl);
     if (mode !== 'main') {
@@ -1702,6 +1874,43 @@ ipcMain.handle('window:close-to-tray', () => {
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
+ipcMain.handle('shadow:open-window', (event, payload: unknown) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error('Only the main CardBush window can open Shadow.');
+  }
+  return createShadowWindow(payload);
+});
+
+ipcMain.handle('shadow:window-context', (event) => {
+  const state = shadowWindows.get(event.sender.id);
+  if (!state) throw new Error('Shadow window context is unavailable.');
+  return structuredClone(state.payload);
+});
+
+ipcMain.handle('shadow:window-minimize', (event) => {
+  shadowWindows.get(event.sender.id)?.window.minimize();
+});
+
+ipcMain.handle('shadow:window-toggle-maximize', (event) => {
+  const target = shadowWindows.get(event.sender.id)?.window;
+  if (!target || target.isDestroyed()) return;
+  if (target.isMaximized()) target.unmaximize();
+  else target.maximize();
+});
+
+ipcMain.handle('shadow:window-is-maximized', (event) =>
+  shadowWindows.get(event.sender.id)?.window.isMaximized() ?? false,
+);
+
+ipcMain.handle('shadow:window-close', (event) => {
+  const state = shadowWindows.get(event.sender.id);
+  if (!state || state.window.isDestroyed()) return;
+  if (state.closeFallbackTimer != null) clearTimeout(state.closeFallbackTimer);
+  state.closeFallbackTimer = null;
+  state.allowClose = true;
+  state.window.close();
+});
+
 ipcMain.handle('attention:notify-session', (event, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
     return { shown: false };
@@ -1982,7 +2191,15 @@ ipcMain.handle('os:install-catalog-application', async (event, packageId: string
 });
 
 ipcMain.handle('cardbush-product-host:command', async (event, command: unknown) => {
-  assertMainWindowSender(event.sender.id);
+  assertRuntimeRendererSender(event.sender.id);
+  if (shadowWindows.has(event.sender.id)) {
+    const kind = command && typeof command === 'object'
+      ? String((command as Record<string, unknown>).kind ?? '')
+      : '';
+    if (kind !== 'model.resolve') {
+      throw new Error('Shadow can only resolve its preselected model binding.');
+    }
+  }
   const controller = await ensureRuntimeServicesReady();
   return controller.execute(command);
 });
@@ -2277,7 +2494,7 @@ ipcMain.handle(
 
 ipcMain.handle('image:read-data-url', async (event, targetPath: string) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (!sourceWindow || sourceWindow !== mainWindow) {
+  if (!sourceWindow || (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id))) {
     return '';
   }
   return readLocalImageDataUrl(targetPath);
@@ -2384,7 +2601,7 @@ ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
 
 ipcMain.handle('shell:open-path', (event, targetPath: string) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow !== mainWindow) {
+  if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
     return 'Open path is only available from the main CardBush window.';
   }
   const normalizedPath = normalizeShellPath(targetPath);
@@ -2601,6 +2818,12 @@ async function initializeRuntimeHostWithinDeadline() {
           app.getPath('userData'),
           'runtime-state',
         ),
+        CARDBUSH_SUBAGENT_CONFIG_PATH: path.join(
+          app.getPath('userData'),
+          'product-host',
+          'config',
+          'subagents.json',
+        ),
         CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
         CARDBUSH_APPS_MCP_ENTRY: path.join(
           app.getAppPath(),
@@ -2635,7 +2858,8 @@ async function initializeRuntimeHostWithinDeadline() {
       ipcMain,
       controller,
       (sender: Electron.WebContents) =>
-        mainWindow != null && sender.id === mainWindow.webContents.id,
+        (mainWindow != null && sender.id === mainWindow.webContents.id) ||
+        shadowWindows.has(sender.id),
     );
   await Promise.all([
     controller.start(),
@@ -3338,6 +3562,16 @@ function assertMainWindowSender(senderId: number) {
   if (mainWindow == null || mainWindow.isDestroyed() || mainWindow.webContents.id !== senderId) {
     throw new Error('OS integration is only available to the main CardBush window.');
   }
+}
+
+function assertRuntimeRendererSender(senderId: number) {
+  if (
+    (mainWindow != null && !mainWindow.isDestroyed() && mainWindow.webContents.id === senderId) ||
+    shadowWindows.has(senderId)
+  ) {
+    return;
+  }
+  throw new Error('Runtime integration is unavailable to this window.');
 }
 
 function osFilesystemLocations() {

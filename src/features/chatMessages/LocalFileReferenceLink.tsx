@@ -1,4 +1,4 @@
-import { FileCode2 } from 'lucide-react';
+import { FileCode2, FolderOpen } from 'lucide-react';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
@@ -12,9 +12,14 @@ export function LocalFileReferenceLink({
   children?: ReactNode;
 }) {
   const label = children || basename(path);
+  const directoryLike = localReferenceLooksLikeDirectory(path);
 
   function openInCardbush(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
+    if (directoryLike) {
+      void window.cardbushDesktop?.openPath?.(path);
+      return;
+    }
     openInspector(path, basename(path));
   }
 
@@ -32,8 +37,16 @@ export function LocalFileReferenceLink({
       onClick={openInCardbush}
       onContextMenu={openContextMenu}
     >
-      <FileCode2 size={12} aria-hidden="true" />
+      {directoryLike
+        ? <FolderOpen size={12} aria-hidden="true" />
+        : <FileCode2 size={12} aria-hidden="true" />}
       <span>{label}</span>
     </a>
   );
+}
+
+function localReferenceLooksLikeDirectory(path: string) {
+  const name = basename(path);
+  if (!name || path.endsWith('/') || path.endsWith('\\')) return true;
+  return !/\.[a-z0-9][a-z0-9._-]{0,15}$/i.test(name);
 }

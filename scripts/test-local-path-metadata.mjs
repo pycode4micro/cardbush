@@ -94,7 +94,14 @@ const {
   localFileReferenceHref,
 } = fileReferenceModule.exports;
 const absoluteDocument = 'C:\\Users\\wfang\\Documents\\report.docx';
+const absoluteSkillDirectory =
+  'C:\\Users\\wfang\\AppData\\Roaming\\cardbush\\skills\\transport-delivery';
 assert.equal(localFileReference(absoluteDocument)?.path, absoluteDocument);
+assert.equal(
+  localFileReference(absoluteSkillDirectory)?.path,
+  absoluteSkillDirectory,
+  'Absolute directory paths must be valid local references even without an extension',
+);
 assert.equal(
   localFileReference(absoluteDocument, 'D:\\proj\\cardbush')?.path,
   absoluteDocument,
@@ -123,6 +130,34 @@ const linkedReferences = linkifyLocalFileReferences(
 assert.ok(linkedReferences.includes('[App.tsx](cardbush-local-file:'));
 assert.ok(linkedReferences.includes(encodeURIComponent('D:\\proj\\cardbush\\src\\App.tsx')));
 assert.ok(linkedReferences.includes('[report.docx](cardbush-local-file:'));
+const linkedDirectoryReference = linkifyLocalFileReferences(
+  `Skill 位于：${absoluteSkillDirectory}，可以打开查看。`,
+  'D:\\proj\\cardbush',
+);
+assert.ok(
+  linkedDirectoryReference.includes('[transport-delivery](cardbush-local-file:'),
+  'Bare absolute directory paths must render as clickable references',
+);
+assert.ok(
+  linkedDirectoryReference.includes(encodeURIComponent(absoluteSkillDirectory)),
+  'Directory links must retain the complete absolute path',
+);
+
+const localReferenceLinkSource = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'src',
+    'features',
+    'chatMessages',
+    'LocalFileReferenceLink.tsx',
+  ),
+  'utf8',
+);
+assert.match(
+  localReferenceLinkSource,
+  /directoryLike[\s\S]*?cardbushDesktop\?\.openPath\?\.\(path\)/,
+  'Directory references must open through the desktop shell instead of the file preview',
+);
 
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),

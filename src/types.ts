@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from '@cardbush/bush-protocol';
+
 export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
@@ -20,7 +22,8 @@ export type ReferencePlanMode = 'off' | 'auto';
 export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
 type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
-export type ReasoningLevel = 'low' | 'medium' | 'high' | 'max';
+export type SubagentPermissionRouting = 'user' | 'parent';
+export type ReasoningLevel = ReasoningEffort;
 export type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
 export type RuntimeAssetCategory = 'prompts' | 'skills' | 'agent_profiles' | 'teams';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
@@ -404,6 +407,7 @@ export interface CardbushAppPlugin {
     screenshotDirectory?: string;
     allowOpenApp?: boolean;
     allowWindowClose?: boolean;
+    connectionMode?: 'managed' | 'existing';
     [key: string]: unknown;
   };
 }

@@ -15,6 +15,7 @@ interface SkillCard {
   description: string;
   descriptionZh: string;
   packageDir: string;
+  mainResource: string;
 }
 
 export function registerSkillTools(registry: ToolRegistry, roots: string[]): void {
@@ -26,7 +27,7 @@ function searchRegistration(roots: string[]): ToolRegistration<{ query: string; 
   return {
     definition: {
       name: "search_skills",
-      description: "Search the installed Skill catalog by natural-language capability description. Returns factual Skill cards; choosing whether to use one remains the model's decision.",
+      description: "Search the installed Skill catalog by natural-language capability description. Returns each Skill's exact local SKILL.md mainResource; use read_file to read that resource before following the Skill.",
       inputSchema: {
         type: "object",
         properties: {
@@ -61,7 +62,7 @@ function searchRegistration(roots: string[]): ToolRegistration<{ query: string; 
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
         .slice(0, context.input.limit);
-      return success(context, { query: context.input.query, matches }, matches.map((item) => item.packageDir));
+      return success(context, { query: context.input.query, matches }, matches.map((item) => item.mainResource));
     },
   };
 }
@@ -91,6 +92,7 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
         description: frontmatter.description || "",
         descriptionZh: frontmatter.description_zh || "",
         packageDir,
+        mainResource: join(packageDir, "SKILL.md"),
       });
     }
   }

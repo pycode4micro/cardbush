@@ -73,13 +73,20 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { executeModelRound } from "./modelRound.js";
+import {
+  DEFAULT_SUBAGENT_PERMISSION_POLICY,
+  type SubagentPermissionPolicy,
+} from "./childTurn.js";
 import { CacheChainTracker } from "./cacheChainTracker.js";
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
 import { RuntimeInteractionStore } from "./runtimeInteractionStore.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
-import { registerSubagentTool } from "./subagentTool.js";
+import {
+  registerSubagentTool,
+  type JoinedSubagentResult,
+} from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { TeamSnapshotStore } from "./teamSnapshotStore.js";
 import { registerTeamTool } from "./teamTool.js";
@@ -143,13 +150,13 @@ export interface InMemoryRuntimeHostOptions {
   subagentTaskStore?: SubagentTaskStore;
   teamSnapshotStore?: TeamSnapshotStore;
   durableSubagentTasks?: boolean;
+  subagentPermissionPolicy?: SubagentPermissionPolicy;
   settleOrphanedTurns?: boolean;
   workspaceObservationStore?: WorkspaceObservationStore;
   registerDefaultWorkspaceTools?: boolean;
   additionalSupportedCommands?: string[];
   additionalFeatures?: string[];
   dataRoot?: string;
-  skillRoots?: string[];
 }
 
 export interface RuntimeHostStreamRequest {
@@ -163,6 +170,15 @@ export interface RuntimeHostCommand {
   kind: string;
   payload: unknown;
 }
+
+interface PendingAgentGuidance {
+  taskId: string;
+  promise: Promise<JoinedSubagentResult["message"]>;
+  settled: boolean;
+  message?: JoinedSubagentResult["message"];
+}
+
+type SettledAgentGuidance = JoinedSubagentResult;
 
 export class InMemoryRuntimeHost {
   readonly #provider: ModelProvider;
@@ -193,7 +209,7 @@ export class InMemoryRuntimeHost {
     content: string;
     createdAt: string;
   }>>();
-  readonly #pendingAgentGuidance = new Map<string, Array<Promise<ModelMessage | null>>>();
+  readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   #shuttingDown = false;
 
   constructor(options: InMemoryRuntimeHostOptions) {
@@ -221,7 +237,6 @@ export class InMemoryRuntimeHost {
     registerInteractionTools(this.#toolRegistry, this.#interactions);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
-      skillRoots: options.skillRoots,
       readToolResult: (locator) => this.#readArchivedToolResult(locator),
     });
     this.#createPermissionId = options.createPermissionId;
@@ -249,6 +264,8 @@ export class InMemoryRuntimeHost {
       registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations);
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
+    const subagentPermissionPolicy = options.subagentPermissionPolicy ??
+      DEFAULT_SUBAGENT_PERMISSION_POLICY;
     registerSubagentTool(
       this.#toolRegistry,
       this.#subagentTasks,
@@ -261,12 +278,15 @@ export class InMemoryRuntimeHost {
       },
       {
         asyncDispatch: true,
-        onAsyncResult: ({ parentSessionId, parentTurnId, result }) => {
+        onAsyncResult: ({ parentSessionId, parentTurnId, taskId, result }) => {
           const key = JSON.stringify([parentSessionId, parentTurnId]);
-          const pending = this.#pendingAgentGuidance.get(key) ?? [];
-          pending.push(result);
-          this.#pendingAgentGuidance.set(key, pending);
+          this.#trackAgentGuidance(key, taskId, result);
         },
+        awaitAsyncResults: ({ parentSessionId, parentTurnId, taskIds }) => {
+          const key = JSON.stringify([parentSessionId, parentTurnId]);
+          return this.#joinPendingAgentGuidance(key, taskIds);
+        },
+        permissionPolicy: subagentPermissionPolicy,
       },
     );
     this.#teams = options.teamSnapshotStore ?? new TeamSnapshotStore({
@@ -283,6 +303,7 @@ export class InMemoryRuntimeHost {
           session: this.#sessions.snapshot(request.sessionId),
         };
       },
+      { permissionPolicy: subagentPermissionPolicy },
     );
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
@@ -746,6 +767,7 @@ export class InMemoryRuntimeHost {
       existingReceiptIds: input.completedReceiptIds,
       executionStore: this.#toolExecutions,
       capabilities: this.#capabilityGrants,
+      ...childPermissionRuntimeOptions(request, identity),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
@@ -763,6 +785,9 @@ export class InMemoryRuntimeHost {
       cachedInputTokens?: number;
     } = input.sessionCommit ? { ...input.sessionCommit.usage } : {};
     const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
+      if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
+        this.#activeTurnControllers.get(turnKey)?.abort();
+      }
       input.onFinalized?.(payload, generatedMessages, usage);
       return this.#finishTurn(identity, payload);
     };
@@ -777,6 +802,15 @@ export class InMemoryRuntimeHost {
       while (true) {
         round += 1;
         if (input.signal?.aborted) return stop();
+        const readyAtRoundBoundary = this.#takeSettledAgentGuidance(turnKey);
+        if (readyAtRoundBoundary.length > 0) {
+          messages = this.#appendAgentGuidance(
+            request.turnId,
+            messages,
+            generatedMessages,
+            readyAtRoundBoundary,
+          );
+        }
 
         let completedRound:
           | Extract<
@@ -959,21 +993,26 @@ export class InMemoryRuntimeHost {
             });
             continue;
           }
-          const pendingAgentResults = this.#pendingAgentGuidance.get(turnKey) ?? [];
-          if (pendingAgentResults.length > 0) {
-            this.#pendingAgentGuidance.delete(turnKey);
-            const settled = (await Promise.all(pendingAgentResults)).filter(
-              (message): message is ModelMessage => message !== null,
+          const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
+          if (readyAgentResults.length > 0) {
+            messages = this.#appendAgentGuidance(
+              request.turnId,
+              messages,
+              generatedMessages,
+              readyAgentResults,
             );
-            if (settled.length > 0) {
-              messages = [...messages, ...settled];
-              settled.forEach((message, index) => generatedMessages.push({
-                messageId: `msg_subagent_result_${request.turnId}_${round}_${index}`,
-                createdAt: this.#sessionNow(),
-                message,
-              }));
-              continue;
-            }
+            continue;
+          }
+          if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
+            const joinedAgentResults = await this.#joinPendingAgentGuidance(turnKey);
+            if (input.signal?.aborted) return stop(completedProjector.finalMessageId);
+            messages = this.#appendAgentGuidance(
+              request.turnId,
+              messages,
+              generatedMessages,
+              joinedAgentResults,
+            );
+            continue;
           }
           const activePlan = request.metadata.planEnabled === true
             ? this.#coordination.getPlan(request.sessionId)
@@ -1082,20 +1121,14 @@ export class InMemoryRuntimeHost {
         completedReceiptIds = [
           ...new Set([...completedReceiptIds, ...toolRound.receiptIds]),
         ];
-        const pendingAgentResults = this.#pendingAgentGuidance.get(turnKey) ?? [];
-        if (pendingAgentResults.length > 0) {
-          this.#pendingAgentGuidance.delete(turnKey);
-          const settled = (await Promise.all(pendingAgentResults)).filter(
-            (message): message is ModelMessage => message !== null,
+        const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
+        if (readyAgentResults.length > 0) {
+          messages = this.#appendAgentGuidance(
+            request.turnId,
+            messages,
+            generatedMessages,
+            readyAgentResults,
           );
-          if (settled.length > 0) {
-            messages = [...messages, ...settled];
-            settled.forEach((message, index) => generatedMessages.push({
-              messageId: `msg_subagent_result_${request.turnId}_${round}_${index}`,
-              createdAt: this.#sessionNow(),
-              message,
-            }));
-          }
         }
         this.#recovery.save({
           request,
@@ -1116,6 +1149,85 @@ export class InMemoryRuntimeHost {
       this.#activeTurnControllers.delete(turnKey);
       input.onSettled?.();
     }
+  }
+
+  #trackAgentGuidance(
+    turnKey: string,
+    taskId: string,
+    result: Promise<JoinedSubagentResult["message"] | null>,
+  ): void {
+    const entry: PendingAgentGuidance = {
+      taskId,
+      settled: false,
+      promise: Promise.resolve(agentGuidanceFailure(taskId, "Result tracking was not initialized.")),
+    };
+    entry.promise = result
+      .then((message) => message ?? agentGuidanceFailure(taskId, "No terminal result was returned."))
+      .catch((error) => agentGuidanceFailure(
+        taskId,
+        error instanceof Error ? error.message : String(error),
+      ))
+      .then((message) => {
+        entry.message = message;
+        entry.settled = true;
+        return message;
+      });
+    const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
+    pending.push(entry);
+    this.#pendingAgentGuidance.set(turnKey, pending);
+  }
+
+  #takeSettledAgentGuidance(turnKey: string): SettledAgentGuidance[] {
+    const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
+    if (pending.length === 0) return [];
+    const settled = pending.filter(
+      (entry): entry is PendingAgentGuidance & { message: JoinedSubagentResult["message"] } =>
+        entry.settled && entry.message !== undefined,
+    );
+    if (settled.length === 0) return [];
+    const settledSet = new Set<PendingAgentGuidance>(settled);
+    const remaining = pending.filter((entry) => !settledSet.has(entry));
+    if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
+    else this.#pendingAgentGuidance.delete(turnKey);
+    return settled.map((entry) => ({ taskId: entry.taskId, message: entry.message }));
+  }
+
+  async #joinPendingAgentGuidance(
+    turnKey: string,
+    taskIds: string[] = [],
+  ): Promise<SettledAgentGuidance[]> {
+    const pending = this.#pendingAgentGuidance.get(turnKey) ?? [];
+    const joining = taskIds.length > 0
+      ? taskIds.map((taskId) => {
+          const entry = pending.find((candidate) => candidate.taskId === taskId);
+          if (!entry) throw new Error(`Subagent task ${taskId} is not outstanding in this parent Turn.`);
+          return entry;
+        })
+      : [...pending];
+    if (joining.length === 0) return [];
+    const messages = await Promise.all(joining.map((entry) => entry.promise));
+    const joiningSet = new Set(joining);
+    const remaining = (this.#pendingAgentGuidance.get(turnKey) ?? [])
+      .filter((entry) => !joiningSet.has(entry));
+    if (remaining.length > 0) this.#pendingAgentGuidance.set(turnKey, remaining);
+    else this.#pendingAgentGuidance.delete(turnKey);
+    return joining.map((entry, index) => ({ taskId: entry.taskId, message: messages[index]! }));
+  }
+
+  #appendAgentGuidance(
+    turnId: string,
+    messages: ModelMessage[],
+    generatedMessages: GeneratedMessageFact[],
+    results: SettledAgentGuidance[],
+  ): ModelMessage[] {
+    for (const result of results) {
+      generatedMessages.push({
+        messageId: `msg_subagent_result_${turnId}_${result.taskId}`,
+        createdAt: this.#sessionNow(),
+        message: result.message,
+      });
+    }
+    return [...messages, ...results.map((result) => result.message)];
   }
 
   #settleOrphanedTurns(): void {
@@ -1242,6 +1354,50 @@ export class InMemoryRuntimeHost {
     return terminal;
 }
 
+}
+
+function agentGuidanceFailure(
+  taskId: string,
+  message: string,
+): JoinedSubagentResult["message"] {
+  return {
+    role: "user",
+    name: "subagent_result",
+    content: `<subagent_result task_id="${taskId}" status="failed">\n${message}\n</subagent_result>`,
+  };
+}
+
+function childPermissionRuntimeOptions(
+  request: ModelRequest,
+  identity: RuntimeEventIdentity,
+): Pick<
+  ConstructorParameters<typeof RuntimeToolLoop>[0],
+  "capabilitySessionId" | "permissionEventIdentity" | "permissionSource"
+> {
+  if (request.metadata.agentRole !== "child") return {};
+  const requestId = metadataString(request.metadata.permissionEventRequestId);
+  const parentSessionId = metadataString(request.metadata.permissionEventSessionId);
+  const parentTurnId = metadataString(request.metadata.permissionEventTurnId);
+  const permissionRouting = request.metadata.permissionRouting === "user" ? "user" : "parent";
+  if (!requestId || !parentSessionId || !parentTurnId) return {};
+  const subagentTaskId = metadataString(request.metadata.subagentTaskId);
+  return {
+    capabilitySessionId:
+      metadataString(request.metadata.permissionScopeSessionId) || identity.sessionId,
+    permissionEventIdentity: { requestId, sessionId: parentSessionId, turnId: parentTurnId },
+    permissionSource: {
+      sourceSessionId: identity.sessionId,
+      sourceTurnId: identity.turnId,
+      parentSessionId,
+      parentTurnId,
+      ...(subagentTaskId ? { subagentTaskId } : {}),
+      permissionRouting,
+    },
+  };
+}
+
+function metadataString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

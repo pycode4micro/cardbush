@@ -3,7 +3,10 @@ export {};
 import type {
   CardlingDesktopAction,
   CardlingDesktopState,
+  ManagedModelConfig,
+  ReasoningLevel,
   RuntimeStartupStatus,
+  ThemeMode,
 } from '../types';
 
 declare global {
@@ -27,6 +30,36 @@ declare global {
       toggleMaximize: () => Promise<void>;
       closeToTray: () => Promise<void>;
       isMaximized: () => Promise<boolean>;
+      openShadowWindow: (payload: {
+        sessionId: string;
+        sourceTurnId: string;
+        title: string;
+        language: 'zh' | 'en';
+        theme: ThemeMode;
+        accentColor: string;
+        modelConfig: ManagedModelConfig;
+        reasoningLevel?: ReasoningLevel;
+        projectDir: string;
+        initialMode: 'readonly' | 'fork';
+      }) => Promise<{ windowId: string; reused: boolean }>;
+      shadowWindowContext: () => Promise<{
+        windowId: string;
+        sessionId: string;
+        sourceTurnId: string;
+        title: string;
+        language: 'zh' | 'en';
+        theme: ThemeMode;
+        accentColor: string;
+        modelConfig: ManagedModelConfig;
+        reasoningLevel?: ReasoningLevel;
+        projectDir: string;
+        initialMode: 'readonly' | 'fork';
+      }>;
+      minimizeShadowWindow: () => Promise<void>;
+      toggleMaximizeShadowWindow: () => Promise<void>;
+      isShadowWindowMaximized: () => Promise<boolean>;
+      closeShadowWindow: () => Promise<void>;
+      onShadowCloseRequest: (callback: () => void) => () => void;
       notifySessionAttention: (payload: {
         sessionId: string;
         title: string;

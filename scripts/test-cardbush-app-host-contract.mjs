@@ -31,6 +31,7 @@ assert.match(runtimeWorker, /id: 'cardbush_apps'/);
 assert.match(runtimeWorker, /id: 'chrome_devtools'/);
 assert.match(runtimeWorker, /CARDBUSH_CHROME_MCP_ENTRY/);
 assert.match(runtimeWorker, /enabledPluginIds\.has\('chrome'\)/);
+assert.match(runtimeWorker, /appsConfig\.chromeConnectionMode === 'existing'[\s\S]*?'--auto-connect'/);
 assert.match(runtimeWorker, /CARDBUSH_APPS_CONFIG_PATH/);
 assert.match(runtimeWorker, /appsConfig\.serviceEnabled/);
 assert.equal(fs.existsSync(path.join(root, 'packages', 'cardbush-apps-mcp', 'src', 'index.ts')), true);
@@ -41,6 +42,8 @@ assert.equal(fs.existsSync(path.join(root, 'assets', 'plugins', 'marketplace.jso
 assert.match(settings, /PluginManagementPanel/);
 assert.match(pluginPanel, /CardBush 精选/);
 assert.match(pluginPanel, /defaultPrompts/);
+assert.match(pluginPanel, /复用当前 Chrome/);
+assert.match(pluginPanel, /chrome:\/\/inspect\/#remote-debugging/);
 assert.match(api, /fetchCardbushAppsConfiguration/);
 assert.match(api, /saveCardbushAppsConfiguration/);
 assert.doesNotMatch(api, /\/host\/v1\/bots/);

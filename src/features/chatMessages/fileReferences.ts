@@ -11,6 +11,9 @@ const fileExtensionPattern = /\.[a-z0-9][a-z0-9._-]{0,15}$/i;
 const trailingLocationPattern = /:(\d+)(?::(\d+))?$/;
 const relativeFilePattern = /(?:\.{0,2}[\\/])?(?:[\w@.+-]+[\\/])+[\w@.+-]+\.[a-z0-9][a-z0-9._-]{0,15}(?::\d+(?::\d+)?)?/gi;
 const windowsFilePattern = /[a-z]:[\\/](?:[^<>:"|?*\r\n`]+[\\/])*[^<>:"|?*\r\n`]+\.[a-z0-9][a-z0-9._-]{0,15}(?::\d+(?::\d+)?)?/gi;
+const bareWindowsAbsolutePathPattern = /[a-z]:[\\/][^\s<>:"|?*`\r\n,;，。；：、(){}\[\]]+/gi;
+const bareUncAbsolutePathPattern = /\\\\[^\s<>:"|?*`\r\n,;，。；：、(){}\[\]]+/g;
+const barePosixAbsolutePathPattern = /\/(?:[\w@.+~-]+\/)+[\w@.+~-]+/g;
 
 export function localFileReference(
   value: string,
@@ -73,6 +76,9 @@ function linkifyTextSegment(value: string, workspaceRoot: string) {
   const matches = [
     ...value.matchAll(windowsFilePattern),
     ...value.matchAll(relativeFilePattern),
+    ...value.matchAll(bareWindowsAbsolutePathPattern),
+    ...value.matchAll(bareUncAbsolutePathPattern),
+    ...value.matchAll(barePosixAbsolutePathPattern),
   ].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
   if (matches.length === 0) {
     return value;
@@ -165,10 +171,13 @@ function decodeFileReference(value: string) {
 
 function looksLikeFilePath(value: string) {
   const withoutLocation = value.replace(trailingLocationPattern, '');
+  if (isAbsoluteLocalPath(withoutLocation)) {
+    return true;
+  }
   if (!fileExtensionPattern.test(withoutLocation)) {
     return false;
   }
-  return isAbsoluteLocalPath(withoutLocation) || /[\\/]/.test(withoutLocation);
+  return /[\\/]/.test(withoutLocation);
 }
 
 function escapeMarkdownLabel(value: string) {

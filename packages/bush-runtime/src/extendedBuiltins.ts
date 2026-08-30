@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
 
 import {
   BUSH_EXECUTION_FACT_PROTOCOL,
@@ -12,7 +13,6 @@ import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./t
 
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
-  skillRoots?: string[];
   readToolResult?: (locator: string) => unknown;
 }
 
@@ -22,7 +22,6 @@ export function registerExtendedBuiltins(registry: ToolRegistry, options: Extend
   registerKed(registry, dataRoot, options.readToolResult);
   registerImageInput(registry);
   registerSchedule(registry, dataRoot);
-  registerSkillsManager(registry, options.skillRoots ?? []);
   registerParallel(registry);
 }
 
@@ -44,7 +43,7 @@ function registerLogic(registry: ToolRegistry, dataRoot: string) {
   });
   registry.register<Record<string, unknown>>({
     definition: { name: "learn_logic", description: "Store a local reasoning lesson as scenario-bias-correction memory, or record feedback for an existing logic_id. Store how to reason, not task instructions.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("logic.learn", true, "session"), visibleToChild: false,
+    manifest: manifest("logic.learn", true, "session"), visibleToChild: true,
     decodeInput: object,
     execute: async (context) => {
       const records = await store.read();
@@ -164,7 +163,7 @@ function registerSchedule(registry: ToolRegistry, dataRoot: string) {
   const store = new JsonStore(join(dataRoot, "scheduler", "jobs.json"));
   registry.register<Record<string, unknown>>({
     definition: { name: "schedule_task", description: "Create, list, or cancel delayed delivery records for already prepared text or files. This does not run open-ended background work.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("schedule.manage", true, "session"), visibleToChild: false,
+    manifest: manifest("schedule.manage", true, "session"), visibleToChild: true,
     decodeInput: object,
     execute: async (context) => {
       const action = text(context.input.action) || "create";
@@ -185,53 +184,11 @@ function registerSchedule(registry: ToolRegistry, dataRoot: string) {
   });
 }
 
-function registerSkillsManager(registry: ToolRegistry, roots: string[]) {
-  registry.register<Record<string, unknown>>({
-    definition: { name: "skills_manager", description: "Inspect or administratively install/uninstall local Skill knowledge packages. Skills cannot grant executable tools.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("skills.manage", true, "skill"), visibleToChild: false,
-    decodeInput: object,
-    authorize: async (context) => {
-      const action = text(context.input.action) || "user_ask_list";
-      if (action === "user_ask_list") return { kind: "allow" };
-      if (action === "check") return pathAdmission(context, requiredText(context.input.source_path, "source_path"), "read");
-      const targetRoot = roots[0];
-      if (!targetRoot) return { kind: "allow" };
-      if (action === "uninstall") return pathAdmission(context, join(targetRoot, safeName(requiredText(context.input.name, "name"))), "write");
-      return combineAdmissions([
-        await pathAdmission(context, requiredText(context.input.source_path, "source_path"), "read"),
-        await pathAdmission(context, targetRoot, "write"),
-      ]);
-    },
-    execute: async (context) => {
-      const action = text(context.input.action) || "user_ask_list";
-      if (action === "user_ask_list") return success(context, { roots, skills: await listSkills(roots) }, roots, ["skill"]);
-      if (action === "check") {
-        const source = resolve(requiredText(context.input.source_path, "source_path"));
-        return success(context, { valid: Boolean(await readFile(join(source, "SKILL.md"), "utf8")), source_path: source }, [source], ["skill"]);
-      }
-      const targetRoot = roots[0];
-      if (!targetRoot) throw new Error("No writable Skill root is configured.");
-      if (action === "uninstall") {
-        const name = safeName(requiredText(context.input.name, "name"));
-        const target = join(targetRoot, name); await rm(target, { recursive: true, force: true });
-        return success(context, { status: "uninstalled", name }, [target], ["skill"]);
-      }
-      const source = resolve(requiredText(context.input.source_path, "source_path"));
-      await readFile(join(source, "SKILL.md"), "utf8");
-      const name = safeName(text(context.input.name) || basename(source));
-      const target = join(targetRoot, name); const temp = `${target}.tmp-${randomUUID()}`;
-      await mkdir(targetRoot, { recursive: true }); await cp(source, temp, { recursive: true });
-      await rm(target, { recursive: true, force: true }); await rename(temp, target);
-      return success(context, { status: "installed", name, path: target }, [source, target], ["skill"]);
-    },
-  });
-}
-
 function registerParallel(registry: ToolRegistry) {
   registry.register<{ calls: Array<{ name: string; arguments: unknown; reason: string }> }>({
     definition: {
       name: "parallel_tools",
-      description: "Execute two or more independent, read-only, parallel-safe child tools concurrently and aggregate successes and failures.",
+      description: "Execute two or more independent, read-only, parallel-safe tools concurrently and aggregate successes and failures. This is not an Agent-delegation mechanism and does not accept subagent or team_delegate.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -306,20 +263,7 @@ class JsonStore {
 
 function manifest(operation: string, mutating: boolean, scope: string) { return { effect_kind: mutating ? "local_state" : "observation", operation, risk: mutating ? "medium" : "low", owner: "runtime", dispatch_phase: mutating ? "write" : "read", dispatch_scope: scope, dispatch_side_effect: mutating ? "local" : "none", dispatch_mutating: mutating, dispatch_source: "registered_tool", stage_modes: [mutating ? "write" : "read"], output_kinds: ["structured_data", "facts"], handoff_exports: mutating ? [] : ["facts"], evidence_hints: [operation] }; }
 function success(context: ToolHandlerContext<unknown>, output: unknown, paths: string[], categories: string[], artifacts: ToolResult["artifacts"] = []): ToolResult { return { protocol: BUSH_TOOL_RESULT_PROTOCOL, tool_call_id: context.toolCall.id, success: true, output, facts: [{ protocol: BUSH_EXECUTION_FACT_PROTOCOL, receipt_id: `receipt_${randomUUID()}`, action_manifest_id: context.actionManifest.manifest_id, status: "completed", operation: context.actionManifest.operation, effect_kind: context.actionManifest.effect_kind, owner: context.actionManifest.owner, dispatch_scope: context.actionManifest.dispatch_scope, categories, paths, execution_success: true, semantic_success: true, verification_state: "verified", error_code: "" }], artifacts, workspace_changes: [], guidance: [] }; }
-async function pathAdmission(context: ToolAdmissionContext<Record<string, unknown>>, candidate: string, access: "read" | "write") { const path = resolve(candidate); const mode = context.turn?.request.permissionMode ?? "task_free"; if (mode === "all_free") return { kind: "allow" as const }; const metadata = context.turn?.request.metadata ?? {}; const roots = [metadata.workspaceDir, metadata.projectDir, ...(mode === "user_free" ? stringList(metadata.userRoots) : []), ...stringList(metadata.taskRoots)].filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => resolve(item)); if (roots.some((root) => path === root || path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) return { kind: "allow" as const }; return { kind: "ask" as const, request: { reason: `${access} requires access outside configured roots.`, actions: [access], resources: [path], capabilityIds: [`${access}:${path}`] } }; }
-function combineAdmissions(decisions: Awaited<ReturnType<typeof pathAdmission>>[]) {
-  const ask = decisions.filter((decision): decision is Extract<(typeof decisions)[number], { kind: "ask" }> => decision.kind === "ask");
-  if (!ask.length) return { kind: "allow" as const };
-  return {
-    kind: "ask" as const,
-    request: {
-      reason: "Access outside configured roots requires approval.",
-      actions: [...new Set(ask.flatMap((decision) => decision.request.actions))],
-      resources: [...new Set(ask.flatMap((decision) => decision.request.resources))],
-      capabilityIds: [...new Set(ask.flatMap((decision) => decision.request.capabilityIds))],
-    },
-  };
-}
+async function pathAdmission(context: ToolAdmissionContext<Record<string, unknown>>, candidate: string, access: "read" | "write") { const path = resolve(candidate); const mode = context.turn?.request.permissionMode ?? "task_free"; if (mode === "all_free") return { kind: "allow" as const }; const metadata = context.turn?.request.metadata ?? {}; const configuredUserRoots = stringList(metadata.userRoots); const userRoots = mode === "user_free" ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()]) : []; const roots = [metadata.workspaceDir, metadata.projectDir, ...userRoots, ...stringList(metadata.taskRoots)].filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => resolve(item)); if (roots.some((root) => path === root || path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) return { kind: "allow" as const }; return { kind: "ask" as const, request: { reason: `${access} requires access outside configured roots.`, actions: [access], resources: [path], capabilityIds: [`${access}:${path}`] } }; }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Tool arguments must be an object."); return value as Record<string, unknown>; }
 function objectSchema(required: string[], properties: Record<string, unknown>) { return { type: "object", additionalProperties: false, required, properties }; }
 function text(value: unknown): string { return String(value ?? "").trim(); }
@@ -329,5 +273,3 @@ function clamp(value: unknown, min: number, max: number, fallback: number): numb
 function tokens(value: string): string[] { return [...new Set(value.normalize("NFKC").toLocaleLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean))]; }
 function score(item: Record<string, unknown>, terms: string[]): number { const corpus = JSON.stringify(item).normalize("NFKC").toLocaleLowerCase(); return terms.reduce((sum, term) => sum + (corpus.includes(term) ? 1 : 0), 0); }
 function summary(item: Record<string, unknown>) { const { content: _content, ...rest } = item; return { ...rest, char_count: text(item.content).length }; }
-function safeName(value: string): string { const name = value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, ""); if (!name) throw new Error("A safe name is required."); return name; }
-async function listSkills(roots: string[]) { const result: Array<{ name: string; path: string }> = []; for (const root of roots) { try { for (const entry of await readdir(root, { withFileTypes: true })) if (entry.isDirectory()) result.push({ name: entry.name, path: join(root, entry.name) }); } catch {} } return result; }

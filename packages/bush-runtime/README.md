@@ -58,11 +58,15 @@ prose is never promoted into an execution receipt.
 
 Subagent execution forks the exact pre-dispatch conversation into an ordinary
 child Session Turn. Dispatch returns a submitted fact immediately and child work
-runs in the background. Tool registrations explicitly declare child visibility
-and parallel safety; Runtime does not derive either property. Child terminal
-output returns as User guidance to the same parent Turn. Subagent lifecycle facts
-are stored in a checksummed append-only journal and are queryable through typed
-commands.
+runs in the background while the parent continues independent model and Tool
+rounds. Completed child output enters the parent only at a round boundary. If the
+parent attempts to finish with active children, Runtime joins them, injects their
+terminal results, and requires one reconciliation round before committing the
+parent terminal fact. The parent may call `await_subagents` once when no useful
+independent work remains; this is an explicit join rather than status polling.
+Tool registrations explicitly declare child visibility and parallel safety;
+Runtime does not derive either property. Subagent lifecycle facts are stored in a
+checksummed append-only journal and are queryable through typed commands.
 
 The default workspace Tool set provides exact file reads, ripgrep search, guarded
 file creation/replacement, exact-text edits, and terminal execution. Existing

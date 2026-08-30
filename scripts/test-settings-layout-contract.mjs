@@ -6,6 +6,7 @@ const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), '
 const app = read('src', 'App.tsx');
 const settings = read('src', 'features', 'SettingsView.tsx');
 const css = read('src', 'styles', 'app.css');
+const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 
 const expectedSections = [
   'profile',
@@ -116,6 +117,22 @@ assert.match(
   'The preserved app shell must keep its composited paint layer without remaining interactive.',
 );
 assert.match(css, /\.settings-shell\.settings-inactive\s*\{[\s\S]*?visibility:\s*hidden/);
+assert.match(
+  css,
+  /\.settings-sidebar\s*\{[\s\S]*?min-width:\s*220px;[\s\S]*?overflow:\s*hidden;/,
+  'Settings and plugin navigation must remain docked at a readable sidebar width.',
+);
+assert.match(sidebarResizer, /const minimumSidebarWidth = 220/);
+assert.match(
+  sidebarResizer,
+  /clampPreviewWidth\([\s\S]*?Boolean\(onCollapse\)[\s\S]*?canCollapse \? 0 : minimumSidebarWidth/,
+  'Only the main app sidebar may cross the readable minimum to trigger collapse.',
+);
+assert.match(
+  sidebarResizer,
+  /readCurrentSidebarWidth\(event\.currentTarget\)[\s\S]*?previousElementSibling[\s\S]*?getBoundingClientRect\(\)\.width/,
+  'Sidebar resizing must begin from rendered geometry instead of a stale CSS preview value.',
+);
 assert.match(
   css,
   /\.app\.has-custom-background > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*100;/,

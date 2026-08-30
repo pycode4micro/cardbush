@@ -4,6 +4,7 @@ import { useCallback, useRef } from 'react';
 import type { AppLanguage } from '../types';
 
 const defaultSidebarWidth = 272;
+const minimumSidebarWidth = 220;
 const collapseSidebarWidthThreshold = 180;
 const maximumSidebarWidth = 420;
 
@@ -36,7 +37,7 @@ export function SidebarResizer({
     (event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
-      const currentWidth = readCurrentSidebarWidth();
+      const currentWidth = readCurrentSidebarWidth(event.currentTarget);
       dragStateRef.current = {
         startX: event.clientX,
         startWidth: currentWidth,
@@ -70,6 +71,7 @@ export function SidebarResizer({
         }
         const nextWidth = clampPreviewWidth(
           state.startWidth + moveEvent.clientX - state.startX,
+          Boolean(onCollapse),
         );
         state.currentWidth = nextWidth;
         state.pendingWidth = nextWidth;
@@ -127,7 +129,12 @@ export function SidebarResizer({
   );
 }
 
-function readCurrentSidebarWidth() {
+function readCurrentSidebarWidth(resizer: HTMLElement) {
+  const renderedSidebar = resizer.previousElementSibling;
+  if (renderedSidebar instanceof HTMLElement) {
+    const renderedWidth = renderedSidebar.getBoundingClientRect().width;
+    if (renderedWidth > 0) return renderedWidth;
+  }
   const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
   const raw = getComputedStyle(scope)
     .getPropertyValue('--sidebar-width')
@@ -140,8 +147,11 @@ function readCurrentSidebarWidth() {
   return sidebar?.getBoundingClientRect().width ?? defaultSidebarWidth;
 }
 
-function clampPreviewWidth(value: number) {
-  return Math.max(0, Math.min(maximumSidebarWidth, value));
+function clampPreviewWidth(value: number, canCollapse: boolean) {
+  return Math.max(
+    canCollapse ? 0 : minimumSidebarWidth,
+    Math.min(maximumSidebarWidth, value),
+  );
 }
 
 function writePreviewWidth(scope: HTMLElement, width: number) {

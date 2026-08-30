@@ -424,6 +424,13 @@
 .plugin-path-setting { display: grid; gap: 7px; margin: 16px 0 10px; color: var(--text-mid); font-size: 13px; }
 .plugin-path-setting input { min-height: 38px; padding: 0 11px; color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); border: 1px solid var(--border); border-radius: 9px; }
 .plugin-check-setting { display: flex; align-items: center; gap: 8px; margin: 11px 0; color: var(--text-mid); font-size: 13px; }
+.plugin-radio-setting { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 10px; margin: 12px 0; padding: 11px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-mid); }
+.plugin-radio-setting input { margin-top: 3px; }
+.plugin-radio-setting span { display: grid; gap: 4px; }
+.plugin-radio-setting strong { color: var(--text); font-size: 13px; }
+.plugin-radio-setting small,
+.plugin-setting-note { color: var(--text-soft); font-size: 12px; line-height: 1.55; }
+.plugin-setting-note { margin: 10px 0 0; padding: 10px 12px; background: color-mix(in srgb, var(--warning, #c49a56) 10%, transparent); border-radius: 9px; }
 .plugin-detail-section > .plugin-install-button { margin-top: 8px; }
 
 .plugin-manage-tabs { margin-bottom: 26px; }

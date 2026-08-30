@@ -16,6 +16,7 @@ export type ProductHostCommand =
     }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "apps.get" }
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "mcp.get" }
+  | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "subagents.get" }
   | {
       protocol: typeof PRODUCT_HOST_IPC_PROTOCOL;
       kind: "apps.update";
@@ -45,6 +46,10 @@ export interface ProductAppsHost {
 }
 export interface ProductMcpHost extends ProductAppsHost {}
 
+export interface ProductSubagentHost {
+  get(): Promise<unknown>;
+}
+
 export interface ProductMaintenanceHost {
   clearConversations(): Promise<Record<string, unknown>>;
   clearLogsCache(): Promise<Record<string, unknown>>;
@@ -73,6 +78,7 @@ export class ProductHost {
     readonly maintenance?: ProductMaintenanceHost,
     readonly apps?: ProductAppsHost,
     readonly mcp?: ProductMcpHost,
+    readonly subagents?: ProductSubagentHost,
   ) {}
 
   async execute(input: unknown): Promise<ProductHostResult | ProductHostFailure> {
@@ -124,6 +130,8 @@ export class ProductHost {
         return this.#apps().update(command.config);
       case "mcp.get":
         return this.#mcp().get();
+      case "subagents.get":
+        return this.#subagents().get();
       case "mcp.update":
         return this.#mcp().update(command.config);
       case "maintenance.clear_conversations":
@@ -162,6 +170,15 @@ export class ProductHost {
     if (!this.mcp) throw new ProductHostProtocolError("product_mcp_host_unavailable", "The Product MCP Host is not installed");
     return this.mcp;
   }
+  #subagents(): ProductSubagentHost {
+    if (!this.subagents) {
+      throw new ProductHostProtocolError(
+        "product_subagent_host_unavailable",
+        "The Product Subagent Host is not installed",
+      );
+    }
+    return this.subagents;
+  }
 }
 
 export class ProductHostProtocolError extends Error {
@@ -184,6 +201,7 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
     case "models.get":
     case "apps.get":
     case "mcp.get":
+    case "subagents.get":
     case "maintenance.clear_conversations":
     case "maintenance.clear_logs_cache":
     case "maintenance.runtime_assets.plan":

@@ -3343,6 +3343,57 @@ function CardbushAppsPanel({
                   </div>
                 </div>
               )}
+              {expanded && plugin.id === 'chrome' && (
+                <div className="cardbush-app-config">
+                  <label className="cardbush-app-option cardbush-app-radio-option">
+                    <input
+                      type="radio"
+                      name="settings-chrome-connection-mode"
+                      checked={plugin.config.connectionMode !== 'existing'}
+                      onChange={() => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, connectionMode: 'managed' },
+                      })}
+                    />
+                    <span>
+                      <strong>{language === 'zh' ? '独立受控浏览器' : 'Managed browser'}</strong>
+                      <small>{language === 'zh' ? '使用独立实例，不复用日常 Chrome 登录状态。' : 'Use a separate instance without your everyday Chrome session.'}</small>
+                    </span>
+                  </label>
+                  <label className="cardbush-app-option cardbush-app-radio-option">
+                    <input
+                      type="radio"
+                      name="settings-chrome-connection-mode"
+                      checked={plugin.config.connectionMode === 'existing'}
+                      onChange={() => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, connectionMode: 'existing' },
+                      })}
+                    />
+                    <span>
+                      <strong>{language === 'zh' ? '复用当前 Chrome' : 'Reuse current Chrome'}</strong>
+                      <small>{language === 'zh' ? '复用已有标签页、Cookie 和登录状态。' : 'Reuse existing tabs, cookies, and signed-in state.'}</small>
+                    </span>
+                  </label>
+                  {plugin.config.connectionMode === 'existing' && (
+                    <p className="cardbush-app-config-note">
+                      {language === 'zh'
+                        ? '需要 Chrome 144 或更高版本，并在 chrome://inspect/#remote-debugging 开启远程调试。Agent 将能访问该浏览器中的页面和登录数据。'
+                        : 'Requires Chrome 144 or newer with remote debugging enabled at chrome://inspect/#remote-debugging. The Agent can access pages and signed-in data in that browser.'}
+                    </p>
+                  )}
+                  <div className="cardbush-app-config-actions">
+                    <button
+                      className="primary-button compact"
+                      type="button"
+                      disabled={Boolean(busyKey)}
+                      onClick={() => void persist(configuration, `config:${plugin.id}`, 'Chrome 连接方式已保存', 'Chrome connection saved')}
+                    >
+                      {language === 'zh' ? '保存配置' : 'Save settings'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </article>
           );
         })}

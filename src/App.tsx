@@ -50,8 +50,6 @@ import {
 
 import {
   defaultBackendCapabilities,
-  closeShadowConversation,
-  createShadowConversation,
   fetchBackendCapabilities,
   fetchBackendReadiness,
   fetchModelConfigs,
@@ -61,8 +59,6 @@ import {
   revertSessionWorkspaceChanges,
   saveModelConfigs,
   saveProjectContext,
-  streamShadowConversationMessage,
-  type ShadowConversationRecord,
   type ExperimentalGoal,
 } from './backend/api';
 import {
@@ -95,10 +91,6 @@ import {
 import { QuickContextRail } from './features/chat/QuickContextRail';
 import { ConversationWorkSummary } from './features/chat/ConversationWorkSummary';
 import { WorkSummaryInspector } from './features/chat/WorkSummaryInspector';
-import {
-  ShadowTemporaryChat,
-  type ShadowChatEntry,
-} from './features/chat/ShadowTemporaryChat';
 import {
   isPermissionInteraction,
   permissionQuestion,
@@ -200,6 +192,7 @@ import type {
   LightThemeStyle,
   ManagedModelConfig,
   PermissionMode,
+  SubagentPermissionRouting,
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeAssetCategory,
@@ -2158,6 +2151,7 @@ function CardbushApp() {
             {section === 'chat' || section === 'os' ? (
               <ChatPanel
                 language={language}
+                theme={theme}
                 title={
                   section === 'os'
                     ? 'CardBush OS'
@@ -2240,6 +2234,7 @@ function CardbushApp() {
                 referencePlanAvailable={backendCapabilities.taskPlan}
                 referencePlanMode={chat.referencePlanMode}
                 permissionMode={chat.permissionMode}
+                subagentPermissionRouting={chat.subagentPermissionRouting}
                 reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection}
                 reasoningLevel={chat.reasoningLevel}
                 reasoningLevels={backendCapabilities.reasoningLevels}
@@ -2248,6 +2243,7 @@ function CardbushApp() {
                 onModelChange={chat.setSelectedModel}
                 onReferencePlanModeChange={chat.setReferencePlanMode}
                 onPermissionModeChange={chat.setPermissionMode}
+                onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting}
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={() =>
@@ -3364,7 +3360,7 @@ function WindowFrame({
           />
         </WindowFrameMenu>
       </div>
-      <div className="window-spacer" />
+      <div className="window-spacer window-drag" aria-hidden="true" />
       <WindowButton
         label={language === 'zh' ? '最小化' : 'Minimize'}
         onClick={() => window.cardbushDesktop?.minimize()}
@@ -3482,7 +3478,7 @@ function FeaturePanelLoading({ language }: { language: AppLanguage }) {
 
 function highestReasoningLevel(levels: ReasoningLevel[]): ReasoningLevel {
   const available = new Set(levels);
-  return (['max', 'high', 'medium', 'low'] as const).find((level) =>
+  return (['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none'] as const).find((level) =>
     available.has(level)
   ) ?? 'max';
 }
@@ -3648,6 +3644,7 @@ function useOsGamepadNavigation(
 
 function ChatPanel({
   language,
+  theme,
   title,
   osModeEnabled,
   osRuntimeAvailable,
@@ -3702,6 +3699,7 @@ function ChatPanel({
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  subagentPermissionRouting,
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
@@ -3710,6 +3708,7 @@ function ChatPanel({
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onSubagentPermissionRoutingChange,
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
@@ -3737,6 +3736,7 @@ function ChatPanel({
   onDraftChange,
 }: {
   language: AppLanguage;
+  theme: ThemeMode;
   title: string;
   osModeEnabled: boolean;
   osRuntimeAvailable: boolean;
@@ -3791,6 +3791,7 @@ function ChatPanel({
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  subagentPermissionRouting: SubagentPermissionRouting;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
@@ -3799,6 +3800,7 @@ function ChatPanel({
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onSubagentPermissionRoutingChange: (value: SubagentPermissionRouting) => void;
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
@@ -3970,15 +3972,7 @@ function ChatPanel({
     return '';
   })();
   const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
-  const [shadowThreadOpen, setShadowThreadOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
-  const [shadowConversation, setShadowConversation] =
-    useState<ShadowConversationRecord | null>(null);
-  const [shadowDraft, setShadowDraft] = useState('');
-  const [shadowEntries, setShadowEntries] = useState<ShadowChatEntry[]>([]);
-  const [shadowError, setShadowError] = useState('');
-  const [shadowReplying, setShadowReplying] = useState(false);
-  const shadowAbortControllerRef = useRef<AbortController | null>(null);
   const [osSystemSurface, setOsSystemSurface] = useState<OsSystemSurfaceMode | null>(null);
   const [osNineKeyOpen, setOsNineKeyOpen] = useState(false);
   const [osSettingsOpen, setOsSettingsOpen] = useState(false);
@@ -3992,139 +3986,46 @@ function ChatPanel({
   } | null>(null);
 
   useEffect(() => {
-    shadowAbortControllerRef.current?.abort();
-    shadowAbortControllerRef.current = null;
-    setShadowThreadOpen(false);
-    setShadowConversation(null);
-    setShadowDraft('');
-    setShadowEntries([]);
-    setShadowError('');
-    setShadowReplying(false);
-  }, [activeConversationId]);
-
-  useEffect(() => {
     setThinkingOpen(false);
   }, [thinkingNotice?.id]);
 
-  const shadowCanActivate = shadowAvailable && Boolean(activeConversationId) &&
+  const shadowCanActivate = shadowAvailable && !sending && Boolean(activeConversationId) &&
+    Boolean(selectedModelConfig) && Boolean(window.cardbushDesktop?.openShadowWindow) &&
     messages.some((message) => message.role === 'user');
 
-  const closeShadowThread = useCallback(() => {
-    shadowAbortControllerRef.current?.abort();
-    shadowAbortControllerRef.current = null;
-    const conversationId = shadowConversation?.id ?? '';
-    setShadowThreadOpen(false);
-    setShadowConversation(null);
-    setShadowDraft('');
-    setShadowEntries([]);
-    setShadowError('');
-    setShadowReplying(false);
-    if (conversationId) {
-      void closeShadowConversation(conversationId).catch(() => undefined);
-    }
-  }, [shadowConversation?.id]);
-
-  const toggleShadowThread = useCallback(async () => {
-    if (shadowThreadOpen) {
-      closeShadowThread();
-      return;
-    }
-    if (!shadowCanActivate || shadowReplying) return;
+  const openShadowPopup = useCallback(async () => {
+    if (!shadowCanActivate || !selectedModelConfig) return;
     setThinkingOpen(false);
-    setShadowThreadOpen(true);
-    setShadowError('');
-    if (shadowConversation) return;
-    setShadowReplying(true);
     try {
-      const conversation = await createShadowConversation({
+      await window.cardbushDesktop?.openShadowWindow({
         sessionId: activeConversationId,
         sourceTurnId: activeTurnId,
-        clientConversationId: crypto.randomUUID(),
+        title,
+        language,
+        theme,
+        accentColor: shadowAccentColor,
+        modelConfig: selectedModelConfig,
+        reasoningLevel,
+        projectDir: activeProjectDir ?? '',
+        initialMode: 'readonly',
       });
-      setShadowConversation(conversation);
     } catch (error) {
-      setShadowError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setShadowReplying(false);
+      void window.cardbushDesktop?.writeDebugLog?.('shadow-window', {
+        stage: 'open-failed',
+        message: error instanceof Error ? error.message : String(error),
+      });
     }
   }, [
     activeConversationId,
+    activeProjectDir,
     activeTurnId,
-    closeShadowThread,
-    shadowCanActivate,
-    shadowConversation,
-    shadowReplying,
-    shadowThreadOpen,
-  ]);
-
-  const sendShadowReply = useCallback(async (text: string) => {
-    const reply = text.trim();
-    if (!shadowConversation || !reply || shadowReplying) return;
-    if (!selectedModelConfig) {
-      setShadowError(`No model configuration found for ${selectedModel}`);
-      return;
-    }
-    const userEntry: ShadowChatEntry = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: reply,
-      createdAt: new Date().toISOString(),
-    };
-    const assistantEntryId = crypto.randomUUID();
-    setShadowEntries((current) => [
-      ...current,
-      userEntry,
-      {
-        id: assistantEntryId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-    setShadowDraft('');
-    setShadowError('');
-    setShadowReplying(true);
-    const controller = new AbortController();
-    shadowAbortControllerRef.current = controller;
-    try {
-      await streamShadowConversationMessage({
-        conversationId: shadowConversation.id,
-        content: reply,
-        clientMessageId: userEntry.id,
-        modelConfig: selectedModelConfig,
-        reasoningLevel,
-        signal: controller.signal,
-        onDelta: (delta) => {
-          setShadowEntries((current) => current.map((entry) =>
-            entry.id === assistantEntryId
-              ? { ...entry, content: `${entry.content}${delta}` }
-              : entry
-          ));
-        },
-        onDone: (message) => {
-          setShadowEntries((current) => current.map((entry) =>
-            entry.id === assistantEntryId
-              ? { ...entry, content: message.content || entry.content, createdAt: message.createdAt }
-              : entry
-          ));
-        },
-      });
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setShadowError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      if (shadowAbortControllerRef.current === controller) {
-        shadowAbortControllerRef.current = null;
-      }
-      setShadowReplying(false);
-    }
-  }, [
+    language,
     reasoningLevel,
-    selectedModel,
     selectedModelConfig,
-    shadowConversation,
-    shadowReplying,
+    shadowAccentColor,
+    shadowCanActivate,
+    theme,
+    title,
   ]);
   const osApplicationLaunchGraceRef = useRef(new Map<string, number>());
   const osPinnedApplicationIds = useMemo(
@@ -6196,12 +6097,14 @@ function ChatPanel({
             referencePlanAvailable={referencePlanAvailable}
             referencePlanMode={referencePlanMode}
             permissionMode={permissionMode}
+            subagentPermissionRouting={subagentPermissionRouting}
             reasoningLevelAvailable={reasoningLevelAvailable}
             reasoningLevel={reasoningLevel}
             reasoningLevels={reasoningLevels}
             onModelChange={onModelChange}
             onReferencePlanModeChange={onReferencePlanModeChange}
             onPermissionModeChange={onPermissionModeChange}
+            onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
             onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
@@ -6326,10 +6229,10 @@ function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && (
           <div
             className={`composer-dock${
-              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0 || shadowThreadOpen
+              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0
                 ? ' runtime-attached'
                 : ''
-            }${shadowThreadOpen ? ' shadow-active' : ''}`}
+            }`}
             ref={composerDockRef}
             style={{
               '--shadow-accent': shadowAccentColor,
@@ -6353,7 +6256,6 @@ function ChatPanel({
                 queuedMessagePreview={queuedMessagePreview}
                 queuedMessages={queuedMessages}
                 onToggleThinking={() => {
-                  setShadowThreadOpen(false);
                   setThinkingOpen((current) => !current);
                 }}
                 onCloseThinking={() => setThinkingOpen(false)}
@@ -6366,31 +6268,17 @@ function ChatPanel({
                 onRemoveQueuedMessage={onRemoveQueuedMessage}
               />
             )}
-            {shadowThreadOpen && (
-              <div className="composer-shadow-chat-host">
-                <ShadowTemporaryChat
-                  language={language}
-                  agentName={shadowConversation?.agentName || 'Shadow Agent'}
-                  entries={shadowEntries}
-                  busy={shadowReplying}
-                  error={shadowError}
-                  open={shadowThreadOpen}
-                  accentColor={shadowAccentColor}
-                  onClose={closeShadowThread}
-                />
-              </div>
-            )}
             <Composer
               key={activeConversationId || 'active-session'}
               compact
               osMode={osModeEnabled}
               language={language}
-              draft={shadowThreadOpen ? shadowDraft : draft}
-              onDraftChange={shadowThreadOpen ? setShadowDraft : onDraftChange}
-              sending={shadowThreadOpen ? shadowReplying : sending}
-              stopping={shadowThreadOpen ? false : stopping}
-              guidanceDeliveryMode={shadowThreadOpen ? 'queue' : guidanceDeliveryMode}
-              cancelEnabled={shadowThreadOpen ? shadowReplying : Boolean(activeTurnId)}
+              draft={draft}
+              onDraftChange={onDraftChange}
+              sending={sending}
+              stopping={stopping}
+              guidanceDeliveryMode={guidanceDeliveryMode}
+              cancelEnabled={Boolean(activeTurnId)}
               queuedMessageCount={0}
               queuedMessagePreview=""
               queuedMessages={[]}
@@ -6400,25 +6288,21 @@ function ChatPanel({
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
               permissionMode={permissionMode}
+              subagentPermissionRouting={subagentPermissionRouting}
               reasoningLevelAvailable={reasoningLevelAvailable}
               reasoningLevel={reasoningLevel}
               reasoningLevels={reasoningLevels}
               onModelChange={onModelChange}
               onReferencePlanModeChange={onReferencePlanModeChange}
               onPermissionModeChange={onPermissionModeChange}
+              onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
               onReasoningLevelChange={onReasoningLevelChange}
-              onSend={shadowThreadOpen ? sendShadowReply : handleComposerSend}
-              onCancel={shadowThreadOpen
-                ? async () => {
-                    shadowAbortControllerRef.current?.abort();
-                    shadowAbortControllerRef.current = null;
-                    setShadowReplying(false);
-                  }
-                : onCancel}
-              shadowActive={shadowThreadOpen}
+              onSend={handleComposerSend}
+              onCancel={onCancel}
+              shadowActive={false}
               shadowAvailable={shadowCanActivate}
-              shadowAgentName={shadowConversation?.agentName}
-              onToggleShadow={shadowCanActivate ? toggleShadowThread : undefined}
+              shadowAgentName={language === 'zh' ? '新窗口' : 'New window'}
+              onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
               contextWindow={{
                 usedTokens: contextWindowUsage?.usedTokens,
                 maxTokens: contextWindowUsage?.maxTokens ?? contextWindowMaxTokens,
@@ -6634,6 +6518,7 @@ function WelcomeComposer({
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  subagentPermissionRouting,
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
@@ -6653,6 +6538,7 @@ function WelcomeComposer({
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onSubagentPermissionRoutingChange,
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
@@ -6682,6 +6568,7 @@ function WelcomeComposer({
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  subagentPermissionRouting: SubagentPermissionRouting;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
@@ -6701,6 +6588,7 @@ function WelcomeComposer({
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onSubagentPermissionRoutingChange: (value: SubagentPermissionRouting) => void;
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
@@ -6731,12 +6619,14 @@ function WelcomeComposer({
       referencePlanAvailable={referencePlanAvailable}
       referencePlanMode={referencePlanMode}
       permissionMode={permissionMode}
+      subagentPermissionRouting={subagentPermissionRouting}
       reasoningLevelAvailable={reasoningLevelAvailable}
       reasoningLevel={reasoningLevel}
       reasoningLevels={reasoningLevels}
       onModelChange={onModelChange}
       onReferencePlanModeChange={onReferencePlanModeChange}
       onPermissionModeChange={onPermissionModeChange}
+      onSubagentPermissionRoutingChange={onSubagentPermissionRoutingChange}
       onReasoningLevelChange={onReasoningLevelChange}
       onConfigureModels={onConfigureModels}
       onCreateConversation={onCreateConversation}

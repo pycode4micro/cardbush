@@ -80,6 +80,115 @@ const attached = attachHistoryToolExecutions(messages, [
 assert.equal(attached[1].toolExecutions[0].id, 'tool-exact');
 assert.equal(attached[2].toolExecutions[0].id, 'tool-segment');
 
+const toolCallAttached = attachHistoryToolExecutions([
+  { id: 'user-tool-call', role: 'user', content: '读取文件', turnId: 'turn-tool-call' },
+  {
+    id: 'assistant-tool-call',
+    role: 'assistant',
+    content: '先读取文件。',
+    turnId: 'turn-tool-call',
+    metadata: { toolCalls: [{ id: 'tool-by-call-id', name: 'read_file' }] },
+  },
+  {
+    id: 'assistant-tool-final',
+    role: 'assistant',
+    content: '读取完成。',
+    turnId: 'turn-tool-call',
+  },
+], [{
+  ...baseTool,
+  id: 'tool-by-call-id',
+  turnId: 'turn-tool-call',
+  sequence: 1,
+}]);
+assert.equal(
+  toolCallAttached[1].toolExecutions[0].id,
+  'tool-by-call-id',
+  'Persisted tools must reattach to the assistant message that issued the tool call.',
+);
+assert.equal(toolCallAttached[2].toolExecutions, undefined);
+
+const historyProjectionPath = path.join(
+  process.cwd(),
+  'src',
+  'features',
+  'chat',
+  'workSummaryHistory.ts',
+);
+const historyProjectionSource = fs.readFileSync(historyProjectionPath, 'utf8');
+const historyProjectionTranspiled = ts.transpileModule(historyProjectionSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const historyProjectionModule = { exports: {} };
+vm.runInNewContext(historyProjectionTranspiled.outputText, {
+  module: historyProjectionModule,
+  exports: historyProjectionModule.exports,
+  Date,
+  Intl,
+  Map,
+  Set,
+  Number,
+});
+const { groupWorkSummaryHistoryByTurn, historyTurnLabel } = historyProjectionModule.exports;
+const persistedGroups = groupWorkSummaryHistoryByTurn(toolCallAttached);
+assert.equal(persistedGroups.length, 1, 'Raw persisted assistant rounds must be replayable.');
+assert.equal(persistedGroups[0].turnId, 'turn-tool-call');
+assert.equal(persistedGroups[0].history.length, 1);
+assert.equal(persistedGroups[0].history[0].id, 'assistant-tool-call');
+assert.equal(persistedGroups[0].toolCount, 1);
+assert.equal(persistedGroups[0].prompt, '读取文件');
+assert.equal(
+  historyTurnLabel(persistedGroups[0], 'zh'),
+  '读取文件',
+  'History navigation must use the user instruction instead of a numeric Turn label.',
+);
+
+const collapsedGroups = groupWorkSummaryHistoryByTurn([
+  { id: 'user-collapsed', role: 'user', content: '检查项目', turnId: 'turn-collapsed' },
+  {
+    id: 'assistant-collapsed-final',
+    role: 'assistant',
+    content: '完成。',
+    turnId: 'turn-collapsed',
+    loopHistory: [{
+      id: 'assistant-collapsed-process',
+      role: 'assistant',
+      content: '正在检查。',
+      turnId: 'turn-collapsed',
+    }],
+  },
+]);
+assert.equal(collapsedGroups.length, 1, 'Live collapsed loop history must remain supported.');
+assert.equal(collapsedGroups[0].history.length, 1);
+assert.equal(collapsedGroups[0].history[0].id, 'assistant-collapsed-process');
+
+const guidedGroups = groupWorkSummaryHistoryByTurn([
+  { id: 'user-original', role: 'user', content: '检查并修复项目', turnId: 'turn-guided' },
+  {
+    id: 'user-guidance',
+    role: 'user',
+    content: '再检查测试',
+    turnId: 'turn-guided',
+    metadata: { name: 'turn_guidance' },
+  },
+  {
+    id: 'assistant-guided-process',
+    role: 'assistant',
+    content: '正在处理。',
+    turnId: 'turn-guided',
+  },
+  {
+    id: 'assistant-guided-final',
+    role: 'assistant',
+    content: '完成。',
+    turnId: 'turn-guided',
+  },
+]);
+assert.equal(guidedGroups[0].prompt, '检查并修复项目');
+
 const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
@@ -336,8 +445,28 @@ const toolBlockSource = fs.readFileSync(
   ),
   'utf8',
 );
+const toolLogoSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'tools', 'ToolLogo.tsx'),
+  'utf8',
+);
+const styleSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'styles', 'app.css'),
+  'utf8',
+);
 assert.match(toolBlockSource, /历史执行记录 · \$\{runSummary\}/);
 assert.match(toolBlockSource, /writeToolExecutionDisclosure\(browserStorage\(\), disclosureId, next\)/);
+assert.equal((toolBlockSource.match(/<ToolLogo /g) ?? []).length, 2);
+assert.match(toolLogoSource, /normalized\.startsWith\('mcp__'\)/);
+assert.match(toolLogoSource, /read_file: \{ icon: FileText/);
+assert.match(toolLogoSource, /subagent: \{ icon: GitFork/);
+assert.match(
+  styleSource,
+  /\.assistant-thinking-model \{[\s\S]*?background: transparent;[\s\S]*?border: 0;[\s\S]*?box-shadow: none;/,
+);
+assert.match(
+  styleSource,
+  /\.tool-logo \{[\s\S]*?background: transparent;[\s\S]*?border: 0;/,
+);
 assert.match(
   bubbleSource,
   /<AssistantCompletedDisclosure[\s\S]*?\{assistantBody\}[\s\S]*?<\/AssistantCompletedDisclosure>/,

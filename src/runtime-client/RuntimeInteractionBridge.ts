@@ -32,14 +32,21 @@ export function registerRuntimePermission(input: {
   actions: string[];
   resources: string[];
   requestedCapabilityIds: string[];
+  sourceSessionId?: string;
+  sourceTurnId?: string;
+  parentSessionId?: string;
+  parentTurnId?: string;
+  subagentTaskId?: string;
+  permissionRouting?: 'user' | 'parent';
   answer: RuntimePermissionEntry['answer'];
 }): PendingInteraction {
+  const fromSubagent = Boolean(input.sourceSessionId && input.sourceSessionId !== input.sessionId);
   const interaction: PendingInteraction = {
     id: input.permissionId,
     type: 'path_permission_request',
     sessionId: input.sessionId,
     turnId: input.turnId,
-    title: 'Permission',
+    title: fromSubagent ? 'Subagent permission' : 'Permission',
     reason: input.reason,
     message: input.reason,
     submitLabel: 'Continue',
@@ -51,6 +58,12 @@ export function registerRuntimePermission(input: {
       resources: [...input.resources],
       reason: input.reason,
       toolCallId: input.toolCallId,
+      sourceSessionId: input.sourceSessionId,
+      sourceTurnId: input.sourceTurnId,
+      parentSessionId: input.parentSessionId,
+      parentTurnId: input.parentTurnId,
+      subagentTaskId: input.subagentTaskId,
+      permissionRouting: input.permissionRouting,
     },
     questions: [{
       id: 'permission',
@@ -69,6 +82,12 @@ export function registerRuntimePermission(input: {
       protocol: 'bush.runtime_permission_answer.v1',
       permissionId: input.permissionId,
       requestedCapabilityIds: [...input.requestedCapabilityIds],
+      sourceSessionId: input.sourceSessionId,
+      sourceTurnId: input.sourceTurnId,
+      parentSessionId: input.parentSessionId,
+      parentTurnId: input.parentTurnId,
+      subagentTaskId: input.subagentTaskId,
+      permissionRouting: input.permissionRouting,
     },
   };
   permissions.set(input.permissionId, {

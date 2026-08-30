@@ -7,6 +7,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   Circle,
   Clock3,
   Edit3,
@@ -61,6 +62,7 @@ import type {
   AppLanguage,
   ManagedModelConfig,
   PermissionMode,
+  SubagentPermissionRouting,
   ReasoningLevel,
   ReferencePlanMode,
   RuntimeStartupStatus,
@@ -321,12 +323,14 @@ export function Composer({
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
+  subagentPermissionRouting,
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
+  onSubagentPermissionRoutingChange,
   onReasoningLevelChange,
   onSend,
   onCancel,
@@ -373,12 +377,14 @@ export function Composer({
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
+  subagentPermissionRouting: SubagentPermissionRouting;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
+  onSubagentPermissionRoutingChange: (value: SubagentPermissionRouting) => void;
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
@@ -962,6 +968,7 @@ export function Composer({
               selectedModel={selectedModel}
               availableModels={availableModels}
               permissionMode={permissionMode}
+              subagentPermissionRouting={subagentPermissionRouting}
               reasoningLevelAvailable={reasoningLevelAvailable}
               reasoningLevel={reasoningLevel}
               reasoningLevels={reasoningLevels}
@@ -974,6 +981,7 @@ export function Composer({
               onSaveProjectContext={onSaveProjectContext}
               onSelectModel={selectModel}
               onSelectPermissionMode={onPermissionModeChange}
+              onSelectSubagentPermissionRouting={onSubagentPermissionRoutingChange}
               onSelectReasoningLevel={onReasoningLevelChange}
               onSelectReferencePlanMode={onReferencePlanModeChange}
               onConfigureModels={onConfigureModels}
@@ -1515,6 +1523,7 @@ function ComposerPopover({
   selectedModel,
   availableModels,
   permissionMode,
+  subagentPermissionRouting,
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
@@ -1529,6 +1538,7 @@ function ComposerPopover({
   onConfigureModels,
   onPickAttachments,
   onSelectPermissionMode,
+  onSelectSubagentPermissionRouting,
   onSelectReasoningLevel,
   onSelectReferencePlanMode,
   onClose,
@@ -1545,6 +1555,7 @@ function ComposerPopover({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   permissionMode: PermissionMode;
+  subagentPermissionRouting: SubagentPermissionRouting;
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
@@ -1559,6 +1570,7 @@ function ComposerPopover({
   onConfigureModels: () => void;
   onPickAttachments: () => void;
   onSelectPermissionMode: (mode: PermissionMode) => void;
+  onSelectSubagentPermissionRouting: (routing: SubagentPermissionRouting) => void;
   onSelectReasoningLevel: (level: ReasoningLevel) => void;
   onSelectReferencePlanMode: (mode: ReferencePlanMode) => void;
   onClose: () => void;
@@ -1567,12 +1579,22 @@ function ComposerPopover({
   const models = availableModels;
   const pickerMenu = menu === 'models';
   const [morePanel, setMorePanel] = useState<MorePanelMenu | null>(null);
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const reasoningLevelGroups = useMemo(
+    () => splitReasoningLevels(reasoningLevels),
+    [reasoningLevels],
+  );
   const referencePlanEnabled = referencePlanMode === 'auto';
   useEffect(() => {
     if (!gitAvailable && morePanel === 'git') {
       setMorePanel(null);
     }
   }, [gitAvailable, morePanel]);
+  useEffect(() => {
+    if (menu !== 'models' || reasoningLevelGroups.secondary.length === 0) {
+      setReasoningExpanded(false);
+    }
+  }, [menu, reasoningLevelGroups.secondary.length]);
   const selectPermission = (mode: PermissionMode) => {
     onSelectPermissionMode(mode);
     onClose();
@@ -1813,6 +1835,42 @@ function ComposerPopover({
               {option.id === permissionMode && <Check size={14} />}
             </button>
           ))}
+          <section className="subagent-permission-routing">
+            <div className="subagent-permission-routing-copy">
+              <strong>{language === 'zh' ? '子 Agent 权限管理' : 'Subagent permissions'}</strong>
+              <small>
+                {subagentPermissionRouting === 'user'
+                  ? language === 'zh'
+                    ? '父子 Agent 共同使用当前选择的权限。'
+                    : 'Parent and child Agents use the permission selected above.'
+                  : language === 'zh'
+                    ? '子 Agent 默认 task_free，额外请求转交父 Turn 审批。'
+                    : 'Subagents default to task_free; extra requests go through the parent Turn.'}
+              </small>
+            </div>
+            <div
+              className={`subagent-routing-switch mode-${subagentPermissionRouting}`}
+              role="group"
+              aria-label={language === 'zh' ? '子 Agent 权限路由' : 'Subagent permission routing'}
+            >
+              <button
+                type="button"
+                className={subagentPermissionRouting === 'user' ? 'active' : ''}
+                aria-pressed={subagentPermissionRouting === 'user'}
+                onClick={() => onSelectSubagentPermissionRouting('user')}
+              >
+                {language === 'zh' ? '统一权限' : 'Unified'}
+              </button>
+              <button
+                type="button"
+                className={subagentPermissionRouting === 'parent' ? 'active' : ''}
+                aria-pressed={subagentPermissionRouting === 'parent'}
+                onClick={() => onSelectSubagentPermissionRouting('parent')}
+              >
+                {language === 'zh' ? '模型审批' : 'Model approval'}
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {menu === 'teams' && <ComposerTeamPicker language={language} onClose={onClose} />}
@@ -1925,18 +1983,51 @@ function ComposerPopover({
                 <span>{language === 'zh' ? '推理强度' : 'Reasoning effort'}</span>
                 <strong>{reasoningLevelLabel(reasoningLevel, language)}</strong>
               </div>
-              <div className="model-reasoning-options">
-                {reasoningLevels.map((level) => (
+              <div className={`model-reasoning-options ${reasoningExpanded ? 'expanded' : ''}`}>
+                <div className="model-reasoning-viewport">
+                  <div className="model-reasoning-pages">
+                    <div className="model-reasoning-primary-options" aria-hidden={reasoningExpanded}>
+                      {reasoningLevelGroups.primary.map((level) => (
+                        <button
+                          className={level === reasoningLevel ? 'active' : ''}
+                          type="button"
+                          tabIndex={reasoningExpanded ? -1 : 0}
+                          key={level}
+                          title={reasoningLevelDescription(level, language)}
+                          onClick={() => onSelectReasoningLevel(level)}
+                        >
+                          {reasoningLevelLabel(level, language)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="model-reasoning-secondary-options" aria-hidden={!reasoningExpanded}>
+                      {reasoningLevelGroups.secondary.map((level) => (
+                        <button
+                          className={level === reasoningLevel ? 'active' : ''}
+                          type="button"
+                          tabIndex={reasoningExpanded ? 0 : -1}
+                          key={level}
+                          title={reasoningLevelDescription(level, language)}
+                          onClick={() => onSelectReasoningLevel(level)}
+                        >
+                          {reasoningLevelLabel(level, language)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {reasoningLevelGroups.secondary.length > 0 && (
                   <button
-                    className={level === reasoningLevel ? 'active' : ''}
+                    className={`model-reasoning-expand ${!reasoningExpanded && reasoningLevelGroups.secondary.includes(reasoningLevel) ? 'hidden-selection' : ''}`}
                     type="button"
-                    key={level}
-                    title={reasoningLevelDescription(level, language)}
-                    onClick={() => onSelectReasoningLevel(level)}
+                    aria-expanded={reasoningExpanded}
+                    aria-label={language === 'zh' ? (reasoningExpanded ? '收起其他推理强度' : '展开其他推理强度') : (reasoningExpanded ? 'Collapse other reasoning levels' : 'Show other reasoning levels')}
+                    title={language === 'zh' ? (reasoningExpanded ? '收起' : '显示其他强度') : (reasoningExpanded ? 'Collapse' : 'Show other levels')}
+                    onClick={() => setReasoningExpanded((current) => !current)}
                   >
-                    {reasoningLevelLabel(level, language)}
+                    <ChevronLeft size={14} />
                   </button>
-                ))}
+                )}
               </div>
             </div>
           )}
@@ -2055,20 +2146,45 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
 
 function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
   const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
+    none: { zh: '关闭', en: 'None' },
+    minimal: { zh: '最低', en: 'Minimal' },
     low: { zh: '低', en: 'Low' },
     medium: { zh: '中', en: 'Medium' },
     high: { zh: '高', en: 'High' },
+    xhigh: { zh: '极高', en: 'XHigh' },
     max: { zh: '最高', en: 'Max' },
   };
   return labels[level][language];
 }
 
+function splitReasoningLevels(levels: ReasoningLevel[]) {
+  const rank: ReasoningLevel[] = [
+    'none',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+  ];
+  const available = new Set(levels);
+  const ordered = rank.filter((level) => available.has(level));
+  const primaryStart = Math.max(0, ordered.length - 3);
+  return {
+    primary: ordered.slice(primaryStart),
+    secondary: ordered.slice(0, primaryStart),
+  };
+}
+
 function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage) {
   const descriptions: Record<ReasoningLevel, { zh: string; en: string }> = {
+    none: { zh: '不分配推理预算，适合最低延迟请求', en: 'No reasoning budget for lowest-latency requests' },
+    minimal: { zh: '使用最少推理预算，主要用于支持该档位的旧模型', en: 'Minimal reasoning budget for models that support this legacy level' },
     low: { zh: '更快，适合直接问题', en: 'Faster for direct questions' },
     medium: { zh: '速度与分析深度平衡', en: 'Balanced speed and depth' },
     high: { zh: '更深入分析复杂问题', en: 'Deeper analysis for complex work' },
-    max: { zh: '使用后端允许的最高强度', en: 'Highest effort allowed by backend' },
+    xhigh: { zh: '面向高难度、质量优先的复杂任务', en: 'Quality-first effort for very difficult tasks' },
+    max: { zh: '当前模型支持的最大推理强度', en: 'Maximum reasoning effort supported by the current model' },
   };
   return descriptions[level][language];
 }

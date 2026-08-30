@@ -258,12 +258,14 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 referencePlanAvailable
                 referencePlanMode="off"
                 permissionMode="all_free"
+                subagentPermissionRouting="parent"
                 reasoningLevelAvailable
                 reasoningLevel="max"
-                reasoningLevels={['low', 'medium', 'high', 'max']}
+                reasoningLevels={['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']}
                 onModelChange={() => undefined}
                 onReferencePlanModeChange={() => undefined}
                 onPermissionModeChange={() => undefined}
+                onSubagentPermissionRoutingChange={() => undefined}
                 onReasoningLevelChange={() => undefined}
                 onSend={async (text) => {
                   if (!shadowOpen) return;

@@ -40,6 +40,10 @@ export interface ComputerUsePluginConfig {
   allowWindowClose: boolean;
 }
 
+export interface ChromePluginConfig {
+  connectionMode: "managed" | "existing";
+}
+
 export interface CardbushAppPluginConfig extends CardbushPluginCatalogEntry {
   installed: boolean;
   enabled: boolean;
@@ -212,25 +216,40 @@ function decodeSnapshot(
 }
 
 function defaultConfig(id: string): Record<string, unknown> {
-  return id === "computer-use" ? {
-    screenshotDirectory: "",
-    allowOpenApp: true,
-    allowWindowClose: true,
-  } : {};
+  if (id === "computer-use") {
+    return {
+      screenshotDirectory: "",
+      allowOpenApp: true,
+      allowWindowClose: true,
+    };
+  }
+  if (id === "chrome") {
+    return { connectionMode: "managed" } satisfies ChromePluginConfig;
+  }
+  return {};
 }
 
 function decodeConfig(id: string, input: unknown): Record<string, unknown> {
   const config = record(input ?? {}, "plugin.config must be an object.");
-  if (id !== "computer-use") return structuredClone(config);
-  const screenshotDirectory = optionalString(config.screenshotDirectory) ?? "";
-  if (screenshotDirectory && !isAbsolute(screenshotDirectory)) {
-    throw new Error("computer-use screenshotDirectory must be an absolute path or empty.");
+  if (id === "computer-use") {
+    const screenshotDirectory = optionalString(config.screenshotDirectory) ?? "";
+    if (screenshotDirectory && !isAbsolute(screenshotDirectory)) {
+      throw new Error("computer-use screenshotDirectory must be an absolute path or empty.");
+    }
+    return {
+      screenshotDirectory,
+      allowOpenApp: boolean(config.allowOpenApp, "computer-use.allowOpenApp"),
+      allowWindowClose: boolean(config.allowWindowClose, "computer-use.allowWindowClose"),
+    };
   }
-  return {
-    screenshotDirectory,
-    allowOpenApp: boolean(config.allowOpenApp, "computer-use.allowOpenApp"),
-    allowWindowClose: boolean(config.allowWindowClose, "computer-use.allowWindowClose"),
-  };
+  if (id === "chrome") {
+    const connectionMode = optionalString(config.connectionMode) ?? "managed";
+    if (connectionMode !== "managed" && connectionMode !== "existing") {
+      throw new Error("chrome.connectionMode must be managed or existing.");
+    }
+    return { connectionMode } satisfies ChromePluginConfig;
+  }
+  return structuredClone(config);
 }
 
 function normalizePluginId(value: string): string {

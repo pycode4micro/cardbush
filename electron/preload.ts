@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 type CardlingDesktopState = {
   enabled: boolean;
@@ -46,6 +47,20 @@ type RuntimeStartupStatus = {
   error?: string;
 };
 
+type ShadowWindowPayload = {
+  windowId: string;
+  sessionId: string;
+  sourceTurnId: string;
+  title: string;
+  language: 'zh' | 'en';
+  theme: 'parchment' | 'bright' | 'dark';
+  accentColor: string;
+  modelConfig: Record<string, unknown>;
+  reasoningLevel?: ReasoningEffort;
+  projectDir: string;
+  initialMode: 'readonly' | 'fork';
+};
+
 const desktopApi = {
   runtime: {
     command: (message: unknown) =>
@@ -77,6 +92,24 @@ const desktopApi = {
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
   isMaximized: () => ipcRenderer.invoke('window:is-maximized') as Promise<boolean>,
+  openShadowWindow: (payload: Omit<ShadowWindowPayload, 'windowId'>) =>
+    ipcRenderer.invoke('shadow:open-window', payload) as Promise<{
+      windowId: string;
+      reused: boolean;
+    }>,
+  shadowWindowContext: () =>
+    ipcRenderer.invoke('shadow:window-context') as Promise<ShadowWindowPayload>,
+  minimizeShadowWindow: () => ipcRenderer.invoke('shadow:window-minimize') as Promise<void>,
+  toggleMaximizeShadowWindow: () =>
+    ipcRenderer.invoke('shadow:window-toggle-maximize') as Promise<void>,
+  isShadowWindowMaximized: () =>
+    ipcRenderer.invoke('shadow:window-is-maximized') as Promise<boolean>,
+  closeShadowWindow: () => ipcRenderer.invoke('shadow:window-close') as Promise<void>,
+  onShadowCloseRequest: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('shadow:close-request', listener);
+    return () => ipcRenderer.removeListener('shadow:close-request', listener);
+  },
   notifySessionAttention: (payload: SessionAttentionPayload) =>
     ipcRenderer.invoke('attention:notify-session', payload) as Promise<{ shown: boolean }>,
   setSessionAttentionCount: (count: number) =>

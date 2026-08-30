@@ -101,13 +101,7 @@ async function controlWindow(input: Record<string, unknown>) {
     throw new Error(`Unsupported window operation: ${operation}`);
   }
   const windows = await listWindows() as Array<Record<string, unknown>>;
-  const hwnd = optionalInteger(input.hwnd);
-  const pattern = String(input.title_pattern ?? '').trim().toLowerCase();
-  const matches = windows.filter((window) => hwnd
-    ? Number(window.hwnd) === hwnd
-    : pattern && String(window.title ?? '').toLowerCase().includes(pattern));
-  if (matches.length !== 1) throw new Error(matches.length ? 'Window selector is ambiguous.' : 'Window was not found.');
-  const target = matches[0];
+  const target = selectWindowTarget(windows, input);
   const bounds = {
     x: optionalInteger(input.x),
     y: optionalInteger(input.y),
@@ -125,6 +119,73 @@ async function controlWindow(input: Record<string, unknown>) {
     CARDBUSH_WINDOW_HEIGHT: String(bounds.height ?? 0),
   });
   return { action: 'window', operation: normalized, target };
+}
+
+export function selectWindowTarget(
+  windows: Array<Record<string, unknown>>,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const hwnd = optionalInteger(input.hwnd);
+  const titlePattern = optionalString(input.title_pattern).toLowerCase();
+  const app = normalizeProcessName(optionalString(input.app));
+  if (hwnd == null && !titlePattern && !app) {
+    throw new Error('Window action requires app, title_pattern, or hwnd.');
+  }
+
+  const matches = windows.filter((window) => {
+    if (hwnd != null && Number(window.hwnd) !== hwnd) return false;
+    if (
+      app &&
+      normalizeProcessName(String(window.process_name ?? '')) !== app
+    ) {
+      return false;
+    }
+    if (
+      titlePattern &&
+      !String(window.title ?? '').toLowerCase().includes(titlePattern)
+    ) {
+      return false;
+    }
+    return true;
+  });
+  if (matches.length === 1) return matches[0];
+
+  const selector = [
+    hwnd != null ? `hwnd=${hwnd}` : '',
+    app ? `app="${app}"` : '',
+    titlePattern ? `title_pattern="${titlePattern}"` : '',
+  ].filter(Boolean).join(', ');
+  if (matches.length === 0) {
+    throw new Error(`Window was not found for ${selector}. Call action="observe" to list available windows.`);
+  }
+  const candidates = matches
+    .slice(0, 6)
+    .map(windowDescription)
+    .join('; ');
+  throw new Error(
+    `Window selector ${selector} matched ${matches.length} windows: ${candidates}. Retry with hwnd.`,
+  );
+}
+
+function normalizeProcessName(value: string) {
+  const executable = value
+    .replace(/^['"]|['"]$/g, '')
+    .split(/[\\/]/)
+    .at(-1)
+    ?.trim()
+    .toLowerCase() ?? '';
+  const name = executable.replace(/\.exe$/i, '');
+  const aliases: Record<string, string> = {
+    'google chrome': 'chrome',
+    'microsoft edge': 'msedge',
+    'visual studio code': 'code',
+  };
+  return aliases[name] ?? name;
+}
+
+function windowDescription(window: Record<string, unknown>) {
+  const title = String(window.title ?? '').replace(/\s+/g, ' ').trim();
+  return `hwnd=${Number(window.hwnd) || 0} process=${String(window.process_name ?? '')} title="${title}"`;
 }
 
 async function runInput(action: string, input: Record<string, unknown>) {
@@ -222,6 +283,10 @@ function requiredString(value: unknown, label: string): string {
   const result = typeof value === 'string' ? value.trim() : '';
   if (!result) throw new Error(`${label} is required.`);
   return result;
+}
+
+function optionalString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function optionalInteger(value: unknown): number | undefined {

@@ -47,6 +47,13 @@ function historyToolTargetIndex(
   }
 
   const turnId = toolTurnId(execution);
+  const toolCallIndex = messages.findIndex((message) =>
+    message.role === 'assistant' &&
+    (!turnId || messageTurnId(message) === turnId) &&
+    messageToolCallIds(message).has(execution.id),
+  );
+  if (toolCallIndex >= 0) return toolCallIndex;
+
   const segmentIndex =
     execution.assistantSegmentIndex ?? finiteNumber(execution.metadata.assistant_segment_index);
   if (turnId && segmentIndex != null) {
@@ -74,6 +81,16 @@ function historyToolTargetIndex(
     }
   }
   return -1;
+}
+
+function messageToolCallIds(message: ChatMessage) {
+  const toolCalls = message.metadata?.toolCalls;
+  if (!Array.isArray(toolCalls)) return new Set<string>();
+  return new Set(toolCalls.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return [];
+    const id = String((candidate as Record<string, unknown>).id ?? '').trim();
+    return id ? [id] : [];
+  }));
 }
 
 function messageIdentityValues(message: ChatMessage) {

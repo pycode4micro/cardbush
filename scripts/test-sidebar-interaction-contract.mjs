@@ -93,6 +93,22 @@ assert.doesNotMatch(
   /\.window-frame[^}]*cursor:\s*ew-resize/,
   'The internal split-resizer treatment must not replace native window resizing',
 );
+const windowDragRule = stylesSource.match(/\.window-drag\s*\{([^}]*)\}/)?.[1] ?? '';
+const windowSpacerRule = stylesSource.match(/\.window-spacer\s*\{([^}]*)\}/)?.[1] ?? '';
+const noDragRule = stylesSource.match(
+  /\.no-drag,\s*button,\s*select,\s*input,\s*textarea\s*\{([^}]*)\}/,
+)?.[1] ?? '';
+assert.match(windowDragRule, /app-region:\s*drag/);
+assert.match(windowDragRule, /-webkit-app-region:\s*drag/);
+assert.match(windowSpacerRule, /min-width:\s*48px/);
+assert.match(windowSpacerRule, /height:\s*100%/);
+assert.match(windowSpacerRule, /app-region:\s*drag/);
+assert.match(noDragRule, /app-region:\s*no-drag/);
+assert.match(
+  appSource,
+  /className="window-spacer window-drag" aria-hidden="true"/,
+  'The empty center title-bar area must remain an explicit native drag target',
+);
 const windowGlyphRule = stylesSource.match(/\.window-glyph\s*\{([^}]*)\}/)?.[1] ?? '';
 assert.match(stylesSource, /\.window-button\s*\{\s*width:\s*40px;[\s\S]*?height:\s*29px/);
 assert.match(windowGlyphRule, /width:\s*10px/);

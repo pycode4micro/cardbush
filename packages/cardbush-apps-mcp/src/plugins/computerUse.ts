@@ -52,7 +52,7 @@ const inputSchema = z.object({
   delta: z.number().int().min(-20).max(20).optional(),
   duration_ms: z.number().int().min(0).max(5000).optional(),
   steps: z.number().int().min(1).max(120).optional(),
-  title_pattern: z.string().optional(),
+  title_pattern: z.string().optional().describe('Case-insensitive substring of the window title.'),
   hwnd: z.number().int().positive().optional(),
   operation: z.enum([
     'activate',
@@ -64,7 +64,29 @@ const inputSchema = z.object({
     'move',
     'resize',
   ]).optional(),
-  app: z.string().optional(),
+  app: z.string().optional().describe(
+    'Application executable or process name, such as chrome, msedge, or code. Supported by open_app and window actions.',
+  ),
+}).superRefine((input, context) => {
+  if (input.action === 'open_app' && !input.app?.trim()) {
+    context.addIssue({
+      code: 'custom',
+      path: ['app'],
+      message: 'open_app requires app.',
+    });
+  }
+  if (
+    input.action === 'window' &&
+    input.hwnd == null &&
+    !input.title_pattern?.trim() &&
+    !input.app?.trim()
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: ['app'],
+      message: 'window requires app, title_pattern, or hwnd.',
+    });
+  }
 });
 
 export function registerComputerUsePlugin(
@@ -76,6 +98,7 @@ export function registerComputerUsePlugin(
     description: [
       "Observe and interact with the user's current desktop.",
       'Use file tools for file content. Screenshots are returned as image artifacts.',
+      'For window actions, prefer app to target a process, or use hwnd from observe when more than one window matches.',
     ].join(' '),
     inputSchema,
     _meta: {

@@ -175,10 +175,16 @@ not infer safety from Tool names, language, task text, manifests, or state
 combinations. Results remain ordered by the original Tool Call batch.
 
 ToolResult now has a structured `guidance` channel. Subagent terminal responses
-are persisted in a checksummed task journal and re-enter the parent after all Tool
-receipts as User guidance, without parsing output prose. Child sessions use the
-same Session/Turn/Provider/Tool loop and durable stores as root sessions. Team
-configuration and peer discussion remain a separate product-owned checkpoint.
+are persisted in a checksummed task journal and re-enter the parent as User
+guidance at safe model-round boundaries, without parsing output prose. Dispatch
+does not block subsequent independent parent rounds. A parent terminal attempt is
+a mandatory join barrier: Runtime waits for remaining children, injects their
+results, and runs parent reconciliation before committing the terminal fact.
+`await_subagents` exposes the same join explicitly when the parent has no useful
+independent work left; repeated status polling is neither required nor encouraged.
+Child sessions use the same Session/Turn/Provider/Tool loop and durable stores as
+root sessions. Team configuration and peer discussion remain a separate
+product-owned checkpoint.
 
 ## Goal continuation checkpoint
 

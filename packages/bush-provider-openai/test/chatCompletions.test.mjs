@@ -87,13 +87,15 @@ test("forwards explicit output and reasoning controls without adding local defau
   const providerDefault = toChatCompletionCreateParams(base);
   assert.equal(providerDefault.max_completion_tokens, undefined);
   assert.equal(providerDefault.reasoning_effort, undefined);
-  const explicit = toChatCompletionCreateParams({
-    ...base,
-    maxOutputTokens: 32768,
-    reasoningEffort: "xhigh",
-  });
-  assert.equal(explicit.max_completion_tokens, 32768);
-  assert.equal(explicit.reasoning_effort, "xhigh");
+  for (const reasoningEffort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    const explicit = toChatCompletionCreateParams({
+      ...base,
+      maxOutputTokens: 32768,
+      reasoningEffort,
+    });
+    assert.equal(explicit.max_completion_tokens, 32768);
+    assert.equal(explicit.reasoning_effort, reasoningEffort);
+  }
 });
 
 test("projects the internal developer role to universally compatible system messages", () => {

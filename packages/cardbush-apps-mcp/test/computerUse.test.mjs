@@ -10,6 +10,7 @@ import {
   readAppsRuntimeConfig,
 } from '../dist/index.js';
 import { computerUseManifest } from '../dist/plugins/computerUse.js';
+import { selectWindowTarget } from '../dist/plugins/computerUseRuntime.js';
 
 test('creates an independent MCP server with an explicit computer-use manifest', () => {
   const server = createCardbushAppsServer();
@@ -56,4 +57,53 @@ test('reads the Product Host lifecycle and Computer Use policy snapshot', async 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('selects a window by application process name', () => {
+  const windows = [
+    { process_id: 10, hwnd: 100, title: 'CardBush', process_name: 'cardbush' },
+    { process_id: 20, hwnd: 200, title: '抖店 - Google Chrome', process_name: 'chrome' },
+  ];
+  assert.deepEqual(
+    selectWindowTarget(windows, { app: 'chrome' }),
+    windows[1],
+  );
+  assert.deepEqual(
+    selectWindowTarget(windows, { app: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' }),
+    windows[1],
+  );
+  assert.deepEqual(
+    selectWindowTarget(windows, { app: 'Google Chrome' }),
+    windows[1],
+  );
+});
+
+test('combines app and title selectors and reports actionable ambiguity', () => {
+  const windows = [
+    { process_id: 20, hwnd: 200, title: '抖店 - Google Chrome', process_name: 'chrome' },
+    { process_id: 21, hwnd: 201, title: '文档 - Google Chrome', process_name: 'chrome.exe' },
+  ];
+  assert.deepEqual(
+    selectWindowTarget(windows, { app: 'chrome', title_pattern: '抖店' }),
+    windows[0],
+  );
+  assert.throws(
+    () => selectWindowTarget(windows, { app: 'chrome' }),
+    /matched 2 windows:.*hwnd=200.*hwnd=201.*Retry with hwnd/,
+  );
+  assert.deepEqual(
+    selectWindowTarget(windows, { hwnd: 201 }),
+    windows[1],
+  );
+});
+
+test('rejects missing and unmatched window selectors with recovery guidance', () => {
+  assert.throws(
+    () => selectWindowTarget([], {}),
+    /requires app, title_pattern, or hwnd/,
+  );
+  assert.throws(
+    () => selectWindowTarget([], { app: 'chrome' }),
+    /Window was not found for app="chrome".*action="observe"/,
+  );
 });

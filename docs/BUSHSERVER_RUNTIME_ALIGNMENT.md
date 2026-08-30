@@ -43,8 +43,10 @@ as disabled or installable Built-ins.
   and share a same-resource mutation fence. Workspace revert verifies the current
   after-revision and uses recorded before-images.
 - Subagent dispatch returns submitted immediately, runs an ordinary child Turn in
-  the background, and feeds its result back to the same parent Turn. Child-visible
-  Tools and Team Profile constraints can only shrink parent capabilities.
+  the background without blocking independent parent rounds, and feeds completed
+  results back only at safe round boundaries. Parent completion is guarded by a
+  mandatory join-and-reconcile barrier. Child-visible Tools and Team Profile
+  constraints can only shrink parent capabilities.
 - Teams require exactly one fallback member and support Profile disabled Tools,
   Skills, trusted Hooks/Guards and prompt instructions. There is no conference,
   peer chat, hidden DAG, automatic routing or Runtime retry policy.
@@ -69,7 +71,6 @@ update_task_plan
 update_goal
 schedule_task
 search_skills
-skills_manager
 consult_logic
 learn_logic
 ked_knowledge

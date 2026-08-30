@@ -462,8 +462,57 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
       <p className="plugin-long-description">{plugin.longDescription}</p>
       <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : 'A'}</span><div><strong>{component.name}</strong><small>{component.description}</small></div>{plugin.installed && <Check size={17} />}</div>)}</section>
       {plugin.id === 'computer-use' && plugin.installed && <section className="plugin-detail-section"><h3>{language === 'zh' ? '配置' : 'Settings'}</h3><label className="plugin-path-setting"><span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span><input value={String(plugin.config.screenshotDirectory ?? '')} placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Use the system temp directory when empty'} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, screenshotDirectory: event.currentTarget.value } })} /></label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowOpenApp !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowOpenApp: event.currentTarget.checked } })} />{language === 'zh' ? '允许启动应用' : 'Allow opening apps'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowWindowClose !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowWindowClose: event.currentTarget.checked } })} />{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</label><button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? '配置已保存' : 'Settings saved')}>{language === 'zh' ? '保存配置' : 'Save settings'}</button></section>}
+      {plugin.id === 'chrome' && plugin.installed && (
+        <ChromeConnectionSettings
+          language={language}
+          plugin={plugin}
+          onReplace={onReplace}
+          onPersist={onPersist}
+        />
+      )}
       <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3><Info label={language === 'zh' ? '功能' : 'Capabilities'} value={plugin.capabilities.join(', ')} /><Info label={language === 'zh' ? '开发者' : 'Developer'} value={plugin.developerName} /><Info label={language === 'zh' ? '类别' : 'Category'} value={plugin.category} /><Info label={language === 'zh' ? '版本' : 'Version'} value={plugin.version} /><Info label="Manifest" value={plugin.manifestPath} /></section>
     </div>
+  );
+}
+
+function ChromeConnectionSettings({ language, plugin, onReplace, onPersist }: {
+  language: AppLanguage;
+  plugin: CardbushAppPlugin;
+  onReplace: (plugin: CardbushAppPlugin) => void;
+  onPersist: (plugin: CardbushAppPlugin, message: string) => void;
+}) {
+  const connectionMode = plugin.config.connectionMode === 'existing' ? 'existing' : 'managed';
+  const setConnectionMode = (mode: 'managed' | 'existing') => {
+    onReplace({ ...plugin, config: { ...plugin.config, connectionMode: mode } });
+  };
+  return (
+    <section className="plugin-detail-section">
+      <h3>{language === 'zh' ? '浏览器连接' : 'Browser connection'}</h3>
+      <label className="plugin-radio-setting">
+        <input type="radio" name="chrome-connection-mode" checked={connectionMode === 'managed'} onChange={() => setConnectionMode('managed')} />
+        <span>
+          <strong>{language === 'zh' ? '独立受控浏览器' : 'Managed browser'}</strong>
+          <small>{language === 'zh' ? '由 Chrome 插件启动独立实例，不使用日常浏览器的登录状态。' : 'Launch a separate instance without using your everyday browser session.'}</small>
+        </span>
+      </label>
+      <label className="plugin-radio-setting">
+        <input type="radio" name="chrome-connection-mode" checked={connectionMode === 'existing'} onChange={() => setConnectionMode('existing')} />
+        <span>
+          <strong>{language === 'zh' ? '复用当前 Chrome' : 'Reuse current Chrome'}</strong>
+          <small>{language === 'zh' ? '连接当前 Chrome，复用已有标签页、Cookie 和登录状态。' : 'Connect to the current Chrome and reuse tabs, cookies, and signed-in state.'}</small>
+        </span>
+      </label>
+      {connectionMode === 'existing' && (
+        <p className="plugin-setting-note">
+          {language === 'zh'
+            ? '需要 Chrome 144 或更高版本，并在 chrome://inspect/#remote-debugging 开启远程调试。Agent 将能访问该浏览器中的页面和登录数据。'
+            : 'Requires Chrome 144 or newer with remote debugging enabled at chrome://inspect/#remote-debugging. The Agent can access pages and signed-in data in that browser.'}
+        </p>
+      )}
+      <button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? 'Chrome 连接方式已保存' : 'Chrome connection saved')}>
+        {language === 'zh' ? '保存配置' : 'Save settings'}
+      </button>
+    </section>
   );
 }
 

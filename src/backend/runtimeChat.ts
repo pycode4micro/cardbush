@@ -9,6 +9,7 @@ import {
   GOAL_CONTINUATION_PROMPT,
   createProductAgentTurnRequest,
 } from '@cardbush/bush-product-agent';
+import type { ProductSubagentConfig } from '@cardbush/product-host';
 
 import type {
   AssistantStreamChunk,
@@ -54,9 +55,30 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   let terminal: Extract<RuntimeEvent, { kind: 'turn_terminal' }> | undefined;
   let lastAssistantMessageId = '';
   try {
-    const resolvedModel = await resolveProductModel(
-      request.modelConfig?.id.trim() || request.model,
-    );
+    const rootModelId = request.modelConfig?.id.trim() || request.model;
+    const [resolvedModel, subagentConfig] = await Promise.all([
+      resolveProductModel(rootModelId),
+      readProductSubagentConfig(),
+    ]);
+    const childModel = subagentConfig.model.mode === 'fixed'
+      ? subagentConfig.model.modelId === rootModelId
+        ? resolvedModel
+        : await resolveProductModel(subagentConfig.model.modelId)
+      : undefined;
+    const childAgentPolicy: Record<string, unknown> = {
+      permissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
+      childPermissionMode: subagentConfig.childPermissionMode,
+      model: childModel ? {
+        mode: 'fixed',
+        modelId: subagentConfig.model.mode === 'fixed'
+          ? subagentConfig.model.modelId
+          : rootModelId,
+        model: childModel.model,
+        providerBinding: childModel.binding,
+        ...(childModel.maxOutputTokens ? { maxOutputTokens: childModel.maxOutputTokens } : {}),
+      } : { mode: 'inherit' },
+      disabledTools: subagentConfig.disabledTools,
+    };
     await synchronizeProductMcpSnapshot(runtime.client);
     const catalog = await runtime.client.getToolCatalogDetails(controller.signal);
     const activeGoal = await runtime.client.getGoal(request.sessionId, controller.signal);
@@ -98,6 +120,8 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       files: request.files,
       images: request.images?.map((image) => image.path),
       permissionMode,
+      subagentPermissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
+      childAgentPolicy,
       interactiveRequestsEnabled: request.interactiveRequestsEnabled,
       userChoiceEnabled: userChoice,
       visionEnabled: vision,
@@ -251,6 +275,30 @@ export async function resolveProductModel(modelId: string): Promise<ResolvedProd
       maxOutputTokens: positiveInteger(value.maxOutputTokens),
     } : {}),
   };
+}
+
+async function readProductSubagentConfig(): Promise<ProductSubagentConfig> {
+  const execute = window.cardbushDesktop?.productHostCommand;
+  if (!execute) throw new Error('CardBush Product Host is unavailable.');
+  const response = await execute({
+    protocol: 'cardbush.product_host_ipc.v1',
+    kind: 'subagents.get',
+  });
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('CardBush Product Host returned an invalid Subagent configuration.');
+  }
+  const envelope = response as Record<string, unknown>;
+  if (envelope.ok !== true) {
+    const error = envelope.error && typeof envelope.error === 'object'
+      ? envelope.error as Record<string, unknown>
+      : {};
+    throw new Error(String(error.message ?? 'Product Subagent configuration failed.'));
+  }
+  const value = envelope.value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Product Subagent configuration payload must be an object.');
+  }
+  return value as unknown as ProductSubagentConfig;
 }
 
 export async function streamRuntimeTurnEvents(
@@ -475,6 +523,12 @@ function permissionInteraction(
     actions: event.payload.actions,
     resources: event.payload.resources,
     requestedCapabilityIds: event.payload.requestedCapabilityIds,
+    sourceSessionId: event.payload.sourceSessionId,
+    sourceTurnId: event.payload.sourceTurnId,
+    parentSessionId: event.payload.parentSessionId,
+    parentTurnId: event.payload.parentTurnId,
+    subagentTaskId: event.payload.subagentTaskId,
+    permissionRouting: event.payload.permissionRouting,
     answer: (answer) => runtime.answerPermission(answer),
   });
 }
@@ -657,7 +711,8 @@ function terminalSnapshot(
 }
 
 function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
-  return value === 'max' || value === 'high' || value === 'medium' || value === 'low'
+  return value === 'max' || value === 'xhigh' || value === 'high' ||
+    value === 'medium' || value === 'low' || value === 'minimal' || value === 'none'
     ? value
     : undefined;
 }

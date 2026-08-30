@@ -1,5 +1,6 @@
 import {
   runtimeSessionTurnRequestSchema,
+  type ReasoningEffort,
   type RuntimeProviderBindingRef,
   type RuntimeSessionTurnRequest,
   type ToolDefinition,
@@ -7,7 +8,7 @@ import {
 
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
-For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
+For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. A subagent dispatch is asynchronous and returns a task ID immediately: after dispatch, continue useful independent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several independent workstreams as separate subagent calls when useful. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
 Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.`;
 
@@ -32,6 +33,8 @@ export interface ProductAgentTurnInput {
   files?: string[];
   images?: string[];
   permissionMode: string;
+  subagentPermissionRouting?: "user" | "parent";
+  childAgentPolicy?: Record<string, unknown>;
   interactiveRequestsEnabled?: boolean;
   userChoiceEnabled?: boolean;
   visionEnabled?: boolean;
@@ -40,7 +43,7 @@ export interface ProductAgentTurnInput {
   planEnabled: boolean;
   maxOutputTokens?: number;
   maxContextTokens?: number;
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningEffort?: ReasoningEffort;
   sessionTitle?: string;
   sessionMetadata?: Record<string, unknown>;
 }
@@ -98,6 +101,8 @@ export function createProductAgentTurnRequest(
       source: "cardbush_product_agent",
       ...(projectDir ? { workspaceDir: projectDir, projectDir } : {}),
       permissionMode: input.permissionMode,
+      subagentPermissionRouting: input.subagentPermissionRouting ?? "user",
+      ...(input.childAgentPolicy ? { childAgentPolicy: input.childAgentPolicy } : {}),
       mcpContext: { filesystemRoots: projectDir ? [projectDir] : [] },
       teamId: input.teamId,
       allowedSkills: input.allowedSkills ?? [],
@@ -111,12 +116,12 @@ export function createProductAgentTurnRequest(
 function runtimeContext(input: ProductAgentTurnInput, projectDir: string): string {
   const content = [
     projectDir ? `Workspace: ${projectDir}` : "",
-    `Local date: ${input.localDate}`,
     input.projectInstructions?.trim()
       ? `Project instructions:\n${input.projectInstructions.trim()}`
       : "",
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images:\n${input.images.join("\n")}` : "",
+    `Local date: ${input.localDate}`,
   ].filter(Boolean).join("\n");
   return content ? `<runtime_context>\n${content}\n</runtime_context>` : "";
 }

@@ -34,14 +34,19 @@ import {
   ToolExecutionStore,
   ToolRegistry,
   type ModelProvider,
+  type SubagentPermissionPolicy,
 } from '@cardbush/bush-runtime';
 import { McpClientManager } from '@cardbush/bush-mcp-client';
+import {
+  decodeProductSubagentConfig,
+  defaultProductSubagentConfig,
+} from '@cardbush/product-host';
 import {
   OpenAICompatibleProvider,
   OpenAICompatibleProviderRegistry,
 } from '@cardbush/bush-provider-openai';
-import { isAbsolute, join } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -271,6 +276,7 @@ function withBundledAppsServer(input: unknown): unknown {
           chromeEntry,
           '--no-usage-statistics',
           '--no-performance-crux',
+          ...(appsConfig.chromeConnectionMode === 'existing' ? ['--auto-connect'] : []),
         ],
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
@@ -298,8 +304,16 @@ function readBundledAppsConfig(path: string | undefined): {
   serviceEnabled: boolean;
   revision: number;
   enabledPluginIds: Set<string>;
+  chromeConnectionMode: 'managed' | 'existing';
 } {
-  if (!path) return { serviceEnabled: true, revision: 1, enabledPluginIds: new Set() };
+  if (!path) {
+    return {
+      serviceEnabled: true,
+      revision: 1,
+      enabledPluginIds: new Set(),
+      chromeConnectionMode: 'managed',
+    };
+  }
   if (!isAbsolute(path)) throw new Error('CARDBUSH_APPS_CONFIG_PATH must be absolute.');
   try {
     const value = object(JSON.parse(readFileSync(path, 'utf8')), 'Apps config must be an object.');
@@ -311,16 +325,37 @@ function readBundledAppsConfig(path: string | undefined): {
       throw new Error('Apps config revision must be a positive integer below 1000000.');
     }
     const plugins = Array.isArray(value.plugins) ? value.plugins : [];
+    let chromeConnectionMode: 'managed' | 'existing' = 'managed';
     const enabledPluginIds = new Set(plugins.flatMap((candidate) => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
       const plugin = candidate as Record<string, unknown>;
       const id = String(plugin.id ?? '').trim().replaceAll('_', '-');
+      if (id === 'chrome') {
+        const config = plugin.config == null
+          ? {}
+          : object(plugin.config, 'Chrome plugin config must be an object.');
+        const mode = String(config.connectionMode ?? 'managed').trim();
+        if (mode !== 'managed' && mode !== 'existing') {
+          throw new Error('Chrome connectionMode must be managed or existing.');
+        }
+        chromeConnectionMode = mode;
+      }
       return id && plugin.installed === true && plugin.enabled === true ? [id] : [];
     }));
-    return { serviceEnabled: value.serviceEnabled, revision, enabledPluginIds };
+    return {
+      serviceEnabled: value.serviceEnabled,
+      revision,
+      enabledPluginIds,
+      chromeConnectionMode,
+    };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
-      return { serviceEnabled: true, revision: 1, enabledPluginIds: new Set() };
+      return {
+        serviceEnabled: true,
+        revision: 1,
+        enabledPluginIds: new Set(),
+        chromeConnectionMode: 'managed',
+      };
     }
     throw error;
   }
@@ -351,10 +386,56 @@ function object(value: unknown, message: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function readSubagentPermissionPolicy(path: string | undefined): SubagentPermissionPolicy {
+  const fallback = defaultProductSubagentConfig();
+  if (!path) return {
+    permissionRouting: fallback.permissionRouting,
+    childPermissionMode: fallback.childPermissionMode,
+    model: { mode: 'inherit' },
+    disabledTools: fallback.disabledTools,
+  };
+  if (!isAbsolute(path)) throw new Error('CARDBUSH_SUBAGENT_CONFIG_PATH must be absolute.');
+  let payload: unknown;
+  try {
+    payload = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify(fallback, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      return {
+        permissionRouting: fallback.permissionRouting,
+        childPermissionMode: fallback.childPermissionMode,
+        model: { mode: 'inherit' },
+        disabledTools: fallback.disabledTools,
+      };
+    }
+    throw error;
+  }
+  const config = decodeProductSubagentConfig(payload);
+  if (JSON.stringify(payload) !== JSON.stringify(config)) {
+    writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  }
+  if (config.permissionRouting === 'parent' && config.childPermissionMode !== 'task_free') {
+    process.stderr.write(`${JSON.stringify({
+      code: 'subagent_elevated_permission_mode',
+      message: `Subagent childPermissionMode is ${config.childPermissionMode}; child Agents may operate beyond project-scoped task_free boundaries.`,
+    })}\n`);
+  }
+  return {
+    permissionRouting: config.permissionRouting,
+    childPermissionMode: config.childPermissionMode,
+    model: { mode: 'inherit' },
+    disabledTools: config.disabledTools,
+  };
+}
+
 const runtimeStateRoot = process.env.CARDBUSH_RUNTIME_STATE_ROOT?.trim();
 if (runtimeStateRoot && !isAbsolute(runtimeStateRoot)) {
   throw new Error('CARDBUSH_RUNTIME_STATE_ROOT must be an absolute path.');
 }
+const subagentPermissionPolicy = readSubagentPermissionPolicy(
+  process.env.CARDBUSH_SUBAGENT_CONFIG_PATH?.trim(),
+);
 const eventLog = runtimeStateRoot
   ? new InMemoryRuntimeEventLog({
       persistence: new FileRuntimeEventPersistence({
@@ -412,7 +493,6 @@ host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry,
   dataRoot: runtimeStateRoot,
-  skillRoots,
   eventLog,
   checkpointStore,
   sessionStore: new SessionStore({ persistence: sessionPersistence }),
@@ -429,6 +509,7 @@ host = new InMemoryRuntimeHost({
   durableSessions: Boolean(runtimeStateRoot),
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
+  subagentPermissionPolicy,
   settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,

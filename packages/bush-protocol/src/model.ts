@@ -71,6 +71,18 @@ export const permissionModeSchema = z.enum([
 export type RequestCapabilities = z.infer<typeof requestCapabilitiesSchema>;
 export type RuntimePermissionMode = z.infer<typeof permissionModeSchema>;
 
+export const reasoningEffortSchema = z.enum([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
+
 export const modelRequestSchema = z.object({
   protocol: z.literal(BUSH_MODEL_REQUEST_PROTOCOL),
   requestId: z.string().min(1),
@@ -84,7 +96,7 @@ export const modelRequestSchema = z.object({
   maxOutputTokens: z.number().int().positive().optional(),
   temperature: z.number().finite().optional(),
   topP: z.number().finite().optional(),
-  reasoningEffort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
   requestCapabilities: requestCapabilitiesSchema.default({
     vision: false,
     interactiveRequests: false,

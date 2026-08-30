@@ -15,6 +15,7 @@ import {
   inheritedChildMessages,
   resolveChildTurn,
   type ChildTurnRunner,
+  type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { TeamSnapshotStore } from "./teamSnapshotStore.js";
@@ -52,6 +53,7 @@ export function registerTeamTool(
     createTurnId?: () => string;
     createMessageId?: () => string;
     createReceiptId?: () => string;
+    permissionPolicy?: SubagentPermissionPolicy;
   } = {},
 ): void {
   if (registry.resolve(TEAM_DELEGATE_TOOL)) return;
@@ -107,7 +109,7 @@ export function registerTeamTool(
       evidence_hints: ["team_task"],
     },
     parallelSafe: false,
-    visibleToChild: false,
+    visibleToChild: true,
     decodeInput,
     execute: async (context) => {
       if (!context.turn) throw new Error("Team dispatch requires the parent Turn context.");
@@ -132,6 +134,7 @@ export function registerTeamTool(
             context.turn!.request.tools.some((tool) => tool.name === name),
           ),
           ids: { createTaskId, createRequestId, createSessionId, createTurnId, createMessageId },
+          permissionPolicy: options.permissionPolicy,
         })
       ));
       return toolResult(context, team, [], execution, createReceiptId());
@@ -158,6 +161,7 @@ async function runPhase(input: {
     createTurnId: () => string;
     createMessageId: () => string;
   };
+  permissionPolicy?: SubagentPermissionPolicy;
 }): Promise<PhaseResult> {
   const taskId = input.ids.createTaskId();
   const childSessionId = input.ids.createSessionId();
@@ -208,6 +212,7 @@ async function runPhase(input: {
         teamHooks: input.member.hooks,
         teamGuards: input.member.guards,
       },
+      permissionPolicy: input.permissionPolicy,
     });
     ({ status, finalResponse, errorMessage, usage } = resolveChildTurn(
       await input.runChild(request, input.context.signal),

@@ -29,6 +29,7 @@ test('registers only the published Skill discovery tool', async () => {
     const searchResult = await search.execute(context(searchInput, 'search_skills'));
     assert.equal(searchResult.success, true);
     assert.equal(searchResult.output.matches[0].name, 'xlsx');
+    assert.equal(searchResult.output.matches[0].mainResource, join(packageDir, 'SKILL.md'));
 
     assert.equal(registry.resolve('read_skill'), undefined);
   } finally {

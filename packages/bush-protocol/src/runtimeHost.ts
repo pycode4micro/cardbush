@@ -123,6 +123,12 @@ const factReferencesSchema = z.object({
 const permissionIdentitySchema = z.object({
   permissionId: z.string().min(1),
   toolCallId: z.string().min(1).optional(),
+  sourceSessionId: z.string().min(1).optional(),
+  sourceTurnId: z.string().min(1).optional(),
+  parentSessionId: z.string().min(1).optional(),
+  parentTurnId: z.string().min(1).optional(),
+  subagentTaskId: z.string().min(1).optional(),
+  permissionRouting: z.enum(["user", "parent"]).optional(),
 });
 
 export const runtimeEventSchema = z.discriminatedUnion("kind", [

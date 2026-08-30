@@ -158,6 +158,13 @@ test("model request keeps provider-independent tool definitions", () => {
 
   assert.equal(request.toolChoice, "auto");
   assert.equal(request.tools[0].name, "read_file");
+
+  for (const reasoningEffort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.equal(
+      modelRequestSchema.parse({ ...request, reasoningEffort }).reasoningEffort,
+      reasoningEffort,
+    );
+  }
 });
 
 test("model events are transport-neutral and mechanically validated", () => {

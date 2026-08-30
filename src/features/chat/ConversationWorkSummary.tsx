@@ -32,20 +32,14 @@ import {
   SUBAGENT_DISPATCH_UI_EVENT,
 } from '../subagents/subagentObservabilityEvents';
 import { ExperimentalA2APanel } from './ExperimentalA2APanel';
+import {
+  groupWorkSummaryHistoryByTurn,
+  historyTurnLabel,
+  historyTurnTimestamp,
+} from './workSummaryHistory';
 
 const historyTurnPageSize = 3;
 const subagentTaskPageSize = 3;
-
-export interface WorkSummaryHistoryTurn {
-  id: string;
-  turnId: string;
-  turnSequence?: number;
-  message: ChatMessage;
-  history: ChatMessage[];
-  prompt: string;
-  toolCount: number;
-  order: number;
-}
 
 export function ConversationWorkSummary({
   language,
@@ -291,17 +285,10 @@ export function ConversationWorkSummary({
                       })}
                     >
                       <span className="work-summary-history-turn-main">
-                        <strong>{historyTurnLabel(group, language)}</strong>
-                        <small title={group.prompt}>
-                          {group.prompt || (language === 'zh' ? '查看该回合的完整执行记录' : 'View the complete execution record')}
-                        </small>
+                        <strong title={group.prompt}>{historyTurnLabel(group, language)}</strong>
                       </span>
                       <span className="work-summary-history-turn-meta">
                         <small>{historyTurnTimestamp(group.message, language)}</small>
-                        <em>
-                          {group.history.length} {language === 'zh' ? '段' : 'steps'}
-                          {group.toolCount > 0 ? ` · ${group.toolCount} ${language === 'zh' ? '工具' : 'tools'}` : ''}
-                        </em>
                       </span>
                       <ChevronRight size={14} />
                     </button>
@@ -346,119 +333,6 @@ export function ConversationWorkSummary({
       </div>
     </aside>
   );
-}
-
-export function groupWorkSummaryHistoryByTurn(
-  messages: ChatMessage[],
-): WorkSummaryHistoryTurn[] {
-  const promptsByTurn = new Map<string, string>();
-  for (const message of messages) {
-    if (message.role !== 'user') continue;
-    const prompt = historyPromptPreview(message.content);
-    const turnId = message.turnId?.trim();
-    if (turnId && prompt && !promptsByTurn.has(turnId)) {
-      promptsByTurn.set(turnId, prompt);
-    }
-  }
-
-  const grouped = new Map<string, WorkSummaryHistoryTurn>();
-  let nearbyPrompt = '';
-  messages.forEach((message, order) => {
-    if (message.role === 'user') {
-      nearbyPrompt = historyPromptPreview(message.content) || nearbyPrompt;
-      return;
-    }
-    if (message.role !== 'assistant' || (message.loopHistory?.length ?? 0) === 0) return;
-    const turnId = message.turnId?.trim() ?? '';
-    const id = turnId || message.id;
-    const history = message.loopHistory ?? [];
-    const existing = grouped.get(id);
-    if (existing) {
-      existing.history = mergeHistoryMessages(existing.history, history);
-      existing.toolCount = existing.history.reduce(
-        (total, item) => total + (item.toolExecutions?.length ?? 0),
-        0,
-      );
-      existing.message = message;
-      existing.order = order;
-      return;
-    }
-    grouped.set(id, {
-      id,
-      turnId,
-      turnSequence: historyTurnSequence(message),
-      message,
-      history: mergeHistoryMessages([], history),
-      prompt: (turnId && promptsByTurn.get(turnId)) || nearbyPrompt,
-      toolCount: history.reduce(
-        (total, item) => total + (item.toolExecutions?.length ?? 0),
-        0,
-      ),
-      order,
-    });
-  });
-
-  return [...grouped.values()].sort((left, right) => {
-    const leftSequence = left.turnSequence ?? left.order;
-    const rightSequence = right.turnSequence ?? right.order;
-    return rightSequence - leftSequence || right.order - left.order;
-  });
-}
-
-function mergeHistoryMessages(current: ChatMessage[], incoming: ChatMessage[]) {
-  const seen = new Set<string>();
-  return [...current, ...incoming].filter((message, index) => {
-    const key = message.messageId?.trim() || message.id.trim() || `${message.turnId ?? ''}:${index}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function historyPromptPreview(content: string) {
-  return content
-    .replace(/Attached files \(absolute paths\):[\s\S]*$/i, '')
-    .replace(/[`*_>#-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 96);
-}
-
-function historyTurnSequence(message: ChatMessage) {
-  const value = Number(
-    message.turnSequence ??
-      message.metadata?.turn_sequence ??
-      message.metadata?.turnSequence,
-  );
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
-}
-
-export function historyTurnLabel(
-  group: WorkSummaryHistoryTurn | undefined,
-  language: AppLanguage,
-) {
-  if (!group) return language === 'zh' ? '回合详情' : 'Turn details';
-  const sequence = group.turnSequence;
-  if (sequence != null) {
-    return language === 'zh' ? `第 ${sequence} 回合` : `Turn ${sequence}`;
-  }
-  return language === 'zh' ? '对话回合' : 'Conversation turn';
-}
-
-export function historyTurnTimestamp(message: ChatMessage, language: AppLanguage) {
-  const source = message.createdAt || String(
-    message.metadata?.cardbush_turn_completed_at ??
-      message.metadata?.turn_completed_at ??
-      '',
-  );
-  const parsed = new Date(source);
-  if (!Number.isFinite(parsed.getTime())) return '';
-  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(parsed);
 }
 
 function useSubagentTaskFeed(sessionId: string, available: boolean) {

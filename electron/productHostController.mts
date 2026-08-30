@@ -15,6 +15,7 @@ import {
   ProductHostProtocolError,
   ProductModelConfigStore,
   ProductMcpConfigStore,
+  ProductSubagentConfigStore,
   type ProductModelConfigSnapshot,
   type RuntimeAssetCategory,
 } from '@cardbush/product-host';
@@ -57,6 +58,7 @@ export class ElectronProductHostController {
   readonly #models: ProductModelConfigStore;
   readonly #apps: CardbushAppsConfigStore;
   readonly #mcp: ProductMcpConfigStore;
+  readonly #subagents: ProductSubagentConfigStore;
   readonly #runtime: ElectronRuntimeTransport;
   readonly #runtimeStateRoot: string;
   readonly #bundledSkillRoot: string;
@@ -86,6 +88,7 @@ export class ElectronProductHostController {
       ]),
     });
     this.#mcp = new ProductMcpConfigStore(join(dataRoot, 'config', 'mcp-servers.json'));
+    this.#subagents = new ProductSubagentConfigStore(join(dataRoot, 'config', 'subagents.json'));
     this.#host = new ProductHost({
       get: async () => {
         const snapshot = await this.#models.read();
@@ -110,6 +113,8 @@ export class ElectronProductHostController {
     }, {
       get: async () => this.#mcp.read(),
       update: async (config) => this.#mcp.write(config),
+    }, {
+      get: async () => this.#subagents.read(),
     });
   }
 

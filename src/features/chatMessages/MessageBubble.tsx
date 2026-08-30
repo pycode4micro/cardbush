@@ -821,8 +821,11 @@ function MessageBubbleView({
     message.role === 'assistant'
       ? (message.loopHistory ?? []).filter(hasVisibleLoopHistoryMessage)
       : [];
-  const visibleLoopHistory = isActiveAssistantTurn ? [] : loopHistory;
-  const activeTranscriptMessages = isActiveAssistantTurn
+  const stoppedAssistantRound = isStoppedAssistantMessage(message);
+  const freezeStoppedTranscript = stoppedAssistantRound && loopHistory.length > 0;
+  const visibleLoopHistory =
+    isActiveAssistantTurn || freezeStoppedTranscript ? [] : loopHistory;
+  const activeTranscriptMessages = isActiveAssistantTurn || freezeStoppedTranscript
     ? activeAssistantTranscriptMessages(loopHistory, message)
     : [];
   const renderActiveTranscript = activeTranscriptMessages.length > 1;
@@ -843,7 +846,6 @@ function MessageBubbleView({
         )
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
-  const stoppedAssistantRound = isStoppedAssistantMessage(message);
   const showAssistantProgress =
     message.role === 'assistant' &&
     !stoppedAssistantRound &&
@@ -2110,14 +2112,10 @@ export function AssistantLoopHistoryBlock({
   onOpenScene?: (scene: CardlingScene) => void;
 }) {
   const visibleHistory = history.filter(hasVisibleLoopHistoryMessage);
-  const toolCount = visibleHistory.reduce(
-    (total, item) => total + (item.toolExecutions?.length ?? 0),
-    0,
-  );
   const summary =
     language === 'zh'
-      ? `历史执行 ${visibleHistory.length} 条${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}`
-      : `Loop history ${visibleHistory.length}${toolCount > 0 ? ` · ${toolCount} tools` : ''}`;
+      ? '历史执行记录'
+      : 'Execution history';
 
   if (visibleHistory.length === 0) {
     return null;
@@ -2139,7 +2137,6 @@ export function AssistantLoopHistoryBlock({
           <AssistantLoopHistoryItem
             // eslint-disable-next-line react/no-array-index-key
             key={`${historyMessage.id}-${index}`}
-            index={index}
             message={historyMessage}
             language={language}
             onRevertChangeReport={onRevertChangeReport}
@@ -2152,13 +2149,11 @@ export function AssistantLoopHistoryBlock({
 }
 
 function AssistantLoopHistoryItem({
-  index,
   message,
   language,
   onRevertChangeReport,
   onOpenScene,
 }: {
-  index: number;
   message: ChatMessage;
   language: AppLanguage;
   onRevertChangeReport: (
@@ -2169,10 +2164,6 @@ function AssistantLoopHistoryItem({
 }) {
   const { imagePaths, videoPaths, audioPaths, text } = splitMessageMedia(message.content);
   const executions = message.toolExecutions ?? [];
-  const title =
-    language === 'zh'
-      ? `第 ${index + 1} 段执行`
-      : `Step ${index + 1}`;
   const timestamp = formatLoopHistoryTimestamp(message, language);
 
   return (
@@ -2180,10 +2171,7 @@ function AssistantLoopHistoryItem({
       className="assistant-loop-history-item"
       data-testid="assistant-loop-history-item"
     >
-      <header>
-        <strong>{title}</strong>
-        {timestamp && <span>{timestamp}</span>}
-      </header>
+      {timestamp && <header className="assistant-loop-history-timestamp"><span>{timestamp}</span></header>}
       <MessageImageStrip paths={imagePaths} language={language} />
       <MessageMediaStrip
         videoPaths={videoPaths}

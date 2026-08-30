@@ -42,7 +42,7 @@ export function registerInteractionTools(
         },
       },
       manifest: interactionManifest("permission.request"),
-      visibleToChild: false,
+      visibleToChild: true,
       decodeInput: (value) => {
         const item = record(value);
         const path = text(item.path);
@@ -99,7 +99,7 @@ export function registerInteractionTools(
         inputSchema: userChoiceInputSchema(),
       },
       manifest: interactionManifest("interaction.user_choice"),
-      visibleToChild: false,
+      visibleToChild: true,
       decodeInput: (value) => record(value),
       authorize: (context) => {
         if (context.turn?.request.requestCapabilities.userChoice === true) return { kind: "allow" };
