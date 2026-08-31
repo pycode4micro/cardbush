@@ -53,7 +53,6 @@ test("runs configured Team assignments concurrently with immutable Profile const
     model: "fixture",
     messages: [],
     tools: registry.definitions(),
-    toolChoice: "auto",
     metadata: {},
   };
   const outcome = await coordinator.execute(
@@ -146,7 +145,6 @@ test("rejects unknown or duplicate member assignments without dispatching childr
           model: "m",
           messages: [],
           tools: registry.definitions(),
-          toolChoice: "auto",
           metadata: {},
         },
         contextMessages: [],

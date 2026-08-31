@@ -25,8 +25,13 @@ export interface RuntimePermissionBrokerOptions {
 }
 
 interface PendingPermission {
-  toolCallId: string;
+  requestKey: string;
+  primaryToolCallId: string;
   capabilityIds: string[];
+  waiters: Map<string, PermissionWaiter>;
+}
+
+interface PermissionWaiter {
   resolve: (answer: RuntimePermissionAnswer) => void;
   reject: (error: Error) => void;
   removeAbortListener: () => void;
@@ -34,6 +39,7 @@ interface PendingPermission {
 
 export class RuntimePermissionBroker implements PermissionResolver {
   readonly #pending = new Map<string, PendingPermission>();
+  readonly #pendingByRequest = new Map<string, string>();
   readonly #createPermissionId: () => string;
   readonly #onRequested?: RuntimePermissionBrokerOptions["onRequested"];
   readonly #onAnswered?: RuntimePermissionBrokerOptions["onAnswered"];
@@ -52,6 +58,15 @@ export class RuntimePermissionBroker implements PermissionResolver {
     signal?: AbortSignal,
   ): Promise<RuntimePermissionAnswer> {
     const request = normalizeRequest(input);
+    const requestKey = permissionRequestKey(request);
+    const existingPermissionId = this.#pendingByRequest.get(requestKey);
+    if (existingPermissionId) {
+      const existing = this.#pending.get(existingPermissionId);
+      if (existing) {
+        return this.#addWaiter(existingPermissionId, existing, request.toolCallId, signal);
+      }
+      this.#pendingByRequest.delete(requestKey);
+    }
     const permissionId = this.#createPermissionId();
     if (this.#pending.has(permissionId)) {
       throw new Error(`Permission ${permissionId} is already pending.`);
@@ -59,36 +74,61 @@ export class RuntimePermissionBroker implements PermissionResolver {
     if (signal?.aborted) {
       return Promise.reject(abortError());
     }
+    const pending: PendingPermission = {
+      requestKey,
+      primaryToolCallId: request.toolCallId,
+      capabilityIds: request.capabilityIds,
+      waiters: new Map(),
+    };
+    this.#pending.set(permissionId, pending);
+    this.#pendingByRequest.set(requestKey, permissionId);
+    const answer = this.#addWaiter(permissionId, pending, request.toolCallId, signal);
+    try {
+      this.#onRequested?.({ ...request, permissionId });
+    } catch (error) {
+      this.#deletePending(permissionId, pending);
+      for (const waiter of pending.waiters.values()) {
+        waiter.removeAbortListener();
+        waiter.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      pending.waiters.clear();
+    }
+    return answer;
+  }
+
+  #addWaiter(
+    permissionId: string,
+    pending: PendingPermission,
+    toolCallId: string,
+    signal?: AbortSignal,
+  ): Promise<RuntimePermissionAnswer> {
+    if (pending.waiters.has(toolCallId)) {
+      throw new Error(`Tool call ${toolCallId} already awaits permission ${permissionId}.`);
+    }
+    if (signal?.aborted) return Promise.reject(abortError());
     return new Promise((resolve, reject) => {
       const onAbort = () => {
-        const pending = this.#pending.get(permissionId);
-        if (!pending) return;
-        this.#pending.delete(permissionId);
-        pending.removeAbortListener();
+        const current = this.#pending.get(permissionId);
+        const waiter = current?.waiters.get(toolCallId);
+        if (!current || !waiter) return;
+        current.waiters.delete(toolCallId);
+        waiter.removeAbortListener();
+        if (current.waiters.size === 0) this.#deletePending(permissionId, current);
         this.#onCancelled?.({
           permissionId,
-          toolCallId: pending.toolCallId,
+          toolCallId,
           reason: "turn_cancelled",
         });
-        pending.reject(abortError());
+        waiter.reject(abortError());
       };
       const removeAbortListener = () =>
         signal?.removeEventListener("abort", onAbort);
-      this.#pending.set(permissionId, {
-        toolCallId: request.toolCallId,
-        capabilityIds: request.capabilityIds,
+      pending.waiters.set(toolCallId, {
         resolve,
         reject,
         removeAbortListener,
       });
       signal?.addEventListener("abort", onAbort, { once: true });
-      try {
-        this.#onRequested?.({ ...request, permissionId });
-      } catch (error) {
-        this.#pending.delete(permissionId);
-        removeAbortListener();
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
     });
   }
 
@@ -106,15 +146,25 @@ export class RuntimePermissionBroker implements PermissionResolver {
         `Permission ${answer.permissionId} must grant exactly the requested capabilities.`,
       );
     }
-    this.#pending.delete(answer.permissionId);
-    pending.removeAbortListener();
-    pending.resolve(answer);
-    this.#onAnswered?.({ ...answer, toolCallId: pending.toolCallId });
+    this.#deletePending(answer.permissionId, pending);
+    for (const waiter of pending.waiters.values()) {
+      waiter.removeAbortListener();
+      waiter.resolve(answer);
+    }
+    pending.waiters.clear();
+    this.#onAnswered?.({ ...answer, toolCallId: pending.primaryToolCallId });
     return answer;
   }
 
   pendingIds(): string[] {
     return [...this.#pending.keys()];
+  }
+
+  #deletePending(permissionId: string, pending: PendingPermission): void {
+    this.#pending.delete(permissionId);
+    if (this.#pendingByRequest.get(pending.requestKey) === permissionId) {
+      this.#pendingByRequest.delete(pending.requestKey);
+    }
   }
 }
 
@@ -154,4 +204,15 @@ function sameSet(left: string[], right: string[]): boolean {
   const leftSet = new Set(left);
   const rightSet = new Set(right);
   return leftSet.size === rightSet.size && [...leftSet].every((item) => rightSet.has(item));
+}
+
+function permissionRequestKey(
+  request: ToolPermissionRequest & { toolCallId: string },
+): string {
+  return JSON.stringify({
+    reason: request.reason,
+    actions: [...request.actions].sort(),
+    resources: [...request.resources].sort(),
+    capabilityIds: [...request.capabilityIds].sort(),
+  });
 }

@@ -42,11 +42,15 @@ import {
   defaultProductSubagentConfig,
 } from '@cardbush/product-host';
 import {
-  OpenAICompatibleProvider,
-  OpenAICompatibleProviderRegistry,
+  OpenAIResponsesProvider,
+  OpenAIResponsesProviderRegistry,
 } from '@cardbush/bush-provider-openai';
+import {
+  loadEnabledProductPluginSkillRoots,
+  type PluginRoot,
+} from './productPlugins.js';
 import { dirname, isAbsolute, join } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -56,7 +60,7 @@ if (!parentPort) {
 const operations = new Map<string, AbortController>();
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
-let providers: OpenAICompatibleProviderRegistry;
+let providers: OpenAIResponsesProviderRegistry;
 let mcp: McpClientManager;
 
 async function handleMessage(input: unknown) {
@@ -182,9 +186,10 @@ async function streamEvents(
 function createEnvironmentProvider(): ModelProvider | undefined {
   const apiKey = process.env.CARDBUSH_RUNTIME_PROVIDER_API_KEY?.trim();
   if (!apiKey) return undefined;
-  return new OpenAICompatibleProvider({
+  const baseURL = process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined;
+  return new OpenAIResponsesProvider({
     apiKey,
-    baseURL: process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined,
+    baseURL,
     timeoutMs: positiveInteger(
       process.env.CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS,
       undefined,
@@ -267,6 +272,7 @@ function withBundledAppsServer(input: unknown): unknown {
     });
   }
   if (chromeEntry && appsConfig.enabledPluginIds.has('chrome')) {
+    const chromeConnection = resolveChromeConnection(appsConfig.chromeConnectionMode);
     bundled.push({
       id: 'chrome_devtools',
       transport: {
@@ -276,7 +282,7 @@ function withBundledAppsServer(input: unknown): unknown {
           chromeEntry,
           '--no-usage-statistics',
           '--no-performance-crux',
-          ...(appsConfig.chromeConnectionMode === 'existing' ? ['--auto-connect'] : []),
+          ...(chromeConnection.effectiveMode === 'existing' ? ['--auto-connect'] : []),
         ],
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
@@ -285,6 +291,7 @@ function withBundledAppsServer(input: unknown): unknown {
         }),
       },
       versionMode: 'auto',
+      restartBackoffMs: 500,
       defaultToolPolicy: {
         permission: 'ask',
         parallelSafe: false,
@@ -292,6 +299,12 @@ function withBundledAppsServer(input: unknown): unknown {
       },
       toolPolicies: {},
     });
+    console.error(JSON.stringify({
+      type: 'runtime_chrome_connection',
+      requestedMode: chromeConnection.requestedMode,
+      effectiveMode: chromeConnection.effectiveMode,
+      reason: chromeConnection.reason,
+    }));
   }
   return {
     ...snapshot,
@@ -311,7 +324,7 @@ function readBundledAppsConfig(path: string | undefined): {
       serviceEnabled: true,
       revision: 1,
       enabledPluginIds: new Set(),
-      chromeConnectionMode: 'managed',
+      chromeConnectionMode: 'existing',
     };
   }
   if (!isAbsolute(path)) throw new Error('CARDBUSH_APPS_CONFIG_PATH must be absolute.');
@@ -325,7 +338,7 @@ function readBundledAppsConfig(path: string | undefined): {
       throw new Error('Apps config revision must be a positive integer below 1000000.');
     }
     const plugins = Array.isArray(value.plugins) ? value.plugins : [];
-    let chromeConnectionMode: 'managed' | 'existing' = 'managed';
+    let chromeConnectionMode: 'managed' | 'existing' = 'existing';
     const enabledPluginIds = new Set(plugins.flatMap((candidate) => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
       const plugin = candidate as Record<string, unknown>;
@@ -334,7 +347,7 @@ function readBundledAppsConfig(path: string | undefined): {
         const config = plugin.config == null
           ? {}
           : object(plugin.config, 'Chrome plugin config must be an object.');
-        const mode = String(config.connectionMode ?? 'managed').trim();
+        const mode = String(config.connectionMode ?? 'existing').trim();
         if (mode !== 'managed' && mode !== 'existing') {
           throw new Error('Chrome connectionMode must be managed or existing.');
         }
@@ -354,7 +367,7 @@ function readBundledAppsConfig(path: string | undefined): {
         serviceEnabled: true,
         revision: 1,
         enabledPluginIds: new Set(),
-        chromeConnectionMode: 'managed',
+        chromeConnectionMode: 'existing',
       };
     }
     throw error;
@@ -482,13 +495,70 @@ const subagentPersistence = runtimeStateRoot
     })
   : undefined;
 
-providers = new OpenAICompatibleProviderRegistry({
+providers = new OpenAIResponsesProviderRegistry({
   fallbackProvider: createEnvironmentProvider(),
 });
 
 const toolRegistry = new ToolRegistry();
 const skillRoots = skillRootsFromEnvironment();
-if (skillRoots.length > 0) registerSkillTools(toolRegistry, skillRoots);
+const pluginRoots = pluginRootsFromEnvironment();
+if (skillRoots.length > 0 || pluginRoots.length > 0) {
+  registerSkillTools(toolRegistry, async () => {
+    try {
+      const activePluginRoots = await loadEnabledProductPluginSkillRoots(
+        pluginRoots,
+        process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '',
+      );
+      return [
+        ...skillRoots.slice(0, 1),
+        ...activePluginRoots,
+        ...skillRoots.slice(1),
+      ];
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({
+        code: 'runtime_plugin_skill_discovery_failed',
+        message: error instanceof Error ? error.message : String(error),
+      })}\n`);
+      return skillRoots;
+    }
+  });
+}
+
+function resolveChromeConnection(
+  requestedMode: 'managed' | 'existing',
+): {
+  requestedMode: 'managed' | 'existing';
+  effectiveMode: 'managed' | 'existing';
+  reason: string;
+} {
+  if (requestedMode === 'managed') {
+    return { requestedMode, effectiveMode: 'managed', reason: 'managed_requested' };
+  }
+  const activePortPath = chromeDevToolsActivePortPath();
+  if (activePortPath && existsSync(activePortPath)) {
+    return { requestedMode, effectiveMode: 'existing', reason: 'devtools_active_port_available' };
+  }
+  return {
+    requestedMode,
+    effectiveMode: 'managed',
+    reason: 'existing_chrome_remote_debugging_unavailable',
+  };
+}
+
+function chromeDevToolsActivePortPath(): string | undefined {
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    return localAppData
+      ? join(localAppData, 'Google', 'Chrome', 'User Data', 'DevToolsActivePort')
+      : undefined;
+  }
+  const home = process.env.HOME?.trim();
+  if (!home) return undefined;
+  if (process.platform === 'darwin') {
+    return join(home, 'Library', 'Application Support', 'Google', 'Chrome', 'DevToolsActivePort');
+  }
+  return join(home, '.config', 'google-chrome', 'DevToolsActivePort');
+}
 host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry,
@@ -538,6 +608,18 @@ host = new InMemoryRuntimeHost({
 mcp = new McpClientManager({
   registry: toolRegistry,
   canApply: () => !host.hasActiveTurns(),
+  onServiceStateChange: (state) => {
+    process.stderr.write(`${JSON.stringify({
+      code: 'runtime_mcp_service_state',
+      ...state,
+    })}\n`);
+  },
+  onServerStderr: (entry) => {
+    process.stderr.write(`${JSON.stringify({
+      code: 'runtime_mcp_stderr',
+      ...entry,
+    })}\n`);
+  },
 });
 
 function skillRootsFromEnvironment(): string[] {
@@ -553,6 +635,31 @@ function skillRootsFromEnvironment(): string[] {
     throw new Error('Every Runtime Skill root must be an absolute path.');
   }
   return roots;
+}
+
+function pluginRootsFromEnvironment(): PluginRoot[] {
+  const raw = process.env.CARDBUSH_RUNTIME_PLUGIN_ROOTS?.trim();
+  if (!raw) return [];
+  let roots: unknown;
+  try {
+    roots = JSON.parse(raw);
+  } catch {
+    throw new Error('CARDBUSH_RUNTIME_PLUGIN_ROOTS must be a JSON array.');
+  }
+  if (!Array.isArray(roots)) {
+    throw new Error('CARDBUSH_RUNTIME_PLUGIN_ROOTS must be a JSON array.');
+  }
+  return roots.map((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('Every Runtime plugin root must be an object.');
+    }
+    const root = candidate as Record<string, unknown>;
+    if (typeof root.path !== 'string' || !isAbsolute(root.path) ||
+        (root.source !== 'bundled' && root.source !== 'user')) {
+      throw new Error('Every Runtime plugin root must have an absolute path and valid source.');
+    }
+    return { path: root.path, source: root.source };
+  });
 }
 
 parentPort.on('message', (messageEvent) => {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { cp, mkdir, readdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type {
@@ -7,7 +7,7 @@ import type {
   CardbushPluginComponent,
 } from '@cardbush/product-host' with { 'resolution-mode': 'import' };
 
-interface PluginRoot {
+export interface PluginRoot {
   path: string;
   source: 'bundled' | 'user';
 }
@@ -45,6 +45,44 @@ export async function loadProductPluginCatalog(
     }
   }
   return [...plugins.values()];
+}
+
+/**
+ * Resolves Skill roots from installed and enabled plugins against the current
+ * catalog. Paths stored in the user configuration are deliberately ignored so
+ * a development checkout move or packaged-app upgrade cannot leave stale or
+ * user-edited executable paths behind.
+ */
+export async function loadEnabledProductPluginSkillRoots(
+  roots: PluginRoot[],
+  configPath: string,
+): Promise<string[]> {
+  const catalog = await loadProductPluginCatalog(roots);
+  let snapshot: Record<string, unknown> | null = null;
+  try {
+    snapshot = await readJson(configPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (snapshot && snapshot.serviceEnabled === false) return [];
+  const stored = new Map<string, Record<string, unknown>>();
+  if (snapshot && Array.isArray(snapshot.plugins)) {
+    for (const candidate of snapshot.plugins) {
+      const state = objectOrEmpty(candidate);
+      const id = string(state.id);
+      if (id) stored.set(id, state);
+    }
+  }
+  const result: string[] = [];
+  for (const plugin of catalog) {
+    const state = stored.get(plugin.id);
+    const installed = state
+      ? state.installed === true
+      : plugin.installation === 'INSTALLED_BY_DEFAULT';
+    const enabled = installed && (state ? state.enabled === true : installed);
+    if (enabled) result.push(...(plugin.skillRoots ?? []));
+  }
+  return [...new Set(result.map((root) => resolve(root)))];
 }
 
 export async function installProductPlugin(
@@ -120,6 +158,7 @@ async function decodeManifest(input: {
   const author = object(manifest.author, 'plugin.author must be an object.');
   const logoPath = await assetPath(pluginRoot, interfaceMetadata.logo);
   const logoDarkPath = await assetPath(pluginRoot, interfaceMetadata.logoDark, true);
+  const skillRoots = await skillRootsFromManifest(manifest, pluginRoot);
   return {
     id,
     name: requiredString(interfaceMetadata.displayName, 'plugin.interface.displayName'),
@@ -137,21 +176,31 @@ async function decodeManifest(input: {
     manifestPath,
     source,
     installation,
-    components: await componentsFromManifest(manifest, pluginRoot),
+    skillRoots,
+    components: await componentsFromManifest(manifest, pluginRoot, skillRoots),
   };
 }
 
 async function componentsFromManifest(
   manifest: Record<string, unknown>,
   pluginRoot: string,
+  skillRoots: string[],
 ): Promise<CardbushPluginComponent[]> {
   const result: CardbushPluginComponent[] = [];
-  const skillsPath = string(manifest.skills);
-  if (skillsPath) {
-    const root = safePluginPath(pluginRoot, skillsPath);
+  for (const root of skillRoots) {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
     for (const entry of entries.filter((item) => item.isDirectory())) {
-      result.push({ kind: 'skill', id: entry.name, name: entry.name, description: 'Plugin Skill' });
+      const skillPath = join(root, entry.name, 'SKILL.md');
+      const content = await readFile(skillPath, 'utf8').catch(() => '');
+      if (!content) continue;
+      const metadata = frontmatter(content);
+      const id = string(metadata.name) || entry.name;
+      result.push({
+        kind: 'skill',
+        id,
+        name: displayName(id),
+        description: string(metadata.description) || 'Plugin Skill',
+      });
     }
   }
   const mcp = manifest.mcpServers;
@@ -179,6 +228,41 @@ async function componentsFromManifest(
         description: string(app.description) || 'CardBush app integration',
       });
     }
+  }
+  return result;
+}
+
+async function skillRootsFromManifest(
+  manifest: Record<string, unknown>,
+  pluginRoot: string,
+): Promise<string[]> {
+  const configured = string(manifest.skills);
+  if (!configured) return [];
+  const candidate = safePluginPath(pluginRoot, configured);
+  if (!(await stat(candidate).catch(() => null))?.isDirectory()) {
+    throw new Error(`Plugin Skill directory is missing: ${configured}`);
+  }
+  const resolvedRoot = await realpath(pluginRoot);
+  const resolvedCandidate = await realpath(candidate);
+  if (!inside(resolvedRoot, resolvedCandidate)) {
+    throw new Error(`Plugin Skill directory escapes its root: ${configured}`);
+  }
+  return [resolvedCandidate];
+}
+
+function frontmatter(content: string): Record<string, unknown> {
+  if (!content.startsWith('---')) return {};
+  const end = content.indexOf('\n---', 3);
+  if (end < 0) return {};
+  const result: Record<string, unknown> = {};
+  for (const line of content.slice(3, end).split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
+    if (!match) continue;
+    const value = match[2].trim();
+    result[match[1]] = ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+      ? value.slice(1, -1)
+      : value;
   }
   return result;
 }

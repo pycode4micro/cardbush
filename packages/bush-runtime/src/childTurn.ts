@@ -64,7 +64,6 @@ export function buildChildTurnRequest(input: {
   metadata: Record<string, unknown>;
   additionalPrefixMessages?: ModelMessage[];
   allowedToolNames?: string[];
-  toolChoice?: "auto" | "none" | "required";
   permissionPolicy?: SubagentPermissionPolicy;
 }): RuntimeSessionTurnRequest {
   if (!input.context.turn) throw new Error("Child dispatch requires the parent Turn context.");
@@ -130,7 +129,6 @@ export function buildChildTurnRequest(input: {
       agentRole: "child",
     },
     tools: childTools,
-    toolChoice: childTools.length > 0 ? (input.toolChoice ?? "auto") : "none",
     maxOutputTokens: modelPolicy?.maxOutputTokens ?? parentRequest.maxOutputTokens,
     temperature: parentRequest.temperature,
     topP: parentRequest.topP,

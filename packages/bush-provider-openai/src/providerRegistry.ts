@@ -13,14 +13,14 @@ import {
 import type { ModelProvider, ModelStreamOptions } from "@cardbush/bush-runtime";
 
 import {
-  OpenAICompatibleProvider,
-  type OpenAICompatibleProviderConfig,
-} from "./chatCompletions.js";
+  OpenAIResponsesProvider,
+  type OpenAIResponsesProviderConfig,
+} from "./responses.js";
 
-export interface OpenAICompatibleProviderRegistryOptions {
+export interface OpenAIResponsesProviderRegistryOptions {
   fallbackProvider?: ModelProvider;
   createRevision?: (config: RuntimeProviderBindingConfig) => string;
-  createProvider?: (config: OpenAICompatibleProviderConfig) => ModelProvider;
+  createProvider?: (config: OpenAIResponsesProviderConfig) => ModelProvider;
 }
 
 /**
@@ -31,21 +31,21 @@ export interface OpenAICompatibleProviderRegistryOptions {
  * binding ID creates a new revision while older revisions remain usable by
  * already-running Turns.
  */
-export class OpenAICompatibleProviderRegistry implements ModelProvider {
+export class OpenAIResponsesProviderRegistry implements ModelProvider {
   readonly #providers = new Map<string, ModelProvider>();
   readonly #bindingKeys = new Map<string, Set<string>>();
   readonly #fallbackProvider?: ModelProvider;
   readonly #createRevision: (config: RuntimeProviderBindingConfig) => string;
   readonly #createProvider: (
-    config: OpenAICompatibleProviderConfig,
+    config: OpenAIResponsesProviderConfig,
   ) => ModelProvider;
 
-  constructor(options: OpenAICompatibleProviderRegistryOptions = {}) {
+  constructor(options: OpenAIResponsesProviderRegistryOptions = {}) {
     this.#fallbackProvider = options.fallbackProvider;
     this.#createRevision = options.createRevision ?? bindingRevision;
     this.#createProvider =
       options.createProvider ??
-      ((config) => new OpenAICompatibleProvider(config));
+      ((config) => new OpenAIResponsesProvider(config));
   }
 
   upsert(input: unknown): RuntimeProviderBindingResult {
@@ -106,7 +106,7 @@ export class OpenAICompatibleProviderRegistry implements ModelProvider {
 
 function toProviderConfig(
   config: RuntimeProviderBindingConfig,
-): OpenAICompatibleProviderConfig {
+): OpenAIResponsesProviderConfig {
   return {
     apiKey: config.apiKey,
     baseURL: config.baseURL,

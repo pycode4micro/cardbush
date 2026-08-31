@@ -88,10 +88,10 @@ vm.runInNewContext(fileReferenceTranspiled.outputText, {
   }),
 });
 const {
-  linkifyLocalFileReferences,
   localFileReference,
   localFileReferenceFromHref,
   localFileReferenceHref,
+  remarkLocalFileReferences,
 } = fileReferenceModule.exports;
 const absoluteDocument = 'C:\\Users\\wfang\\Documents\\report.docx';
 const absoluteSkillDirectory =
@@ -123,24 +123,65 @@ assert.equal(
   '',
   'Internal file hrefs must not allow relative paths to bypass local-path validation',
 );
-const linkedReferences = linkifyLocalFileReferences(
-  `Open src/App.tsx and ${absoluteDocument}`,
-  'D:\\proj\\cardbush',
+const localPathTree = {
+  type: 'root',
+  children: [{
+    type: 'paragraph',
+    children: [{ type: 'text', value: `Open src/App.tsx and ${absoluteDocument}` }],
+  }],
+};
+remarkLocalFileReferences({ workspaceRoot: 'D:\\proj\\cardbush' })(localPathTree);
+const localPathLinks = localPathTree.children[0].children.filter((node) => node.type === 'link');
+assert.equal(localPathLinks.length, 2);
+assert.equal(localPathLinks[0].children[0].value, 'App.tsx');
+assert.ok(localPathLinks[0].url.includes(encodeURIComponent('D:\\proj\\cardbush\\src\\App.tsx')));
+assert.equal(localPathLinks[1].children[0].value, 'report.docx');
+
+const linkedDirectoryTree = {
+  type: 'root',
+  children: [{
+    type: 'paragraph',
+    children: [{ type: 'text', value: `Skill 位于：${absoluteSkillDirectory}，可以打开查看。` }],
+  }],
+};
+remarkLocalFileReferences({ workspaceRoot: 'D:\\proj\\cardbush' })(linkedDirectoryTree);
+const directoryLink = linkedDirectoryTree.children[0].children.find((node) => node.type === 'link');
+assert.equal(directoryLink.children[0].value, 'transport-delivery');
+assert.ok(directoryLink.url.includes(encodeURIComponent(absoluteSkillDirectory)));
+
+const nativeMarkdownTree = {
+  type: 'root',
+  children: [{
+    type: 'paragraph',
+    children: [
+      { type: 'strong', children: [{ type: 'text', value: '哔哩哔哩 (゜-゜)つロ 干杯~-bilibili' }] },
+      { type: 'text', value: ' 已在浏览器新标签页中打开（' },
+      { type: 'link', url: 'https://www.bilibili.com', children: [{ type: 'text', value: 'https://www.bilibili.com' }] },
+      { type: 'text', value: '）。' },
+    ],
+  }],
+};
+const nativeMarkdownBefore = JSON.stringify(nativeMarkdownTree);
+remarkLocalFileReferences({ workspaceRoot: 'D:\\proj\\cardbush' })(nativeMarkdownTree);
+assert.equal(
+  JSON.stringify(nativeMarkdownTree),
+  nativeMarkdownBefore,
+  'Native Markdown links and emphasis must remain untouched by local file enhancement.',
 );
-assert.ok(linkedReferences.includes('[App.tsx](cardbush-local-file:'));
-assert.ok(linkedReferences.includes(encodeURIComponent('D:\\proj\\cardbush\\src\\App.tsx')));
-assert.ok(linkedReferences.includes('[report.docx](cardbush-local-file:'));
-const linkedDirectoryReference = linkifyLocalFileReferences(
-  `Skill 位于：${absoluteSkillDirectory}，可以打开查看。`,
-  'D:\\proj\\cardbush',
-);
-assert.ok(
-  linkedDirectoryReference.includes('[transport-delivery](cardbush-local-file:'),
-  'Bare absolute directory paths must render as clickable references',
-);
-assert.ok(
-  linkedDirectoryReference.includes(encodeURIComponent(absoluteSkillDirectory)),
-  'Directory links must retain the complete absolute path',
+
+const bareWebUrlTree = {
+  type: 'root',
+  children: [{
+    type: 'paragraph',
+    children: [{ type: 'text', value: '打开（https://www.bilibili.com）。' }],
+  }],
+};
+const bareWebUrlBefore = JSON.stringify(bareWebUrlTree);
+remarkLocalFileReferences({ workspaceRoot: 'D:\\proj\\cardbush' })(bareWebUrlTree);
+assert.equal(
+  JSON.stringify(bareWebUrlTree),
+  bareWebUrlBefore,
+  'A web URL must never be interpreted as a Windows path beginning with s:/',
 );
 
 const localReferenceLinkSource = fs.readFileSync(

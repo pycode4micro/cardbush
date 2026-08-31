@@ -22,7 +22,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type {
+  ReasoningEffort,
+  RuntimeIpcOutboundMessage,
+} from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 import { inspectProjectRoots } from './projectRoots';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
@@ -32,8 +35,16 @@ import {
   migrateLegacyProductSkills,
   readProductSkill,
 } from './productSkills';
-import { installProductPlugin } from './productPlugins';
+import {
+  installProductPlugin,
+  loadEnabledProductPluginSkillRoots,
+  type PluginRoot,
+} from './productPlugins';
 import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
+import {
+  DesktopControlOverlay,
+  type DesktopControlTurn,
+} from './desktopControlOverlay';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -56,6 +67,8 @@ const cardbushDisplayName = 'cardbush';
 const desktopStartupStartedAt = Date.now();
 const runtimeStartupStatusChannel = 'app:runtime-startup-status';
 const runtimeServicesStartupTimeoutMs = 15_000;
+const bushRuntimeIpcProtocol = 'bush.runtime_ipc.v1' as const;
+const stopRuntimeTurnCommand = 'runtime.stop_turn' as const;
 // BrowserWindow#setIcon is most reliable on Windows when it receives a
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
 // shortcuts, where Windows explicitly requires an .ico file.
@@ -116,11 +129,13 @@ type RuntimeHostController = {
   startStream: (message: unknown) => Promise<void>;
   stopStream: (message: unknown) => Promise<void>;
   cancelOperation: (message: unknown) => Promise<void>;
-  onStreamFrame: (listener: (message: unknown) => void) => () => void;
+  onStreamFrame: (listener: (message: RuntimeIpcOutboundMessage) => void) => () => void;
 };
 
 let runtimeHostController: RuntimeHostController | null = null;
 let unregisterRuntimeHostIpc: (() => void) | null = null;
+let unregisterDesktopControlMonitor: (() => void) | null = null;
+let desktopControlOverlay: DesktopControlOverlay | null = null;
 let productHostController: {
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
@@ -597,15 +612,13 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
   };
   const theme = input.theme === 'bright' || input.theme === 'parchment' ? input.theme : 'dark';
-  const reasoningLevel = input.reasoningLevel === 'none' ||
-    input.reasoningLevel === 'minimal' ||
-    input.reasoningLevel === 'low' ||
-    input.reasoningLevel === 'medium' ||
-    input.reasoningLevel === 'high' ||
-    input.reasoningLevel === 'xhigh' ||
-    input.reasoningLevel === 'max'
-    ? input.reasoningLevel
-    : 'medium';
+  const requestedReasoningLevel = String(input.reasoningLevel ?? '').trim().toLowerCase();
+  const reasoningLevel: ReasoningEffort = requestedReasoningLevel === 'none' ||
+      requestedReasoningLevel === 'low' || requestedReasoningLevel === 'medium' ||
+      requestedReasoningLevel === 'high' || requestedReasoningLevel === 'xhigh' ||
+      requestedReasoningLevel === 'max'
+    ? requestedReasoningLevel
+    : 'high';
   return {
     sessionId,
     sourceTurnId: String(input.sourceTurnId ?? '').trim(),
@@ -2311,12 +2324,12 @@ ipcMain.handle('a2a:dispatch', (event, input: {
 
 ipcMain.handle('skills:list', async () => {
   await ensureLegacyProductSkillsMigrated();
-  return listProductSkills(productSkillRoots());
+  return listProductSkills(await activeProductSkillRoots());
 });
 
 ipcMain.handle('skills:read', async (_, skillName: string) => {
   await ensureLegacyProductSkillsMigrated();
-  return readProductSkill(productSkillRoots(), String(skillName ?? ''));
+  return readProductSkill(await activeProductSkillRoots(), String(skillName ?? ''));
 });
 
 ipcMain.handle('plugins:install-local', async () => {
@@ -2744,9 +2757,87 @@ function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
   }
 }
 
+function isComputerUseRuntimeTool(toolName: string): boolean {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === 'computer_use' || /(?:__|[./:])computer_use$/.test(normalized);
+}
+
+function ensureDesktopControlOverlay(): DesktopControlOverlay {
+  if (desktopControlOverlay) return desktopControlOverlay;
+  desktopControlOverlay = new DesktopControlOverlay({
+    onCancel: async (turn) => {
+      const controller = runtimeHostController;
+      if (!controller) {
+        appendDebugLog('desktop-control', {
+          stage: 'escape-stop-skipped',
+          reason: 'runtime_host_unavailable',
+          ...turn,
+        });
+        return;
+      }
+      const operationId = `desktop-control-stop-${randomUUID()}`;
+      const response = await controller.command({
+        protocol: bushRuntimeIpcProtocol,
+        type: 'command',
+        operationId,
+        command: {
+          kind: stopRuntimeTurnCommand,
+          payload: turn,
+        },
+      });
+      const responseRecord = response && typeof response === 'object'
+        ? response as Record<string, unknown>
+        : {};
+      appendDebugLog('desktop-control', {
+        stage: responseRecord.ok === false ? 'escape-stop-rejected' : 'escape-stop-sent',
+        operationId,
+        ...turn,
+        response,
+      });
+    },
+    onDiagnostic: (event, details = {}) => {
+      appendDebugLog('desktop-control', { stage: event, ...details });
+    },
+  });
+  return desktopControlOverlay;
+}
+
+function registerDesktopControlMonitor(controller: RuntimeHostController): void {
+  unregisterDesktopControlMonitor?.();
+  const subscriptionTurns = new Map<string, DesktopControlTurn>();
+  unregisterDesktopControlMonitor = controller.onStreamFrame((message) => {
+    if (message.type !== 'stream_frame') return;
+    if (message.frame.kind === 'event') {
+      const { event } = message.frame;
+      const turn = { sessionId: event.sessionId, turnId: event.turnId };
+      subscriptionTurns.set(message.subscriptionId, turn);
+      if (
+        event.kind === 'tool_running' &&
+        isComputerUseRuntimeTool(event.payload.toolName)
+      ) {
+        ensureDesktopControlOverlay().show(turn);
+      } else if (event.kind === 'turn_terminal') {
+        desktopControlOverlay?.hide(turn);
+      }
+      return;
+    }
+    const turn = subscriptionTurns.get(message.subscriptionId);
+    subscriptionTurns.delete(message.subscriptionId);
+    if (turn) desktopControlOverlay?.hide(turn);
+  });
+}
+
+function disposeDesktopControlMonitor(): void {
+  unregisterDesktopControlMonitor?.();
+  unregisterDesktopControlMonitor = null;
+  desktopControlOverlay?.dispose();
+  desktopControlOverlay = null;
+}
+
 async function startRuntimeServices(force = false): Promise<void> {
   if (runtimeServicesInitialization) return runtimeServicesInitialization;
   if (force) {
+    disposeDesktopControlMonitor();
     unregisterRuntimeHostIpc?.();
     unregisterRuntimeHostIpc = null;
     runtimeHostController?.stop();
@@ -2795,6 +2886,7 @@ async function initializeRuntimeHost() {
       runtimeServicesStartupTimeoutMs,
     );
   } catch (error) {
+    disposeDesktopControlMonitor();
     unregisterRuntimeHostIpc?.();
     unregisterRuntimeHostIpc = null;
     runtimeHostController?.stop();
@@ -2805,6 +2897,7 @@ async function initializeRuntimeHost() {
 }
 
 async function initializeRuntimeHostWithinDeadline() {
+  const bundledRipgrep = resolveBundledRipgrepPath();
   const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
@@ -2825,6 +2918,8 @@ async function initializeRuntimeHostWithinDeadline() {
           'subagents.json',
         ),
         CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
+        CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify(productPluginRoots()),
+        ...(bundledRipgrep ? { CARDBUSH_RG_PATH: bundledRipgrep } : {}),
         CARDBUSH_APPS_MCP_ENTRY: path.join(
           app.getAppPath(),
           'packages',
@@ -2844,16 +2939,12 @@ async function initializeRuntimeHostWithinDeadline() {
           'bin',
           'chrome-devtools-mcp.js',
         ),
-        CARDBUSH_APPS_CONFIG_PATH: path.join(
-          app.getPath('userData'),
-          'product-host',
-          'config',
-          'apps.json',
-        ),
+        CARDBUSH_APPS_CONFIG_PATH: productAppsConfigPath(),
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
     }) as RuntimeHostController;
     runtimeHostController = controller;
+    registerDesktopControlMonitor(controller);
     unregisterRuntimeHostIpc = controllerModule.registerRuntimeHostIpc(
       ipcMain,
       controller,
@@ -2981,6 +3072,38 @@ function productSkillRoots(): string[] {
   ];
 }
 
+function resolveBundledRipgrepPath(): string | undefined {
+  if (process.platform !== 'win32' || process.arch !== 'x64') return undefined;
+  const relativePath = path.join('runtime-tools', 'ripgrep', 'win32-x64', 'rg.exe');
+  return cardbushRuntimeIsPackaged
+    ? path.join(process.resourcesPath, relativePath)
+    : path.join(app.getAppPath(), 'assets', relativePath);
+}
+
+function productPluginRoots(): PluginRoot[] {
+  return [
+    { path: path.join(app.getAppPath(), 'assets', 'plugins'), source: 'bundled' },
+    { path: path.join(app.getPath('userData'), 'plugins'), source: 'user' },
+  ];
+}
+
+function productAppsConfigPath(): string {
+  return path.join(app.getPath('userData'), 'product-host', 'config', 'apps.json');
+}
+
+async function activeProductSkillRoots(): Promise<string[]> {
+  const productRoots = productSkillRoots();
+  const pluginRoots = await loadEnabledProductPluginSkillRoots(
+    productPluginRoots(),
+    productAppsConfigPath(),
+  );
+  return [
+    ...productRoots.slice(0, 1),
+    ...pluginRoots,
+    ...productRoots.slice(1),
+  ];
+}
+
 function registerLocalFileProtocol() {
   if (protocol.isProtocolHandled(localFileProtocol)) {
     return;
@@ -3074,6 +3197,7 @@ function registerLocalFileProtocol() {
 
 app.on('before-quit', (event) => {
   isQuitting = true;
+  desktopControlOverlay?.hide();
   if (hostShutdownComplete) {
     return;
   }
@@ -3087,6 +3211,7 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  disposeDesktopControlMonitor();
   unregisterRuntimeHostIpc?.();
   unregisterRuntimeHostIpc = null;
   runtimeHostController?.stop();

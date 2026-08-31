@@ -1,2 +1,2 @@
-export * from "./chatCompletions.js";
+export * from "./responses.js";
 export * from "./providerRegistry.js";

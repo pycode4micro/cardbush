@@ -21,7 +21,7 @@ export type RuntimeProviderBindingRef = z.infer<
 export const runtimeProviderBindingConfigSchema = z.object({
   protocol: z.literal(BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL),
   bindingId: z.string().min(1),
-  adapter: z.literal("openai_compatible"),
+  adapter: z.literal("openai_responses"),
   apiKey: z.string().min(1),
   baseURL: z.string().min(1).optional(),
   defaultHeaders: z.record(z.string(), z.string()).default({}),

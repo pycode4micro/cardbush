@@ -53,6 +53,7 @@ export interface ToolRegistration<TInput = unknown> {
   ) => ToolAdmissionDecision | Promise<ToolAdmissionDecision>;
   execute: (context: ToolHandlerContext<TInput>) => ToolResult | Promise<ToolResult>;
   parallelSafe?: boolean;
+  executionChannel?: string;
   visibleToChild?: boolean;
   registrationOwner?: string;
 }
@@ -130,6 +131,9 @@ export class ToolRegistry {
         definition: registration.definition,
         manifest: registration.manifest,
         parallelSafe: registration.parallelSafe === true,
+        ...(registration.executionChannel
+          ? { executionChannel: registration.executionChannel }
+          : {}),
         visibleToChild: registration.visibleToChild !== false,
         ...(registration.registrationOwner
           ? { registrationOwner: registration.registrationOwner }
@@ -147,6 +151,10 @@ export class ToolRegistry {
   isParallelSafe(name: string): boolean {
     return this.#registrations.get(name)?.parallelSafe === true;
   }
+
+  executionChannel(name: string): string {
+    return this.#registrations.get(name)?.executionChannel ?? "runtime:default";
+  }
 }
 
 function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): AnyToolRegistration {
@@ -157,6 +165,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     authorize: candidate.authorize as AnyToolRegistration["authorize"],
     execute: candidate.execute as AnyToolRegistration["execute"],
     parallelSafe: candidate.parallelSafe ?? false,
+    executionChannel: candidate.executionChannel?.trim() || undefined,
     visibleToChild: candidate.visibleToChild ?? true,
     registrationOwner: candidate.registrationOwner?.trim() || undefined,
   };

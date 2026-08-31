@@ -36,7 +36,6 @@ test("forks the pre-dispatch context, hides root-only tools and returns user gui
     model: "fixture-model",
     messages: [],
     tools: registry.definitions(),
-    toolChoice: "auto",
     metadata: {
       subagentChildPrefixMessages: [
         { role: "system", content: "child-only system" },
@@ -129,7 +128,6 @@ test("a child Turn cannot invoke a root-only tool even by fabricating its name",
         model: "m",
         messages: [],
         tools: [],
-        toolChoice: "auto",
         metadata: {},
       },
       contextMessages: [],

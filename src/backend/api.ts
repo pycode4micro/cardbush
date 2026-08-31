@@ -466,8 +466,8 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   taskPlan: false,
   reasoningStream: false,
   reasoningLevelSelection: false,
-  reasoningLevels: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
-  defaultReasoningLevel: 'medium',
+  reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
+  defaultReasoningLevel: 'high',
   terminalRuntimeSelection: false,
   terminalRuntimes: ['powershell', 'wsl'],
   defaultTerminalRuntime: 'powershell',
@@ -485,7 +485,6 @@ export interface McpServerConfigInput {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
-  timeoutSeconds?: number;
 }
 
 export interface SubagentDispatchRequest {
@@ -1418,10 +1417,6 @@ function mcpServerRequestBody(input: McpServerConfigInput) {
   if (input.headers && Object.keys(input.headers).length > 0) {
     body.headers = input.headers;
   }
-  if (input.timeoutSeconds != null) {
-    body.timeout_seconds = input.timeoutSeconds;
-    body.timeoutSeconds = input.timeoutSeconds;
-  }
   return body;
 }
 
@@ -1464,7 +1459,6 @@ function mcpServerFromPayload(payload: unknown, index = 0): McpServerConfig {
     ...(env ? { env } : {}),
     ...(urlValue ? { url: urlValue } : {}),
     ...(headers ? { headers } : {}),
-    timeoutSeconds: optionalNumber(item.timeout_seconds ?? item.timeoutSeconds),
     toolCount: optionalNumber(
       item.tool_count ?? item.toolCount ?? asRecord(item.tools).count,
     ),

@@ -30,6 +30,7 @@ const userModelMessageSchema = z.object({
 const assistantModelMessageSchema = z.object({
   role: z.literal("assistant"),
   content: z.string(),
+  reasoningContent: z.string().optional(),
   toolCalls: z
     .array(
       z.object({
@@ -73,7 +74,6 @@ export type RuntimePermissionMode = z.infer<typeof permissionModeSchema>;
 
 export const reasoningEffortSchema = z.enum([
   "none",
-  "minimal",
   "low",
   "medium",
   "high",
@@ -92,7 +92,6 @@ export const modelRequestSchema = z.object({
   providerBinding: runtimeProviderBindingRefSchema.optional(),
   messages: z.array(modelMessageSchema),
   tools: z.array(toolDefinitionSchema).default([]),
-  toolChoice: z.enum(["auto", "none", "required"]).default("auto"),
   maxOutputTokens: z.number().int().positive().optional(),
   temperature: z.number().finite().optional(),
   topP: z.number().finite().optional(),

@@ -31,6 +31,11 @@ assert.match(composer, /retryRuntimeStartup/);
 assert.match(chat, /requestContext\.runtimeReady === false/);
 assert.match(builder, /asar: true/);
 assert.match(builder, /dist-electron\/\*\*\/\*/);
+assert.match(builder, /extraResources:/);
+assert.match(builder, /assets\/runtime-tools/);
+assert.match(main, /CARDBUSH_RG_PATH: bundledRipgrep/);
+assert.match(main, /process\.resourcesPath/);
+assert.equal(packageJson.scripts['package:win'].startsWith('npm run runtime-tools:verify'), true);
 for (const workspaceDependency of [
   '@cardbush/bush-protocol',
   '@cardbush/bush-runtime',

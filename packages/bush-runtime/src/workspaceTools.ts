@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
+  lstat,
   mkdir,
+  readdir,
   readFile,
   realpath,
   writeFile,
@@ -193,10 +195,13 @@ export function registerWorkspaceTools(
       if (!context.input.regex) args.push("--fixed-strings");
       for (const glob of context.input.globs) args.push("--glob", glob);
       args.push("--", context.input.query, path);
-      const execution = await runProcess("rg", args, {
-        cwd: workspaceRoot(context) ?? dirname(path),
-        signal: context.signal,
-      });
+      const execution = await searchFileContent(
+        path,
+        context.input,
+        args,
+        workspaceRoot(context) ?? dirname(path),
+        context.signal,
+      );
       if (execution.exitCode !== 0 && execution.exitCode !== 1) {
         throw new Error(execution.stderr || `ripgrep exited with code ${execution.exitCode}.`);
       }
@@ -791,6 +796,159 @@ interface ProcessResult {
   timedOut: boolean;
 }
 
+async function searchFileContent(
+  path: string,
+  input: SearchInput,
+  args: string[],
+  cwd: string,
+  signal?: AbortSignal,
+): Promise<ProcessResult> {
+  const bundled = process.env.CARDBUSH_RG_PATH?.trim();
+  const executables = [...new Set([bundled, "rg"].filter((value): value is string => Boolean(value)))];
+  for (const executable of executables) {
+    try {
+      return await runProcess(executable, args, { cwd, signal });
+    } catch (error) {
+      if (!isUnavailableExecutableError(error)) throw error;
+    }
+  }
+  return searchFileContentWithNode(path, input, signal);
+}
+
+function isUnavailableExecutableError(error: unknown): boolean {
+  return ["EACCES", "EINVAL", "ENOENT", "ENOEXEC"].includes(
+    String((error as NodeJS.ErrnoException)?.code),
+  );
+}
+
+async function searchFileContentWithNode(
+  root: string,
+  input: SearchInput,
+  signal?: AbortSignal,
+): Promise<ProcessResult> {
+  const files: string[] = [];
+  const maximumFiles = 25_000;
+  const maximumOutputBytes = 2 * 1024 * 1024;
+  const visit = async (candidate: string): Promise<void> => {
+    throwIfAborted(signal);
+    let info;
+    try {
+      info = await lstat(candidate);
+    } catch (error) {
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) return;
+      throw error;
+    }
+    if (info.isSymbolicLink()) return;
+    if (info.isFile()) {
+      files.push(candidate);
+      if (files.length > maximumFiles) {
+        throw new Error(`Node search fallback exceeded ${maximumFiles} files; narrow path or globs.`);
+      }
+      return;
+    }
+    if (!info.isDirectory()) return;
+    let entries;
+    try {
+      entries = await readdir(candidate, { withFileTypes: true });
+    } catch (error) {
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      await visit(resolve(candidate, entry.name));
+    }
+  };
+  await visit(root);
+
+  const rootInfo = await lstat(root);
+  const globs = input.globs.map((glob) => ({
+    excluded: glob.startsWith("!"),
+    expression: globToRegExp(glob.startsWith("!") ? glob.slice(1) : glob),
+  }));
+  const positiveGlobs = globs.filter((glob) => !glob.excluded);
+  const negativeGlobs = globs.filter((glob) => glob.excluded);
+  const regex = input.regex ? new RegExp(input.query, "g") : undefined;
+  const output: string[] = [];
+  let outputBytes = 0;
+
+  for (const file of files) {
+    throwIfAborted(signal);
+    const relativePath = (rootInfo.isFile() ? file.split(/[\\/]/).at(-1)! : relative(root, file))
+      .replaceAll("\\", "/");
+    if (positiveGlobs.length > 0 && !positiveGlobs.some((glob) => glob.expression.test(relativePath))) {
+      continue;
+    }
+    if (negativeGlobs.some((glob) => glob.expression.test(relativePath))) continue;
+    let bytes;
+    try {
+      bytes = await readFile(file);
+    } catch (error) {
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) continue;
+      throw error;
+    }
+    if (bytes.subarray(0, 8_192).includes(0)) continue;
+    const lines = bytes.toString("utf8").split(/\r?\n/);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      let column = -1;
+      if (regex) {
+        regex.lastIndex = 0;
+        column = regex.exec(line)?.index ?? -1;
+      } else {
+        column = line.indexOf(input.query);
+      }
+      if (column < 0) continue;
+      const match = `${file}:${index + 1}:${column + 1}:${line}\n`;
+      outputBytes += Buffer.byteLength(match);
+      if (outputBytes > maximumOutputBytes) {
+        output.push(`[search output truncated at ${maximumOutputBytes} bytes]\n`);
+        return {
+          exitCode: 0,
+          stdout: output.join(""),
+          stderr: "",
+          timedOut: false,
+        };
+      }
+      output.push(match);
+    }
+  }
+  return {
+    exitCode: output.length > 0 ? 0 : 1,
+    stdout: output.join(""),
+    stderr: "",
+    timedOut: false,
+  };
+}
+
+function globToRegExp(value: string): RegExp {
+  const normalized = value.trim().replaceAll("\\", "/");
+  let source = "^";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const character = normalized[index]!;
+    if (character === "*" && normalized[index + 1] === "*") {
+      const followedBySlash = normalized[index + 2] === "/";
+      source += followedBySlash ? "(?:.*/)?" : ".*";
+      index += followedBySlash ? 2 : 1;
+    } else if (character === "*") {
+      source += "[^/]*";
+    } else if (character === "?") {
+      source += "[^/]";
+    } else {
+      source += character.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error("Tool execution was cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
 function runShell(
   command: string,
   options: { cwd: string; timeoutMs?: number; signal?: AbortSignal },
@@ -815,8 +973,8 @@ function runProcess(
       windowsHide: true,
       signal: options.signal,
     });
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
     const timeout = options.timeoutMs
       ? setTimeout(() => {
@@ -824,12 +982,34 @@ function runProcess(
           child.kill();
         }, options.timeoutMs)
       : undefined;
-    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
-    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.stdout.on("data", (chunk: Buffer) => { stdoutChunks.push(chunk); });
+    child.stderr.on("data", (chunk: Buffer) => { stderrChunks.push(chunk); });
     child.on("error", reject);
     child.on("close", (exitCode) => {
       if (timeout) clearTimeout(timeout);
-      resolvePromise({ exitCode, stdout, stderr, timedOut });
+      resolvePromise({
+        exitCode,
+        stdout: decodeProcessOutput(Buffer.concat(stdoutChunks)),
+        stderr: decodeProcessOutput(Buffer.concat(stderrChunks)),
+        timedOut,
+      });
     });
   });
+}
+
+function decodeProcessOutput(bytes: Buffer): string {
+  if (bytes.length === 0) return "";
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    if (process.platform === "win32") {
+      try {
+        return new TextDecoder("gbk", { fatal: true }).decode(bytes);
+      } catch {
+        // Preserve output even when it is neither valid UTF-8 nor the Windows
+        // Simplified Chinese code page used by the local shell.
+      }
+    }
+    return bytes.toString("utf8");
+  }
 }

@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ToolExecutionCoordinator,
@@ -101,6 +102,91 @@ test("writes new files, treats search no-match as a successful fact, and reports
   assert.equal(nonzero.result.output.exitCode, 7);
   assert.equal(nonzero.result.output.stdout, "out");
   assert.equal(nonzero.result.output.stderr, "err");
+});
+
+test("searches with the Node fallback when ripgrep is unavailable in a packaged environment", async (t) => {
+  const root = temporaryRoot(t);
+  writeFileSync(join(root, "first.txt"), "alpha\nneedle here\n");
+  writeFileSync(join(root, "ignored.log"), "needle ignored\n");
+  const setup = tools(root);
+  const previousPath = process.env.PATH;
+  const previousBundled = process.env.CARDBUSH_RG_PATH;
+  process.env.PATH = "";
+  delete process.env.CARDBUSH_RG_PATH;
+  try {
+    const outcome = await setup.execute("session", "search_file_content", {
+      path: root,
+      query: "needle",
+      globs: ["**/*.txt"],
+    });
+    assert.equal(outcome.kind, "completed");
+    assert.equal(outcome.result.output.matched, true);
+    assert.match(outcome.result.output.output, /first\.txt:2:1:needle here/);
+    assert.doesNotMatch(outcome.result.output.output, /ignored\.log/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousBundled === undefined) delete process.env.CARDBUSH_RG_PATH;
+    else process.env.CARDBUSH_RG_PATH = previousBundled;
+  }
+});
+
+test("prefers the bundled ripgrep executable when the system PATH has no rg", async (t) => {
+  if (process.platform !== "win32" || process.arch !== "x64") return;
+  const root = temporaryRoot(t);
+  writeFileSync(join(root, "visible.txt"), "bundled needle\n");
+  writeFileSync(join(root, ".hidden.txt"), "hidden needle\n");
+  const bundled = fileURLToPath(new URL(
+    "../../../assets/runtime-tools/ripgrep/win32-x64/rg.exe",
+    import.meta.url,
+  ));
+  const setup = tools(root);
+  const previousPath = process.env.PATH;
+  const previousBundled = process.env.CARDBUSH_RG_PATH;
+  process.env.PATH = "";
+  process.env.CARDBUSH_RG_PATH = bundled;
+  try {
+    const outcome = await setup.execute("session", "search_file_content", {
+      path: root,
+      query: "needle",
+    });
+    assert.equal(outcome.kind, "completed");
+    assert.match(outcome.result.output.output, /visible\.txt:1:9:bundled needle/);
+    assert.doesNotMatch(outcome.result.output.output, /hidden\.txt/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    if (previousBundled === undefined) delete process.env.CARDBUSH_RG_PATH;
+    else process.env.CARDBUSH_RG_PATH = previousBundled;
+  }
+});
+
+test("preserves UTF-8 output and decodes legacy Windows shell output", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const utf8 = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"process.stdout.write('中文文件')\"",
+    cwd: root,
+  });
+  assert.equal(utf8.kind, "completed");
+  assert.equal(utf8.result.output.stdout, "中文文件");
+
+  if (process.platform !== "win32") return;
+  writeFileSync(join(root, "中文目录.txt"), "content");
+  const shellBuiltin = await setup.execute("session", "terminal_exec", {
+    command: "dir /b",
+    cwd: root,
+  });
+  assert.equal(shellBuiltin.kind, "completed");
+  assert.match(shellBuiltin.result.output.stdout, /中文目录\.txt/);
+
+  const legacy = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"process.stdout.write(Buffer.from([0xd6,0xd0,0xce,0xc4])); process.stderr.write(Buffer.from([0xb4,0xed,0xce,0xf3]))\"",
+    cwd: root,
+  });
+  assert.equal(legacy.kind, "completed");
+  assert.equal(legacy.result.output.stdout, "中文");
+  assert.equal(legacy.result.output.stderr, "错误");
 });
 
 test("uses absolute filesystem paths safely when a Turn has no workspace", async (t) => {
@@ -273,7 +359,6 @@ function turn(registry, workspaceDir, metadata) {
       model: "model",
       messages: [],
       tools: registry.definitions(),
-      toolChoice: "auto",
       metadata: { workspaceDir, ...metadata },
     },
     contextMessages: [],

@@ -152,7 +152,6 @@ async function environment(t, sessionId) {
             model: "test-model",
             messages: [],
             tools: registry.definitions(),
-            toolChoice: "auto",
             metadata: { workspaceDir: root },
           },
           contextMessages: [],

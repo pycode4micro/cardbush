@@ -2147,11 +2147,10 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
 function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
   const labels: Record<ReasoningLevel, { zh: string; en: string }> = {
     none: { zh: '关闭', en: 'None' },
-    minimal: { zh: '最低', en: 'Minimal' },
     low: { zh: '低', en: 'Low' },
     medium: { zh: '中', en: 'Medium' },
     high: { zh: '高', en: 'High' },
-    xhigh: { zh: '极高', en: 'XHigh' },
+    xhigh: { zh: '超高', en: 'Extra high' },
     max: { zh: '最高', en: 'Max' },
   };
   return labels[level][language];
@@ -2160,7 +2159,6 @@ function reasoningLevelLabel(level: ReasoningLevel, language: AppLanguage) {
 function splitReasoningLevels(levels: ReasoningLevel[]) {
   const rank: ReasoningLevel[] = [
     'none',
-    'minimal',
     'low',
     'medium',
     'high',
@@ -2179,11 +2177,10 @@ function splitReasoningLevels(levels: ReasoningLevel[]) {
 function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage) {
   const descriptions: Record<ReasoningLevel, { zh: string; en: string }> = {
     none: { zh: '不分配推理预算，适合最低延迟请求', en: 'No reasoning budget for lowest-latency requests' },
-    minimal: { zh: '使用最少推理预算，主要用于支持该档位的旧模型', en: 'Minimal reasoning budget for models that support this legacy level' },
     low: { zh: '更快，适合直接问题', en: 'Faster for direct questions' },
-    medium: { zh: '速度与分析深度平衡', en: 'Balanced speed and depth' },
+    medium: { zh: '质量与延迟的平衡档', en: 'Balanced quality and latency' },
     high: { zh: '更深入分析复杂问题', en: 'Deeper analysis for complex work' },
-    xhigh: { zh: '面向高难度、质量优先的复杂任务', en: 'Quality-first effort for very difficult tasks' },
+    xhigh: { zh: '适合高难度代理和长链路任务', en: 'For difficult agentic and long-horizon work' },
     max: { zh: '当前模型支持的最大推理强度', en: 'Maximum reasoning effort supported by the current model' },
   };
   return descriptions[level][language];

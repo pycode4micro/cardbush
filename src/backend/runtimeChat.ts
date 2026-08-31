@@ -103,6 +103,21 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
       (request.teamModeEnabled === true || entry.manifest.operation !== 'agent.team_delegate'),
     ).map((entry) => entry.definition);
+    const maxContextTokens = positiveInteger(
+      request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
+    );
+    const configuredMaxOutputTokens = positiveInteger(
+      request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
+    );
+    if (
+      maxContextTokens &&
+      configuredMaxOutputTokens &&
+      configuredMaxOutputTokens >= maxContextTokens
+    ) {
+      throw new Error(
+        `Invalid token limits for ${resolvedModel.model}: maxOutputTokens (${configuredMaxOutputTokens}) must be less than maxContextTokens (${maxContextTokens}).`,
+      );
+    }
     const runtimeRequest = createProductAgentTurnRequest({
       requestId,
       sessionId: request.sessionId,
@@ -129,12 +144,8 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       teamId: request.teamId,
       allowedSkills: request.allowedSkills,
       planEnabled: request.referencePlanMode !== 'off',
-      maxOutputTokens: positiveInteger(
-        request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
-      ),
-      maxContextTokens: positiveInteger(
-        request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
-      ),
+      maxOutputTokens: configuredMaxOutputTokens,
+      maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),
     });
     if (goalCommand) {
@@ -421,6 +432,17 @@ async function consumeRuntimeEvents(
       case 'assistant_segment_delta':
         onAssistantMessage(event.payload.messageId);
         request.onDelta?.(event.payload.delta, streamChunk(event, event.payload.messageId));
+        break;
+      case 'guidance_applied':
+        request.onExecution?.({
+          ...streamChunk(event, ''),
+          kind: 'loop_transition',
+          reason: 'turn_guidance_applied',
+          guidanceMessageId: event.payload.messageId,
+          previousAssistantMessageId: event.payload.previousAssistantMessageId,
+          pendingGuidanceCount: event.payload.queueDepth,
+          guidanceRoundIndex: event.payload.afterRound,
+        });
         break;
       case 'tool_queued':
       case 'tool_running':
@@ -732,9 +754,11 @@ function terminalSnapshot(
 }
 
 function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
-  return value === 'max' || value === 'xhigh' || value === 'high' ||
-    value === 'medium' || value === 'low' || value === 'minimal' || value === 'none'
-    ? value
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return normalized === 'none' || normalized === 'low' ||
+    normalized === 'medium' || normalized === 'high' ||
+    normalized === 'xhigh' || normalized === 'max'
+    ? normalized
     : undefined;
 }
 

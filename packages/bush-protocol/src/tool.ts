@@ -108,6 +108,7 @@ export const toolCatalogEntrySchema = z.object({
   definition: toolDefinitionSchema,
   manifest: actionManifestTemplateSchema,
   parallelSafe: z.boolean(),
+  executionChannel: z.string().min(1).optional(),
   visibleToChild: z.boolean(),
   registrationOwner: z.string().min(1).optional(),
 });

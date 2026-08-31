@@ -10,7 +10,10 @@ import {
   readAppsRuntimeConfig,
 } from '../dist/index.js';
 import { computerUseManifest } from '../dist/plugins/computerUse.js';
-import { selectWindowTarget } from '../dist/plugins/computerUseRuntime.js';
+import {
+  executeComputerUse,
+  selectWindowTarget,
+} from '../dist/plugins/computerUseRuntime.js';
 
 test('creates an independent MCP server with an explicit computer-use manifest', () => {
   const server = createCardbushAppsServer();
@@ -19,6 +22,10 @@ test('creates an independent MCP server with an explicit computer-use manifest',
   assert.equal(computerUseManifest.dispatch_source, 'mcp_tool');
   assert.equal(computerUseManifest.operation, 'desktop.control');
   assert.deepEqual(Object.keys(server._registeredTools), ['computer_use']);
+  const tool = server._registeredTools.computer_use;
+  assert.match(tool.description, /LAST-RESORT FALLBACK/);
+  assert.match(tool.description, /prefer direct APIs, app connectors, MCP tools, browser tools/);
+  assert.equal(tool.annotations.destructiveHint, true);
 });
 
 test('does not register an uninstalled or disabled plugin', () => {
@@ -28,6 +35,19 @@ test('does not register an uninstalled or disabled plugin', () => {
   const uninstalled = defaultAppsRuntimeConfig();
   uninstalled.computerUse.installed = false;
   assert.deepEqual(Object.keys(createCardbushAppsServer(uninstalled)._registeredTools), []);
+});
+
+test('honors Runtime cancellation before issuing desktop input', async () => {
+  const controller = new AbortController();
+  controller.abort(new DOMException('Turn stopped', 'AbortError'));
+  await assert.rejects(
+    executeComputerUse(
+      { action: 'click', x: 10, y: 10 },
+      defaultAppsRuntimeConfig().computerUse.config,
+      controller.signal,
+    ),
+    (error) => error?.name === 'AbortError',
+  );
 });
 
 test('reads the Product Host lifecycle and Computer Use policy snapshot', async () => {

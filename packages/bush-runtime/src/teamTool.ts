@@ -199,7 +199,6 @@ async function runPhase(input: {
       inherited: input.inherited,
       additionalPrefixMessages: [memberMessage(input.team, input.member, input.phase)],
       allowedToolNames: input.toolNames,
-      toolChoice: input.toolNames.length > 0 ? "auto" : "none",
       metadata: {
         teamId: input.team.teamId,
         teamMemberId: input.member.memberId,

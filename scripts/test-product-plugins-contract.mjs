@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
   installProductPlugin,
+  loadEnabledProductPluginSkillRoots,
   loadProductPluginCatalog,
 } from '../dist-electron/productPlugins.js';
 
@@ -26,10 +27,23 @@ for (const plugin of catalog) {
 }
 assert.deepEqual(catalog.find((plugin) => plugin.id === 'computer-use')?.components.map((item) => item.kind), ['mcp']);
 assert.deepEqual(catalog.find((plugin) => plugin.id === 'cardbush-bot')?.components.map((item) => item.kind), ['app']);
+const chromePlugin = catalog.find((plugin) => plugin.id === 'chrome');
 assert.deepEqual(
-  catalog.find((plugin) => plugin.id === 'chrome')?.components.map((item) => item.kind),
-  ['mcp', 'app'],
+  chromePlugin?.components.map((item) => item.kind),
+  ['skill', 'skill', 'skill', 'skill', 'skill', 'skill', 'mcp', 'app'],
 );
+assert.deepEqual(
+  chromePlugin?.components.filter((item) => item.kind === 'skill').map((item) => item.id).sort(),
+  [
+    'a11y-debugging',
+    'chrome-devtools',
+    'chrome-devtools-cli',
+    'debug-optimize-lcp',
+    'memory-leak-debugging',
+    'troubleshooting',
+  ],
+);
+assert.equal(chromePlugin?.skillRoots?.length, 1);
 const chromePackage = JSON.parse(readFileSync(resolve(
   'assets', 'plugins', 'chrome', 'runtime', 'chrome-devtools-mcp', 'package.json',
 ), 'utf8'));
@@ -51,6 +65,34 @@ assert.equal(
 
 const temporary = await mkdtemp(join(tmpdir(), 'cardbush-plugin-install-'));
 try {
+  const appsConfigPath = join(temporary, 'apps.json');
+  await writeFile(appsConfigPath, JSON.stringify({
+    protocol: 'cardbush.apps_config.v1',
+    revision: 1,
+    serviceEnabled: true,
+    plugins: [{ id: 'chrome', installed: true, enabled: true }],
+  }));
+  assert.deepEqual(
+    await loadEnabledProductPluginSkillRoots(
+      [{ path: bundledRoot, source: 'bundled' }],
+      appsConfigPath,
+    ),
+    chromePlugin?.skillRoots,
+  );
+  await writeFile(appsConfigPath, JSON.stringify({
+    protocol: 'cardbush.apps_config.v1',
+    revision: 2,
+    serviceEnabled: true,
+    plugins: [{ id: 'chrome', installed: true, enabled: false }],
+  }));
+  assert.deepEqual(
+    await loadEnabledProductPluginSkillRoots(
+      [{ path: bundledRoot, source: 'bundled' }],
+      appsConfigPath,
+    ),
+    [],
+  );
+
   const installed = await installProductPlugin(join(bundledRoot, 'chrome'), temporary);
   assert.equal(installed.id, 'chrome');
   const userCatalog = await loadProductPluginCatalog([{ path: temporary, source: 'user' }]);

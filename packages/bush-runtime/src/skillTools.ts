@@ -18,12 +18,21 @@ interface SkillCard {
   mainResource: string;
 }
 
-export function registerSkillTools(registry: ToolRegistry, roots: string[]): void {
-  const normalizedRoots = [...new Set(roots.map((root) => resolve(root)).filter(isAbsolute))];
-  registry.register(searchRegistration(normalizedRoots));
+export type SkillRootProvider = () => string[] | Promise<string[]>;
+
+export function registerSkillTools(
+  registry: ToolRegistry,
+  roots: string[] | SkillRootProvider,
+): void {
+  const provider = typeof roots === "function"
+    ? async () => normalizeRoots(await roots())
+    : async () => normalizeRoots(roots);
+  registry.register(searchRegistration(provider));
 }
 
-function searchRegistration(roots: string[]): ToolRegistration<{ query: string; limit: number }> {
+function searchRegistration(
+  roots: SkillRootProvider,
+): ToolRegistration<{ query: string; limit: number }> {
   return {
     definition: {
       name: "search_skills",
@@ -49,12 +58,13 @@ function searchRegistration(roots: string[]): ToolRegistration<{ query: string; 
       return { query, limit };
     },
     execute: async (context) => {
+      const activeRoots = await roots();
       const terms = tokens(context.input.query);
       const configured = context.turn?.request.metadata.allowedSkills;
       const allowed = Array.isArray(configured)
         ? new Set(configured.filter((item): item is string => typeof item === "string"))
         : undefined;
-      const skills = (await loadCards(roots)).filter((skill) =>
+      const skills = (await loadCards(activeRoots)).filter((skill) =>
         allowed === undefined || allowed.has(skill.name),
       );
       const matches = skills
@@ -65,6 +75,10 @@ function searchRegistration(roots: string[]): ToolRegistration<{ query: string; 
       return success(context, { query: context.input.query, matches }, matches.map((item) => item.mainResource));
     },
   };
+}
+
+function normalizeRoots(roots: string[]): string[] {
+  return [...new Set(roots.map((root) => resolve(root)).filter(isAbsolute))];
 }
 
 async function loadCards(roots: string[]): Promise<SkillCard[]> {

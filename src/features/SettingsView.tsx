@@ -354,6 +354,20 @@ export function SettingsView({
         notify(language === 'zh' ? '请输入模型名称' : 'Enter a model name');
         return;
       }
+      const nextMaxContextTokens = normalizeMaxContextTokens(maxContextTokens);
+      const nextMaxCompletionTokens = normalizeMaxCompletionTokens(maxCompletionTokens);
+      if (
+        nextMaxContextTokens &&
+        nextMaxCompletionTokens &&
+        nextMaxCompletionTokens >= nextMaxContextTokens
+      ) {
+        notify(
+          language === 'zh'
+            ? '最大输出 token 必须小于最大上下文 token'
+            : 'Max output tokens must be less than max context tokens',
+        );
+        return;
+      }
       updateSettings((current) => ({
         ...current,
         managedModelConfigs: [
@@ -365,15 +379,14 @@ export function SettingsView({
             modelName: nextModel,
             baseUrl,
             ...(
-              normalizeMaxContextTokens(maxContextTokens)
-                ? { maxContextTokens: normalizeMaxContextTokens(maxContextTokens) }
+              nextMaxContextTokens
+                ? { maxContextTokens: nextMaxContextTokens }
                 : {}
             ),
             ...(
-              normalizeMaxCompletionTokens(maxCompletionTokens)
+              nextMaxCompletionTokens
                 ? {
-                    maxCompletionTokens:
-                      normalizeMaxCompletionTokens(maxCompletionTokens),
+                    maxCompletionTokens: nextMaxCompletionTokens,
                   }
                 : {}
             ),
@@ -424,6 +437,19 @@ export function SettingsView({
         );
         return;
       }
+      const existing = settings.managedModelConfigs.find((item) => item.id === id);
+      if (
+        normalized &&
+        existing?.maxCompletionTokens &&
+        existing.maxCompletionTokens >= normalized
+      ) {
+        notify(
+          language === 'zh'
+            ? '最大上下文 token 必须大于当前最大输出 token'
+            : 'Max context tokens must be greater than the current max output tokens',
+        );
+        return;
+      }
       updateSettings((current) => ({
         ...current,
         managedModelConfigs: current.managedModelConfigs.map((item) => {
@@ -443,7 +469,7 @@ export function SettingsView({
           : 'Max context tokens updated',
       );
     },
-    [language, notify, updateSettings],
+    [language, notify, settings.managedModelConfigs, updateSettings],
   );
 
   const updateModelCompletionTokens = useCallback(
@@ -455,6 +481,19 @@ export function SettingsView({
           language === 'zh'
             ? '最大输出 token 必须是大于 0 的数字'
             : 'Max output tokens must be a number greater than 0',
+        );
+        return;
+      }
+      const existing = settings.managedModelConfigs.find((item) => item.id === id);
+      if (
+        normalized &&
+        existing?.maxContextTokens &&
+        normalized >= existing.maxContextTokens
+      ) {
+        notify(
+          language === 'zh'
+            ? '最大输出 token 必须小于当前最大上下文 token'
+            : 'Max output tokens must be less than the current max context tokens',
         );
         return;
       }
@@ -477,7 +516,7 @@ export function SettingsView({
           : 'Max output tokens updated',
       );
     },
-    [language, notify, updateSettings],
+    [language, notify, settings.managedModelConfigs, updateSettings],
   );
 
   const resetModels = useCallback(() => {
@@ -2700,7 +2739,6 @@ type McpServerDraft = {
   envText: string;
   url: string;
   headersText: string;
-  timeoutSeconds: string;
 };
 
 const emptyMcpDraft: McpServerDraft = {
@@ -2715,7 +2753,6 @@ const emptyMcpDraft: McpServerDraft = {
   envText: '{}',
   url: '',
   headersText: '{}',
-  timeoutSeconds: '60',
 };
 
 function McpServersPanel({
@@ -3041,12 +3078,6 @@ function McpServersPanel({
                 onChange={(value) => updateDraft({ id: value })}
               />
               <SettingsInput
-                label={language === 'zh' ? '超时秒数' : 'Timeout seconds'}
-                value={draft.timeoutSeconds}
-                placeholder="60"
-                onChange={(value) => updateDraft({ timeoutSeconds: value })}
-              />
-              <SettingsInput
                 label={language === 'zh' ? '工作目录' : 'Working directory'}
                 value={draft.cwd}
                 placeholder="C:\\Users\\..."
@@ -3349,7 +3380,7 @@ function CardbushAppsPanel({
                     <input
                       type="radio"
                       name="settings-chrome-connection-mode"
-                      checked={plugin.config.connectionMode !== 'existing'}
+                      checked={plugin.config.connectionMode === 'managed'}
                       onChange={() => replacePlugin({
                         ...plugin,
                         config: { ...plugin.config, connectionMode: 'managed' },
@@ -3364,18 +3395,18 @@ function CardbushAppsPanel({
                     <input
                       type="radio"
                       name="settings-chrome-connection-mode"
-                      checked={plugin.config.connectionMode === 'existing'}
+                      checked={plugin.config.connectionMode !== 'managed'}
                       onChange={() => replacePlugin({
                         ...plugin,
                         config: { ...plugin.config, connectionMode: 'existing' },
                       })}
                     />
                     <span>
-                      <strong>{language === 'zh' ? '复用当前 Chrome' : 'Reuse current Chrome'}</strong>
-                      <small>{language === 'zh' ? '复用已有标签页、Cookie 和登录状态。' : 'Reuse existing tabs, cookies, and signed-in state.'}</small>
+                      <strong>{language === 'zh' ? '优先复用当前 Chrome' : 'Prefer current Chrome'}</strong>
+                      <small>{language === 'zh' ? '远程调试可用时复用现有会话，否则自动使用独立受控浏览器。' : 'Reuse the current session when remote debugging is available, otherwise fall back to a managed browser.'}</small>
                     </span>
                   </label>
-                  {plugin.config.connectionMode === 'existing' && (
+                  {plugin.config.connectionMode !== 'managed' && (
                     <p className="cardbush-app-config-note">
                       {language === 'zh'
                         ? '需要 Chrome 144 或更高版本，并在 chrome://inspect/#remote-debugging 开启远程调试。Agent 将能访问该浏览器中的页面和登录数据。'
@@ -3415,7 +3446,6 @@ function mcpDraftFromServer(server: McpServerConfig): McpServerDraft {
     envText: jsonRecordText(server.env),
     url: server.url ?? '',
     headersText: jsonRecordText(server.headers),
-    timeoutSeconds: server.timeoutSeconds ? String(server.timeoutSeconds) : '60',
   };
 }
 
@@ -3429,10 +3459,6 @@ function mcpDraftToInput(
     draft.id.trim() ||
     mcpSlug(draft.name || commandParts[0] || draft.url) ||
     'mcp-server';
-  const timeoutSeconds = Number(draft.timeoutSeconds);
-  if (draft.timeoutSeconds.trim() && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
-    throw new Error(language === 'zh' ? '超时秒数必须大于 0' : 'Timeout must be greater than 0');
-  }
   const env = draft.transport === 'stdio'
     ? parseStringRecordText(draft.envText, 'env', language)
     : {};
@@ -3461,9 +3487,6 @@ function mcpDraftToInput(
     env,
     url: draft.url.trim(),
     headers,
-    ...(Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-      ? { timeoutSeconds: Math.floor(timeoutSeconds) }
-      : {}),
   };
 }
 

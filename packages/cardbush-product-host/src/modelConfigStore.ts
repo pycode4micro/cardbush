@@ -155,6 +155,13 @@ function decodeUpdate(
     const id = requiredString(config.id, "id");
     const previous = prior.get(id);
     const suppliedApiKey = optionalString(config.apiKey ?? config.api_key);
+    const maxContextTokens = positiveInteger(
+      config.maxContextTokens ?? config.max_context_tokens,
+    );
+    const maxOutputTokens = positiveInteger(
+      config.maxOutputTokens ?? config.maxCompletionTokens ?? config.max_completion_tokens,
+    );
+    assertValidTokenLimits(id, maxContextTokens, maxOutputTokens);
     return {
       id,
       provider: requiredString(config.provider, "provider"),
@@ -162,12 +169,8 @@ function decodeUpdate(
       apiKey: suppliedApiKey ?? previous?.apiKey ?? "",
       ...optionalProperty("baseURL", optionalString(config.baseURL ?? config.baseUrl ?? config.base_url)),
       ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders ?? config.default_headers)),
-      ...optionalProperty("maxContextTokens", positiveInteger(
-        config.maxContextTokens ?? config.max_context_tokens,
-      )),
-      ...optionalProperty("maxOutputTokens", positiveInteger(
-        config.maxOutputTokens ?? config.maxCompletionTokens ?? config.max_completion_tokens,
-      )),
+      ...optionalProperty("maxContextTokens", maxContextTokens),
+      ...optionalProperty("maxOutputTokens", maxOutputTokens),
     } satisfies ProductModelConfig;
   });
   const ids = new Set<string>();
@@ -187,15 +190,19 @@ function decodeSnapshot(input: unknown): ProductModelConfigSnapshot {
   }
   const models = value.models.map((candidate) => {
     const config = record(candidate, "Stored model configuration must be an object.");
+    const id = requiredString(config.id, "id");
+    const maxContextTokens = positiveInteger(config.maxContextTokens);
+    const maxOutputTokens = positiveInteger(config.maxOutputTokens);
+    assertValidTokenLimits(id, maxContextTokens, maxOutputTokens);
     return {
-      id: requiredString(config.id, "id"),
+      id,
       provider: requiredString(config.provider, "provider"),
       model: requiredString(config.model, "model"),
       apiKey: optionalString(config.apiKey) ?? "",
       ...optionalProperty("baseURL", optionalString(config.baseURL)),
       ...optionalProperty("defaultHeaders", stringRecord(config.defaultHeaders)),
-      ...optionalProperty("maxContextTokens", positiveInteger(config.maxContextTokens)),
-      ...optionalProperty("maxOutputTokens", positiveInteger(config.maxOutputTokens)),
+      ...optionalProperty("maxContextTokens", maxContextTokens),
+      ...optionalProperty("maxOutputTokens", maxOutputTokens),
     };
   });
   const defaultModelId = optionalString(value.defaultModelId) ?? "";
@@ -238,6 +245,22 @@ function positiveInteger(input: unknown): number | undefined {
   const value = Number(input);
   if (!Number.isInteger(value) || value <= 0) throw new Error("Token limits must be positive integers.");
   return value;
+}
+
+function assertValidTokenLimits(
+  modelId: string,
+  maxContextTokens: number | undefined,
+  maxOutputTokens: number | undefined,
+): void {
+  if (
+    maxContextTokens !== undefined &&
+    maxOutputTokens !== undefined &&
+    maxOutputTokens >= maxContextTokens
+  ) {
+    throw new Error(
+      `Model ${modelId}: maxOutputTokens (${maxOutputTokens}) must be less than maxContextTokens (${maxContextTokens}).`,
+    );
+  }
 }
 
 function stringRecord(input: unknown): Record<string, string> | undefined {

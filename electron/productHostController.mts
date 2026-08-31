@@ -342,7 +342,7 @@ export class ElectronProductHostController {
         payload: {
           protocol: 'bush.provider_binding_config.v1',
           bindingId: selected.id,
-          adapter: 'openai_compatible',
+          adapter: 'openai_responses',
           apiKey: selected.apiKey,
           baseURL: selected.baseURL,
           defaultHeaders: selected.defaultHeaders ?? {},

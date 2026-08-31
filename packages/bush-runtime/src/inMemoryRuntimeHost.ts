@@ -387,6 +387,7 @@ export class InMemoryRuntimeHost {
           "assistant_segment_started",
           "assistant_segment_delta",
           "assistant_segment_completed",
+          "guidance_applied",
           "tool_queued",
           "tool_running",
           "tool_completed",
@@ -732,6 +733,17 @@ export class InMemoryRuntimeHost {
     } = {},
   ): Promise<RuntimeEvent> {
     const request = modelRequestSchema.parse(input);
+    const contextWindowTokens = Number(request.metadata.contextWindowTokens);
+    if (
+      Number.isInteger(contextWindowTokens) &&
+      contextWindowTokens > 0 &&
+      request.maxOutputTokens !== undefined &&
+      request.maxOutputTokens >= contextWindowTokens
+    ) {
+      throw new Error(
+        `Invalid model token limits: maxOutputTokens (${request.maxOutputTokens}) must be less than contextWindowTokens (${contextWindowTokens}).`,
+      );
+    }
     const identity: RuntimeEventIdentity = {
       requestId: request.requestId,
       sessionId: request.sessionId,
@@ -968,7 +980,6 @@ export class InMemoryRuntimeHost {
                 ...request,
                 messages,
                 tools: request.tools.filter((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL),
-                toolChoice: "required" as const,
               }
             : { ...request, messages };
           if (contextCompactionRequired && roundRequest.tools.length !== 1) {
@@ -1228,6 +1239,9 @@ export class InMemoryRuntimeHost {
             const assistantMessage: ModelMessage = {
               role: "assistant",
               content: completedRound.text,
+              ...(completedRound.reasoning
+                ? { reasoningContent: completedRound.reasoning }
+                : {}),
               toolCalls: [],
             };
             generatedMessages.push({
@@ -1237,22 +1251,16 @@ export class InMemoryRuntimeHost {
             });
             messages = [...messages, assistantMessage];
           }
-          const guidance = this.#guidanceQueues.get(turnKey)?.shift();
-          if (guidance) {
-            if (this.#guidanceQueues.get(turnKey)?.length === 0) {
-              this.#guidanceQueues.delete(turnKey);
-            }
-            const guidanceMessage: ModelMessage = {
-              role: "user",
-              name: "turn_guidance",
-              content: guidance.content,
-            };
-            messages = [...messages, guidanceMessage];
-            generatedMessages.push({
-              messageId: guidance.messageId,
-              createdAt: guidance.createdAt,
-              message: guidanceMessage,
-            });
+          const appliedGuidance = this.#appendQueuedTurnGuidance({
+            turnKey,
+            identity,
+            round,
+            previousAssistantMessageId: completedProjector.messageId,
+            messages,
+            generatedMessages,
+          });
+          if (appliedGuidance.count > 0) {
+            messages = appliedGuidance.messages;
             this.#recovery.save({
               request,
               messages,
@@ -1364,6 +1372,9 @@ export class InMemoryRuntimeHost {
         const assistantMessage: ModelMessage = {
           role: "assistant",
           content: completedRound.text,
+          ...(completedRound.reasoning
+            ? { reasoningContent: completedRound.reasoning }
+            : {}),
           toolCalls: completedRound.toolCalls.map((call) => ({
             id: call.id,
             name: call.name,
@@ -1402,6 +1413,15 @@ export class InMemoryRuntimeHost {
             readyAgentResults,
           );
         }
+        const appliedGuidance = this.#appendQueuedTurnGuidance({
+          turnKey,
+          identity,
+          round,
+          previousAssistantMessageId: completedProjector.messageId,
+          messages,
+          generatedMessages,
+        });
+        messages = appliedGuidance.messages;
         this.#recovery.save({
           request,
           messages,
@@ -1543,6 +1563,51 @@ export class InMemoryRuntimeHost {
       });
     }
     return [...messages, ...results.map((result) => result.message)];
+  }
+
+  #appendQueuedTurnGuidance(input: {
+    turnKey: string;
+    identity: RuntimeEventIdentity;
+    round: number;
+    previousAssistantMessageId?: string;
+    messages: ModelMessage[];
+    generatedMessages: GeneratedMessageFact[];
+  }): { messages: ModelMessage[]; count: number } {
+    const queued = this.#guidanceQueues.get(input.turnKey);
+    if (!queued || queued.length === 0) {
+      return { messages: input.messages, count: 0 };
+    }
+    this.#guidanceQueues.delete(input.turnKey);
+    const guidanceMessages = queued.map((guidance) => {
+      const message: ModelMessage = {
+        role: "user",
+        name: "turn_guidance",
+        content: guidance.content,
+      };
+      input.generatedMessages.push({
+        messageId: guidance.messageId,
+        createdAt: guidance.createdAt,
+        message,
+      });
+      return message;
+    });
+    queued.forEach((guidance, index) => {
+      this.#eventLog.append(input.identity, {
+        kind: "guidance_applied",
+        payload: {
+          messageId: guidance.messageId,
+          queueDepth: queued.length - index - 1,
+          afterRound: input.round,
+          ...(input.previousAssistantMessageId
+            ? { previousAssistantMessageId: input.previousAssistantMessageId }
+            : {}),
+        },
+      });
+    });
+    return {
+      messages: [...input.messages, ...guidanceMessages],
+      count: guidanceMessages.length,
+    };
   }
 
   #settleOrphanedTurns(): void {

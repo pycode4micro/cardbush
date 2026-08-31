@@ -246,7 +246,7 @@ function ConnectedRuntimeLivePreTest({
       const configured = await session.configureProvider({
         protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
         bindingId: modelConfig.id,
-        adapter: 'openai_compatible',
+        adapter: 'openai_responses',
         apiKey: modelConfig.apiKey,
         baseURL: modelConfig.baseUrl.trim() || undefined,
         defaultHeaders: {},
@@ -264,7 +264,6 @@ function ConnectedRuntimeLivePreTest({
         providerBinding: configured.binding,
         messages: [{ role: 'user', content }],
         tools: [],
-      toolChoice: 'auto',
       requestCapabilities: {
         vision: false,
         interactiveRequests: true,

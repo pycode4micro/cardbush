@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   Client,
+  SdkErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   type Tool as McpTool,
@@ -31,6 +32,14 @@ import {
 interface ConnectedServer {
   config: McpServerSnapshot;
   client: Client;
+  transport: Transport;
+  health: "ready" | "restarting" | "unavailable";
+  restartAttempts: number;
+  lastError?: string;
+  restartPromise?: Promise<void>;
+  pendingClient?: Client;
+  pendingTransport?: Transport;
+  retired: boolean;
   tools: Array<{
     remote: McpTool;
     runtimeName: string;
@@ -45,6 +54,17 @@ export interface McpClientManagerOptions {
   createReceiptId?: () => string;
   createClient?: (server: McpServerSnapshot) => Client;
   createTransport?: (server: McpServerSnapshot) => Transport;
+  wait?: (milliseconds: number) => Promise<void>;
+  closeTimeoutMs?: number;
+  onServiceStateChange?: (state: {
+    serverId: string;
+    health: "ready" | "restarting" | "unavailable";
+    restartAttempts: number;
+    transportKind: McpServerSnapshot["transport"]["kind"];
+    recoveryOwner: "cardbush_supervisor";
+    error?: string;
+  }) => void;
+  onServerStderr?: (entry: { serverId: string; message: string }) => void;
 }
 
 /**
@@ -58,6 +78,10 @@ export class McpClientManager {
   readonly #createReceiptId: () => string;
   readonly #createClient: (server: McpServerSnapshot) => Client;
   readonly #createTransport: (server: McpServerSnapshot) => Transport;
+  readonly #wait: (milliseconds: number) => Promise<void>;
+  readonly #closeTimeoutMs: number;
+  readonly #onServiceStateChange?: McpClientManagerOptions["onServiceStateChange"];
+  readonly #onServerStderr?: McpClientManagerOptions["onServerStderr"];
   #connections: ConnectedServer[] = [];
   #snapshot?: McpSnapshot;
   #result?: McpSnapshotResult;
@@ -68,10 +92,28 @@ export class McpClientManager {
     this.#createReceiptId = options.createReceiptId ?? (() => `receipt_${randomUUID()}`);
     this.#createClient = options.createClient ?? createClient;
     this.#createTransport = options.createTransport ?? createTransport;
+    this.#wait = options.wait ?? delay;
+    this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000;
+    this.#onServiceStateChange = options.onServiceStateChange;
+    this.#onServerStderr = options.onServerStderr;
   }
 
   snapshot(): McpSnapshotResult | undefined {
-    return this.#result ? structuredClone(this.#result) : undefined;
+    if (!this.#result) return undefined;
+    return structuredClone({
+      ...this.#result,
+      servers: this.#result.servers.map((server) => {
+        const connection = this.#connections.find((item) => item.config.id === server.id);
+        return connection
+          ? {
+              ...server,
+              health: connection.health,
+              restartAttempts: connection.restartAttempts,
+              ...(connection.lastError ? { lastError: connection.lastError } : {}),
+            }
+          : server;
+      }),
+    });
   }
 
   async apply(input: unknown): Promise<McpSnapshotResult> {
@@ -87,7 +129,7 @@ export class McpClientManager {
         if (fingerprint(snapshot) !== fingerprint(this.#snapshot)) {
           throw new Error("MCP snapshot identity was reused with different content.");
         }
-        return structuredClone(this.#result!);
+        return this.snapshot()!;
       }
     }
 
@@ -101,7 +143,7 @@ export class McpClientManager {
       );
       this.#registry.replaceOwned("runtime_mcp", registrations);
     } catch (error) {
-      await closeConnections(next);
+      await this.#retireConnections(next);
       throw error;
     }
 
@@ -116,14 +158,16 @@ export class McpClientManager {
         id: connection.config.id,
         negotiatedProtocolVersion:
           connection.client.getNegotiatedProtocolVersion() ?? undefined,
+        health: connection.health,
+        restartAttempts: connection.restartAttempts,
         tools: connection.tools.map((tool) => ({
           remoteName: tool.remote.name,
           runtimeName: tool.runtimeName,
         })),
       })),
     };
-    await closeConnections(previous);
-    return structuredClone(this.#result);
+    await this.#retireConnections(previous);
+    return this.snapshot()!;
   }
 
   async close(): Promise<void> {
@@ -132,13 +176,15 @@ export class McpClientManager {
     this.#snapshot = undefined;
     this.#result = undefined;
     this.#registry.removeOwned("runtime_mcp");
-    await closeConnections(current);
+    await this.#retireConnections(current);
   }
 
   async #connect(config: McpServerSnapshot): Promise<ConnectedServer> {
     const client = this.#createClient(config);
+    const transport = this.#createTransport(config);
+    drainTransportStderr(transport, config.id, this.#onServerStderr);
     try {
-      await client.connect(this.#createTransport(config));
+      await client.connect(transport);
       const listed = await client.listTools();
       const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
       const tools = listed.tools
@@ -153,9 +199,19 @@ export class McpClientManager {
           };
         });
       assertUnique(tools.map((tool) => tool.runtimeName), `MCP server ${config.id}`);
-      return { config, client, tools };
+      const connection: ConnectedServer = {
+        config,
+        client,
+        transport,
+        tools,
+        health: "ready",
+        restartAttempts: 0,
+        retired: false,
+      };
+      this.#watchClientLifecycle(connection, client);
+      return connection;
     } catch (error) {
-      await client.close().catch(() => undefined);
+      await closeConnection(client, transport, this.#closeTimeoutMs);
       throw error;
     }
   }
@@ -174,6 +230,7 @@ export class McpClientManager {
       },
       manifest: tool.manifest,
       parallelSafe: tool.policy.parallelSafe,
+      executionChannel: `mcp:${connection.config.id}`,
       visibleToChild: tool.policy.visibleToChild,
       decodeInput: jsonObject,
       authorize: tool.policy.permission === "allow"
@@ -194,14 +251,62 @@ export class McpClientManager {
           },
       execute: async (context) => {
         const receiptId = this.#createReceiptId();
-        const candidate = await connection.client.callTool(
-          {
-            name: tool.remote.name,
-            arguments: context.input,
-            _meta: mcpRequestMetadata(context, receiptId),
-          },
-          { signal: context.signal, toolDefinition: tool.remote },
-        );
+        if (connection.health !== "ready") {
+          return mcpProtocolFailure(
+            context,
+            {},
+            resource,
+            receiptId,
+            connection.health === "restarting"
+              ? "mcp_service_restarting"
+              : "mcp_service_unavailable",
+            `MCP service ${connection.config.id} is recovering; use another available capability instead of retrying this connection.`,
+            {
+              serverId: connection.config.id,
+              health: connection.health,
+              restartAttempts: connection.restartAttempts,
+              retryable: true,
+            },
+            false,
+          );
+        }
+        const activeClient = connection.client;
+        let candidate;
+        try {
+          candidate = await activeClient.callTool(
+            {
+              name: tool.remote.name,
+              arguments: context.input,
+              _meta: mcpRequestMetadata(context, receiptId),
+            },
+            {
+              signal: context.signal,
+              toolDefinition: tool.remote,
+            },
+          );
+        } catch (error) {
+          if (context.signal?.aborted || isAbortError(error)) {
+            throw abortErrorFromSignal(context.signal, error);
+          }
+          if (!isMcpConnectionFailure(error)) throw error;
+          this.#invalidateConnection(connection, activeClient, error);
+          return mcpProtocolFailure(
+            context,
+            {},
+            resource,
+            receiptId,
+            "mcp_service_connection_lost",
+            `MCP service ${connection.config.id} lost its connection and is being restarted.`,
+            {
+              serverId: connection.config.id,
+              health: "restarting",
+              transportKind: connection.config.transport.kind,
+              recoveryOwner: "cardbush_supervisor",
+              retryable: true,
+            },
+            false,
+          );
+        }
         return strictMcpToolResult(
           context,
           toJson(candidate),
@@ -210,6 +315,139 @@ export class McpClientManager {
         );
       },
     };
+  }
+
+  #watchClientLifecycle(connection: ConnectedServer, client: Client): void {
+    client.onclose = () => {
+      this.#invalidateConnection(
+        connection,
+        client,
+        Object.assign(new Error(`MCP service ${connection.config.id} connection closed.`), {
+          code: SdkErrorCode.ConnectionClosed,
+        }),
+      );
+    };
+  }
+
+  #invalidateConnection(
+    connection: ConnectedServer,
+    failedClient: Client,
+    error: unknown,
+  ): void {
+    if (
+      connection.retired ||
+      connection.client !== failedClient ||
+      connection.health !== "ready"
+    ) return;
+    connection.health = "restarting";
+    connection.lastError = errorMessage(error);
+    this.#publishServiceState(connection, "cardbush_supervisor");
+    connection.restartPromise = this.#restartConnection(connection, failedClient)
+      .catch((restartError) => {
+        if (connection.retired) return;
+        connection.health = "unavailable";
+        connection.lastError = errorMessage(restartError);
+        connection.restartPromise = undefined;
+        this.#publishServiceState(connection, "cardbush_supervisor");
+      });
+  }
+
+  async #restartConnection(
+    connection: ConnectedServer,
+    failedClient: Client,
+  ): Promise<void> {
+    const failedTransport = connection.transport;
+    await closeConnection(failedClient, failedTransport, this.#closeTimeoutMs);
+    while (!connection.retired) {
+      const attempt = connection.restartAttempts + 1;
+      const backoff = Math.min(
+        10_000,
+        connection.config.restartBackoffMs * 2 ** Math.min(attempt - 1, 5),
+      );
+      if (backoff > 0) await this.#wait(backoff);
+      if (connection.retired) return;
+      connection.health = "restarting";
+      connection.restartAttempts = attempt;
+      this.#publishServiceState(connection, "cardbush_supervisor");
+      const client = this.#createClient(connection.config);
+      const transport = this.#createTransport(connection.config);
+      drainTransportStderr(
+        transport,
+        connection.config.id,
+        this.#onServerStderr,
+      );
+      connection.pendingClient = client;
+      connection.pendingTransport = transport;
+      try {
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const byName = new Map(listed.tools.map((remote) => [remote.name, remote]));
+        const missing = connection.tools.filter((tool) => !byName.has(tool.remote.name));
+        if (missing.length > 0) {
+          throw new Error(
+            `Restarted MCP service omitted configured tools: ${missing.map((tool) => tool.remote.name).join(", ")}`,
+          );
+        }
+        if (connection.retired) {
+          connection.pendingClient = undefined;
+          connection.pendingTransport = undefined;
+          await closeConnection(client, transport, this.#closeTimeoutMs);
+          return;
+        }
+        connection.client = client;
+        connection.transport = transport;
+        this.#watchClientLifecycle(connection, client);
+        connection.pendingClient = undefined;
+        connection.pendingTransport = undefined;
+        connection.tools.forEach((tool) => {
+          tool.remote = byName.get(tool.remote.name)!;
+        });
+        connection.health = "ready";
+        connection.lastError = undefined;
+        connection.restartPromise = undefined;
+        this.#publishServiceState(connection, "cardbush_supervisor");
+        return;
+      } catch (error) {
+        connection.pendingClient = undefined;
+        connection.pendingTransport = undefined;
+        connection.health = "unavailable";
+        connection.lastError = errorMessage(error);
+        this.#publishServiceState(connection, "cardbush_supervisor");
+        await closeConnection(client, transport, this.#closeTimeoutMs);
+      }
+    }
+  }
+
+  async #retireConnections(connections: ConnectedServer[]): Promise<void> {
+    connections.forEach((connection) => {
+      connection.retired = true;
+    });
+    await Promise.allSettled(
+      connections.flatMap((connection) => [
+        closeConnection(connection.client, connection.transport, this.#closeTimeoutMs),
+        ...(connection.pendingClient && connection.pendingTransport
+          ? [closeConnection(
+              connection.pendingClient,
+              connection.pendingTransport,
+              this.#closeTimeoutMs,
+            )]
+          : []),
+      ]),
+    );
+  }
+
+  #publishServiceState(
+    connection: ConnectedServer,
+    recoveryOwner: "cardbush_supervisor",
+  ): void {
+    this.#onServiceStateChange?.({
+      serverId: connection.config.id,
+      health: connection.health,
+      restartAttempts: connection.restartAttempts,
+      transportKind: connection.config.transport.kind,
+      recoveryOwner,
+      ...(connection.lastError ? { error: connection.lastError } : {}),
+    });
   }
 }
 
@@ -316,7 +554,8 @@ function strictMcpToolResult(
       resource,
       receiptId,
       "mcp_tool_error",
-      `MCP tool ${resource} reported an error.`,
+      mcpToolErrorMessage(output, resource),
+      { resource },
     );
   }
   const parsed = toolResultSchema.safeParse(output.structuredContent);
@@ -373,6 +612,7 @@ function mcpProtocolFailure(
   code: string,
   message: string,
   details: Record<string, unknown> = {},
+  executionSuccess = true,
 ): ToolResult {
   return {
     protocol: BUSH_TOOL_RESULT_PROTOCOL,
@@ -388,9 +628,13 @@ function mcpProtocolFailure(
       effect_kind: context.actionManifest.effect_kind,
       owner: context.actionManifest.owner,
       dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["mcp_protocol_failure"],
+      categories: [
+        code.startsWith("mcp_service_")
+          ? "mcp_transport_failure"
+          : "mcp_protocol_failure",
+      ],
       paths: [],
-      execution_success: true,
+      execution_success: executionSuccess,
       semantic_success: false,
       verification_state: "failed",
       error_code: code,
@@ -429,6 +673,132 @@ function fingerprint(snapshot: McpSnapshot): string {
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex");
 }
 
-async function closeConnections(connections: ConnectedServer[]): Promise<void> {
-  await Promise.allSettled(connections.map((connection) => connection.client.close()));
+function mcpErrorCode(error: unknown): unknown {
+  return error && typeof error === "object" && "code" in error
+    ? (error as { code?: unknown }).code
+    : undefined;
+}
+
+function mcpToolErrorMessage(
+  output: Record<string, unknown>,
+  resource: string,
+): string {
+  const content = Array.isArray(output.content) ? output.content : [];
+  const text = content
+    .flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const candidate = item as Record<string, unknown>;
+      return candidate.type === "text" && typeof candidate.text === "string"
+        ? [candidate.text.trim()]
+        : [];
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  return text
+    ? text.slice(0, 2_000)
+    : `MCP tool ${resource} reported an error.`;
+}
+
+function drainTransportStderr(
+  transport: Transport,
+  serverId: string,
+  onServerStderr?: McpClientManagerOptions["onServerStderr"],
+): void {
+  const stderr = (transport as {
+    stderr?: NodeJS.ReadableStream | null;
+  }).stderr;
+  if (!stderr || typeof stderr.on !== "function") return;
+  if (!onServerStderr) {
+    (stderr as NodeJS.ReadableStream & { resume?: () => void }).resume?.();
+    return;
+  }
+  stderr.on("data", (chunk: unknown) => {
+    const message = Buffer.isBuffer(chunk)
+      ? chunk.toString("utf8")
+      : String(chunk);
+    const normalized = message.trim();
+    if (!normalized) return;
+    onServerStderr({ serverId, message: normalized.slice(0, 8_192) });
+  });
+}
+
+function isMcpConnectionFailure(error: unknown): boolean {
+  const code = mcpErrorCode(error);
+  if (
+    code === SdkErrorCode.ConnectionClosed ||
+    code === SdkErrorCode.SendFailed ||
+    code === SdkErrorCode.NotConnected
+  ) return true;
+  const message = errorMessage(error).toLowerCase();
+  return /connection.*closed|transport.*closed|not connected|econnreset|econnrefused|epipe|socket hang up|connection terminated/.test(message);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function abortErrorFromSignal(
+  signal: AbortSignal | undefined,
+  fallback: unknown,
+): Error {
+  const reason = signal?.reason;
+  if (reason instanceof Error && reason.name === "AbortError") {
+    return reason;
+  }
+  const error = new Error(
+    reason instanceof Error
+      ? reason.message
+      : typeof reason === "string" && reason.trim()
+        ? reason
+        : errorMessage(fallback),
+  );
+  error.name = "AbortError";
+  return error;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function closeConnection(
+  client: Client,
+  transport: Transport,
+  timeoutMs: number,
+): Promise<void> {
+  let clientCloseSucceeded = false;
+  const clientSettled = await settleWithin(
+    Promise.resolve().then(async () => {
+      await client.close();
+      clientCloseSucceeded = true;
+    }),
+    timeoutMs,
+  );
+  if (clientSettled && clientCloseSucceeded) return;
+  const close = (transport as { close?: () => Promise<void> }).close;
+  if (typeof close === "function") {
+    await settleWithin(Promise.resolve().then(() => close.call(transport)), timeoutMs);
+  }
+}
+
+async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true, () => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, milliseconds);
+    timer.unref?.();
+  });
 }

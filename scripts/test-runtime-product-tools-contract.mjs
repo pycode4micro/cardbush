@@ -29,12 +29,15 @@ assert.match(
   appsPlugin,
   /Use direct filesystem tools instead of desktop applications to create, read, or edit files/,
 );
+assert.match(appsPlugin, /LAST-RESORT FALLBACK/);
+assert.match(appsPlugin, /prefer direct APIs, app connectors, MCP tools, browser tools/);
 assert.doesNotMatch(runtimeChat, /entry\.manifest\.dispatch_scope !== 'resource'/);
 assert.match(runtimeChat, /filesystemLocations/);
 assert.match(
   productAgent,
   /Do not inspect or operate the desktop, open a GUI editor, or search Skills/,
 );
+assert.match(productAgent, /Computer Use is a last-resort fallback, never the default route/);
 assert.match(extendedBuiltins, /name: "consult_logic"/);
 assert.match(extendedBuiltins, /name: "learn_logic"/);
 assert.doesNotMatch(extendedBuiltins, /name: "ked_/);

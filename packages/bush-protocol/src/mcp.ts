@@ -41,6 +41,7 @@ export const mcpServerSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
   transport: mcpTransportConfigSchema,
   versionMode: z.enum(["auto", "legacy", "modern"]).default("auto"),
+  restartBackoffMs: z.number().int().min(0).max(60_000).default(250),
   exposeTools: z.array(z.string().min(1)).optional(),
   defaultToolPolicy: mcpToolPolicySchema.default({
     permission: "ask",
@@ -72,6 +73,9 @@ export const mcpSnapshotResultSchema = z.object({
   servers: z.array(z.object({
     id: z.string().min(1),
     negotiatedProtocolVersion: z.string().min(1).optional(),
+    health: z.enum(["ready", "restarting", "unavailable"]).default("ready"),
+    restartAttempts: z.number().int().nonnegative().default(0),
+    lastError: z.string().optional(),
     tools: z.array(z.object({
       remoteName: z.string().min(1),
       runtimeName: z.string().min(1),

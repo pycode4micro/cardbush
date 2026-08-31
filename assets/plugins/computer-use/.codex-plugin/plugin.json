@@ -1,15 +1,15 @@
 {
   "name": "computer-use",
   "version": "1.0.0",
-  "description": "Control Windows desktop applications.",
+  "description": "Last-resort control for Windows desktop applications.",
   "author": { "name": "CardBush" },
   "license": "Proprietary",
   "keywords": ["desktop", "windows", "automation"],
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Computer Use",
-    "shortDescription": "控制 Windows 桌面应用",
-    "longDescription": "通过明确的权限请求观察桌面、操作窗口并控制本机应用。",
+    "shortDescription": "Windows 桌面控制（兜底工具）",
+    "longDescription": "仅在专用工具、文件工具、应用连接器或浏览器工具无法完成任务时使用。它会通过明确的权限请求观察桌面、操作窗口并控制本机应用，可能占用用户的鼠标和键盘。",
     "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],

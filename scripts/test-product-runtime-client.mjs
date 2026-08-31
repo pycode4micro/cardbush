@@ -191,7 +191,7 @@ try {
   const providerBinding = await liveSession.configureProvider({
     protocol: 'bush.provider_binding_config.v1',
     bindingId: 'product_model_config',
-    adapter: 'openai_compatible',
+    adapter: 'openai_responses',
     apiKey: 'product-test-secret',
     baseURL: 'https://provider.invalid/v1',
   });
@@ -434,7 +434,6 @@ function modelRequest(suffix) {
     model: 'unconfigured-model',
     messages: [{ role: 'user', content: 'hello' }],
     tools: [],
-    toolChoice: 'auto',
     metadata: {},
   };
 }

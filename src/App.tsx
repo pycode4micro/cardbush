@@ -492,7 +492,7 @@ function CardbushApp() {
   const lastSavedModelConfigSignatureRef = useRef('');
   const osStartupHandledRef = useRef(false);
   const conversationBeforeOsRef = useRef('');
-  const reasoningBeforeOsRef = useRef<ReasoningLevel>('medium');
+  const reasoningBeforeOsRef = useRef<ReasoningLevel>('high');
   const projectItemsRef = useRef(projectItems);
   const theme = resolveTheme(themePreference, lightThemeStyle, systemDark);
   const language = resolveAppLanguage(languageMode, systemLanguage);
@@ -3486,7 +3486,7 @@ function FeaturePanelLoading({ language }: { language: AppLanguage }) {
 
 function highestReasoningLevel(levels: ReasoningLevel[]): ReasoningLevel {
   const available = new Set(levels);
-  return (['max', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none'] as const).find((level) =>
+  return (['max', 'xhigh', 'high', 'medium', 'low', 'none'] as const).find((level) =>
     available.has(level)
   ) ?? 'max';
 }

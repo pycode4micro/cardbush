@@ -1,10 +1,11 @@
 {
   "name": "chrome",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Automate and inspect Chrome through the official Chrome DevTools MCP server.",
   "author": { "name": "CardBush" },
   "license": "Proprietary",
   "keywords": ["chrome", "browser", "tabs"],
+  "skills": "./runtime/chrome-devtools-mcp/skills",
   "apps": "./.app.json",
   "mcpServers": "./.mcp.json",
   "interface": {

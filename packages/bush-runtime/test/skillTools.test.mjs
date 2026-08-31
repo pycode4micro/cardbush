@@ -37,6 +37,47 @@ test('registers only the published Skill discovery tool', async () => {
   }
 });
 
+test('resolves active Skill roots for every search', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-dynamic-skills-'));
+  try {
+    const first = join(root, 'first');
+    const second = join(root, 'second');
+    await writeSkill(first, 'first-skill', 'First browser workflow');
+    await writeSkill(second, 'second-skill', 'Second browser workflow');
+    let activeRoots = [first];
+    const registry = new ToolRegistry();
+    registerSkillTools(registry, () => activeRoots);
+    const search = registry.resolve('search_skills');
+
+    const firstResult = await search.execute(context(
+      search.decodeInput({ query: 'browser', limit: 5 }),
+      'search_skills_first',
+    ));
+    assert.deepEqual(firstResult.output.matches.map((item) => item.name), ['first-skill']);
+
+    activeRoots = [second];
+    const secondResult = await search.execute(context(
+      search.decodeInput({ query: 'browser', limit: 5 }),
+      'search_skills_second',
+    ));
+    assert.deepEqual(secondResult.output.matches.map((item) => item.name), ['second-skill']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+async function writeSkill(root, name, description) {
+  const packageDir = join(root, name);
+  await mkdir(packageDir, { recursive: true });
+  await writeFile(join(packageDir, 'SKILL.md'), [
+    '---',
+    `name: ${name}`,
+    `description: ${description}`,
+    '---',
+    `# ${name}`,
+  ].join('\n'));
+}
+
 function context(input, name) {
   return {
     requestId: 'request_skill',

@@ -985,7 +985,7 @@ export function useCardbushChat(
       },
       onDelta: (delta, chunk) => streamBuffer.push(delta, chunk),
       onExecution: (update) => {
-        if (update.reason === 'turn_guidance_pending') {
+        if (isTurnGuidanceBoundary(update)) {
           streamBuffer.flushToolBoundary();
           ensureAssistant();
           setMessagesByConversation((state) =>
@@ -1812,7 +1812,7 @@ export function useCardbushChat(
             streamBuffer.push(delta, chunk);
           },
           onExecution: (update) => {
-            if (update.reason === 'turn_guidance_pending') {
+            if (isTurnGuidanceBoundary(update)) {
               streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
@@ -2288,7 +2288,7 @@ export function useCardbushChat(
             streamBuffer.push(delta, chunk);
           },
           onExecution: (update) => {
-            if (update.reason === 'turn_guidance_pending') {
+            if (isTurnGuidanceBoundary(update)) {
               streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
@@ -3582,7 +3582,6 @@ function normalizeReasoningLevels(values?: ReasoningLevel[]): ReasoningLevel[] {
   const normalized = (values ?? [])
     .filter((item) =>
       item === 'none' ||
-      item === 'minimal' ||
       item === 'low' ||
       item === 'medium' ||
       item === 'high' ||
@@ -3591,18 +3590,19 @@ function normalizeReasoningLevels(values?: ReasoningLevel[]): ReasoningLevel[] {
     .filter((item, index, all) => all.indexOf(item) === index);
   return normalized.length > 0
     ? normalized
-    : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+    : ['none', 'low', 'medium', 'high', 'xhigh', 'max'];
 }
 
 function normalizeReasoningLevel(
   value: unknown,
   available: ReasoningLevel[],
 ): ReasoningLevel {
-  const normalized = String(value ?? '').trim().toLowerCase() as ReasoningLevel;
+  const raw = String(value ?? '').trim().toLowerCase();
+  const normalized = raw as ReasoningLevel;
   if (available.includes(normalized)) {
     return normalized;
   }
-  return available.includes('medium') ? 'medium' : available[0] ?? 'medium';
+  return available.includes('high') ? 'high' : available[0] ?? 'high';
 }
 
 function normalizeDisabledToolNames(values?: Set<string>) {
@@ -4023,6 +4023,27 @@ export function applyAssistantSegmentBoundary(
   update: StreamExecutionUpdate,
 ) {
   const messages = [...(current[sessionId] ?? [])];
+  if (update.guidanceMessageId) {
+    const guidanceMessageId = update.guidanceMessageId.trim();
+    for (let index = 0; index < messages.length; index += 1) {
+      const message = messages[index];
+      if (
+        message.role === 'user' &&
+        (message.id === guidanceMessageId ||
+          message.clientMessageId === guidanceMessageId ||
+          String(message.metadata?.client_message_id ?? '') === guidanceMessageId)
+      ) {
+        messages[index] = {
+          ...message,
+          status: 'sent',
+          metadata: {
+            ...(message.metadata ?? {}),
+            guidance_delivery: 'sent',
+          },
+        };
+      }
+    }
+  }
   const nextSegmentIndex =
     update.nextAssistantSegmentIndex ?? update.assistantSegmentIndex;
   const previousSegmentIndex =
@@ -4031,7 +4052,7 @@ export function applyAssistantSegmentBoundary(
       ? nextSegmentIndex - 1
       : undefined);
   const previousIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
-    messageId: '',
+    messageId: update.previousAssistantMessageId ?? '',
     assistantSegmentIndex: previousSegmentIndex,
     turnId: update.turnId,
   });
@@ -4508,38 +4529,64 @@ export function applyTurnTerminalSnapshot(
   const turnId = terminal.turnId.trim();
   const completedAt = terminal.completedAt ?? new Date().toISOString();
   const messages = current[sessionId] ?? [];
+  const terminalStatus = terminal.stopped
+    ? 'stopped'
+    : terminal.status === 'failed'
+      ? 'failed'
+      : 'complete';
+  const terminalMetadata = (message?: ChatMessage) => ({
+    ...(message?.metadata ?? {}),
+    status: terminal.status,
+    stopped: terminal.stopped,
+    stop_reason: terminal.stopReason,
+    stop_scenario: terminal.stopScenario,
+    ...(terminal.stopDetails ? { stop_details: terminal.stopDetails } : {}),
+    ...(terminal.terminalEventSequence != null
+      ? { terminal_event_sequence: terminal.terminalEventSequence }
+      : {}),
+    cardbush_terminal_snapshot: true,
+    cardbush_terminal_stopped: terminal.stopped,
+    cardbush_turn_started_at:
+      message?.metadata?.cardbush_turn_started_at ?? message?.createdAt ?? completedAt,
+    cardbush_turn_completed_at: completedAt,
+  });
+  let matchedAssistant = false;
+  const nextMessages = messages.map((message) => {
+    const belongsToTurn = turnId && chatMessageTurnId(message) === turnId;
+    if (
+      message.role !== 'assistant' ||
+      (!belongsToTurn && message.id !== fallbackAssistantId)
+    ) {
+      return message;
+    }
+    matchedAssistant = true;
+    return {
+      ...message,
+      status: terminalStatus,
+      metadata: terminalMetadata(message),
+    };
+  });
+  if (!matchedAssistant && terminalStatus === 'failed') {
+    nextMessages.push({
+      id: fallbackAssistantId || `assistant-terminal-${turnId || completedAt}`,
+      role: 'assistant',
+      content: '',
+      conversationId: sessionId,
+      turnId: turnId || undefined,
+      createdAt: completedAt,
+      status: 'failed',
+      metadata: terminalMetadata(),
+    });
+  }
   return {
     ...current,
-    [sessionId]: messages.map((message) => {
-      const belongsToTurn = turnId && chatMessageTurnId(message) === turnId;
-      if (
-        message.role !== 'assistant' ||
-        (!belongsToTurn && message.id !== fallbackAssistantId)
-      ) {
-        return message;
-      }
-      return {
-        ...message,
-        status: terminal.stopped ? 'stopped' : 'complete',
-        metadata: {
-          ...(message.metadata ?? {}),
-          status: terminal.status,
-          stopped: terminal.stopped,
-          stop_reason: terminal.stopReason,
-          stop_scenario: terminal.stopScenario,
-          ...(terminal.stopDetails ? { stop_details: terminal.stopDetails } : {}),
-          ...(terminal.terminalEventSequence != null
-            ? { terminal_event_sequence: terminal.terminalEventSequence }
-            : {}),
-          cardbush_terminal_snapshot: true,
-          cardbush_terminal_stopped: terminal.stopped,
-          cardbush_turn_started_at:
-            message.metadata?.cardbush_turn_started_at ?? message.createdAt,
-          cardbush_turn_completed_at: completedAt,
-        },
-      };
-    }),
+    [sessionId]: nextMessages,
   };
+}
+
+function isTurnGuidanceBoundary(update: StreamExecutionUpdate) {
+  return update.reason === 'turn_guidance_pending' ||
+    update.reason === 'turn_guidance_applied';
 }
 
 export function appendToolExecution(
@@ -4845,8 +4892,12 @@ export function mergeFinalStreamMessages(
   const completedAt = new Date().toISOString();
 
   const mergedIncoming = attachLocalToolExecutionsToTranscriptMessages(incoming.map((message) => {
+    const exactExistingMessage = existingById.get(message.id);
+    const hasSegmentedAssistantSnapshot =
+      message.role === 'assistant' &&
+      countMessagesInSameRoleTurn(incoming, message) > 1;
     const existingMessage =
-      existingById.get(message.id) ??
+      exactExistingMessage ??
       findStreamReplacementSource(existing, message, {
         targetTurnId,
         temporaryIds,
@@ -4872,7 +4923,16 @@ export function mergeFinalStreamMessages(
       loopHistory:
         (message.loopHistory?.length ?? 0) > 0
           ? message.loopHistory
-          : existingMessage?.loopHistory,
+          // A temporary streaming assistant is the aggregate display target for
+          // the whole active Turn. Reusing its loopHistory as the fallback for
+          // every persisted assistant segment duplicates the complete execution
+          // transcript once per segment when Stop reconciles the final snapshot.
+          // Once the backend supplied multiple authoritative segments, even a
+          // matching final message id can still refer to that aggregate local
+          // display target. Do not reattach its history to the final segment.
+          : hasSegmentedAssistantSnapshot
+            ? undefined
+            : exactExistingMessage?.loopHistory,
     };
   }), localToolExecutions);
 
@@ -4933,6 +4993,12 @@ export function mergeFinalStreamMessages(
             findPersistedEditableUserMessage(message, normalizedIncoming),
         );
       }
+      return false;
+    }
+    if (
+      isRetainedTerminalAssistant(message) &&
+      !hasAssistantInSameTurn(normalizedIncoming, message)
+    ) {
       return false;
     }
     if (incomingIds.has(message.id) || temporaryIds.has(message.id)) {
@@ -5092,6 +5158,20 @@ export function mergeLoadedMessagesPreservingLocalState(
     if (!source) {
       return message;
     }
+    const localTranscriptInheritance = localTranscriptCollectionInheritance(
+      source,
+      message,
+      loaded,
+    );
+    const sourceToolExecutions = source.toolExecutions ?? [];
+    const inheritedToolExecutions =
+      countMessagesInSameRoleTurn(loaded, message) > 1
+        ? sourceToolExecutions.filter((execution) =>
+            toolExecutionBelongsToMessage(message, execution),
+          )
+        : localTranscriptInheritance.toolExecutions
+          ? sourceToolExecutions
+          : [];
     return {
       ...message,
       // A terminal refresh may persist the user/assistant rows at slightly
@@ -5104,23 +5184,21 @@ export function mergeLoadedMessagesPreservingLocalState(
       taskPlan: message.taskPlan ?? source.taskPlan,
       toolExecutions: mergeToolExecutionLists(
         message.toolExecutions ?? [],
-        source.toolExecutions ?? [],
+        inheritedToolExecutions,
       ),
       loopHistory:
         (message.loopHistory?.length ?? 0) > 0
           ? message.loopHistory
-          : source.loopHistory,
+          : localTranscriptInheritance.loopHistory
+            ? source.loopHistory
+            : undefined,
     };
   });
-  const retainedStoppedAssistants = existing.filter((message) =>
-    message.role === 'assistant' &&
-      message.metadata?.cardbush_terminal_stopped === true &&
-      !merged.some((candidate) =>
-        candidate.role === 'assistant' &&
-          messagesShareTranscriptPosition(candidate, message),
-      ),
+  const retainedTerminalAssistants = existing.filter((message) =>
+    isRetainedTerminalAssistant(message) &&
+      !hasAssistantInSameTurn(merged, message),
   );
-  for (const retained of retainedStoppedAssistants) {
+  for (const retained of retainedTerminalAssistants) {
     const turnId = chatMessageTurnId(retained);
     const lastTurnIndex = findLastIndex(
       merged,
@@ -5129,6 +5207,88 @@ export function mergeLoadedMessagesPreservingLocalState(
     merged.splice(lastTurnIndex >= 0 ? lastTurnIndex + 1 : merged.length, 0, retained);
   }
   return collapseLoopTranscriptMessages(merged);
+}
+
+function localTranscriptCollectionInheritance(
+  source: ChatMessage,
+  message: ChatMessage,
+  loaded: ChatMessage[],
+) {
+  const sameRoleTurnCount = countMessagesInSameRoleTurn(loaded, message);
+  let preciseIdentity = messageIdentityMatches(source, message);
+  const sourceAssistantId = source.assistantMessageId?.trim() ?? '';
+  const messageAssistantId = message.assistantMessageId?.trim() ?? '';
+  if (
+    sourceAssistantId &&
+    messageAssistantId &&
+    sourceAssistantId === messageAssistantId
+  ) {
+    preciseIdentity = true;
+  }
+  const turnId = chatMessageTurnId(message);
+  if (!turnId) {
+    return {
+      toolExecutions: preciseIdentity,
+      loopHistory: preciseIdentity,
+    };
+  }
+  // A legacy final snapshot can replace one optimistic assistant without a
+  // shared message id. That fallback is safe only when the backend returned a
+  // single assistant for the Turn. With multiple loop segments, assigning the
+  // aggregate local collections to every row is precisely the duplication this
+  // guard prevents.
+  const uniqueTurnMessage = sameRoleTurnCount === 1;
+  return {
+    toolExecutions: preciseIdentity || uniqueTurnMessage,
+    // loopHistory on a local streaming assistant is an aggregate of its prior
+    // loop segments. A multi-segment backend snapshot already contains those
+    // rows, so inheriting it on the matching final row would render them twice.
+    loopHistory: uniqueTurnMessage,
+  };
+}
+
+function countMessagesInSameRoleTurn(
+  messages: ChatMessage[],
+  reference: ChatMessage,
+) {
+  const turnId = chatMessageTurnId(reference);
+  if (!turnId) {
+    return 0;
+  }
+  return messages.filter(
+    (candidate) =>
+      candidate.role === reference.role && chatMessageTurnId(candidate) === turnId,
+  ).length;
+}
+
+function isRetainedTerminalAssistant(message: ChatMessage) {
+  if (
+    message.role !== 'assistant' ||
+    message.metadata?.cardbush_terminal_snapshot !== true
+  ) {
+    return false;
+  }
+  const status = String(message.status ?? message.metadata?.status ?? '')
+    .trim()
+    .toLowerCase();
+  return (
+    status === 'failed' ||
+    status === 'stopped' ||
+    message.metadata?.cardbush_terminal_stopped === true
+  );
+}
+
+function hasAssistantInSameTurn(
+  messages: ChatMessage[],
+  reference: ChatMessage,
+) {
+  const turnId = chatMessageTurnId(reference);
+  return Boolean(
+    turnId && messages.some(
+      (message) =>
+        message.role === 'assistant' && chatMessageTurnId(message) === turnId,
+    ),
+  );
 }
 
 function mergeWorkspaceChangeExecutions(
@@ -5462,6 +5622,9 @@ function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessa
     }
     if ((item.turnId?.trim() ?? '') !== turnId) {
       return false;
+    }
+    if (isRetainedTerminalAssistant(item)) {
+      return true;
     }
     return (
       messagesShareTranscriptPosition(item, message) ||
@@ -6090,6 +6253,7 @@ function isAssistantFinalTranscript(message: ChatMessage) {
   return (
     status === 'complete' ||
     status === 'completed' ||
+    status === 'failed' ||
     status === 'stopped' ||
     message.metadata?.stopped === true ||
     message.metadata?.cardbush_terminal_stopped === true ||

@@ -41,7 +41,7 @@ test("persists service, plugin lifecycle, and plugin-specific configuration", as
   }
 });
 
-test("defaults Chrome to a managed browser and persists existing-browser mode", async () => {
+test("defaults Chrome to the existing browser and preserves explicit managed mode", async () => {
   const root = await mkdtemp(join(tmpdir(), "cardbush-chrome-config-"));
   try {
     const path = join(root, "apps.json");
@@ -68,17 +68,27 @@ test("defaults Chrome to a managed browser and persists existing-browser mode", 
       loadCatalog: async () => [chrome],
     });
     const initial = await store.read();
-    assert.deepEqual(initial.plugins[0].config, { connectionMode: "managed" });
+    assert.deepEqual(initial.plugins[0].config, { connectionMode: "existing" });
+    const migrated = await store.write({
+      serviceEnabled: true,
+      plugins: [{
+        id: "chrome",
+        installed: true,
+        enabled: true,
+        config: {},
+      }],
+    });
+    assert.deepEqual(migrated.plugins[0].config, { connectionMode: "existing" });
     const saved = await store.write({
       serviceEnabled: true,
       plugins: [{
         id: "chrome",
         installed: true,
         enabled: true,
-        config: { connectionMode: "existing" },
+        config: { connectionMode: "managed" },
       }],
     });
-    assert.deepEqual(saved.plugins[0].config, { connectionMode: "existing" });
+    assert.deepEqual(saved.plugins[0].config, { connectionMode: "managed" });
     await assert.rejects(
       () => store.write({
         serviceEnabled: true,

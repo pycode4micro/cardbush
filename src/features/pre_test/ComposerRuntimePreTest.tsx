@@ -261,7 +261,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 subagentPermissionRouting="parent"
                 reasoningLevelAvailable
                 reasoningLevel="max"
-                reasoningLevels={['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']}
+                reasoningLevels={['none', 'low', 'medium', 'high', 'xhigh', 'max']}
                 onModelChange={() => undefined}
                 onReferencePlanModeChange={() => undefined}
                 onPermissionModeChange={() => undefined}

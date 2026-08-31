@@ -121,13 +121,14 @@ export function PluginManagementPanel({
     try {
       const saved = await saveCardbushAppsConfiguration(next);
       setConfiguration(saved);
+      setLocalSkills(await onReloadSkills());
       onNotify(message);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
       setBusy('');
     }
-  }, [onNotify]);
+  }, [onNotify, onReloadSkills]);
 
   const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
     setConfiguration((current) => current ? {
@@ -481,7 +482,7 @@ function ChromeConnectionSettings({ language, plugin, onReplace, onPersist }: {
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
-  const connectionMode = plugin.config.connectionMode === 'existing' ? 'existing' : 'managed';
+  const connectionMode = plugin.config.connectionMode === 'managed' ? 'managed' : 'existing';
   const setConnectionMode = (mode: 'managed' | 'existing') => {
     onReplace({ ...plugin, config: { ...plugin.config, connectionMode: mode } });
   };
@@ -498,8 +499,8 @@ function ChromeConnectionSettings({ language, plugin, onReplace, onPersist }: {
       <label className="plugin-radio-setting">
         <input type="radio" name="chrome-connection-mode" checked={connectionMode === 'existing'} onChange={() => setConnectionMode('existing')} />
         <span>
-          <strong>{language === 'zh' ? '复用当前 Chrome' : 'Reuse current Chrome'}</strong>
-          <small>{language === 'zh' ? '连接当前 Chrome，复用已有标签页、Cookie 和登录状态。' : 'Connect to the current Chrome and reuse tabs, cookies, and signed-in state.'}</small>
+          <strong>{language === 'zh' ? '优先复用当前 Chrome' : 'Prefer current Chrome'}</strong>
+          <small>{language === 'zh' ? '远程调试可用时复用标签页与登录状态；不可用时自动使用独立受控浏览器，避免任务中断。' : 'Reuse tabs and signed-in state when remote debugging is available, otherwise fall back to a managed browser so the task can continue.'}</small>
         </span>
       </label>
       {connectionMode === 'existing' && (

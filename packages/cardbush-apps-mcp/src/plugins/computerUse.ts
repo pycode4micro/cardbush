@@ -96,11 +96,20 @@ export function registerComputerUsePlugin(
   server.registerTool('computer_use', {
     title: 'Computer use',
     description: [
-      "Observe and interact with the user's current desktop.",
+      "LAST-RESORT FALLBACK: observe and interact with the user's current desktop only when no purpose-built Tool can complete the task.",
+      'First prefer direct APIs, app connectors, MCP tools, browser tools, and structured filesystem tools because they are more reliable and do not occupy the user\'s mouse or keyboard.',
       'Use direct filesystem tools instead of desktop applications to create, read, or edit files.',
-      'Use this Tool only when the task requires visible GUI interaction or no direct Tool can perform the operation. Screenshots are returned as image artifacts.',
+      'For browser work, prefer chrome_devtools and use Computer Use only after a concrete Chrome Tool failure or when visible browser chrome must be controlled.',
+      'Do not call this Tool merely to inspect the desktop when another Tool already exposes the required state. Screenshots are returned as image artifacts.',
       'For window actions, prefer app to target a process, or use hwnd from observe when more than one window matches.',
     ].join(' '),
+    annotations: {
+      title: 'Computer Use (last-resort fallback)',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema,
     _meta: {
       'cardbush/plugin_id': 'computer_use',
@@ -108,9 +117,12 @@ export function registerComputerUsePlugin(
     },
   }, async (input, context) => {
     try {
-      const result = await executeComputerUse(input, config);
+      const result = await executeComputerUse(input, config, context.mcpReq.signal);
       return mcpResult(context, true, result.output, result.paths, result.artifacts);
     } catch (error) {
+      if (context.mcpReq.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        throw error;
+      }
       return mcpResult(
         context,
         false,

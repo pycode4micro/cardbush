@@ -73,6 +73,7 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
             headers: server.headers ?? {},
           },
       versionMode: 'auto',
+      restartBackoffMs: 250,
       defaultToolPolicy: {
         permission: 'ask',
         parallelSafe: false,
@@ -96,7 +97,6 @@ function storedServer(server: McpServerConfig) {
     env: server.env,
     url: server.url,
     headers: server.headers,
-    timeoutSeconds: server.timeoutSeconds,
   };
 }
 
@@ -118,7 +118,6 @@ function serverFromStored(value: unknown): McpServerConfig | null {
     env: stringRecord(record.env),
     url: optionalString(record.url),
     headers: stringRecord(record.headers),
-    timeoutSeconds: positiveInteger(record.timeoutSeconds),
     raw: { ...record, source: 'cardbush_product' },
   };
 }
@@ -143,11 +142,6 @@ function stringRecord(value: unknown) {
 function optionalString(value: unknown) {
   const normalized = String(value ?? '').trim();
   return normalized || undefined;
-}
-
-function positiveInteger(value: unknown) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function productHostMcp(

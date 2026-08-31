@@ -39,7 +39,7 @@ assert.doesNotMatch(
 );
 assert.match(hook, /applyTurnTerminalSnapshot/);
 assert.match(hook, /cardbush_terminal_stopped/);
-assert.match(hook, /retainedStoppedAssistants/);
+assert.match(hook, /retainedTerminalAssistants/);
 assert.match(hook, /createdAt: source\.createdAt \?\? message\.createdAt/);
 assert.match(hook, /terminalTurnIdsRef\.current\.has\(terminalTurnId\)/);
 assert.match(hook, /const reconcileTerminalTurn = useCallback/);
@@ -104,6 +104,16 @@ vm.runInNewContext(hookTranspiled.outputText, {
         isGoalSelfCheckMessage: () => false,
       };
     }
+    if (specifier.endsWith('/toolArtifacts')) {
+      return {
+        mergeToolArtifacts: (current = [], incoming = []) => [
+          ...current,
+          ...incoming.filter(
+            (artifact) => !current.some((item) => item.id === artifact.id),
+          ),
+        ],
+      };
+    }
     return {};
   },
   Date,
@@ -112,9 +122,83 @@ vm.runInNewContext(hookTranspiled.outputText, {
   window: { setTimeout, clearTimeout },
 });
 const {
+  applyTurnTerminalSnapshot,
+  mergeFinalStreamMessages,
   mergeLoadedMessagesPreservingLocalState,
   normalizeChatMessagesForDisplay,
 } = hookModule.exports;
+
+const failedTerminalTranscript = applyTurnTerminalSnapshot(
+  {
+    session: [{
+      id: 'user-failed',
+      role: 'user',
+      content: '打开网页',
+      turnId: 'turn-failed',
+      createdAt: '2026-08-30T12:00:00.000Z',
+    }],
+  },
+  'session',
+  'assistant-failed',
+  {
+    turnId: 'turn-failed',
+    status: 'failed',
+    stopped: false,
+    stopReason: 'invalid_request_error',
+    stopDetails: { message: 'The provider rejected this request.' },
+    completedAt: '2026-08-30T12:00:01.000Z',
+    raw: {},
+  },
+).session;
+assert.deepEqual(
+  Array.from(failedTerminalTranscript, (message) => message.role),
+  ['user', 'assistant'],
+  'A failed turn without model text must create a visible assistant failure record',
+);
+assert.equal(failedTerminalTranscript[1].status, 'failed');
+
+const finalStreamFailedTerminal = mergeFinalStreamMessages(
+  { session: failedTerminalTranscript },
+  'session',
+  [{
+    id: 'user-server-failed',
+    role: 'user',
+    content: '打开网页',
+    turnId: 'turn-failed',
+    createdAt: '2026-08-30T12:00:00.000Z',
+  }],
+  {
+    turnId: 'turn-failed',
+    temporaryMessageIds: ['user-failed', 'assistant-failed'],
+    toolSourceMessageId: 'assistant-failed',
+  },
+).session;
+assert.deepEqual(
+  Array.from(finalStreamFailedTerminal, (message) => message.role),
+  ['user', 'assistant'],
+  'The final stream snapshot must not erase a terminal failure when it has no assistant row',
+);
+assert.equal(finalStreamFailedTerminal[1].status, 'failed');
+
+const reconciledFailedTerminal = mergeLoadedMessagesPreservingLocalState(
+  failedTerminalTranscript,
+  [{
+    id: 'user-server-failed',
+    role: 'user',
+    content: '打开网页',
+    turnId: 'turn-failed',
+    createdAt: '2026-08-30T12:00:00.000Z',
+  }],
+);
+assert.deepEqual(
+  Array.from(reconciledFailedTerminal, (message) => message.role),
+  ['user', 'assistant'],
+  'A user-only Runtime snapshot must not erase the terminal failure presentation',
+);
+assert.equal(
+  reconciledFailedTerminal[1].metadata.stop_details.message,
+  'The provider rejected this request.',
+);
 
 const stoppedTranscript = mergeLoadedMessagesPreservingLocalState(
   [
@@ -234,6 +318,70 @@ assert.deepEqual(
     ['继续读取技能指南。', 'tool-read'],
   ],
   'Stopped process segments and their execution records must remain inside the single assistant unit.',
+);
+
+const aggregateExecutions = ['tool-loop-1', 'tool-loop-2', 'tool-loop-3'].map(
+  (id, index) => ({
+    id,
+    state: index === 1 ? 'failed' : 'completed',
+    summary: `执行 ${index + 1}`,
+    output: `结果 ${index + 1}`,
+    assistantMessageId: `persisted-stopped-segment-${index + 1}`,
+    metadata: {},
+  }),
+);
+const stoppedAggregateReconciliation = mergeLoadedMessagesPreservingLocalState(
+  [{
+    id: 'temporary-stopped-aggregate',
+    role: 'assistant',
+    content: '停止前的聚合显示消息',
+    turnId: 'turn-stopped-aggregate',
+    status: 'stopped',
+    assistantMessageId: 'persisted-stopped-segment-3',
+    metadata: {
+      cardbush_terminal_snapshot: true,
+      cardbush_terminal_stopped: true,
+    },
+    toolExecutions: aggregateExecutions,
+    loopHistory: [{
+      id: 'temporary-cumulative-history',
+      role: 'assistant',
+      content: '不应再次投射的累计历史',
+      turnId: 'turn-stopped-aggregate',
+      status: 'superseded',
+      toolExecutions: aggregateExecutions,
+      metadata: { transcript_kind: 'assistant_loop' },
+    }],
+  }],
+  aggregateExecutions.map((execution, index) => ({
+    id: `persisted-stopped-segment-${index + 1}`,
+    messageId: `persisted-stopped-segment-${index + 1}`,
+    role: 'assistant',
+    content: index < 2 ? `过程 ${index + 1}` : '停止时的最后过程',
+    turnId: 'turn-stopped-aggregate',
+    messageIndex: index + 1,
+    status: index < 2 ? 'superseded' : 'stopped',
+    metadata: {
+      assistant_segment_index: index + 1,
+      transcript_kind: index < 2 ? 'assistant_loop' : 'assistant_final',
+      ...(index === 2 ? { stopped: true } : {}),
+    },
+    toolExecutions: [execution],
+  })),
+);
+const reconciledExecutionIds = stoppedAggregateReconciliation
+  .flatMap((message) => [message, ...(message.loopHistory ?? [])])
+  .flatMap((message) => message.toolExecutions ?? [])
+  .map((execution) => execution.id);
+assert.equal(
+  reconciledExecutionIds.sort().join(','),
+  aggregateExecutions.map((execution) => execution.id).sort().join(','),
+  'Stop reconciliation must project each execution once instead of copying the aggregate list into every loop segment.',
+);
+assert.equal(
+  stoppedAggregateReconciliation.length,
+  1,
+  'The stopped multi-loop transcript must still collapse into one assistant interaction unit.',
 );
 
 console.log('Stop lifecycle frontend contract tests passed');

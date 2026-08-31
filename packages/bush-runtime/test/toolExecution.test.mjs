@@ -6,8 +6,10 @@ import {
   BUSH_EXECUTION_FACT_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
+  BUSH_RUNTIME_GUIDANCE_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   BUSH_TOOL_RESULT_PROTOCOL,
+  ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
 } from "@cardbush/bush-protocol";
@@ -63,6 +65,180 @@ test("executes a registered tool and continues the same Turn to a final model re
   assert.equal(provider.requests[1].messages.at(-2).role, "assistant");
   assert.equal(provider.requests[1].messages.at(-1).role, "tool");
   assert.match(provider.requests[1].messages.at(-1).content, /receipt_call_fixture/);
+});
+
+test("isolates non-parallel-safe tools by execution channel", async () => {
+  let releaseChrome;
+  const chromeGate = new Promise((resolve) => {
+    releaseChrome = resolve;
+  });
+  let fallbackStarted = false;
+  const definitions = ["chrome_wait", "computer_fallback"].map((name) => ({
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  }));
+  const registry = new ToolRegistry();
+  registry.register({
+    definition: definitions[0],
+    manifest: { ...manifest, operation: "fixture.chrome_wait", owner: "mcp:chrome" },
+    parallelSafe: false,
+    executionChannel: "mcp:chrome_devtools",
+    decodeInput: (input) => input,
+    async execute(context) {
+      await chromeGate;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  registry.register({
+    definition: definitions[1],
+    manifest: { ...manifest, operation: "fixture.computer_fallback", owner: "mcp:apps" },
+    parallelSafe: false,
+    executionChannel: "mcp:cardbush_apps",
+    decodeInput: (input) => input,
+    execute(context) {
+      fallbackStarted = true;
+      releaseChrome();
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const provider = providerWithRounds([channelToolRound(), answerRound("done")]);
+  const host = createHost(provider, registry);
+  const terminal = await Promise.race([
+    host.runModelTurn({ ...request(), tools: definitions }),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("cross-channel fallback was blocked")),
+      500,
+    )),
+  ]);
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(fallbackStarted, true);
+  assert.equal(
+    host.events("session_tools", "turn_tools")
+      .filter((event) => event.kind === "tool_completed").length,
+    2,
+  );
+  assert.deepEqual(
+    provider.requests[1].messages.slice(-2).map((message) => message.toolCallId),
+    ["call_chrome", "call_fallback"],
+    "tool result messages must preserve provider ordinal order",
+  );
+});
+
+test("keeps non-parallel-safe tools serialized inside one execution channel", async () => {
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  let secondStarted = false;
+  const definitions = ["chrome_wait", "computer_fallback"].map((name) => ({
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  }));
+  const registry = new ToolRegistry();
+  registry.register({
+    definition: definitions[0],
+    manifest: { ...manifest, operation: "fixture.channel_first" },
+    parallelSafe: false,
+    executionChannel: "mcp:same_service",
+    decodeInput: (input) => input,
+    async execute(context) {
+      await firstGate;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  registry.register({
+    definition: definitions[1],
+    manifest: { ...manifest, operation: "fixture.channel_second" },
+    parallelSafe: false,
+    executionChannel: "mcp:same_service",
+    decodeInput: (input) => input,
+    execute(context) {
+      secondStarted = true;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const host = createHost(
+    providerWithRounds([channelToolRound(), answerRound("done")]),
+    registry,
+  );
+
+  const running = host.runModelTurn({ ...request(), tools: definitions });
+  await waitForEvent(host, "tool_running");
+  assert.equal(secondStarted, false);
+  releaseFirst();
+  const terminal = await running;
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(secondStarted, true);
+});
+
+test("preserves hidden reasoning on assistant tool-call messages for provider replay", async () => {
+  const firstRound = toolRound();
+  firstRound.splice(1, 0, event(1, "reasoning_delta", {
+    delta: "I should use the fixture tool.",
+  }));
+  firstRound[2].sequence = 2;
+  firstRound[3].sequence = 3;
+  const provider = providerWithRounds([firstRound, answerRound("done")]);
+  const host = createHost(provider, registryWithExecution());
+
+  const terminal = await host.runModelTurn(request());
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(
+    provider.requests[1].messages.at(-2).reasoningContent,
+    "I should use the fixture tool.",
+  );
+});
+
+test("applies queued user guidance immediately after an in-flight tool round", async () => {
+  let releaseTool;
+  const toolGate = new Promise((resolve) => {
+    releaseTool = resolve;
+  });
+  const provider = providerWithRounds([toolRound(), answerRound("stopped as guided")]);
+  const registry = registryWithExecution({
+    async execute(context) {
+      await toolGate;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const host = createHost(provider, registry);
+
+  const running = host.runModelTurn(request());
+  await waitForEvent(host, "tool_running");
+  const receipt = await host.sendCommand({
+    kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
+    payload: {
+      protocol: BUSH_RUNTIME_GUIDANCE_PROTOCOL,
+      sessionId: "session_tools",
+      turnId: "turn_tools",
+      messageId: "guidance_stop_now",
+      content: "Stop the browser work now; no more actions are needed.",
+      createdAt: "2026-08-29T00:00:01.000Z",
+    },
+  });
+  assert.equal(receipt.queueDepth, 1);
+  releaseTool();
+
+  const terminal = await running;
+  const nextMessages = provider.requests[1].messages;
+  assert.equal(terminal.payload.status, "completed");
+  assert.deepEqual(nextMessages.slice(-3).map((message) => message.role), [
+    "assistant",
+    "tool",
+    "user",
+  ]);
+  assert.equal(nextMessages.at(-1).name, "turn_guidance");
+  assert.match(nextMessages.at(-1).content, /no more actions/);
+  const applied = host.events("session_tools", "turn_tools").find(
+    (event) => event.kind === "guidance_applied",
+  );
+  assert.equal(applied.payload.messageId, "guidance_stop_now");
+  assert.equal(applied.payload.queueDepth, 0);
+  assert.equal(applied.payload.afterRound, 1);
 });
 
 test("returns malformed JSON as one factual tool failure and lets the model recover", async () => {
@@ -539,6 +715,25 @@ function twoToolRound() {
       toolCallId: "call_second",
       nameDelta: "fixture_tool",
       argumentsDelta: '{"value":"second"}',
+    }),
+    event(3, "response_completed", { finishReason: "tool_calls" }),
+  ];
+}
+
+function channelToolRound() {
+  return [
+    event(0, "response_started"),
+    event(1, "tool_call_delta", {
+      index: 0,
+      toolCallId: "call_chrome",
+      nameDelta: "chrome_wait",
+      argumentsDelta: "{}",
+    }),
+    event(2, "tool_call_delta", {
+      index: 1,
+      toolCallId: "call_fallback",
+      nameDelta: "computer_fallback",
+      argumentsDelta: "{}",
     }),
     event(3, "response_completed", { finishReason: "tool_calls" }),
   ];

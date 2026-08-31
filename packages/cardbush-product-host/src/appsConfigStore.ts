@@ -31,6 +31,8 @@ export interface CardbushPluginCatalogEntry {
   manifestPath: string;
   source: "bundled" | "user";
   installation: "AVAILABLE" | "INSTALLED_BY_DEFAULT";
+  /** Absolute, validated directories containing this plugin's Skill packages. */
+  skillRoots?: string[];
   components: CardbushPluginComponent[];
 }
 
@@ -64,8 +66,8 @@ export interface CardbushAppsConfigStoreOptions {
 const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
   id: "computer-use",
   name: "Computer Use",
-  description: "Control Windows desktop applications.",
-  longDescription: "Observe the local desktop and interact with applications through explicit, permission-aware actions.",
+  description: "Last-resort control for Windows desktop applications.",
+  longDescription: "Use only when a purpose-built tool, filesystem tool, app connector, or browser tool cannot complete the task. Computer Use observes and controls the local desktop through explicit, permission-aware actions and may occupy the user's mouse and keyboard.",
   version: "1.0.0",
   developerName: "CardBush",
   category: "Productivity",
@@ -82,7 +84,7 @@ const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
     kind: "mcp",
     id: "cardbush_apps",
     name: "Computer Use",
-    description: "Permission-aware desktop control MCP tools.",
+    description: "Last-resort, permission-aware desktop control MCP tools.",
   }],
 };
 
@@ -224,7 +226,7 @@ function defaultConfig(id: string): Record<string, unknown> {
     };
   }
   if (id === "chrome") {
-    return { connectionMode: "managed" } satisfies ChromePluginConfig;
+    return { connectionMode: "existing" } satisfies ChromePluginConfig;
   }
   return {};
 }
@@ -243,7 +245,7 @@ function decodeConfig(id: string, input: unknown): Record<string, unknown> {
     };
   }
   if (id === "chrome") {
-    const connectionMode = optionalString(config.connectionMode) ?? "managed";
+    const connectionMode = optionalString(config.connectionMode) ?? "existing";
     if (connectionMode !== "managed" && connectionMode !== "existing") {
       throw new Error("chrome.connectionMode must be managed or existing.");
     }

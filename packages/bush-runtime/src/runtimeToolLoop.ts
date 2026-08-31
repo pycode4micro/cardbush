@@ -145,11 +145,12 @@ export class RuntimeToolLoop {
       this.#appendToolOutcome(toolCall, executionIdentity, outcome);
       return outcome;
     };
-    const outcomes = toolCalls.every((toolCall) =>
-      this.#registry.isParallelSafe(toolCall.name),
-    )
-      ? await Promise.all(toolCalls.map(executeOne))
-      : await sequential(toolCalls, executeOne);
+    const outcomes = await executeByChannel(
+      toolCalls,
+      executeOne,
+      (toolCall) => this.#registry.executionChannel(toolCall.name),
+      (toolCall) => this.#registry.isParallelSafe(toolCall.name),
+    );
     for (const [ordinal, outcome] of outcomes.entries()) {
       const toolCall = toolCalls[ordinal]!;
       receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
@@ -317,6 +318,37 @@ async function sequential<TInput, TOutput>(
   for (const [index, value] of values.entries()) {
     output.push(await execute(value, index));
   }
+  return output;
+}
+
+async function executeByChannel<TInput, TOutput>(
+  values: TInput[],
+  execute: (value: TInput, index: number) => Promise<TOutput>,
+  channelFor: (value: TInput) => string,
+  parallelSafe: (value: TInput) => boolean,
+): Promise<TOutput[]> {
+  const channels = new Map<string, Array<{ value: TInput; index: number }>>();
+  values.forEach((value, index) => {
+    const channel = channelFor(value);
+    const entries = channels.get(channel) ?? [];
+    entries.push({ value, index });
+    channels.set(channel, entries);
+  });
+  const output: TOutput[] = new Array(values.length);
+  await Promise.all([...channels.values()].map(async (entries) => {
+    if (entries.every(({ value }) => parallelSafe(value))) {
+      const results = await Promise.all(
+        entries.map(({ value, index }) => execute(value, index)),
+      );
+      entries.forEach(({ index }, resultIndex) => {
+        output[index] = results[resultIndex]!;
+      });
+      return;
+    }
+    for (const { value, index } of entries) {
+      output[index] = await execute(value, index);
+    }
+  }));
   return output;
 }
 

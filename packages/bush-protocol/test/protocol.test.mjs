@@ -55,6 +55,29 @@ test("runtime event decoder keeps reasoning separate from assistant content", ()
   assert.equal(event.payload.delta, "private reasoning");
 });
 
+test("runtime guidance application is an explicit delivery fact", () => {
+  const event = decodeRuntimeEvent({
+    protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
+    eventId: "evt_guidance_applied",
+    sequence: 4,
+    requestId: "req_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    createdAt: "2026-08-29T00:00:01.000Z",
+    kind: "guidance_applied",
+    payload: {
+      messageId: "guidance_1",
+      queueDepth: 0,
+      afterRound: 1,
+      previousAssistantMessageId: "message_1",
+    },
+  });
+
+  assert.equal(event.kind, "guidance_applied");
+  assert.equal(event.payload.messageId, "guidance_1");
+  assert.equal(event.payload.queueDepth, 0);
+});
+
 test("runtime capability decoder rejects undeclared protocol versions", () => {
   assert.throws(() =>
     decodeRuntimeCapabilities({
@@ -156,14 +179,16 @@ test("model request keeps provider-independent tool definitions", () => {
     ],
   });
 
-  assert.equal(request.toolChoice, "auto");
   assert.equal(request.tools[0].name, "read_file");
 
-  for (const reasoningEffort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+  for (const reasoningEffort of ["none", "low", "medium", "high", "xhigh", "max"]) {
     assert.equal(
       modelRequestSchema.parse({ ...request, reasoningEffort }).reasoningEffort,
       reasoningEffort,
     );
+  }
+  for (const unsupported of ["minimal", "middle"]) {
+    assert.throws(() => modelRequestSchema.parse({ ...request, reasoningEffort: unsupported }));
   }
 });
 
@@ -355,7 +380,7 @@ test("provider binding commands validate secrets but return only opaque referenc
   const config = runtimeProviderBindingConfigSchema.parse({
     protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
     bindingId: "model_config_1",
-    adapter: "openai_compatible",
+    adapter: "openai_responses",
     apiKey: "secret-value",
     baseURL: "https://provider.invalid/v1",
   });
@@ -385,6 +410,7 @@ test("MCP snapshots carry explicit transport and Tool policy without task semant
   });
 
   assert.equal(snapshot.servers[0].versionMode, "auto");
+  assert.equal(snapshot.servers[0].restartBackoffMs, 250);
   assert.equal(snapshot.servers[0].defaultToolPolicy.permission, "ask");
   assert.equal(snapshot.servers[0].defaultToolPolicy.parallelSafe, false);
   assert.throws(() => mcpSnapshotSchema.parse({

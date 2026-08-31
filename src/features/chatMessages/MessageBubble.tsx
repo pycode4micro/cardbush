@@ -2,6 +2,7 @@ import {
   ArrowUp,
   Check,
   CheckCircle2,
+  CircleAlert,
   ChevronDown,
   Clipboard,
   Clock3,
@@ -64,9 +65,10 @@ import {
 } from './markdownFormat';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
 import {
-  linkifyLocalFileReferences,
   localFileReference,
   localFileReferenceFromHref,
+  localFileReferenceScheme,
+  remarkLocalFileReferences,
 } from './fileReferences';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import {
@@ -244,6 +246,32 @@ function assistantTimeoutPresentation(
   return null;
 }
 
+function assistantFailurePresentation(
+  message: ChatMessage,
+  language: AppLanguage,
+) {
+  if (message.role !== 'assistant') return null;
+  const metadata = message.metadata ?? {};
+  const status = String(message.status ?? metadata.status ?? '').trim().toLowerCase();
+  if (status !== 'failed') return null;
+  const stopDetails = recordFromUnknown(
+    metadata.stop_details ?? metadata.stopDetails,
+  );
+  const reason = String(metadata.stop_reason ?? metadata.stopReason ?? 'runtime_failed').trim();
+  const providerMessage = String(
+    stopDetails.message ?? stopDetails.error ?? '',
+  ).trim();
+  return {
+    reason,
+    title: language === 'zh' ? '本轮执行失败' : 'This turn failed',
+    detail: providerMessage || (
+      language === 'zh'
+        ? `运行时未能完成本轮（${reason}）。请重试。`
+        : `The Runtime could not complete this turn (${reason}). Please retry.`
+    ),
+  };
+}
+
 function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -257,7 +285,7 @@ type ImagePreview = {
 };
 
 const LazyMarkdownContent = lazy(async () => {
-  const [{ default: ReactMarkdown }, { default: remarkGfm }] = await Promise.all([
+  const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
     import('react-markdown'),
     import('remark-gfm'),
   ]);
@@ -273,7 +301,13 @@ const LazyMarkdownContent = lazy(async () => {
   }) {
     return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[
+        remarkGfm,
+        [remarkLocalFileReferences, { workspaceRoot }],
+      ]}
+      urlTransform={(url) =>
+        url.startsWith(localFileReferenceScheme) ? url : defaultUrlTransform(url)
+      }
       components={{
         a: ({ href, children, ...props }) => {
           const directReference = href
@@ -345,10 +379,7 @@ const LazyMarkdownContent = lazy(async () => {
         ),
       }}
     >
-      {linkifyLocalFileReferences(
-        normalizeMarkdownContentForDisplay(content),
-        workspaceRoot,
-      )}
+      {normalizeMarkdownContentForDisplay(content)}
     </ReactMarkdown>
     );
   }
@@ -872,6 +903,7 @@ function MessageBubbleView({
     ? completedAssistantChangeReport(message)
     : null;
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
+  const failurePresentation = assistantFailurePresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
   const hasAssistantBody = Boolean(
     text.trim() ||
@@ -883,6 +915,7 @@ function MessageBubbleView({
       renderActiveTranscript ||
       visibleLoopHistory.length > 0 ||
       timeoutPresentation ||
+      failurePresentation ||
       hookSummary,
   );
   if (!showAssistantProgress && !hasAssistantBody) {
@@ -1031,6 +1064,19 @@ function MessageBubbleView({
               <span>
                 <strong>{timeoutPresentation.title}</strong>
                 <small>{timeoutPresentation.detail}</small>
+              </span>
+            </div>
+          )}
+          {failurePresentation && (
+            <div
+              className="assistant-timeout-notice assistant-failure-notice"
+              data-failure-reason={failurePresentation.reason}
+              role="alert"
+            >
+              <CircleAlert size={15} />
+              <span>
+                <strong>{failurePresentation.title}</strong>
+                <small>{failurePresentation.detail}</small>
               </span>
             </div>
           )}
@@ -1629,6 +1675,7 @@ function isFinalAssistantDisplayMessage(message: ChatMessage) {
   return (
     status === 'complete' ||
     status === 'completed' ||
+    status === 'failed' ||
     transcriptKind === 'assistant_final' ||
     (!status && !transcriptKind)
   );

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
+import { readdir, readFile } from 'node:fs/promises';
 
 import { BUSH_MCP_SNAPSHOT_PROTOCOL } from '@cardbush/bush-protocol';
 import { ToolRegistry } from '@cardbush/bush-runtime';
@@ -21,6 +22,29 @@ const env = Object.fromEntries(
 );
 const registry = new ToolRegistry();
 const manager = new McpClientManager({ registry });
+const skillsRoot = resolve(
+  'assets',
+  'plugins',
+  'chrome',
+  'runtime',
+  'chrome-devtools-mcp',
+  'skills',
+);
+const officialSkills = (await readdir(skillsRoot, { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name)
+  .sort();
+assert.deepEqual(officialSkills, [
+  'a11y-debugging',
+  'chrome-devtools',
+  'chrome-devtools-cli',
+  'debug-optimize-lcp',
+  'memory-leak-debugging',
+  'troubleshooting',
+]);
+for (const skill of officialSkills) {
+  assert.match(await readFile(resolve(skillsRoot, skill, 'SKILL.md'), 'utf8'), /^---\r?\nname:/);
+}
 
 try {
   const applied = await Promise.race([

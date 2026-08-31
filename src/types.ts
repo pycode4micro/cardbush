@@ -183,7 +183,6 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
-  timeoutSeconds?: number;
   toolCount?: number;
   status?: string;
   lastError?: string;
@@ -572,6 +571,8 @@ export interface TurnTerminalSnapshot {
 export interface StreamExecutionUpdate extends AssistantStreamChunk {
   kind: string;
   reason?: string;
+  guidanceMessageId?: string;
+  previousAssistantMessageId?: string;
   pendingGuidanceCount?: number;
   guidanceRoundIndex?: number;
   previousAssistantSegmentIndex?: number;

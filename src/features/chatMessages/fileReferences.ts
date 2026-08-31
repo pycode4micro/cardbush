@@ -52,27 +52,53 @@ export function localFileReferenceFromHref(href: string) {
   }
 }
 
-export function linkifyLocalFileReferences(content: string, workspaceRoot = '') {
-  return content
-    .split(/(```[\s\S]*?```)/g)
-    .map((fencedBlock, fencedIndex) => {
-      if (fencedIndex % 2 === 1) {
-        return fencedBlock;
-      }
-      return fencedBlock
-        .split(/(`[^`\n]+`|\[[^\]\n]+\]\([^)\n]+\))/g)
-        .map((protectedBlock, protectedIndex) => {
-          if (protectedIndex % 2 === 1) {
-            return protectedBlock;
-          }
-          return linkifyTextSegment(protectedBlock, workspaceRoot);
-        })
-        .join('');
-    })
-    .join('');
+type MarkdownNode = {
+  type: string;
+  value?: string;
+  url?: string;
+  children?: MarkdownNode[];
+};
+
+/**
+ * CardBush's local-file behavior is a Markdown AST extension. Standard Markdown
+ * syntax is parsed first, so links, code and other native nodes are never
+ * rewritten as source text merely to add local file navigation.
+ */
+export function remarkLocalFileReferences(options: { workspaceRoot?: string } = {}) {
+  const workspaceRoot = options.workspaceRoot ?? '';
+  return (tree: MarkdownNode) => {
+    visitMarkdownText(tree, workspaceRoot);
+  };
 }
 
-function linkifyTextSegment(value: string, workspaceRoot: string) {
+function visitMarkdownText(node: MarkdownNode, workspaceRoot: string) {
+  if (!node.children || markdownNativeBoundary(node.type)) {
+    return;
+  }
+  for (let index = 0; index < node.children.length; index += 1) {
+    const child = node.children[index]!;
+    if (child.type === 'text' && typeof child.value === 'string') {
+      const replacement = localFileMarkdownNodes(child.value, workspaceRoot);
+      if (replacement) {
+        node.children.splice(index, 1, ...replacement);
+        index += replacement.length - 1;
+      }
+      continue;
+    }
+    visitMarkdownText(child, workspaceRoot);
+  }
+}
+
+function markdownNativeBoundary(type: string) {
+  return type === 'link' ||
+    type === 'linkReference' ||
+    type === 'definition' ||
+    type === 'code' ||
+    type === 'inlineCode' ||
+    type === 'html';
+}
+
+function localFileMarkdownNodes(value: string, workspaceRoot: string): MarkdownNode[] | null {
   const matches = [
     ...value.matchAll(windowsFilePattern),
     ...value.matchAll(relativeFilePattern),
@@ -81,36 +107,50 @@ function linkifyTextSegment(value: string, workspaceRoot: string) {
     ...value.matchAll(barePosixAbsolutePathPattern),
   ].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
   if (matches.length === 0) {
-    return value;
+    return null;
   }
   let cursor = 0;
-  let result = '';
+  const result: MarkdownNode[] = [];
   for (const match of matches) {
     const index = match.index ?? 0;
     if (index < cursor) {
       continue;
     }
-    if (isInsideBareWebUrl(value, index)) {
+    if (isInsideWebUrl(value, index)) {
       continue;
     }
     const reference = localFileReference(match[0], workspaceRoot);
     if (!reference) {
       continue;
     }
-    result += value.slice(cursor, index);
-    result += `[${escapeMarkdownLabel(reference.label)}](${localFileReferenceHref(reference.path)})`;
+    if (index > cursor) {
+      result.push({ type: 'text', value: value.slice(cursor, index) });
+    }
+    result.push({
+      type: 'link',
+      url: localFileReferenceHref(reference.path),
+      children: [{ type: 'text', value: reference.label }],
+    });
     cursor = index + match[0].length;
   }
-  return result + value.slice(cursor);
+  if (result.length === 0) {
+    return null;
+  }
+  if (cursor < value.length) {
+    result.push({ type: 'text', value: value.slice(cursor) });
+  }
+  return result;
 }
 
-function isInsideBareWebUrl(value: string, index: number) {
-  const tokenStart = Math.max(
-    value.lastIndexOf(' ', index - 1),
-    value.lastIndexOf('\n', index - 1),
-    value.lastIndexOf('\t', index - 1),
-  ) + 1;
-  return /^https?:\/\//i.test(value.slice(tokenStart, index));
+function isInsideWebUrl(value: string, index: number) {
+  for (const match of value.matchAll(/https?:\/\/[^\s<>()（）\[\]【】]+/gi)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+    if (index >= start && index < end) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function cleanFileReferenceValue(value: string) {
@@ -178,8 +218,4 @@ function looksLikeFilePath(value: string) {
     return false;
   }
   return /[\\/]/.test(withoutLocation);
-}
-
-function escapeMarkdownLabel(value: string) {
-  return value.replaceAll('[', '\\[').replaceAll(']', '\\]');
 }

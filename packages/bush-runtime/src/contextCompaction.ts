@@ -139,15 +139,27 @@ export function estimateContextPressure(
   const contextWindowTokens = Number(request.metadata.contextWindowTokens);
   if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) return undefined;
   const configuredOutput = Number(request.maxOutputTokens);
+  if (
+    Number.isInteger(configuredOutput) &&
+    configuredOutput > 0 &&
+    configuredOutput >= contextWindowTokens
+  ) {
+    throw new Error(
+      `Invalid model token limits: maxOutputTokens (${configuredOutput}) must be less than contextWindowTokens (${contextWindowTokens}).`,
+    );
+  }
+  const defaultReservedOutputTokens = Math.min(
+    8192,
+    Math.max(1024, Math.trunc(contextWindowTokens * 0.1)),
+  );
   const reservedOutputTokens = Number.isInteger(configuredOutput) && configuredOutput > 0
-    ? Math.min(configuredOutput, Math.max(1, contextWindowTokens - 1))
-    : Math.min(8192, Math.max(1024, Math.trunc(contextWindowTokens * 0.1)));
+    ? configuredOutput
+    : defaultReservedOutputTokens;
   const usableInputTokens = Math.max(1, Math.trunc(contextWindowTokens) - reservedOutputTokens);
   const promptShape = {
     model: request.model,
     messages,
     tools: request.tools,
-    toolChoice: request.toolChoice,
     reasoningEffort: request.reasoningEffort,
     requestCapabilities: request.requestCapabilities,
   };

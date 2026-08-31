@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -91,4 +91,38 @@ test("imports only missing credentials from an identity-matched legacy snapshot"
   assert.equal(snapshot.models[1].apiKey, "current-secret");
   assert.equal(snapshot.models[2].apiKey, "");
   assert.equal(JSON.stringify(store.publicPayload(snapshot)).includes("legacy-vision-secret"), false);
+});
+
+test("rejects impossible token limits in updates and stored snapshots", async () => {
+  const root = await mkdtemp(join(tmpdir(), "cardbush-model-token-limits-"));
+  const path = join(root, "models.json");
+  const store = new ProductModelConfigStore(path);
+  await assert.rejects(() => store.write({
+    defaultModelId: "invalid",
+    models: [{
+      id: "invalid",
+      provider: "deepseek",
+      modelName: "deepseek-v4-flash-vision-exp",
+      apiKey: "secret",
+      maxContextTokens: 256000,
+      maxCompletionTokens: 384000,
+    }],
+  }), /Model invalid: maxOutputTokens \(384000\) must be less than maxContextTokens \(256000\)/);
+
+  await writeFile(path, JSON.stringify({
+    version: 1,
+    defaultModelId: "legacy",
+    models: [{
+      id: "legacy",
+      provider: "deepseek",
+      model: "deepseek-v4-flash-vision-exp",
+      apiKey: "secret",
+      maxContextTokens: 256000,
+      maxOutputTokens: 384000,
+    }],
+  }));
+  await assert.rejects(
+    () => store.read(),
+    /Model legacy: maxOutputTokens \(384000\) must be less than maxContextTokens \(256000\)/,
+  );
 });

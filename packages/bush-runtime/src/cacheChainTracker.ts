@@ -27,7 +27,6 @@ export class CacheChainTracker {
         model: request.model,
         providerBinding: request.providerBinding ?? null,
         tools: request.tools,
-        toolChoice: request.toolChoice,
         maxOutputTokens: request.maxOutputTokens ?? null,
         temperature: request.temperature ?? null,
         topP: request.topP ?? null,

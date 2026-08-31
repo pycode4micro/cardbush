@@ -75,6 +75,10 @@ async function run() {
       ...withoutProviderConfiguration(process.env),
       CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
       CARDBUSH_APPS_CONFIG_PATH: appsConfigPath,
+      CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify([{
+        path: path.join(repositoryRoot, 'assets', 'plugins'),
+        source: 'bundled',
+      }]),
       CARDBUSH_APPS_MCP_ENTRY: path.join(
         repositoryRoot,
         'packages',
@@ -154,6 +158,7 @@ async function run() {
     });
     assert.equal(toolCatalogResponse.ok, true);
     const toolNames = toolCatalogResponse.result.map((tool) => tool.name);
+    assert.ok(toolNames.includes('search_skills'));
     assert.ok(toolNames.includes('mcp__cardbush_apps__computer_use'));
     assert.ok(toolNames.includes('mcp__chrome_devtools__navigate_page'));
     const configuredProvider = await controller.command({
@@ -165,7 +170,7 @@ async function run() {
         payload: {
           protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
           bindingId: 'utility_provider',
-          adapter: 'openai_compatible',
+          adapter: 'openai_responses',
           apiKey: 'utility-test-secret',
           baseURL: 'https://provider.invalid/v1',
         },

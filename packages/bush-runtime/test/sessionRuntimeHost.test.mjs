@@ -216,7 +216,11 @@ test("forces atomic context compaction and resumes the same active Turn", async 
           yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
           return;
         }
-        if (request.toolChoice === "required") {
+        if (
+          request.tools.length === 1 &&
+          request.tools[0]?.name === "checkpoint_context" &&
+          request.messages.some((message) => message.name === "context_pressure")
+        ) {
           const argumentsText = JSON.stringify({
             session_revision: 2,
             summaries: [{
@@ -263,7 +267,6 @@ test("forces atomic context compaction and resumes the same active Turn", async 
   await host.runSessionTurn(second);
 
   assert.equal(observedRequests.length, 3);
-  assert.equal(observedRequests[1].toolChoice, "required");
   assert.deepEqual(observedRequests[1].tools.map((tool) => tool.name), ["checkpoint_context"]);
   assert.match(
     observedRequests[2].messages.find((message) => message.name === "turn_context_summary")?.content ?? "",
@@ -299,7 +302,6 @@ function sessionRequest(requestId, turnId, messageId, content) {
     prefixMessages: [{ role: "system", content: "fixed-prefix" }],
     inputMessages: [{ messageId, createdAt: NOW, message: { role: "user", content } }],
     tools: [],
-    toolChoice: "auto",
     metadata: {},
   };
 }

@@ -105,6 +105,13 @@ assert.match(composerSource, /primary:\s*ordered\.slice\(primaryStart\)/);
 assert.match(composerSource, /secondary:\s*ordered\.slice\(0, primaryStart\)/);
 assert.match(composerSource, /className="model-reasoning-secondary-options"/);
 assert.match(composerSource, /aria-expanded=\{reasoningExpanded\}/);
+for (const level of ['none', 'low', 'medium', 'high', 'xhigh', 'max']) {
+  assert.match(composerSource, new RegExp(`${level}: \\{`));
+}
+assert.doesNotMatch(composerSource, /minimal:\s*\{/);
+assert.doesNotMatch(composerSource, /middle:\s*\{/);
+assert.match(apiSource, /reasoningLevels: \['none', 'low', 'medium', 'high', 'xhigh', 'max'\]/);
+assert.match(apiSource, /defaultReasoningLevel: 'high'/);
 
 const styleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),

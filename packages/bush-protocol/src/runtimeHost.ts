@@ -45,6 +45,7 @@ export const runtimeEventKindSchema = z.enum([
   "assistant_segment_started",
   "assistant_segment_delta",
   "assistant_segment_completed",
+  "guidance_applied",
   "tool_queued",
   "tool_running",
   "tool_completed",
@@ -163,6 +164,15 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("assistant_segment_completed"),
     payload: segmentCompletedPayloadSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("guidance_applied"),
+    payload: z.object({
+      messageId: z.string().min(1),
+      queueDepth: z.number().int().nonnegative(),
+      afterRound: z.number().int().positive(),
+      previousAssistantMessageId: z.string().min(1).optional(),
+    }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_queued"),

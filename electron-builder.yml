@@ -10,10 +10,16 @@ files:
   - packages/*/dist/**/*
   - packages/*/package.json
   - assets/**/*
+  - '!assets/runtime-tools/**/*'
   - package.json
   - node_modules/**/*
   - '!node_modules/.cache/**/*'
   - '!**/*.map'
+extraResources:
+  - from: assets/runtime-tools
+    to: runtime-tools
+    filter:
+      - '**/*'
 win:
   icon: assets/cardbush.ico
   target:

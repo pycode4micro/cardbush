@@ -371,6 +371,22 @@ state = applyAssistantSegmentBoundary(
   initialAssistantId,
   {
     kind: 'loop_transition',
+    reason: 'turn_guidance_applied',
+    turnId: 'turn-1',
+    messageId: '',
+    guidanceMessageId: 'client-guidance-1',
+    previousAssistantMessageId: 'assistant-segment-1',
+  },
+);
+assert.equal(state[sessionId][2].status, 'sent');
+assert.equal(state[sessionId][2].metadata.guidance_delivery, 'sent');
+
+state = applyAssistantSegmentBoundary(
+  state,
+  sessionId,
+  initialAssistantId,
+  {
+    kind: 'loop_transition',
     reason: 'turn_guidance_pending',
     turnId: 'turn-1',
     messageId: 'assistant-segment-2',

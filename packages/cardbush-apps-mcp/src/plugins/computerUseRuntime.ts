@@ -19,12 +19,14 @@ export interface ComputerUseResult {
 export async function executeComputerUse(
   input: Record<string, unknown>,
   config: ComputerUsePluginConfig,
+  signal?: AbortSignal,
 ): Promise<ComputerUseResult> {
+  throwIfAborted(signal);
   ensureWindows();
   const action = String(input.action ?? '').trim();
   if (action === 'observe' || action === 'screenshot') {
-    const capture = await captureDesktop(config.screenshotDirectory);
-    const windows = action === 'observe' ? await listWindows() : undefined;
+    const capture = await captureDesktop(config.screenshotDirectory, signal);
+    const windows = action === 'observe' ? await listWindows(signal) : undefined;
     return {
       output: { ...capture.output, ...(windows ? { windows } : {}) },
       paths: [capture.path],
@@ -36,22 +38,22 @@ export async function executeComputerUse(
     const app = requiredString(input.app, 'app');
     await powershell(`Start-Process -FilePath $env:CARDBUSH_APP_TARGET`, {
       CARDBUSH_APP_TARGET: app,
-    });
+    }, signal);
     return plain({ action, app });
   }
   if (action === 'window') {
     if (String(input.operation ?? '').trim().toLowerCase() === 'close' && !config.allowWindowClose) {
       throw new Error('Closing windows is disabled in Computer Use settings.');
     }
-    return plain(await controlWindow(input));
+    return plain(await controlWindow(input, signal));
   }
   if (['click', 'type', 'key', 'scroll', 'drag'].includes(action)) {
-    return plain(await runInput(action, input));
+    return plain(await runInput(action, input, signal));
   }
   throw new Error(`Unsupported computer_use action: ${action}`);
 }
 
-async function captureDesktop(configuredDirectory: string) {
+async function captureDesktop(configuredDirectory: string, signal?: AbortSignal) {
   const directory = configuredDirectory || join(tmpdir(), 'cardbush-apps', 'captures');
   await mkdir(directory, { recursive: true });
   const path = join(directory, `capture-${Date.now()}-${randomUUID()}.png`);
@@ -69,7 +71,11 @@ try {
   $graphics.Dispose()
   $bitmap.Dispose()
 }`;
-  const output = record(json(await powershell(script, { CARDBUSH_CAPTURE_PATH: path })));
+  const output = record(json(await powershell(
+    script,
+    { CARDBUSH_CAPTURE_PATH: path },
+    signal,
+  )));
   const artifact: Artifact = {
     artifact_id: `artifact_${randomUUID()}`,
     type: 'image',
@@ -81,26 +87,26 @@ try {
   return { path, output, artifact };
 }
 
-async function listWindows(): Promise<unknown[]> {
+async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
   const output = await powershell(String.raw`
 $items = Get-Process -ErrorAction SilentlyContinue | Where-Object {
   $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.MainWindowTitle -ne 'Program Manager'
 } | ForEach-Object {
   [PSCustomObject]@{ process_id=$_.Id; hwnd=$_.MainWindowHandle.ToInt64(); title=$_.MainWindowTitle; process_name=$_.ProcessName }
 }
-@($items) | ConvertTo-Json -Compress`);
+@($items) | ConvertTo-Json -Compress`, {}, signal);
   if (!output.trim()) return [];
   const value = json(output);
   return Array.isArray(value) ? value : [value];
 }
 
-async function controlWindow(input: Record<string, unknown>) {
+async function controlWindow(input: Record<string, unknown>, signal?: AbortSignal) {
   const operation = String(input.operation ?? 'activate').trim().toLowerCase();
   const normalized = operation === 'activate' ? 'focus' : operation;
   if (!['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize'].includes(normalized)) {
     throw new Error(`Unsupported window operation: ${operation}`);
   }
-  const windows = await listWindows() as Array<Record<string, unknown>>;
+  const windows = await listWindows(signal) as Array<Record<string, unknown>>;
   const target = selectWindowTarget(windows, input);
   const bounds = {
     x: optionalInteger(input.x),
@@ -117,7 +123,7 @@ async function controlWindow(input: Record<string, unknown>) {
     CARDBUSH_WINDOW_Y: String(bounds.y ?? 0),
     CARDBUSH_WINDOW_WIDTH: String(bounds.width ?? 0),
     CARDBUSH_WINDOW_HEIGHT: String(bounds.height ?? 0),
-  });
+  }, signal);
   return { action: 'window', operation: normalized, target };
 }
 
@@ -188,9 +194,17 @@ function windowDescription(window: Record<string, unknown>) {
   return `hwnd=${Number(window.hwnd) || 0} process=${String(window.process_name ?? '')} title="${title}"`;
 }
 
-async function runInput(action: string, input: Record<string, unknown>) {
+async function runInput(
+  action: string,
+  input: Record<string, unknown>,
+  signal?: AbortSignal,
+) {
   const payload = Buffer.from(JSON.stringify({ action, ...input }), 'utf8').toString('base64');
-  const output = await powershell(computerInputScript, { CARDBUSH_INPUT_BASE64: payload });
+  const output = await powershell(
+    computerInputScript,
+    { CARDBUSH_INPUT_BASE64: payload },
+    signal,
+  );
   return output.trim() ? json(output) : { action };
 }
 
@@ -253,7 +267,12 @@ switch ($p.action) {
 }
 [PSCustomObject]@{action=$p.action} | ConvertTo-Json -Compress`;
 
-async function powershell(script: string, extraEnv: Record<string, string> = {}): Promise<string> {
+async function powershell(
+  script: string,
+  extraEnv: Record<string, string> = {},
+  signal?: AbortSignal,
+): Promise<string> {
+  throwIfAborted(signal);
   const { stdout } = await execFileAsync('powershell.exe', [
     '-NoLogo',
     '-NoProfile',
@@ -265,10 +284,19 @@ async function powershell(script: string, extraEnv: Record<string, string> = {})
   ], {
     windowsHide: true,
     timeout: 15_000,
+    signal,
     maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, ...extraEnv },
   });
   return stdout;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error('Computer Use was cancelled.');
+  error.name = 'AbortError';
+  throw error;
 }
 
 function plain(output: unknown): ComputerUseResult {

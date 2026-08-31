@@ -6,11 +6,11 @@ import {
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
 } from "@cardbush/bush-protocol";
-import { OpenAICompatibleProviderRegistry } from "../dist/index.js";
+import { OpenAIResponsesProviderRegistry } from "../dist/index.js";
 
 test("keeps provider secrets outside the returned binding reference", () => {
   const created = [];
-  const registry = new OpenAICompatibleProviderRegistry({
+  const registry = new OpenAIResponsesProviderRegistry({
     createRevision: () => "revision_1",
     createProvider: (config) => {
       created.push(config);
@@ -31,7 +31,7 @@ test("keeps provider secrets outside the returned binding reference", () => {
 
 test("retains immutable revisions for concurrent Turns", async () => {
   let revision = 0;
-  const registry = new OpenAICompatibleProviderRegistry({
+  const registry = new OpenAIResponsesProviderRegistry({
     createRevision: () => `revision_${++revision}`,
     createProvider: (config) => provider(config.apiKey),
   });
@@ -50,13 +50,13 @@ test("retains immutable revisions for concurrent Turns", async () => {
 });
 
 test("recreates the same opaque revision after restart for the same exact config", () => {
-  const first = new OpenAICompatibleProviderRegistry({
+  const first = new OpenAIResponsesProviderRegistry({
     createProvider: () => provider("first"),
   }).upsert(bindingConfig("same-secret"));
-  const restarted = new OpenAICompatibleProviderRegistry({
+  const restarted = new OpenAIResponsesProviderRegistry({
     createProvider: () => provider("second"),
   }).upsert(bindingConfig("same-secret"));
-  const changed = new OpenAICompatibleProviderRegistry({
+  const changed = new OpenAIResponsesProviderRegistry({
     createProvider: () => provider("third"),
   }).upsert(bindingConfig("changed-secret"));
 
@@ -66,7 +66,7 @@ test("recreates the same opaque revision after restart for the same exact config
 });
 
 test("returns factual failures for missing bindings and removes all revisions", async () => {
-  const registry = new OpenAICompatibleProviderRegistry({
+  const registry = new OpenAIResponsesProviderRegistry({
     createRevision: () => "revision_1",
     createProvider: () => provider("configured"),
   });
@@ -84,7 +84,7 @@ function bindingConfig(apiKey) {
   return {
     protocol: BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
     bindingId: "model_config_1",
-    adapter: "openai_compatible",
+    adapter: "openai_responses",
     apiKey,
     baseURL: "https://provider.invalid/v1",
   };
