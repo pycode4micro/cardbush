@@ -26,6 +26,10 @@ export interface OpenAIResponsesProviderConfig {
   timeoutMs?: number;
 }
 
+export interface ResponseCreateProjectionOptions {
+  disableProviderState?: boolean;
+}
+
 export interface ResponseNormalizationState {
   requestId: string;
   sequence: number;
@@ -64,10 +68,11 @@ export function normalizeResponseStreamEvent(
   };
 
   if (event.type === "response.created") {
-    start(event.response.id);
+    start(responseContinuationId(event.response));
     return events;
   }
-  start(responseFromEvent(event)?.id);
+  const response = responseFromEvent(event);
+  start(response ? responseContinuationId(response) : undefined);
 
   switch (event.type) {
     case "response.output_text.delta":
@@ -171,6 +176,14 @@ function responseFromEvent(event: ResponseStreamEvent): Response | undefined {
     : undefined;
 }
 
+function responseContinuationId(response: Response): string | undefined {
+  return responseStore(response) === true ? response.id : undefined;
+}
+
+function responseStore(response: Response): boolean | undefined {
+  return (response as Response & { store?: boolean }).store;
+}
+
 function appendResponseUsage(
   response: Response,
   append: (event: ModelEventPayload) => void,
@@ -212,10 +225,22 @@ function retryableProviderCode(code: string | null | undefined): boolean {
 
 export function toResponsesCreateParams(
   request: ModelRequest,
+  options: ResponseCreateProjectionOptions = {},
 ): ResponseCreateParamsStreaming {
+  const providerState = options.disableProviderState
+    ? undefined
+    : request.providerState;
+  const inputMessageOffset = providerState?.previousResponseId
+    ? providerState.inputMessageOffset!
+    : 0;
+  if (inputMessageOffset > request.messages.length) {
+    throw new Error(
+      `Provider continuation offset ${inputMessageOffset} exceeds ${request.messages.length} messages.`,
+    );
+  }
   return {
     model: request.model,
-    input: toResponseInput(request.messages),
+    input: toResponseInput(request.messages.slice(inputMessageOffset)),
     tools: toResponseTools(request),
     max_output_tokens: request.maxOutputTokens,
     temperature: request.temperature,
@@ -223,7 +248,10 @@ export function toResponsesCreateParams(
     reasoning: request.reasoningEffort
       ? { effort: request.reasoningEffort }
       : undefined,
-    store: false,
+    ...(providerState?.previousResponseId
+      ? { previous_response_id: providerState.previousResponseId }
+      : {}),
+    store: Boolean(providerState),
     stream: true,
   } as ResponseCreateParamsStreaming;
 }
@@ -419,6 +447,7 @@ function providerFailureEvent(
 
 export class OpenAIResponsesProvider implements ModelProvider {
   readonly #client: OpenAI;
+  #providerStateEnabled = true;
 
   constructor(config: OpenAIResponsesProviderConfig) {
     this.#client = new OpenAI({
@@ -440,11 +469,37 @@ export class OpenAIResponsesProvider implements ModelProvider {
       started: false,
     };
     try {
-      const stream = await this.#client.responses.create(
-        toResponsesCreateParams(await resolveLocalImageInputs(request)),
-        { signal: options.signal },
+      const resolvedRequest = await resolveLocalImageInputs(request);
+      const useProviderState = Boolean(
+        resolvedRequest.providerState && this.#providerStateEnabled,
       );
+      let stream;
+      try {
+        stream = await this.#client.responses.create(
+          toResponsesCreateParams(resolvedRequest, {
+            disableProviderState: !useProviderState,
+          }),
+          { signal: options.signal },
+        );
+      } catch (error) {
+        if (!useProviderState || !providerStateCompatibilityError(error)) throw error;
+        this.#providerStateEnabled = false;
+        logProviderStateFallback(error);
+        stream = await this.#client.responses.create(
+          toResponsesCreateParams(resolvedRequest, { disableProviderState: true }),
+          { signal: options.signal },
+        );
+      }
       for await (const providerEvent of stream) {
+        if (
+          useProviderState &&
+          this.#providerStateEnabled &&
+          providerEvent.type === "response.created" &&
+          responseStore(providerEvent.response) !== true
+        ) {
+          this.#providerStateEnabled = false;
+          logProviderStateUnavailable("response_not_stored");
+        }
         for (const event of normalizeResponseStreamEvent(providerEvent, state)) {
           yield event;
         }
@@ -470,4 +525,32 @@ export class OpenAIResponsesProvider implements ModelProvider {
       );
     }
   }
+}
+
+function providerStateCompatibilityError(error: unknown): boolean {
+  if (!(error instanceof OpenAI.APIError)) return false;
+  if (![400, 404, 422].includes(error.status ?? 0)) return false;
+  const code = typeof error.code === "string" ? error.code : "";
+  return /(?:previous[_ -]?response|response[_ -]?state|\bstore\b)/i.test(
+    `${code} ${error.message}`,
+  );
+}
+
+function logProviderStateFallback(error: unknown): void {
+  const apiError = error instanceof OpenAI.APIError ? error : undefined;
+  console.warn("[bush-provider-openai]", JSON.stringify({
+    type: "provider_response_chain_disabled",
+    status: apiError?.status ?? null,
+    code: typeof apiError?.code === "string"
+      ? apiError.code
+      : apiError?.name ?? "provider_state_unsupported",
+  }));
+}
+
+function logProviderStateUnavailable(reason: string): void {
+  console.warn("[bush-provider-openai]", JSON.stringify({
+    type: "provider_response_chain_disabled",
+    status: null,
+    code: reason,
+  }));
 }

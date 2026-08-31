@@ -62,6 +62,14 @@ test("executes a registered tool and continues the same Turn to a final model re
   assert.deepEqual(completed.payload.receiptIds, ["receipt_call_fixture"]);
   assert.deepEqual(completed.payload.executionFactIds, ["receipt_call_fixture"]);
   assert.equal(provider.requests.length, 2);
+  assert.deepEqual(provider.requests[0].providerState, {
+    strategy: "response_chain",
+  });
+  assert.deepEqual(provider.requests[1].providerState, {
+    strategy: "response_chain",
+    previousResponseId: "resp_tool_round",
+    inputMessageOffset: 2,
+  });
   assert.equal(provider.requests[1].messages.at(-2).role, "assistant");
   assert.equal(provider.requests[1].messages.at(-1).role, "tool");
   assert.match(provider.requests[1].messages.at(-1).content, /receipt_call_fixture/);
@@ -682,7 +690,7 @@ function result(toolCallId, actionManifest, factOverrides = {}) {
 
 function toolRound(overrides = {}) {
   return [
-    event(0, "response_started"),
+    event(0, "response_started", { providerResponseId: "resp_tool_round" }),
     event(1, "tool_call_delta", {
       index: 0,
       toolCallId: "call_fixture",

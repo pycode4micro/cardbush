@@ -445,6 +445,121 @@ const toolBlockSource = fs.readFileSync(
   ),
   'utf8',
 );
+const toolStateSource = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'src',
+    'features',
+    'tools',
+    'toolExecutionState.ts',
+  ),
+  'utf8',
+);
+const toolStateTranspiled = ts.transpileModule(toolStateSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const toolStateModule = { exports: {} };
+vm.runInNewContext(toolStateTranspiled.outputText, {
+  module: toolStateModule,
+  exports: toolStateModule.exports,
+});
+const {
+  activeToolStatusLabel,
+  isToolCancelled,
+  isToolRunning,
+  runningToolLabel,
+} = toolStateModule.exports;
+const awaitingPermissionTool = {
+  ...baseTool,
+  id: 'tool-awaiting-permission',
+  state: 'awaiting_permission',
+  success: false,
+};
+assert.equal(isToolRunning(awaitingPermissionTool), true);
+assert.equal(activeToolStatusLabel(awaitingPermissionTool, 'zh'), '等待授权');
+assert.equal(
+  runningToolLabel([awaitingPermissionTool], 'zh'),
+  'read_file 等待授权',
+);
+assert.equal(
+  activeToolStatusLabel({ ...awaitingPermissionTool, state: 'queued' }, 'zh'),
+  '排队中',
+);
+assert.equal(
+  isToolCancelled({ ...awaitingPermissionTool, state: 'cancelled' }),
+  true,
+);
+
+const pendingQueueSource = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'src',
+    'features',
+    'interactions',
+    'pendingInteractionQueue.ts',
+  ),
+  'utf8',
+);
+const pendingQueueTranspiled = ts.transpileModule(pendingQueueSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const pendingQueueModule = { exports: {} };
+vm.runInNewContext(pendingQueueTranspiled.outputText, {
+  module: pendingQueueModule,
+  exports: pendingQueueModule.exports,
+});
+const { keepFirstPendingInteraction } = pendingQueueModule.exports;
+const firstPermission = { id: 'permission-a', sessionId: 'session-a', raw: {} };
+const secondPermission = { id: 'permission-b', sessionId: 'session-a', raw: {} };
+assert.equal(
+  keepFirstPendingInteraction(null, firstPermission, 'session-a').id,
+  'permission-a',
+);
+assert.equal(
+  keepFirstPendingInteraction(firstPermission, secondPermission, 'session-a').id,
+  'permission-a',
+  'Parallel permissions must not replace the request already visible to the user.',
+);
+assert.equal(
+  keepFirstPendingInteraction(
+    firstPermission,
+    { id: 'permission-background', sessionId: 'session-b', raw: {} },
+    'session-a',
+  ).id,
+  'permission-a',
+  'A background session permission must not replace the active session dialog.',
+);
+
+const runtimeChatSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'runtimeChat.ts'),
+  'utf8',
+);
+assert.match(
+  runtimeChatSource,
+  /case 'permission_requested':[\s\S]*?state: 'awaiting_permission'/,
+  'A permission request must project an explicit waiting state for its tool.',
+);
+assert.match(
+  chatHookSource,
+  /setPendingInteraction\(\(current\) => keepFirstPendingInteraction\(/,
+  'Runtime interaction events must preserve the first visible permission.',
+);
+assert.match(
+  chatHookSource,
+  /const nextInteraction = await fetchPendingInteraction\(sessionId\)/,
+  'Answering one permission must immediately advance to the next pending request.',
+);
+assert.match(
+  chatHookSource,
+  /onDone: \(terminal\) => \{\s*setPendingInteraction\(\(current\) =>\s*current\?\.sessionId === sessionId \? null : current,/,
+  'A terminal Turn must remove its obsolete permission card.',
+);
 const toolLogoSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolLogo.tsx'),
   'utf8',

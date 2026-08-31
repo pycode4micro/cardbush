@@ -83,6 +83,34 @@ export const reasoningEffortSchema = z.enum([
 
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
+/**
+ * Ephemeral provider-side continuation for consecutive model rounds in one
+ * active Turn. Runtime checkpoints intentionally omit this state and rebuild
+ * the next request from the authoritative message history after recovery.
+ */
+export const modelProviderStateSchema = z.object({
+  strategy: z.literal("response_chain"),
+  previousResponseId: z.string().min(1).optional(),
+  inputMessageOffset: z.number().int().nonnegative().optional(),
+}).superRefine((state, context) => {
+  if (state.previousResponseId && state.inputMessageOffset === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["inputMessageOffset"],
+      message: "inputMessageOffset is required with previousResponseId.",
+    });
+  }
+  if (!state.previousResponseId && state.inputMessageOffset !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["previousResponseId"],
+      message: "previousResponseId is required with inputMessageOffset.",
+    });
+  }
+});
+
+export type ModelProviderState = z.infer<typeof modelProviderStateSchema>;
+
 export const modelRequestSchema = z.object({
   protocol: z.literal(BUSH_MODEL_REQUEST_PROTOCOL),
   requestId: z.string().min(1),
@@ -96,6 +124,7 @@ export const modelRequestSchema = z.object({
   temperature: z.number().finite().optional(),
   topP: z.number().finite().optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
+  providerState: modelProviderStateSchema.optional(),
   requestCapabilities: requestCapabilitiesSchema.default({
     vision: false,
     interactiveRequests: false,

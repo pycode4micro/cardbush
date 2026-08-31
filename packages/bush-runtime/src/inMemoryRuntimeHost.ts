@@ -63,6 +63,7 @@ import {
   runtimeLogicFeedbackRequestSchema,
   type ModelRequest,
   type ModelMessage,
+  type ModelProviderState,
   type CacheChainState,
   type RuntimeCapabilities,
   type RuntimeEvent,
@@ -874,6 +875,7 @@ export class InMemoryRuntimeHost {
     let emptyStopRetries = 0;
     let contextCompactionFailures = 0;
     let contextPressureNoticeRevision: number | undefined;
+    let providerState: ModelProviderState = freshResponseChain();
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
       ? structuredClone(input.sessionCommit.generatedMessages)
@@ -948,6 +950,7 @@ export class InMemoryRuntimeHost {
                   generatedMessages,
                   summaryLimit,
                 );
+                providerState = freshResponseChain();
                 pressure = estimateContextPressure(request, messages);
                 if (!pressure || pressure.ratio < CONTEXT_COMPACTION_HARD_PRESSURE) break;
                 summaryLimit -= 1;
@@ -979,9 +982,10 @@ export class InMemoryRuntimeHost {
             ? {
                 ...request,
                 messages,
+                providerState,
                 tools: request.tools.filter((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL),
               }
-            : { ...request, messages };
+            : { ...request, messages, providerState };
           if (contextCompactionRequired && roundRequest.tools.length !== 1) {
             return finalize({
               status: "failed",
@@ -1137,6 +1141,7 @@ export class InMemoryRuntimeHost {
             visibility: "internal",
             content: "Context compaction is mandatory before normal work can continue. Call checkpoint_context now and do not answer or call another Tool.",
           }];
+          providerState = freshResponseChain();
           continue;
         }
         if (checkpointCalls.length > 0) {
@@ -1156,6 +1161,7 @@ export class InMemoryRuntimeHost {
               visibility: "internal",
               content: "checkpoint_context must be the only Tool call in this maintenance round. Call it again alone with every requested Turn summary.",
             }];
+            providerState = freshResponseChain();
             continue;
           }
           try {
@@ -1175,6 +1181,7 @@ export class InMemoryRuntimeHost {
               input.sessionCommit!,
               generatedMessages,
             );
+            providerState = freshResponseChain();
             this.#recovery.save({
               request,
               messages,
@@ -1217,6 +1224,7 @@ export class InMemoryRuntimeHost {
                 ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision and Turn order.`
                 : `The checkpoint_context call was rejected because Runtime has not authorized compaction at the current pressure. Continue the task normally and do not call checkpoint_context without a context_pressure notice.`,
             }];
+            providerState = freshResponseChain();
             continue;
           }
         }
@@ -1251,6 +1259,10 @@ export class InMemoryRuntimeHost {
             });
             messages = [...messages, assistantMessage];
           }
+          providerState = continuedResponseChain(
+            completedRound.providerResponseId,
+            messages.length,
+          );
           const appliedGuidance = this.#appendQueuedTurnGuidance({
             turnKey,
             identity,
@@ -1381,11 +1393,16 @@ export class InMemoryRuntimeHost {
             argumentsText: call.argumentsText,
           })),
         };
+        const continuationOffset = messages.length + 1;
         messages = [
           ...messages,
           assistantMessage,
           ...toolRound.messages,
         ];
+        providerState = continuedResponseChain(
+          completedRound.providerResponseId,
+          continuationOffset,
+        );
         generatedMessages.push({
           messageId: completedProjector.messageId,
           createdAt: this.#sessionNow(),
@@ -1984,6 +2001,19 @@ function childPermissionRuntimeOptions(
 
 function metadataString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function freshResponseChain(): ModelProviderState {
+  return { strategy: "response_chain" };
+}
+
+function continuedResponseChain(
+  previousResponseId: string | undefined,
+  inputMessageOffset: number,
+): ModelProviderState {
+  return previousResponseId
+    ? { strategy: "response_chain", previousResponseId, inputMessageOffset }
+    : freshResponseChain();
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

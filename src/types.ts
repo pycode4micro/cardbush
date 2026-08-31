@@ -365,7 +365,7 @@ export interface ProjectItem {
 export interface ChatAttachment {
   id: string;
   name: string;
-  type: 'image' | 'video' | 'audio' | 'document';
+  type: 'image' | 'video' | 'audio' | 'document' | 'folder';
   path?: string;
   size?: number;
 }

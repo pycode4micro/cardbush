@@ -2295,13 +2295,14 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
   )].slice(0, 32);
   const inspected = await Promise.all(uniquePaths.map(async (targetPath) => {
     const stats = await fs.promises.stat(targetPath).catch(() => null);
-    if (!stats?.isFile()) {
+    if (!stats || (!stats.isFile() && !stats.isDirectory())) {
       return null;
     }
     return {
       path: targetPath,
       name: path.basename(targetPath),
-      size: stats.size,
+      kind: stats.isDirectory() ? 'folder' as const : 'file' as const,
+      ...(stats.isFile() ? { size: stats.size } : {}),
     };
   }));
   return inspected.filter((item) => item != null);

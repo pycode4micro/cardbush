@@ -199,7 +199,8 @@ declare global {
       inspectAttachments: (paths: string[]) => Promise<Array<{
         path: string;
         name: string;
-        size: number;
+        kind: 'file' | 'folder';
+        size?: number;
       }>>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;

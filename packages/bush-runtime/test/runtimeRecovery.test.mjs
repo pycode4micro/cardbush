@@ -100,12 +100,23 @@ test("blocks recovery after a tool entered execution beyond the checkpoint", () 
     payload: { status: "running" },
   });
   recovery.save({
-    request: request(),
+    request: {
+      ...request(),
+      providerState: {
+        strategy: "response_chain",
+        previousResponseId: "resp_ephemeral",
+        inputMessageOffset: 1,
+      },
+    },
     messages: request().messages,
     nextRound: 1,
     completedReceiptIds: [],
     cacheChainState: new CacheChainTracker().snapshot(),
   });
+  assert.equal(
+    checkpoints.load(identity.sessionId, identity.turnId).request.providerState,
+    undefined,
+  );
   const tool = {
     toolCallId: "call_ambiguous",
     toolName: "fixture_tool",

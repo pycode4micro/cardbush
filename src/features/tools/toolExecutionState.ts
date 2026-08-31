@@ -2,7 +2,14 @@ import type { AppLanguage, ChatToolExecution } from '../../types';
 
 export function isToolRunning(execution: ChatToolExecution) {
   const normalized = execution.state.trim().toLowerCase();
-  return ['using', 'running', 'pending', 'started', 'queued'].includes(normalized);
+  return [
+    'using',
+    'running',
+    'pending',
+    'started',
+    'queued',
+    'awaiting_permission',
+  ].includes(normalized);
 }
 
 export function isToolRunningInContext(
@@ -20,12 +27,54 @@ export function runningToolLabel(
     executions.find((item) => isToolRunning(item)) ?? executions[executions.length - 1];
   const summary = running?.summary.trim();
   const toolNameText = displayToolName(running?.name ?? '');
+  const state = running?.state.trim().toLowerCase() ?? '';
+  if (state === 'awaiting_permission') {
+    return language === 'zh'
+      ? `${toolNameText} 等待授权`
+      : `${toolNameText} awaiting permission`;
+  }
+  if (state === 'queued') {
+    return language === 'zh'
+      ? `${toolNameText} 排队中`
+      : `${toolNameText} queued`;
+  }
+  if (state === 'pending') {
+    return language === 'zh'
+      ? `${toolNameText} 等待中`
+      : `${toolNameText} pending`;
+  }
   if (!summary) {
     return language === 'zh' ? `正在运行 ${toolNameText}` : `Running ${toolNameText}`;
   }
   return language === 'zh'
     ? `正在运行 ${toolNameText} ${summary}`
     : `Running ${toolNameText} ${summary}`;
+}
+
+export function activeToolStatusLabel(
+  execution: ChatToolExecution,
+  language: AppLanguage,
+) {
+  const state = execution.state.trim().toLowerCase();
+  if (state === 'awaiting_permission') {
+    return language === 'zh' ? '等待授权' : 'Awaiting permission';
+  }
+  if (state === 'queued') {
+    return language === 'zh' ? '排队中' : 'Queued';
+  }
+  if (state === 'pending') {
+    return language === 'zh' ? '等待中' : 'Pending';
+  }
+  if (['using', 'running', 'started'].includes(state)) {
+    return language === 'zh' ? '运行中' : 'Running';
+  }
+  return undefined;
+}
+
+export function isToolCancelled(execution: ChatToolExecution) {
+  return ['cancelled', 'canceled', 'stopped'].includes(
+    execution.state.trim().toLowerCase(),
+  );
 }
 
 export function displayToolName(value: string) {

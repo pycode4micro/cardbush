@@ -6177,6 +6177,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 .message-file-icon.archive { color: #b28a3a; }
 .message-file-icon.code { color: #5b91d8; }
 .message-file-icon.document { color: #557dcc; }
+.message-file-icon.folder { color: #d6a443; }
 
 .message-file-icon em {
   position: absolute;
@@ -10279,6 +10280,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 .composer-file-icon.archive { color: #b28a3a; }
 .composer-file-icon.code { color: #5b91d8; }
 .composer-file-icon.document { color: #557dcc; }
+.composer-file-icon.folder { color: #d6a443; }
 
 .composer-file-icon em {
   position: absolute;

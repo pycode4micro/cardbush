@@ -401,6 +401,7 @@ async function consumeRuntimeEvents(
   signal: AbortSignal,
   cursor?: { afterSequence?: number; lastEventId?: string },
 ) {
+  const liveToolExecutions = new Map<string, ChatToolExecution>();
   for await (const event of runtime.client.events({
     sessionId: runtimeRequest.sessionId,
     turnId: runtimeRequest.turnId,
@@ -445,9 +446,12 @@ async function consumeRuntimeEvents(
         });
         break;
       case 'tool_queued':
-      case 'tool_running':
-        request.onToolExecution?.(toolLifecycle(event));
+      case 'tool_running': {
+        const execution = toolLifecycle(event);
+        liveToolExecutions.set(event.payload.toolCallId, execution);
+        request.onToolExecution?.(execution);
         break;
+      }
       case 'tool_completed':
       case 'tool_failed': {
         const loading = runtime.client
@@ -457,9 +461,9 @@ async function consumeRuntimeEvents(
             toolCallId: event.payload.toolCallId,
           })
           .then(async (record) => {
-            request.onToolExecution?.(
-              record ? toolRecord(record, event) : toolLifecycle(event),
-            );
+            const execution = record ? toolRecord(record, event) : toolLifecycle(event);
+            liveToolExecutions.set(event.payload.toolCallId, execution);
+            request.onToolExecution?.(execution);
             if (record?.toolCall.name === 'update_task_plan') {
               const plan = await runtime.client.getPlan(event.sessionId);
               if (plan) request.onTaskPlanUpdate?.(planUpdate(plan.plan, event));
@@ -474,11 +478,34 @@ async function consumeRuntimeEvents(
         pendingToolLoads.add(loading);
         break;
       }
-      case 'tool_cancelled':
-        request.onToolExecution?.(toolLifecycle(event));
+      case 'tool_cancelled': {
+        const execution = toolLifecycle(event);
+        liveToolExecutions.set(event.payload.toolCallId, execution);
+        request.onToolExecution?.(execution);
         break;
+      }
       case 'permission_requested': {
         const interaction = permissionInteraction(runtime, event);
+        const toolCallId = event.payload.toolCallId;
+        const queuedExecution = toolCallId
+          ? liveToolExecutions.get(toolCallId)
+          : undefined;
+        if (queuedExecution && toolCallId) {
+          const awaitingPermission: ChatToolExecution = {
+            ...queuedExecution,
+            state: 'awaiting_permission',
+            createdAt: event.createdAt,
+            sequence: event.sequence,
+            metadata: {
+              ...queuedExecution.metadata,
+              permissionId: event.payload.permissionId,
+              permissionReason: event.payload.reason,
+              permissionResources: [...event.payload.resources],
+            },
+          };
+          liveToolExecutions.set(toolCallId, awaitingPermission);
+          request.onToolExecution?.(awaitingPermission);
+        }
         request.onInteractiveRequest?.(interaction);
         break;
       }

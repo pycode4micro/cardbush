@@ -259,7 +259,8 @@ const desktopApi = {
     ipcRenderer.invoke('files:inspect-attachments', paths) as Promise<Array<{
       path: string;
       name: string;
-      size: number;
+      kind: 'file' | 'folder';
+      size?: number;
     }>>,
   listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
   readSkill: (skillName: string) =>

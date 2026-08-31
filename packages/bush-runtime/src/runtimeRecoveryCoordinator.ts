@@ -62,9 +62,10 @@ export class RuntimeRecoveryCoordinator {
     if (cursor.kind === "turn_terminal") {
       throw new Error("Cannot checkpoint a terminal Turn.");
     }
+    const { providerState: _ephemeralProviderState, ...recoverableRequest } = input.request;
     const checkpoint = runtimeCheckpointSchema.parse({
       protocol: BUSH_RUNTIME_CHECKPOINT_PROTOCOL,
-      request: { ...input.request, messages: input.messages },
+      request: { ...recoverableRequest, messages: input.messages },
       nextRound: input.nextRound,
       lastEventSequence: cursor.sequence,
       lastEventId: cursor.eventId,

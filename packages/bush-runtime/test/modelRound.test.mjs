@@ -35,7 +35,7 @@ class FakeProvider {
 
 test("collects visible and reasoning channels without mixing them", async () => {
   const events = [
-    { ...base, sequence: 0, kind: "response_started" },
+    { ...base, sequence: 0, kind: "response_started", providerResponseId: "resp_round_1" },
     { ...base, sequence: 1, kind: "reasoning_delta", delta: "private analysis" },
     { ...base, sequence: 2, kind: "text_delta", delta: "visible answer" },
     { ...base, sequence: 3, kind: "response_completed", finishReason: "stop" },
@@ -47,6 +47,7 @@ test("collects visible and reasoning channels without mixing them", async () => 
   });
 
   assert.equal(result.status, "completed");
+  assert.equal(result.providerResponseId, "resp_round_1");
   assert.equal(result.text, "visible answer");
   assert.equal(result.reasoning, "private analysis");
   assert.equal(result.usage.inputTokens, 20);

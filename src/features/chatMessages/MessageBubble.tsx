@@ -12,6 +12,7 @@ import {
   FileCode2,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   LoaderCircle,
   Presentation,
   RefreshCw,
@@ -2638,24 +2639,32 @@ function messageFileIconKind(extension: string) {
   return 'file';
 }
 
-function MessageFileIcon({ name }: { name: string }) {
+function MessageFileIcon({
+  name,
+  kind,
+}: {
+  name: string;
+  kind: 'file' | 'folder';
+}) {
   const extension = messageFileExtension(name);
-  const kind = messageFileIconKind(extension);
-  const icon = kind === 'sheet'
+  const iconKind = kind === 'folder' ? 'folder' : messageFileIconKind(extension);
+  const icon = iconKind === 'folder'
+    ? <FolderOpen size={23} />
+    : iconKind === 'sheet'
     ? <FileSpreadsheet size={22} />
-    : kind === 'slides'
+    : iconKind === 'slides'
       ? <Presentation size={22} />
-      : kind === 'archive'
+      : iconKind === 'archive'
         ? <FileArchive size={22} />
-        : kind === 'code'
+        : iconKind === 'code'
           ? <FileCode2 size={22} />
-          : kind === 'document'
+          : iconKind === 'document'
             ? <FileText size={22} />
             : <FileIcon size={22} />;
   return (
-    <span className={`message-file-icon ${kind}`} aria-hidden="true">
+    <span className={`message-file-icon ${iconKind}`} aria-hidden="true">
       {icon}
-      <em>{extension ? extension.toUpperCase() : 'FILE'}</em>
+      <em>{kind === 'folder' ? 'FOLDER' : extension ? extension.toUpperCase() : 'FILE'}</em>
     </span>
   );
 }
@@ -2681,7 +2690,11 @@ function MessageFileAttachmentStrip({
   attachments: ChatAttachment[];
   language: AppLanguage;
 }) {
-  const [metadata, setMetadata] = useState<Record<string, { name: string; size: number }>>({});
+  const [metadata, setMetadata] = useState<Record<string, {
+    name: string;
+    kind: 'file' | 'folder';
+    size?: number;
+  }>>({});
   const attachmentKey = attachments
     .map((attachment) => `${attachment.path ?? ''}:${attachment.size ?? ''}`)
     .join('|');
@@ -2700,7 +2713,7 @@ function MessageFileAttachmentStrip({
       setMetadata((current) => {
         const next = { ...current };
         for (const item of items) {
-          next[item.path] = { name: item.name, size: item.size };
+          next[item.path] = { name: item.name, kind: item.kind, size: item.size };
         }
         return next;
       });
@@ -2718,6 +2731,7 @@ function MessageFileAttachmentStrip({
         const inspected = metadata[pathValue];
         const name = inspected?.name || attachment.name || basename(pathValue);
         const size = inspected?.size ?? attachment.size;
+        const kind = inspected?.kind ?? (attachment.type === 'folder' ? 'folder' : 'file');
         return (
           <button
             className="message-file-attachment"
@@ -2725,13 +2739,17 @@ function MessageFileAttachmentStrip({
             key={attachment.id || pathValue}
             title={pathValue}
             disabled={!pathValue}
-            onClick={() => openInspector(pathValue, name)}
+            onClick={() => kind === 'folder'
+              ? void window.cardbushDesktop?.openPath?.(pathValue)
+              : openInspector(pathValue, name)}
           >
-            <MessageFileIcon name={name} />
+            <MessageFileIcon name={name} kind={kind} />
             <span className="message-file-meta">
               <strong>{name}</strong>
               <small>
-                {formatMessageFileSize(size)} · {language === 'zh' ? '只读' : 'Read only'}
+                {kind === 'folder'
+                  ? language === 'zh' ? '文件夹 · 点击打开' : 'Folder · Open'
+                  : `${formatMessageFileSize(size)} · ${language === 'zh' ? '只读' : 'Read only'}`}
               </small>
             </span>
           </button>

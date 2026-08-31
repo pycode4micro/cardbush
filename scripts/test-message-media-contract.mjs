@@ -24,7 +24,7 @@ const localFileProtocol = read('electron', 'localFileProtocol.ts');
 assert.match(localPaths, /export function isVideoPath/);
 assert.match(localPaths, /export function isAudioPath/);
 assert.match(messageMedia, /export function splitMessageMedia/);
-assert.match(types, /type:\s*'image' \| 'video' \| 'audio' \| 'document'/);
+assert.match(types, /type:\s*'image' \| 'video' \| 'audio' \| 'document' \| 'folder'/);
 assert.match(chatHook, /isVideoPath\(pathValue\)[\s\S]*?'video'/);
 assert.match(chatHook, /isAudioPath\(pathValue\)[\s\S]*?'audio'/);
 assert.match(api, /toolArtifactsFromPayload\(\{[\s\S]*?record\.result\.artifacts/);

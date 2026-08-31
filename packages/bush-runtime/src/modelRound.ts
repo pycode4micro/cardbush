@@ -18,6 +18,7 @@ export interface ModelRoundUsage {
 
 export interface CompletedModelRound {
   status: "completed";
+  providerResponseId?: string;
   text: string;
   reasoning: string;
   toolCalls: ToolCall[];
@@ -27,6 +28,7 @@ export interface CompletedModelRound {
 
 export interface FailedModelRound {
   status: "failed";
+  providerResponseId?: string;
   text: string;
   reasoning: string;
   toolCalls: ToolCall[];
@@ -69,6 +71,7 @@ export async function executeModelRound(
   let reasoning = "";
   let finishReason: string | undefined;
   let completed = false;
+  let providerResponseId: string | undefined;
   let failure: Extract<ModelEvent, { kind: "response_failed" }> | undefined;
   let lastSequence = -1;
   const usage: ModelRoundUsage = {};
@@ -128,6 +131,7 @@ export async function executeModelRound(
         failure = event;
         break;
       case "response_started":
+        providerResponseId = event.providerResponseId;
         break;
     }
     if (failure) {
@@ -156,10 +160,19 @@ export async function executeModelRound(
     );
   }
   if (failure) {
-    return { status: "failed", text, reasoning, toolCalls, usage, error: failure };
+    return {
+      status: "failed",
+      providerResponseId,
+      text,
+      reasoning,
+      toolCalls,
+      usage,
+      error: failure,
+    };
   }
   return {
     status: "completed",
+    providerResponseId,
     text,
     reasoning,
     toolCalls,

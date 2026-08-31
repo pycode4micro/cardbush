@@ -25,7 +25,15 @@ import { SubagentChildTools, subagentChildToolExecutions } from './SubagentChild
 import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
-import { displayToolName, isToolRunning, isToolRunningInContext, runningToolLabel, compareToolExecutionOrder } from './toolExecutionState';
+import {
+  activeToolStatusLabel,
+  compareToolExecutionOrder,
+  displayToolName,
+  isToolCancelled,
+  isToolRunning,
+  isToolRunningInContext,
+  runningToolLabel,
+} from './toolExecutionState';
 import {
   defaultToolExecutionExpanded,
   readToolExecutionDisclosure,
@@ -213,6 +221,9 @@ function isToolFailed(execution: ChatToolExecution) {
     return false;
   }
   const normalized = execution.state.trim().toLowerCase();
+  if (isToolCancelled(execution)) {
+    return false;
+  }
   return (
     ['fail', 'failed', 'error'].includes(normalized) ||
     (!execution.success && !isToolRunning(execution))
@@ -452,6 +463,8 @@ function ToolExecutionDetail({
   const workerInfo = workerProfileInfoFromExecution(execution);
   const dispatchPlan = planDispatchInfoFromExecution(execution);
   const failed = isToolFailedInContext(execution, active);
+  const cancelled = isToolCancelled(execution);
+  const activeStatus = active ? activeToolStatusLabel(execution, language) : undefined;
   const shouldCollapseOutput = toolOutputNeedsCollapse(output);
   const visibleOutput =
     shouldCollapseOutput && !outputExpanded ? compactToolOutput(output) : output;
@@ -459,17 +472,19 @@ function ToolExecutionDetail({
     ? language === 'zh'
       ? '节点验证未通过'
       : 'Verification failed'
-    : isToolRunningInContext(execution, active)
-      ? language === 'zh'
-        ? '运行中'
-        : 'Running'
-      : failed
+    : activeStatus
+      ? activeStatus
+      : cancelled
         ? language === 'zh'
-          ? '失败'
-          : 'Failed'
-        : language === 'zh'
-          ? '完成'
-          : 'Done';
+          ? '已取消'
+          : 'Cancelled'
+        : failed
+          ? language === 'zh'
+            ? '失败'
+            : 'Failed'
+          : language === 'zh'
+            ? '完成'
+            : 'Done';
   return (
     <section className="tool-execution-detail">
       <header>

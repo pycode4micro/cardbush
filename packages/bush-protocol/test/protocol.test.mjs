@@ -190,6 +190,22 @@ test("model request keeps provider-independent tool definitions", () => {
   for (const unsupported of ["minimal", "middle"]) {
     assert.throws(() => modelRequestSchema.parse({ ...request, reasoningEffort: unsupported }));
   }
+  const continued = modelRequestSchema.parse({
+    ...request,
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_1",
+      inputMessageOffset: 1,
+    },
+  });
+  assert.equal(continued.providerState.previousResponseId, "resp_1");
+  assert.throws(() => modelRequestSchema.parse({
+    ...request,
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_1",
+    },
+  }));
 });
 
 test("model events are transport-neutral and mechanically validated", () => {

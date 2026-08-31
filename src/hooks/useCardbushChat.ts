@@ -63,6 +63,7 @@ import type {
   SubagentDispatchEvent,
   TurnTerminalSnapshot,
 } from '../types';
+import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
 import { mergeToolArtifacts } from '../backend/toolArtifacts';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
@@ -1046,10 +1047,14 @@ export function useCardbushChat(
         );
       },
       onInteractiveRequest: (interaction) => {
-        setPendingInteraction({
-          ...interaction,
-          sessionId: interaction.sessionId ?? normalizedSessionId,
-        });
+        setPendingInteraction((current) => keepFirstPendingInteraction(
+          current,
+          {
+            ...interaction,
+            sessionId: interaction.sessionId ?? normalizedSessionId,
+          },
+          activeConversationIdRef.current,
+        ));
         markSessionAttention(
           normalizedSessionId,
           'waiting',
@@ -1073,6 +1078,9 @@ export function useCardbushChat(
         });
       },
       onDone: (terminal) => {
+        setPendingInteraction((current) =>
+          current?.sessionId === normalizedSessionId ? null : current,
+        );
         if (!terminal.stopped && terminal.status === 'completed') {
           void streamBuffer.releaseTerminal();
         } else {
@@ -1660,7 +1668,7 @@ export function useCardbushChat(
         return;
       }
       const outbound = splitStreamAttachmentMentions(trimmed);
-      const optimisticAttachments = chatAttachmentsFromOutbound(outbound);
+      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound);
       const attachments = streamAttachmentsForVision(
         outbound,
         requestContext.standardImageInputEnabled === true,
@@ -1867,10 +1875,14 @@ export function useCardbushChat(
             );
           },
           onInteractiveRequest: (interaction) => {
-            setPendingInteraction({
-              ...interaction,
-              sessionId: interaction.sessionId ?? sessionId,
-            });
+            setPendingInteraction((current) => keepFirstPendingInteraction(
+              current,
+              {
+                ...interaction,
+                sessionId: interaction.sessionId ?? sessionId,
+              },
+              activeConversationIdRef.current,
+            ));
             markSessionAttention(
               sessionId,
               'waiting',
@@ -1894,6 +1906,9 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            setPendingInteraction((current) =>
+              current?.sessionId === sessionId ? null : current,
+            );
             terminalSnapshot = withTerminalTurnId(
               terminal,
               activeTurnIdsRef.current[sessionId],
@@ -2340,10 +2355,14 @@ export function useCardbushChat(
             );
           },
           onInteractiveRequest: (interaction) => {
-            setPendingInteraction({
-              ...interaction,
-              sessionId: interaction.sessionId ?? sessionId,
-            });
+            setPendingInteraction((current) => keepFirstPendingInteraction(
+              current,
+              {
+                ...interaction,
+                sessionId: interaction.sessionId ?? sessionId,
+              },
+              activeConversationIdRef.current,
+            ));
             markSessionAttention(
               sessionId,
               'waiting',
@@ -2367,6 +2386,9 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            setPendingInteraction((current) =>
+              current?.sessionId === sessionId ? null : current,
+            );
             terminalSnapshot = withTerminalTurnId(
               terminal,
               activeTurnIdsRef.current[sessionId] ?? tempAssistant.turnId,
@@ -2777,7 +2799,7 @@ export function useCardbushChat(
         conversationId,
         turnId: undefined,
         createdAt,
-        attachments: chatAttachmentsFromOutbound(outbound),
+        attachments: await chatAttachmentsFromOutbound(outbound),
       };
       const tempAssistant: ChatMessage = {
         id: `assistant-edit-${crypto.randomUUID()}`,
@@ -3205,13 +3227,27 @@ export function useCardbushChat(
           }
           await replyInteraction({ interactionId: interaction.id, answers: reply });
         }
-        setPendingInteraction(null);
-        clearSessionAttention(sessionId, 'waiting');
+        const nextInteraction = await fetchPendingInteraction(sessionId).catch(() => null);
+        if (activeConversationIdRef.current.trim() === sessionId) {
+          setPendingInteraction((current) =>
+            current && current.id !== interaction.id
+              ? current
+              : nextInteraction,
+          );
+        }
+        if (!nextInteraction) {
+          clearSessionAttention(sessionId, 'waiting');
+        }
         setError(null);
       } catch (caught) {
         if (isInteractionGoneError(caught)) {
-          setPendingInteraction(null);
-          clearSessionAttention(sessionId, 'waiting');
+          const nextInteraction = await fetchPendingInteraction(sessionId).catch(() => null);
+          if (activeConversationIdRef.current.trim() === sessionId) {
+            setPendingInteraction(nextInteraction);
+          }
+          if (!nextInteraction) {
+            clearSessionAttention(sessionId, 'waiting');
+          }
           setError(null);
           return;
         }
@@ -3229,13 +3265,27 @@ export function useCardbushChat(
     const sessionId = interaction.sessionId?.trim() || activeConversationId.trim();
     try {
       await cancelInteraction(interaction.id);
-      setPendingInteraction(null);
-      clearSessionAttention(sessionId, 'waiting');
+      const nextInteraction = await fetchPendingInteraction(sessionId).catch(() => null);
+      if (activeConversationIdRef.current.trim() === sessionId) {
+        setPendingInteraction((current) =>
+          current && current.id !== interaction.id
+            ? current
+            : nextInteraction,
+        );
+      }
+      if (!nextInteraction) {
+        clearSessionAttention(sessionId, 'waiting');
+      }
       setError(null);
     } catch (caught) {
       if (isInteractionGoneError(caught)) {
-        setPendingInteraction(null);
-        clearSessionAttention(sessionId, 'waiting');
+        const nextInteraction = await fetchPendingInteraction(sessionId).catch(() => null);
+        if (activeConversationIdRef.current.trim() === sessionId) {
+          setPendingInteraction(nextInteraction);
+        }
+        if (!nextInteraction) {
+          clearSessionAttention(sessionId, 'waiting');
+        }
         setError(null);
         return;
       }
@@ -6548,9 +6598,18 @@ function splitStreamAttachmentMentions(content: string) {
   };
 }
 
-function chatAttachmentsFromOutbound(
+async function chatAttachmentsFromOutbound(
   outbound: ReturnType<typeof splitStreamAttachmentMentions>,
-): ChatAttachment[] {
+): Promise<ChatAttachment[]> {
+  const inspected = await window.cardbushDesktop
+    ?.inspectAttachments?.(outbound.files)
+    .catch(() => []);
+  const kindByPath = new Map(
+    (inspected ?? []).map((item) => [
+      item.path.replace(/\\/g, '/').toLowerCase(),
+      item.kind,
+    ]),
+  );
   return [
     ...outbound.images.map((image) => ({
       id: `attachment-${crypto.randomUUID()}`,
@@ -6558,16 +6617,21 @@ function chatAttachmentsFromOutbound(
       path: image.path,
       type: 'image' as const,
     })),
-    ...outbound.files.map((pathValue) => ({
-      id: `attachment-${crypto.randomUUID()}`,
-      name: basename(pathValue),
-      path: pathValue,
-      type: isVideoPath(pathValue)
-        ? 'video' as const
-        : isAudioPath(pathValue)
-          ? 'audio' as const
-          : 'document' as const,
-    })),
+    ...outbound.files.map((pathValue) => {
+      const kind = kindByPath.get(pathValue.replace(/\\/g, '/').toLowerCase());
+      return {
+        id: `attachment-${crypto.randomUUID()}`,
+        name: basename(pathValue),
+        path: pathValue,
+        type: kind === 'folder'
+          ? 'folder' as const
+          : isVideoPath(pathValue)
+            ? 'video' as const
+            : isAudioPath(pathValue)
+              ? 'audio' as const
+              : 'document' as const,
+      };
+    }),
   ];
 }
 

@@ -31,9 +31,26 @@ function response(overrides = {}) {
     tools: [],
     top_p: null,
     usage: null,
+    store: false,
     ...overrides,
   };
 }
+
+test("only exposes a continuation id for responses the provider actually stored", () => {
+  const stored = normalizeResponseStreamEvent({
+    type: "response.created",
+    sequence_number: 0,
+    response: response({ id: "resp_stored", status: "in_progress", store: true }),
+  }, { requestId: "req_stored", sequence: 0, started: false });
+  const stateless = normalizeResponseStreamEvent({
+    type: "response.created",
+    sequence_number: 0,
+    response: response({ id: "resp_stateless", status: "in_progress", store: false }),
+  }, { requestId: "req_stateless", sequence: 0, started: false });
+
+  assert.equal(stored[0].providerResponseId, "resp_stored");
+  assert.equal(stateless[0].providerResponseId, undefined);
+});
 
 test("normalizes Responses text, reasoning, function calls and cache usage", () => {
   const state = { requestId: "req_1", sequence: 0, started: false };
@@ -225,6 +242,51 @@ test("projects Bush messages into stateless Responses input items", () => {
   assert.equal(request.input[5].call_id, "call_1");
 });
 
+test("projects an active Turn response chain as incremental Responses input", () => {
+  const base = {
+    protocol: "bush.model_request.v1",
+    requestId: "request_chain",
+    sessionId: "session_chain",
+    turnId: "turn_chain",
+    model: "response-model",
+    messages: [{ role: "user", content: "inspect" }],
+    tools: [],
+    metadata: {},
+  };
+  const first = toResponsesCreateParams({
+    ...base,
+    providerState: { strategy: "response_chain" },
+  });
+  assert.equal(first.store, true);
+  assert.equal("previous_response_id" in first, false);
+  assert.equal(first.input.length, 1);
+
+  const continued = toResponsesCreateParams({
+    ...base,
+    messages: [
+      ...base.messages,
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "call_1", name: "inspect", argumentsText: "{}" }],
+      },
+      { role: "tool", toolCallId: "call_1", content: "observed" },
+    ],
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_1",
+      inputMessageOffset: 2,
+    },
+  });
+  assert.equal(continued.store, true);
+  assert.equal(continued.previous_response_id, "resp_1");
+  assert.deepEqual(continued.input, [{
+    type: "function_call_output",
+    call_id: "call_1",
+    output: "observed",
+  }]);
+});
+
 test("maps all six product reasoning levels to Responses reasoning effort", () => {
   const base = {
     protocol: "bush.model_request.v1",
@@ -355,6 +417,100 @@ test("posts directly to the Responses endpoint and streams stable model events",
   assert.equal(received.body.stream, true);
   assert.equal("tool_choice" in received.body, false);
   assert.deepEqual(received.body.reasoning, { effort: "high" });
+  assert.deepEqual(events.map((event) => event.kind), [
+    "response_started",
+    "text_delta",
+    "response_completed",
+  ]);
+});
+
+test("falls back to full stateless input when a compatible endpoint rejects response chaining", async (context) => {
+  const received = [];
+  const server = createServer(async (request, responseStream) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    received.push(body);
+    if (received.length === 1) {
+      responseStream.writeHead(400, { "content-type": "application/json" });
+      responseStream.end(JSON.stringify({
+        error: {
+          message: "Unsupported parameter: previous_response_id",
+          type: "invalid_request_error",
+          param: "previous_response_id",
+          code: "unsupported_parameter",
+        },
+      }));
+      return;
+    }
+    responseStream.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    for (const event of [
+      {
+        type: "response.created",
+        sequence_number: 0,
+        response: response({ id: "resp_fallback", status: "in_progress" }),
+      },
+      {
+        type: "response.output_text.delta",
+        sequence_number: 1,
+        item_id: "msg_fallback",
+        output_index: 0,
+        content_index: 0,
+        delta: "recovered",
+        logprobs: [],
+      },
+      {
+        type: "response.completed",
+        sequence_number: 2,
+        response: response({ id: "resp_fallback" }),
+      },
+    ]) {
+      responseStream.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+    responseStream.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const provider = new OpenAIResponsesProvider({
+    apiKey: "response-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+  });
+  const events = [];
+  for await (const event of provider.stream({
+    protocol: "bush.model_request.v1",
+    requestId: "request_fallback",
+    sessionId: "session_fallback",
+    turnId: "turn_fallback",
+    model: "response-model",
+    messages: [
+      { role: "user", content: "inspect" },
+      { role: "tool", toolCallId: "call_1", content: "observed" },
+    ],
+    tools: [],
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_previous",
+      inputMessageOffset: 1,
+    },
+    metadata: {},
+  })) events.push(event);
+
+  assert.equal(received.length, 2);
+  assert.equal(received[0].previous_response_id, "resp_previous");
+  assert.equal(received[0].store, true);
+  assert.equal(received[0].input.length, 1);
+  assert.equal("previous_response_id" in received[1], false);
+  assert.equal(received[1].store, false);
+  assert.equal(received[1].input.length, 2);
   assert.deepEqual(events.map((event) => event.kind), [
     "response_started",
     "text_delta",

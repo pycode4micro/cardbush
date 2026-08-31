@@ -119,13 +119,14 @@ assert.doesNotMatch(
 );
 assert.match(
   source,
-  /className="composer-file-preview"[\s\S]*?openInspector\(file\.path, file\.name\)/,
-  'File cards must open the existing right-side read-only inspector',
+  /file\.kind === 'folder'[\s\S]*?openPath\?\.\(file\.path\)[\s\S]*?openInspector\(file\.path, file\.name\)/,
+  'Attachment cards must open folders in the OS and files in the read-only inspector',
 );
-assert.match(source, /<ComposerFileIcon name=\{file\.name\} \/>/);
-assert.match(source, /<small>\{formatFileSize\(file\.size\)\}<\/small>/);
+assert.match(source, /<ComposerFileIcon name=\{file\.name\} kind=\{file\.kind\} \/>/);
+assert.match(source, /file\.kind === 'folder'[\s\S]*?formatFileSize\(file\.size\)/);
 assert.match(mainSource, /ipcMain\.handle\('files:inspect-attachments'/);
 assert.match(mainSource, /size:\s*stats\.size/);
+assert.match(mainSource, /kind:\s*stats\.isDirectory\(\) \? 'folder'/);
 assert.match(preloadSource, /inspectAttachments:[\s\S]*?files:inspect-attachments/);
 assert.match(stylesSource, /\.composer-file-attachment\s*\{/);
 assert.match(stylesSource, /\.composer-file-meta small\s*\{[\s\S]*?color:\s*var\(--text-soft\)/);
@@ -139,8 +140,8 @@ assert.match(messageBubbleSource, /function MessageFileAttachmentStrip/);
 assert.match(messageBubbleSource, /splitUserFileAttachments/);
 assert.match(
   messageBubbleSource,
-  /openInspector\(pathValue, name\)/,
-  'Sent file cards must open the right-side read-only inspector',
+  /kind === 'folder'[\s\S]*?openPath\?\.\(pathValue\)[\s\S]*?openInspector\(pathValue, name\)/,
+  'Sent attachment cards must distinguish folder and file open behavior',
 );
 assert.match(stylesSource, /\.message-file-attachment\s*\{/);
 const sendButtonHoverRule = stylesSource.match(

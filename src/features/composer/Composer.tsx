@@ -18,6 +18,7 @@ import {
   FileCode2,
   FileSpreadsheet,
   FileText,
+  FolderOpen,
   GitBranch,
   KeyRound,
   ListChecks,
@@ -91,6 +92,7 @@ type ComposerFileAttachment = {
   id: string;
   path: string;
   name: string;
+  kind: 'file' | 'folder';
   size?: number;
 };
 
@@ -208,12 +210,13 @@ function imageAttachmentFromPath(pathValue: string): ComposerImageAttachment {
 
 function fileAttachmentFromPath(
   pathValue: string,
-  metadata?: { name?: string; size?: number },
+  metadata?: { name?: string; kind?: 'file' | 'folder'; size?: number },
 ): ComposerFileAttachment {
   return {
     id: `file-${crypto.randomUUID()}`,
     path: pathValue,
     name: metadata?.name?.trim() || basename(pathValue),
+    kind: metadata?.kind ?? 'file',
     size: Number.isFinite(metadata?.size) ? metadata?.size : undefined,
   };
 }
@@ -232,24 +235,26 @@ function fileIconKind(extension: string) {
   return 'file';
 }
 
-function ComposerFileIcon({ name }: { name: string }) {
+function ComposerFileIcon({ name, kind }: { name: string; kind: 'file' | 'folder' }) {
   const extension = fileExtension(name);
-  const kind = fileIconKind(extension);
-  const icon = kind === 'sheet'
+  const iconKind = kind === 'folder' ? 'folder' : fileIconKind(extension);
+  const icon = iconKind === 'folder'
+    ? <FolderOpen size={23} />
+    : iconKind === 'sheet'
     ? <FileSpreadsheet size={22} />
-    : kind === 'slides'
+    : iconKind === 'slides'
       ? <Presentation size={22} />
-      : kind === 'archive'
+      : iconKind === 'archive'
         ? <FileArchive size={22} />
-        : kind === 'code'
+        : iconKind === 'code'
           ? <FileCode2 size={22} />
-          : kind === 'document'
+          : iconKind === 'document'
             ? <FileText size={22} />
             : <FileIcon size={22} />;
   return (
-    <span className={`composer-file-icon ${kind}`} aria-hidden="true">
+    <span className={`composer-file-icon ${iconKind}`} aria-hidden="true">
       {icon}
-      <em>{extension ? extension.toUpperCase() : 'FILE'}</em>
+      <em>{kind === 'folder' ? 'FOLDER' : extension ? extension.toUpperCase() : 'FILE'}</em>
     </span>
   );
 }
@@ -1116,20 +1121,30 @@ export function Composer({
                 <button
                   className="composer-file-preview"
                   type="button"
-                  title={language === 'zh' ? `只读预览 ${file.name}` : `Preview ${file.name} read-only`}
-                  onClick={() => openInspector(file.path, file.name)}
+                  title={file.kind === 'folder'
+                    ? language === 'zh' ? `打开文件夹 ${file.name}` : `Open folder ${file.name}`
+                    : language === 'zh' ? `只读预览 ${file.name}` : `Preview ${file.name} read-only`}
+                  onClick={() => file.kind === 'folder'
+                    ? void window.cardbushDesktop?.openPath?.(file.path)
+                    : openInspector(file.path, file.name)}
                 >
-                  <ComposerFileIcon name={file.name} />
+                  <ComposerFileIcon name={file.name} kind={file.kind} />
                   <span className="composer-file-meta">
                     <strong>{file.name}</strong>
-                    <small>{formatFileSize(file.size)}</small>
+                    <small>{file.kind === 'folder'
+                      ? language === 'zh' ? '文件夹' : 'Folder'
+                      : formatFileSize(file.size)}</small>
                   </span>
                 </button>
                 <button
                   className="composer-file-remove"
                   type="button"
-                  aria-label={language === 'zh' ? `移除文件 ${file.name}` : `Remove ${file.name}`}
-                  title={language === 'zh' ? '移除文件' : 'Remove file'}
+                  aria-label={file.kind === 'folder'
+                    ? language === 'zh' ? `移除文件夹 ${file.name}` : `Remove folder ${file.name}`
+                    : language === 'zh' ? `移除文件 ${file.name}` : `Remove ${file.name}`}
+                  title={file.kind === 'folder'
+                    ? language === 'zh' ? '移除文件夹' : 'Remove folder'
+                    : language === 'zh' ? '移除文件' : 'Remove file'}
                   onClick={() =>
                     setFileAttachments((current) =>
                       current.filter((item) => item.id !== file.id),

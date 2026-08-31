@@ -29,7 +29,7 @@ assert.match(
 );
 assert.match(
   hookSource,
-  /const editedUser:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:\s*chatAttachmentsFromOutbound\(outbound\)/,
+  /const editedUser:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:\s*await chatAttachmentsFromOutbound\(outbound\)/,
   'The edited optimistic bubble must keep attachment cards without exposing @ paths',
 );
 
