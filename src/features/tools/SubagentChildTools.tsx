@@ -1,4 +1,5 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
+import { decodeToolExecutionState } from './toolExecutionState';
 import { displayToolName } from './toolExecutionState';
 import { asRecord } from './toolPayload';
 import { ToolLogo } from './ToolLogo';
@@ -75,7 +76,9 @@ function childToolExecutionFromPayload(
   if (!id) {
     return null;
   }
-  const state = String(value.state ?? value.status ?? metadata.state ?? '').trim();
+  const state = decodeToolExecutionState(
+    value.state ?? value.status ?? metadata.state,
+  );
   const createdAt = String(value.created_at ?? value.createdAt ?? '').trim();
   return {
     id,
@@ -83,7 +86,7 @@ function childToolExecutionFromPayload(
     state,
     summary: String(value.summary ?? value.command ?? value.input ?? ''),
     output: String(value.output ?? value.result ?? ''),
-    success: typeof value.success === 'boolean' ? value.success : state !== 'fail',
+    success: typeof value.success === 'boolean' ? value.success : state === 'completed',
     durationMs: Number(value.duration_ms ?? value.durationMs ?? 0) || 0,
     createdAt: createdAt || new Date().toISOString(),
     contentOffset: 0,

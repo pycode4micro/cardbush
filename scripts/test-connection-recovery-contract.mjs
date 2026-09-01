@@ -35,13 +35,15 @@ assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart, 'missing recovery r
 const recovery = hook.slice(recoveryStart, recoveryEnd);
 assert.match(recovery, /fetchSessionMessages\(sessionId/);
 assert.match(recovery, /failedAttempts >= 5/);
-assert.match(recovery, /isRunningSessionTurn/);
+assert.doesNotMatch(recovery, /isRunningSessionTurn/);
 assert.doesNotMatch(
   recovery,
   /streamChat\(|sendMessage\(/,
   'transport recovery must never submit the original turn again',
 );
 assert.match(hook, /isNetworkTransportError\(caught\)/);
+assert.match(hook, /error\.fact\.kind === 'transport'/);
+assert.doesNotMatch(hook, /failed to fetch\|networkerror|econnreset|socket hang up/i);
 assert.match(hook, /onConnectionState: \(update\)/);
 
 assert.match(app, /<ConversationConnectionNotice/);

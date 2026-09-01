@@ -32,8 +32,10 @@ test("builds the same explicit product Turn for desktop and transport callers", 
   assert.equal(request.prefixMessages[0].role, "system");
   assert.match(request.prefixMessages[0].content, /subagent dispatch is asynchronous/);
   assert.match(request.prefixMessages[0].content, /call await_subagents once; do not poll/);
-  assert.match(request.prefixMessages[0].content, /use the direct read_file, search_file_content, write_file and edit_file Tools/);
-  assert.match(request.prefixMessages[0].content, /Do not inspect or operate the desktop/);
+  assert.doesNotMatch(
+    request.prefixMessages[0].content,
+    /last-resort|prefer any purpose-built|use the direct read_file|chrome_devtools Tools as the primary route/i,
+  );
   assert.match(request.prefixMessages[0].content, /LEM is advisory reasoning memory/);
   assert.match(request.prefixMessages[0].content, /User thumbs are recorded by Runtime/);
   assert.equal(request.prefixMessages.length, 2);

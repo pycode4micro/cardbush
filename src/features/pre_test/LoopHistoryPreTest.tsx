@@ -228,7 +228,7 @@ function buildMergedFixture() {
     role: 'assistant',
     turnId,
     content: '问题已修复：最终快照替换后，四段 loop 消息都会完整归档，Plan 也只显示在历史详情内。',
-    status: 'complete',
+    status: 'completed',
     createdAt: '2026-08-14T12:00:05.000Z',
     metadata: {
       transcript_kind: 'assistant_final',
@@ -301,7 +301,7 @@ function historyMessage(
     role: 'assistant',
     turnId,
     content,
-    status: archivedSegment ? 'complete' : 'superseded',
+    status: archivedSegment ? 'completed' : 'superseded',
     loopIndex: index,
     sequence: index,
     createdAt: `2026-08-14T12:00:0${index}.000Z`,

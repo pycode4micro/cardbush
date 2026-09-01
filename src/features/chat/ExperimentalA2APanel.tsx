@@ -42,7 +42,7 @@ export function ExperimentalA2APanel({
     } catch (caught) {
       setAvailable(false);
       const message = caught instanceof Error ? caught.message : String(caught);
-      if (!/404|not found/i.test(message)) setError(message);
+      setError(message);
     }
   }, []);
 

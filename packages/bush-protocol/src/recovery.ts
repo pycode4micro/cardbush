@@ -12,8 +12,11 @@ export const INSPECT_RUNTIME_RECOVERY_COMMAND =
   "runtime.inspect_recovery" as const;
 export const RESUME_MODEL_TURN_COMMAND = "runtime.resume_model_turn" as const;
 export const STOP_RUNTIME_TURN_COMMAND = "runtime.stop_turn" as const;
+export const CANCEL_RUNTIME_TOOL_COMMAND = "runtime.cancel_tool" as const;
 export const BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL =
   "bush.runtime_stop_receipt.v1" as const;
+export const BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL =
+  "bush.runtime_tool_cancel_receipt.v1" as const;
 
 export const runtimeTurnIdentitySchema = z.object({
   sessionId: z.string().min(1),
@@ -21,6 +24,14 @@ export const runtimeTurnIdentitySchema = z.object({
 });
 
 export type RuntimeTurnIdentity = z.infer<typeof runtimeTurnIdentitySchema>;
+
+export const runtimeToolCancellationIdentitySchema = runtimeTurnIdentitySchema.extend({
+  toolCallId: z.string().min(1),
+});
+
+export type RuntimeToolCancellationIdentity = z.infer<
+  typeof runtimeToolCancellationIdentitySchema
+>;
 
 export const runtimeStopReceiptSchema = runtimeTurnIdentitySchema.extend({
   protocol: z.literal(BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL),
@@ -30,6 +41,14 @@ export const runtimeStopReceiptSchema = runtimeTurnIdentitySchema.extend({
 });
 
 export type RuntimeStopReceipt = z.infer<typeof runtimeStopReceiptSchema>;
+
+export const runtimeToolCancelReceiptSchema = runtimeToolCancellationIdentitySchema.extend({
+  protocol: z.literal(BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL),
+  accepted: z.boolean(),
+  reason: z.string().min(1),
+});
+
+export type RuntimeToolCancelReceipt = z.infer<typeof runtimeToolCancelReceiptSchema>;
 
 export const runtimeCheckpointSchema = z.object({
   protocol: z.literal(BUSH_RUNTIME_CHECKPOINT_PROTOCOL),

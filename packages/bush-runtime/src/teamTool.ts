@@ -345,6 +345,7 @@ function toolResult(
       })),
     ...(completed ? {} : {
       error: {
+        kind: "tool" as const,
         code: "team_task_failed",
         message: error || "A configured Team phase did not complete.",
         details: { teamId: team.teamId },

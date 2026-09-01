@@ -42,8 +42,12 @@ import {
   defaultProductSubagentConfig,
 } from '@cardbush/product-host';
 import {
+  FileProviderCapabilityStore,
+  InMemoryProviderCapabilityStore,
   OpenAIResponsesProvider,
   OpenAIResponsesProviderRegistry,
+  openAIResponsesCapabilityScope,
+  type ProviderCapabilityStore,
 } from '@cardbush/bush-provider-openai';
 import {
   loadEnabledProductPluginSkillRoots,
@@ -74,7 +78,7 @@ async function handleMessage(input: unknown) {
       type: 'protocol_error',
       error: received !== BUSH_RUNTIME_IPC_PROTOCOL
         ? createProtocolVersionMismatchError(received)
-        : runtimeError('invalid_ipc_message', errorMessage(error)),
+        : runtimeError('protocol', 'invalid_ipc_message', errorMessage(error)),
     });
     return;
   }
@@ -85,6 +89,7 @@ async function handleMessage(input: unknown) {
         postCommandError(
           message.operationId,
           runtimeError(
+            'protocol',
             'duplicate_operation_id',
             `Operation ${message.operationId} already exists.`,
             message.operationId,
@@ -109,11 +114,7 @@ async function handleMessage(input: unknown) {
       } catch (error) {
         postCommandError(
           message.operationId,
-          runtimeError(
-            controller.signal.aborted ? 'operation_cancelled' : 'runtime_command_failed',
-            errorMessage(error),
-            message.operationId,
-          ),
+          runtimeErrorFromUnknown(error, message.operationId, controller.signal.aborted),
         );
       } finally {
         operations.delete(message.operationId);
@@ -128,6 +129,7 @@ async function handleMessage(input: unknown) {
         postStreamError(
           message.subscriptionId,
           runtimeError(
+            'protocol',
             'duplicate_subscription_id',
             `Subscription ${message.subscriptionId} already exists.`,
           ),
@@ -176,24 +178,31 @@ async function streamEvents(
   } catch (error) {
     postStreamError(
       subscriptionId,
-      runtimeError('runtime_stream_failed', errorMessage(error)),
+      runtimeError('runtime', 'runtime_stream_failed', errorMessage(error)),
     );
   } finally {
     subscriptions.delete(subscriptionId);
   }
 }
 
-function createEnvironmentProvider(): ModelProvider | undefined {
+function createEnvironmentProvider(
+  capabilityStore: ProviderCapabilityStore,
+): ModelProvider | undefined {
   const apiKey = process.env.CARDBUSH_RUNTIME_PROVIDER_API_KEY?.trim();
   if (!apiKey) return undefined;
   const baseURL = process.env.CARDBUSH_RUNTIME_PROVIDER_BASE_URL?.trim() || undefined;
-  return new OpenAIResponsesProvider({
+  const config = {
     apiKey,
     baseURL,
     timeoutMs: positiveInteger(
       process.env.CARDBUSH_RUNTIME_PROVIDER_TIMEOUT_MS,
       undefined,
     ),
+  };
+  return new OpenAIResponsesProvider({
+    ...config,
+    capabilityStore,
+    capabilityScope: openAIResponsesCapabilityScope(config),
   });
 }
 
@@ -263,6 +272,7 @@ function withBundledAppsServer(input: unknown): unknown {
         }),
       },
       versionMode: 'auto',
+      acceptCardbushExtensions: true,
       defaultToolPolicy: {
         permission: 'ask',
         parallelSafe: false,
@@ -495,8 +505,12 @@ const subagentPersistence = runtimeStateRoot
     })
   : undefined;
 
+const providerCapabilityStore = runtimeStateRoot
+  ? new FileProviderCapabilityStore(join(runtimeStateRoot, 'provider-capabilities.json'))
+  : new InMemoryProviderCapabilityStore();
 providers = new OpenAIResponsesProviderRegistry({
-  fallbackProvider: createEnvironmentProvider(),
+  fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
+  capabilityStore: providerCapabilityStore,
 });
 
 const toolRegistry = new ToolRegistry();
@@ -696,16 +710,49 @@ function postStreamError(subscriptionId: string, error: RuntimeProtocolError) {
 }
 
 function runtimeError(
+  kind: RuntimeProtocolError['kind'],
   code: string,
   message: string,
   requestId?: string,
 ): RuntimeProtocolError {
   return {
     protocol: BUSH_RUNTIME_ERROR_PROTOCOL,
+    kind,
     code,
     message,
     retryable: false,
     details: {},
+    requestId,
+  };
+}
+
+function runtimeErrorFromUnknown(
+  error: unknown,
+  requestId?: string,
+  cancelled = false,
+): RuntimeProtocolError {
+  if (cancelled) {
+    return runtimeError('cancelled', 'operation_cancelled', errorMessage(error), requestId);
+  }
+  const value = error && typeof error === 'object'
+    ? error as Record<string, unknown>
+    : {};
+  const code = typeof value.code === 'string' && value.code.trim()
+    ? value.code.trim()
+    : 'runtime_command_failed';
+  const details = value.details && typeof value.details === 'object' && !Array.isArray(value.details)
+    ? value.details as Record<string, unknown>
+    : {};
+  return {
+    protocol: BUSH_RUNTIME_ERROR_PROTOCOL,
+    kind: value.kind === 'protocol' || value.kind === 'transport' ||
+      value.kind === 'runtime' || value.kind === 'cancelled'
+      ? value.kind
+      : 'runtime',
+    code,
+    message: errorMessage(error),
+    retryable: value.retryable === true,
+    details,
     requestId,
   };
 }

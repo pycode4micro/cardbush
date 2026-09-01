@@ -36,10 +36,10 @@ export async function executeComputerUse(
   if (action === 'open_app') {
     if (!config.allowOpenApp) throw new Error('Opening applications is disabled in Computer Use settings.');
     const app = requiredString(input.app, 'app');
-    await powershell(`Start-Process -FilePath $env:CARDBUSH_APP_TARGET`, {
+    const launch = record(json(await powershell(openApplicationScript, {
       CARDBUSH_APP_TARGET: app,
-    }, signal);
-    return plain({ action, app });
+    }, signal)));
+    return plain({ action, app, launch });
   }
   if (action === 'window') {
     if (String(input.operation ?? '').trim().toLowerCase() === 'close' && !config.allowWindowClose) {
@@ -52,6 +52,79 @@ export async function executeComputerUse(
   }
   throw new Error(`Unsupported computer_use action: ${action}`);
 }
+
+const openApplicationScript = String.raw`
+$requested = $env:CARDBUSH_APP_TARGET.Trim()
+if (-not $requested) { throw 'Application target is empty.' }
+
+function Launch-CardBushApplication([string]$target, [string]$resolution) {
+  $process = Start-Process -FilePath $target -PassThru
+  [PSCustomObject]@{
+    requested = $requested
+    target = $target
+    resolution = $resolution
+    process_id = if ($null -ne $process) { $process.Id } else { $null }
+  } | ConvertTo-Json -Compress
+  exit 0
+}
+
+if (Test-Path -LiteralPath $requested -PathType Leaf) {
+  Launch-CardBushApplication (Resolve-Path -LiteralPath $requested).Path 'path'
+}
+
+$commandNames = @($requested)
+if (-not [IO.Path]::GetExtension($requested)) { $commandNames += "$requested.exe" }
+foreach ($name in $commandNames) {
+  $command = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($null -ne $command) { Launch-CardBushApplication $command.Source 'command' }
+}
+
+$requestedBase = [IO.Path]::GetFileNameWithoutExtension($requested)
+$appPathRoots = @(
+  'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\App Paths',
+  'Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\App Paths',
+  'Registry::HKEY_LOCAL_MACHINE\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths'
+)
+foreach ($root in $appPathRoots) {
+  $entry = Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | Where-Object {
+    [string]::Equals([IO.Path]::GetFileNameWithoutExtension($_.PSChildName), $requestedBase, [StringComparison]::OrdinalIgnoreCase)
+  } | Select-Object -First 1
+  if ($null -ne $entry) {
+    $target = $entry.GetValue('')
+    if ($target -and (Test-Path -LiteralPath $target -PathType Leaf)) {
+      Launch-CardBushApplication $target 'app_path'
+    }
+  }
+}
+
+$startAppMatches = @(Get-StartApps -ErrorAction SilentlyContinue | Where-Object {
+  [string]::Equals($_.Name, $requested, [StringComparison]::OrdinalIgnoreCase) -or
+  [string]::Equals($_.Name, $requestedBase, [StringComparison]::OrdinalIgnoreCase)
+})
+if ($startAppMatches.Count -eq 1) {
+  $appId = $startAppMatches[0].AppID
+  Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$appId"
+  [PSCustomObject]@{ requested=$requested; target=$appId; resolution='start_app'; process_id=$null } | ConvertTo-Json -Compress
+  exit 0
+}
+
+$startMenuRoots = @(
+  [Environment]::GetFolderPath('StartMenu'),
+  [Environment]::GetFolderPath('CommonStartMenu')
+) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
+$shortcuts = @($startMenuRoots | ForEach-Object {
+  Get-ChildItem -LiteralPath $_ -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue
+})
+$exactShortcuts = @($shortcuts | Where-Object {
+  [string]::Equals($_.BaseName, $requested, [StringComparison]::OrdinalIgnoreCase) -or
+  [string]::Equals($_.BaseName, $requestedBase, [StringComparison]::OrdinalIgnoreCase)
+})
+if ($exactShortcuts.Count -eq 1) {
+  Launch-CardBushApplication $exactShortcuts[0].FullName 'start_menu'
+}
+
+throw "Application '$requested' was not found as a path, executable, registered app, or Start menu shortcut."
+`;
 
 async function captureDesktop(configuredDirectory: string, signal?: AbortSignal) {
   const directory = configuredDirectory || join(tmpdir(), 'cardbush-apps', 'captures');
@@ -243,10 +316,22 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 public static class CardBushInput {
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion data; }
+  [StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT keyboard; }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort virtualKey; public ushort scanCode; public uint flags; public uint time; public UIntPtr extraInfo; }
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f,uint x,uint y,int d,UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte k,byte s,uint f,UIntPtr e);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
   public static void Key(byte k,bool d){keybd_event(k,0,d?0u:2u,UIntPtr.Zero);}
+  public static void Text(string text){
+    foreach(char character in text){
+      INPUT down=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=4}}};
+      INPUT up=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=6}}};
+      INPUT[] inputs=new INPUT[]{down,up};
+      if(SendInput(2,inputs,Marshal.SizeOf(typeof(INPUT)))!=2) throw new InvalidOperationException("Unicode keyboard input failed.");
+    }
+  }
   public static void Drag(int x,int y,int tx,int ty,int steps,int duration){SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);for(int i=1;i<=steps;i++){SetCursorPos(x+(tx-x)*i/steps,y+(ty-y)*i/steps);if(duration>0)Thread.Sleep(duration/steps);}mouse_event(4,0,0,0,UIntPtr.Zero);}
 }
 '@
@@ -262,7 +347,7 @@ switch ($p.action) {
   'click' { $b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[void][CardBushInput]::SetCursorPos([int]$p.x,[int]$p.y);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[UIntPtr]::Zero);[CardBushInput]::mouse_event($b[1],0,0,0,[UIntPtr]::Zero)} }
   'scroll' { [CardBushInput]::mouse_event(2048,0,0,([int]$p.delta)*120,[UIntPtr]::Zero) }
   'drag' { $steps=if($null -ne $p.steps){[int]$p.steps}else{20};$duration=if($null -ne $p.duration_ms){[int]$p.duration_ms}else{400};[CardBushInput]::Drag([int]$p.x,[int]$p.y,[int]$p.to_x,[int]$p.to_y,$steps,$duration) }
-  'type' { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait([string]$p.text) }
+  'type' { [CardBushInput]::Text([string]$p.text) }
   'key' { $keys=@($p.keys);if($keys.Count -eq 0 -or $null -eq $keys[0]){$keys=@($p.key)};$codes=@($keys|%{KeyCode ([string]$_)});$codes|%{[CardBushInput]::Key($_,$true)};[array]::Reverse($codes);$codes|%{[CardBushInput]::Key($_,$false)} }
 }
 [PSCustomObject]@{action=$p.action} | ConvertTo-Json -Compress`;
@@ -273,19 +358,28 @@ async function powershell(
   signal?: AbortSignal,
 ): Promise<string> {
   throwIfAborted(signal);
+  const utf8Script = [
+    '$cardbushUtf8 = [System.Text.UTF8Encoding]::new($false)',
+    '[Console]::InputEncoding = $cardbushUtf8',
+    '[Console]::OutputEncoding = $cardbushUtf8',
+    '$OutputEncoding = $cardbushUtf8',
+    script,
+  ].join('\n');
+  const encodedCommand = Buffer.from(utf8Script, 'utf16le').toString('base64');
   const { stdout } = await execFileAsync('powershell.exe', [
     '-NoLogo',
     '-NoProfile',
     '-NonInteractive',
     '-ExecutionPolicy',
     'Bypass',
-    '-Command',
-    script,
+    '-EncodedCommand',
+    encodedCommand,
   ], {
     windowsHide: true,
     timeout: 15_000,
     signal,
     maxBuffer: 8 * 1024 * 1024,
+    encoding: 'utf8',
     env: { ...process.env, ...extraEnv },
   });
   return stdout;

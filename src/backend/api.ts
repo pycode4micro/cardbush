@@ -562,7 +562,7 @@ export interface SessionMessagesResult {
 export interface SessionLatestTurn {
   turnId: string;
   turnSequence?: number;
-  status: string;
+  status: RuntimeSessionSnapshot['turns'][number]['status'];
   stopped: boolean;
   stopReason: string;
   stopScenario: string;
@@ -1714,16 +1714,12 @@ function runtimeMessage(
     turnId: message.turnId,
     createdAt: message.createdAt,
     ...(role === 'assistant' && turn
-      ? { status: assistantDisplayTurnStatus(turn.status) }
+      ? { status: turn.status }
       : {}),
     turnSequence: message.turnSequence,
     messageIndex: message.messageIndex,
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
-}
-
-function assistantDisplayTurnStatus(status: string): string {
-  return status.trim().toLowerCase() === 'completed' ? 'complete' : status;
 }
 
 function runtimeHistoryToolExecution(
@@ -2396,8 +2392,7 @@ export async function revertSessionWorkspaceChanges(
         turnIds: normalizedTurns,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('runtime_workspace_snapshot_unavailable')) {
+      if (runtimeProtocolErrorCode(error) === 'runtime_workspace_snapshot_unavailable') {
         throw new RuntimeWorkspaceSnapshotUnavailableError();
       }
       throw error;
@@ -3148,6 +3143,12 @@ function optionalString(value: unknown) {
   return text.trim() ? text : undefined;
 }
 
+function runtimeProtocolErrorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const value = error as { code?: unknown; fact?: { code?: unknown } };
+  return String(value.fact?.code ?? value.code ?? '').trim();
+}
+
 function optionalNumber(value: unknown) {
   if (value == null || value === '') {
     return undefined;
@@ -3156,78 +3157,36 @@ function optionalNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : undefined;
 }
 
-function subagentTaskFromPayload(value: unknown): SubagentTaskSnapshot {
-  const item = asRecord(value);
-  const contractEvaluation = asRecord(
-    item.contract_evaluation ?? item.contractEvaluation,
-  );
-  const status =
-    String(item.status ?? '')
-      .trim()
-      .toLowerCase() || 'submitted';
-  const active = [
-    'dispatching',
-    'submitted',
-    'running',
-    'stop_requested',
-  ].includes(status);
-  const acceptedValue = item.accepted ?? contractEvaluation.accepted;
-  return {
-    protocol: String(item.protocol ?? ''),
-    taskId: optionalString(item.task_id ?? item.taskId),
-    toolCallId: optionalString(item.tool_call_id ?? item.toolCallId),
-    parentSessionId: String(
-      item.parent_session_id ?? item.parentSessionId ?? '',
-    ),
-    parentTurnId: String(item.parent_turn_id ?? item.parentTurnId ?? ''),
-    childSessionId: optionalString(
-      item.child_session_id ?? item.childSessionId,
-    ),
-    childTurnId: optionalString(item.child_turn_id ?? item.childTurnId),
-    agentName: optionalString(item.agent_name ?? item.agentName),
-    origin: optionalString(item.origin),
-    teamId: optionalString(item.team_id ?? item.teamId),
-    teamMemberId: optionalString(item.team_member_id ?? item.teamMemberId),
-    agentProfileId: optionalString(
-      item.agent_profile_id ?? item.agentProfileId,
-    ),
-    requestPrompt: optionalString(item.request_prompt ?? item.requestPrompt),
-    responsePrompt: optionalString(item.response_prompt ?? item.responsePrompt),
-    status,
-    terminal: typeof item.terminal === 'boolean' ? item.terminal : !active,
-    accepted: typeof acceptedValue === 'boolean' ? acceptedValue : undefined,
-    errorMessage: optionalString(item.error_message ?? item.errorMessage),
-    reviewStatus: optionalString(item.review_status ?? item.reviewStatus),
-    reportOutcome: optionalString(item.report_outcome ?? item.reportOutcome),
-    contractState: optionalString(
-      item.contract_state ?? item.contractState ?? contractEvaluation.state,
-    ),
-    createdAt: optionalString(item.created_at ?? item.createdAt),
-    updatedAt: optionalString(item.updated_at ?? item.updatedAt),
-    startedAt: optionalString(item.started_at ?? item.startedAt),
-    completedAt: optionalString(item.completed_at ?? item.completedAt),
-    detailEndpoint: optionalString(item.detail_endpoint ?? item.detailEndpoint),
-    report: asRecord(item.report),
-    review: asRecord(item.review),
-    contractEvaluation,
-    executionContract: asRecord(
-      item.execution_contract ?? item.executionContract,
-    ),
-    workerProposal: asRecord(item.worker_proposal ?? item.workerProposal),
-    mergePlan: asRecord(item.merge_plan ?? item.mergePlan),
-    usage: asRecord(item.usage),
-    raw: item,
-  };
-}
-
 function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
-  return subagentTaskFromPayload({
-    ...task,
-    terminal: task.status !== 'running',
+  return {
+    protocol: task.protocol,
+    taskId: task.taskId,
+    parentSessionId: task.parentSessionId,
+    parentTurnId: task.parentTurnId,
+    childSessionId: task.childSessionId,
+    childTurnId: task.childTurnId,
+    origin: task.origin,
+    teamId: task.teamId,
+    teamMemberId: task.teamMemberId,
+    agentProfileId: task.agentProfileId,
     requestPrompt: task.prompt,
-    responsePrompt: task.finalResponse,
+    responsePrompt: task.finalResponse || undefined,
+    status: task.status,
+    terminal: task.status !== 'running',
+    accepted: true,
+    errorMessage: task.errorMessage || undefined,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    completedAt: task.completedAt,
     report: task.finalResponse ? { finalResponse: task.finalResponse } : {},
-  });
+    review: {},
+    contractEvaluation: {},
+    executionContract: {},
+    workerProposal: {},
+    mergePlan: {},
+    usage: task.usage,
+    raw: { ...task },
+  };
 }
 
 function asRecord(value: unknown) {

@@ -300,7 +300,7 @@ function submittedResult(
     success: true,
     output: {
       taskId: task.taskId,
-      status: "submitted",
+      status: task.status,
       childSessionId: task.childSessionId,
       childTurnId: task.childTurnId,
       inheritedMessageCount: task.inheritedMessageCount,
@@ -369,6 +369,7 @@ function result(
       ? {}
       : {
           error: {
+            kind: task.status === "stopped" ? "cancelled" : "tool",
             code: task.status === "stopped" ? "subagent_stopped" : "subagent_failed",
             message: task.errorMessage,
             details: { taskId: task.taskId },

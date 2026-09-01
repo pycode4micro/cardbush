@@ -214,9 +214,7 @@ function SubagentTaskInspector({
   }, [detail.sessionId, refresh, task.taskId, task.toolCallId]);
 
   const status = subagentInspectorStatus(task, language);
-  const active = ['dispatching', 'submitted', 'running', 'stop_requested'].includes(
-    task.status.trim().toLowerCase(),
-  );
+  const active = task.status === 'running';
 
   useEffect(() => {
     if (!active || !task.taskId?.trim()) return undefined;
@@ -383,18 +381,14 @@ function taskFromDispatch(event: SubagentDispatchEvent): SubagentTaskSnapshot {
 }
 
 function subagentInspectorStatus(task: SubagentTaskSnapshot, language: AppLanguage) {
-  const status = task.status.trim().toLowerCase();
-  if (status === 'dispatching') return { tone: 'running', label: language === 'zh' ? '正在派发' : 'Dispatching' };
-  if (['submitted', 'running', 'stop_requested'].includes(status)) return { tone: 'running', label: language === 'zh' ? '运行中' : 'Running' };
-  if (status === 'result_ready' || status === 'completed') {
+  if (task.status === 'running') return { tone: 'running', label: language === 'zh' ? '运行中' : 'Running' };
+  if (task.status === 'completed') {
     if (task.reviewStatus === 'accepted') return { tone: 'complete', label: language === 'zh' ? '父级已接受' : 'Accepted by parent' };
     if (task.reviewStatus === 'rejected') return { tone: 'failed', label: language === 'zh' ? '父级已拒绝' : 'Rejected by parent' };
     if (task.reviewStatus === 'revision_requested') return { tone: 'review', label: language === 'zh' ? '需要修订' : 'Revision requested' };
     return { tone: 'review', label: language === 'zh' ? '待父级审查' : 'Awaiting parent review' };
   }
-  if (status === 'interrupted') return { tone: 'failed', label: language === 'zh' ? '服务异常退出，任务未完成' : 'Service interrupted; task incomplete' };
-  if (['failed', 'blocked', 'stopped'].includes(status)) return { tone: 'failed', label: language === 'zh' ? '任务未完成' : 'Task incomplete' };
-  return { tone: 'review', label: status || (language === 'zh' ? '等待状态' : 'Pending status') };
+  return { tone: 'failed', label: language === 'zh' ? '任务未完成' : 'Task incomplete' };
 }
 
 function stringValue(value: unknown) {

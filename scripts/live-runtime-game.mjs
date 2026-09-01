@@ -100,6 +100,26 @@ const events = host.events(sessionId, turnId);
 const finalMessage = session?.turns
   .flatMap((turn) => turn.messages)
   .find((item) => item.messageId === terminal.payload.finalMessageId);
+const usage = session?.turns.at(-1)?.usage ?? {};
+const eventKindCounts = countBy(events, (event) => event.kind);
+const toolNameCounts = countBy(records, (record) => record.toolCall.name);
+const toolOutcomeCounts = countBy(records, (record) => record.outcome);
+const toolErrorKindCounts = countBy(
+  records.filter((record) => record.result.error),
+  (record) => record.result.error.kind,
+);
+const toolErrorCodeCounts = countBy(
+  records.filter((record) => record.result.error),
+  (record) => record.result.error.code,
+);
+const facts = records.flatMap((record) => record.result.facts);
+const factVerificationCounts = countBy(facts, (fact) => fact.verification_state);
+const factSemanticCounts = countBy(facts, (fact) => String(fact.semantic_success));
+const toolLatencies = toolLatencySamples(events);
+const cacheHitRate = typeof usage.inputTokens === 'number' && usage.inputTokens > 0
+  ? (usage.cachedInputTokens ?? 0) / usage.inputTokens
+  : null;
+const consistencyViolations = records.flatMap((record) => inspectToolRecord(record));
 const report = {
   protocol: 'cardbush.live_runtime_validation.v1',
   model: { provider: String(selected.provider ?? ''), model },
@@ -109,15 +129,42 @@ const report = {
   turnId,
   durationMs: Date.now() - startedAt,
   terminal: terminal.payload,
-  usage: session?.turns.at(-1)?.usage ?? {},
+  usage,
+  cache: {
+    hitRate: cacheHitRate,
+    hitPercent: cacheHitRate === null ? null : cacheHitRate * 100,
+    uncachedInputTokens: typeof usage.inputTokens === 'number'
+      ? usage.inputTokens - (usage.cachedInputTokens ?? 0)
+      : null,
+  },
   eventCount: events.length,
+  eventKindCounts,
   providerRetryCount: events.filter((event) => event.kind === 'provider_retry').length,
+  rounds: records.reduce((maximum, record) => Math.max(maximum, record.round), 0),
+  toolNameCounts,
+  toolOutcomeCounts,
+  toolErrorKindCounts,
+  toolErrorCodeCounts,
+  facts: {
+    count: facts.length,
+    verificationCounts: factVerificationCounts,
+    semanticSuccessCounts: factSemanticCounts,
+  },
+  toolLatencyMs: summarizeLatencies(toolLatencies),
+  consistency: {
+    violationCount: consistencyViolations.length,
+    violations: consistencyViolations,
+  },
   tools: records.map((record) => ({
+    round: record.round,
     name: record.toolCall.name,
     outcome: record.outcome,
     success: record.result.success,
+    errorKind: record.result.error?.kind,
     errorCode: record.result.error?.code,
     errorMessage: record.result.error?.message,
+    factCount: record.result.facts.length,
+    verificationStates: [...new Set(record.result.facts.map((fact) => fact.verification_state))],
   })),
   finalResponse: finalMessage?.message.role === 'assistant'
     ? finalMessage.message.content
@@ -135,6 +182,9 @@ process.stdout.write(`${JSON.stringify({
   providerRetryCount: report.providerRetryCount,
   toolCount: report.tools.length,
   toolFailures: report.tools.filter((item) => !item.success).length,
+  cacheHitPercent: report.cache.hitPercent,
+  consistencyViolationCount: report.consistency.violationCount,
+  toolLatencyMs: report.toolLatencyMs,
 })}\n`);
 
 function requiredAbsolute(value, name) {
@@ -148,4 +198,73 @@ function requiredAbsolute(value, name) {
 function excludedPath(candidate, root) {
   const relative = candidate.slice(root.length).replaceAll('\\', '/');
   return /(?:^|\/)(?:\.git|\.ruff_cache|__pycache__|target)(?:\/|$)/.test(relative);
+}
+
+function countBy(values, keyFor) {
+  return Object.fromEntries(
+    [...values.reduce((counts, value) => {
+      const key = String(keyFor(value));
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      return counts;
+    }, new Map())].sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function toolLatencySamples(events) {
+  const startedAtByCall = new Map();
+  const samples = [];
+  for (const event of events) {
+    const toolCallId = event.payload?.toolCallId;
+    if (!toolCallId) continue;
+    if (event.kind === 'tool_running') {
+      startedAtByCall.set(toolCallId, Date.parse(event.createdAt));
+      continue;
+    }
+    if (!['tool_completed', 'tool_failed', 'tool_cancelled'].includes(event.kind)) continue;
+    const startedAt = startedAtByCall.get(toolCallId);
+    const completedAt = Date.parse(event.createdAt);
+    if (Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt) {
+      samples.push(completedAt - startedAt);
+    }
+  }
+  return samples;
+}
+
+function summarizeLatencies(values) {
+  if (!values.length) return { count: 0, min: null, p50: null, p95: null, max: null };
+  const sorted = [...values].sort((left, right) => left - right);
+  const percentile = (fraction) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)];
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    p50: percentile(0.5),
+    p95: percentile(0.95),
+    max: sorted.at(-1),
+  };
+}
+
+function inspectToolRecord(record) {
+  const violations = [];
+  const reference = `${record.round}:${record.toolCall.name}:${record.toolCall.id}`;
+  if (record.result.success !== (record.outcome === 'completed')) {
+    violations.push({ reference, code: 'outcome_success_mismatch' });
+  }
+  if (record.result.success && record.result.error) {
+    violations.push({ reference, code: 'successful_result_has_error' });
+  }
+  if (!record.result.success && !record.result.error) {
+    violations.push({ reference, code: 'failed_result_missing_error' });
+  }
+  for (const fact of record.result.facts) {
+    if (fact.semantic_success === true && !fact.execution_success) {
+      violations.push({ reference, receiptId: fact.receipt_id, code: 'semantic_success_without_execution' });
+    }
+    if (fact.verification_state === 'verified' && fact.semantic_success !== true) {
+      violations.push({ reference, receiptId: fact.receipt_id, code: 'verified_without_semantic_success' });
+    }
+    if (fact.error_code && fact.semantic_success === true) {
+      violations.push({ reference, receiptId: fact.receipt_id, code: 'semantic_success_with_error' });
+    }
+  }
+  return violations;
 }

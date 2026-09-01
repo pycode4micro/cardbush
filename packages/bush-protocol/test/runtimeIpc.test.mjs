@@ -32,6 +32,7 @@ test("exposes protocol mismatch as a stable structured error", () => {
     BUSH_RUNTIME_IPC_PROTOCOL,
     "operation_1",
   );
+  assert.equal(error.kind, "protocol");
   assert.equal(error.code, "protocol_version_mismatch");
   assert.equal(error.retryable, false);
   assert.deepEqual(error.details, {
@@ -43,6 +44,19 @@ test("exposes protocol mismatch as a stable structured error", () => {
       protocol: "bush.runtime_ipc.v2",
       type: "cancel_operation",
       operationId: "operation_1",
+    }),
+  );
+  assert.throws(() =>
+    decodeRuntimeIpcOutboundMessage({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+      type: "protocol_error",
+      error: {
+        protocol: "bush.runtime_error.v1",
+        code: "missing_kind",
+        message: "invalid",
+        retryable: false,
+        details: {},
+      },
     }),
   );
 });

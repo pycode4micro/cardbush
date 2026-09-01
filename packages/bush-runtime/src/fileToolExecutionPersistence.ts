@@ -102,11 +102,12 @@ export class FileToolExecutionPersistence implements ToolExecutionPersistence {
     try {
       const candidate = JSON.parse(line) as Record<string, unknown>;
       if (candidate.protocol !== RECORD_PROTOCOL) throw new Error("record protocol mismatch");
-      const record = toolExecutionRecordSchema.parse(candidate.record);
-      if (record.sessionId !== sessionId) throw new Error("session identity mismatch");
-      if (candidate.checksum !== checksum(JSON.stringify(record))) {
+      const persistedRecordJson = JSON.stringify(candidate.record);
+      if (candidate.checksum !== checksum(persistedRecordJson)) {
         throw new Error("record checksum mismatch");
       }
+      const record = toolExecutionRecordSchema.parse(candidate.record);
+      if (record.sessionId !== sessionId) throw new Error("session identity mismatch");
       return record;
     } catch (error) {
       throw new ToolExecutionJournalCorruptionError(

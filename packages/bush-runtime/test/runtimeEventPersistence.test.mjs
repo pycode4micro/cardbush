@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   readFileSync,
@@ -119,6 +120,44 @@ test("fails closed for a complete corrupted journal record", (t) => {
       ),
     RuntimeEventJournalCorruptionError,
   );
+});
+
+test("verifies the persisted bytes before schema defaults are applied", (t) => {
+  const root = temporaryRoot(t);
+  const writer = new FileRuntimeEventPersistence({ root });
+  eventLog(writer).append(identity, {
+    kind: "tool_failed",
+    payload: {
+      toolCallId: "call_legacy_error",
+      toolName: "fixture_tool",
+      ordinal: 0,
+      receiptIds: [],
+      executionFactIds: [],
+      artifactIds: [],
+      workspaceChangeIds: [],
+      error: {
+        kind: "tool",
+        code: "fixture_failure",
+        message: "fixture failed",
+        details: {},
+      },
+    },
+  });
+  writer.close();
+
+  const journal = join(root, readdirSync(root)[0]);
+  const persisted = JSON.parse(readFileSync(journal, "utf8"));
+  delete persisted.event.payload.error.kind;
+  persisted.checksum = createHash("sha256")
+    .update(JSON.stringify(persisted.event))
+    .digest("hex");
+  writeFileSync(journal, `${JSON.stringify(persisted)}\n`, "utf8");
+
+  const [recovered] = new FileRuntimeEventPersistence({ root }).load(
+    identity.sessionId,
+    identity.turnId,
+  );
+  assert.equal(recovered.payload.error.kind, "tool");
 });
 
 test("rejects persisted sequence gaps and identity conflicts mechanically", () => {

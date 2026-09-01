@@ -178,56 +178,8 @@ function browserStorage() {
   }
 }
 
-function isSubagentDispatchRejectionExecution(execution: ChatToolExecution) {
-  const metadata = execution.metadata;
-  const hasSubagentMarker =
-    execution.name.trim().toLowerCase().includes('subagent') ||
-    String(metadata.kind ?? metadata.type ?? '').trim() === 'subagent_tool' ||
-    metadata.subagent_task_id != null ||
-    metadata.subagentTaskId != null ||
-    metadata.subagent_name != null ||
-    metadata.subagentName != null;
-  if (!hasSubagentMarker) {
-    return false;
-  }
-  const outputPayload = parseToolOutputJson(execution.output);
-  const candidates = [
-    execution.metadata,
-    asRecord(execution.metadata.result),
-    asRecord(execution.metadata.payload),
-    outputPayload,
-  ];
-  return candidates.some(isSubagentDispatchRejectionPayload);
-}
-
-function isSubagentDispatchRejectionPayload(payload: Record<string, unknown>) {
-  if (Object.keys(payload).length === 0) {
-    return false;
-  }
-  const status = String(payload.status ?? '').trim().toLowerCase();
-  return (
-    payload.accepted === false ||
-    status === 'rejected' ||
-    Boolean(payload.error_code ?? payload.errorCode)
-  );
-}
-
 function isToolFailed(execution: ChatToolExecution) {
-  if (isSubagentDispatchRejectionExecution(execution)) {
-    return false;
-  }
-  const verificationInfo = planVerificationInfoFromExecution(execution);
-  if (verificationInfo?.failed) {
-    return false;
-  }
-  const normalized = execution.state.trim().toLowerCase();
-  if (isToolCancelled(execution)) {
-    return false;
-  }
-  return (
-    ['fail', 'failed', 'error'].includes(normalized) ||
-    (!execution.success && !isToolRunning(execution))
-  );
+  return execution.state === 'failed';
 }
 
 function isToolFailedInContext(execution: ChatToolExecution, active: boolean) {

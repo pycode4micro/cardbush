@@ -198,9 +198,10 @@ assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(messages, tool
 assert.match(apiSource, /options\.includeSuperseded === false \? snapshot\.supersededMessageIds : \[\]/);
 assert.match(
   apiSource,
-  /assistantDisplayTurnStatus\(turn\.status\)/,
-  'Persisted Runtime Turn status must be projected into the assistant display status.',
+  /\{ status: turn\.status \}/,
+  'Persisted Runtime Turn status must be projected without a compatibility alias.',
 );
+assert.doesNotMatch(apiSource, /assistantDisplayTurnStatus/);
 assert.match(
   apiSource,
   /\.filter\(\(message\) => !isInternalRuntimeMessage\(message\)\)/,
@@ -546,6 +547,16 @@ assert.match(
   'A permission request must project an explicit waiting state for its tool.',
 );
 assert.match(
+  runtimeChatSource,
+  /case 'tool_completed':[\s\S]*?const terminalExecution = toolLifecycle\(event\);[\s\S]*?onToolExecution\?\.\(terminalExecution\);[\s\S]*?loadToolExecutionWithTimeout/,
+  'A terminal Tool event must settle the UI before optional record enrichment.',
+);
+assert.match(
+  runtimeChatSource,
+  /function loadToolExecutionWithTimeout[\s\S]*?timeoutMs = 5_000/,
+  'Tool record enrichment must have a bounded local timeout.',
+);
+assert.match(
   chatHookSource,
   /setPendingInteraction\(\(current\) => keepFirstPendingInteraction\(/,
   'Runtime interaction events must preserve the first visible permission.',
@@ -601,15 +612,14 @@ assert.match(
   /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
   'The terminal turn must keep the processed header and final answer in chat',
 );
-assert.match(
-  bubbleSource,
-  /status === 'complete'[\s\S]{0,80}status === 'completed'/,
-  'Both legacy UI complete and Runtime completed must render as a visible final answer.',
-);
-assert.match(
-  chatHookSource,
-  /function isAssistantFinalTranscript[\s\S]*?status === 'complete'[\s\S]{0,80}status === 'completed'/,
-  'Runtime completed messages must remain the final transcript during history normalization.',
+assert.match(bubbleSource, /status === 'completed'/);
+assert.doesNotMatch(bubbleSource, /status === 'complete'/);
+assert.match(chatHookSource, /function isAssistantFinalTranscript[\s\S]*?status === 'completed'/);
+const finalTranscriptStart = chatHookSource.indexOf('function isAssistantFinalTranscript');
+const finalTranscriptEnd = chatHookSource.indexOf('\nfunction ', finalTranscriptStart + 1);
+assert.doesNotMatch(
+  chatHookSource.slice(finalTranscriptStart, finalTranscriptEnd),
+  /status === 'complete'/,
 );
 assert.doesNotMatch(
   bubbleSource,

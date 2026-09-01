@@ -24,7 +24,9 @@ import {
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   SHUTDOWN_RUNTIME_COMMAND,
   STOP_RUNTIME_TURN_COMMAND,
+  CANCEL_RUNTIME_TOOL_COMMAND,
   BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL,
+  BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
   LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
   CREATE_RUNTIME_GOAL_COMMAND,
@@ -49,6 +51,7 @@ import {
   turnToolExecutionsIdentitySchema,
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
+  runtimeToolCancellationIdentitySchema,
   setRuntimePlanRequestSchema,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
@@ -428,6 +431,7 @@ export class InMemoryRuntimeHost {
         RUN_RUNTIME_SESSION_TURN_COMMAND,
         SHUTDOWN_RUNTIME_COMMAND,
         STOP_RUNTIME_TURN_COMMAND,
+        CANCEL_RUNTIME_TOOL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
@@ -453,6 +457,7 @@ export class InMemoryRuntimeHost {
         "provider_retry",
         "tool_execution",
         "interactive_permissions",
+        "targeted_tool_cancellation",
         "generic_user_choice",
         "same_turn_guidance",
         "checkpoint_recovery",
@@ -675,6 +680,24 @@ export class InMemoryRuntimeHost {
           accepted: true,
           terminal: false,
           reason: "stop_accepted",
+        };
+      }
+      case CANCEL_RUNTIME_TOOL_COMMAND: {
+        const identity = runtimeToolCancellationIdentitySchema.parse(command.payload);
+        const matches = [...this.#toolLoops].filter((toolLoop) =>
+          toolLoop.matches(identity.sessionId, identity.turnId)
+        );
+        if (matches.length > 1) {
+          throw new Error(
+            `Tool ${identity.toolCallId} is ambiguous across active Runtime loops.`,
+          );
+        }
+        const accepted = matches[0]?.cancelTool(identity.toolCallId) === true;
+        return {
+          protocol: BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
+          ...identity,
+          accepted,
+          reason: accepted ? "tool_cancel_accepted" : "tool_not_active",
         };
       }
       case INSPECT_RUNTIME_RECOVERY_COMMAND: {
@@ -1879,7 +1902,11 @@ interface WorkspaceRevertOperation {
 }
 
 function workspaceSnapshotUnavailable(message: string): Error {
-  return new Error(`runtime_workspace_snapshot_unavailable: ${message}`);
+  return Object.assign(new Error(message), {
+    code: "runtime_workspace_snapshot_unavailable",
+    retryable: false,
+    details: {},
+  });
 }
 
 function stringArrayMetadata(value: unknown): string[] {

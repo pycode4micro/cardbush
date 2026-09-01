@@ -395,7 +395,7 @@ state = applyAssistantSegmentBoundary(
     nextAssistantSegmentIndex: 2,
   },
 );
-assert.equal(state[sessionId][1].status, 'complete');
+assert.equal(state[sessionId][1].status, 'completed');
 assert.equal(state[sessionId][1].metadata.segment_complete, true);
 assert.equal(state[sessionId][3].messageId, 'assistant-segment-2');
 

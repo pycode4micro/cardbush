@@ -16,11 +16,17 @@ import {
   OpenAIResponsesProvider,
   type OpenAIResponsesProviderConfig,
 } from "./responses.js";
+import {
+  InMemoryProviderCapabilityStore,
+  openAIResponsesCapabilityScope,
+  type ProviderCapabilityStore,
+} from "./providerCapabilities.js";
 
 export interface OpenAIResponsesProviderRegistryOptions {
   fallbackProvider?: ModelProvider;
   createRevision?: (config: RuntimeProviderBindingConfig) => string;
   createProvider?: (config: OpenAIResponsesProviderConfig) => ModelProvider;
+  capabilityStore?: ProviderCapabilityStore;
 }
 
 /**
@@ -39,6 +45,7 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
   readonly #createProvider: (
     config: OpenAIResponsesProviderConfig,
   ) => ModelProvider;
+  readonly #capabilityStore: ProviderCapabilityStore;
 
   constructor(options: OpenAIResponsesProviderRegistryOptions = {}) {
     this.#fallbackProvider = options.fallbackProvider;
@@ -46,13 +53,17 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
     this.#createProvider =
       options.createProvider ??
       ((config) => new OpenAIResponsesProvider(config));
+    this.#capabilityStore = options.capabilityStore ?? new InMemoryProviderCapabilityStore();
   }
 
   upsert(input: unknown): RuntimeProviderBindingResult {
     const config = runtimeProviderBindingConfigSchema.parse(input);
     const revision = this.#createRevision(config);
     const key = bindingKey(config.bindingId, revision);
-    this.#providers.set(key, this.#createProvider(toProviderConfig(config)));
+    this.#providers.set(
+      key,
+      this.#createProvider(toProviderConfig(config, this.#capabilityStore)),
+    );
     const revisions = this.#bindingKeys.get(config.bindingId) ?? new Set<string>();
     revisions.add(key);
     this.#bindingKeys.set(config.bindingId, revisions);
@@ -106,12 +117,15 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
 
 function toProviderConfig(
   config: RuntimeProviderBindingConfig,
+  capabilityStore: ProviderCapabilityStore,
 ): OpenAIResponsesProviderConfig {
   return {
     apiKey: config.apiKey,
     baseURL: config.baseURL,
     defaultHeaders: config.defaultHeaders,
     timeoutMs: config.timeoutMs,
+    capabilityStore,
+    capabilityScope: openAIResponsesCapabilityScope(config),
   };
 }
 

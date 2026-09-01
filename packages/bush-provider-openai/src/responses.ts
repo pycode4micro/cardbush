@@ -18,12 +18,20 @@ import {
   type ModelRequest,
 } from "@cardbush/bush-protocol";
 import type { ModelProvider, ModelStreamOptions } from "@cardbush/bush-runtime";
+import {
+  InMemoryProviderCapabilityStore,
+  openAIResponsesCapabilityScope,
+  type ProviderCapabilityStatus,
+  type ProviderCapabilityStore,
+} from "./providerCapabilities.js";
 
 export interface OpenAIResponsesProviderConfig {
   apiKey: string;
   baseURL?: string;
   defaultHeaders?: Record<string, string>;
   timeoutMs?: number;
+  capabilityStore?: ProviderCapabilityStore;
+  capabilityScope?: string;
 }
 
 export interface ResponseCreateProjectionOptions {
@@ -153,7 +161,7 @@ export function normalizeResponseStreamEvent(
         kind: "response_failed",
         code: event.code || "provider_response_error",
         message: event.message,
-        retryable: retryableProviderCode(event.code),
+        retryable: false,
       });
       state.terminal = true;
       break;
@@ -214,13 +222,9 @@ function responseFailurePayload(response: Response): ModelEventPayload {
     kind: "response_failed",
     code,
     message: response.error?.message ?? "The provider failed to generate a response.",
-    retryable: retryableProviderCode(code),
+    retryable: false,
     providerRequestId: response.id,
   };
-}
-
-function retryableProviderCode(code: string | null | undefined): boolean {
-  return /(?:server|rate_limit|timeout|overload|temporar|unavailable)/i.test(code ?? "");
 }
 
 export function toResponsesCreateParams(
@@ -439,15 +443,16 @@ function providerFailureEvent(
     sequence,
     createdAt: new Date().toISOString(),
     kind: "response_failed",
-    code: "provider_connection_error",
+    code: "provider_client_error",
     message: error instanceof Error ? error.message : String(error),
-    retryable: true,
+    retryable: false,
   };
 }
 
 export class OpenAIResponsesProvider implements ModelProvider {
   readonly #client: OpenAI;
-  #providerStateEnabled = true;
+  readonly #capabilityStore: ProviderCapabilityStore;
+  readonly #capabilityScope: string;
 
   constructor(config: OpenAIResponsesProviderConfig) {
     this.#client = new OpenAI({
@@ -457,6 +462,8 @@ export class OpenAIResponsesProvider implements ModelProvider {
       timeout: config.timeoutMs,
       maxRetries: 0,
     });
+    this.#capabilityStore = config.capabilityStore ?? new InMemoryProviderCapabilityStore();
+    this.#capabilityScope = config.capabilityScope ?? openAIResponsesCapabilityScope(config);
   }
 
   async *stream(
@@ -470,35 +477,47 @@ export class OpenAIResponsesProvider implements ModelProvider {
     };
     try {
       const resolvedRequest = await resolveLocalImageInputs(request);
-      const useProviderState = Boolean(
-        resolvedRequest.providerState && this.#providerStateEnabled,
+      const continuation = this.#readCapability(
+        resolvedRequest.model,
+        "response_continuation",
       );
-      let stream;
-      try {
-        stream = await this.#client.responses.create(
-          toResponsesCreateParams(resolvedRequest, {
-            disableProviderState: !useProviderState,
-          }),
-          { signal: options.signal },
-        );
-      } catch (error) {
-        if (!useProviderState || !providerStateCompatibilityError(error)) throw error;
-        this.#providerStateEnabled = false;
-        logProviderStateFallback(error);
-        stream = await this.#client.responses.create(
-          toResponsesCreateParams(resolvedRequest, { disableProviderState: true }),
-          { signal: options.signal },
-        );
-      }
+      const hasPreviousResponse = Boolean(
+        resolvedRequest.providerState?.previousResponseId,
+      );
+      const useProviderState = Boolean(
+        resolvedRequest.providerState &&
+        (!hasPreviousResponse || continuation === "supported"),
+      );
+      const activeProviderState = useProviderState;
+      const stream = await this.#client.responses.create(
+        toResponsesCreateParams(resolvedRequest, {
+          disableProviderState: !useProviderState,
+        }),
+        { signal: options.signal },
+      );
       for await (const providerEvent of stream) {
         if (
-          useProviderState &&
-          this.#providerStateEnabled &&
+          activeProviderState &&
           providerEvent.type === "response.created" &&
           responseStore(providerEvent.response) !== true
         ) {
-          this.#providerStateEnabled = false;
-          logProviderStateUnavailable("response_not_stored");
+          this.#observeCapability(
+            resolvedRequest.model,
+            "response_continuation",
+            "unsupported",
+            "response_not_stored",
+          );
+        } else if (
+          activeProviderState &&
+          providerEvent.type === "response.created" &&
+          responseStore(providerEvent.response) === true
+        ) {
+          this.#observeCapability(
+            resolvedRequest.model,
+            "response_continuation",
+            "supported",
+            "response_stored",
+          );
         }
         for (const event of normalizeResponseStreamEvent(providerEvent, state)) {
           yield event;
@@ -525,32 +544,30 @@ export class OpenAIResponsesProvider implements ModelProvider {
       );
     }
   }
-}
 
-function providerStateCompatibilityError(error: unknown): boolean {
-  if (!(error instanceof OpenAI.APIError)) return false;
-  if (![400, 404, 422].includes(error.status ?? 0)) return false;
-  const code = typeof error.code === "string" ? error.code : "";
-  return /(?:previous[_ -]?response|response[_ -]?state|\bstore\b)/i.test(
-    `${code} ${error.message}`,
-  );
-}
+  #readCapability(model: string, capability: string): ProviderCapabilityStatus {
+    return this.#capabilityStore.read({
+      scope: this.#capabilityScope,
+      model,
+      capability,
+    }).status;
+  }
 
-function logProviderStateFallback(error: unknown): void {
-  const apiError = error instanceof OpenAI.APIError ? error : undefined;
-  console.warn("[bush-provider-openai]", JSON.stringify({
-    type: "provider_response_chain_disabled",
-    status: apiError?.status ?? null,
-    code: typeof apiError?.code === "string"
-      ? apiError.code
-      : apiError?.name ?? "provider_state_unsupported",
-  }));
-}
-
-function logProviderStateUnavailable(reason: string): void {
-  console.warn("[bush-provider-openai]", JSON.stringify({
-    type: "provider_response_chain_disabled",
-    status: null,
-    code: reason,
-  }));
+  #observeCapability(
+    model: string,
+    capability: string,
+    status: "supported" | "unsupported",
+    reason: string,
+  ): void {
+    const identity = { scope: this.#capabilityScope, model, capability };
+    const previous = this.#capabilityStore.read(identity);
+    if (previous.status === status && previous.reason === reason) return;
+    this.#capabilityStore.observe(identity, { status, reason });
+    console.warn("[bush-provider-openai]", JSON.stringify({
+      type: "provider_capability_observed",
+      capability,
+      status,
+      reason,
+    }));
+  }
 }

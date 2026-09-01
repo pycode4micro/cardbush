@@ -19,8 +19,18 @@ export const RUNTIME_IPC_CANCEL_OPERATION_CHANNEL =
 export const RUNTIME_IPC_STREAM_FRAME_CHANNEL =
   "bush-runtime:stream-frame" as const;
 
+export const runtimeErrorKindSchema = z.enum([
+  "protocol",
+  "transport",
+  "runtime",
+  "cancelled",
+]);
+
+export type RuntimeErrorKind = z.infer<typeof runtimeErrorKindSchema>;
+
 export const runtimeProtocolErrorSchema = z.object({
   protocol: z.literal(BUSH_RUNTIME_ERROR_PROTOCOL),
+  kind: runtimeErrorKindSchema,
   code: z.string().min(1),
   message: z.string(),
   retryable: z.boolean(),
@@ -37,6 +47,7 @@ export function createProtocolVersionMismatchError(
 ): RuntimeProtocolError {
   return {
     protocol: BUSH_RUNTIME_ERROR_PROTOCOL,
+    kind: "protocol",
     code: "protocol_version_mismatch",
     message: `Runtime protocol ${String(received)} is not supported.`,
     retryable: false,

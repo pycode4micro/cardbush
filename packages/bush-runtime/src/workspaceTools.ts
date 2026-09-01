@@ -42,8 +42,13 @@ interface SearchInput extends PathInput {
 interface TerminalInput {
   command: string;
   cwd: string;
-  timeoutMs?: number;
+  timeoutMs: number;
+  shell: TerminalShell;
 }
+
+type TerminalShell = "cmd" | "powershell" | "posix";
+
+const MAX_TERMINAL_TIMEOUT_MS = 30_000;
 
 interface Observation {
   sha256: string;
@@ -89,7 +94,10 @@ export class WorkspaceObservationStore {
   acquireMutation(path: string): () => void {
     const identity = normalizeIdentity(path);
     if (this.#mutations.has(identity)) {
-      throw new Error(`A concurrent mutation already holds the resource lease for ${path}.`);
+      throw codedError(
+        "workspace_resource_busy",
+        `A concurrent mutation already holds the resource lease for ${path}.`,
+      );
     }
     this.#mutations.add(identity);
     return () => this.#mutations.delete(identity);
@@ -277,9 +285,17 @@ export function registerWorkspaceTools(
         assertObservedIfExisting(context, observations, path, before);
         const source = before.toString(context.input.encoding);
         const count = occurrences(source, context.input.oldText);
-        if (count === 0) throw new Error("old_text was not found in the current file revision.");
+        if (count === 0) {
+          throw codedError(
+            "edit_old_text_not_found",
+            "old_text was not found in the current file revision.",
+          );
+        }
         if (!context.input.replaceAll && count !== 1) {
-          throw new Error(`old_text matched ${count} times; set replace_all or provide a unique value.`);
+          throw codedError(
+            "edit_old_text_ambiguous",
+            `old_text matched ${count} times; set replace_all or provide a unique value.`,
+          );
         }
         const next = context.input.replaceAll
           ? source.split(context.input.oldText).join(context.input.newText)
@@ -307,12 +323,27 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "terminal_exec",
-      description: "Execute one command in the selected working directory and return the complete stdout, stderr and exit code. Commands are not rewritten or interpreted by Runtime.",
+      description: terminalToolDescription(),
       inputSchema: objectSchema({
         command: { type: "string", minLength: 1 },
-        cwd: { type: "string" },
-        timeout_ms: { type: "integer", minimum: 1 },
-      }, ["command"]),
+        cwd: {
+          type: "string",
+          minLength: 1,
+          description: "Working directory. Use an absolute path when the Turn has no workspace.",
+        },
+        timeout_ms: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_TERMINAL_TIMEOUT_MS,
+          description: `Required execution deadline in milliseconds. Maximum ${MAX_TERMINAL_TIMEOUT_MS}.`,
+        },
+        shell: {
+          type: "string",
+          enum: availableTerminalShells(),
+          default: defaultTerminalShell(),
+          description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
+        },
+      }, ["command", "cwd", "timeout_ms", "shell"]),
     },
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: decodeTerminal,
@@ -326,6 +357,7 @@ export function registerWorkspaceTools(
         cwd,
         timeoutMs: context.input.timeoutMs,
         signal: context.signal,
+        shell: context.input.shell,
       });
       const receiptId = createReceiptId();
       const completed = execution.exitCode === 0 && !execution.timedOut;
@@ -336,16 +368,24 @@ export function registerWorkspaceTools(
           ...execution,
         }, receiptId, [cwd]),
         success: completed,
-        facts: [executionFact(context, receiptId, [cwd], completed)],
+        facts: [executionFact(context, receiptId, [cwd], completed, {
+          shell: execution.shell,
+          shellExecutable: execution.shellExecutable,
+        })],
         ...(completed
           ? {}
           : {
               error: {
+                kind: "tool" as const,
                 code: execution.timedOut ? "terminal_timeout" : "terminal_exit_nonzero",
                 message: execution.timedOut
-                  ? "The command timed out."
+                  ? `The command exceeded its ${execution.timeoutMs} ms execution deadline.`
                   : `The command exited with code ${execution.exitCode}.`,
-                details: { exitCode: execution.exitCode },
+                details: {
+                  exitCode: execution.exitCode,
+                  timeoutMs: execution.timeoutMs,
+                  durationMs: execution.durationMs,
+                },
               },
             }),
       };
@@ -453,10 +493,16 @@ async function resolveToolPath(
   const root = workspaceRoot(context);
   const normalized = candidate.trim();
   if (!normalized) {
-    throw new Error("An absolute path is required when the Turn has no workspaceDir.");
+    throw codedError(
+      "workspace_path_required",
+      "An absolute path is required when the Turn has no workspaceDir.",
+    );
   }
   if (!isAbsolute(normalized) && !root) {
-    throw new Error("Relative paths require a workspaceDir; use an absolute path instead.");
+    throw codedError(
+      "workspace_relative_path_without_root",
+      "Relative paths require a workspaceDir; use an absolute path instead.",
+    );
   }
   const lexical = resolve(isAbsolute(normalized) ? normalized : resolve(root!, normalized));
   try {
@@ -487,7 +533,10 @@ function workspaceRoot(context: ToolAdmissionContext<unknown>): string | undefin
 function terminalWorkingDirectory(context: ToolAdmissionContext<TerminalInput>): string {
   const candidate = context.input.cwd || workspaceRoot(context);
   if (!candidate) {
-    throw new Error("terminal_exec requires an absolute cwd when the Turn has no workspaceDir.");
+    throw codedError(
+      "terminal_cwd_required",
+      "terminal_exec requires an absolute cwd when the Turn has no workspaceDir.",
+    );
   }
   return candidate;
 }
@@ -514,10 +563,15 @@ function assertObservedIfExisting(
       workspaceRoot(context),
     )
   ) {
-    throw new Error(
+    throw codedError(
+      "workspace_revision_not_observed",
       `Current file revision ${sha256} has not been observed by this Agent context; read_file first.`,
     );
   }
+}
+
+function codedError(code: string, message: string): Error & { code: string } {
+  return Object.assign(new Error(message), { code });
 }
 
 function successResult(
@@ -631,12 +685,13 @@ function executionFact(
   receiptId: string,
   paths: string[],
   succeeded: boolean,
+  metadata?: Record<string, unknown>,
 ) {
   return {
     protocol: BUSH_EXECUTION_FACT_PROTOCOL,
     receipt_id: receiptId,
     action_manifest_id: context.actionManifest.manifest_id,
-    status: succeeded ? "succeeded" : "failed",
+    status: succeeded ? "succeeded" as const : "failed" as const,
     operation: context.actionManifest.operation,
     effect_kind: context.actionManifest.effect_kind,
     owner: context.actionManifest.owner,
@@ -647,6 +702,7 @@ function executionFact(
     semantic_success: succeeded,
     verification_state: succeeded ? "verified" as const : "failed" as const,
     error_code: succeeded ? "" : "execution_failed",
+    ...(metadata ? { metadata } : {}),
   };
 }
 
@@ -688,13 +744,23 @@ function decodeSearch(input: unknown): SearchInput {
 function decodeTerminal(input: unknown): TerminalInput {
   const object = objectInput(input);
   const timeout = object.timeout_ms;
-  if (timeout !== undefined && (!Number.isInteger(timeout) || Number(timeout) < 1)) {
-    throw new Error("timeout_ms must be a positive integer.");
+  if (!Number.isInteger(timeout) || Number(timeout) < 1) {
+    throw new Error("timeout_ms is required and must be a positive integer.");
+  }
+  if (Number(timeout) > MAX_TERMINAL_TIMEOUT_MS) {
+    throw new Error(`timeout_ms must not exceed ${MAX_TERMINAL_TIMEOUT_MS}.`);
+  }
+  const shell = object.shell === undefined ? defaultTerminalShell() : String(object.shell);
+  if (!availableTerminalShells().includes(shell as TerminalShell)) {
+    throw new Error(
+      `shell must be one of: ${availableTerminalShells().join(", ")}.`,
+    );
   }
   return {
     command: requiredString(object.command, "command", false),
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
-    ...(timeout === undefined ? {} : { timeoutMs: Number(timeout) }),
+    timeoutMs: Number(timeout),
+    shell: shell as TerminalShell,
   };
 }
 
@@ -794,6 +860,13 @@ interface ProcessResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+}
+
+interface TerminalProcessResult extends ProcessResult {
+  shell: TerminalShell;
+  shellExecutable: string;
+  timeoutMs: number;
+  durationMs: number;
 }
 
 async function searchFileContent(
@@ -949,11 +1022,75 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw error;
 }
 
+function availableTerminalShells(): TerminalShell[] {
+  return process.platform === "win32"
+    ? ["powershell", "cmd"]
+    : ["posix"];
+}
+
+function defaultTerminalShell(): TerminalShell {
+  return process.platform === "win32" ? "powershell" : "posix";
+}
+
+function terminalToolDescription(): string {
+  const shells = availableTerminalShells().join(", ");
+  return [
+    "Execute one command in the selected working directory and return complete stdout, stderr and exit code.",
+    `Every execution requires an explicit timeout_ms deadline no greater than ${MAX_TERMINAL_TIMEOUT_MS} ms. Choose the smallest sufficient deadline.`,
+    `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
+    "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
+  ].join(" ");
+}
+
+function terminalShellInvocation(
+  shell: TerminalShell,
+  command: string,
+): { executable: string; args: string[] } {
+  if (shell === "powershell") {
+    const harness = [
+      `& { ${command} }`,
+      "$cardbushCommandSucceeded = $?",
+      "$cardbushNativeExitCode = $LASTEXITCODE",
+      "if ($null -ne $cardbushNativeExitCode -and $cardbushNativeExitCode -ne 0) { exit $cardbushNativeExitCode }",
+      "if (-not $cardbushCommandSucceeded) { exit 1 }",
+    ].join("; ");
+    return {
+      executable: "powershell.exe",
+      args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", harness],
+    };
+  }
+  if (shell === "cmd") {
+    return {
+      executable: process.env.ComSpec?.trim() || "cmd.exe",
+      args: ["/d", "/s", "/c", command],
+    };
+  }
+  return { executable: "/bin/sh", args: ["-c", command] };
+}
+
 function runShell(
   command: string,
-  options: { cwd: string; timeoutMs?: number; signal?: AbortSignal },
-): Promise<ProcessResult> {
-  return runProcess(command, [], { ...options, shell: true });
+  options: {
+    cwd: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    shell: TerminalShell;
+  },
+): Promise<TerminalProcessResult> {
+  const invocation = terminalShellInvocation(options.shell, command);
+  const startedAt = Date.now();
+  const processOptions = {
+    cwd: options.cwd,
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
+  };
+  return runProcess(invocation.executable, invocation.args, processOptions).then((result) => ({
+    ...result,
+    shell: options.shell,
+    shellExecutable: invocation.executable,
+    timeoutMs: options.timeoutMs,
+    durationMs: Date.now() - startedAt,
+  }));
 }
 
 function runProcess(

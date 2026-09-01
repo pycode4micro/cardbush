@@ -68,6 +68,28 @@ const inputSchema = z.object({
     'Application executable or process name, such as chrome, msedge, or code. Supported by open_app and window actions.',
   ),
 }).superRefine((input, context) => {
+  const requireFields = (fields: Array<keyof typeof input>, message: string) => {
+    for (const field of fields) {
+      if (input[field] == null || input[field] === '') {
+        context.addIssue({ code: 'custom', path: [field], message });
+      }
+    }
+  };
+  if (input.action === 'click') {
+    requireFields(['x', 'y'], 'click requires x and y.');
+  }
+  if (input.action === 'drag') {
+    requireFields(['x', 'y', 'to_x', 'to_y'], 'drag requires x, y, to_x, and to_y.');
+  }
+  if (input.action === 'type' && input.text == null) {
+    context.addIssue({ code: 'custom', path: ['text'], message: 'type requires text.' });
+  }
+  if (input.action === 'key' && !input.key?.trim() && !input.keys?.length) {
+    context.addIssue({ code: 'custom', path: ['key'], message: 'key requires key or keys.' });
+  }
+  if (input.action === 'scroll') {
+    requireFields(['delta'], 'scroll requires delta.');
+  }
   if (input.action === 'open_app' && !input.app?.trim()) {
     context.addIssue({
       code: 'custom',
@@ -87,6 +109,12 @@ const inputSchema = z.object({
       message: 'window requires app, title_pattern, or hwnd.',
     });
   }
+  if (input.action === 'window' && input.operation === 'move') {
+    requireFields(['x', 'y'], 'window move requires x and y.');
+  }
+  if (input.action === 'window' && input.operation === 'resize') {
+    requireFields(['width', 'height'], 'window resize requires width and height.');
+  }
 });
 
 export function registerComputerUsePlugin(
@@ -96,15 +124,12 @@ export function registerComputerUsePlugin(
   server.registerTool('computer_use', {
     title: 'Computer use',
     description: [
-      "LAST-RESORT FALLBACK: observe and interact with the user's current desktop only when no purpose-built Tool can complete the task.",
-      'First prefer direct APIs, app connectors, MCP tools, browser tools, and structured filesystem tools because they are more reliable and do not occupy the user\'s mouse or keyboard.',
-      'Use direct filesystem tools instead of desktop applications to create, read, or edit files.',
-      'For browser work, prefer chrome_devtools and use Computer Use only after a concrete Chrome Tool failure or when visible browser chrome must be controlled.',
-      'Do not call this Tool merely to inspect the desktop when another Tool already exposes the required state. Screenshots are returned as image artifacts.',
-      'For window actions, prefer app to target a process, or use hwnd from observe when more than one window matches.',
+      "Observe and interact with the user's current desktop through visible application UI.",
+      "Input actions may occupy the user's mouse or keyboard. Screenshots are returned as image artifacts.",
+      'Window actions accept app, title_pattern, or an exact hwnd returned by observe.',
     ].join(' '),
     annotations: {
-      title: 'Computer Use (last-resort fallback)',
+      title: 'Computer Use',
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
@@ -118,7 +143,14 @@ export function registerComputerUsePlugin(
   }, async (input, context) => {
     try {
       const result = await executeComputerUse(input, config, context.mcpReq.signal);
-      return mcpResult(context, true, result.output, result.paths, result.artifacts);
+      return mcpResult(
+        context,
+        true,
+        result.output,
+        result.paths,
+        result.artifacts,
+        input.action,
+      );
     } catch (error) {
       if (context.mcpReq.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
         throw error;
@@ -129,6 +161,7 @@ export function registerComputerUsePlugin(
         {},
         [],
         [],
+        input.action,
         { code: 'computer_use_failed', message: errorMessage(error) },
       );
     }
@@ -141,6 +174,7 @@ function mcpResult(
   output: unknown,
   paths: string[],
   artifacts: Artifact[],
+  action: string,
   error?: { code: string; message: string },
 ) {
   const metadata = (context.mcpReq._meta ?? {}) as Record<string, unknown>;
@@ -166,13 +200,15 @@ function mcpResult(
       paths,
       execution_success: success,
       semantic_success: success,
-      verification_state: success ? 'verified' : 'failed',
+      verification_state: success
+        ? ['observe', 'list_windows'].includes(action) ? 'verified' : 'attempted'
+        : 'failed',
       error_code: error?.code ?? '',
     }],
     artifacts,
     workspace_changes: [],
     guidance: [],
-    ...(error ? { error } : {}),
+    ...(error ? { error: { kind: 'tool' as const, ...error } } : {}),
   };
   return {
     content: [{

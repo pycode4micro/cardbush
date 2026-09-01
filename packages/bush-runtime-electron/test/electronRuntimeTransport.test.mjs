@@ -112,6 +112,42 @@ test("surfaces an incompatible stream frame inside the AsyncIterable", async () 
   );
 });
 
+test("classifies bridge command rejection as a transport fact without reading prose", async () => {
+  const bridge = fakeBridge();
+  bridge.command = async () => { throw new Error("arbitrary localized text"); };
+  const transport = new ElectronRuntimeTransport(bridge, {
+    createId: () => "operation_transport",
+  });
+
+  await assert.rejects(
+    () => transport.sendCommand({ kind: "runtime.test", payload: {} }),
+    (error) =>
+      error instanceof RuntimeRemoteError &&
+      error.fact.kind === "transport" &&
+      error.fact.code === "runtime_command_transport_failed" &&
+      error.fact.retryable === true,
+  );
+});
+
+test("classifies malformed same-version payload as a protocol fact", async () => {
+  const bridge = fakeBridge();
+  bridge.command = async () => ({
+    protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+    type: "unknown_response",
+  });
+  const transport = new ElectronRuntimeTransport(bridge, {
+    createId: () => "operation_protocol",
+  });
+
+  await assert.rejects(
+    () => transport.sendCommand({ kind: "runtime.test", payload: {} }),
+    (error) =>
+      error instanceof RuntimeRemoteError &&
+      error.fact.kind === "protocol" &&
+      error.fact.code === "invalid_runtime_ipc_message",
+  );
+});
+
 function fakeBridge() {
   const listeners = new Set();
   const bridge = {

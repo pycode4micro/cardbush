@@ -7,6 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  InMemoryProviderCapabilityStore,
   normalizeResponseStreamEvent,
   OpenAIResponsesProvider,
   resolveLocalImageInputs,
@@ -422,27 +423,16 @@ test("posts directly to the Responses endpoint and streams stable model events",
     "text_delta",
     "response_completed",
   ]);
+
 });
 
-test("falls back to full stateless input when a compatible endpoint rejects response chaining", async (context) => {
+test("uses full input when continuation support has not been observed", async (context) => {
   const received = [];
   const server = createServer(async (request, responseStream) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     received.push(body);
-    if (received.length === 1) {
-      responseStream.writeHead(400, { "content-type": "application/json" });
-      responseStream.end(JSON.stringify({
-        error: {
-          message: "Unsupported parameter: previous_response_id",
-          type: "invalid_request_error",
-          param: "previous_response_id",
-          code: "unsupported_parameter",
-        },
-      }));
-      return;
-    }
     responseStream.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
@@ -480,9 +470,12 @@ test("falls back to full stateless input when a compatible endpoint rejects resp
   }));
   const address = server.address();
   assert.ok(address && typeof address === "object");
+  const capabilityStore = new InMemoryProviderCapabilityStore();
   const provider = new OpenAIResponsesProvider({
     apiKey: "response-secret",
     baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capabilityStore,
+    capabilityScope: "fallback-compatible-endpoint",
   });
   const events = [];
   for await (const event of provider.stream({
@@ -504,16 +497,122 @@ test("falls back to full stateless input when a compatible endpoint rejects resp
     metadata: {},
   })) events.push(event);
 
-  assert.equal(received.length, 2);
-  assert.equal(received[0].previous_response_id, "resp_previous");
-  assert.equal(received[0].store, true);
-  assert.equal(received[0].input.length, 1);
-  assert.equal("previous_response_id" in received[1], false);
-  assert.equal(received[1].store, false);
-  assert.equal(received[1].input.length, 2);
+  assert.equal(received.length, 1);
+  assert.equal("previous_response_id" in received[0], false);
+  assert.equal(received[0].store, false);
+  assert.equal(received[0].input.length, 2);
   assert.deepEqual(events.map((event) => event.kind), [
     "response_started",
     "text_delta",
     "response_completed",
   ]);
+
+  const restarted = new OpenAIResponsesProvider({
+    apiKey: "response-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capabilityStore,
+    capabilityScope: "fallback-compatible-endpoint",
+  });
+  const continuedRequest = {
+    protocol: "bush.model_request.v1",
+    requestId: "request_cached_capability",
+    sessionId: "session_fallback",
+    turnId: "turn_cached_capability",
+    model: "response-model",
+    messages: [
+      { role: "user", content: "inspect" },
+      { role: "tool", toolCallId: "call_1", content: "observed" },
+    ],
+    tools: [],
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_previous",
+      inputMessageOffset: 1,
+    },
+    metadata: {},
+  };
+  for await (const _event of restarted.stream(continuedRequest)) {
+    // Drain the stream so the cached capability is used.
+  }
+  assert.equal(received.length, 2);
+  assert.equal("previous_response_id" in received[1], false);
+  assert.equal(received[1].input.length, 2);
+
+  for await (const _event of restarted.stream({
+    ...continuedRequest,
+    requestId: "request_other_model",
+    turnId: "turn_other_model",
+    model: "other-model",
+    providerState: {
+      ...continuedRequest.providerState,
+      previousResponseId: "resp_other",
+    },
+  })) {
+    // A different model starts with an independent unknown capability.
+  }
+  assert.equal(received.length, 3);
+  assert.equal("previous_response_id" in received[2], false);
+  assert.equal(received[2].input.length, 2);
+});
+
+test("does not hide a continuation failure after support was explicitly observed", async (context) => {
+  const received = [];
+  const server = createServer(async (request, responseStream) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    responseStream.writeHead(400, { "content-type": "application/json" });
+    responseStream.end(JSON.stringify({
+      error: {
+        message: "request rejected",
+        type: "invalid_request_error",
+        code: "invalid_request",
+      },
+    }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const capabilityStore = new InMemoryProviderCapabilityStore();
+  capabilityStore.observe({
+    scope: "known-continuation-endpoint",
+    model: "response-model",
+    capability: "response_continuation",
+  }, { status: "supported", reason: "response_stored" });
+  const provider = new OpenAIResponsesProvider({
+    apiKey: "response-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capabilityStore,
+    capabilityScope: "known-continuation-endpoint",
+  });
+  const events = [];
+  for await (const event of provider.stream({
+    protocol: "bush.model_request.v1",
+    requestId: "request_known_continuation",
+    sessionId: "session_known_continuation",
+    turnId: "turn_known_continuation",
+    model: "response-model",
+    messages: [
+      { role: "user", content: "inspect" },
+      { role: "tool", toolCallId: "call_1", content: "observed" },
+    ],
+    tools: [],
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_previous",
+      inputMessageOffset: 1,
+    },
+    metadata: {},
+  })) events.push(event);
+
+  assert.equal(received.length, 1);
+  assert.equal(received[0].previous_response_id, "resp_previous");
+  assert.equal(received[0].input.length, 1);
+  assert.equal(events.at(-1).kind, "response_failed");
+  assert.equal(events.at(-1).retryable, false);
+  assert.equal(events.at(-1).status, 400);
 });

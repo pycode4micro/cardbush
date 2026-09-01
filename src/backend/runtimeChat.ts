@@ -4,7 +4,10 @@ import type {
   RuntimeSessionTurnRequest,
   ToolExecutionRecord,
 } from '@cardbush/bush-protocol';
-import { runtimeProviderBindingRefSchema } from '@cardbush/bush-protocol';
+import {
+  runtimeProviderBindingRefSchema,
+  subagentTaskStatusSchema,
+} from '@cardbush/bush-protocol';
 import {
   GOAL_CONTINUATION_PROMPT,
   createProductAgentTurnRequest,
@@ -92,7 +95,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     const permissionMode = request.permissionMode ?? 'task_free';
     const interactiveRequests = request.interactiveRequestsEnabled === true;
     const vision = request.standardImageInputEnabled === true;
-    const userChoice = false;
+    const userChoice = interactiveRequests;
     const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
     const tools = catalog.filter((entry) =>
       (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
@@ -367,7 +370,7 @@ export async function streamRuntimeTurnEvents(
           turnId: message.turnId,
           createdAt: message.createdAt,
           ...(message.message.role === 'assistant' ? {
-            status: turn.status === 'completed' ? 'complete' : turn.status,
+            status: turn.status,
           } : {}),
           turnSequence: message.turnSequence,
           messageIndex: message.messageIndex,
@@ -454,12 +457,18 @@ async function consumeRuntimeEvents(
       }
       case 'tool_completed':
       case 'tool_failed': {
-        const loading = runtime.client
-          .getToolExecution({
+        const terminalExecution = toolLifecycle(event);
+        liveToolExecutions.set(event.payload.toolCallId, terminalExecution);
+        request.onToolExecution?.(terminalExecution);
+        const loading = loadToolExecutionWithTimeout(
+          runtime,
+          {
             sessionId: event.sessionId,
             turnId: event.turnId,
             toolCallId: event.payload.toolCallId,
-          })
+          },
+          signal,
+        )
           .then(async (record) => {
             const execution = record ? toolRecord(record, event) : toolLifecycle(event);
             liveToolExecutions.set(event.payload.toolCallId, execution);
@@ -473,6 +482,15 @@ async function consumeRuntimeEvents(
                 request.onSubagentDispatch?.(dispatch),
               );
             }
+          })
+          .catch((error) => {
+            console.warn('[cardbush-runtime]', JSON.stringify({
+              type: 'tool_execution_enrichment_failed',
+              sessionId: event.sessionId,
+              turnId: event.turnId,
+              toolCallId: event.payload.toolCallId,
+              message: error instanceof Error ? error.message : String(error),
+            }));
           })
           .finally(() => pendingToolLoads.delete(loading));
         pendingToolLoads.add(loading);
@@ -645,7 +663,7 @@ function toolLifecycle(
   return {
     id: event.payload.toolCallId,
     name: event.payload.toolName,
-    state: event.kind.replace('tool_', ''),
+    state: toolLifecycleState(event.kind),
     summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
     output: '',
     success: event.kind === 'tool_completed',
@@ -660,6 +678,7 @@ function toolLifecycle(
       workspaceChangeIds: 'workspaceChangeIds' in event.payload
         ? event.payload.workspaceChangeIds
         : [],
+      ...('error' in event.payload ? { error: event.payload.error } : {}),
     },
   };
 }
@@ -740,8 +759,11 @@ function subagentDispatches(
     ? members
     : [output];
   return items.map((item) => {
-    const status = String(item.status ?? output.status ?? (record.result.success ? 'completed' : 'failed'));
-    const terminal = ['completed', 'failed', 'stopped', 'cancelled'].includes(status);
+    const statusValue = item.status ?? output.status;
+    const status = statusValue == null && !record.result.success
+      ? 'failed'
+      : subagentTaskStatusSchema.parse(statusValue);
+    const terminal = status !== 'running';
     return {
     protocol: 'bush.subagent_task.v1',
     phase: record.result.success ? 'dispatched' as const : 'failed' as const,
@@ -787,6 +809,42 @@ function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
     normalized === 'xhigh' || normalized === 'max'
     ? normalized
     : undefined;
+}
+
+function toolLifecycleState(
+  kind: 'tool_queued' | 'tool_running' | 'tool_completed' | 'tool_failed' | 'tool_cancelled',
+): ChatToolExecution['state'] {
+  switch (kind) {
+    case 'tool_queued': return 'queued';
+    case 'tool_running': return 'running';
+    case 'tool_completed': return 'completed';
+    case 'tool_failed': return 'failed';
+    case 'tool_cancelled': return 'cancelled';
+  }
+}
+
+async function loadToolExecutionWithTimeout(
+  runtime: ReturnType<typeof createDesktopRuntimeSession>,
+  input: { sessionId: string; turnId: string; toolCallId: string },
+  parentSignal: AbortSignal,
+  timeoutMs = 5_000,
+) {
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(parentSignal.reason);
+  if (parentSignal.aborted) forwardAbort();
+  else parentSignal.addEventListener('abort', forwardAbort, { once: true });
+  const timer = window.setTimeout(() => {
+    controller.abort(new DOMException(
+      `Tool execution enrichment exceeded ${timeoutMs}ms.`,
+      'TimeoutError',
+    ));
+  }, timeoutMs);
+  try {
+    return await runtime.client.getToolExecution(input, controller.signal);
+  } finally {
+    window.clearTimeout(timer);
+    parentSignal.removeEventListener('abort', forwardAbort);
+  }
 }
 
 function positiveInteger(value: unknown): number | undefined {

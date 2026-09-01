@@ -23,9 +23,23 @@ test('creates an independent MCP server with an explicit computer-use manifest',
   assert.equal(computerUseManifest.operation, 'desktop.control');
   assert.deepEqual(Object.keys(server._registeredTools), ['computer_use']);
   const tool = server._registeredTools.computer_use;
-  assert.match(tool.description, /LAST-RESORT FALLBACK/);
-  assert.match(tool.description, /prefer direct APIs, app connectors, MCP tools, browser tools/);
+  assert.match(tool.description, /Observe and interact with the user's current desktop/);
+  assert.doesNotMatch(tool.description, /last-resort|prefer|primary route|fallback/i);
+  assert.equal(tool.annotations.title, 'Computer Use');
   assert.equal(tool.annotations.destructiveHint, true);
+});
+
+test('rejects incomplete input actions before desktop execution', () => {
+  const tool = createCardbushAppsServer()._registeredTools.computer_use;
+  const schema = tool.inputSchema;
+  assert.equal(schema.safeParse({ action: 'click' }).success, false);
+  assert.equal(schema.safeParse({ action: 'drag', x: 1, y: 2 }).success, false);
+  assert.equal(schema.safeParse({ action: 'type' }).success, false);
+  assert.equal(schema.safeParse({ action: 'key' }).success, false);
+  assert.equal(schema.safeParse({ action: 'scroll' }).success, false);
+  assert.equal(schema.safeParse({ action: 'window', app: 'chrome', operation: 'move' }).success, false);
+  assert.equal(schema.safeParse({ action: 'click', x: 0, y: 0 }).success, true);
+  assert.equal(schema.safeParse({ action: 'type', text: '中文 + ^ % { }' }).success, true);
 });
 
 test('does not register an uninstalled or disabled plugin', () => {
@@ -47,6 +61,23 @@ test('honors Runtime cancellation before issuing desktop input', async () => {
       controller.signal,
     ),
     (error) => error?.name === 'AbortError',
+  );
+});
+
+test('preserves Unicode in generic application resolution failures', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const config = defaultAppsRuntimeConfig().computerUse.config;
+  await assert.rejects(
+    executeComputerUse({
+      action: 'open_app',
+      app: 'CardBush-不存在的应用-测试',
+    }, config),
+    (error) => {
+      assert.match(error.message, /CardBush-不存在的应用-测试/);
+      assert.doesNotMatch(error.message, /�/);
+      return true;
+    },
   );
 });
 

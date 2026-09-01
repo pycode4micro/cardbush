@@ -59,6 +59,7 @@ export class RuntimeUtilityProcessController {
       const startupTimeout = setTimeout(() => {
         const failure = new RuntimeHostControllerError(
           runtimeError(
+            'transport',
             'runtime_host_startup_timeout',
             `Runtime Utility Process did not become ready within ${startupTimeoutMs}ms.`,
           ),
@@ -85,7 +86,7 @@ export class RuntimeUtilityProcessController {
           const received = extractRuntimeIpcProtocol(candidate);
           const fact = received !== BUSH_RUNTIME_IPC_PROTOCOL
             ? createProtocolVersionMismatchError(received)
-            : runtimeError('invalid_runtime_host_message', errorMessage(error));
+            : runtimeError('protocol', 'invalid_runtime_host_message', errorMessage(error));
           const failure = new RuntimeHostControllerError(fact);
           clearStartupTimeout();
           reject(failure);
@@ -118,6 +119,7 @@ export class RuntimeUtilityProcessController {
         this.#ready = undefined;
         const failure = new RuntimeHostControllerError(
           runtimeError(
+            'transport',
             'runtime_host_exited',
             `Runtime Utility Process exited with code ${code}.`,
           ),
@@ -129,6 +131,7 @@ export class RuntimeUtilityProcessController {
         clearStartupTimeout();
         const failure = new RuntimeHostControllerError(
           runtimeError(
+            'transport',
             'runtime_host_fatal_error',
             `Runtime Utility Process failed at ${location}.`,
             undefined,
@@ -161,6 +164,7 @@ export class RuntimeUtilityProcessController {
       return commandFailure(
         operationId,
         runtimeError(
+          'protocol',
           'invalid_runtime_command',
           'Runtime command channel received a non-command message.',
           operationId,
@@ -175,6 +179,7 @@ export class RuntimeUtilityProcessController {
         error instanceof RuntimeHostControllerError
           ? error.fact
           : runtimeError(
+              'transport',
               'runtime_host_unavailable',
               errorMessage(error),
               message.operationId,
@@ -185,6 +190,7 @@ export class RuntimeUtilityProcessController {
       return commandFailure(
         message.operationId,
         runtimeError(
+          'protocol',
           'duplicate_operation_id',
           `Operation ${message.operationId} already exists.`,
           message.operationId,
@@ -326,6 +332,7 @@ export function registerRuntimeHostIpc(
 }
 
 function runtimeError(
+  kind: RuntimeProtocolError['kind'],
   code: string,
   message: string,
   requestId?: string,
@@ -333,6 +340,7 @@ function runtimeError(
 ): RuntimeProtocolError {
   return {
     protocol: BUSH_RUNTIME_ERROR_PROTOCOL,
+    kind,
     code,
     message,
     retryable: false,
@@ -366,7 +374,7 @@ function inboundProtocolError(
         BUSH_RUNTIME_IPC_PROTOCOL,
         requestId,
       )
-    : runtimeError('invalid_ipc_message', errorMessage(error), requestId);
+    : runtimeError('protocol', 'invalid_ipc_message', errorMessage(error), requestId);
 }
 
 function extractString(input: unknown, key: string): string | undefined {

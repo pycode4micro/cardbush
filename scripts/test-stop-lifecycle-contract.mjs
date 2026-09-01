@@ -44,7 +44,8 @@ assert.match(hook, /createdAt: source\.createdAt \?\? message\.createdAt/);
 assert.match(hook, /terminalTurnIdsRef\.current\.has\(terminalTurnId\)/);
 assert.match(hook, /const reconcileTerminalTurn = useCallback/);
 assert.match(hook, /reconcileTerminalTurn\(sessionId, turnId, 20, 750\)/);
-assert.match(hook, /!isRunningSessionTurn\(latestTurn\)/);
+assert.match(hook, /latestTurn\?\.turnId === turnId/);
+assert.doesNotMatch(hook, /isRunningSessionTurn/);
 
 assert.match(app, /stopping=\{chat\.stopping\}/);
 assert.match(composer, /正在停止/);

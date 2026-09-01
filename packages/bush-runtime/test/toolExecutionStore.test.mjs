@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +61,57 @@ test("fails closed when a complete persisted Tool record is mutated", (t) => {
     ToolExecutionJournalCorruptionError,
   );
   reopened.close();
+});
+
+test("checks persisted Tool bytes before adding protocol defaults", (t) => {
+  const root = temporaryRoot(t);
+  const persistence = new FileToolExecutionPersistence({ root });
+  const failed = outcome({
+    success: false,
+    output: null,
+    facts: [{
+      protocol: "bush.tool.execution_fact.v1",
+      receipt_id: "receipt_1",
+      action_manifest_id: "attempt:turn_1:1:call_1",
+      status: "failed",
+      operation: "fixture.read",
+      effect_kind: "observation",
+      owner: "fixture",
+      dispatch_scope: "turn",
+      categories: ["tool_failure"],
+      paths: [],
+      execution_success: false,
+      semantic_success: false,
+      verification_state: "failed",
+      error_code: "fixture_failure",
+    }],
+    artifacts: [],
+    workspace_changes: [],
+    error: {
+      kind: "tool",
+      code: "fixture_failure",
+      message: "fixture failed",
+      details: {},
+    },
+  });
+  failed.kind = "failed";
+  new ToolExecutionStore({ persistence, now: () => NOW }).record(
+    toolCall(),
+    identity(),
+    failed,
+  );
+  persistence.close();
+
+  const path = join(root, readdirSync(root)[0]);
+  const persisted = JSON.parse(readFileSync(path, "utf8"));
+  delete persisted.record.result.error.kind;
+  persisted.checksum = createHash("sha256")
+    .update(JSON.stringify(persisted.record))
+    .digest("hex");
+  writeFileSync(path, `${JSON.stringify(persisted)}\n`, "utf8");
+
+  const [recovered] = new FileToolExecutionPersistence({ root }).load("session_1");
+  assert.equal(recovered.result.error.kind, "tool");
 });
 
 const NOW = "2026-08-29T00:00:00.000Z";

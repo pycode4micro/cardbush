@@ -66,8 +66,8 @@ export interface CardbushAppsConfigStoreOptions {
 const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
   id: "computer-use",
   name: "Computer Use",
-  description: "Last-resort control for Windows desktop applications.",
-  longDescription: "Use only when a purpose-built tool, filesystem tool, app connector, or browser tool cannot complete the task. Computer Use observes and controls the local desktop through explicit, permission-aware actions and may occupy the user's mouse and keyboard.",
+  description: "Observe and control Windows desktop applications.",
+  longDescription: "Computer Use observes and controls the local desktop through explicit, permission-aware actions. Input actions may occupy the user's mouse and keyboard.",
   version: "1.0.0",
   developerName: "CardBush",
   category: "Productivity",
@@ -84,7 +84,7 @@ const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
     kind: "mcp",
     id: "cardbush_apps",
     name: "Computer Use",
-    description: "Last-resort, permission-aware desktop control MCP tools.",
+    description: "Permission-aware desktop control MCP tools.",
   }],
 };
 

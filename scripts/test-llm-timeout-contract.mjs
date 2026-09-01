@@ -21,7 +21,8 @@ for (const reason of [
 
 assert.match(provider, /timeout: config\.timeoutMs/);
 assert.match(provider, /maxRetries: 0/);
-assert.match(provider, /code: "provider_connection_error"/);
+assert.match(provider, /code: "provider_client_error"/);
+assert.match(provider, /code: "provider_client_error"[\s\S]*?retryable: false/);
 assert.match(runtimeChat, /case 'provider_retry'/);
 assert.doesNotMatch(api, /function localizedLlmTimeoutMessage/);
 assert.match(bubble, /function assistantTimeoutPresentation/);

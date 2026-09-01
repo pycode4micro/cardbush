@@ -71,13 +71,14 @@ export class FileRuntimeCheckpointStore implements RuntimeCheckpointStore {
       if (record.protocol !== RECORD_PROTOCOL) {
         throw new Error("checkpoint record protocol mismatch");
       }
+      const persistedCheckpointJson = JSON.stringify(record.checkpoint);
+      if (record.checksum !== checksum(persistedCheckpointJson)) {
+        throw new Error("checkpoint checksum mismatch");
+      }
       const checkpoint = runtimeCheckpointSchema.parse(record.checkpoint);
       if ((sessionId && checkpoint.request.sessionId !== sessionId) ||
           (turnId && checkpoint.request.turnId !== turnId)) {
         throw new Error("checkpoint identity mismatch");
-      }
-      if (record.checksum !== checksum(JSON.stringify(checkpoint))) {
-        throw new Error("checkpoint checksum mismatch");
       }
       return checkpoint;
     } catch (error) {

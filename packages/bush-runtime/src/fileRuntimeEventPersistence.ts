@@ -138,11 +138,11 @@ export class FileRuntimeEventPersistence implements RuntimeEventPersistence {
       if (candidate.protocol !== RECORD_PROTOCOL) {
         throw new Error("record protocol mismatch");
       }
-      const event = runtimeEventSchema.parse(candidate.event);
-      const eventJson = JSON.stringify(event);
-      if (candidate.checksum !== checksum(eventJson)) {
+      const persistedEventJson = JSON.stringify(candidate.event);
+      if (candidate.checksum !== checksum(persistedEventJson)) {
         throw new Error("record checksum mismatch");
       }
+      const event = runtimeEventSchema.parse(candidate.event);
       return event;
     } catch (error) {
       throw new RuntimeEventJournalCorruptionError(

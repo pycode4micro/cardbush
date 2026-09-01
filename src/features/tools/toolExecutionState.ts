@@ -1,15 +1,17 @@
 import type { AppLanguage, ChatToolExecution } from '../../types';
 
+export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
+  if (
+    value === 'queued' || value === 'running' || value === 'awaiting_permission' ||
+    value === 'completed' || value === 'failed' || value === 'cancelled'
+  ) return value;
+  throw new Error(`Invalid tool execution state: ${String(value)}`);
+}
+
 export function isToolRunning(execution: ChatToolExecution) {
-  const normalized = execution.state.trim().toLowerCase();
-  return [
-    'using',
-    'running',
-    'pending',
-    'started',
-    'queued',
-    'awaiting_permission',
-  ].includes(normalized);
+  return execution.state === 'running' ||
+    execution.state === 'queued' ||
+    execution.state === 'awaiting_permission';
 }
 
 export function isToolRunningInContext(
@@ -27,7 +29,7 @@ export function runningToolLabel(
     executions.find((item) => isToolRunning(item)) ?? executions[executions.length - 1];
   const summary = running?.summary.trim();
   const toolNameText = displayToolName(running?.name ?? '');
-  const state = running?.state.trim().toLowerCase() ?? '';
+  const state = running?.state;
   if (state === 'awaiting_permission') {
     return language === 'zh'
       ? `${toolNameText} 等待授权`
@@ -37,11 +39,6 @@ export function runningToolLabel(
     return language === 'zh'
       ? `${toolNameText} 排队中`
       : `${toolNameText} queued`;
-  }
-  if (state === 'pending') {
-    return language === 'zh'
-      ? `${toolNameText} 等待中`
-      : `${toolNameText} pending`;
   }
   if (!summary) {
     return language === 'zh' ? `正在运行 ${toolNameText}` : `Running ${toolNameText}`;
@@ -55,26 +52,21 @@ export function activeToolStatusLabel(
   execution: ChatToolExecution,
   language: AppLanguage,
 ) {
-  const state = execution.state.trim().toLowerCase();
+  const state = execution.state;
   if (state === 'awaiting_permission') {
     return language === 'zh' ? '等待授权' : 'Awaiting permission';
   }
   if (state === 'queued') {
     return language === 'zh' ? '排队中' : 'Queued';
   }
-  if (state === 'pending') {
-    return language === 'zh' ? '等待中' : 'Pending';
-  }
-  if (['using', 'running', 'started'].includes(state)) {
+  if (state === 'running') {
     return language === 'zh' ? '运行中' : 'Running';
   }
   return undefined;
 }
 
 export function isToolCancelled(execution: ChatToolExecution) {
-  return ['cancelled', 'canceled', 'stopped'].includes(
-    execution.state.trim().toLowerCase(),
-  );
+  return execution.state === 'cancelled';
 }
 
 export function displayToolName(value: string) {

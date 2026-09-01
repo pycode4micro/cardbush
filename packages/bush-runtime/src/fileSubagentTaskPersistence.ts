@@ -60,11 +60,12 @@ export class FileSubagentTaskPersistence implements SubagentTaskPersistence {
       try {
         const candidate = JSON.parse(line) as Record<string, unknown>;
         if (candidate.protocol !== RECORD_PROTOCOL) throw new Error("record protocol mismatch");
-        const event = subagentEventSchema.parse(candidate.event);
-        if (event.parentSessionId !== parentSessionId) throw new Error("session identity mismatch");
-        if (candidate.checksum !== checksum(JSON.stringify(event))) {
+        const persistedEventJson = JSON.stringify(candidate.event);
+        if (candidate.checksum !== checksum(persistedEventJson)) {
           throw new Error("record checksum mismatch");
         }
+        const event = subagentEventSchema.parse(candidate.event);
+        if (event.parentSessionId !== parentSessionId) throw new Error("session identity mismatch");
         return event;
       } catch (error) {
         throw new SubagentJournalCorruptionError(

@@ -457,10 +457,18 @@ export interface SessionTokenUsage {
   promptCacheMissTokens: number;
 }
 
+export type ChatToolExecutionState =
+  | 'queued'
+  | 'running'
+  | 'awaiting_permission'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
 export interface ChatToolExecution {
   id: string;
   name: string;
-  state: string;
+  state: ChatToolExecutionState;
   summary: string;
   output: string;
   success: boolean;
@@ -843,11 +851,12 @@ export interface TeamConfigurationCapabilities {
 }
 
 type SubagentDispatchPhase = 'dispatching' | 'dispatched' | 'failed';
+export type SubagentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
 
 export interface SubagentDispatchEvent {
   protocol: string;
   phase: SubagentDispatchPhase;
-  status: string;
+  status: SubagentTaskStatus;
   terminal: boolean;
   accepted?: boolean;
   taskId?: string;
@@ -887,7 +896,7 @@ export interface SubagentTaskSnapshot {
   agentProfileId?: string;
   requestPrompt?: string;
   responsePrompt?: string;
-  status: string;
+  status: SubagentTaskStatus;
   terminal: boolean;
   accepted?: boolean;
   errorMessage?: string;

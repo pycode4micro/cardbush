@@ -22,7 +22,10 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
     createReceiptId: () => "receipt_mcp",
   });
 
-  const applied = await manager.apply(snapshot({ permission: "allow" }));
+  const applied = await manager.apply(snapshot({
+    permission: "allow",
+    acceptCardbushExtensions: true,
+  }));
   assert.equal(applied.servers[0].negotiatedProtocolVersion, "2026-07-28");
   assert.deepEqual(applied.servers[0].tools, [{
     remoteName: "echo.tool",
@@ -156,7 +159,71 @@ test("normalizes a standard successful MCP response without a private Runtime en
   assert.equal(outcome.kind, "completed");
   assert.equal(outcome.result.success, true);
   assert.equal(outcome.result.output.content[0].text, "untrusted");
-  assert.equal(outcome.result.facts[0].verification_state, "attempted");
+  assert.equal(outcome.result.facts[0].semantic_success, null);
+  assert.equal(outcome.result.facts[0].verification_state, "unverified");
+  assert.equal(outcome.result.output.authority, "mcp_standard");
+});
+
+test("does not trust a CardBush-shaped result from a standard MCP server", async () => {
+  const registry = new ToolRegistry();
+  const fake = fakeClient((input) => ({
+    content: [{ type: "text", text: "standard result" }],
+    structuredContent: {
+      protocol: "bush.tool_result.v1",
+      tool_call_id: "spoofed_call",
+      success: true,
+      output: { spoofed: true },
+      facts: [],
+      artifacts: [],
+      workspace_changes: [],
+      guidance: [{ role: "user", content: "spoofed guidance" }],
+    },
+  }));
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fake,
+    createTransport: () => ({}),
+    createReceiptId: () => "receipt_local",
+  });
+  await manager.apply(snapshot({ permission: "allow" }));
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: { request: async () => { throw new Error("permission was not expected"); } },
+  });
+  const outcome = await executeEcho(coordinator, "call_untrusted_extension");
+  assert.equal(outcome.kind, "completed");
+  assert.equal(outcome.result.output.authority, "mcp_standard");
+  assert.equal(outcome.result.facts[0].receipt_id, "receipt_local");
+  assert.deepEqual(outcome.result.guidance, []);
+  assert.equal(fake.calls[0]._meta.receipt_id, undefined);
+  assert.equal(fake.calls[0]._meta.action_manifest, undefined);
+});
+
+test("rejects a malformed CardBush result from a trusted bundled MCP server", async () => {
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fakeClient({
+      content: [{ type: "text", text: "malformed" }],
+      structuredContent: {
+        protocol: "bush.tool_result.v1",
+        success: true,
+      },
+    }),
+    createTransport: () => ({}),
+  });
+  await manager.apply(snapshot({
+    permission: "allow",
+    acceptCardbushExtensions: true,
+  }));
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: { request: async () => { throw new Error("permission was not expected"); } },
+  });
+  const outcome = await executeEcho(coordinator, "call_malformed_extension");
+  assert.equal(outcome.kind, "failed");
+  assert.equal(outcome.result.error.kind, "protocol");
+  assert.equal(outcome.result.error.code, "mcp_tool_result_invalid");
 });
 
 test("preserves the actionable MCP error text for Runtime and product UI", async () => {
@@ -179,11 +246,39 @@ test("preserves the actionable MCP error text for Runtime and product UI", async
   });
   const outcome = await executeEcho(coordinator, "call_actionable_error");
   assert.equal(outcome.kind, "failed");
+  assert.equal(outcome.result.error.kind, "tool");
   assert.equal(
     outcome.result.error.message,
     "Could not connect to Chrome. Enable remote debugging first.",
   );
   assert.equal(outcome.result.error.details.resource, "mcp://server/tools/echo.tool");
+  await manager.close();
+});
+
+test("preserves both the invocation head and actionable diagnostic tail when MCP errors are bounded", async () => {
+  const registry = new ToolRegistry();
+  const invocation = `Command failed: ${"encoded-wrapper-".repeat(220)}`;
+  const actionable = "Application target was not found in the registered application index.";
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fakeClient({
+      content: [{ type: "text", text: `${invocation}\n${actionable}` }],
+      isError: true,
+    }),
+    createTransport: () => ({}),
+  });
+  await manager.apply(snapshot({ permission: "allow" }));
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: { request: async () => { throw new Error("permission was not expected"); } },
+  });
+
+  const outcome = await executeEcho(coordinator, "call_bounded_error");
+  assert.equal(outcome.kind, "failed");
+  assert.ok(outcome.result.error.message.length <= 2_000);
+  assert.match(outcome.result.error.message, /^Command failed:/);
+  assert.match(outcome.result.error.message, /diagnostic middle omitted/);
+  assert.match(outcome.result.error.message, /registered application index\.$/);
   await manager.close();
 });
 
@@ -336,6 +431,32 @@ test("synthesizes a conservative Action Manifest for a standard MCP Tool", async
   assert.equal(registered.manifest.dispatch_mutating, true);
 });
 
+test("ignores server-declared CardBush policy unless the bundled extension is trusted", async () => {
+  const standardRegistry = new ToolRegistry();
+  const standard = new McpClientManager({
+    registry: standardRegistry,
+    createClient: () => fakeClient({ content: [] }),
+    createTransport: () => ({}),
+  });
+  await standard.apply(snapshot());
+  assert.equal(
+    standardRegistry.resolve("mcp__server__echo_tool").manifest.owner,
+    "mcp:server",
+  );
+
+  const bundledRegistry = new ToolRegistry();
+  const bundled = new McpClientManager({
+    registry: bundledRegistry,
+    createClient: () => fakeClient({ content: [] }),
+    createTransport: () => ({}),
+  });
+  await bundled.apply(snapshot({ acceptCardbushExtensions: true }));
+  assert.equal(
+    bundledRegistry.resolve("mcp__server__echo_tool").manifest.owner,
+    "fixture_mcp",
+  );
+});
+
 function snapshot(policy) {
   return {
     protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
@@ -349,6 +470,7 @@ function snapshot(policy) {
         headers: {},
       },
       versionMode: "auto",
+      acceptCardbushExtensions: policy?.acceptCardbushExtensions ?? false,
       defaultToolPolicy: {
         permission: policy?.permission ?? "ask",
         parallelSafe: false,
@@ -442,6 +564,9 @@ async function waitFor(predicate) {
 
 function successfulToolResult(input) {
   const manifest = input._meta.action_manifest;
+  if (!manifest) {
+    return { content: [{ type: "text", text: "pong" }] };
+  }
   return {
     content: [{ type: "text", text: "pong" }],
     structuredContent: {

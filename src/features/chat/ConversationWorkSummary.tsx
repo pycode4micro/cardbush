@@ -495,15 +495,12 @@ function subagentTaskTime(task: SubagentTaskSnapshot) {
 }
 
 function subagentTaskActive(task: SubagentTaskSnapshot) {
-  return ['dispatching', 'submitted', 'running', 'stop_requested'].includes(
-    task.status.trim().toLowerCase(),
-  );
+  return task.status === 'running';
 }
 
 function subagentTaskTone(task: SubagentTaskSnapshot) {
-  const status = task.status.trim().toLowerCase();
-  if (['failed', 'blocked', 'interrupted', 'stopped'].includes(status)) return 'failed';
-  if (['result_ready', 'completed'].includes(status) && task.reviewStatus !== 'accepted') {
+  if (task.status === 'failed' || task.status === 'stopped') return 'failed';
+  if (task.status === 'completed' && task.reviewStatus !== 'accepted') {
     return 'review';
   }
   if (task.reviewStatus === 'accepted') return 'complete';
@@ -521,22 +518,14 @@ function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
 }
 
 function subagentTaskStatusLabel(task: SubagentTaskSnapshot, language: AppLanguage) {
-  const status = task.status.trim().toLowerCase();
-  if (status === 'dispatching') return language === 'zh' ? '派发中' : 'Dispatching';
-  if (['submitted', 'running', 'stop_requested'].includes(status)) {
+  if (task.status === 'running') {
     return language === 'zh' ? '运行中' : 'Running';
   }
-  if (status === 'result_ready') {
+  if (task.status === 'completed') {
     return task.reviewStatus === 'accepted'
       ? language === 'zh' ? '父级已接受' : 'Accepted by parent'
       : language === 'zh' ? '待父级审查' : 'Awaiting parent review';
   }
-  if (status === 'completed') return language === 'zh' ? '待父级审查' : 'Awaiting parent review';
-  if (status === 'interrupted') {
-    return language === 'zh' ? '服务异常退出' : 'Service interrupted';
-  }
-  if (['failed', 'blocked', 'stopped'].includes(status)) {
-    return language === 'zh' ? '未完成' : 'Not completed';
-  }
-  return status || (language === 'zh' ? '等待状态' : 'Pending status');
+  if (task.status === 'stopped') return language === 'zh' ? '已停止' : 'Stopped';
+  return language === 'zh' ? '未完成' : 'Not completed';
 }

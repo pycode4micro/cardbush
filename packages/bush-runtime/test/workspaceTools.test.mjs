@@ -66,6 +66,19 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   assert.match(outcome.result.error.message, /has not been observed/);
 });
 
+test("preserves filesystem error codes as Tool failures", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const outcome = await setup.execute("session", "read_file", {
+    path: join(root, "missing.txt"),
+  });
+
+  assert.equal(outcome.kind, "failed");
+  assert.equal(outcome.result.error.kind, "tool");
+  assert.equal(outcome.result.error.code, "ENOENT");
+  assert.equal(outcome.result.facts[0].categories[0], "tool_failure");
+});
+
 test("writes new files, treats search no-match as a successful fact, and reports exit codes", async (t) => {
   const root = temporaryRoot(t);
   const setup = tools(root);
@@ -87,14 +100,25 @@ test("writes new files, treats search no-match as a successful fact, and reports
   const terminal = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('ok')\"",
     cwd: root,
+    timeout_ms: 5_000,
   });
   assert.equal(terminal.kind, "completed");
   assert.equal(terminal.result.output.exitCode, 0);
   assert.equal(terminal.result.output.stdout, "ok");
+  assert.equal(
+    terminal.result.output.shell,
+    process.platform === "win32" ? "powershell" : "posix",
+  );
+  assert.equal(terminal.result.facts[0].metadata.shell, terminal.result.output.shell);
+  assert.equal(
+    terminal.result.facts[0].metadata.shellExecutable,
+    terminal.result.output.shellExecutable,
+  );
 
   const nonzero = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('out'); process.stderr.write('err'); process.exit(7)\"",
     cwd: root,
+    timeout_ms: 5_000,
   });
   assert.equal(nonzero.kind, "failed");
   assert.equal(nonzero.result.success, false);
@@ -167,6 +191,7 @@ test("preserves UTF-8 output and decodes legacy Windows shell output", async (t)
   const utf8 = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('中文文件')\"",
     cwd: root,
+    timeout_ms: 5_000,
   });
   assert.equal(utf8.kind, "completed");
   assert.equal(utf8.result.output.stdout, "中文文件");
@@ -176,6 +201,8 @@ test("preserves UTF-8 output and decodes legacy Windows shell output", async (t)
   const shellBuiltin = await setup.execute("session", "terminal_exec", {
     command: "dir /b",
     cwd: root,
+    timeout_ms: 5_000,
+    shell: "cmd",
   });
   assert.equal(shellBuiltin.kind, "completed");
   assert.match(shellBuiltin.result.output.stdout, /中文目录\.txt/);
@@ -183,10 +210,67 @@ test("preserves UTF-8 output and decodes legacy Windows shell output", async (t)
   const legacy = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write(Buffer.from([0xd6,0xd0,0xce,0xc4])); process.stderr.write(Buffer.from([0xb4,0xed,0xce,0xf3]))\"",
     cwd: root,
+    timeout_ms: 5_000,
   });
   assert.equal(legacy.kind, "completed");
   assert.equal(legacy.result.output.stdout, "中文");
   assert.equal(legacy.result.output.stderr, "错误");
+});
+
+test("publishes an explicit platform shell contract and rejects unavailable shells", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const definition = setup.registry.resolve("terminal_exec").definition;
+  const shellSchema = definition.inputSchema.properties.shell;
+  const expected = process.platform === "win32" ? ["powershell", "cmd"] : ["posix"];
+  assert.deepEqual(shellSchema.enum, expected);
+  assert.equal(shellSchema.default, expected[0]);
+  assert.deepEqual(definition.inputSchema.required, ["command", "cwd", "timeout_ms", "shell"]);
+  assert.equal(definition.inputSchema.properties.timeout_ms.maximum, 30_000);
+  assert.match(definition.inputSchema.properties.cwd.description, /absolute path/i);
+  assert.match(definition.description, /never rewrites commands/i);
+
+  const unavailable = await setup.execute("session", "terminal_exec", {
+    command: "echo blocked",
+    cwd: root,
+    timeout_ms: 5_000,
+    shell: process.platform === "win32" ? "posix" : "cmd",
+  });
+  assert.equal(unavailable.kind, "failed");
+  assert.match(unavailable.result.error.message, /shell must be one of/);
+});
+
+test("requires and enforces a bounded terminal execution deadline", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+
+  const missing = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"process.stdout.write('should not run')\"",
+    cwd: root,
+  });
+  assert.equal(missing.kind, "failed");
+  assert.match(missing.result.error.message, /timeout_ms is required/);
+
+  const excessive = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"process.stdout.write('should not run')\"",
+    cwd: root,
+    timeout_ms: 30_001,
+  });
+  assert.equal(excessive.kind, "failed");
+  assert.match(excessive.result.error.message, /must not exceed 30000/);
+
+  const startedAt = Date.now();
+  const timedOut = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"setTimeout(() => {}, 5000)\"",
+    cwd: root,
+    timeout_ms: 100,
+  });
+  assert.equal(timedOut.kind, "failed");
+  assert.equal(timedOut.result.error.code, "terminal_timeout");
+  assert.equal(timedOut.result.output.timedOut, true);
+  assert.equal(timedOut.result.output.timeoutMs, 100);
+  assert.ok(timedOut.result.output.durationMs >= 90);
+  assert.ok(Date.now() - startedAt < 2_000);
 });
 
 test("uses absolute filesystem paths safely when a Turn has no workspace", async (t) => {
@@ -325,6 +409,7 @@ function tools(workspace) {
     permissions: { request: async () => { throw new Error("unexpected permission"); } },
   });
   return {
+    registry,
     execute(sessionId, name, input, metadata = {}) {
       return coordinator.execute(
         call(name, input),

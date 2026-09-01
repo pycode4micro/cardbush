@@ -22,6 +22,10 @@ assert.match(main, /await ensureRuntimeServicesReady\(\)/);
 assert.doesNotMatch(main, /CardBush Runtime is still initializing/);
 assert.match(main, /runtimeServicesStartupTimeoutMs = 15_000/);
 assert.match(main, /runtime_services_startup_timeout/);
+assert.match(main, /CARDBUSH_PACKAGED_SMOKE_RESULT/);
+assert.match(main, /cardbush\.packaged_smoke\.v1/);
+assert.match(main, /runtime\.get_capabilities/);
+assert.match(main, /shutdownClean/);
 assert.match(controller, /startupTimeoutMs\?: number/);
 assert.match(controller, /runtime_host_startup_timeout/);
 assert.match(preload, /runtimeStartupStatus:/);
@@ -36,6 +40,11 @@ assert.match(builder, /assets\/runtime-tools/);
 assert.match(main, /CARDBUSH_RG_PATH: bundledRipgrep/);
 assert.match(main, /process\.resourcesPath/);
 assert.equal(packageJson.scripts['package:win'].startsWith('npm run runtime-tools:verify'), true);
+assert.equal(
+  packageJson.scripts['smoke:packaged'],
+  'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke && node scripts/run-packaged-smoke.mjs',
+);
+assert.equal(fs.existsSync(path.join(root, 'scripts', 'run-packaged-smoke.mjs')), true);
 for (const workspaceDependency of [
   '@cardbush/bush-protocol',
   '@cardbush/bush-runtime',

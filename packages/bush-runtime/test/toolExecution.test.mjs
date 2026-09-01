@@ -8,7 +8,9 @@ import {
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_RUNTIME_GUIDANCE_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+  BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
   BUSH_TOOL_RESULT_PROTOCOL,
+  CANCEL_RUNTIME_TOOL_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
@@ -75,6 +77,42 @@ test("executes a registered tool and continues the same Turn to a final model re
   assert.match(provider.requests[1].messages.at(-1).content, /receipt_call_fixture/);
 });
 
+test("cancels one active Tool without stopping the Turn", async () => {
+  const provider = providerWithRounds([toolRound(), answerRound("continued")]);
+  const registry = registryWithExecution({
+    execute(context) {
+      return new Promise((_resolve, reject) => {
+        const cancel = () => reject(
+          context.signal?.reason ?? new DOMException("cancelled", "AbortError"),
+        );
+        if (context.signal?.aborted) cancel();
+        else context.signal?.addEventListener("abort", cancel, { once: true });
+      });
+    },
+  });
+  const host = createHost(provider, registry);
+  const running = host.runModelTurn(request());
+  await waitForEvent(host, "tool_running");
+
+  const receipt = await host.sendCommand({
+    kind: CANCEL_RUNTIME_TOOL_COMMAND,
+    payload: {
+      sessionId: "session_tools",
+      turnId: "turn_tools",
+      toolCallId: "call_fixture",
+    },
+  });
+  const terminal = await running;
+
+  assert.equal(receipt.protocol, BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL);
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.reason, "tool_cancel_accepted");
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(terminal.payload.reason, "model_response_completed");
+  assert.ok(host.events("session_tools", "turn_tools")
+    .some((event) => event.kind === "tool_cancelled"));
+});
+
 test("isolates non-parallel-safe tools by execution channel", async () => {
   let releaseChrome;
   const chromeGate = new Promise((resolve) => {
@@ -132,6 +170,86 @@ test("isolates non-parallel-safe tools by execution channel", async () => {
     ["call_chrome", "call_fallback"],
     "tool result messages must preserve provider ordinal order",
   );
+});
+
+test("does not issue desktop input while another Tool permission is pending", async () => {
+  let desktopInputIssued = false;
+  const definitions = ["permission_tool", "desktop_tool"].map((name) => ({
+    name,
+    description: name,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  }));
+  const registry = new ToolRegistry();
+  registry.register({
+    definition: definitions[0],
+    manifest: { ...manifest, operation: "fixture.permission", owner: "mcp:permission" },
+    executionChannel: "mcp:permission",
+    decodeInput: (input) => input,
+    authorize() {
+      return {
+        kind: "ask",
+        request: {
+          reason: "Allow the fixture operation.",
+          actions: ["read"],
+          resources: ["fixture://permission"],
+          capabilityIds: ["fixture_permission"],
+        },
+      };
+    },
+    execute(context) {
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  registry.register({
+    definition: definitions[1],
+    manifest: {
+      ...manifest,
+      effect_kind: "desktop_control",
+      operation: "desktop.control",
+      risk: "medium",
+      owner: "mcp:desktop",
+      dispatch_scope: "process",
+      dispatch_side_effect: "desktop_control",
+      dispatch_mutating: true,
+    },
+    executionChannel: "mcp:desktop",
+    decodeInput: (input) => input,
+    execute(context) {
+      if (context.signal?.aborted) throw context.signal.reason;
+      desktopInputIssued = true;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const provider = providerWithRounds([
+    twoNamedToolRound("permission_tool", "desktop_tool"),
+    answerRound("continued"),
+  ]);
+  const host = createHost(provider, registry, {
+    createPermissionId: () => "permission_desktop_race",
+  });
+  const running = host.runModelTurn({ ...request(), tools: definitions });
+  await waitForEvent(host, "permission_requested");
+  await host.sendCommand({
+    kind: ANSWER_RUNTIME_PERMISSION_COMMAND,
+    payload: {
+      protocol: BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
+      permissionId: "permission_desktop_race",
+      answerId: "answer_desktop_race",
+      decision: "allow_once",
+      grantedCapabilityIds: ["fixture_permission"],
+    },
+  });
+  const terminal = await running;
+  const events = host.events("session_tools", "turn_tools");
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(desktopInputIssued, false);
+  assert.ok(events.some((event) =>
+    event.kind === "tool_cancelled" && event.payload.toolCallId === "call_second"
+  ));
+  assert.ok(events.some((event) =>
+    event.kind === "tool_completed" && event.payload.toolCallId === "call_first"
+  ));
 });
 
 test("keeps non-parallel-safe tools serialized inside one execution channel", async () => {
@@ -345,7 +463,53 @@ test("rejects a mismatched Execution Fact instead of trusting tool output prose"
     .find((event) => event.kind === "tool_failed");
 
   assert.equal(failed.payload.error.code, "execution_fact_manifest_mismatch");
-  assert.deepEqual(failed.payload.receiptIds, []);
+  assert.equal(failed.payload.receiptIds.length, 1);
+  assert.match(failed.payload.receiptIds[0], /^failed:attempt:turn_tools:1:/);
+});
+
+test("rejects contradictory Tool result facts before they enter the event log", async () => {
+  const registry = registryWithExecution({
+    execute({ toolCall, actionManifest }) {
+      return result(toolCall.id, actionManifest, {
+        execution_success: false,
+        semantic_success: true,
+        verification_state: "verified",
+      });
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("handled")]),
+    registry,
+  );
+  await host.runModelTurn(request());
+  const failed = host
+    .events("session_tools", "turn_tools")
+    .find((event) => event.kind === "tool_failed");
+  assert.equal(failed.payload.error.code, "tool_result_schema_invalid");
+  assert.equal(failed.payload.receiptIds.length, 1);
+  assert.equal(failed.payload.error.kind, "protocol");
+});
+
+test("classifies handler rejections as Tool failures with stable codes", async () => {
+  const registry = registryWithExecution({
+    execute() {
+      throw Object.assign(new Error("The requested edit target is stale."), {
+        code: "edit_old_text_not_found",
+      });
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("recovered")]),
+    registry,
+  );
+
+  await host.runModelTurn(request());
+  const failed = host
+    .events("session_tools", "turn_tools")
+    .find((event) => event.kind === "tool_failed");
+
+  assert.equal(failed.payload.error.kind, "tool");
+  assert.equal(failed.payload.error.code, "edit_old_text_not_found");
 });
 
 test("rejects duplicate receipt identities across separate tool executions", async () => {
@@ -395,6 +559,7 @@ test("rejects invalid input against the registration decoder without invoking ad
 
   assert.equal(admissions, 0);
   assert.equal(failed.payload.error.code, "tool_arguments_schema_invalid");
+  assert.equal(failed.payload.error.kind, "protocol");
 });
 
 test("rejects incomplete manifests when a tool is registered", () => {
@@ -518,6 +683,10 @@ test("a rejected permission never invokes the tool handler", async () => {
     events.find((event) => event.kind === "tool_failed").payload.error.code,
     "permission_rejected",
   );
+  assert.equal(
+    events.find((event) => event.kind === "tool_failed").payload.error.kind,
+    "permission",
+  );
 });
 
 test("reuses allow_session only for the exact capability in the same Session", async () => {
@@ -613,6 +782,46 @@ test("cancelling while permission is pending closes both permission and Turn fac
   assert.equal(terminal.payload.status, "stopped");
   assert.ok(events.find((event) => event.kind === "permission_cancelled"));
   assert.ok(events.find((event) => event.kind === "tool_cancelled"));
+});
+
+test("targeted Tool cancellation closes its pending permission and continues the Turn", async () => {
+  const registry = registryWithExecution({
+    authorize() {
+      return {
+        kind: "ask",
+        request: {
+          reason: "Control the selected desktop application.",
+          actions: ["control"],
+          resources: ["desktop://current"],
+          capabilityIds: ["desktop_control"],
+        },
+      };
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("continued")]),
+    registry,
+    { createPermissionId: () => "permission_targeted_cancel" },
+  );
+  const running = host.runModelTurn(request());
+  await waitForEvent(host, "permission_requested");
+
+  const receipt = await host.sendCommand({
+    kind: CANCEL_RUNTIME_TOOL_COMMAND,
+    payload: {
+      sessionId: "session_tools",
+      turnId: "turn_tools",
+      toolCallId: "call_fixture",
+    },
+  });
+  const terminal = await running;
+  const events = host.events("session_tools", "turn_tools");
+
+  assert.equal(receipt.accepted, true);
+  assert.equal(terminal.payload.status, "completed");
+  assert.ok(events.some((event) => event.kind === "permission_cancelled"));
+  assert.ok(events.some((event) => event.kind === "tool_cancelled"));
+  assert.equal(events.at(-1).kind, "turn_terminal");
 });
 
 test("rejects permission answers that do not grant a concrete capability", async () => {
@@ -723,6 +932,25 @@ function twoToolRound() {
       toolCallId: "call_second",
       nameDelta: "fixture_tool",
       argumentsDelta: '{"value":"second"}',
+    }),
+    event(3, "response_completed", { finishReason: "tool_calls" }),
+  ];
+}
+
+function twoNamedToolRound(firstName, secondName) {
+  return [
+    event(0, "response_started"),
+    event(1, "tool_call_delta", {
+      index: 0,
+      toolCallId: "call_first",
+      nameDelta: firstName,
+      argumentsDelta: "{}",
+    }),
+    event(2, "tool_call_delta", {
+      index: 1,
+      toolCallId: "call_second",
+      nameDelta: secondName,
+      argumentsDelta: "{}",
     }),
     event(3, "response_completed", { finishReason: "tool_calls" }),
   ];

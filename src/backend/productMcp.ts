@@ -74,6 +74,7 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
           },
       versionMode: 'auto',
       restartBackoffMs: 250,
+      acceptCardbushExtensions: false,
       defaultToolPolicy: {
         permission: 'ask',
         parallelSafe: false,

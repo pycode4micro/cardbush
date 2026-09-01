@@ -195,7 +195,12 @@ export class McpClientManager {
             remote,
             runtimeName: runtimeToolName(config.id, remote.name),
             policy,
-            manifest: explicitActionManifest(config.id, remote, policy),
+            manifest: explicitActionManifest(
+              config.id,
+              remote,
+              policy,
+              config.acceptCardbushExtensions,
+            ),
           };
         });
       assertUnique(tools.map((tool) => tool.runtimeName), `MCP server ${config.id}`);
@@ -252,11 +257,12 @@ export class McpClientManager {
       execute: async (context) => {
         const receiptId = this.#createReceiptId();
         if (connection.health !== "ready") {
-          return mcpProtocolFailure(
+          return mcpFailure(
             context,
             {},
             resource,
             receiptId,
+            "transport",
             connection.health === "restarting"
               ? "mcp_service_restarting"
               : "mcp_service_unavailable",
@@ -277,7 +283,11 @@ export class McpClientManager {
             {
               name: tool.remote.name,
               arguments: context.input,
-              _meta: mcpRequestMetadata(context, receiptId),
+              _meta: mcpRequestMetadata(
+                context,
+                receiptId,
+                connection.config.acceptCardbushExtensions,
+              ),
             },
             {
               signal: context.signal,
@@ -288,13 +298,28 @@ export class McpClientManager {
           if (context.signal?.aborted || isAbortError(error)) {
             throw abortErrorFromSignal(context.signal, error);
           }
-          if (!isMcpConnectionFailure(error)) throw error;
+          if (!isMcpConnectionFailure(error)) {
+            return mcpFailure(
+              context,
+              {},
+              resource,
+              receiptId,
+              "protocol",
+              "mcp_protocol_error",
+              errorMessage(error),
+              {
+                resource,
+                sdkCode: mcpErrorCode(error),
+              },
+            );
+          }
           this.#invalidateConnection(connection, activeClient, error);
-          return mcpProtocolFailure(
+          return mcpFailure(
             context,
             {},
             resource,
             receiptId,
+            "transport",
             "mcp_service_connection_lost",
             `MCP service ${connection.config.id} lost its connection and is being restarted.`,
             {
@@ -312,6 +337,7 @@ export class McpClientManager {
           toJson(candidate),
           resource,
           receiptId,
+          connection.config.acceptCardbushExtensions,
         );
       },
     };
@@ -454,6 +480,7 @@ export class McpClientManager {
 function mcpRequestMetadata(
   context: ToolHandlerContext<unknown>,
   receiptId: string,
+  acceptCardbushExtensions: boolean,
 ): Record<string, unknown> {
   const rawContext = context.turn?.request.metadata.mcpContext;
   const declared = rawContext != null && typeof rawContext === "object" && !Array.isArray(rawContext)
@@ -468,15 +495,19 @@ function mcpRequestMetadata(
     ? declared.transportChannel.trim()
     : "";
   return {
-    session_id: context.sessionId,
-    turn_id: context.turnId,
-    tool_call_id: context.toolCall.id,
-    permission_grants: [...context.capabilityIds],
     filesystem_roots: filesystemRoots,
-    runtime_tool_result_protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    receipt_id: receiptId,
-    action_manifest: { ...context.actionManifest },
     ...(transportChannel ? { transport_channel: transportChannel } : {}),
+    ...(acceptCardbushExtensions
+      ? {
+          session_id: context.sessionId,
+          turn_id: context.turnId,
+          tool_call_id: context.toolCall.id,
+          permission_grants: [...context.capabilityIds],
+          runtime_tool_result_protocol: BUSH_TOOL_RESULT_PROTOCOL,
+          receipt_id: receiptId,
+          action_manifest: { ...context.actionManifest },
+        }
+      : {}),
   };
 }
 
@@ -484,11 +515,14 @@ function explicitActionManifest(
   serverId: string,
   remote: McpTool,
   policy: McpToolPolicy,
+  acceptCardbushExtensions: boolean,
 ): ActionManifestTemplate {
   const metadata = remote._meta && typeof remote._meta === "object"
     ? remote._meta as Record<string, unknown>
     : {};
-  const candidate = policy.actionManifest ?? metadata["cardbush/action_manifest"];
+  const candidate = policy.actionManifest ?? (
+    acceptCardbushExtensions ? metadata["cardbush/action_manifest"] : undefined
+  );
   const parsed = actionManifestTemplateSchema.safeParse(candidate);
   if (parsed.success) return parsed.data;
   return {
@@ -546,26 +580,46 @@ function strictMcpToolResult(
   output: Record<string, unknown>,
   resource: string,
   receiptId: string,
+  acceptCardbushExtensions: boolean,
 ): ToolResult {
   if (output.isError === true) {
-    return mcpProtocolFailure(
+    return mcpFailure(
       context,
       output,
       resource,
       receiptId,
+      "tool",
       "mcp_tool_error",
       mcpToolErrorMessage(output, resource),
       { resource },
     );
   }
-  const parsed = toolResultSchema.safeParse(output.structuredContent);
-  if (!parsed.success) {
+  const parsed = acceptCardbushExtensions
+    ? toolResultSchema.safeParse(output.structuredContent)
+    : undefined;
+  if (
+    acceptCardbushExtensions &&
+    !parsed?.success &&
+    isCardbushToolResultEnvelope(output.structuredContent)
+  ) {
+    return mcpFailure(
+      context,
+      output,
+      resource,
+      receiptId,
+      "protocol",
+      "mcp_tool_result_invalid",
+      `MCP tool ${resource} returned an invalid CardBush Tool result.`,
+      { issues: parsed?.error.issues ?? [] },
+    );
+  }
+  if (!parsed?.success) {
     return {
       protocol: BUSH_TOOL_RESULT_PROTOCOL,
       tool_call_id: context.toolCall.id,
       success: true,
       output: {
-        authority: "display_only",
+        authority: "mcp_standard",
         content: output.content ?? [],
         structuredContent: output.structuredContent ?? null,
         resource,
@@ -582,8 +636,8 @@ function strictMcpToolResult(
         categories: ["mcp_standard_content", "non_authoritative"],
         paths: [],
         execution_success: true,
-        semantic_success: true,
-        verification_state: "attempted",
+        semantic_success: null,
+        verification_state: "unverified",
         error_code: "",
       }],
       artifacts: [],
@@ -592,11 +646,12 @@ function strictMcpToolResult(
     };
   }
   if (!parsed.data.facts.some((fact) => fact.receipt_id === receiptId)) {
-    return mcpProtocolFailure(
+    return mcpFailure(
       context,
       output,
       resource,
       receiptId,
+      "protocol",
       "mcp_tool_result_receipt_missing",
       `MCP tool ${resource} did not return the Runtime-issued receipt identity.`,
     );
@@ -604,15 +659,16 @@ function strictMcpToolResult(
   return parsed.data;
 }
 
-function mcpProtocolFailure(
+function mcpFailure(
   context: ToolHandlerContext<unknown>,
   output: Record<string, unknown>,
   resource: string,
   receiptId: string,
+  kind: "tool" | "protocol" | "transport",
   code: string,
   message: string,
   details: Record<string, unknown> = {},
-  executionSuccess = true,
+  executionSuccess = false,
 ): ToolResult {
   return {
     protocol: BUSH_TOOL_RESULT_PROTOCOL,
@@ -628,11 +684,7 @@ function mcpProtocolFailure(
       effect_kind: context.actionManifest.effect_kind,
       owner: context.actionManifest.owner,
       dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: [
-        code.startsWith("mcp_service_")
-          ? "mcp_transport_failure"
-          : "mcp_protocol_failure",
-      ],
+      categories: [`mcp_${kind}_failure`],
       paths: [],
       execution_success: executionSuccess,
       semantic_success: false,
@@ -642,8 +694,17 @@ function mcpProtocolFailure(
     artifacts: [],
     workspace_changes: [],
     guidance: [],
-    error: { code, message, details },
+    error: { kind, code, message, details },
   };
+}
+
+function isCardbushToolResultEnvelope(value: unknown): boolean {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { protocol?: unknown }).protocol === BUSH_TOOL_RESULT_PROTOCOL
+  );
 }
 
 function runtimeToolName(serverId: string, remoteName: string): string {
@@ -696,8 +757,17 @@ function mcpToolErrorMessage(
     .join("\n")
     .trim();
   return text
-    ? text.slice(0, 2_000)
+    ? boundedDiagnostic(text, 2_000)
     : `MCP tool ${resource} reported an error.`;
+}
+
+function boundedDiagnostic(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  const marker = "\n… diagnostic middle omitted …\n";
+  const available = Math.max(0, limit - marker.length);
+  const headLength = Math.floor(available * 0.4);
+  const tailLength = available - headLength;
+  return `${value.slice(0, headLength)}${marker}${value.slice(-tailLength)}`;
 }
 
 function drainTransportStderr(
@@ -725,13 +795,14 @@ function drainTransportStderr(
 
 function isMcpConnectionFailure(error: unknown): boolean {
   const code = mcpErrorCode(error);
-  if (
+  return (
     code === SdkErrorCode.ConnectionClosed ||
     code === SdkErrorCode.SendFailed ||
-    code === SdkErrorCode.NotConnected
-  ) return true;
-  const message = errorMessage(error).toLowerCase();
-  return /connection.*closed|transport.*closed|not connected|econnreset|econnrefused|epipe|socket hang up|connection terminated/.test(message);
+    code === SdkErrorCode.NotConnected ||
+    code === "ECONNRESET" ||
+    code === "ECONNREFUSED" ||
+    code === "EPIPE"
+  );
 }
 
 function isAbortError(error: unknown): boolean {

@@ -142,11 +142,12 @@ export class FileSessionEventPersistence implements SessionEventPersistence {
     try {
       const record = JSON.parse(value) as Record<string, unknown>;
       if (record.protocol !== RECORD_PROTOCOL) throw new Error("record protocol mismatch");
-      const event = sessionEventSchema.parse(record.event);
-      if (event.sessionId !== sessionId) throw new Error("session identity mismatch");
-      if (record.checksum !== checksum(JSON.stringify(event))) {
+      const persistedEventJson = JSON.stringify(record.event);
+      if (record.checksum !== checksum(persistedEventJson)) {
         throw new Error("record checksum mismatch");
       }
+      const event = sessionEventSchema.parse(record.event);
+      if (event.sessionId !== sessionId) throw new Error("session identity mismatch");
       return event;
     } catch (error) {
       throw new SessionJournalCorruptionError(

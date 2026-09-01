@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 
 import {
   cancelInteraction,
@@ -704,13 +705,9 @@ export function useCardbushChat(
   const activeGoalCancelling = activeConversationId
     ? goalCancellingByConversation[activeConversationId] === true
     : false;
-  const activeGoalLatestTurn = activeConversationId
-    ? goalLatestTurnByConversation[activeConversationId]
-    : undefined;
   const activeGoalWaiting =
     activeGoal?.status === 'active' &&
-    !sending &&
-    (!activeGoalLatestTurn || !isRunningSessionTurn(activeGoalLatestTurn));
+    !sending;
 
   useEffect(() => {
     let cancelled = false;
@@ -1164,14 +1161,7 @@ export function useCardbushChat(
           goalTurnControllersRef.current[normalizedSessionId]?.controller === controller
         ) {
           delete goalTurnControllersRef.current[normalizedSessionId];
-          if (
-            loaded?.latestTurn &&
-            loaded.latestTurn.turnId === normalizedTurnId &&
-            isRunningSessionTurn(loaded.latestTurn)
-          ) {
-            turnStillRunning = true;
-            markSessionRunning(normalizedSessionId, normalizedTurnId);
-          } else if (!controllersRef.current[normalizedSessionId]) {
+          if (!controllersRef.current[normalizedSessionId]) {
             clearSessionRunning(normalizedSessionId);
           }
         }
@@ -1327,13 +1317,7 @@ export function useCardbushChat(
             ...current,
             [sessionId]: sessionResult.latestTurn,
           }));
-          if (
-            sessionResult.latestTurn &&
-            isRunningSessionTurn(sessionResult.latestTurn)
-          ) {
-            markSessionRunning(sessionId, sessionResult.latestTurn.turnId);
-            subscribeGoalTurn(sessionId, sessionResult.latestTurn.turnId);
-          } else if (!controllersRef.current[sessionId]) {
+          if (!controllersRef.current[sessionId]) {
             clearSessionRunning(sessionId);
           }
         }
@@ -1568,18 +1552,15 @@ export function useCardbushChat(
     reason: string;
   }) => {
     let failedAttempts = 0;
-    let syncPolls = 0;
     const deadline = Date.now() + 10 * 60 * 1000;
     while (!signal.aborted && Date.now() < deadline) {
       const nextRetryMs = failedAttempts > 0
         ? Math.min(800 * (2 ** (failedAttempts - 1)), 5000)
-        : syncPolls > 0
-          ? 2000
-          : 0;
+        : 0;
       setConnectionRecoveryByConversation((current) => ({
         ...current,
         [sessionId]: {
-          state: failedAttempts > 0 ? 'retrying' : syncPolls > 0 ? 'syncing' : 'retrying',
+          state: 'retrying',
           source: 'network',
           sessionId,
           turnId,
@@ -1611,25 +1592,6 @@ export function useCardbushChat(
           [sessionId]: sessionResult.latestTurn,
         }));
         failedAttempts = 0;
-        if (
-          sessionResult.latestTurn &&
-          isRunningSessionTurn(sessionResult.latestTurn)
-        ) {
-          markSessionRunning(sessionId, sessionResult.latestTurn.turnId);
-          syncPolls += 1;
-          setConnectionRecoveryByConversation((current) => ({
-            ...current,
-            [sessionId]: {
-              state: 'syncing',
-              source: 'network',
-              sessionId,
-              turnId: sessionResult.latestTurn?.turnId ?? turnId,
-              reason,
-              createdAt: new Date().toISOString(),
-            },
-          }));
-          continue;
-        }
         setConnectionRecoveryByConversation((current) => ({
           ...current,
           [sessionId]: undefined,
@@ -1638,7 +1600,6 @@ export function useCardbushChat(
         return true;
       } catch {
         failedAttempts += 1;
-        syncPolls = 0;
         if (failedAttempts >= 5) {
           break;
         }
@@ -1659,7 +1620,7 @@ export function useCardbushChat(
       }));
     }
     return false;
-  }, [markSessionRunning, reloadConversations]);
+  }, [reloadConversations]);
 
   const sendMessage = useCallback(
     async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string) => {
@@ -3304,14 +3265,8 @@ export function useCardbushChat(
       [sessionId]: true,
     }));
     try {
-      const latestTurn = (
-        await fetchSessionMessages(sessionId, {
-          includeSuperseded: true,
-        }).catch(() => null)
-      )?.latestTurn ?? goalLatestTurnByConversation[sessionId];
-      if (latestTurn && isRunningSessionTurn(latestTurn)) {
-        await stopTurn(latestTurn.turnId);
-      }
+      const activeTurnId = activeTurnIdsRef.current[sessionId];
+      if (activeTurnId) await stopTurn(activeTurnId);
 
       let latestGoal = goal;
       try {
@@ -3358,7 +3313,6 @@ export function useCardbushChat(
     activeConversationId,
     clearSessionRunning,
     goalByConversation,
-    goalLatestTurnByConversation,
     refreshGoal,
   ]);
 
@@ -3379,8 +3333,7 @@ export function useCardbushChat(
       const latestTurn = loaded?.latestTurn;
       if (
         loaded &&
-        latestTurn?.turnId === turnId &&
-        !isRunningSessionTurn(latestTurn)
+        latestTurn?.turnId === turnId
       ) {
         const terminal = terminalSnapshotFromLatestTurn(latestTurn);
         terminalTurnIdsRef.current.add(turnId);
@@ -4110,10 +4063,10 @@ export function applyAssistantSegmentBoundary(
     const previous = messages[previousIndex];
     messages[previousIndex] = {
       ...previous,
-      status: 'complete',
+      status: 'completed',
       metadata: {
         ...(previous.metadata ?? {}),
-        status: 'complete',
+        status: 'completed',
         segment_complete: true,
         segment_boundary: 'turn_guidance',
         ...(nextSegmentIndex != null
@@ -4583,7 +4536,7 @@ export function applyTurnTerminalSnapshot(
     ? 'stopped'
     : terminal.status === 'failed'
       ? 'failed'
-      : 'complete';
+      : 'completed';
   const terminalMetadata = (message?: ChatMessage) => ({
     ...(message?.metadata ?? {}),
     status: terminal.status,
@@ -4731,12 +4684,10 @@ function mergeToolExecutionUpdate(
   };
 }
 
-function toolExecutionStateRank(value: string) {
-  const state = value.trim().toLowerCase();
-  if (['completed', 'complete', 'succeeded', 'success', 'done'].includes(state)) return 3;
-  if (['failed', 'fail', 'error', 'cancelled', 'canceled', 'stopped'].includes(state)) return 2;
-  if (['using', 'running', 'pending', 'started', 'queued'].includes(state)) return 1;
-  return 0;
+function toolExecutionStateRank(value: ChatToolExecution['state']) {
+  if (value === 'completed') return 3;
+  if (value === 'failed' || value === 'cancelled') return 2;
+  return 1;
 }
 
 function applyTaskPlanUpdate(
@@ -6301,7 +6252,6 @@ function isAssistantFinalTranscript(message: ChatMessage) {
     .toLowerCase();
   const transcriptKind = assistantTranscriptKind(message);
   return (
-    status === 'complete' ||
     status === 'completed' ||
     status === 'failed' ||
     status === 'stopped' ||
@@ -6795,23 +6745,18 @@ function currentExperimentalGoal(goals: ExperimentalGoal[]) {
   return goals.find((goal) => goal.status === 'active') ?? goals[0];
 }
 
-function isRunningSessionTurn(turn: SessionLatestTurn) {
-  return ['queued', 'pending', 'running', 'active', 'streaming'].includes(
-    turn.status.trim().toLowerCase(),
-  );
-}
-
 function goalPollingDelayMs() {
   return document.visibilityState === 'hidden' ? 7_000 : 2_000;
 }
 
 function isNotFoundLikeError(error: unknown) {
-  return /(^|\\s)(404|not found)(\\s|:|$)/i.test(errorMessage(error));
+  const code = runtimeErrorCode(error);
+  return code === 'not_found' || code === 'team_flow_not_found';
 }
 
 function isInteractionGoneError(error: unknown) {
-  return runtimeErrorCode(error) === 'permission_not_pending' ||
-    /permission .* is not pending/i.test(errorMessage(error));
+  const code = runtimeErrorCode(error);
+  return code === 'permission_not_pending' || code === 'interaction_not_pending';
 }
 
 function waitForRecoveryDelay(delayMs: number) {
@@ -6825,9 +6770,7 @@ function rawErrorMessage(error: unknown) {
 }
 
 function isNetworkTransportError(error: unknown) {
-  return /failed to fetch|networkerror|load failed|fetch failed|\bterminated\b|econnreset|socket hang up|incomplete chunked encoding|sse connection closed/i.test(
-    rawErrorMessage(error),
-  );
+  return error instanceof RuntimeRemoteError && error.fact.kind === 'transport';
 }
 
 function errorMessage(error: unknown) {
@@ -6835,7 +6778,7 @@ function errorMessage(error: unknown) {
   const english =
     typeof document !== 'undefined' &&
     document.documentElement.lang.toLowerCase().startsWith('en');
-  if (/failed to fetch|networkerror|load failed/i.test(message)) {
+  if (error instanceof RuntimeRemoteError && error.fact.kind === 'transport') {
     return english
       ? 'Unable to reach the model provider or an external integration.'
       : '无法连接模型服务或外部集成。';
@@ -6844,7 +6787,7 @@ function errorMessage(error: unknown) {
 }
 
 function runtimeErrorCode(error: unknown): string {
-  return error && typeof error === 'object' && 'code' in error
-    ? String((error as { code?: unknown }).code ?? '')
-    : '';
+  if (!error || typeof error !== 'object') return '';
+  const value = error as { code?: unknown; fact?: { code?: unknown } };
+  return String(value.fact?.code ?? value.code ?? '').trim();
 }

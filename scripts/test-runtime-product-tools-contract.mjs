@@ -25,19 +25,14 @@ assert.match(worker, /id: 'cardbush_apps'/);
 assert.match(appsPlugin, /registerTool\('computer_use'/);
 assert.match(appsPlugin, /'cardbush\/action_manifest'/);
 assert.match(appsPlugin, /owner: 'cardbush_apps'/);
-assert.match(
-  appsPlugin,
-  /Use direct filesystem tools instead of desktop applications to create, read, or edit files/,
-);
-assert.match(appsPlugin, /LAST-RESORT FALLBACK/);
-assert.match(appsPlugin, /prefer direct APIs, app connectors, MCP tools, browser tools/);
+assert.match(appsPlugin, /Observe and interact with the user's current desktop/);
+assert.doesNotMatch(appsPlugin, /LAST-RESORT|last-resort fallback|prefer chrome_devtools/i);
 assert.doesNotMatch(runtimeChat, /entry\.manifest\.dispatch_scope !== 'resource'/);
 assert.match(runtimeChat, /filesystemLocations/);
-assert.match(
+assert.doesNotMatch(
   productAgent,
-  /Do not inspect or operate the desktop, open a GUI editor, or search Skills/,
+  /Computer Use is a last-resort|prefer any purpose-built|chrome_devtools Tools as the primary route/,
 );
-assert.match(productAgent, /Computer Use is a last-resort fallback, never the default route/);
 assert.match(extendedBuiltins, /name: "consult_logic"/);
 assert.match(extendedBuiltins, /name: "learn_logic"/);
 assert.doesNotMatch(extendedBuiltins, /name: "ked_/);

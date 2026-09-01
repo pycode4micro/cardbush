@@ -1,14 +1,7 @@
 import { AlertCircle, ShieldCheck } from 'lucide-react';
 
 import type { AppLanguage, ChatToolExecution } from '../../types';
-import {
-  asRecord,
-  firstDefined,
-  firstRecord,
-  nonEmptyString,
-  parseToolOutputJson,
-  stringArrayLoose,
-} from './toolPayload';
+import { asRecord, nonEmptyString } from './toolPayload';
 
 export type VerificationAssertionItem = {
   label: string;
@@ -84,74 +77,23 @@ export function PlanVerificationPanel({
 export function planVerificationInfoFromExecution(
   execution: ChatToolExecution,
 ): PlanVerificationInfo | null {
-  const outputPayload = parseToolOutputJson(execution.output);
-  const payloads = [
-    execution.metadata,
-    asRecord(execution.metadata.result),
-    asRecord(execution.metadata.plan),
-    outputPayload,
-    asRecord(outputPayload.result),
-    asRecord(outputPayload.plan),
-  ];
-  const verificationResult = firstRecord(
-    payloads.flatMap((payload) => [
-      asRecord(payload.verification_result),
-      asRecord(payload.verificationResult),
-    ]),
+  const facts = Array.isArray(execution.metadata.facts)
+    ? execution.metadata.facts.map(asRecord)
+    : [];
+  const fact = facts.find((candidate) =>
+    Array.isArray(candidate.categories) &&
+    candidate.categories.includes('plan_verification'),
   );
-  const status =
-    nonEmptyString(
-      firstDefined(
-        payloads.map((payload) =>
-          payload.status ?? payload.verification_status ?? payload.verificationStatus,
-        ),
-      ),
-    ) ??
-    nonEmptyString(
-      verificationResult.status ??
-        verificationResult.verification_status ??
-        verificationResult.verificationStatus,
-    ) ??
-    '';
-  const summary =
-    nonEmptyString(verificationResult.summary) ??
-    nonEmptyString(verificationResult.message) ??
-    nonEmptyString(
-      firstDefined(payloads.map((payload) => payload.verification_summary)),
-    ) ??
-    '';
-  const verificationLevel =
-    nonEmptyString(
-      firstDefined(
-        payloads.map((payload) => payload.verification_level ?? payload.verificationLevel),
-      ),
-    ) ??
-    nonEmptyString(verificationResult.verification_level ?? verificationResult.verificationLevel) ??
-    '';
-  const assertions = stringArrayLoose(
-    firstDefined(
-      payloads.map((payload) => payload.success_assertions ?? payload.successAssertions),
-    ),
-  );
-  const assertionResults = normalizeAssertionResults(
-    firstDefined([
-      verificationResult.assertion_results,
-      verificationResult.assertionResults,
-      ...payloads.map((payload) => payload.assertion_results ?? payload.assertionResults),
-    ]),
-  );
-  const failed =
-    status.trim().toLowerCase() === 'verification_failed' ||
-    assertionResults.some((item) => /fail|failed|false|missing/i.test(item.status));
-  if (
-    !failed &&
-    !summary &&
-    !verificationLevel &&
-    assertions.length === 0 &&
-    assertionResults.length === 0
-  ) {
-    return null;
-  }
+  if (!fact) return null;
+  const metadata = asRecord(fact.metadata);
+  const status = nonEmptyString(fact.verification_state) ?? '';
+  const summary = nonEmptyString(metadata.summary) ?? '';
+  const verificationLevel = nonEmptyString(metadata.verificationLevel) ?? '';
+  const assertions = Array.isArray(metadata.assertions)
+    ? metadata.assertions.filter((item): item is string => typeof item === 'string')
+    : [];
+  const assertionResults = normalizeAssertionResults(metadata.assertionResults);
+  const failed = fact.semantic_success === false || status === 'failed';
   return {
     failed,
     status,
@@ -168,37 +110,13 @@ export function normalizeAssertionResults(value: unknown): VerificationAssertion
   }
   return value
     .map((item) => {
-      if (item == null) {
-        return null;
-      }
-      if (typeof item !== 'object' || Array.isArray(item)) {
-        return {
-          label: String(item),
-          status: '',
-          summary: '',
-        };
-      }
+      if (item == null || typeof item !== 'object' || Array.isArray(item)) return null;
       const record = asRecord(item);
-      const label =
-        nonEmptyString(
-          record.label ??
-            record.name ??
-            record.id ??
-            record.assertion ??
-            record.description,
-        ) ?? '';
-      const status =
-        nonEmptyString(
-          record.status ?? record.result ?? record.state ?? record.ok,
-        ) ?? '';
-      const summary =
-        nonEmptyString(
-          record.summary ?? record.message ?? record.detail ?? record.evidence,
-        ) ?? '';
-      if (!label && !status && !summary) {
-        return null;
-      }
-      return { label: label || summary || status, status, summary };
+      const label = nonEmptyString(record.label) ?? '';
+      const passed = typeof record.passed === 'boolean' ? record.passed : undefined;
+      const summary = nonEmptyString(record.summary) ?? '';
+      if (!label || passed === undefined) return null;
+      return { label, status: passed ? 'passed' : 'failed', summary };
     })
     .filter((item): item is VerificationAssertionItem => item != null);
 }

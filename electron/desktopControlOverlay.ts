@@ -8,6 +8,11 @@ import {
 export type DesktopControlTurn = {
   sessionId: string;
   turnId: string;
+  toolCallId: string;
+};
+
+type DesktopControlScope = Pick<DesktopControlTurn, 'sessionId' | 'turnId'> & {
+  toolCallId?: string;
 };
 
 type DesktopControlOverlayOptions = {
@@ -44,7 +49,7 @@ export class DesktopControlOverlay {
     this.#onDiagnostic?.('shown', { ...turn });
   }
 
-  hide(turn?: DesktopControlTurn): void {
+  hide(turn?: DesktopControlScope): void {
     if (turn && !sameTurn(this.#activeTurn, turn)) return;
     const hiddenTurn = this.#activeTurn;
     this.#activeTurn = null;
@@ -231,8 +236,10 @@ export class DesktopControlOverlay {
   }
 }
 
-function sameTurn(left: DesktopControlTurn | null, right: DesktopControlTurn): boolean {
-  return left?.sessionId === right.sessionId && left.turnId === right.turnId;
+function sameTurn(left: DesktopControlTurn | null, right: DesktopControlScope): boolean {
+  return left?.sessionId === right.sessionId &&
+    left.turnId === right.turnId &&
+    (right.toolCallId === undefined || left.toolCallId === right.toolCallId);
 }
 
 function htmlDataUrl(html: string): string {

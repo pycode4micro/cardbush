@@ -5,6 +5,7 @@ import {
   type ActionManifest,
   type RuntimePermissionAnswer,
   type ToolCall,
+  type ToolErrorKind,
   type ToolResult,
 } from "@cardbush/bush-protocol";
 
@@ -102,6 +103,9 @@ export class ToolExecutionCoordinator {
         toolCall.id,
         "tool_arguments_invalid_json",
         error instanceof Error ? error.message : String(error),
+        undefined,
+        {},
+        "protocol",
       );
     }
 
@@ -113,6 +117,9 @@ export class ToolExecutionCoordinator {
         toolCall.id,
         "tool_arguments_schema_invalid",
         error instanceof Error ? error.message : String(error),
+        undefined,
+        {},
+        "protocol",
       );
     }
 
@@ -138,9 +145,11 @@ export class ToolExecutionCoordinator {
       } catch (error) {
         return failedResult(
           toolCall.id,
-          "tool_admission_exception",
+          errorCode(error, "tool_admission_exception"),
           error instanceof Error ? error.message : String(error),
           actionManifest,
+          errorDetails(error),
+          errorCode(error, "") ? "tool" : "runtime",
         );
       }
       if (admission.kind === "deny") {
@@ -150,6 +159,7 @@ export class ToolExecutionCoordinator {
           admission.message,
           actionManifest,
           admission.details,
+          "permission",
         );
       }
       if (admission.kind === "ask") {
@@ -176,6 +186,8 @@ export class ToolExecutionCoordinator {
               "permission_request_failed",
               error instanceof Error ? error.message : String(error),
               actionManifest,
+              {},
+              "permission",
             );
           }
           if (answer.decision === "deny") {
@@ -184,6 +196,8 @@ export class ToolExecutionCoordinator {
               "permission_rejected",
               "The requested permission was rejected.",
               actionManifest,
+              {},
+              "permission",
             );
           }
           if (answer.decision === "cancel") {
@@ -207,11 +221,10 @@ export class ToolExecutionCoordinator {
       return cancelledResult(toolCall.id, "turn_cancelled", actionManifest);
     }
     this.#observer.running?.(toolCall, identity);
-    let candidate: ToolResult;
+    let rawCandidate: ToolResult;
     try {
       let nestedOrdinal = 0;
-      candidate = toolResultSchema.parse(
-        await registration.execute({
+      rawCandidate = await registration.execute({
           requestId: identity.requestId,
           sessionId: identity.sessionId,
           turnId: identity.turnId,
@@ -233,19 +246,33 @@ export class ToolExecutionCoordinator {
             }, signal, turn);
             return nested.result;
           },
-        }),
-      );
+        });
     } catch (error) {
       if (isAbortError(error)) {
         return cancelledResult(toolCall.id, "tool_execution_cancelled", actionManifest);
       }
       return failedResult(
         toolCall.id,
-        "tool_execution_exception",
+        errorCode(error, "tool_execution_exception"),
         error instanceof Error ? error.message : String(error),
         actionManifest,
+        errorDetails(error),
+        "tool",
       );
     }
+
+    const parsedCandidate = toolResultSchema.safeParse(rawCandidate);
+    if (!parsedCandidate.success) {
+      return failedResult(
+        toolCall.id,
+        "tool_result_schema_invalid",
+        "Tool returned a result that violates the Runtime result contract.",
+        actionManifest,
+        { issues: parsedCandidate.error.issues },
+        "protocol",
+      );
+    }
+    const candidate = parsedCandidate.data;
 
     try {
       assertJsonValue(candidate);
@@ -255,6 +282,8 @@ export class ToolExecutionCoordinator {
         "tool_result_not_json_serializable",
         error instanceof Error ? error.message : String(error),
         actionManifest,
+        {},
+        "protocol",
       );
     }
 
@@ -265,6 +294,8 @@ export class ToolExecutionCoordinator {
         protocolError.code,
         protocolError.message,
         actionManifest,
+        {},
+        "protocol",
       );
     }
     candidate.facts.forEach((fact) => this.#receiptIds.add(fact.receipt_id));
@@ -322,6 +353,7 @@ function failedResult(
   message: string,
   actionManifest?: ActionManifest,
   details: Record<string, unknown> = {},
+  kind: ToolErrorKind = "runtime",
 ): ToolExecutionOutcome {
   return {
     kind: "failed",
@@ -331,11 +363,13 @@ function failedResult(
       tool_call_id: toolCallId,
       success: false,
       output: null,
-      facts: [],
+      facts: actionManifest
+        ? [failedExecutionFact(actionManifest, code, "failed", kind)]
+        : [],
       artifacts: [],
       workspace_changes: [],
       guidance: [],
-      error: { code, message, details },
+      error: { kind, code, message, details },
     },
   };
 }
@@ -354,13 +388,61 @@ function cancelledResult(
       tool_call_id: toolCallId,
       success: false,
       output: null,
-      facts: [],
+      facts: actionManifest
+        ? [failedExecutionFact(actionManifest, reason, "cancelled")]
+        : [],
       artifacts: [],
       workspace_changes: [],
       guidance: [],
-      error: { code: reason, message: "Tool execution was cancelled.", details: {} },
+      error: {
+        kind: "cancelled",
+        code: reason,
+        message: "Tool execution was cancelled.",
+        details: {},
+      },
     },
   };
+}
+
+function failedExecutionFact(
+  manifest: ActionManifest,
+  code: string,
+  status: "failed" | "cancelled",
+  kind: ToolErrorKind = "cancelled",
+): ToolResult["facts"][number] {
+  return {
+    protocol: "bush.tool.execution_fact.v1",
+    receipt_id: `${status}:${manifest.manifest_id}`,
+    action_manifest_id: manifest.manifest_id,
+    status,
+    operation: manifest.operation,
+    effect_kind: manifest.effect_kind,
+    owner: manifest.owner,
+    dispatch_scope: manifest.dispatch_scope,
+    categories: [status === "cancelled" ? "runtime_cancellation" : `${kind}_failure`],
+    paths: [],
+    execution_success: false,
+    semantic_success: false,
+    verification_state: status === "cancelled" ? "unverified" : "failed",
+    error_code: code,
+  };
+}
+
+function errorCode(error: unknown, fallback: string): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const candidate = String(error.code ?? "").trim();
+    if (candidate) return candidate;
+  }
+  return fallback;
+}
+
+function errorDetails(error: unknown): Record<string, unknown> {
+  if (!error || typeof error !== "object") return {};
+  const details: Record<string, unknown> = {};
+  if ("name" in error && typeof error.name === "string") details.name = error.name;
+  if ("path" in error && typeof error.path === "string") details.path = error.path;
+  if ("syscall" in error && typeof error.syscall === "string") details.syscall = error.syscall;
+  return details;
 }
 
 function isAbortError(error: unknown): boolean {

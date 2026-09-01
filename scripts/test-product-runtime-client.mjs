@@ -405,6 +405,7 @@ function createLiveRuntimeBridge(options = {}) {
         ok: false,
         error: {
           protocol: 'bush.runtime_error.v1',
+          kind: 'runtime',
           code: 'operation_cancelled',
           message: 'The Runtime operation was cancelled.',
           retryable: false,

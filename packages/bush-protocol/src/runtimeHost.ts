@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
 import { interactionQuestionSchema } from "./interaction.js";
+import { toolErrorKindSchema } from "./tool.js";
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -190,6 +191,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("tool_failed"),
     payload: toolIdentitySchema.merge(factReferencesSchema).extend({
       error: z.object({
+        kind: toolErrorKindSchema.default("tool"),
         code: z.string().min(1),
         message: z.string(),
         details: z.record(z.string(), z.unknown()).default({}),

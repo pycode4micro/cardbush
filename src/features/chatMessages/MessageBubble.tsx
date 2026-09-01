@@ -1674,7 +1674,6 @@ function isFinalAssistantDisplayMessage(message: ChatMessage) {
     return false;
   }
   return (
-    status === 'complete' ||
     status === 'completed' ||
     status === 'failed' ||
     transcriptKind === 'assistant_final' ||

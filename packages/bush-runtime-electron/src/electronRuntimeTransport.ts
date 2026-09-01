@@ -78,7 +78,17 @@ export class ElectronRuntimeTransport {
     };
     signal?.addEventListener("abort", cancel, { once: true });
     try {
-      const response = decodeOutbound(await this.#bridge.command(request), operationId);
+      let rawResponse: unknown;
+      try {
+        rawResponse = await this.#bridge.command(request);
+      } catch (error) {
+        throw transportError(
+          "runtime_command_transport_failed",
+          errorMessage(error),
+          operationId,
+        );
+      }
+      const response = decodeOutbound(rawResponse, operationId);
       if (response.type !== "command_response" || response.operationId !== operationId) {
         throw protocolError(
           "ipc_response_identity_mismatch",
@@ -137,16 +147,24 @@ export class ElectronRuntimeTransport {
     };
     request.signal?.addEventListener("abort", stop, { once: true });
     try {
-      await this.#bridge.startStream({
-        protocol: BUSH_RUNTIME_IPC_PROTOCOL,
-        type: "start_stream",
-        subscriptionId,
-        request: {
-          sessionId: request.sessionId,
-          turnId: request.turnId,
-          cursor: request.cursor,
-        },
-      });
+      try {
+        await this.#bridge.startStream({
+          protocol: BUSH_RUNTIME_IPC_PROTOCOL,
+          type: "start_stream",
+          subscriptionId,
+          request: {
+            sessionId: request.sessionId,
+            turnId: request.turnId,
+            cursor: request.cursor,
+          },
+        });
+      } catch (error) {
+        throw transportError(
+          "runtime_stream_transport_failed",
+          errorMessage(error),
+          subscriptionId,
+        );
+      }
       while (!request.signal?.aborted) {
         if (frameError) throw frameError;
         const frame = frames.shift();
@@ -190,7 +208,11 @@ function decodeOutbound(
         ),
       );
     }
-    throw error;
+    throw protocolError(
+      "invalid_runtime_ipc_message",
+      errorMessage(error),
+      requestId,
+    );
   }
 }
 
@@ -201,12 +223,33 @@ function protocolError(
 ): RuntimeRemoteError {
   return new RuntimeRemoteError({
     protocol: "bush.runtime_error.v1",
+    kind: "protocol",
     code,
     message,
     retryable: false,
     details: {},
     requestId,
   });
+}
+
+function transportError(
+  code: string,
+  message: string,
+  requestId?: string,
+): RuntimeRemoteError {
+  return new RuntimeRemoteError({
+    protocol: "bush.runtime_error.v1",
+    kind: "transport",
+    code,
+    message,
+    retryable: true,
+    details: {},
+    requestId,
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function abortError(): DOMException {

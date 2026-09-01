@@ -176,3 +176,26 @@ CardBush 的核心分层目前是成立的：Provider 事件由 Runtime 归一�
 - 遗留重点：绝对 Token/事件规模、Windows Shell 契约、安装包真实桌面专项验收。
 
 本报告不包含任何 Provider 密钥；真实配置仅在本机读取，没有写入仓库或测试产物。
+
+## 9. 后续通用优化（2026-09-01）
+
+根据审查结论完成以下通用改进；未修改 Append-only 事实链，也未修改 `game` 项目：
+
+- Provider capability 改为 `unknown / supported / unsupported` 能力矩阵，按适配器配置修订、模型和能力隔离。
+- 能力观测持久化到 Runtime 状态目录，默认 24 小时失效后重新协商；配置、端点、凭据或模型变化都会进入新的能力作用域。
+- 能力处理不包含服务商名称或特定模型分支；当前 Responses continuation 只是该通用矩阵中的第一项能力。
+- `terminal_exec` 在协议中显式选择 `powershell / cmd / posix`，Runtime 不再依赖 Node 隐式 Shell。
+- 实际 Shell 与可执行文件写入 Tool Result 和 Execution Fact；PowerShell Harness 会保留原生命令退出码。
+- 新增打包产物冒烟：真正构建并隐藏启动 `CardBush.exe`，无 Provider 凭据验证 Renderer、Utility Runtime、Product Host、Apps MCP、Chrome MCP、ripgrep 和干净退出。
+
+首次真实打包冒烟结果：
+
+| 指标 | 结果 |
+|---|---:|
+| 打包应用总自检耗时 | 1,941 ms |
+| Runtime 就绪耗时 | 1,816 ms |
+| Renderer | 通过 |
+| Runtime capability command | 通过 |
+| Product Host | 通过 |
+| Apps MCP / Chrome MCP / ripgrep 资源 | 全部存在 |
+| 干净关闭 | 通过 |

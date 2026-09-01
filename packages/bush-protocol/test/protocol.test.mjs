@@ -13,6 +13,7 @@ import {
   BUSH_RUNTIME_EVENT_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL,
+  BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
   BUSH_PROVIDER_BINDING_CONFIG_PROTOCOL,
   cacheChainStateSchema,
   coordinationEventSchema,
@@ -24,14 +25,64 @@ import {
   mcpSnapshotSchema,
   runtimePermissionAnswerSchema,
   runtimeRecoveryInspectionSchema,
+  runtimeToolCancelReceiptSchema,
   runtimeProviderBindingConfigSchema,
   runtimeProviderBindingResultSchema,
   taskPlanSchema,
   setRuntimePlanRequestSchema,
   subagentTaskSchema,
   teamSnapshotSchema,
+  toolResultSchema,
   updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
+
+test("Tool results reject contradictory success and verification facts", () => {
+  const base = {
+    protocol: "bush.tool_result.v1",
+    tool_call_id: "call_consistency",
+    success: true,
+    output: {},
+    facts: [{
+      protocol: "bush.tool.execution_fact.v1",
+      receipt_id: "receipt_consistency",
+      action_manifest_id: "manifest_consistency",
+      status: "succeeded",
+      operation: "fixture.execute",
+      effect_kind: "fixture",
+      owner: "fixture",
+      dispatch_scope: "turn",
+      categories: [],
+      paths: [],
+      execution_success: true,
+      semantic_success: true,
+      verification_state: "verified",
+      error_code: "",
+    }],
+    artifacts: [],
+    workspace_changes: [],
+    guidance: [],
+  };
+  assert.equal(toolResultSchema.parse(base).success, true);
+  assert.throws(() => toolResultSchema.parse({
+    ...base,
+    facts: [{
+      ...base.facts[0],
+      execution_success: false,
+    }],
+  }));
+  assert.throws(() => toolResultSchema.parse({
+    ...base,
+    success: false,
+  }));
+  assert.throws(() => toolResultSchema.parse({
+    ...base,
+    error: {
+      kind: "tool",
+      code: "unexpected_error",
+      message: "contradiction",
+    },
+  }));
+});
 
 test("runtime event decoder keeps reasoning separate from assistant content", () => {
   const event = decodeRuntimeEvent({
@@ -206,6 +257,18 @@ test("model request keeps provider-independent tool definitions", () => {
       previousResponseId: "resp_1",
     },
   }));
+});
+
+test("targeted Tool cancellation receipts retain the exact Tool identity", () => {
+  const receipt = runtimeToolCancelReceiptSchema.parse({
+    protocol: BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
+    sessionId: "session_1",
+    turnId: "turn_1",
+    toolCallId: "call_1",
+    accepted: true,
+    reason: "tool_cancel_accepted",
+  });
+  assert.equal(receipt.toolCallId, "call_1");
 });
 
 test("model events are transport-neutral and mechanically validated", () => {

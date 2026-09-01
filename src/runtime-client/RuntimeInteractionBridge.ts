@@ -146,7 +146,10 @@ export async function answerRuntimeGenericInteraction(
   input: Omit<RuntimeInteractionAnswer, 'protocol' | 'interactionId' | 'answerId'>,
 ): Promise<void> {
   const entry = genericInteractions.get(interactionId);
-  if (!entry) throw new Error(`Runtime interaction ${interactionId} is not pending.`);
+  if (!entry) throw interactionNotPendingError(
+    'interaction_not_pending',
+    `Runtime interaction ${interactionId} is not pending.`,
+  );
   await entry.answer({
     protocol: 'bush.runtime_interaction.v1',
     interactionId,
@@ -165,7 +168,10 @@ export async function answerRuntimeInteraction(
   decision: 'allow_once' | 'allow_session' | 'deny' | 'cancel',
 ): Promise<void> {
   const entry = permissions.get(interactionId);
-  if (!entry) throw new Error(`Runtime permission ${interactionId} is not pending.`);
+  if (!entry) throw interactionNotPendingError(
+    'permission_not_pending',
+    `Runtime permission ${interactionId} is not pending.`,
+  );
   const answer: RuntimePermissionAnswer = {
     protocol: 'bush.runtime_permission_answer.v1',
     permissionId: interactionId,
@@ -178,6 +184,10 @@ export async function answerRuntimeInteraction(
   };
   await entry.answer(answer);
   permissions.delete(interactionId);
+}
+
+function interactionNotPendingError(code: string, message: string): Error {
+  return Object.assign(new Error(message), { code });
 }
 
 export function removeRuntimePermission(permissionId: string): void {

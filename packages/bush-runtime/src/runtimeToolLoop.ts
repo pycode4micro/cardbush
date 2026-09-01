@@ -55,6 +55,10 @@ export class RuntimeToolLoop {
   readonly #registry: ToolRegistry;
   readonly #permissionEventIdentity: RuntimeEventIdentity;
   readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
+  readonly #activeToolControllers = new Map<
+    string,
+    { controller: AbortController; toolName: string }
+  >();
 
   constructor(options: RuntimeToolLoopOptions) {
     this.#eventLog = options.eventLog;
@@ -65,6 +69,7 @@ export class RuntimeToolLoop {
     this.#permissions = new RuntimePermissionBroker({
       createPermissionId: options.createPermissionId,
       onRequested: (permission) => {
+        this.#cancelActiveDesktopControls(permission.toolCallId);
         this.#eventLog.append(this.#permissionEventIdentity, {
           kind: "permission_requested",
           payload: {
@@ -95,6 +100,12 @@ export class RuntimeToolLoop {
             kind: "tool_running",
             payload: toolIdentity(toolCall, executionIdentity),
           });
+          if (
+            this.#permissions.pendingIds().length > 0 &&
+            this.#registry.resolve(toolCall.name)?.manifest.effect_kind === "desktop_control"
+          ) {
+            this.cancelTool(toolCall.id);
+          }
         },
       },
       existingReceiptIds: options.existingReceiptIds,
@@ -110,6 +121,27 @@ export class RuntimeToolLoop {
 
   answerPermission(answer: RuntimePermissionAnswer): RuntimePermissionAnswer {
     return this.#permissions.answer(answer);
+  }
+
+  matches(sessionId: string, turnId: string): boolean {
+    return this.#identity.sessionId === sessionId && this.#identity.turnId === turnId;
+  }
+
+  cancelTool(toolCallId: string): boolean {
+    const active = this.#activeToolControllers.get(toolCallId);
+    if (!active || active.controller.signal.aborted) return false;
+    active.controller.abort(new DOMException("Tool control was cancelled.", "AbortError"));
+    return true;
+  }
+
+  #cancelActiveDesktopControls(excludedToolCallId: string): void {
+    for (const [toolCallId, active] of this.#activeToolControllers) {
+      if (toolCallId === excludedToolCallId) continue;
+      if (this.#registry.resolve(active.toolName)?.manifest.effect_kind !== "desktop_control") {
+        continue;
+      }
+      this.cancelTool(toolCallId);
+    }
   }
 
   async execute(
@@ -133,17 +165,38 @@ export class RuntimeToolLoop {
     const receiptIds: string[] = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
-      const outcome = await this.#coordinator.execute(
-        toolCall,
-        executionIdentity,
-        input.signal,
-        input.request && input.contextMessages
-          ? { request: input.request, contextMessages: input.contextMessages }
-          : undefined,
-      );
-      this.#executionStore?.record(toolCall, executionIdentity, outcome);
-      this.#appendToolOutcome(toolCall, executionIdentity, outcome);
-      return outcome;
+      const controller = new AbortController();
+      const detachAbort = forwardAbort(input.signal, controller);
+      if (this.#activeToolControllers.has(toolCall.id)) {
+        detachAbort();
+        throw new Error(`Tool call ${toolCall.id} is already active.`);
+      }
+      this.#activeToolControllers.set(toolCall.id, {
+        controller,
+        toolName: toolCall.name,
+      });
+      if (this.#hasConcurrentPermissionAdmission(toolCall, toolCalls)) {
+        controller.abort(new DOMException(
+          "Desktop control was deferred because another concurrent Tool may request permission.",
+          "AbortError",
+        ));
+      }
+      try {
+        const outcome = await this.#coordinator.execute(
+          toolCall,
+          executionIdentity,
+          controller.signal,
+          input.request && input.contextMessages
+            ? { request: input.request, contextMessages: input.contextMessages }
+            : undefined,
+        );
+        this.#executionStore?.record(toolCall, executionIdentity, outcome);
+        this.#appendToolOutcome(toolCall, executionIdentity, outcome);
+        return outcome;
+      } finally {
+        this.#activeToolControllers.delete(toolCall.id);
+        detachAbort();
+      }
     };
     const outcomes = await executeByChannel(
       toolCalls,
@@ -171,6 +224,22 @@ export class RuntimeToolLoop {
       messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : []), ...guidanceMessages],
       receiptIds,
     };
+  }
+
+  #hasConcurrentPermissionAdmission(toolCall: ToolCall, toolCalls: ToolCall[]): boolean {
+    const registration = this.#registry.resolve(toolCall.name);
+    if (registration?.manifest.effect_kind !== "desktop_control") return false;
+    return toolCalls.some((candidate) => {
+      if (candidate.id === toolCall.id) return false;
+      const candidateRegistration = this.#registry.resolve(candidate.name);
+      if (!candidateRegistration?.authorize) return false;
+      const sameChannel = this.#registry.executionChannel(candidate.name) ===
+        this.#registry.executionChannel(toolCall.name);
+      return !sameChannel || (
+        this.#registry.isParallelSafe(candidate.name) &&
+        this.#registry.isParallelSafe(toolCall.name)
+      );
+    });
   }
 
   #executionIdentity(
@@ -242,6 +311,7 @@ export class RuntimeToolLoop {
       });
     }
     const error = outcome.result.error ?? {
+      kind: "runtime" as const,
       code: "tool_execution_failed",
       message: "Tool execution failed without an error description.",
       details: {},
@@ -319,6 +389,17 @@ async function sequential<TInput, TOutput>(
     output.push(await execute(value, index));
   }
   return output;
+}
+
+function forwardAbort(
+  signal: AbortSignal | undefined,
+  controller: AbortController,
+): () => void {
+  if (!signal) return () => undefined;
+  const abort = () => controller.abort(signal.reason);
+  if (signal.aborted) abort();
+  else signal.addEventListener("abort", abort, { once: true });
+  return () => signal.removeEventListener("abort", abort);
 }
 
 async function executeByChannel<TInput, TOutput>(

@@ -98,7 +98,7 @@ test("reports an unavailable Runtime snapshot instead of a false zero-file succe
   const setup = await environment(t, "missing-session");
   await assert.rejects(
     setup.revert(["turn-without-records"]),
-    /runtime_workspace_snapshot_unavailable/,
+    (error) => error?.code === "runtime_workspace_snapshot_unavailable",
   );
 });
 

@@ -52,7 +52,7 @@ assert.match(pluginPanel, /defaultPrompts/);
 assert.match(pluginPanel, /复用当前 Chrome/);
 assert.match(pluginPanel, /connectionMode === 'managed' \? 'managed' : 'existing'/);
 assert.match(pluginPanel, /chrome:\/\/inspect\/#remote-debugging/);
-assert.match(productAgent, /Never invoke chrome_devtools and computer-use as competing alternatives/);
+assert.doesNotMatch(productAgent, /Never invoke chrome_devtools and computer-use as competing alternatives/);
 assert.match(api, /fetchCardbushAppsConfiguration/);
 assert.match(api, /saveCardbushAppsConfiguration/);
 assert.doesNotMatch(api, /\/host\/v1\/bots/);

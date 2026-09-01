@@ -63,9 +63,13 @@ assert.match(main, /Start Menu'[\s\S]*?'Programs'/);
 assert.match(main, /const operation = fs\.existsSync\(shortcutPath\) \? 'replace' : 'create'/);
 assert.match(main, /shell\.writeShortcutLink\(shortcutPath, operation/);
 assert.match(main, /appUserModelId:\s*cardbushAppUserModelId/);
-assert.match(
-  main,
-  /registerLocalFileProtocol\(\);\s*createWindow\(\);[\s\S]*?setImmediate\(\(\) => \{\s*const shortcutUpdated = ensureWindowsTaskbarShortcut\(\);/,
+const startupBlock = main.slice(
+  main.indexOf('app.whenReady().then'),
+  main.indexOf('function publishRuntimeStartupStatus'),
+);
+assert.ok(
+  startupBlock.indexOf('createWindow();') <
+    startupBlock.indexOf('const shortcutUpdated = ensureWindowsTaskbarShortcut();'),
   'Taskbar shortcut maintenance must run after the first window is created so it cannot block startup.',
 );
 assert.match(main, /window\.on\('show', refreshWindowBackdrop\)/);

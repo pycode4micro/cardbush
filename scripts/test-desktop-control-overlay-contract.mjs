@@ -20,8 +20,13 @@ assert.match(overlay, /background: rgba\(11, 15, 24, 0\.13\)/);
 
 assert.match(main, /event\.kind === 'tool_running'/);
 assert.match(main, /isComputerUseRuntimeTool\(event\.payload\.toolName\)/);
+assert.match(main, /event\.kind === 'tool_completed'/);
+assert.match(main, /event\.kind === 'tool_failed'/);
+assert.match(main, /event\.kind === 'tool_cancelled'/);
+assert.match(main, /event\.kind === 'permission_requested'/);
 assert.match(main, /event\.kind === 'turn_terminal'/);
-assert.match(main, /kind: stopRuntimeTurnCommand/);
+assert.match(main, /kind: cancelRuntimeToolCommand/);
+assert.doesNotMatch(main, /desktop-control-stop-|escape-stop-sent/);
 assert.match(main, /disposeDesktopControlMonitor\(\)/);
 
 const computerUse = read('packages', 'cardbush-apps-mcp', 'src', 'plugins', 'computerUse.ts');

@@ -67,8 +67,10 @@ const cardbushDisplayName = 'cardbush';
 const desktopStartupStartedAt = Date.now();
 const runtimeStartupStatusChannel = 'app:runtime-startup-status';
 const runtimeServicesStartupTimeoutMs = 15_000;
+const packagedSmokeResultPath = process.env.CARDBUSH_PACKAGED_SMOKE_RESULT?.trim() ?? '';
+const packagedSmokeMode = packagedSmokeResultPath.length > 0;
 const bushRuntimeIpcProtocol = 'bush.runtime_ipc.v1' as const;
-const stopRuntimeTurnCommand = 'runtime.stop_turn' as const;
+const cancelRuntimeToolCommand = 'runtime.cancel_tool' as const;
 // BrowserWindow#setIcon is most reliable on Windows when it receives a
 // high-resolution PNG. Keep the multi-resolution ICO for Shell metadata and
 // shortcuts, where Windows explicitly requires an .ico file.
@@ -200,6 +202,10 @@ let runtimeStartupStatus: RuntimeStartupStatus = {
   startedAt: new Date(desktopStartupStartedAt).toISOString(),
 };
 let runtimeServicesInitialization: Promise<void> | null = null;
+let packagedSmokeRendererReadyResolve: (() => void) | null = null;
+const packagedSmokeRendererReady = new Promise<void>((resolve) => {
+  packagedSmokeRendererReadyResolve = resolve;
+});
 let cardlingExpanded = false;
 let cardlingApplyingBounds = false;
 if (process.platform === 'win32') {
@@ -505,9 +511,9 @@ function traceMainWindowComposition(
   }
 }
 
-function createWindow() {
+function createWindow(options: { reveal?: boolean } = {}) {
   if (mainWindow != null && !mainWindow.isDestroyed()) {
-    return;
+    return mainWindow;
   }
   if (startupRevealFallback != null) {
     clearTimeout(startupRevealFallback);
@@ -565,12 +571,14 @@ function createWindow() {
   });
   applySessionAttentionBadge();
 
-  startupRevealFallback = setTimeout(() => {
-    if (!window.isDestroyed() && !window.isVisible()) {
-      applyMainWindowVisualMaterial(window, lastMainWindowTheme);
-      window.show();
-    }
-  }, 5000);
+  if (options.reveal !== false) {
+    startupRevealFallback = setTimeout(() => {
+      if (!window.isDestroyed() && !window.isVisible()) {
+        applyMainWindowVisualMaterial(window, lastMainWindowTheme);
+        window.show();
+      }
+    }, 5000);
+  }
 
   window.once('closed', () => {
     if (startupRevealFallback != null) {
@@ -592,6 +600,7 @@ function createWindow() {
   });
 
   loadRenderer(window, 'main');
+  return window;
 }
 
 function shadowWindowKey(sessionId: string, sourceTurnId: string) {
@@ -1968,6 +1977,8 @@ ipcMain.handle('app:renderer-ready', (event) => {
     clearTimeout(startupRevealFallback);
     startupRevealFallback = null;
   }
+  packagedSmokeRendererReadyResolve?.();
+  packagedSmokeRendererReadyResolve = null;
   applyMainWindowVisualMaterial(sourceWindow, lastMainWindowTheme);
   const loadedIcon = loadCardbushIconWithSource(256);
   applyCardbushWindowIcon(
@@ -1982,6 +1993,7 @@ ipcMain.handle('app:renderer-ready', (event) => {
     runtimePhase: runtimeStartupStatus.phase,
     packaged: cardbushRuntimeIsPackaged,
   });
+  if (packagedSmokeMode) return;
   sourceWindow.show();
   // Windows can briefly restore the executable icon while creating the
   // taskbar button. Reapply once after the HWND has become visible.
@@ -2693,11 +2705,155 @@ ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
   return openUiPreview(target);
 });
 
+async function runPackagedApplicationSmoke(): Promise<void> {
+  const startedAt = Date.now();
+  const report: Record<string, unknown> = {
+    protocol: 'cardbush.packaged_smoke.v1',
+    packaged: cardbushRuntimeIsPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    startedAt: new Date(startedAt).toISOString(),
+  };
+  let succeeded = false;
+  try {
+    if (!path.isAbsolute(packagedSmokeResultPath)) {
+      throw new Error('CARDBUSH_PACKAGED_SMOKE_RESULT must be an absolute path.');
+    }
+    const window = createWindow({ reveal: false });
+    await Promise.all([
+      withPackagedSmokeTimeout(
+        packagedSmokeRendererReady,
+        15_000,
+        'Packaged renderer did not become ready.',
+      ),
+      startRuntimeServices(),
+    ]);
+    const controller = runtimeHostController;
+    if (!controller || runtimeStartupStatus.phase !== 'ready') {
+      throw new Error(runtimeStartupStatus.error || 'Packaged Runtime did not become ready.');
+    }
+    const capabilityResponse = await withPackagedSmokeTimeout(
+      controller.command({
+        protocol: bushRuntimeIpcProtocol,
+        type: 'command',
+        operationId: `packaged-smoke-${randomUUID()}`,
+        command: { kind: 'runtime.get_capabilities', payload: {} },
+      }),
+      10_000,
+      'Packaged Runtime capability query timed out.',
+    ) as Record<string, unknown>;
+    const runtimeCapabilitiesReady = capabilityResponse.type === 'command_response' &&
+      capabilityResponse.ok === true &&
+      typeof capabilityResponse.result === 'object' &&
+      capabilityResponse.result !== null;
+    const productSnapshot = await withPackagedSmokeTimeout(
+      productHostController?.execute({
+        protocol: 'cardbush.product_host_ipc.v1',
+        kind: 'apps.get',
+      }) ?? Promise.reject(new Error('Product Host is unavailable.')),
+      10_000,
+      'Packaged Product Host query timed out.',
+    );
+    const bundledRipgrep = resolveBundledRipgrepPath();
+    const assets = {
+      runtimeWorker: fs.existsSync(path.join(__dirname, 'runtimeHostWorker.mjs')),
+      productHostController: fs.existsSync(path.join(__dirname, 'productHostController.mjs')),
+      appsMcp: fs.existsSync(path.join(
+        app.getAppPath(),
+        'packages',
+        'cardbush-apps-mcp',
+        'dist',
+        'index.js',
+      )),
+      chromeMcp: fs.existsSync(path.join(
+        app.getAppPath(),
+        'assets',
+        'plugins',
+        'chrome',
+        'runtime',
+        'chrome-devtools-mcp',
+        'build',
+        'src',
+        'bin',
+        'chrome-devtools-mcp.js',
+      )),
+      runtimeSearch: process.platform !== 'win32' || Boolean(
+        bundledRipgrep && fs.existsSync(bundledRipgrep),
+      ),
+    };
+    succeeded = cardbushRuntimeIsPackaged &&
+      runtimeCapabilitiesReady &&
+      Object.values(assets).every(Boolean);
+    Object.assign(report, {
+      rendererReady: !window.webContents.isLoadingMainFrame(),
+      rendererUrl: window.webContents.getURL(),
+      runtimeStatus: { ...runtimeStartupStatus },
+      runtimeCapabilitiesReady,
+      productHostReady: productSnapshot != null,
+      assets,
+    });
+  } catch (error) {
+    report.error = error instanceof Error ? error.message : String(error);
+  }
+
+  let shutdownClean = false;
+  try {
+    await withPackagedSmokeTimeout(
+      productHostController?.shutdown() ?? Promise.resolve(),
+      8_000,
+      'Packaged Runtime shutdown timed out.',
+    );
+    runtimeHostController?.stop();
+    shutdownClean = true;
+  } catch (error) {
+    report.shutdownError = error instanceof Error ? error.message : String(error);
+  }
+  report.shutdownClean = shutdownClean;
+  report.elapsedMs = Date.now() - startedAt;
+  report.success = succeeded && shutdownClean;
+  try {
+    fs.mkdirSync(path.dirname(packagedSmokeResultPath), { recursive: true });
+    fs.writeFileSync(
+      packagedSmokeResultPath,
+      `${JSON.stringify(report, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+  } catch (error) {
+    console.error('[packaged-smoke] failed to write result', error);
+  }
+  isQuitting = true;
+  app.exit(report.success === true ? 0 : 1);
+}
+
+function withPackagedSmokeTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
   }
   registerLocalFileProtocol();
+  if (packagedSmokeMode) {
+    await runPackagedApplicationSmoke();
+    return;
+  }
   createWindow();
   createTray();
   appendDebugLog('startup', {
@@ -2767,34 +2923,7 @@ function ensureDesktopControlOverlay(): DesktopControlOverlay {
   if (desktopControlOverlay) return desktopControlOverlay;
   desktopControlOverlay = new DesktopControlOverlay({
     onCancel: async (turn) => {
-      const controller = runtimeHostController;
-      if (!controller) {
-        appendDebugLog('desktop-control', {
-          stage: 'escape-stop-skipped',
-          reason: 'runtime_host_unavailable',
-          ...turn,
-        });
-        return;
-      }
-      const operationId = `desktop-control-stop-${randomUUID()}`;
-      const response = await controller.command({
-        protocol: bushRuntimeIpcProtocol,
-        type: 'command',
-        operationId,
-        command: {
-          kind: stopRuntimeTurnCommand,
-          payload: turn,
-        },
-      });
-      const responseRecord = response && typeof response === 'object'
-        ? response as Record<string, unknown>
-        : {};
-      appendDebugLog('desktop-control', {
-        stage: responseRecord.ok === false ? 'escape-stop-rejected' : 'escape-stop-sent',
-        operationId,
-        ...turn,
-        response,
-      });
+      await cancelDesktopControlTool(turn, 'escape');
     },
     onDiagnostic: (event, details = {}) => {
       appendDebugLog('desktop-control', { stage: event, ...details });
@@ -2803,28 +2932,136 @@ function ensureDesktopControlOverlay(): DesktopControlOverlay {
   return desktopControlOverlay;
 }
 
+async function cancelDesktopControlTool(
+  turn: DesktopControlTurn,
+  source: 'escape' | 'permission_race',
+): Promise<void> {
+  const controller = runtimeHostController;
+  if (!controller) {
+    appendDebugLog('desktop-control', {
+      stage: 'tool-cancel-skipped',
+      source,
+      reason: 'runtime_host_unavailable',
+      ...turn,
+    });
+    return;
+  }
+  const operationId = `desktop-control-cancel-${randomUUID()}`;
+  const response = await controller.command({
+    protocol: bushRuntimeIpcProtocol,
+    type: 'command',
+    operationId,
+    command: {
+      kind: cancelRuntimeToolCommand,
+      payload: turn,
+    },
+  });
+  const responseRecord = response && typeof response === 'object'
+    ? response as Record<string, unknown>
+    : {};
+  appendDebugLog('desktop-control', {
+    stage: responseRecord.ok === false ? 'tool-cancel-rejected' : 'tool-cancel-sent',
+    source,
+    operationId,
+    ...turn,
+    response,
+  });
+}
+
+function runtimeTurnKey(sessionId: string, turnId: string): string {
+  return JSON.stringify([sessionId, turnId]);
+}
+
+function runtimeToolKey(control: DesktopControlTurn): string {
+  return JSON.stringify([control.sessionId, control.turnId, control.toolCallId]);
+}
+
 function registerDesktopControlMonitor(controller: RuntimeHostController): void {
   unregisterDesktopControlMonitor?.();
-  const subscriptionTurns = new Map<string, DesktopControlTurn>();
+  const subscriptionTurns = new Map<string, { sessionId: string; turnId: string }>();
+  const activeControls = new Map<string, DesktopControlTurn>();
+  const pendingPermissions = new Map<string, Set<string>>();
+  const cancelRequested = new Set<string>();
+  const cancelControl = (control: DesktopControlTurn, source: 'permission_race') => {
+    const key = runtimeToolKey(control);
+    if (cancelRequested.has(key)) return;
+    cancelRequested.add(key);
+    desktopControlOverlay?.hide(control);
+    void cancelDesktopControlTool(control, source).catch((error: unknown) => {
+      appendDebugLog('desktop-control', {
+        stage: 'tool-cancel-failed',
+        source,
+        ...control,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+  const clearTurn = (sessionId: string, turnId: string) => {
+    const key = runtimeTurnKey(sessionId, turnId);
+    pendingPermissions.delete(key);
+    for (const [toolKey, control] of activeControls) {
+      if (control.sessionId !== sessionId || control.turnId !== turnId) continue;
+      activeControls.delete(toolKey);
+      cancelRequested.delete(toolKey);
+      desktopControlOverlay?.hide(control);
+    }
+  };
   unregisterDesktopControlMonitor = controller.onStreamFrame((message) => {
     if (message.type !== 'stream_frame') return;
     if (message.frame.kind === 'event') {
       const { event } = message.frame;
       const turn = { sessionId: event.sessionId, turnId: event.turnId };
+      const turnKey = runtimeTurnKey(event.sessionId, event.turnId);
       subscriptionTurns.set(message.subscriptionId, turn);
       if (
         event.kind === 'tool_running' &&
         isComputerUseRuntimeTool(event.payload.toolName)
       ) {
-        ensureDesktopControlOverlay().show(turn);
+        const control = { ...turn, toolCallId: event.payload.toolCallId };
+        activeControls.set(runtimeToolKey(control), control);
+        if ((pendingPermissions.get(turnKey)?.size ?? 0) > 0) {
+          cancelControl(control, 'permission_race');
+        } else {
+          ensureDesktopControlOverlay().show(control);
+        }
+      } else if (
+        (event.kind === 'tool_completed' ||
+          event.kind === 'tool_failed' ||
+          event.kind === 'tool_cancelled') &&
+        isComputerUseRuntimeTool(event.payload.toolName)
+      ) {
+        const controlIdentity = { ...turn, toolCallId: event.payload.toolCallId };
+        const toolKey = runtimeToolKey(controlIdentity);
+        const control = activeControls.get(toolKey);
+        activeControls.delete(toolKey);
+        cancelRequested.delete(toolKey);
+        if (control) desktopControlOverlay?.hide(control);
+      } else if (event.kind === 'permission_requested') {
+        const permissions = pendingPermissions.get(turnKey) ?? new Set<string>();
+        permissions.add(event.payload.permissionId);
+        pendingPermissions.set(turnKey, permissions);
+        for (const control of activeControls.values()) {
+          if (control.sessionId === event.sessionId && control.turnId === event.turnId) {
+            cancelControl(control, 'permission_race');
+          }
+        }
+      } else if (
+        event.kind === 'permission_answered' ||
+        event.kind === 'permission_rejected' ||
+        event.kind === 'permission_cancelled' ||
+        event.kind === 'permission_expired'
+      ) {
+        const permissions = pendingPermissions.get(turnKey);
+        permissions?.delete(event.payload.permissionId);
+        if (permissions?.size === 0) pendingPermissions.delete(turnKey);
       } else if (event.kind === 'turn_terminal') {
-        desktopControlOverlay?.hide(turn);
+        clearTurn(event.sessionId, event.turnId);
       }
       return;
     }
     const turn = subscriptionTurns.get(message.subscriptionId);
     subscriptionTurns.delete(message.subscriptionId);
-    if (turn) desktopControlOverlay?.hide(turn);
+    if (turn) clearTurn(turn.sessionId, turn.turnId);
   });
 }
 
