@@ -8,7 +8,7 @@ servers. It does not open an HTTP port.
 ## Ownership
 
 - `@cardbush/bush-runtime` owns immutable Built-in Tools, admission, permissions,
-  receipts, execution facts, Turn lifecycle and recovery.
+  invocation lifecycle, Workspace Change recording, Turn lifecycle and recovery.
 - `@cardbush/apps-mcp` owns CardBush-shipped app plugins. The initial plugin is
   `computer_use`.
 - Product Host owns model and plugin configuration, but never plugin execution.
@@ -16,9 +16,9 @@ servers. It does not open an HTTP port.
 
 The Runtime must never hard-code a `computer_use` handler or a private
 `host_tool_request` transport. A plugin is visible only after MCP discovery and is
-namespaced by the MCP client. Every state-changing tool supplies a complete
-`cardbush/action_manifest`; results return the Runtime-issued receipt identity and
-normal artifacts.
+namespaced by the MCP client. Tool behavior is described with standard MCP schema
+and annotations; results remain standard MCP `CallToolResult` values. CardBush
+does not require a private result envelope or server-issued Runtime facts.
 
 ## Process lifecycle
 

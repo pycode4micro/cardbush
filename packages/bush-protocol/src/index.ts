@@ -2,6 +2,7 @@ export * from "./cacheChain.js";
 export * from "./childAgent.js";
 export * from "./coordination.js";
 export * from "./delegation.js";
+export * from "./environment.js";
 export * from "./guidance.js";
 export * from "./interaction.js";
 export * from "./mcp.js";

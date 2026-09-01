@@ -78,7 +78,7 @@ import {
   recordAssistantFeedback,
   type AssistantFeedbackRating,
 } from '../messageFeedback';
-import { splitMessageMedia } from '../messageImages';
+import { splitMessageMedia, splitMessageMediaBlocks } from '../messageImages';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import {
   compareToolExecutionOrder,
@@ -107,7 +107,7 @@ type UserMessageDeliveryState = 'pending' | 'failed';
 
 function userMessageDeliveryState(message: ChatMessage): UserMessageDeliveryState | null {
   const metadata = message.metadata ?? {};
-  if (metadata.turn_guidance === true) {
+  if (metadata.turn_guidance === true || metadata.name === 'turn_guidance') {
     return null;
   }
   const delivery = String(metadata.message_delivery ?? '').trim().toLowerCase();
@@ -118,6 +118,7 @@ function guidanceDeliveryState(message: ChatMessage): GuidanceDeliveryState | nu
   const metadata = message.metadata ?? {};
   const isGuidance =
     metadata.turn_guidance === true ||
+    metadata.name === 'turn_guidance' ||
     typeof metadata.guidance_delivery === 'string';
   if (!isGuidance) {
     return null;
@@ -562,6 +563,19 @@ function MessageBubbleView({
       ? legacyUserGoalCommandText(message.attachments ?? [], userContentParts.text)
       : null;
   const text = legacyGoalCommandText ?? userContentParts.text;
+  const assistantContent = message.role === 'assistant' ? message.content : text;
+  const detachedImagePaths = pathsNotEmbeddedInContent(
+    imagePaths,
+    contentParts.imagePaths,
+  );
+  const detachedVideoPaths = pathsNotEmbeddedInContent(
+    videoPaths,
+    contentParts.videoPaths,
+  );
+  const detachedAudioPaths = pathsNotEmbeddedInContent(
+    audioPaths,
+    contentParts.audioPaths,
+  );
   const goalCommand =
     message.role === 'user'
       ? userGoalCommandPresentation(message, text, language, goalObjective)
@@ -927,11 +941,12 @@ function MessageBubbleView({
       <AgentHookSummaryBadge message={message} language={language} />
       {!renderActiveTranscript && (
         <>
-          <MessageImageStrip paths={imagePaths} language={language} />
+          <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
           <MessageMediaStrip
-            videoPaths={videoPaths}
-            audioPaths={audioPaths}
+            videoPaths={detachedVideoPaths}
+            audioPaths={detachedAudioPaths}
             language={language}
+            showPaths
           />
         </>
       )}
@@ -946,7 +961,7 @@ function MessageBubbleView({
         />
       ) : toolExecutions.length > 0 ? (
         <AssistantMessageContent
-          content={text}
+          content={assistantContent}
           executions={toolExecutions}
           language={language}
           message={message}
@@ -956,9 +971,9 @@ function MessageBubbleView({
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />
-      ) : text ? (
+      ) : assistantContent ? (
         <>
-          <MarkdownContent content={text} language={language} />
+          <MessageInlineMediaContent content={assistantContent} language={language} />
           {isActiveAssistantTurn && (
             <AssistantThinkingProcessLine
               language={language}
@@ -985,15 +1000,16 @@ function MessageBubbleView({
   );
   const finalAnswerBody = (
     <div className="assistant-final-answer">
-      <MessageImageStrip paths={imagePaths} language={language} />
+      <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
       <MessageMediaStrip
-        videoPaths={videoPaths}
-        audioPaths={audioPaths}
+        videoPaths={detachedVideoPaths}
+        audioPaths={detachedAudioPaths}
         language={language}
+        showPaths
       />
-      {text && (
-        <MarkdownContent
-          content={assistantTextWithoutToolNarration(text, toolExecutions)}
+      {assistantContent && (
+        <MessageInlineMediaContent
+          content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
           language={language}
         />
       )}
@@ -1372,7 +1388,6 @@ function AssistantActiveTranscript({
   return (
     <div className="assistant-active-transcript">
       {visibleMessages.map((segment, index) => {
-        const { imagePaths, videoPaths, audioPaths, text } = splitMessageMedia(segment.content);
         const executions = segment.toolExecutions ?? [];
         const isLastSegment = index === visibleMessages.length - 1;
         return (
@@ -1381,15 +1396,9 @@ function AssistantActiveTranscript({
             key={segment.id}
             className="assistant-active-transcript-segment"
           >
-            <MessageImageStrip paths={imagePaths} language={language} />
-            <MessageMediaStrip
-              videoPaths={videoPaths}
-              audioPaths={audioPaths}
-              language={language}
-            />
             {executions.length > 0 ? (
               <AssistantMessageContent
-                content={text}
+                content={segment.content}
                 executions={executions}
                 language={language}
                 message={segment}
@@ -1399,9 +1408,9 @@ function AssistantActiveTranscript({
                 onRevertChangeReport={onRevertChangeReport}
                 onOpenScene={onOpenScene}
               />
-            ) : text ? (
+            ) : segment.content ? (
               <>
-                <MarkdownContent content={text} language={language} />
+                <MessageInlineMediaContent content={segment.content} language={language} />
                 {showThinkingPlaceholder && isLastSegment && (
                   <AssistantThinkingProcessLine
                     language={language}
@@ -1461,7 +1470,7 @@ function AssistantMessageContent({
     const segment = displayContent.slice(cursor, group.offset);
     if (segment.trim()) {
       blocks.push(
-        <MarkdownContent
+        <MessageInlineMediaContent
           key={`text-before-${groupKey || index}`}
           content={segment.trim()}
           language={language}
@@ -1485,7 +1494,7 @@ function AssistantMessageContent({
   const tail = displayContent.slice(cursor);
   if (tail.trim()) {
     blocks.push(
-      <MarkdownContent key="text-tail" content={tail.trim()} language={language} />,
+      <MessageInlineMediaContent key="text-tail" content={tail.trim()} language={language} />,
     );
   }
   if (
@@ -2217,7 +2226,6 @@ function AssistantLoopHistoryItem({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const { imagePaths, videoPaths, audioPaths, text } = splitMessageMedia(message.content);
   const executions = message.toolExecutions ?? [];
   const timestamp = formatLoopHistoryTimestamp(message, language);
 
@@ -2227,15 +2235,9 @@ function AssistantLoopHistoryItem({
       data-testid="assistant-loop-history-item"
     >
       {timestamp && <header className="assistant-loop-history-timestamp"><span>{timestamp}</span></header>}
-      <MessageImageStrip paths={imagePaths} language={language} />
-      <MessageMediaStrip
-        videoPaths={videoPaths}
-        audioPaths={audioPaths}
-        language={language}
-      />
       {executions.length > 0 ? (
         <AssistantMessageContent
-          content={text}
+          content={message.content}
           executions={executions}
           language={language}
           message={message}
@@ -2243,8 +2245,8 @@ function AssistantLoopHistoryItem({
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />
-      ) : text ? (
-        <MarkdownContent content={text} language={language} />
+      ) : message.content ? (
+        <MessageInlineMediaContent content={message.content} language={language} />
       ) : null}
     </section>
   );
@@ -2540,6 +2542,15 @@ function uniqueAttachmentPaths(paths: string[]) {
   });
 }
 
+function pathsNotEmbeddedInContent(paths: string[], embeddedPaths: string[]) {
+  const embedded = new Set(
+    embeddedPaths.map((pathValue) => pathValue.trim().replace(/\\/g, '/').toLowerCase()),
+  );
+  return paths.filter(
+    (pathValue) => !embedded.has(pathValue.trim().replace(/\\/g, '/').toLowerCase()),
+  );
+}
+
 function userMessageFileAttachments(
   attachments: ChatAttachment[],
   parsedPaths: string[],
@@ -2578,10 +2589,12 @@ function MessageMediaStrip({
   videoPaths,
   audioPaths,
   language,
+  showPaths = false,
 }: {
   videoPaths: string[];
   audioPaths: string[];
   language: AppLanguage;
+  showPaths?: boolean;
 }) {
   if (videoPaths.length === 0 && audioPaths.length === 0) return null;
   return (
@@ -2597,7 +2610,9 @@ function MessageMediaStrip({
               src={messageMediaSource(pathValue)}
               aria-label={language === 'zh' ? `播放视频 ${name}` : `Play video ${name}`}
             />
-            <figcaption title={pathValue}>{name}</figcaption>
+            <figcaption title={pathValue}>
+              {showPaths ? <MessageMediaPath pathValue={pathValue} language={language} /> : name}
+            </figcaption>
           </figure>
         );
       })}
@@ -2605,7 +2620,9 @@ function MessageMediaStrip({
         const name = basename(pathValue);
         return (
           <figure className="message-audio-player" key={`audio-${pathValue}`}>
-            <figcaption title={pathValue}>{name}</figcaption>
+            <figcaption title={pathValue}>
+              {showPaths ? <MessageMediaPath pathValue={pathValue} language={language} /> : name}
+            </figcaption>
             <audio
               controls
               preload="metadata"
@@ -2761,9 +2778,11 @@ function MessageFileAttachmentStrip({
 function MessageImageStrip({
   paths,
   language,
+  showPaths = false,
 }: {
   paths: string[];
   language: AppLanguage;
+  showPaths?: boolean;
 }) {
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   if (paths.length === 0) {
@@ -2774,12 +2793,18 @@ function MessageImageStrip({
       <div className="message-image-strip">
         {paths.map((pathValue, index) => {
           return (
-            <MessageImagePreviewButton
-              key={`${pathValue}-${index}`}
-              pathValue={pathValue}
-              language={language}
-              onPreview={setPreview}
-            />
+            <figure className="message-image-item" key={`${pathValue}-${index}`}>
+              <MessageImagePreviewButton
+                pathValue={pathValue}
+                language={language}
+                onPreview={setPreview}
+              />
+              {showPaths && (
+                <figcaption>
+                  <MessageMediaPath pathValue={pathValue} language={language} />
+                </figcaption>
+              )}
+            </figure>
           );
         })}
       </div>
@@ -2791,6 +2816,89 @@ function MessageImageStrip({
         />
       )}
     </>
+  );
+}
+
+function MessageMediaPath({
+  pathValue,
+  language,
+}: {
+  pathValue: string;
+  language: AppLanguage;
+}) {
+  const local = isAbsoluteLocalPath(pathValue) || /^file:\/\//i.test(pathValue);
+  const label = /^data:/i.test(pathValue)
+    ? language === 'zh' ? '内嵌媒体' : 'Embedded media'
+    : pathValue;
+  return (
+    <button
+      className="message-media-path"
+      type="button"
+      title={pathValue}
+      onClick={() => {
+        if (local) {
+          openInspector(pathValue, basename(pathValue));
+          return;
+        }
+        if (/^https?:\/\//i.test(pathValue)) {
+          window.open(pathValue, '_blank', 'noopener,noreferrer');
+        }
+      }}
+    >
+      <FileIcon size={11} />
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function MessageInlineMediaContent({
+  content,
+  language,
+}: {
+  content: string;
+  language: AppLanguage;
+}) {
+  const blocks = splitMessageMediaBlocks(content);
+  return (
+    <div className="message-inline-media-content">
+      {blocks.map((block, index) => {
+        if (block.kind === 'text') {
+          return (
+            <MarkdownContent
+              // The source range, rather than its words, establishes block identity.
+              // eslint-disable-next-line react/no-array-index-key
+              key={`text-${index}`}
+              content={block.content}
+              language={language}
+            />
+          );
+        }
+        const imagePaths = block.items
+          .filter((item) => item.type === 'image')
+          .map((item) => item.path);
+        const videoPaths = block.items
+          .filter((item) => item.type === 'video')
+          .map((item) => item.path);
+        const audioPaths = block.items
+          .filter((item) => item.type === 'audio')
+          .map((item) => item.path);
+        return (
+          <div
+            className="message-inline-media-block"
+            // eslint-disable-next-line react/no-array-index-key
+            key={`media-${index}`}
+          >
+            <MessageImageStrip paths={imagePaths} language={language} showPaths />
+            <MessageMediaStrip
+              videoPaths={videoPaths}
+              audioPaths={audioPaths}
+              language={language}
+              showPaths
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

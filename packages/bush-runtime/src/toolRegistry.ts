@@ -4,10 +4,12 @@ import {
   type ActionManifest,
   type ActionManifestTemplate,
   type RuntimePermissionAnswer,
+  type RuntimePermissionScope,
+  type RuntimePermissionTarget,
   type ToolCall,
   type ToolDefinition,
   type ToolCatalogEntry,
-  type ToolResult,
+  type WorkspaceChange,
   type ModelMessage,
   type ModelRequest,
 } from "@cardbush/bush-protocol";
@@ -15,8 +17,9 @@ import {
 export interface ToolPermissionRequest {
   reason: string;
   actions: string[];
-  resources: string[];
+  targets: RuntimePermissionTarget[];
   capabilityIds: string[];
+  scope?: RuntimePermissionScope;
 }
 
 export type ToolAdmissionDecision =
@@ -41,7 +44,8 @@ export interface ToolAdmissionContext<TInput = unknown> {
 export interface ToolHandlerContext<TInput = unknown>
   extends ToolAdmissionContext<TInput> {
   capabilityIds: string[];
-  invokeTool: (name: string, input: unknown) => Promise<ToolResult>;
+  invokeTool: (name: string, input: unknown) => Promise<unknown>;
+  recordWorkspaceChange: (change: WorkspaceChange) => void;
 }
 
 export interface ToolRegistration<TInput = unknown> {
@@ -51,7 +55,7 @@ export interface ToolRegistration<TInput = unknown> {
   authorize?: (
     context: ToolAdmissionContext<TInput>,
   ) => ToolAdmissionDecision | Promise<ToolAdmissionDecision>;
-  execute: (context: ToolHandlerContext<TInput>) => ToolResult | Promise<ToolResult>;
+  execute: (context: ToolHandlerContext<TInput>) => unknown | Promise<unknown>;
   parallelSafe?: boolean;
   executionChannel?: string;
   visibleToChild?: boolean;

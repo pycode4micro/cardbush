@@ -8,8 +8,7 @@ import {
   registerCoordinationTools,
 } from "../dist/index.js";
 
-test("model-facing Plan and Goal tools submit facts with Runtime-owned identities", async () => {
-  let receipt = 0;
+test("model-facing Plan and Goal tools return their native coordination records", async () => {
   const store = new CoordinationStore({
     now: () => "2026-08-29T00:00:00.000Z",
     createNodeId: () => "node_runtime",
@@ -21,10 +20,7 @@ test("model-facing Plan and Goal tools submit facts with Runtime-owned identitie
     linkedA2ATaskIds: [],
   });
   const registry = new ToolRegistry();
-  registerCoordinationTools(registry, store, {
-    createPlanId: () => "plan_runtime",
-    createReceiptId: () => `receipt_${++receipt}`,
-  });
+  registerCoordinationTools(registry, store, { createPlanId: () => "plan_runtime" });
   const coordinator = new ToolExecutionCoordinator({
     registry,
     permissions: { request: async () => { throw new Error("unexpected permission"); } },
@@ -38,10 +34,9 @@ test("model-facing Plan and Goal tools submit facts with Runtime-owned identitie
     }),
     identity(0),
   );
-  assert.equal(planOutcome.kind, "completed");
-  assert.equal(planOutcome.result.output.plan.plan_id, "plan_runtime");
-  assert.equal(planOutcome.result.output.plan.nodes[0].id, "node_runtime");
-  assert.equal(planOutcome.result.facts[0].receipt_id, "receipt_1");
+  assert.equal(planOutcome.kind, "returned");
+  assert.equal(planOutcome.result.plan.plan_id, "plan_runtime");
+  assert.equal(planOutcome.result.plan.nodes[0].id, "node_runtime");
 
   const goalOutcome = await coordinator.execute(
     toolCall("call_goal", "update_goal", {
@@ -50,9 +45,9 @@ test("model-facing Plan and Goal tools submit facts with Runtime-owned identitie
     }),
     identity(1),
   );
-  assert.equal(goalOutcome.kind, "completed");
-  assert.equal(goalOutcome.result.output.goalId, "goal_runtime");
-  assert.equal(goalOutcome.result.output.status, "complete");
+  assert.equal(goalOutcome.kind, "returned");
+  assert.equal(goalOutcome.result.goalId, "goal_runtime");
+  assert.equal(goalOutcome.result.status, "complete");
   assert.equal(store.getGoal("session_1").revision, 2);
 });
 

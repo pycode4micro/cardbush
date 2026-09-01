@@ -3,6 +3,7 @@ import {
   modelRequestSchema,
   runtimeSessionTurnRequestSchema,
   type ContextSnapshot,
+  type CacheChainState,
   type ModelMessage,
   type ModelRequest,
   type RuntimeEvent,
@@ -35,11 +36,13 @@ export type TurnFinalizedObserver = (
   payload: TurnTerminalPayload,
   generatedMessages: GeneratedMessageFact[],
   usage: SessionUsageFact,
+  cacheChainState: CacheChainState,
 ) => void;
 
 export interface PreparedSessionTurn {
   modelRequest: ModelRequest;
   sessionCommit: RuntimeSessionCommitCheckpoint;
+  cacheChainState?: CacheChainState;
 }
 
 export class RuntimeSessionCoordinator {
@@ -188,6 +191,7 @@ export class RuntimeSessionCoordinator {
     const createdAt = this.#now();
     const prepared = {
       modelRequest,
+      cacheChainState: session.turns.at(-1)?.cacheChainState,
       sessionCommit: {
         turnSequence: (session.turns.at(-1)?.turnSequence ?? 0) + 1,
         createdAt,
@@ -217,7 +221,7 @@ export class RuntimeSessionCoordinator {
     checkpoint: RuntimeSessionCommitCheckpoint,
   ): TurnFinalizedObserver {
     validateSessionCheckpoint(request, checkpoint);
-    return (payload, generatedMessages, usage) => {
+    return (payload, generatedMessages, usage, cacheChainState) => {
       try {
         const inputMessages = checkpoint.inputMessages.map((item, index) => ({
           messageId: item.messageId,
@@ -244,6 +248,7 @@ export class RuntimeSessionCoordinator {
           reason: payload.reason,
           messages: [...inputMessages, ...generated],
           usage,
+          cacheChainState,
         });
       } finally {
         this.abandon(request.sessionId, request.turnId);

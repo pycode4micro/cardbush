@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { cacheChainStateSchema } from "./cacheChain.js";
 import { modelMessageSchema, modelRequestSchema } from "./model.js";
 
 export const BUSH_SESSION_EVENT_PROTOCOL = "bush.session_event.v1" as const;
@@ -52,6 +53,7 @@ export const committedTurnSchema = z.object({
   reason: z.string().min(1),
   messages: z.array(sessionMessageSchema).min(1),
   usage: sessionUsageSchema.default({}),
+  cacheChainState: cacheChainStateSchema.optional(),
   contextSummary: z.string().min(1).optional(),
 });
 

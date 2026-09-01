@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   type SessionSnapshot,
-  type ToolResult,
 } from "@cardbush/bush-protocol";
 
 import {
@@ -52,7 +49,6 @@ export function registerSubagentTool(
     createSessionId?: () => string;
     createTurnId?: () => string;
     createMessageId?: () => string;
-    createReceiptId?: () => string;
     asyncDispatch?: boolean;
     onAsyncResult?: (input: {
       parentSessionId: string;
@@ -70,7 +66,6 @@ export function registerSubagentTool(
   const createSessionId = options.createSessionId ?? (() => `subagent_session_${randomUUID()}`);
   const createTurnId = options.createTurnId ?? (() => `subagent_turn_${randomUUID()}`);
   const createMessageId = options.createMessageId ?? (() => `subagent_message_${randomUUID()}`);
-  const createReceiptId = options.createReceiptId ?? (() => `receipt_${randomUUID()}`);
 
   registry.register<SubagentInput>({
     definition: {
@@ -92,15 +87,8 @@ export function registerSubagentTool(
       operation: "agent.delegate",
       risk: "low",
       owner: "runtime_subagent",
-      dispatch_phase: "execution",
       dispatch_scope: "child_session",
-      dispatch_side_effect: "delegated_execution",
-      dispatch_mutating: true,
-      dispatch_source: "registered_tool",
-      stage_modes: ["execute"],
-      output_kinds: ["structured_data", "user_guidance"],
-      handoff_exports: ["terminal_response"],
-      evidence_hints: ["subagent_task"],
+      mutating: true,
     },
     parallelSafe: true,
     visibleToChild: true,
@@ -153,20 +141,19 @@ export function registerSubagentTool(
           taskId,
           result: completion.then(asyncResultMessage),
         });
-        return submittedResult(context, tasks.get(context.sessionId, taskId)!, createReceiptId());
+        return submittedResult(tasks.get(context.sessionId, taskId)!);
       }
-      return result(context, await completion, createReceiptId());
+      return taskResult(await completion);
     },
   });
   if (options.awaitAsyncResults && !registry.resolve(AWAIT_SUBAGENTS_TOOL)) {
-    registerAwaitSubagentsTool(registry, options.awaitAsyncResults, createReceiptId);
+    registerAwaitSubagentsTool(registry, options.awaitAsyncResults);
   }
 }
 
 function registerAwaitSubagentsTool(
   registry: ToolRegistry,
   awaitAsyncResults: AwaitAsyncSubagentResults,
-  createReceiptId: () => string,
 ): void {
   registry.register<AwaitSubagentsInput>({
     definition: {
@@ -191,15 +178,8 @@ function registerAwaitSubagentsTool(
       operation: "agent.join",
       risk: "low",
       owner: "runtime_subagent",
-      dispatch_phase: "execution",
       dispatch_scope: "child_session",
-      dispatch_side_effect: "none",
-      dispatch_mutating: false,
-      dispatch_source: "registered_tool",
-      stage_modes: ["execute"],
-      output_kinds: ["structured_data", "user_guidance"],
-      handoff_exports: ["terminal_response"],
-      evidence_hints: ["subagent_task"],
+      mutating: false,
     },
     parallelSafe: false,
     visibleToChild: true,
@@ -212,33 +192,10 @@ function registerAwaitSubagentsTool(
         taskIds: context.input.taskIds,
       });
       return {
-        protocol: BUSH_TOOL_RESULT_PROTOCOL,
-        tool_call_id: context.toolCall.id,
-        success: true,
-        output: {
-          status: "joined",
-          taskIds: joined.map((result) => result.taskId),
-          count: joined.length,
-        },
-        facts: [{
-          protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-          receipt_id: createReceiptId(),
-          action_manifest_id: context.actionManifest.manifest_id,
-          status: "succeeded",
-          operation: context.actionManifest.operation,
-          effect_kind: context.actionManifest.effect_kind,
-          owner: context.actionManifest.owner,
-          dispatch_scope: context.actionManifest.dispatch_scope,
-          categories: ["subagent_task"],
-          paths: [],
-          execution_success: true,
-          semantic_success: true,
-          verification_state: "verified",
-          error_code: "",
-        }],
-        artifacts: [],
-        workspace_changes: [],
-        guidance: joined.map((result) => result.message),
+        status: "joined",
+        taskIds: joined.map((result) => result.taskId),
+        count: joined.length,
+        results: joined.map((result) => ({ taskId: result.taskId, content: result.message.content })),
       };
     },
   });
@@ -289,92 +246,26 @@ async function finishTask(input: {
   });
 }
 
-function submittedResult(
-  context: ToolHandlerContext<SubagentInput>,
-  task: ReturnType<SubagentTaskStore["start"]>,
-  receiptId: string,
-): ToolResult {
+function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<string, unknown> {
   return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: true,
-    output: {
-      taskId: task.taskId,
-      status: task.status,
-      childSessionId: task.childSessionId,
-      childTurnId: task.childTurnId,
-      inheritedMessageCount: task.inheritedMessageCount,
-    },
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: receiptId,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: "submitted",
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["subagent_task"],
-      paths: [],
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [], workspace_changes: [], guidance: [],
+    taskId: task.taskId,
+    status: task.status,
+    childSessionId: task.childSessionId,
+    childTurnId: task.childTurnId,
+    inheritedMessageCount: task.inheritedMessageCount,
   };
 }
 
-function result(
-  context: ToolHandlerContext<SubagentInput>,
-  task: ReturnType<SubagentTaskStore["finish"]>,
-  receiptId: string,
-): ToolResult {
-  const completed = task.status === "completed";
+function taskResult(task: ReturnType<SubagentTaskStore["finish"]>): Record<string, unknown> {
   return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: completed,
-    output: {
-      taskId: task.taskId,
-      status: task.status,
-      childSessionId: task.childSessionId,
-      childTurnId: task.childTurnId,
-      inheritedMessageCount: task.inheritedMessageCount,
-      errorMessage: task.errorMessage,
-      usage: task.usage,
-    },
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: receiptId,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: completed ? "succeeded" : task.status,
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["subagent_task"],
-      paths: [],
-      execution_success: true,
-      semantic_success: completed,
-      verification_state: completed ? "verified" : "failed",
-      error_code: completed ? "" : task.errorMessage || "subagent_failed",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: task.finalResponse
-      ? [{ role: "user", name: "subagent_result", content: task.finalResponse }]
-      : [],
-    ...(completed
-      ? {}
-      : {
-          error: {
-            kind: task.status === "stopped" ? "cancelled" : "tool",
-            code: task.status === "stopped" ? "subagent_stopped" : "subagent_failed",
-            message: task.errorMessage,
-            details: { taskId: task.taskId },
-          },
-        }),
+    taskId: task.taskId,
+    status: task.status,
+    childSessionId: task.childSessionId,
+    childTurnId: task.childTurnId,
+    inheritedMessageCount: task.inheritedMessageCount,
+    finalResponse: task.finalResponse,
+    errorMessage: task.errorMessage,
+    usage: task.usage,
   };
 }
 

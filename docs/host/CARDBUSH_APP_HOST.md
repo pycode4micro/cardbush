@@ -20,9 +20,9 @@ CardBush must not special-case a Bot MCP server ID or inspect its private config
 
 The recommended Bot MCP surface contains one model-visible tool named `deliver`.
 It sends text and/or already-created local artifacts through the Bot service. The
-Bot server declares the complete `cardbush/action_manifest` metadata required by
-the normal MCP Tool Registry. CardBush applies the same discovery, permission,
-receipt and execution-fact lifecycle used for every other external MCP tool.
+Bot server declares its input schema and standard MCP annotations. CardBush
+applies the same discovery, permission and invocation lifecycle used for every
+other external MCP tool while preserving its native MCP result unchanged.
 
 The tool name is intentionally not registered by CardBush itself. If the Bot MCP
 is absent, `deliver` is absent. If multiple independent delivery plugins are

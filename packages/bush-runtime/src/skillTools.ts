@@ -1,14 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
-import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
-  type ToolResult,
-} from "@cardbush/bush-protocol";
-
-import type { ToolHandlerContext, ToolRegistration, ToolRegistry } from "./toolRegistry.js";
+import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
 
 interface SkillCard {
   name: string;
@@ -72,7 +65,7 @@ function searchRegistration(
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
         .slice(0, context.input.limit);
-      return success(context, { query: context.input.query, matches }, matches.map((item) => item.mainResource));
+      return { query: context.input.query, matches };
     },
   };
 }
@@ -156,47 +149,8 @@ function manifest(operation: string) {
     operation,
     risk: "low",
     owner: "runtime",
-    dispatch_phase: "execution",
     dispatch_scope: "runtime",
-    dispatch_side_effect: "none",
-    dispatch_mutating: false,
-    dispatch_source: "product_skill_snapshot",
-    stage_modes: ["read"],
-    output_kinds: ["skill_instruction"],
-    handoff_exports: [],
-    evidence_hints: ["skill_resource"],
-  };
-}
-
-function success(
-  context: ToolHandlerContext<unknown>,
-  output: unknown,
-  paths: string[],
-): ToolResult {
-  return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: true,
-    output,
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: `receipt_${randomUUID()}`,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: "completed",
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["skill"],
-      paths,
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
+    mutating: false,
   };
 }
 

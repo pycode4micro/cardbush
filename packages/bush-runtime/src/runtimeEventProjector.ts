@@ -29,6 +29,8 @@ export class RuntimeEventProjector {
   #active?: ActiveSegment;
   #nextOrdinal = 0;
   #hasAssistantSegment = false;
+  #assistantContent = "";
+  #reasoningContent = "";
 
   constructor(
     eventLog: InMemoryRuntimeEventLog,
@@ -47,6 +49,14 @@ export class RuntimeEventProjector {
 
   get finalMessageId(): string | undefined {
     return this.#hasAssistantSegment ? this.#messageId : undefined;
+  }
+
+  get assistantContent(): string {
+    return this.#assistantContent;
+  }
+
+  get reasoningContent(): string {
+    return this.#reasoningContent;
   }
 
   accept(event: ModelEvent): RuntimeEvent[] {
@@ -90,6 +100,8 @@ export class RuntimeEventProjector {
 
   #appendDelta(channel: SegmentChannel, delta: string): RuntimeEvent[] {
     const events: RuntimeEvent[] = [];
+    if (channel === "assistant") this.#assistantContent += delta;
+    else this.#reasoningContent += delta;
     if (this.#active?.channel !== channel) {
       events.push(...this.completeOpenSegment());
       this.#active = {

@@ -88,12 +88,15 @@ const permissionFixture: PendingInteraction = {
   reason: '需要将最终验收报告写入桌面。',
   description: '模型请求向工作区外写入一份发布验收报告。',
   toolName: 'request_permission',
-  permissionPreview: {
-    path: 'C:\\Users\\wfang\\Desktop\\release-report.md',
-    resource_kind: 'path',
-    access_kind: 'write',
+  runtimePermission: {
     reason: '需要将最终验收报告写入桌面。',
-    operation: '创建 release-report.md 并写入验收结果',
+    actions: ['write'],
+    targets: [{
+      kind: 'filesystem_path',
+      value: 'C:\\Users\\wfang\\Desktop\\release-report.md',
+    }],
+    requestedCapabilityIds: ['write:C:\\Users\\wfang\\Desktop\\release-report.md'],
+    scope: { mode: 'task_free', roots: ['C:\\workspace'] },
   },
   questions: [{
     id: 'permission',

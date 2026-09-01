@@ -3,12 +3,6 @@ import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
-  type ToolResult,
-} from "@cardbush/bush-protocol";
-
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { LogicMemoryStore } from "./logicMemory.js";
 
@@ -198,7 +192,7 @@ function registerImageInput(registry: ToolRegistry) {
       const url = requiredText(context.input.url, "url");
       if (!isAbsolute(url) && !/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) throw new Error("url must be an absolute path, http(s) URL, or data image.");
       if (isAbsolute(url)) await stat(url);
-      return success(context, { queued: true, url, label: text(context.input.label), caption: text(context.input.caption) }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, detail: text(context.input.detail) || "auto" } }], "attempted");
+      return success(context, { queued: true, url, label: text(context.input.label), caption: text(context.input.caption) }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, detail: text(context.input.detail) || "auto" } }]);
     },
   });
 }
@@ -277,7 +271,7 @@ function registerParallel(registry: ToolRegistry) {
       const catalog = new Map(registry.catalog().map((item) => [item.definition.name, item]));
       const disallowed = context.input.calls.filter((call) => {
         const entry = catalog.get(call.name);
-        return call.name === "parallel_tools" || !entry?.parallelSafe || entry.manifest.dispatch_mutating;
+        return call.name === "parallel_tools" || !entry?.parallelSafe;
       });
       if (disallowed.length) {
         throw new Error(`parallel_tools only accepts read-only parallel-safe tools: ${disallowed.map((item) => item.name).join(", ")}`);
@@ -285,15 +279,15 @@ function registerParallel(registry: ToolRegistry) {
       const results = await Promise.all(context.input.calls.map(async (call) => {
         try {
           const child = await context.invokeTool(call.name, call.arguments);
-          return { name: call.name, reason: call.reason, success: child.success, output: child.output, error: child.error };
+          return { name: call.name, reason: call.reason, returned: true, result: child };
         } catch (error) {
           return { name: call.name, reason: call.reason, success: false, error: { code: "child_exception", message: error instanceof Error ? error.message : String(error) } };
         }
       }));
       return success(context, {
         results,
-        success_count: results.filter((item) => item.success).length,
-        failure_count: results.filter((item) => !item.success).length,
+        returned_count: results.filter((item) => item.returned === true).length,
+        failure_count: results.filter((item) => item.returned !== true).length,
       }, [], ["tool_results"]);
     },
   });
@@ -305,9 +299,15 @@ class JsonStore {
   async write(value: unknown) { await mkdir(dirname(this.path), { recursive: true }); const temp = `${this.path}.tmp-${randomUUID()}`; await writeFile(temp, JSON.stringify(value, null, 2), "utf8"); await rename(temp, this.path).catch(async () => { await rm(this.path, { force: true }); await rename(temp, this.path); }); }
 }
 
-function manifest(operation: string, mutating: boolean, scope: string) { return { effect_kind: mutating ? "local_state" : "observation", operation, risk: mutating ? "medium" : "low", owner: "runtime", dispatch_phase: mutating ? "write" : "read", dispatch_scope: scope, dispatch_side_effect: mutating ? "local" : "none", dispatch_mutating: mutating, dispatch_source: "registered_tool", stage_modes: [mutating ? "write" : "read"], output_kinds: ["structured_data", "facts"], handoff_exports: mutating ? [] : ["facts"], evidence_hints: [operation] }; }
-function success(context: ToolHandlerContext<unknown>, output: unknown, paths: string[], categories: string[], artifacts: ToolResult["artifacts"] = [], verificationState: "verified" | "attempted" = "verified"): ToolResult { return { protocol: BUSH_TOOL_RESULT_PROTOCOL, tool_call_id: context.toolCall.id, success: true, output, facts: [{ protocol: BUSH_EXECUTION_FACT_PROTOCOL, receipt_id: `receipt_${randomUUID()}`, action_manifest_id: context.actionManifest.manifest_id, status: "completed", operation: context.actionManifest.operation, effect_kind: context.actionManifest.effect_kind, owner: context.actionManifest.owner, dispatch_scope: context.actionManifest.dispatch_scope, categories, paths, execution_success: true, semantic_success: true, verification_state: verificationState, error_code: "" }], artifacts, workspace_changes: [], guidance: [] }; }
-async function pathAdmission(context: ToolAdmissionContext<Record<string, unknown>>, candidate: string, access: "read" | "write") { const path = resolve(candidate); const mode = context.turn?.request.permissionMode ?? "task_free"; if (mode === "all_free") return { kind: "allow" as const }; const metadata = context.turn?.request.metadata ?? {}; const configuredUserRoots = stringList(metadata.userRoots); const userRoots = mode === "user_free" ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()]) : []; const roots = [metadata.workspaceDir, metadata.projectDir, ...userRoots, ...stringList(metadata.taskRoots)].filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => resolve(item)); if (roots.some((root) => path === root || path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) return { kind: "allow" as const }; return { kind: "ask" as const, request: { reason: `${access} requires access outside configured roots.`, actions: [access], resources: [path], capabilityIds: [`${access}:${path}`] } }; }
+function manifest(operation: string, mutating: boolean, scope: string) { return { effect_kind: mutating ? "local_state" : "observation", operation, risk: mutating ? "medium" : "low", owner: "runtime", dispatch_scope: scope, mutating }; }
+function success(_context: ToolHandlerContext<unknown>, output: unknown, _paths: string[], _categories: string[], artifacts: Array<Record<string, unknown>> = []): unknown {
+  if (artifacts.length === 0) return output;
+  const value = output && typeof output === "object" && !Array.isArray(output)
+    ? output as Record<string, unknown>
+    : { value: output };
+  return { ...value, artifacts };
+}
+async function pathAdmission(context: ToolAdmissionContext<Record<string, unknown>>, candidate: string, access: "read" | "write") { const path = resolve(candidate); const mode = context.turn?.request.permissionMode ?? "task_free"; if (mode === "all_free") return { kind: "allow" as const }; const metadata = context.turn?.request.metadata ?? {}; const configuredUserRoots = stringList(metadata.userRoots); const userRoots = mode === "user_free" ? (configuredUserRoots.length > 0 ? configuredUserRoots : [homedir()]) : []; const roots = [metadata.workspaceDir, metadata.projectDir, ...userRoots, ...stringList(metadata.taskRoots)].filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => resolve(item)); if (roots.some((root) => path === root || path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) return { kind: "allow" as const }; return { kind: "ask" as const, request: { reason: `${access} requires access outside configured roots.`, actions: [access], targets: [{ kind: "filesystem_path" as const, value: path }], capabilityIds: [`${access}:${path}`], scope: { mode: mode === "user_free" ? "user_free" as const : "task_free" as const, roots } } }; }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Tool arguments must be an object."); return value as Record<string, unknown>; }
 function objectSchema(required: string[], properties: Record<string, unknown>) { return { type: "object", additionalProperties: false, required, properties }; }
 function text(value: unknown): string { return String(value ?? "").trim(); }

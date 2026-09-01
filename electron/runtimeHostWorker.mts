@@ -272,7 +272,6 @@ function withBundledAppsServer(input: unknown): unknown {
         }),
       },
       versionMode: 'auto',
-      acceptCardbushExtensions: true,
       defaultToolPolicy: {
         permission: 'ask',
         parallelSafe: false,

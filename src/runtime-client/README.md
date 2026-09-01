@@ -23,7 +23,7 @@ Forbidden responsibilities:
 - retry model or tool requests;
 - reorder, merge or fabricate Runtime events;
 - access Runtime SQLite storage;
-- implement permission or Execution Fact rules.
+- implement permission rules or interpret native Tool result semantics.
 
 `FixtureRuntimeTransport` deliberately accepts raw fixture values.
 `createRuntimeFixtureClient` validates the complete fixture through the
@@ -40,8 +40,9 @@ model or network prose. React should subscribe to its `RuntimeTurnStore`; it
 must not call preload IPC methods directly.
 
 Tool and permission events are projected by stable call/permission identity.
-Receipt, Execution Fact, Artifact and Workspace Change references remain
-separate arrays; rendered tool output is never inspected to manufacture them.
+Terminal Tool events carry invocation state only; the exact native return,
+Runtime error, and Runtime-owned Workspace Changes are loaded from the execution
+record. Rendered output is never inspected to manufacture lifecycle facts.
 Permission answers are validated against `bush.runtime_permission_answer.v1`
 before IPC. The allow UI remains gated until `permission_requested` publishes
 the concrete capability IDs that the user is allowed to grant.

@@ -1,4 +1,7 @@
-import type { ReasoningEffort } from '@cardbush/bush-protocol';
+import type {
+  ReasoningEffort,
+  RuntimePermissionRequest,
+} from '@cardbush/bush-protocol';
 
 export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
@@ -679,7 +682,7 @@ export interface PendingInteraction {
   cancelLabel?: string;
   replyMode?: string;
   toolName?: string;
-  permissionPreview?: Record<string, unknown>;
+  runtimePermission?: RuntimePermissionRequest;
   questions?: InteractionQuestion[];
   raw: Record<string, unknown>;
 }

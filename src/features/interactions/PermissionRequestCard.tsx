@@ -9,6 +9,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react';
+import type { RuntimePermissionScope } from '@cardbush/bush-protocol';
 
 import type {
   AppLanguage,
@@ -32,10 +33,15 @@ export function PermissionRequestCard({
   onChoose: (optionId: string) => void;
   onCancel: () => void;
 }) {
-  const details = permissionDetails(interaction);
+  const details = permissionDetails(interaction, language);
   const question = permissionQuestion(interaction.questions ?? []);
   const options = normalizedPermissionOptions(question?.options ?? [], language);
-  const title = interaction.title || (language === 'zh' ? '需要访问权限' : 'Permission required');
+  const sourceTitle = interaction.title?.trim() ?? '';
+  const title = !sourceTitle || sourceTitle === 'Permission'
+    ? language === 'zh' ? '需要访问权限' : 'Permission required'
+    : sourceTitle === 'Subagent permission'
+      ? language === 'zh' ? '子 Agent 需要权限' : sourceTitle
+      : sourceTitle;
 
   return (
     <section
@@ -95,6 +101,15 @@ export function PermissionRequestCard({
           {details.description && (!details.target || !details.operation) && (
             <p className="permission-description">{details.description}</p>
           )}
+          {details.scopeNotice && (
+            <div>
+              <Folder size={14} />
+              <span>
+                <small>{language === 'zh' ? '当前授权边界' : 'Current permission boundary'}</small>
+                <p>{details.scopeNotice}</p>
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="permission-actions">
@@ -129,7 +144,7 @@ export function isPermissionInteraction(interaction: PendingInteraction) {
   return (
     type.includes('permission') ||
     tool.includes('permission') ||
-    interaction.permissionPreview != null
+    interaction.runtimePermission != null
   );
 }
 
@@ -141,65 +156,34 @@ export function permissionQuestion(questions: InteractionQuestion[]) {
   );
 }
 
-function permissionDetails(interaction: PendingInteraction) {
-  const raw = interaction.raw;
-  const preview = interaction.permissionPreview ?? {};
-  const permission = asRecord(
-    preview.permission ??
-      raw.permission ??
-      raw.permission_request ??
-      raw.permissionRequest,
-  );
-  const parameters = Array.isArray(preview.parameters)
-    ? preview.parameters.map(asRecord)
-    : [];
-  const target = firstText(
-    permission.path,
-    permission.target,
-    preview.path,
-    preview.target,
-    raw.path,
-    raw.target,
-    parameterValue(parameters, ['path', 'target', 'process']),
-  );
-  const resourceKind = firstText(
-    permission.resource_kind,
-    permission.resourceKind,
-    preview.resource_kind,
-    preview.resourceKind,
-    raw.resource_kind,
-    raw.resourceKind,
-    target.startsWith('process://') ? 'process' : target ? 'path' : '',
-  );
-  const accessKind = normalizeAccessKind(firstText(
-    permission.access_kind,
-    permission.accessKind,
-    permission.access,
-    preview.access_kind,
-    preview.accessKind,
-    preview.access,
-    raw.access_kind,
-    raw.accessKind,
-    raw.access,
-    parameterValue(parameters, ['access_kind', 'access']),
-  ));
+function permissionDetails(interaction: PendingInteraction, language: AppLanguage) {
+  const permission = interaction.runtimePermission;
+  const targets = permission?.targets ?? [];
+  const primaryTarget = targets[0];
+  const actions = permission?.actions ?? [];
+  const accessKind = normalizeAccessKind(actions[0] ?? '');
   return {
-    target,
-    resourceKind,
+    target: targets.map((target) => target.label || target.value).join(' · '),
+    resourceKind: primaryTarget?.kind ?? '',
     accessKind,
-    reason: firstText(permission.reason, preview.reason, raw.reason, interaction.reason),
-    operation: firstText(
-      permission.operation,
-      preview.operation,
-      preview.planned_operation,
-      preview.plannedOperation,
-      raw.operation,
-      raw.planned_operation,
-      raw.plannedOperation,
-      parameterValue(parameters, ['operation', 'action', 'command']),
-    ),
-    description: firstText(interaction.description, interaction.message),
+    reason: permission?.reason || interaction.reason || '',
+    operation: accessKind ? '' : actions.join(', '),
+    description: interaction.description?.trim() ?? '',
+    scopeNotice: permissionScopeNotice(permission?.scope, language),
   };
+}
+
+function permissionScopeNotice(
+  scope: RuntimePermissionScope | undefined,
+  language: AppLanguage,
+) {
+  if (!scope) return '';
+  if (scope.mode === 'task_free' && scope.roots.length === 0) {
+    return language === 'zh'
+      ? '当前会话未绑定项目或任务工作区。'
+      : 'No project or task workspace is bound to this session.';
+  }
+  return scope.roots.join(' · ');
 }
 
 function normalizedPermissionOptions(
@@ -259,34 +243,9 @@ function permissionOptionIcon(optionId: string) {
   return <Check size={14} />;
 }
 
-function parameterValue(
-  parameters: Record<string, unknown>[],
-  names: string[],
-) {
-  const normalizedNames = new Set(names.map((name) => name.toLowerCase()));
-  const parameter = parameters.find((item) =>
-    normalizedNames.has(String(item.name ?? item.key ?? '').trim().toLowerCase()),
-  );
-  return parameter?.preview ?? parameter?.value;
-}
-
 function normalizeAccessKind(value: string) {
   const normalized = value.trim().toLowerCase();
   if (normalized === 'write' || normalized.includes('write')) return 'write';
   if (normalized === 'read' || normalized.includes('read')) return 'read';
   return '';
-}
-
-function firstText(...values: unknown[]) {
-  for (const value of values) {
-    const text = String(value ?? '').trim();
-    if (text) return text;
-  }
-  return '';
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value != null && typeof value === 'object'
-    ? value as Record<string, unknown>
-    : {};
 }

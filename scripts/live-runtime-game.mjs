@@ -105,16 +105,13 @@ const eventKindCounts = countBy(events, (event) => event.kind);
 const toolNameCounts = countBy(records, (record) => record.toolCall.name);
 const toolOutcomeCounts = countBy(records, (record) => record.outcome);
 const toolErrorKindCounts = countBy(
-  records.filter((record) => record.result.error),
-  (record) => record.result.error.kind,
+  records.filter((record) => record.error),
+  (record) => record.error.kind,
 );
 const toolErrorCodeCounts = countBy(
-  records.filter((record) => record.result.error),
-  (record) => record.result.error.code,
+  records.filter((record) => record.error),
+  (record) => record.error.code,
 );
-const facts = records.flatMap((record) => record.result.facts);
-const factVerificationCounts = countBy(facts, (fact) => fact.verification_state);
-const factSemanticCounts = countBy(facts, (fact) => String(fact.semantic_success));
 const toolLatencies = toolLatencySamples(events);
 const cacheHitRate = typeof usage.inputTokens === 'number' && usage.inputTokens > 0
   ? (usage.cachedInputTokens ?? 0) / usage.inputTokens
@@ -145,11 +142,6 @@ const report = {
   toolOutcomeCounts,
   toolErrorKindCounts,
   toolErrorCodeCounts,
-  facts: {
-    count: facts.length,
-    verificationCounts: factVerificationCounts,
-    semanticSuccessCounts: factSemanticCounts,
-  },
   toolLatencyMs: summarizeLatencies(toolLatencies),
   consistency: {
     violationCount: consistencyViolations.length,
@@ -159,12 +151,10 @@ const report = {
     round: record.round,
     name: record.toolCall.name,
     outcome: record.outcome,
-    success: record.result.success,
-    errorKind: record.result.error?.kind,
-    errorCode: record.result.error?.code,
-    errorMessage: record.result.error?.message,
-    factCount: record.result.facts.length,
-    verificationStates: [...new Set(record.result.facts.map((fact) => fact.verification_state))],
+    returned: record.outcome === 'returned',
+    errorKind: record.error?.kind,
+    errorCode: record.error?.code,
+    errorMessage: record.error?.message,
   })),
   finalResponse: finalMessage?.message.role === 'assistant'
     ? finalMessage.message.content
@@ -181,7 +171,8 @@ process.stdout.write(`${JSON.stringify({
   eventCount: report.eventCount,
   providerRetryCount: report.providerRetryCount,
   toolCount: report.tools.length,
-  toolFailures: report.tools.filter((item) => !item.success).length,
+  toolFailures: report.tools.filter((item) => item.outcome === 'failed').length,
+  toolCancellations: report.tools.filter((item) => item.outcome === 'cancelled').length,
   cacheHitPercent: report.cache.hitPercent,
   consistencyViolationCount: report.consistency.violationCount,
   toolLatencyMs: report.toolLatencyMs,
@@ -220,7 +211,7 @@ function toolLatencySamples(events) {
       startedAtByCall.set(toolCallId, Date.parse(event.createdAt));
       continue;
     }
-    if (!['tool_completed', 'tool_failed', 'tool_cancelled'].includes(event.kind)) continue;
+    if (!['tool_returned', 'tool_failed', 'tool_cancelled'].includes(event.kind)) continue;
     const startedAt = startedAtByCall.get(toolCallId);
     const completedAt = Date.parse(event.createdAt);
     if (Number.isFinite(startedAt) && Number.isFinite(completedAt) && completedAt >= startedAt) {
@@ -246,25 +237,14 @@ function summarizeLatencies(values) {
 function inspectToolRecord(record) {
   const violations = [];
   const reference = `${record.round}:${record.toolCall.name}:${record.toolCall.id}`;
-  if (record.result.success !== (record.outcome === 'completed')) {
-    violations.push({ reference, code: 'outcome_success_mismatch' });
+  if (record.outcome === 'returned' && record.error) {
+    violations.push({ reference, code: 'returned_record_has_runtime_error' });
   }
-  if (record.result.success && record.result.error) {
-    violations.push({ reference, code: 'successful_result_has_error' });
+  if (record.outcome !== 'returned' && !record.error) {
+    violations.push({ reference, code: 'unreturned_record_missing_runtime_error' });
   }
-  if (!record.result.success && !record.result.error) {
-    violations.push({ reference, code: 'failed_result_missing_error' });
-  }
-  for (const fact of record.result.facts) {
-    if (fact.semantic_success === true && !fact.execution_success) {
-      violations.push({ reference, receiptId: fact.receipt_id, code: 'semantic_success_without_execution' });
-    }
-    if (fact.verification_state === 'verified' && fact.semantic_success !== true) {
-      violations.push({ reference, receiptId: fact.receipt_id, code: 'verified_without_semantic_success' });
-    }
-    if (fact.error_code && fact.semantic_success === true) {
-      violations.push({ reference, receiptId: fact.receipt_id, code: 'semantic_success_with_error' });
-    }
+  if (record.outcome !== 'returned' && 'result' in record) {
+    violations.push({ reference, code: 'unreturned_record_has_native_result' });
   }
   return violations;
 }

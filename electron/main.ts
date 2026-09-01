@@ -13,7 +13,9 @@ import {
   screen,
   session,
   shell,
+  webContents as electronWebContents,
   type NativeImage,
+  type MenuItemConstructorOptions,
   type OpenDialogOptions,
 } from 'electron';
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -2320,6 +2322,67 @@ ipcMain.handle('files:inspect-attachments', async (_, targetPaths: string[]) => 
   return inspected.filter((item) => item != null);
 });
 
+ipcMain.handle('workspace:ensure-task-directory', async (event, sessionId: string) => {
+  assertMainWindowSender(event.sender.id);
+  const normalizedSessionId = String(sessionId ?? '').trim();
+  if (!normalizedSessionId) {
+    throw new Error('Session ID is required for a task workspace.');
+  }
+  const stableId = createHash('sha256').update(normalizedSessionId).digest('hex').slice(0, 24);
+  const workspace = path.join(app.getPath('userData'), 'task-workspaces', stableId);
+  await fs.promises.mkdir(workspace, { recursive: true });
+  return workspace;
+});
+
+ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id)) {
+    return null;
+  }
+  const normalizedPath = normalizeShellPath(targetPath);
+  if (!normalizedPath) {
+    return null;
+  }
+  const stats = await fs.promises.stat(normalizedPath).catch(() => null);
+  if (!stats || (!stats.isFile() && !stats.isDirectory())) {
+    return null;
+  }
+  const name = path.basename(normalizedPath);
+  if (stats.isDirectory()) {
+    return { path: normalizedPath, name, kind: 'folder' as const };
+  }
+  if (process.platform !== 'win32' || path.extname(normalizedPath).toLowerCase() !== '.lnk') {
+    return { path: normalizedPath, name, kind: 'file' as const };
+  }
+
+  let kind: 'folder' | 'application' = 'application';
+  try {
+    const shortcut = shell.readShortcutLink(normalizedPath);
+    const shortcutTarget = expandWindowsEnv(shortcut.target?.trim() ?? '');
+    if (shortcutTarget) {
+      const targetStats = await fs.promises.stat(shortcutTarget).catch(() => null);
+      if (targetStats?.isDirectory()) {
+        kind = 'folder';
+      }
+    }
+  } catch {
+    // Windows can still resolve and launch some Shell-managed shortcuts even
+    // when their target metadata is unavailable. Keep them launchable.
+  }
+  if (kind === 'folder') {
+    return { path: normalizedPath, name, kind };
+  }
+  const iconImage = await app
+    .getFileIcon(normalizedPath, { size: 'large' })
+    .catch(() => nativeImage.createEmpty());
+  return {
+    path: normalizedPath,
+    name: path.basename(normalizedPath, path.extname(normalizedPath)),
+    kind,
+    ...(iconImage.isEmpty() ? {} : { icon: iconImage.toDataURL() }),
+  };
+});
+
 ipcMain.handle('a2a:inspect', (event, agentUrl: string) => {
   assertMainWindowSender(event.sender.id);
   return productA2AClient.inspect(agentUrl);
@@ -2524,6 +2587,73 @@ ipcMain.handle('image:read-data-url', async (event, targetPath: string) => {
     return '';
   }
   return readLocalImageDataUrl(targetPath);
+});
+
+ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
+  guestWebContentsId?: number;
+  target?: string;
+  x?: number;
+  y?: number;
+  mediaType?: string;
+  srcURL?: string;
+  linkURL?: string;
+  selectionText?: string;
+  isEditable?: boolean;
+}) => {
+  assertMainWindowSender(event.sender.id);
+  const guest = electronWebContents.fromId(Number(payload?.guestWebContentsId));
+  if (!guest || guest.isDestroyed() || guest.hostWebContents?.id !== event.sender.id) {
+    return;
+  }
+  const target = String(payload?.target ?? '').trim();
+  const localTarget = /^https?:\/\//i.test(target) ? '' : normalizeShellPath(target);
+  const localStats = localTarget
+    ? await fs.promises.stat(localTarget).catch(() => null)
+    : null;
+  const selectionText = String(payload?.selectionText ?? '');
+  const srcURL = String(payload?.srcURL ?? '').trim();
+  const linkURL = String(payload?.linkURL ?? '').trim();
+  const x = Number.isFinite(payload?.x) ? Number(payload.x) : 0;
+  const y = Number.isFinite(payload?.y) ? Number(payload.y) : 0;
+  const template: MenuItemConstructorOptions[] = [];
+
+  if (selectionText) {
+    template.push({ label: '复制', click: () => guest.copy() });
+  } else if (payload?.isEditable) {
+    template.push(
+      { label: '剪切', click: () => guest.cut() },
+      { label: '复制', click: () => guest.copy() },
+      { label: '粘贴', click: () => guest.paste() },
+    );
+  }
+  if (payload?.mediaType === 'image') {
+    if (template.length > 0) template.push({ type: 'separator' });
+    template.push({
+      label: '复制图片',
+      click: () => guest.copyImageAt(x, y),
+    });
+    if (srcURL) {
+      template.push({ label: '复制图片地址', click: () => clipboard.writeText(srcURL) });
+    }
+  }
+  if (linkURL) {
+    if (template.length > 0) template.push({ type: 'separator' });
+    template.push({ label: '复制链接地址', click: () => clipboard.writeText(linkURL) });
+  }
+  if (localStats?.isFile()) {
+    if (template.length > 0) template.push({ type: 'separator' });
+    template.push(
+      {
+        label: '复制文件',
+        click: () => void copyLocalFileToClipboard(localTarget),
+      },
+      { label: '复制文件路径', click: () => clipboard.writeText(localTarget) },
+    );
+  }
+  if (template.length === 0) {
+    return;
+  }
+  Menu.buildFromTemplate(template).popup({ window: mainWindow ?? undefined });
 });
 
 ipcMain.handle('cardling:update-state', (event, payload: CardlingDesktopState) => {
@@ -3025,7 +3155,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
           ensureDesktopControlOverlay().show(control);
         }
       } else if (
-        (event.kind === 'tool_completed' ||
+        (event.kind === 'tool_returned' ||
           event.kind === 'tool_failed' ||
           event.kind === 'tool_cancelled') &&
         isComputerUseRuntimeTool(event.payload.toolName)
@@ -5454,6 +5584,67 @@ function saveImageDataUrl(
     height: image.getSize().height,
     copiedToClipboard,
   };
+}
+
+async function copyLocalFileToClipboard(targetPath: string) {
+  const normalizedPath = normalizeShellPath(targetPath);
+  const stats = await fs.promises.stat(normalizedPath).catch(() => null);
+  if (!normalizedPath || !stats?.isFile()) {
+    throw new Error('Copy target must be an existing local file.');
+  }
+  if (process.platform === 'win32') {
+    await copyWindowsFileToClipboard(normalizedPath);
+    return { copied: true as const, kind: 'file' as const };
+  }
+  clipboard.writeText(normalizedPath);
+  return { copied: true as const, kind: 'path' as const };
+}
+
+function copyWindowsFileToClipboard(targetPath: string) {
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$items = New-Object System.Collections.Specialized.StringCollection',
+    '[void]$items.Add([IO.Path]::GetFullPath($env:CARDBUSH_CLIPBOARD_TARGET))',
+    '[Windows.Forms.Clipboard]::SetFileDropList($items)',
+  ].join('; ');
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-STA',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+        script,
+      ],
+      {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        env: { ...process.env, CARDBUSH_CLIPBOARD_TARGET: targetPath },
+      },
+    );
+    let stderr = '';
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error('Copy file operation timed out.'));
+    }, 5_000);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.once('error', (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('close', (exitCode) => {
+      clearTimeout(timeout);
+      if (exitCode === 0) resolve();
+      else reject(new Error(stderr.trim() || `Copy file exited with code ${exitCode}.`));
+    });
+  });
 }
 
 async function readLocalImageDataUrl(targetPath: string) {

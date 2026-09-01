@@ -54,7 +54,7 @@ assert.equal(structured[0].id, 'artifact-one');
 assert.equal(structured[0].type, 'image');
 assert.equal(structured[0].size, 42);
 
-const compatibility = toolArtifactsFromPayload({
+const undeclared = toolArtifactsFromPayload({
   metadata: {
     result: {
       images: [{ image_path: 'D:\\tmp\\nested.webp' }],
@@ -63,15 +63,15 @@ const compatibility = toolArtifactsFromPayload({
   output: 'C:\\workspace\\renders\\legacy.jpg',
 });
 assert.deepEqual(
-  Array.from(compatibility, (artifact) => artifact.path),
-  ['D:\\tmp\\nested.webp', 'C:\\workspace\\renders\\legacy.jpg'],
+  Array.from(undeclared, (artifact) => artifact.path),
+  [],
+  'Artifact rendering must not search compatibility aliases or output prose',
 );
 
 const jsonOutput = toolArtifactsFromPayload({
   output: JSON.stringify({ image: { url: 'https://example.test/result.png' } }),
 });
-assert.equal(jsonOutput.length, 1);
-assert.equal(jsonOutput[0].path, 'https://example.test/result.png');
+assert.equal(jsonOutput.length, 0);
 
 assert.equal(
   toolArtifactsFromPayload({
@@ -102,12 +102,12 @@ assert.match(typesSource, /artifacts\?: ChatToolArtifact\[\]/);
 assert.equal(
   (apiSource.match(/toolArtifactsFromPayload\(/g) ?? []).length,
   1,
-  'Only compatibility history projection should need the defensive artifact parser',
+  'History projection should read the same explicit native artifact channels',
 );
 assert.match(
   runtimeChatSource,
-  /record\.result\.artifacts\.map\(artifact\)/,
-  'Live Runtime facts should project their validated artifact array directly',
+  /toolArtifactsFromPayload\(\{ result: record\.result \}\)/,
+  'Live Runtime records should use the explicit native artifact adapter',
 );
 assert.doesNotMatch(apiSource, /restored HTTP history/i);
 assert.match(hookSource, /mergeToolArtifacts\(current\.artifacts, incoming\.artifacts\)/);

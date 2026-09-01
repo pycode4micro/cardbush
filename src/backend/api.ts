@@ -48,7 +48,6 @@ import type {
 } from '../types';
 import type {
   GoalState as RuntimeGoalState,
-  SessionMessage as RuntimeSessionMessage,
   SessionSnapshot as RuntimeSessionSnapshot,
   SubagentTask as RuntimeSubagentTask,
   ToolExecutionRecord as RuntimeToolExecutionRecord,
@@ -63,6 +62,10 @@ import {
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { toolArtifactsFromPayload } from './toolArtifacts';
+import {
+  projectRuntimeSessionMessage,
+  projectRuntimeTurnMessages,
+} from './runtimeSessionMessageProjection';
 import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
   CARDBUSH_APPS_MCP_SERVER_ID,
@@ -170,6 +173,7 @@ export interface ChatStreamRequest {
   model: string;
   modelConfig?: ManagedModelConfig;
   projectDir?: string;
+  workspaceDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
@@ -250,6 +254,7 @@ export interface ControlStreamRequest {
   model: string;
   modelConfig?: ManagedModelConfig;
   projectDir?: string;
+  workspaceDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
@@ -1558,10 +1563,12 @@ export async function fetchSessionMessages(
       options.includeSuperseded === false ? snapshot.supersededMessageIds : [],
     );
     const messages = snapshot.turns.flatMap((turn) =>
-      turn.messages
-        .filter((message) => !superseded.has(message.messageId))
-        .filter((message) => !isInternalRuntimeMessage(message))
-        .map((message) => runtimeMessage(message, snapshot.sessionId, turn)),
+      projectRuntimeTurnMessages({
+        ...turn,
+        messages: turn.messages
+          .filter((message) => !superseded.has(message.messageId))
+          .filter((message) => !isInternalRuntimeMessage(message)),
+      }, snapshot.sessionId),
     );
     const records = (
       await Promise.all(
@@ -1576,12 +1583,13 @@ export async function fetchSessionMessages(
     const toolExecutions = records.map(runtimeHistoryToolExecution);
     const latest = snapshot.turns.at(-1);
     const projectDir = optionalString(snapshot.metadata?.projectDir);
-    const workspaceContext: WorkspaceContext | undefined = projectDir
+    const taskDir = projectDir ? '' : taskWorkspaceDirectory(snapshot.metadata);
+    const workspaceContext: WorkspaceContext | undefined = projectDir || taskDir
       ? {
-          mode: 'project',
-          executionRoot: projectDir,
-          projectDir,
-          taskDir: '',
+          mode: projectDir ? 'project' : 'task',
+          executionRoot: projectDir || taskDir,
+          projectDir: projectDir || null,
+          taskDir,
           source: 'electron_runtime',
         }
       : undefined;
@@ -1645,6 +1653,21 @@ function runtimeConversation(
   };
 }
 
+function taskWorkspaceDirectory(metadata: Record<string, unknown> | undefined) {
+  if (!metadata) return '';
+  for (const candidate of [
+    metadata.task_dir,
+    metadata.taskDir,
+    metadata.session_workspace_dir,
+    metadata.sessionWorkspaceDir,
+    metadata.workspace_dir,
+    metadata.workspaceDir,
+  ]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return '';
+}
+
 function initialRuntimeConversationTitle(value: unknown) {
   const normalized = String(value ?? '')
     .replace(/\s+/g, ' ')
@@ -1677,68 +1700,23 @@ function lexicalScore(content: string, terms: string[]) {
   );
 }
 
-function runtimeMessage(
-  message: RuntimeSessionMessage,
-  sessionId: string,
-  turn?: RuntimeSessionSnapshot['turns'][number],
-): ChatMessage {
-  const role =
-    message.message.role === 'developer' ? 'system' : message.message.role;
-  const metadata: Record<string, unknown> = {};
-  if (message.message.role === 'assistant') {
-    metadata.toolCalls = message.message.toolCalls;
-    if (turn) {
-      metadata.cardbush_turn_started_at = turn.createdAt;
-      metadata.cardbush_turn_completed_at = turn.completedAt;
-      const startedAt = Date.parse(turn.createdAt);
-      const completedAt = Date.parse(turn.completedAt);
-      if (
-        Number.isFinite(startedAt) &&
-        Number.isFinite(completedAt) &&
-        completedAt >= startedAt
-      ) {
-        metadata.cardbush_turn_duration_ms = completedAt - startedAt;
-      }
-    }
-  } else if (message.message.role === 'tool') {
-    metadata.toolCallId = message.message.toolCallId;
-  } else if (message.message.name) {
-    metadata.name = message.message.name;
-  }
-  return {
-    id: message.messageId,
-    messageId: message.messageId,
-    role,
-    content: message.message.content,
-    conversationId: sessionId,
-    turnId: message.turnId,
-    createdAt: message.createdAt,
-    ...(role === 'assistant' && turn
-      ? { status: turn.status }
-      : {}),
-    turnSequence: message.turnSequence,
-    messageIndex: message.messageIndex,
-    ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-  };
-}
-
 function runtimeHistoryToolExecution(
   record: RuntimeToolExecutionRecord,
 ): ChatToolExecution {
-  const artifacts = toolArtifactsFromPayload({
-    artifacts: record.result.artifacts,
-  });
+  const artifacts = record.outcome === 'returned'
+    ? toolArtifactsFromPayload({ result: record.result })
+    : [];
   const output =
-    typeof record.result.output === 'string'
-      ? record.result.output
-      : JSON.stringify(record.result.output, null, 2);
+    typeof record.result === 'string'
+      ? record.result
+      : JSON.stringify(record.result, null, 2) ?? 'null';
   return {
     id: record.toolCall.id,
     name: record.toolCall.name,
-    state: record.outcome,
-    summary: record.result.error?.message ?? record.toolCall.name,
+    state: record.outcome === 'returned' ? 'completed' : record.outcome,
+    summary: record.error?.message ?? record.toolCall.name,
     output,
-    success: record.result.success,
+    success: record.outcome === 'returned',
     durationMs: 0,
     createdAt: record.recordedAt,
     contentOffset: 0,
@@ -1748,9 +1726,9 @@ function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
-      facts: record.result.facts,
-      workspaceChanges: record.result.workspace_changes,
-      error: record.result.error,
+      nativeResult: record.result,
+      workspaceChanges: record.workspaceChanges,
+      error: record.error,
     },
   };
 }
@@ -1767,19 +1745,26 @@ export async function createConversation({
   metadata?: Record<string, unknown>;
 } = {}): Promise<ConversationSummary> {
   const normalizedProjectDir = projectDir?.trim() || '';
+  const normalizedSessionId = sessionId?.trim() || `local-${crypto.randomUUID()}`;
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
   if (normalizedProjectDir) {
     normalizedMetadata.workspace_mode = 'project';
     normalizedMetadata.workspace_dir = normalizedProjectDir;
     normalizedMetadata.user_project_dir = normalizedProjectDir;
     normalizedMetadata.project_dir = normalizedProjectDir;
-  } else if (normalizedMetadata.workspace_mode == null) {
+  } else {
+    const taskDir = await window.cardbushDesktop?.ensureTaskWorkspace?.(normalizedSessionId);
     normalizedMetadata.workspace_mode = 'task';
+    if (taskDir) {
+      normalizedMetadata.workspace_dir = taskDir;
+      normalizedMetadata.task_dir = taskDir;
+      normalizedMetadata.session_workspace_dir = taskDir;
+    }
   }
   const runtime = createDesktopRuntimeSession();
   try {
     const snapshot = await runtime.client.createSession({
-      sessionId: sessionId?.trim() || `local-${crypto.randomUUID()}`,
+      sessionId: normalizedSessionId,
       metadata: {
         ...normalizedMetadata,
         title,
@@ -1812,10 +1797,15 @@ export async function updateConversation({
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
   if (projectDir !== undefined) {
     const normalizedProjectDir = projectDir?.trim() || '';
+    const taskDir = normalizedProjectDir
+      ? ''
+      : await window.cardbushDesktop?.ensureTaskWorkspace?.(normalized);
     normalizedMetadata.workspace_mode = normalizedProjectDir
       ? 'project'
       : 'task';
-    normalizedMetadata.workspace_dir = normalizedProjectDir || null;
+    normalizedMetadata.workspace_dir = normalizedProjectDir || taskDir || null;
+    normalizedMetadata.task_dir = taskDir || null;
+    normalizedMetadata.session_workspace_dir = taskDir || null;
     normalizedMetadata.user_project_dir = normalizedProjectDir || null;
     normalizedMetadata.project_dir = normalizedProjectDir || null;
   }
@@ -2166,7 +2156,7 @@ export async function searchSessionContext({
       .filter(({ message }) => !isInternalRuntimeMessage(message))
       .map(({ message, turn }) => ({
         message,
-        projected: runtimeMessage(message, sessionId, turn),
+        projected: projectRuntimeSessionMessage(message, sessionId, turn),
       }))
       .filter(({ projected }) => roles.includes(projected.role))
       .map(({ message, projected }) => ({
@@ -2235,7 +2225,7 @@ export async function fetchSessionMessageWindow({
       anchorMessageId: messageId,
       messages: messages
         .slice(start, end)
-        .map(({ message, turn }) => runtimeMessage(message, sessionId, turn)),
+        .map(({ message, turn }) => projectRuntimeSessionMessage(message, sessionId, turn)),
       hasMoreBefore: start > 0,
       hasMoreAfter: end < messages.length,
       beforeCursor: start > 0 ? String(start) : undefined,
@@ -2344,14 +2334,11 @@ export async function fetchSessionWorkspaceChanges(
     return records
       .map((record) => ({
         ...record,
-        result: {
-          ...record.result,
-          workspace_changes: record.result.workspace_changes.filter(
-            (change) => !revertedChangeIds.has(change.change_id),
-          ),
-        },
+        workspaceChanges: record.workspaceChanges.filter(
+          (change) => !revertedChangeIds.has(change.change_id),
+        ),
       }))
-      .filter((record) => record.result.workspace_changes.length > 0)
+      .filter((record) => record.workspaceChanges.length > 0)
       .map(runtimeHistoryToolExecution);
   } finally {
     runtime.dispose();

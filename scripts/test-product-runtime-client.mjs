@@ -230,12 +230,12 @@ try {
   const lifecycleView = lifecycleProjection.snapshot();
   assert.equal(lifecycleView.tools.length, 1);
   assert.equal(lifecycleView.tools[0].phase, 'completed');
-  assert.deepEqual(lifecycleView.tools[0].receiptIds, ['receipt_write_1']);
-  assert.deepEqual(lifecycleView.tools[0].executionFactIds, ['fact_write_1']);
-  assert.deepEqual(lifecycleView.tools[0].workspaceChangeIds, ['change_write_1']);
   assert.equal(lifecycleView.permissions[0].phase, 'answered');
   assert.deepEqual(lifecycleView.permissions[0].actions, ['write']);
-  assert.deepEqual(lifecycleView.permissions[0].resources, ['workspace/file.txt']);
+  assert.deepEqual(lifecycleView.permissions[0].targets, [{
+    kind: 'filesystem_path',
+    value: 'workspace/file.txt',
+  }]);
   assert.deepEqual(lifecycleView.permissions[0].grantedCapabilityIds, [
     'capability.files.write',
   ]);
@@ -473,7 +473,7 @@ function toolPermissionLifecycleEvents() {
       toolCallId: tool.toolCallId,
       reason: 'The Action Manifest requires workspace write access.',
       actions: ['write'],
-      resources: ['workspace/file.txt'],
+      targets: [{ kind: 'filesystem_path', value: 'workspace/file.txt' }],
       requestedCapabilityIds: ['capability.files.write'],
     }),
     base(3, 'permission_answered', {
@@ -483,13 +483,7 @@ function toolPermissionLifecycleEvents() {
       grantedCapabilityIds: ['capability.files.write'],
     }),
     base(4, 'tool_running', tool),
-    base(5, 'tool_completed', {
-      ...tool,
-      receiptIds: ['receipt_write_1'],
-      executionFactIds: ['fact_write_1'],
-      artifactIds: [],
-      workspaceChangeIds: ['change_write_1'],
-    }),
+    base(5, 'tool_returned', tool),
   ];
 }
 
@@ -507,10 +501,6 @@ function permissionRejectedEvents() {
     }),
     lifecycleEvent(identity, 4, 'tool_failed', {
       ...tool,
-      receiptIds: [],
-      executionFactIds: [],
-      artifactIds: [],
-      workspaceChangeIds: [],
       error: {
         code: 'permission_rejected',
         message: 'The requested permission was rejected.',

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   actionManifestSchema,
   BUSH_CACHE_CHAIN_STATE_PROTOCOL,
+  BUSH_SESSION_ENVIRONMENT_PROTOCOL,
   BUSH_ACTION_MANIFEST_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
@@ -20,6 +21,8 @@ import {
   createRuntimeGoalRequestSchema,
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
+  decodeSessionEnvironmentFact,
+  encodeSessionEnvironmentFact,
   modelEventSchema,
   modelRequestSchema,
   mcpSnapshotSchema,
@@ -32,49 +35,56 @@ import {
   setRuntimePlanRequestSchema,
   subagentTaskSchema,
   teamSnapshotSchema,
-  toolResultSchema,
+  toolExecutionRecordSchema,
   updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
 
-test("Tool results reject contradictory success and verification facts", () => {
+test("session environment facts are structured append-only epochs", () => {
+  const encoded = encodeSessionEnvironmentFact({
+    protocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+    kind: "update",
+    localDate: "2026-09-02",
+    effectiveAt: "2026-09-02T00:00:00.000Z",
+  });
+  assert.deepEqual(decodeSessionEnvironmentFact(encoded), {
+    protocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+    kind: "update",
+    localDate: "2026-09-02",
+    effectiveAt: "2026-09-02T00:00:00.000Z",
+  });
+  assert.throws(() => decodeSessionEnvironmentFact(JSON.stringify({
+    protocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+    kind: "snapshot",
+    localDate: "09/02/2026",
+    effectiveAt: "2026-09-02T00:00:00.000Z",
+  })));
+});
+
+test("Tool execution records preserve native results without semantic normalization", () => {
   const base = {
-    protocol: "bush.tool_result.v1",
-    tool_call_id: "call_consistency",
-    success: true,
-    output: {},
-    facts: [{
-      protocol: "bush.tool.execution_fact.v1",
-      receipt_id: "receipt_consistency",
-      action_manifest_id: "manifest_consistency",
-      status: "succeeded",
-      operation: "fixture.execute",
-      effect_kind: "fixture",
-      owner: "fixture",
-      dispatch_scope: "turn",
-      categories: [],
-      paths: [],
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
+    protocol: "bush.tool.execution_record.v2",
+    requestId: "request_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    round: 1,
+    ordinal: 0,
+    recordedAt: "2026-09-01T00:00:00.000Z",
+    toolCall: {
+      protocol: "bush.tool_call.v1",
+      id: "call_consistency",
+      name: "fixture",
+      argumentsText: "{}",
+    },
+    outcome: "returned",
+    result: { providerField: "preserved", success: false },
+    workspaceChanges: [],
   };
-  assert.equal(toolResultSchema.parse(base).success, true);
-  assert.throws(() => toolResultSchema.parse({
+  assert.deepEqual(toolExecutionRecordSchema.parse(base).result, base.result);
+  assert.throws(() => toolExecutionRecordSchema.parse({
     ...base,
-    facts: [{
-      ...base.facts[0],
-      execution_success: false,
-    }],
+    outcome: "failed",
   }));
-  assert.throws(() => toolResultSchema.parse({
-    ...base,
-    success: false,
-  }));
-  assert.throws(() => toolResultSchema.parse({
+  assert.throws(() => toolExecutionRecordSchema.parse({
     ...base,
     error: {
       kind: "tool",
@@ -155,18 +165,48 @@ test("tool and permission lifecycle facts require stable associations", () => {
   };
   const completed = decodeRuntimeEvent({
     ...envelope,
-    kind: "tool_completed",
+    kind: "tool_returned",
     payload: {
       toolCallId: "call_1",
       toolName: "write_file",
       ordinal: 0,
-      receiptIds: ["receipt_1"],
-      executionFactIds: ["fact_1"],
-      artifactIds: [],
-      workspaceChangeIds: ["change_1"],
     },
   });
-  assert.equal(completed.payload.receiptIds[0], "receipt_1");
+  assert.equal(completed.payload.toolCallId, "call_1");
+
+  const permission = decodeRuntimeEvent({
+    ...envelope,
+    eventId: "evt_permission_valid",
+    kind: "permission_requested",
+    payload: {
+      permissionId: "permission_1",
+      toolCallId: "call_1",
+      reason: "outside workspace",
+      actions: ["read"],
+      targets: [{ kind: "filesystem_path", value: "C:/outside.txt" }],
+      requestedCapabilityIds: ["read:C:/outside.txt"],
+      scope: { mode: "task_free", roots: ["C:/workspace"] },
+    },
+  });
+  assert.equal(permission.payload.targets[0].kind, "filesystem_path");
+  assert.deepEqual(permission.payload.scope.roots, ["C:/workspace"]);
+
+  const historicalPermission = decodeRuntimeEvent({
+    ...envelope,
+    eventId: "evt_permission_historical",
+    kind: "permission_requested",
+    payload: {
+      permissionId: "permission_legacy",
+      reason: "legacy request",
+      actions: ["read"],
+      resources: ["legacy://resource"],
+      requestedCapabilityIds: ["legacy:read"],
+    },
+  });
+  assert.deepEqual(historicalPermission.payload.targets, [{
+    kind: "opaque",
+    value: "legacy://resource",
+  }]);
 
   assert.throws(() =>
     decodeRuntimeEvent({
@@ -176,7 +216,8 @@ test("tool and permission lifecycle facts require stable associations", () => {
       payload: {
         reason: "outside workspace",
         actions: ["read"],
-        resources: ["C:/outside.txt"],
+        targets: [{ kind: "filesystem_path", value: "C:/outside.txt" }],
+        requestedCapabilityIds: ["read:C:/outside.txt"],
       },
     }),
   );
@@ -190,15 +231,8 @@ test("action manifests and permission answers enforce only explicit protocol fac
     operation: "fixture.read",
     risk: "low",
     owner: "fixture_runtime",
-    dispatch_phase: "execution",
     dispatch_scope: "turn",
-    dispatch_side_effect: "none",
-    dispatch_mutating: false,
-    dispatch_source: "registered_tool",
-    stage_modes: ["execute"],
-    output_kinds: ["structured_data"],
-    handoff_exports: [],
-    evidence_hints: ["observation"],
+    mutating: false,
   });
   assert.equal(parsed.operation, "fixture.read");
 

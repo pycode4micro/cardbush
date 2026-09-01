@@ -9,18 +9,14 @@ import {
   defaultAppsRuntimeConfig,
   readAppsRuntimeConfig,
 } from '../dist/index.js';
-import { computerUseManifest } from '../dist/plugins/computerUse.js';
 import {
   executeComputerUse,
   selectWindowTarget,
 } from '../dist/plugins/computerUseRuntime.js';
 
-test('creates an independent MCP server with an explicit computer-use manifest', () => {
+test('creates an independent MCP server with standard MCP annotations', () => {
   const server = createCardbushAppsServer();
   assert.ok(server);
-  assert.equal(computerUseManifest.owner, 'cardbush_apps');
-  assert.equal(computerUseManifest.dispatch_source, 'mcp_tool');
-  assert.equal(computerUseManifest.operation, 'desktop.control');
   assert.deepEqual(Object.keys(server._registeredTools), ['computer_use']);
   const tool = server._registeredTools.computer_use;
   assert.match(tool.description, /Observe and interact with the user's current desktop/);

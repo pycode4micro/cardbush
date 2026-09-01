@@ -11,6 +11,7 @@ import {
   GET_RUNTIME_SESSION_COMMAND,
   RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   RUN_RUNTIME_SESSION_TURN_COMMAND,
+  SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
 } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost, LogicMemoryStore } from "../dist/index.js";
 
@@ -68,8 +69,123 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   assert.equal(snapshot.turns.length, 2);
   assert.equal(snapshot.turns[0].usage.inputTokens, 10);
   assert.equal(snapshot.turns[1].usage.cachedInputTokens, 10);
+  assert.equal(snapshot.turns[0].cacheChainState.requestOrdinal, 1);
+  assert.equal(snapshot.turns[1].cacheChainState.requestOrdinal, 2);
   assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 4);
   assert.ok(host.capabilities().features.includes("append_only_session_context"));
+  assert.ok(host.capabilities().features.includes("cross_turn_cache_chain"));
+  assert.ok(host.capabilities().features.includes("stopped_turn_continuation"));
+});
+
+test("stops an uncooperative provider, commits partial facts, and continues the Cache Chain", async () => {
+  const observedRequests = [];
+  let call = 0;
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async *stream(request) {
+        observedRequests.push(structuredClone(request));
+        call += 1;
+        yield event(request.requestId, 0, "response_started");
+        if (call === 1) {
+          yield event(request.requestId, 1, "text_delta", { delta: "partial-before-stop" });
+          await new Promise(() => {});
+          return;
+        }
+        yield event(request.requestId, 1, "text_delta", { delta: "continued-after-stop" });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+    projectorOptions: {
+      createMessageId: counter("assistant_stopped"),
+      createSegmentId: counter("segment_stopped"),
+    },
+  });
+
+  const first = host.runSessionTurn(
+    sessionRequest("request_stop_1", "turn_stop_1", "user_stop_1", "first"),
+  );
+  await waitFor(() => host.events("session_1", "turn_stop_1")
+    .some((candidate) => candidate.kind === "assistant_segment_delta"));
+  const receipt = await host.sendCommand({
+    kind: "runtime.stop_turn",
+    payload: { sessionId: "session_1", turnId: "turn_stop_1" },
+  });
+  const stopped = await Promise.race([
+    first,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("Stop remained blocked by an uncooperative Provider.")),
+      1_000,
+    )),
+  ]);
+
+  assert.equal(receipt.accepted, true);
+  assert.equal(stopped.payload.status, "stopped");
+  const afterStop = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1" },
+  });
+  assert.deepEqual(afterStop.turns[0].messages.map((item) => item.message.content), [
+    "first",
+    "partial-before-stop",
+  ]);
+  assert.equal(afterStop.turns[0].cacheChainState.requestOrdinal, 1);
+
+  await host.runSessionTurn(
+    sessionRequest("request_stop_2", "turn_stop_2", "user_stop_2", "continue"),
+  );
+  assert.deepEqual(observedRequests[1].messages.map((message) => message.content), [
+    "fixed-prefix",
+    "first",
+    "partial-before-stop",
+    "continue",
+  ]);
+  const observation = host.events("session_1", "turn_stop_2")
+    .find((candidate) => candidate.kind === "cache_chain_observed");
+  assert.equal(observation.payload.previousMessageCount, 2);
+  assert.equal(observation.payload.sharedPrefixMessages, 2);
+  assert.equal(observation.payload.frozenPrefixBreak, false);
+});
+
+test("edit and regenerate inherit the prior Cache Chain and expose the real break", async () => {
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async *stream(request) {
+        yield event(request.requestId, 0, "response_started");
+        yield event(request.requestId, 1, "text_delta", { delta: `answer:${request.turnId}` });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+  });
+  await host.runSessionTurn(
+    sessionRequest("request_edit_1", "turn_edit_1", "user_edit_1", "original"),
+  );
+  const before = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1" },
+  });
+  await host.sendCommand({
+    kind: SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
+    payload: {
+      sessionId: "session_1",
+      messageIds: before.turns[0].messages.map((message) => message.messageId),
+      reason: "user_edit_regenerate",
+    },
+  });
+  await host.runSessionTurn(
+    sessionRequest("request_edit_2", "turn_edit_2", "user_edit_2", "replacement"),
+  );
+
+  const observation = host.events("session_1", "turn_edit_2")
+    .find((candidate) => candidate.kind === "cache_chain_observed");
+  assert.equal(observation.payload.requestOrdinal, 2);
+  assert.equal(observation.payload.previousMessageCount, 2);
+  assert.equal(observation.payload.sharedPrefixMessages, 1);
+  assert.equal(observation.payload.frozenPrefixBreak, true);
+  assert.equal(observation.payload.breakIndex, 1);
 });
 
 test("exposes exact Session context through the typed command boundary", async () => {
@@ -343,4 +459,12 @@ function deterministicEventLogOptions() {
 function counter(prefix) {
   let value = 0;
   return () => `${prefix}_${++value}`;
+}
+
+async function waitFor(predicate, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for Runtime fact.");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }

@@ -18,7 +18,7 @@ import type {
 
 const UNSAFE_POST_CHECKPOINT_EVENTS = new Set([
   "tool_running",
-  "tool_completed",
+  "tool_returned",
   "tool_failed",
   "tool_cancelled",
   "permission_requested",
@@ -49,7 +49,6 @@ export class RuntimeRecoveryCoordinator {
     request: ModelRequest;
     messages: ModelMessage[];
     nextRound: number;
-    completedReceiptIds: string[];
     cacheChainState: CacheChainState;
     sessionCommit?: RuntimeSessionCommitCheckpoint;
   }): RuntimeCheckpoint {
@@ -69,7 +68,6 @@ export class RuntimeRecoveryCoordinator {
       nextRound: input.nextRound,
       lastEventSequence: cursor.sequence,
       lastEventId: cursor.eventId,
-      completedReceiptIds: [...new Set(input.completedReceiptIds)],
       cacheChainState: input.cacheChainState,
       sessionCommit: input.sessionCommit,
       createdAt: this.#now(),

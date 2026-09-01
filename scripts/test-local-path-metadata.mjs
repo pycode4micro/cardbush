@@ -184,6 +184,21 @@ assert.equal(
   'A web URL must never be interpreted as a Windows path beginning with s:/',
 );
 
+const dateTableCellTree = {
+  type: 'root',
+  children: [{
+    type: 'tableCell',
+    children: [{ type: 'text', value: '2026/9/29 18:30' }],
+  }],
+};
+const dateTableCellBefore = JSON.stringify(dateTableCellTree);
+remarkLocalFileReferences({ workspaceRoot: 'D:\\proj\\cardbush' })(dateTableCellTree);
+assert.equal(
+  JSON.stringify(dateTableCellTree),
+  dateTableCellBefore,
+  'Slash-formatted dates must not be promoted to local folder references',
+);
+
 const localReferenceLinkSource = fs.readFileSync(
   path.join(
     process.cwd(),
@@ -199,6 +214,8 @@ assert.match(
   /directoryLike[\s\S]*?cardbushDesktop\?\.openPath\?\.\(path\)/,
   'Directory references must open through the desktop shell instead of the file preview',
 );
+assert.match(localReferenceLinkSource, /inspectLocalReference/);
+assert.match(localReferenceLinkSource, /applicationLike[\s\S]*?openPath\?\.\(path\)/);
 
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
@@ -217,6 +234,9 @@ const electronMainSource = fs.readFileSync(
   path.join(process.cwd(), 'electron', 'main.ts'),
   'utf8',
 );
+assert.match(electronMainSource, /ipcMain\.handle\('files:inspect-local-reference'/);
+assert.match(electronMainSource, /shell\.readShortcutLink\(normalizedPath\)/);
+assert.match(electronMainSource, /getFileIcon\(normalizedPath/);
 const fileContextMenuHandler = electronMainSource.match(
   /ipcMain\.handle\('shell:file-context-menu',[\s\S]*?\n\}\);/,
 )?.[0] ?? '';

@@ -38,7 +38,6 @@ test("runs configured Team assignments concurrently with immutable Profile const
       createSessionId: () => `session_${serial}`,
       createTurnId: () => `turn_${serial}`,
       createMessageId: () => `message_${serial}`,
-      createReceiptId: () => "receipt_team",
     },
   );
   const coordinator = new ToolExecutionCoordinator({
@@ -86,8 +85,7 @@ test("runs configured Team assignments concurrently with immutable Profile const
     },
   );
 
-  assert.equal(outcome.kind, "completed");
-  assert.equal(outcome.result.success, true);
+  assert.equal(outcome.kind, "returned");
   assert.equal(peak, 2);
   assert.equal(requests.length, 2);
   assert.deepEqual(requests.map((request) => request.metadata.teamPhase), [
@@ -99,8 +97,8 @@ test("runs configured Team assignments concurrently with immutable Profile const
   assert.ok(requests.every((request) => request.metadata.disabledTools.includes("subagent")));
   assert.ok(requests.every((request) => request.metadata.disabledTools.includes("team_delegate")));
   assert.ok(requests.every((request) => request.tools.length === 0));
-  assert.deepEqual(outcome.result.guidance.map((message) => message.name), [
-    "team_result_builder", "team_result_reviewer",
+  assert.deepEqual(outcome.result.members.map((member) => member.memberId), [
+    "builder", "reviewer",
   ]);
   assert.deepEqual(tasks.list("parent_session").map((task) => [task.origin, task.phase]), [
     ["team", "execution"],
@@ -150,7 +148,8 @@ test("rejects unknown or duplicate member assignments without dispatching childr
         contextMessages: [],
       },
     );
-    assert.equal(outcome.result.success, false);
+    assert.equal(outcome.kind, "failed");
+    assert.match(outcome.error.message, /not configured|assigned more than once/);
   }
   assert.equal(children, 0);
 });

@@ -1,30 +1,8 @@
-import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
-  type Artifact,
-  type ToolResult,
-} from '@cardbush/bush-protocol';
-import { McpServer, type ServerContext } from '@modelcontextprotocol/server';
+import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
-import { executeComputerUse } from './computerUseRuntime.js';
+import { executeComputerUse, type ComputerUseArtifact } from './computerUseRuntime.js';
 import type { ComputerUsePluginConfig } from '../config.js';
-
-export const computerUseManifest = {
-  effect_kind: 'desktop_control',
-  operation: 'desktop.control',
-  risk: 'medium',
-  owner: 'cardbush_apps',
-  dispatch_phase: 'execution',
-  dispatch_scope: 'process',
-  dispatch_side_effect: 'desktop_control',
-  dispatch_mutating: true,
-  dispatch_source: 'mcp_tool',
-  stage_modes: ['execute'],
-  output_kinds: ['structured_data', 'artifact'],
-  handoff_exports: ['artifact'],
-  evidence_hints: ['desktop_state', 'screenshot'],
-} as const;
 
 const inputSchema = z.object({
   action: z.enum([
@@ -138,13 +116,11 @@ export function registerComputerUsePlugin(
     inputSchema,
     _meta: {
       'cardbush/plugin_id': 'computer_use',
-      'cardbush/action_manifest': computerUseManifest,
     },
   }, async (input, context) => {
     try {
       const result = await executeComputerUse(input, config, context.mcpReq.signal);
       return mcpResult(
-        context,
         true,
         result.output,
         result.paths,
@@ -156,7 +132,6 @@ export function registerComputerUsePlugin(
         throw error;
       }
       return mcpResult(
-        context,
         false,
         {},
         [],
@@ -169,67 +144,22 @@ export function registerComputerUsePlugin(
 }
 
 function mcpResult(
-  context: ServerContext,
   success: boolean,
   output: unknown,
   paths: string[],
-  artifacts: Artifact[],
+  artifacts: ComputerUseArtifact[],
   action: string,
   error?: { code: string; message: string },
 ) {
-  const metadata = (context.mcpReq._meta ?? {}) as Record<string, unknown>;
-  const receiptId = requiredMetadata(metadata, 'receipt_id');
-  const toolCallId = requiredMetadata(metadata, 'tool_call_id');
-  const actionManifest = record(metadata.action_manifest);
-  const manifestId = requiredMetadata(actionManifest, 'manifest_id');
-  const result: ToolResult = {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: toolCallId,
-    success,
-    output,
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: receiptId,
-      action_manifest_id: manifestId,
-      status: success ? 'succeeded' : 'failed',
-      operation: String(actionManifest.operation ?? computerUseManifest.operation),
-      effect_kind: String(actionManifest.effect_kind ?? computerUseManifest.effect_kind),
-      owner: String(actionManifest.owner ?? computerUseManifest.owner),
-      dispatch_scope: String(actionManifest.dispatch_scope ?? computerUseManifest.dispatch_scope),
-      categories: ['desktop_control'],
-      paths,
-      execution_success: success,
-      semantic_success: success,
-      verification_state: success
-        ? ['observe', 'list_windows'].includes(action) ? 'verified' : 'attempted'
-        : 'failed',
-      error_code: error?.code ?? '',
-    }],
-    artifacts,
-    workspace_changes: [],
-    guidance: [],
-    ...(error ? { error: { kind: 'tool' as const, ...error } } : {}),
-  };
+  const result = { action, output, paths, artifacts, ...(error ? { error } : {}) };
   return {
     content: [{
       type: 'text' as const,
       text: success ? JSON.stringify(output) : error?.message ?? 'computer_use failed',
     }],
-    structuredContent: result as unknown as Record<string, unknown>,
+    structuredContent: result,
     isError: !success,
   };
-}
-
-function requiredMetadata(value: Record<string, unknown>, key: string): string {
-  const result = String(value[key] ?? '').trim();
-  if (!result) throw new Error(`Missing CardBush MCP request metadata: ${key}`);
-  return result;
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }
 
 function errorMessage(error: unknown): string {

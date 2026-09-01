@@ -39,13 +39,25 @@ Turn interrupted after tool execution can resume and commit exactly once. The
 desktop Product Host settles checkpoints orphaned by a process crash as stopped
 Turns during startup and releases the Session single-active-Turn gate.
 
+Stop is a Loop boundary, not a history rollback and not an implicit process
+shutdown. Runtime aborts the active Provider/Tool wait, allows a uniform 250 ms
+grace for a cooperative native stop fact, then projects exactly one cancelled
+Tool fact where needed and commits the interrupted Turn with any assistant
+text and completed Tool facts already observed, and releases the Session for the
+next Turn. Provider or Tool promises that ignore Abort are detached and their late
+settlement cannot append a second lifecycle fact. A following user message is
+assembled after the stopped Turn, while its hash-only Cache Chain snapshot is
+carried into the next Turn so append-only prefix continuity remains observable.
+Explicit message edit/regenerate still uses supersession; the inherited tracker
+then reports the actual prefix break rather than hiding it.
+
 The live Utility Process stores Runtime events, checkpoints and Session facts
 under separate directories beneath its explicit state root. Tool execution also
-has a checksummed journal containing the admitted manifest, exact result,
-Execution Facts, Artifacts and Workspace Changes. Event references come only
-from those declared facts; Runtime never extracts paths or effects from output
-text. The Electron product chat path now consumes these typed Session and Tool
-facts directly; ordinary Turns no longer need a Python HTTP/SSE adapter. Large
+has a checksummed journal containing the admitted manifest, exact native result,
+Runtime-owned Workspace Changes, or a Runtime invocation error. Runtime never
+creates semantic result facts, interprets MCP `isError`, or extracts paths and
+effects from output text. The Electron product chat path consumes these records
+directly; ordinary Turns no longer need a Python HTTP/SSE adapter. Large
 Tool results remain complete in that journal; the model sees a bounded projection
 and can retrieve exact excerpts from a stable `tool-result://` locator through
 `read_archived_tool_result`. That reader accepts only an exact locator emitted by
@@ -61,9 +73,10 @@ state combinations.
 identity and revision fields are supplied by Runtime rather than the model. The
 typed Tool Catalog is the sole source of their model-visible definitions.
 
-Normal assistant terminal text completes the Turn. Runtime keeps Tool execution
-receipts authoritative for effects, artifacts, and workspace changes; terminal
-prose is never promoted into an execution receipt.
+Normal assistant terminal text completes the Turn. Runtime keeps invocation state
+and recorded Workspace Changes authoritative for its own lifecycle; tool-owned
+meaning remains inside the native return and terminal prose is never promoted
+into an execution fact.
 
 Subagent execution forks the exact pre-dispatch conversation into an ordinary
 child Session Turn. Dispatch returns a submitted fact immediately and child work
@@ -86,8 +99,12 @@ an operation is inside the workspace. External access requests one capability
 bound to the exact action and canonical resource, and an allow answer must grant
 exactly that requested capability set.
 
-Runtime does not parse, classify, or rewrite terminal commands. It records the
-selected working directory, complete output, exit code, and timeout as Tool facts.
+Runtime does not parse, classify, or rewrite terminal commands. `terminal_exec`
+returns completed output and exit status when the command finishes inside its
+declared yield window; otherwise it returns `state=running` with a stable
+terminal session handle. `terminal_poll`, `terminal_write`, `terminal_list`, and
+permission-gated `terminal_stop` manage that handle without blocking the Agent
+Loop. Cancelling a wait does not implicitly stop the spawned terminal session.
 Consequently this workspace permission protocol controls declared paths and the
 terminal working directory; it is not an operating-system sandbox and does not
 claim to constrain paths that a command itself may access.

@@ -19,7 +19,6 @@ import {
 import { copyText } from '../messageFeedback';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { PlanningAssessmentNotice, planningAssessmentFromExecution } from './PlanningAssessmentNotice';
-import { PlanVerificationPanel, normalizeAssertionResults, planVerificationInfoFromExecution, type VerificationAssertionItem } from './PlanVerificationPanel';
 import { SubagentAuditSignalsPanel, subagentAuditSignalsFromExecution } from './SubagentAuditSignalsPanel';
 import { SubagentChildTools, subagentChildToolExecutions } from './SubagentChildTools';
 import { ToolChangeBlock } from './ToolChangeBlock';
@@ -291,6 +290,27 @@ function summarizeIoManifest(manifest: Record<string, unknown>) {
   return summarizeRecord(manifest);
 }
 
+type VerificationAssertionItem = {
+  label: string;
+  status: string;
+  summary: string;
+};
+
+function normalizeAssertionResults(value: unknown): VerificationAssertionItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (item == null || typeof item !== 'object' || Array.isArray(item)) return null;
+      const record = asRecord(item);
+      const label = nonEmptyString(record.label) ?? '';
+      const passed = typeof record.passed === 'boolean' ? record.passed : undefined;
+      const summary = nonEmptyString(record.summary) ?? '';
+      if (!label || passed === undefined) return null;
+      return { label, status: passed ? 'passed' : 'failed', summary };
+    })
+    .filter((item): item is VerificationAssertionItem => item != null);
+}
+
 function summarizeAssertionResults(items: VerificationAssertionItem[]) {
   const visible = items
     .slice(0, 4)
@@ -410,7 +430,6 @@ function ToolExecutionDetail({
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
   const hookDecision = toolHookDecisionFromExecution(execution);
   const planningAssessment = planningAssessmentFromExecution(execution);
-  const verificationInfo = planVerificationInfoFromExecution(execution);
   const auditSignals = subagentAuditSignalsFromExecution(execution);
   const workerInfo = workerProfileInfoFromExecution(execution);
   const dispatchPlan = planDispatchInfoFromExecution(execution);
@@ -420,11 +439,7 @@ function ToolExecutionDetail({
   const shouldCollapseOutput = toolOutputNeedsCollapse(output);
   const visibleOutput =
     shouldCollapseOutput && !outputExpanded ? compactToolOutput(output) : output;
-  const status = verificationInfo?.failed
-    ? language === 'zh'
-      ? '节点验证未通过'
-      : 'Verification failed'
-    : activeStatus
+  const status = activeStatus
       ? activeStatus
       : cancelled
         ? language === 'zh'
@@ -442,7 +457,7 @@ function ToolExecutionDetail({
       <header>
         <ToolLogo name={execution.name} size={16} />
         <strong>{displayToolName(execution.name)}</strong>
-        <span className={verificationInfo?.failed ? 'warning' : failed ? 'failed' : ''}>
+        <span className={failed ? 'failed' : ''}>
           {duration ? `${status} · ${duration}` : status}
         </span>
       </header>
@@ -462,9 +477,6 @@ function ToolExecutionDetail({
         />
       )}
       {hookDecision && <ToolHookDecisionNotice decision={hookDecision} />}
-      {verificationInfo && (
-        <PlanVerificationPanel info={verificationInfo} language={language} />
-      )}
       {auditSignals && (
         <SubagentAuditSignalsPanel signals={auditSignals} language={language} />
       )}

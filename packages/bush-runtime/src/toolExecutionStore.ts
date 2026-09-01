@@ -33,7 +33,7 @@ export class ToolExecutionStore {
     identity: ToolExecutionIdentity,
     outcome: ToolExecutionOutcome,
   ): ToolExecutionRecord {
-    const candidate = toolExecutionRecordSchema.parse({
+    const candidate = structuredClone(toolExecutionRecordSchema.parse({
       protocol: BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
       requestId: identity.requestId,
       sessionId: identity.sessionId,
@@ -44,8 +44,10 @@ export class ToolExecutionStore {
       toolCall,
       outcome: outcome.kind,
       actionManifest: outcome.actionManifest,
-      result: outcome.result,
-    });
+      ...(outcome.kind === "returned" ? { result: outcome.result } : {}),
+      workspaceChanges: outcome.workspaceChanges,
+      ...(outcome.kind === "returned" ? {} : { error: outcome.error }),
+    }));
     validateRecord(candidate);
     const records = this.#load(identity.sessionId);
     const existing = records.find(
@@ -54,15 +56,7 @@ export class ToolExecutionStore {
     );
     if (existing) {
       if (JSON.stringify(existing) === JSON.stringify(candidate)) return existing;
-      throw new Error(`Tool execution ${toolCall.id} already has different facts.`);
-    }
-    const receiptIds = new Set(
-      records.flatMap((record) => record.result.facts.map((fact) => fact.receipt_id)),
-    );
-    for (const fact of candidate.result.facts) {
-      if (receiptIds.has(fact.receipt_id)) {
-        throw new Error(`Execution Fact ${fact.receipt_id} already exists.`);
-      }
+      throw new Error(`Tool execution ${toolCall.id} already has a different record.`);
     }
     this.#persistence?.append(candidate);
     records.push(candidate);
@@ -92,17 +86,10 @@ export class ToolExecutionStore {
       return parsed;
     });
     const identities = new Set<string>();
-    const receipts = new Set<string>();
     for (const record of loaded) {
       const identity = JSON.stringify([record.turnId, record.toolCall.id]);
       if (identities.has(identity)) throw new Error("Duplicate persisted Tool execution identity.");
       identities.add(identity);
-      for (const fact of record.result.facts) {
-        if (receipts.has(fact.receipt_id)) {
-          throw new Error(`Duplicate persisted Execution Fact ${fact.receipt_id}.`);
-        }
-        receipts.add(fact.receipt_id);
-      }
     }
     this.#records.set(sessionId, loaded);
     return loaded;
@@ -110,14 +97,7 @@ export class ToolExecutionStore {
 }
 
 function validateRecord(record: ToolExecutionRecord): void {
-  if (record.result.tool_call_id !== record.toolCall.id) {
-    throw new Error("Tool execution result identity mismatch.");
-  }
-  const artifactIds = record.result.artifacts.map((artifact) => artifact.artifact_id);
-  if (new Set(artifactIds).size !== artifactIds.length) {
-    throw new Error("Tool execution contains duplicate Artifact identities.");
-  }
-  const changeIds = record.result.workspace_changes.map((change) => change.change_id);
+  const changeIds = record.workspaceChanges.map((change) => change.change_id);
   if (new Set(changeIds).size !== changeIds.length) {
     throw new Error("Tool execution contains duplicate Workspace Change identities.");
   }

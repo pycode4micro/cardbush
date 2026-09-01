@@ -13,7 +13,10 @@ const relativeFilePattern = /(?:\.{0,2}[\\/])?(?:[\w@.+-]+[\\/])+[\w@.+-]+\.[a-z
 const windowsFilePattern = /[a-z]:[\\/](?:[^<>:"|?*\r\n`]+[\\/])*[^<>:"|?*\r\n`]+\.[a-z0-9][a-z0-9._-]{0,15}(?::\d+(?::\d+)?)?/gi;
 const bareWindowsAbsolutePathPattern = /[a-z]:[\\/][^\s<>:"|?*`\r\n,;，。；：、(){}\[\]]+/gi;
 const bareUncAbsolutePathPattern = /\\\\[^\s<>:"|?*`\r\n,;，。；：、(){}\[\]]+/g;
-const barePosixAbsolutePathPattern = /\/(?:[\w@.+~-]+\/)+[\w@.+~-]+/g;
+// A POSIX path must begin at a text boundary. Without this guard, the second
+// half of a date such as `2026/9/29` is indistinguishable from `/9/29` and is
+// incorrectly promoted to a local folder link.
+const barePosixAbsolutePathPattern = /(?<![\p{L}\p{N}_])\/(?:[\w@.+~-]+\/)+[\w@.+~-]+/gu;
 
 export function localFileReference(
   value: string,

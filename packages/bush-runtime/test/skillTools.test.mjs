@@ -27,9 +27,8 @@ test('registers only the published Skill discovery tool', async () => {
     const search = registry.resolve('search_skills');
     const searchInput = search.decodeInput({ query: 'spreadsheet', limit: 5 });
     const searchResult = await search.execute(context(searchInput, 'search_skills'));
-    assert.equal(searchResult.success, true);
-    assert.equal(searchResult.output.matches[0].name, 'xlsx');
-    assert.equal(searchResult.output.matches[0].mainResource, join(packageDir, 'SKILL.md'));
+    assert.equal(searchResult.matches[0].name, 'xlsx');
+    assert.equal(searchResult.matches[0].mainResource, join(packageDir, 'SKILL.md'));
 
     assert.equal(registry.resolve('read_skill'), undefined);
   } finally {
@@ -53,14 +52,14 @@ test('resolves active Skill roots for every search', async () => {
       search.decodeInput({ query: 'browser', limit: 5 }),
       'search_skills_first',
     ));
-    assert.deepEqual(firstResult.output.matches.map((item) => item.name), ['first-skill']);
+    assert.deepEqual(firstResult.matches.map((item) => item.name), ['first-skill']);
 
     activeRoots = [second];
     const secondResult = await search.execute(context(
       search.decodeInput({ query: 'browser', limit: 5 }),
       'search_skills_second',
     ));
-    assert.deepEqual(secondResult.output.matches.map((item) => item.name), ['second-skill']);
+    assert.deepEqual(secondResult.matches.map((item) => item.name), ['second-skill']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -97,16 +96,10 @@ function context(input, name) {
       operation: `skills.${name}`,
       risk: 'low',
       owner: 'runtime',
-      dispatch_phase: 'execution',
       dispatch_scope: 'runtime',
-      dispatch_side_effect: 'none',
-      dispatch_mutating: false,
-      dispatch_source: 'test',
-      stage_modes: ['read'],
-      output_kinds: ['skill_instruction'],
-      handoff_exports: [],
-      evidence_hints: [],
+      mutating: false,
     },
     capabilityIds: [],
+    recordWorkspaceChange() {},
   };
 }

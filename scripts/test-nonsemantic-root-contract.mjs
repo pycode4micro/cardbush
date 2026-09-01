@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { decodeRuntimeFixture } from '@cardbush/bush-protocol/runtime-fixture';
@@ -33,9 +33,11 @@ for (const alias of ['pending', 'using', 'started', 'complete', 'succeeded', 'su
   assert.doesNotMatch(toolState, new RegExp(`['\"]${alias}['\"]`));
 }
 
-const verification = read('src', 'features', 'tools', 'PlanVerificationPanel.tsx');
-assert.match(verification, /candidate\.categories\.includes\('plan_verification'\)/);
-assert.doesNotMatch(verification, /parseToolOutputJson|verification_result|\/fail|failed\|false\|missing/);
+assert.equal(
+  existsSync(join(root, 'src', 'features', 'tools', 'PlanVerificationPanel.tsx')),
+  false,
+  'The removed Execution Fact classifier UI must not be restored',
+);
 
 const fixture = decodeRuntimeFixture(JSON.parse(read(
   'packages',

@@ -1487,7 +1487,9 @@ function ScrollingConversationTitle({ title }: { title: string }) {
     return () => observer.disconnect();
   }, [title]);
 
-  const duration = Math.min(12, Math.max(4, overflowWidth / 24 + 2));
+  // Keep the marquee distance-aware, but quick enough that a hovered title is
+  // useful immediately. The duration represents one trip across the overflow.
+  const duration = Math.min(5.2, Math.max(1.4, overflowWidth / 64 + 0.65));
   return (
     <span
       ref={viewportRef}

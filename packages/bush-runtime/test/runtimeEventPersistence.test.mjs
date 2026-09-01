@@ -131,10 +131,6 @@ test("verifies the persisted bytes before schema defaults are applied", (t) => {
       toolCallId: "call_legacy_error",
       toolName: "fixture_tool",
       ordinal: 0,
-      receiptIds: [],
-      executionFactIds: [],
-      artifactIds: [],
-      workspaceChangeIds: [],
       error: {
         kind: "tool",
         code: "fixture_failure",

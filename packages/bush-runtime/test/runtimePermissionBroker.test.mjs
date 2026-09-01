@@ -13,7 +13,7 @@ test("coalesces simultaneous identical capability requests into one user decisio
   const common = {
     reason: "read requires access outside the task roots.",
     actions: ["read"],
-    resources: ["C:\\workspace"],
+    targets: [{ kind: "filesystem_path", value: "C:\\workspace" }],
     capabilityIds: ["capability_read_workspace"],
   };
   const first = broker.request({ ...common, toolCallId: "call_1" });
@@ -45,14 +45,14 @@ test("keeps distinct capabilities as distinct permission requests", () => {
     reason: "read one",
     toolCallId: "call_1",
     actions: ["read"],
-    resources: ["C:\\one"],
+    targets: [{ kind: "filesystem_path", value: "C:\\one" }],
     capabilityIds: ["capability_one"],
   });
   void broker.request({
     reason: "read two",
     toolCallId: "call_2",
     actions: ["read"],
-    resources: ["C:\\two"],
+    targets: [{ kind: "filesystem_path", value: "C:\\two" }],
     capabilityIds: ["capability_two"],
   });
   assert.equal(requested.length, 2);

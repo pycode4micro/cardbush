@@ -12,12 +12,6 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 
-import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
-  type ToolResult,
-} from "@cardbush/bush-protocol";
-
 import type {
   ToolAdmissionContext,
   ToolHandlerContext,
@@ -42,13 +36,18 @@ interface SearchInput extends PathInput {
 interface TerminalInput {
   command: string;
   cwd: string;
-  timeoutMs: number;
+  yieldTimeMs: number;
   shell: TerminalShell;
 }
 
+interface TerminalSessionInput { sessionId: string }
+interface TerminalPollInput extends TerminalSessionInput { yieldTimeMs: number }
+interface TerminalWriteInput extends TerminalPollInput { chars: string }
+
 type TerminalShell = "cmd" | "powershell" | "posix";
 
-const MAX_TERMINAL_TIMEOUT_MS = 30_000;
+const MAX_TERMINAL_YIELD_MS = 30_000;
+const MAX_TERMINAL_OUTPUT_BYTES = 1024 * 1024;
 
 interface Observation {
   sha256: string;
@@ -151,10 +150,10 @@ export class WorkspaceObservationStore {
 export function registerWorkspaceTools(
   registry: ToolRegistry,
   observations: WorkspaceObservationStore = new WorkspaceObservationStore(),
-  options: { createReceiptId?: () => string; createChangeId?: () => string } = {},
+  options: { createChangeId?: () => string } = {},
 ): WorkspaceObservationStore {
-  const createReceiptId = options.createReceiptId ?? (() => `receipt_${randomUUID()}`);
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
+  const terminals = new TerminalSessionManager();
 
   registerIfMissing(registry, {
     definition: {
@@ -174,11 +173,11 @@ export function registerWorkspaceTools(
       const bytes = await readFile(path);
       const sha256 = digest(bytes);
       observations.record(context.sessionId, path, sha256, workspaceRoot(context));
-      return successResult(context, {
+      return {
         path,
         sha256,
         content: bytes.toString(context.input.encoding),
-      }, createReceiptId(), [path]);
+      };
     },
   });
 
@@ -213,12 +212,12 @@ export function registerWorkspaceTools(
       if (execution.exitCode !== 0 && execution.exitCode !== 1) {
         throw new Error(execution.stderr || `ripgrep exited with code ${execution.exitCode}.`);
       }
-      return successResult(context, {
+      return {
         path,
         query: context.input.query,
         matched: execution.exitCode === 0,
         output: execution.stdout,
-      }, createReceiptId(), [path]);
+      };
     },
   });
 
@@ -253,7 +252,6 @@ export function registerWorkspaceTools(
           after,
           before ? "modified" : "added",
           context.input.encoding,
-          createReceiptId(),
           createChangeId(),
         );
       } finally {
@@ -311,7 +309,6 @@ export function registerWorkspaceTools(
           after,
           "modified",
           context.input.encoding,
-          createReceiptId(),
           createChangeId(),
         );
       } finally {
@@ -331,11 +328,11 @@ export function registerWorkspaceTools(
           minLength: 1,
           description: "Working directory. Use an absolute path when the Turn has no workspace.",
         },
-        timeout_ms: {
+        yield_time_ms: {
           type: "integer",
           minimum: 1,
-          maximum: MAX_TERMINAL_TIMEOUT_MS,
-          description: `Required execution deadline in milliseconds. Maximum ${MAX_TERMINAL_TIMEOUT_MS}.`,
+          maximum: MAX_TERMINAL_YIELD_MS,
+          description: `Required initial wait before a still-running command returns a terminal session handle. Maximum ${MAX_TERMINAL_YIELD_MS}.`,
         },
         shell: {
           type: "string",
@@ -343,7 +340,7 @@ export function registerWorkspaceTools(
           default: defaultTerminalShell(),
           description: "Explicit command interpreter. Runtime never rewrites commands between shell syntaxes.",
         },
-      }, ["command", "cwd", "timeout_ms", "shell"]),
+      }, ["command", "cwd", "yield_time_ms", "shell"]),
     },
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: decodeTerminal,
@@ -353,43 +350,98 @@ export function registerWorkspaceTools(
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
-      const execution = await runShell(context.input.command, {
+      return terminals.start({
+        ownerSessionId: context.sessionId,
+        command: context.input.command,
         cwd,
-        timeoutMs: context.input.timeoutMs,
+        yieldTimeMs: context.input.yieldTimeMs,
         signal: context.signal,
         shell: context.input.shell,
       });
-      const receiptId = createReceiptId();
-      const completed = execution.exitCode === 0 && !execution.timedOut;
+    },
+  });
+
+  registerIfMissing(registry, {
+    definition: {
+      name: "terminal_poll",
+      description: "Wait for new output or a state change from one running terminal session. Returns only output produced since the preceding terminal result.",
+      inputSchema: objectSchema({
+        session_id: { type: "string", minLength: 1 },
+        yield_time_ms: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_TERMINAL_YIELD_MS,
+        },
+      }, ["session_id", "yield_time_ms"]),
+    },
+    manifest: manifest("terminal.poll", "observation", false),
+    decodeInput: decodeTerminalPoll,
+    execute: (context: ToolHandlerContext<TerminalPollInput>) =>
+      terminals.poll(context.sessionId, context.input, context.signal),
+  });
+
+  registerIfMissing(registry, {
+    definition: {
+      name: "terminal_write",
+      description: "Write exact characters to the stdin of one running terminal session, then return newly produced output and its current state.",
+      inputSchema: objectSchema({
+        session_id: { type: "string", minLength: 1 },
+        chars: { type: "string" },
+        yield_time_ms: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_TERMINAL_YIELD_MS,
+        },
+      }, ["session_id", "chars", "yield_time_ms"]),
+    },
+    manifest: manifest("terminal.write", "process_execution", true),
+    decodeInput: decodeTerminalWrite,
+    execute: (context: ToolHandlerContext<TerminalWriteInput>) =>
+      terminals.write(context.sessionId, context.input, context.signal),
+  });
+
+  registerIfMissing(registry, {
+    definition: {
+      name: "terminal_stop",
+      description: "Stop one running terminal session and its process tree. This is an explicit destructive process-control action.",
+      inputSchema: objectSchema({
+        session_id: { type: "string", minLength: 1 },
+      }, ["session_id"]),
+    },
+    manifest: manifest("terminal.stop", "process_control", true),
+    decodeInput: decodeTerminalSession,
+    authorize: (context: ToolAdmissionContext<TerminalSessionInput>) => {
+      const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return {
-        ...successResult(context, {
-          command: context.input.command,
-          cwd,
-          ...execution,
-        }, receiptId, [cwd]),
-        success: completed,
-        facts: [executionFact(context, receiptId, [cwd], completed, {
-          shell: execution.shell,
-          shellExecutable: execution.shellExecutable,
-        })],
-        ...(completed
-          ? {}
-          : {
-              error: {
-                kind: "tool" as const,
-                code: execution.timedOut ? "terminal_timeout" : "terminal_exit_nonzero",
-                message: execution.timedOut
-                  ? `The command exceeded its ${execution.timeoutMs} ms execution deadline.`
-                  : `The command exited with code ${execution.exitCode}.`,
-                details: {
-                  exitCode: execution.exitCode,
-                  timeoutMs: execution.timeoutMs,
-                  durationMs: execution.durationMs,
-                },
-              },
-            }),
+        kind: "ask" as const,
+        request: {
+          reason: "Stopping a running terminal session requires explicit permission.",
+          actions: ["stop"],
+          targets: [{
+            kind: "process" as const,
+            value: terminal.sessionId,
+            label: terminal.command,
+          }],
+          capabilityIds: [`process.stop:${terminal.sessionId}`],
+        },
       };
     },
+    execute: (context: ToolHandlerContext<TerminalSessionInput>) =>
+      terminals.stop(context.sessionId, context.input.sessionId),
+  });
+
+  registerIfMissing(registry, {
+    definition: {
+      name: "terminal_list",
+      description: "List terminal sessions owned by the current Runtime session without consuming their pending output.",
+      inputSchema: objectSchema({}, []),
+    },
+    manifest: manifest("terminal.list", "observation", false),
+    parallelSafe: true,
+    decodeInput: () => ({}),
+    execute: (context: ToolHandlerContext<Record<string, never>>) => ({
+      sessions: terminals.list(context.sessionId),
+    }),
   });
 
   return observations;
@@ -405,15 +457,8 @@ function manifest(operation: string, effectKind: string, mutating: boolean) {
     operation,
     risk: mutating ? "medium" : "low",
     owner: "runtime_workspace",
-    dispatch_phase: "execution",
     dispatch_scope: "resource",
-    dispatch_side_effect: mutating ? effectKind : "none",
-    dispatch_mutating: mutating,
-    dispatch_source: "registered_tool",
-    stage_modes: ["execute"],
-    output_kinds: ["structured_data"],
-    handoff_exports: [],
-    evidence_hints: [effectKind],
+    mutating,
   };
 }
 
@@ -435,8 +480,12 @@ async function pathAdmission(
       request: {
         reason: string;
         actions: string[];
-        resources: string[];
+        targets: Array<{ kind: "filesystem_path"; value: string }>;
         capabilityIds: string[];
+        scope: {
+          mode: "task_free" | "user_free";
+          roots: string[];
+        };
       };
     }
 > {
@@ -450,8 +499,9 @@ async function pathAdmission(
     request: {
       reason: `${action} requires access outside the ${mode === "user_free" ? "user" : "task"} roots.`,
       actions: [action],
-      resources: [path],
+      targets: [{ kind: "filesystem_path", value: path }],
       capabilityIds: [capabilityId],
+      scope: { mode, roots },
     },
   };
 }
@@ -574,24 +624,6 @@ function codedError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
-function successResult(
-  context: ToolHandlerContext<unknown>,
-  output: unknown,
-  receiptId: string,
-  paths: string[],
-): ToolResult {
-  return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: true,
-    output,
-    facts: [executionFact(context, receiptId, paths, true)],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
-  };
-}
-
 function changeResult(
   context: ToolHandlerContext<unknown>,
   path: string,
@@ -599,15 +631,12 @@ function changeResult(
   after: Buffer,
   status: "added" | "modified",
   encoding: BufferEncoding,
-  receiptId: string,
   changeId: string,
-): ToolResult {
+): Record<string, unknown> {
   const beforeText = before?.toString(encoding) ?? "";
   const afterText = after.toString(encoding);
   const diff = createDisplayDiff(beforeText, afterText);
-  return {
-    ...successResult(context, { path, sha256: digest(after) }, receiptId, [path]),
-    workspace_changes: [{
+  const change = {
       change_id: changeId,
       path,
       status,
@@ -619,7 +648,12 @@ function changeResult(
         ...(before ? { beforeContentBase64: before.toString("base64") } : {}),
         diff: diff.text,
       },
-    }],
+  };
+  context.recordWorkspaceChange(change);
+  return {
+    path,
+    sha256: digest(after),
+    change,
   };
 }
 
@@ -680,32 +714,6 @@ function normalizedTextLines(value: string): string[] {
   return lines;
 }
 
-function executionFact(
-  context: ToolHandlerContext<unknown>,
-  receiptId: string,
-  paths: string[],
-  succeeded: boolean,
-  metadata?: Record<string, unknown>,
-) {
-  return {
-    protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-    receipt_id: receiptId,
-    action_manifest_id: context.actionManifest.manifest_id,
-    status: succeeded ? "succeeded" as const : "failed" as const,
-    operation: context.actionManifest.operation,
-    effect_kind: context.actionManifest.effect_kind,
-    owner: context.actionManifest.owner,
-    dispatch_scope: context.actionManifest.dispatch_scope,
-    categories: [context.actionManifest.effect_kind],
-    paths,
-    execution_success: true,
-    semantic_success: succeeded,
-    verification_state: succeeded ? "verified" as const : "failed" as const,
-    error_code: succeeded ? "" : "execution_failed",
-    ...(metadata ? { metadata } : {}),
-  };
-}
-
 function decodeRead(input: unknown): ReadFileInput {
   const object = objectInput(input);
   return { path: requiredString(object.path, "path"), encoding: encoding(object.encoding) };
@@ -743,12 +751,12 @@ function decodeSearch(input: unknown): SearchInput {
 
 function decodeTerminal(input: unknown): TerminalInput {
   const object = objectInput(input);
-  const timeout = object.timeout_ms;
-  if (!Number.isInteger(timeout) || Number(timeout) < 1) {
-    throw new Error("timeout_ms is required and must be a positive integer.");
+  const yieldTime = object.yield_time_ms;
+  if (!Number.isInteger(yieldTime) || Number(yieldTime) < 1) {
+    throw new Error("yield_time_ms is required and must be a positive integer.");
   }
-  if (Number(timeout) > MAX_TERMINAL_TIMEOUT_MS) {
-    throw new Error(`timeout_ms must not exceed ${MAX_TERMINAL_TIMEOUT_MS}.`);
+  if (Number(yieldTime) > MAX_TERMINAL_YIELD_MS) {
+    throw new Error(`yield_time_ms must not exceed ${MAX_TERMINAL_YIELD_MS}.`);
   }
   const shell = object.shell === undefined ? defaultTerminalShell() : String(object.shell);
   if (!availableTerminalShells().includes(shell as TerminalShell)) {
@@ -759,8 +767,36 @@ function decodeTerminal(input: unknown): TerminalInput {
   return {
     command: requiredString(object.command, "command", false),
     cwd: typeof object.cwd === "string" ? object.cwd.trim() : "",
-    timeoutMs: Number(timeout),
+    yieldTimeMs: Number(yieldTime),
     shell: shell as TerminalShell,
+  };
+}
+
+function decodeTerminalSession(input: unknown): TerminalSessionInput {
+  const object = objectInput(input);
+  return { sessionId: requiredString(object.session_id, "session_id") };
+}
+
+function decodeTerminalPoll(input: unknown): TerminalPollInput {
+  const object = objectInput(input);
+  const yieldTime = object.yield_time_ms;
+  if (!Number.isInteger(yieldTime) || Number(yieldTime) < 1) {
+    throw new Error("yield_time_ms is required and must be a positive integer.");
+  }
+  if (Number(yieldTime) > MAX_TERMINAL_YIELD_MS) {
+    throw new Error(`yield_time_ms must not exceed ${MAX_TERMINAL_YIELD_MS}.`);
+  }
+  return {
+    sessionId: requiredString(object.session_id, "session_id"),
+    yieldTimeMs: Number(yieldTime),
+  };
+}
+
+function decodeTerminalWrite(input: unknown): TerminalWriteInput {
+  const object = objectInput(input);
+  return {
+    ...decodeTerminalPoll(object),
+    chars: stringValue(object.chars, "chars"),
   };
 }
 
@@ -862,11 +898,350 @@ interface ProcessResult {
   timedOut: boolean;
 }
 
-interface TerminalProcessResult extends ProcessResult {
+type TerminalSessionState = "running" | "exited" | "failed" | "stopped";
+
+interface ManagedTerminalSession {
+  sessionId: string;
+  ownerSessionId: string;
+  command: string;
+  cwd: string;
   shell: TerminalShell;
   shellExecutable: string;
-  timeoutMs: number;
-  durationMs: number;
+  child: ReturnType<typeof spawn>;
+  pid: number | null;
+  state: TerminalSessionState;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  error: string;
+  startedAt: number;
+  revision: number;
+  stopRequested: boolean;
+  stdout: Buffer[];
+  stderr: Buffer[];
+  stdoutBytes: number;
+  stderrBytes: number;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  waiters: Set<() => void>;
+}
+
+class TerminalSessionManager {
+  readonly #sessions = new Map<string, ManagedTerminalSession>();
+
+  async start(input: {
+    ownerSessionId: string;
+    command: string;
+    cwd: string;
+    yieldTimeMs: number;
+    signal?: AbortSignal;
+    shell: TerminalShell;
+  }): Promise<Record<string, unknown>> {
+    const invocation = terminalShellInvocation(input.shell, input.command);
+    const child = spawn(invocation.executable, invocation.args, {
+      cwd: input.cwd,
+      detached: process.platform !== "win32",
+      windowsHide: true,
+    });
+    const terminal: ManagedTerminalSession = {
+      sessionId: `terminal_${randomUUID()}`,
+      ownerSessionId: input.ownerSessionId,
+      command: input.command,
+      cwd: input.cwd,
+      shell: input.shell,
+      shellExecutable: invocation.executable,
+      child,
+      pid: child.pid ?? null,
+      state: "running",
+      exitCode: null,
+      signal: null,
+      error: "",
+      startedAt: Date.now(),
+      revision: 0,
+      stopRequested: false,
+      stdout: [],
+      stderr: [],
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      waiters: new Set(),
+    };
+    this.#sessions.set(terminal.sessionId, terminal);
+    child.stdout?.on("data", (chunk: Buffer) => {
+      appendTerminalOutput(terminal, "stdout", chunk);
+      this.#notify(terminal);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      appendTerminalOutput(terminal, "stderr", chunk);
+      this.#notify(terminal);
+    });
+    child.on("error", (error) => {
+      terminal.state = "failed";
+      terminal.error = error.message;
+      this.#notify(terminal);
+    });
+    child.on("exit", (exitCode, signal) => {
+      terminal.state = terminal.stopRequested ? "stopped" : "exited";
+      terminal.exitCode = exitCode;
+      terminal.signal = signal;
+      this.#notify(terminal);
+      const releaseStreams = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }, 100);
+      releaseStreams.unref?.();
+    });
+
+    await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
+    const result = this.#consume(terminal, input.yieldTimeMs);
+    if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
+    return result;
+  }
+
+  async poll(
+    ownerSessionId: string,
+    input: TerminalPollInput,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const terminal = this.#owned(ownerSessionId, input.sessionId);
+    if (
+      terminal.state === "running" &&
+      terminal.stdoutBytes === 0 &&
+      terminal.stderrBytes === 0
+    ) {
+      await this.#waitForRevision(terminal, terminal.revision, input.yieldTimeMs, signal);
+    }
+    const result = this.#consume(terminal, input.yieldTimeMs);
+    if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
+    return result;
+  }
+
+  async write(
+    ownerSessionId: string,
+    input: TerminalWriteInput,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const terminal = this.#owned(ownerSessionId, input.sessionId);
+    if (terminal.state !== "running" || !terminal.child.stdin?.writable) {
+      throw codedError("terminal_session_not_writable", `Terminal session ${input.sessionId} is not writable.`);
+    }
+    await new Promise<void>((resolvePromise, reject) => {
+      terminal.child.stdin!.write(input.chars, (error) => {
+        if (error) reject(error);
+        else resolvePromise();
+      });
+    });
+    return this.poll(ownerSessionId, input, signal);
+  }
+
+  async stop(ownerSessionId: string, sessionId: string): Promise<Record<string, unknown>> {
+    const terminal = this.#owned(ownerSessionId, sessionId);
+    terminal.stopRequested = true;
+    await terminateProcessTree(terminal);
+    if (terminal.state === "running") {
+      terminal.state = "stopped";
+      this.#notify(terminal);
+    }
+    const result = this.#consume(terminal, 0);
+    this.#sessions.delete(terminal.sessionId);
+    terminal.child.stdout?.destroy();
+    terminal.child.stderr?.destroy();
+    terminal.child.stdin?.destroy();
+    return result;
+  }
+
+  describe(ownerSessionId: string, sessionId: string) {
+    const terminal = this.#owned(ownerSessionId, sessionId);
+    return {
+      sessionId: terminal.sessionId,
+      command: terminal.command,
+      pid: terminal.pid,
+      state: terminal.state,
+    };
+  }
+
+  list(ownerSessionId: string): Array<Record<string, unknown>> {
+    return [...this.#sessions.values()]
+      .filter((terminal) => terminal.ownerSessionId === ownerSessionId)
+      .map((terminal) => ({
+        terminalSessionId: terminal.sessionId,
+        pid: terminal.pid,
+        state: terminal.state,
+        command: terminal.command,
+        cwd: terminal.cwd,
+        shell: terminal.shell,
+        startedAt: new Date(terminal.startedAt).toISOString(),
+        durationMs: Date.now() - terminal.startedAt,
+        pendingOutput: terminal.stdoutBytes + terminal.stderrBytes > 0,
+      }));
+  }
+
+  #owned(ownerSessionId: string, sessionId: string): ManagedTerminalSession {
+    const terminal = this.#sessions.get(sessionId);
+    if (!terminal || terminal.ownerSessionId !== ownerSessionId) {
+      throw codedError("terminal_session_not_found", `Terminal session ${sessionId} is not available in this Runtime session.`);
+    }
+    return terminal;
+  }
+
+  #consume(terminal: ManagedTerminalSession, yieldTimeMs: number): Record<string, unknown> {
+    const stdout = decodeProcessOutput(Buffer.concat(terminal.stdout));
+    const stderr = decodeProcessOutput(Buffer.concat(terminal.stderr));
+    terminal.stdout = [];
+    terminal.stderr = [];
+    terminal.stdoutBytes = 0;
+    terminal.stderrBytes = 0;
+    const stdoutTruncated = terminal.stdoutTruncated;
+    const stderrTruncated = terminal.stderrTruncated;
+    terminal.stdoutTruncated = false;
+    terminal.stderrTruncated = false;
+    return {
+      terminalSessionId: terminal.sessionId,
+      pid: terminal.pid,
+      state: terminal.state,
+      command: terminal.command,
+      cwd: terminal.cwd,
+      shell: terminal.shell,
+      shellExecutable: terminal.shellExecutable,
+      yieldTimeMs,
+      durationMs: Date.now() - terminal.startedAt,
+      exitCode: terminal.exitCode,
+      signal: terminal.signal,
+      stdout,
+      stderr,
+      stdoutTruncated,
+      stderrTruncated,
+      ...(terminal.error ? { error: terminal.error } : {}),
+    };
+  }
+
+  #notify(terminal: ManagedTerminalSession): void {
+    terminal.revision += 1;
+    for (const waiter of [...terminal.waiters]) waiter();
+  }
+
+  #waitForExit(
+    terminal: ManagedTerminalSession,
+    yieldTimeMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (terminal.state !== "running") return Promise.resolve();
+    return this.#wait(terminal, yieldTimeMs, signal, () => terminal.state !== "running");
+  }
+
+  #waitForRevision(
+    terminal: ManagedTerminalSession,
+    revision: number,
+    yieldTimeMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (terminal.revision !== revision || terminal.state !== "running") return Promise.resolve();
+    return this.#wait(
+      terminal,
+      yieldTimeMs,
+      signal,
+      () => terminal.revision !== revision || terminal.state !== "running",
+    );
+  }
+
+  #wait(
+    terminal: ManagedTerminalSession,
+    yieldTimeMs: number,
+    signal: AbortSignal | undefined,
+    completed: () => boolean,
+  ): Promise<void> {
+    if (completed()) return Promise.resolve();
+    if (signal?.aborted) return Promise.reject(abortReason(signal));
+    return new Promise((resolvePromise, reject) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        terminal.waiters.delete(onChange);
+        signal?.removeEventListener("abort", onAbort);
+        resolvePromise();
+      };
+      const onChange = () => {
+        if (completed()) finish();
+      };
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        terminal.waiters.delete(onChange);
+        signal?.removeEventListener("abort", onAbort);
+        reject(abortReason(signal!));
+      };
+      const timer = setTimeout(finish, yieldTimeMs);
+      terminal.waiters.add(onChange);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+}
+
+function appendTerminalOutput(
+  terminal: ManagedTerminalSession,
+  channel: "stdout" | "stderr",
+  chunk: Buffer,
+): void {
+  const chunks = terminal[channel];
+  const byteKey = channel === "stdout" ? "stdoutBytes" : "stderrBytes";
+  const truncatedKey = channel === "stdout" ? "stdoutTruncated" : "stderrTruncated";
+  chunks.push(Buffer.from(chunk));
+  terminal[byteKey] += chunk.length;
+  while (terminal[byteKey] > MAX_TERMINAL_OUTPUT_BYTES && chunks.length > 0) {
+    const overflow = terminal[byteKey] - MAX_TERMINAL_OUTPUT_BYTES;
+    const first = chunks[0]!;
+    if (first.length <= overflow) {
+      chunks.shift();
+      terminal[byteKey] -= first.length;
+    } else {
+      chunks[0] = first.subarray(overflow);
+      terminal[byteKey] -= overflow;
+    }
+    terminal[truncatedKey] = true;
+  }
+}
+
+async function terminateProcessTree(terminal: ManagedTerminalSession): Promise<void> {
+  const pid = terminal.pid;
+  if (!pid) {
+    terminal.child.kill();
+    return;
+  }
+  if (process.platform === "win32") {
+    await new Promise<void>((resolvePromise) => {
+      const killer = spawn("taskkill.exe", ["/pid", String(pid), "/t", "/f"], {
+        windowsHide: true,
+      });
+      killer.on("error", () => {
+        terminal.child.kill();
+        resolvePromise();
+      });
+      killer.on("close", () => resolvePromise());
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    terminal.child.kill("SIGTERM");
+  }
+  await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  if (terminal.state !== "running") return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    terminal.child.kill("SIGKILL");
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("Terminal wait was cancelled; the terminal session remains available.");
+  error.name = "AbortError";
+  return error;
 }
 
 async function searchFileContent(
@@ -1035,8 +1410,9 @@ function defaultTerminalShell(): TerminalShell {
 function terminalToolDescription(): string {
   const shells = availableTerminalShells().join(", ");
   return [
-    "Execute one command in the selected working directory and return complete stdout, stderr and exit code.",
-    `Every execution requires an explicit timeout_ms deadline no greater than ${MAX_TERMINAL_TIMEOUT_MS} ms. Choose the smallest sufficient deadline.`,
+    "Execute one command in the selected working directory.",
+    `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. If the command is still active then, return state=running and a terminalSessionId instead of waiting for process exit.`,
+    "Running terminal sessions persist across Agent turns and are stopped only through terminal_stop or natural process exit.",
     `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
     "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
   ].join(" ");
@@ -1066,31 +1442,6 @@ function terminalShellInvocation(
     };
   }
   return { executable: "/bin/sh", args: ["-c", command] };
-}
-
-function runShell(
-  command: string,
-  options: {
-    cwd: string;
-    timeoutMs: number;
-    signal?: AbortSignal;
-    shell: TerminalShell;
-  },
-): Promise<TerminalProcessResult> {
-  const invocation = terminalShellInvocation(options.shell, command);
-  const startedAt = Date.now();
-  const processOptions = {
-    cwd: options.cwd,
-    timeoutMs: options.timeoutMs,
-    signal: options.signal,
-  };
-  return runProcess(invocation.executable, invocation.args, processOptions).then((result) => ({
-    ...result,
-    shell: options.shell,
-    shellExecutable: invocation.executable,
-    timeoutMs: options.timeoutMs,
-    durationMs: Date.now() - startedAt,
-  }));
 }
 
 function runProcess(

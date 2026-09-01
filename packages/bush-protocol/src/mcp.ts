@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { actionManifestTemplateSchema } from "./tool.js";
 
-export const BUSH_MCP_SNAPSHOT_PROTOCOL = "bush.mcp_snapshot.v1" as const;
+export const BUSH_MCP_SNAPSHOT_PROTOCOL = "bush.mcp_snapshot.v2" as const;
 export const BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL =
   "bush.mcp_snapshot_result.v1" as const;
 export const APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND =
@@ -42,7 +42,6 @@ export const mcpServerSnapshotSchema = z.object({
   transport: mcpTransportConfigSchema,
   versionMode: z.enum(["auto", "legacy", "modern"]).default("auto"),
   restartBackoffMs: z.number().int().min(0).max(60_000).default(250),
-  acceptCardbushExtensions: z.boolean().default(false),
   exposeTools: z.array(z.string().min(1)).optional(),
   defaultToolPolicy: mcpToolPolicySchema.default({
     permission: "ask",

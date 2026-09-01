@@ -39,11 +39,10 @@ test("publishes one strict archived-result reader", async () => {
     max_chars: 500,
   });
   const result = await reader.execute(context(input));
-  assert.equal(result.success, true);
-  assert.equal(result.output.locator, "tool-result://session/turn/call");
-  assert.equal(result.output.offset, 500);
-  assert.equal(result.output.text.length, 500);
-  assert.equal(result.output.complete, false);
+  assert.equal(result.locator, "tool-result://session/turn/call");
+  assert.equal(result.offset, 500);
+  assert.equal(result.text.length, 500);
+  assert.equal(result.complete, false);
 });
 
 function context(input) {
@@ -65,16 +64,10 @@ function context(input) {
       operation: "tool_result_archive.read",
       risk: "low",
       owner: "runtime",
-      dispatch_phase: "read",
       dispatch_scope: "session",
-      dispatch_side_effect: "none",
-      dispatch_mutating: false,
-      dispatch_source: "registered_tool",
-      stage_modes: ["read"],
-      output_kinds: ["structured_data", "facts"],
-      handoff_exports: ["facts"],
-      evidence_hints: ["tool_result_archive.read"],
+      mutating: false,
     },
     capabilityIds: [],
+    recordWorkspaceChange() {},
   };
 }

@@ -25,7 +25,7 @@ const DURABILITY_BOUNDARIES = new Set<RuntimeEvent["kind"]>([
   "turn_started",
   "cache_chain_observed",
   "tool_running",
-  "tool_completed",
+  "tool_returned",
   "tool_failed",
   "tool_cancelled",
   "permission_requested",

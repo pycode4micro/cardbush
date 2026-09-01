@@ -1,8 +1,12 @@
 import {
+  BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+  decodeSessionEnvironmentFact,
+  encodeSessionEnvironmentFact,
   runtimeSessionTurnRequestSchema,
   type ReasoningEffort,
   type RuntimeProviderBindingRef,
   type RuntimeSessionTurnRequest,
+  type SessionSnapshot,
   type ToolDefinition,
 } from "@cardbush/bush-protocol";
 
@@ -29,12 +33,15 @@ export interface ProductAgentTurnInput {
   messageId: string;
   createdAt: string;
   localDate: string;
+  /** Last session environment epoch already committed to this Session. */
+  sessionEnvironmentLocalDate?: string;
   userText: string;
   userMessageName?: string;
   model: string;
   providerBinding?: RuntimeProviderBindingRef;
   tools: ToolDefinition[];
   projectDir?: string;
+  workspaceDir?: string;
   projectInstructions?: string;
   files?: string[];
   images?: string[];
@@ -59,11 +66,12 @@ export interface ProductAgentTurnInput {
   sessionMetadata?: Record<string, unknown>;
 }
 
-export function createProductAgentTurnRequest(
+function createBaseProductAgentTurnRequest(
   input: ProductAgentTurnInput,
 ): RuntimeSessionTurnRequest {
   const projectDir = input.projectDir?.trim() ?? "";
-  const context = runtimeContext(input, projectDir);
+  const workspaceDir = input.workspaceDir?.trim() || projectDir;
+  const context = runtimeContext(input, workspaceDir);
   return runtimeSessionTurnRequestSchema.parse({
     protocol: "bush.session_turn_request.v1",
     requestId: input.requestId,
@@ -96,6 +104,12 @@ export function createProductAgentTurnRequest(
     sessionMetadata: input.sessionMetadata ?? {
       title: input.sessionTitle ?? initialTitle(input.userText),
       ...(projectDir ? { projectDir } : {}),
+      ...(workspaceDir && !projectDir ? {
+        workspace_mode: "task",
+        workspace_dir: workspaceDir,
+        task_dir: workspaceDir,
+        session_workspace_dir: workspaceDir,
+      } : {}),
     },
     tools: input.tools,
     maxOutputTokens: input.maxOutputTokens,
@@ -109,11 +123,16 @@ export function createProductAgentTurnRequest(
     permissionMode: input.permissionMode,
     metadata: {
       source: "cardbush_product_agent",
-      ...(projectDir ? { workspaceDir: projectDir, projectDir } : {}),
+      ...(workspaceDir ? { workspaceDir } : {}),
+      ...(projectDir ? { projectDir } : {}),
+      ...(workspaceDir && !projectDir ? {
+        sessionWorkspaceDir: workspaceDir,
+        taskRoots: [workspaceDir],
+      } : {}),
       permissionMode: input.permissionMode,
       subagentPermissionRouting: input.subagentPermissionRouting ?? "user",
       ...(input.childAgentPolicy ? { childAgentPolicy: input.childAgentPolicy } : {}),
-      mcpContext: { filesystemRoots: projectDir ? [projectDir] : [] },
+      mcpContext: { filesystemRoots: workspaceDir ? [workspaceDir] : [] },
       teamId: input.teamId,
       allowedSkills: input.allowedSkills ?? [],
       planEnabled: input.planEnabled,
@@ -123,9 +142,58 @@ export function createProductAgentTurnRequest(
   });
 }
 
-function runtimeContext(input: ProductAgentTurnInput, projectDir: string): string {
+/**
+ * Product request shape: session-stable facts stay in the prefix while
+ * append-only Turn and environment facts are committed as internal inputs.
+ */
+export function createProductAgentTurnRequest(
+  input: ProductAgentTurnInput,
+): RuntimeSessionTurnRequest {
+  const request = createBaseProductAgentTurnRequest(input);
+  const projectDir = input.projectDir?.trim() ?? "";
+  const workspaceDir = input.workspaceDir?.trim() || projectDir;
+  const stableContext = stableRuntimeContext(input, workspaceDir);
+  const turnContext = volatileTurnContext(input);
+  const environmentInput = sessionEnvironmentInput(input);
+  return runtimeSessionTurnRequestSchema.parse({
+    ...request,
+    tools: [...request.tools].sort((left, right) =>
+      left.name.localeCompare(right.name) ||
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    ),
+    prefixMessages: [
+      { role: "system", content: ROOT_AGENT_SYSTEM_PROMPT },
+      ...(stableContext ? [{
+        role: "developer" as const,
+        name: "runtime_context",
+        content: stableContext,
+      }] : []),
+    ],
+    inputMessages: [
+      ...(environmentInput ? [environmentInput] : []),
+      ...(turnContext ? [{
+        messageId: `${input.messageId}:turn-context`,
+        createdAt: input.createdAt,
+        message: {
+          role: "user" as const,
+          name: "turn_runtime_context",
+          visibility: "internal" as const,
+          content: turnContext,
+        },
+      }] : []),
+      ...request.inputMessages,
+    ],
+    metadata: {
+      ...request.metadata,
+      sessionEnvironmentProtocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+      sessionEnvironmentLocalDate: input.localDate,
+    },
+  });
+}
+
+function runtimeContext(input: ProductAgentTurnInput, workspaceDir: string): string {
   const content = [
-    projectDir ? `Workspace: ${projectDir}` : "",
+    workspaceDir ? `Workspace: ${workspaceDir}` : "",
     input.projectInstructions?.trim()
       ? `Project instructions:\n${input.projectInstructions.trim()}`
       : "",
@@ -139,6 +207,81 @@ function runtimeContext(input: ProductAgentTurnInput, projectDir: string): strin
     `Local date: ${input.localDate}`,
   ].filter(Boolean).join("\n");
   return content ? `<runtime_context>\n${content}\n</runtime_context>` : "";
+}
+
+function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string): string {
+  const content = [
+    workspaceDir ? `Workspace: ${workspaceDir}` : "",
+    input.projectInstructions?.trim()
+      ? `Project instructions:\n${input.projectInstructions.trim()}`
+      : "",
+    input.filesystemLocations?.length
+      ? `Filesystem locations:\n${[...input.filesystemLocations]
+        .sort((left, right) =>
+          left.id.localeCompare(right.id) ||
+          left.name.localeCompare(right.name) ||
+          left.path.localeCompare(right.path),
+        )
+        .map((location) => `${location.name}: ${location.path}`)
+        .join("\n")}`
+      : "",
+  ].filter(Boolean).join("\n");
+  return content ? `<runtime_context>\n${content}\n</runtime_context>` : "";
+}
+
+function volatileTurnContext(input: ProductAgentTurnInput): string {
+  const content = input.files?.length
+    ? `Attached files:\n${input.files.join("\n")}`
+    : "";
+  return content ? `<turn_runtime_context>\n${content}\n</turn_runtime_context>` : "";
+}
+
+function sessionEnvironmentInput(
+  input: ProductAgentTurnInput,
+): RuntimeSessionTurnRequest["inputMessages"][number] | undefined {
+  const previousLocalDate = input.sessionEnvironmentLocalDate?.trim() ?? "";
+  if (previousLocalDate === input.localDate) return undefined;
+  const kind = previousLocalDate ? "update" as const : "snapshot" as const;
+  return {
+    messageId: `${input.messageId}:session-environment`,
+    createdAt: input.createdAt,
+    message: {
+      role: "user",
+      name: kind === "snapshot" ? "session_environment" : "session_environment_update",
+      visibility: "internal",
+      content: encodeSessionEnvironmentFact({
+        protocol: BUSH_SESSION_ENVIRONMENT_PROTOCOL,
+        kind,
+        localDate: input.localDate,
+        effectiveAt: input.createdAt,
+      }),
+    },
+  };
+}
+
+export function latestSessionEnvironmentLocalDate(
+  session: Pick<SessionSnapshot, "turns"> | undefined,
+): string | undefined {
+  if (!session) return undefined;
+  for (let turnIndex = session.turns.length - 1; turnIndex >= 0; turnIndex -= 1) {
+    const messages = session.turns[turnIndex]?.messages ?? [];
+    for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+      const message = messages[messageIndex]?.message;
+      if (
+        message?.role !== "user" ||
+        message.visibility !== "internal" ||
+        (message.name !== "session_environment" && message.name !== "session_environment_update")
+      ) {
+        continue;
+      }
+      try {
+        return decodeSessionEnvironmentFact(message.content).localDate;
+      } catch {
+        // A malformed candidate has no authority; continue to the previous valid epoch.
+      }
+    }
+  }
+  return undefined;
 }
 
 function initialTitle(input: string): string {

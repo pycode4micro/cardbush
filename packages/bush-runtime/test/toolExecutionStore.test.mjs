@@ -11,7 +11,7 @@ import {
   ToolExecutionStore,
 } from "../dist/index.js";
 
-test("persists authoritative facts, artifacts and workspace changes", (t) => {
+test("persists native results and Runtime-owned workspace changes", (t) => {
   const root = temporaryRoot(t);
   const persistence = new FileToolExecutionPersistence({ root });
   const store = new ToolExecutionStore({ persistence, now: () => NOW });
@@ -19,28 +19,28 @@ test("persists authoritative facts, artifacts and workspace changes", (t) => {
   persistence.close();
 
   assert.deepEqual(saved.result.artifacts.map((item) => item.artifact_id), ["artifact_1"]);
-  assert.deepEqual(saved.result.workspace_changes.map((item) => item.change_id), ["change_1"]);
+  assert.deepEqual(saved.workspaceChanges.map((item) => item.change_id), ["change_1"]);
   const reopened = new FileToolExecutionPersistence({ root });
   const recovered = new ToolExecutionStore({ persistence: reopened });
-  assert.equal(recovered.get("session_1", "turn_1", "call_1")?.result.output.value, "ok");
+  assert.equal(recovered.get("session_1", "turn_1", "call_1")?.result.value, "ok");
   assert.equal(recovered.listTurn("session_1", "turn_1").length, 1);
   reopened.close();
 });
 
-test("rejects conflicting identities and duplicate artifact references", () => {
+test("rejects conflicting identities and duplicate Runtime workspace changes", () => {
   const store = new ToolExecutionStore({ now: () => NOW });
   store.record(toolCall(), identity(), outcome());
   assert.throws(
-    () => store.record(toolCall(), identity(), outcome({ output: { value: "changed" } })),
-    /different facts/,
+    () => store.record(toolCall(), identity(), outcome({ result: { value: "changed" } })),
+    /different record/,
   );
   assert.throws(
     () => new ToolExecutionStore({ now: () => NOW }).record(
       toolCall(),
       identity(),
-      outcome({ artifacts: [artifact(), artifact()] }),
+      outcome({ workspaceChanges: [workspaceChange(), workspaceChange()] }),
     ),
-    /duplicate Artifact/,
+    /duplicate Workspace Change/,
   );
 });
 
@@ -67,26 +67,8 @@ test("checks persisted Tool bytes before adding protocol defaults", (t) => {
   const root = temporaryRoot(t);
   const persistence = new FileToolExecutionPersistence({ root });
   const failed = outcome({
-    success: false,
-    output: null,
-    facts: [{
-      protocol: "bush.tool.execution_fact.v1",
-      receipt_id: "receipt_1",
-      action_manifest_id: "attempt:turn_1:1:call_1",
-      status: "failed",
-      operation: "fixture.read",
-      effect_kind: "observation",
-      owner: "fixture",
-      dispatch_scope: "turn",
-      categories: ["tool_failure"],
-      paths: [],
-      execution_success: false,
-      semantic_success: false,
-      verification_state: "failed",
-      error_code: "fixture_failure",
-    }],
-    artifacts: [],
-    workspace_changes: [],
+    kind: "failed",
+    result: undefined,
     error: {
       kind: "tool",
       code: "fixture_failure",
@@ -94,7 +76,6 @@ test("checks persisted Tool bytes before adding protocol defaults", (t) => {
       details: {},
     },
   });
-  failed.kind = "failed";
   new ToolExecutionStore({ persistence, now: () => NOW }).record(
     toolCall(),
     identity(),
@@ -104,14 +85,14 @@ test("checks persisted Tool bytes before adding protocol defaults", (t) => {
 
   const path = join(root, readdirSync(root)[0]);
   const persisted = JSON.parse(readFileSync(path, "utf8"));
-  delete persisted.record.result.error.kind;
+  delete persisted.record.error.kind;
   persisted.checksum = createHash("sha256")
     .update(JSON.stringify(persisted.record))
     .digest("hex");
   writeFileSync(path, `${JSON.stringify(persisted)}\n`, "utf8");
 
   const [recovered] = new FileToolExecutionPersistence({ root }).load("session_1");
-  assert.equal(recovered.result.error.kind, "tool");
+  assert.equal(recovered.error.kind, "tool");
 });
 
 const NOW = "2026-08-29T00:00:00.000Z";
@@ -146,6 +127,17 @@ function artifact() {
   };
 }
 
+function workspaceChange() {
+  return {
+    change_id: "change_1",
+    path: "src/file.ts",
+    status: "modified",
+    additions: 1,
+    deletions: 0,
+    metadata: {},
+  };
+}
+
 function outcome(overrides = {}) {
   const manifest = {
     protocol: "bush.tool.action_manifest.v1",
@@ -154,52 +146,16 @@ function outcome(overrides = {}) {
     operation: "fixture.read",
     risk: "low",
     owner: "fixture",
-    dispatch_phase: "execution",
     dispatch_scope: "turn",
-    dispatch_side_effect: "none",
-    dispatch_mutating: false,
-    dispatch_source: "registered_tool",
-    stage_modes: ["execute"],
-    output_kinds: ["structured_data"],
-    handoff_exports: [],
-    evidence_hints: ["observation"],
+    mutating: false,
   };
-  return {
-    kind: "completed",
+  const base = {
+    kind: "returned",
     actionManifest: manifest,
-    result: {
-      protocol: "bush.tool_result.v1",
-      tool_call_id: "call_1",
-      success: true,
-      output: { value: "ok" },
-      facts: [{
-        protocol: "bush.tool.execution_fact.v1",
-        receipt_id: "receipt_1",
-        action_manifest_id: manifest.manifest_id,
-        status: "succeeded",
-        operation: manifest.operation,
-        effect_kind: manifest.effect_kind,
-        owner: manifest.owner,
-        dispatch_scope: manifest.dispatch_scope,
-        categories: ["observation"],
-        paths: [],
-        execution_success: true,
-        semantic_success: true,
-        verification_state: "verified",
-        error_code: "",
-      }],
-      artifacts: [artifact()],
-      workspace_changes: [{
-        change_id: "change_1",
-        path: "src/file.ts",
-        status: "modified",
-        additions: 1,
-        deletions: 0,
-        metadata: {},
-      }],
-      ...overrides,
-    },
+    result: { value: "ok", artifacts: [artifact()] },
+    workspaceChanges: [workspaceChange()],
   };
+  return { ...base, ...overrides };
 }
 
 function temporaryRoot(t) {

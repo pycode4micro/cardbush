@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
   BUSH_TASK_PLAN_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   type GoalState,
   type TaskPlan,
-  type ToolResult,
 } from "@cardbush/bush-protocol";
 
 import type { CoordinationStore } from "./coordinationStore.js";
@@ -37,11 +34,9 @@ export function registerCoordinationTools(
   store: CoordinationStore,
   options: {
     createPlanId?: () => string;
-    createReceiptId?: () => string;
   } = {},
 ): void {
   const createPlanId = options.createPlanId ?? (() => `plan_${randomUUID()}`);
-  const createReceiptId = options.createReceiptId ?? (() => `receipt_${randomUUID()}`);
 
   if (!registry.resolve(UPDATE_TASK_PLAN_TOOL)) {
     registry.register<TaskPlanToolInput>({
@@ -93,7 +88,7 @@ export function registerCoordinationTools(
           plan,
           scopeChangeReason: context.input.scopeChangeReason,
         });
-        return completedResult(context, state, createReceiptId());
+        return state;
       },
     });
   }
@@ -131,7 +126,7 @@ export function registerCoordinationTools(
           consumedTokens: context.input.consumedTokens ?? before.consumedTokens,
           linkedA2ATaskIds: context.input.linkedA2ATaskIds ?? before.linkedA2ATaskIds,
         });
-        return completedResult(context, state, createReceiptId());
+        return state;
       },
     });
   }
@@ -143,47 +138,8 @@ function coordinationManifest(operation: string) {
     operation,
     risk: "low",
     owner: "runtime_coordination",
-    dispatch_phase: "execution",
     dispatch_scope: "session",
-    dispatch_side_effect: "runtime_fact",
-    dispatch_mutating: true,
-    dispatch_source: "registered_tool",
-    stage_modes: ["execute"],
-    output_kinds: ["structured_data"],
-    handoff_exports: [],
-    evidence_hints: ["runtime_state"],
-  };
-}
-
-function completedResult(
-  context: ToolHandlerContext<unknown>,
-  output: TaskPlan | GoalState | unknown,
-  receiptId: string,
-): ToolResult {
-  return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: true,
-    output,
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: receiptId,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: "succeeded",
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["runtime_state"],
-      paths: [],
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
+    mutating: true,
   };
 }
 

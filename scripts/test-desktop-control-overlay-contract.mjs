@@ -20,7 +20,7 @@ assert.match(overlay, /background: rgba\(11, 15, 24, 0\.13\)/);
 
 assert.match(main, /event\.kind === 'tool_running'/);
 assert.match(main, /isComputerUseRuntimeTool\(event\.payload\.toolName\)/);
-assert.match(main, /event\.kind === 'tool_completed'/);
+assert.match(main, /event\.kind === 'tool_returned'/);
 assert.match(main, /event\.kind === 'tool_failed'/);
 assert.match(main, /event\.kind === 'tool_cancelled'/);
 assert.match(main, /event\.kind === 'permission_requested'/);

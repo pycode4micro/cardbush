@@ -548,7 +548,7 @@ assert.match(
 );
 assert.match(
   runtimeChatSource,
-  /case 'tool_completed':[\s\S]*?const terminalExecution = toolLifecycle\(event\);[\s\S]*?onToolExecution\?\.\(terminalExecution\);[\s\S]*?loadToolExecutionWithTimeout/,
+  /case 'tool_returned':[\s\S]*?const terminalExecution = toolLifecycle\(event\);[\s\S]*?onToolExecution\?\.\(terminalExecution\);[\s\S]*?loadToolExecutionWithTimeout/,
   'A terminal Tool event must settle the UI before optional record enrichment.',
 );
 assert.match(

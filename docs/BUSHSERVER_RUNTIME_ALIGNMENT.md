@@ -26,10 +26,15 @@ as disabled or installable Built-ins.
   projects prior completed Turns as concise summaries for the model without
   changing raw history replay. The active Turn remains exact, including Tool
   calls and results, until it reaches its terminal state.
-- Stop has an independent typed acceptance receipt. The live event stream remains
-  authoritative until `turn_terminal`; generated text, Tool facts, artifacts and
-  workspace changes remain durable. Product startup settles orphaned checkpoints
-  as `runtime_restart_interrupted` before allowing later work.
+- Stop has an independent typed acceptance receipt and is a resumable Session
+  boundary rather than a rollback. The active Provider/Tool wait receives one
+  uniform 250 ms settlement grace and is then detached when its Promise does not
+  cooperate; already observed assistant text, Tool facts and workspace changes
+  are committed in one stopped Turn before the
+  Session gate is released. The next user Turn extends those facts and inherits
+  the prior hash-only Cache Chain snapshot. Late Provider/Tool settlement cannot
+  append a second lifecycle fact. Product startup settles orphaned checkpoints as
+  `runtime_restart_interrupted` before allowing later work.
 - Guidance is queued inside the active Turn and consumed as a user-role message on
   the next provider round. It does not create a hidden replacement Turn.
 - Request capabilities default off and keep vision, interactive requests and
@@ -69,6 +74,10 @@ search_file_content
 write_file
 edit_file
 terminal_exec
+terminal_poll
+terminal_write
+terminal_list
+terminal_stop
 parallel_tools
 inject_image_input
 update_task_plan
@@ -90,10 +99,11 @@ and Teams only. External executable extensions use MCP.
 
 ## Authority and remaining validation boundary
 
-Action Manifest, Execution Fact, Artifact, Workspace Change, usage and terminal
-state are structured facts. Runtime does not infer success, paths, delivery,
-completion or next actions from prose. Generic MCP content remains displayable;
-only an explicit authority envelope can introduce authoritative facts.
+Action Manifest, Runtime invocation status, Workspace Change, usage and terminal
+state are structured Runtime facts. Each Tool owns the schema and meaning of its
+native return. Runtime does not infer success, paths, delivery, completion or next
+actions from prose, and MCP responses cross the boundary unchanged. Product
+renderers may consume standard MCP content blocks or explicit tool-owned fields.
 
 The release gate still requires real-provider A/B coverage for Stop during a
 provider stream, Tool cancellation, Guidance races, Subagent/Team concurrency,

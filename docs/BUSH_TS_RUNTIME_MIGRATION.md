@@ -21,7 +21,7 @@ reference and differential-test oracle during migration.
 1. Extract and validate contracts from the frozen Python reference.
 2. Normalize provider streams into `bush.model_event.v1`.
 3. Implement one provider-independent Turn coordinator.
-4. Add tool admission, execution, observation, and authoritative receipts.
+4. Add tool admission, invocation lifecycle, native results, and workspace changes.
 5. Add context, Cache Chain, recovery, and persistence.
 6. Add Plan, Goal, Subagent, and Team behavior.
 7. Put the Runtime behind an Electron utility-process host and typed IPC.
@@ -50,10 +50,10 @@ events, supports cursor replay and live subscription, and makes Provider retries
 attempt supersession, cancellation, and terminal failure observable.
 
 The Host now also executes registered tools through a provider-independent
-`ToolRegistry`. Each registration supplies its own input decoder, authoritative
-Action Manifest template, optional admission decision, and handler. Runtime only
-parses JSON, validates the registration's decoder, verifies Tool Call / Manifest /
-Execution Fact identities, and projects lifecycle facts. It never infers effects
+`ToolRegistry`. Each registration supplies its own input decoder, Action Manifest
+template, optional admission decision, and handler. Runtime only parses JSON,
+validates the registration's decoder, preserves the native return, and projects
+invocation lifecycle facts. It never infers effects
 from a Tool name or output prose. Interactive permission decisions use a separate
 command and concrete capability identifiers; denied or cancelled requests never
 invoke the handler. Product extensions do not enter through a private host-tool
@@ -73,7 +73,7 @@ removed mechanically after a process crash; complete invalid records are never
 guessed or repaired.
 
 The stable checkpoint contains the exact provider-independent request, current
-messages, completed receipt identifiers, and a hash-only Cache Chain snapshot.
+messages, and a hash-only Cache Chain snapshot.
 Restart recovery supersedes partial provider output and resumes from that stable
 request. If a Tool or permission lifecycle advanced after the checkpoint, Runtime
 blocks automatic resume instead of re-dispatching a possibly completed effect.
@@ -84,6 +84,10 @@ Cache Chain observation compares the real provider request structure and ordered
 message hashes. It reports append-only prefix continuity and exact break position,
 but never classifies a task, Tool name, programming language, or output prose. The
 Python reference's name-based Cache heuristics are intentionally not migrated.
+The final hash-only snapshot is stored with each committed Turn and seeds the next
+Turn in that Session. A stopped Turn therefore remains an ordinary append-only
+prefix; edit/regenerate inherits the same snapshot but truthfully reports the
+edited prefix as a break.
 
 The Utility Process enables file-backed recovery only when
 `CARDBUSH_RUNTIME_STATE_ROOT` is an absolute directory. Choosing the production
@@ -124,19 +128,19 @@ Product model settings now cross typed IPC through an opaque provider binding.
 Secrets remain inside the Utility Process registry and never enter Model Requests,
 event journals, checkpoints, Cache Chain state or renderer-visible results.
 
-## Session and authoritative Tool facts checkpoint
+## Session and native Tool result checkpoint
 
 Session history is an append-only checksummed journal. A Turn is committed once
 with ordered message identity and usage; history changes require explicit message
 supersession. Context assembly appends fixed prefix, committed messages and current
 input without percentage thresholds, summaries or semantic selection.
 
-Tool execution now has a separate authoritative record containing the admitted
-Action Manifest, exact ToolResult, Execution Facts, Artifacts and Workspace
-Changes. Tools declare these values; Runtime validates identities and publishes
-their IDs without parsing output prose or dispatching on Tool names. Records are
-queryable through typed Runtime commands and persist under the Utility Process
-state root.
+Tool execution now has a separate record containing the admitted Action Manifest,
+the exact native Tool return value, Runtime-owned Workspace Changes, or a Runtime
+invocation error. Runtime validates JSON transport and lifecycle identities only;
+it does not wrap returns in a private ToolResult, create semantic facts, reinterpret
+MCP `isError`, or extract effects from output prose. Records are queryable through
+typed Runtime commands and persist under the Utility Process state root.
 
 ## Plan and Goal fact checkpoint
 
@@ -149,7 +153,7 @@ but does not interpret it.
 
 Goal status and reason are caller-declared facts. Runtime validates their schema,
 identity, and revision, then preserves them verbatim. It does not inspect user or
-assistant prose, Tool names, Plan-node combinations, or Execution Facts to decide
+assistant prose, Tool names, Plan-node combinations, or Tool returns to decide
 whether a Goal is complete. Goal continuation is implemented by the product caller
 as consecutive normal Session Turns built on these facts.
 
@@ -174,10 +178,10 @@ only when every registration in that batch makes that declaration; Runtime does
 not infer safety from Tool names, language, task text, manifests, or state
 combinations. Results remain ordered by the original Tool Call batch.
 
-ToolResult now has a structured `guidance` channel. Subagent terminal responses
-are persisted in a checksummed task journal and re-enter the parent as User
-guidance at safe model-round boundaries, without parsing output prose. Dispatch
-does not block subsequent independent parent rounds. A parent terminal attempt is
+Subagent terminal responses are persisted in a checksummed task journal. Async
+completion enters the parent through the Runtime's explicit child-result boundary;
+explicit joins return native Tool data. Dispatch does not block subsequent
+independent parent rounds. A parent terminal attempt is
 a mandatory join barrier: Runtime waits for remaining children, injects their
 results, and runs parent reconciliation before committing the terminal fact.
 `await_subagents` exposes the same join explicitly when the parent has no useful
@@ -202,7 +206,8 @@ the last completed Turn and the UI can display progress one Turn at a time.
 ## Workspace execution checkpoint
 
 The Runtime now registers `read_file`, `search_file_content`, `write_file`,
-`edit_file`, and `terminal_exec` from one typed workspace Tool module. Paths are
+`edit_file`, `terminal_exec`, `terminal_poll`, `terminal_write`, `terminal_list`,
+and `terminal_stop` from one typed workspace Tool module. Paths are
 canonicalized before workspace admission, including linked workspace roots and
 linked-directory escapes. Existing file writes require a matching SHA-256 read
 observation from the current Agent context or its explicit parent fork. An
@@ -217,15 +222,18 @@ are omitted for modified files until an exact diff producer is attached rather
 than publishing approximate facts.
 
 Terminal execution remains intentionally transparent: Runtime performs no shell,
-language, command, or intent rewriting and returns complete stdout, stderr, exit
-code, and timeout facts. Permission admission covers the selected canonical cwd,
-not the effects inferred from command text. This checkpoint therefore preserves
-the product's explicit non-sandbox boundary instead of implying an enforcement
-guarantee that the process host does not provide.
+language, command, service, or intent classification. A command that outlives
+the declared yield window returns a stable terminal session handle, so the Agent
+Loop can continue while the process remains active. Follow-up Tools poll output,
+write stdin, list owned sessions, or explicitly stop a process tree. Permission
+admission covers the selected canonical cwd, while stopping requires an exact
+process capability; neither is inferred from command text. This checkpoint
+therefore preserves the product's explicit non-sandbox boundary instead of
+implying an enforcement guarantee that the process host does not provide.
 
 ## MCP client checkpoint
 
-MCP configuration is a product-owned `bush.mcp_snapshot.v1` fact. The Electron
+MCP configuration is a product-owned `bush.mcp_snapshot.v2` fact. The Electron
 Runtime accepts a complete snapshot only between Turns, connects it with the
 official TypeScript MCP 2.x client using `auto` negotiation by default, and
 atomically replaces the corresponding Tool registrations. Modern
@@ -236,9 +244,9 @@ Each configured server supplies explicit default and per-Tool permission,
 parallel-safety, and child-visibility policy. Runtime never derives those values
 from the Tool name, description, annotations, task text, or lifecycle-state
 combinations. Remote Tool names receive a deterministic server namespace. MCP
-results are preserved as structured output and wrapped in one authoritative
-Execution Fact; Runtime does not scrape result prose for paths, Artifacts, or
-workspace changes. Reusing a snapshot revision with different content, moving a
+results cross the boundary unchanged as native `CallToolResult` values; Runtime
+does not impose a private result schema or scrape result prose for paths,
+Artifacts, or workspace changes. Reusing a snapshot revision with different content, moving a
 revision backwards, changing configuration during a Turn, or colliding with a
 Tool owned by another source fails closed while the previous snapshot stays live.
 
@@ -264,8 +272,8 @@ new task, so schema evolution does not invalidate existing checksums.
 ## Product Host and secret ownership checkpoint
 
 Provider credentials are owned by the typed Electron Product Host. Computer Use
-is owned by the independent bundled `cardbush_apps` MCP process and returns
-explicit Artifacts and Execution Facts through the normal MCP Tool Registry. Bot
+is owned by the independent bundled `cardbush_apps` MCP process and returns a
+standard MCP result with explicit native artifacts. Bot
 configuration, adapters, inbound media, delivery, accounts and management UI are
 not CardBush product capabilities; an independent Bot may expose `deliver`
 through that same generic registry.
@@ -294,7 +302,7 @@ Runtime reminder. The adapter now projects that internal role mechanically to
 the universally supported `system` role without changing the Runtime protocol.
 
 A post-fix write Turn completed naturally in 83 seconds with no provider retry,
-returned the authoritative write receipt, and reported the output path as an
+recorded the Runtime-owned Workspace Change, and reported the output path as an
 absolute path. The original source project was not modified by either run.
 
 ## Product cutover completion checkpoint
@@ -308,10 +316,11 @@ parsers and backend settings are not retained as a compatibility layer.
 
 Shadow conversations are hidden, temporary Runtime Sessions with an explicit
 source-Turn boundary, frozen source revision and a read-only Tool selection.
-Assistant timing comes from committed Runtime Turn timestamps, and media comes
-from validated ToolResult Artifacts rather than response-text or arbitrary JSON
-inference. Bot/channel ownership is outside CardBush and may integrate only as an
-independent MCP server.
+Assistant timing comes from committed Runtime Turn timestamps. Media rendering
+reads only explicit native `artifacts`, MCP `structuredContent.artifacts`, or MCP
+media/resource content blocks; it does not infer paths from response text or
+arbitrary nested JSON. Bot/channel ownership is outside CardBush and may integrate
+only as an independent MCP server.
 
 The complete product release gate passes after the cutover, including protocol,
 Runtime, provider, MCP, Electron IPC, Product Host, Goal/A2A, Shadow,

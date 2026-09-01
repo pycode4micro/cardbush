@@ -37,6 +37,48 @@ export function splitMessageMedia(content: string) {
   };
 }
 
+export type MessageMediaItem = {
+  path: string;
+  type: 'image' | 'video' | 'audio';
+};
+
+export type MessageMediaBlock =
+  | { kind: 'text'; content: string }
+  | { kind: 'media'; items: MessageMediaItem[] };
+
+/**
+ * Preserves the authored relationship between prose and standalone media paths.
+ * Consecutive media lines share one visual group, while prose between them keeps
+ * separate groups in the same order as the source message.
+ */
+export function splitMessageMediaBlocks(content: string): MessageMediaBlock[] {
+  const blocks: MessageMediaBlock[] = [];
+  let textLines: string[] = [];
+  let mediaItems: MessageMediaItem[] = [];
+  const flushText = () => {
+    const value = textLines.join('\n').trim();
+    if (value) blocks.push({ kind: 'text', content: value });
+    textLines = [];
+  };
+  const flushMedia = () => {
+    if (mediaItems.length > 0) blocks.push({ kind: 'media', items: mediaItems });
+    mediaItems = [];
+  };
+  for (const line of content.split(/\r?\n/)) {
+    const media = mediaPathFromMessageLine(line);
+    if (media) {
+      flushText();
+      mediaItems.push(media);
+      continue;
+    }
+    flushMedia();
+    textLines.push(line);
+  }
+  flushText();
+  flushMedia();
+  return blocks;
+}
+
 function mediaPathFromMessageLine(value: string) {
   const trimmed = value.trim();
   const pathValue = stripWrappingQuotes(

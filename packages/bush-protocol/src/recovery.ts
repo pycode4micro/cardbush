@@ -5,7 +5,7 @@ import { cacheChainStateSchema } from "./cacheChain.js";
 import { runtimeSessionCommitCheckpointSchema } from "./session.js";
 
 export const BUSH_RUNTIME_CHECKPOINT_PROTOCOL =
-  "bush.runtime_checkpoint.v1" as const;
+  "bush.runtime_checkpoint.v2" as const;
 export const BUSH_RUNTIME_RECOVERY_INSPECTION_PROTOCOL =
   "bush.runtime_recovery_inspection.v1" as const;
 export const INSPECT_RUNTIME_RECOVERY_COMMAND =
@@ -56,7 +56,6 @@ export const runtimeCheckpointSchema = z.object({
   nextRound: z.number().int().positive(),
   lastEventSequence: z.number().int().nonnegative(),
   lastEventId: z.string().min(1),
-  completedReceiptIds: z.array(z.string().min(1)),
   cacheChainState: cacheChainStateSchema,
   sessionCommit: runtimeSessionCommitCheckpointSchema.optional(),
   createdAt: z.string().min(1),

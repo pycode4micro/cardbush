@@ -1,13 +1,5 @@
-import { randomUUID } from "node:crypto";
-
-import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
-  type ToolResult,
-} from "@cardbush/bush-protocol";
-
 import type { RuntimeInteractionStore } from "./runtimeInteractionStore.js";
-import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import type { ToolRegistry } from "./toolRegistry.js";
 
 export const REQUEST_PERMISSION_TOOL = "request_permission" as const;
 export const REQUEST_USER_CHOICE_TOOL = "request_user_choice" as const;
@@ -21,6 +13,10 @@ export function registerInteractionTools(
       reason: string;
       actions: string[];
       resources: string[];
+      targets: Array<{
+        kind: "filesystem_path" | "opaque";
+        value: string;
+      }>;
       capabilityIds: string[];
     }>({
       definition: {
@@ -69,6 +65,9 @@ export function registerInteractionTools(
           reason,
           actions: normalizedActions,
           resources: normalizedResources,
+          targets: path
+            ? [{ kind: "filesystem_path" as const, value: path }]
+            : normalizedResources.map((value) => ({ kind: "opaque" as const, value })),
           capabilityIds: normalizedCapabilities,
         };
       },
@@ -77,11 +76,11 @@ export function registerInteractionTools(
         request: {
           reason: context.input.reason,
           actions: context.input.actions,
-          resources: context.input.resources,
+          targets: context.input.targets,
           capabilityIds: context.input.capabilityIds,
         },
       }),
-      execute: (context) => completed(context, {
+      execute: (context) => ({
         granted: true,
         actions: context.input.actions,
         resources: context.input.resources,
@@ -123,7 +122,7 @@ export function registerInteractionTools(
           cancelLabel: text(input.cancel_label) || "Cancel",
           timeoutMinutes: integer(input.timeout_minutes) || 10,
         }, context.signal);
-        return completed(context, answer);
+        return answer;
       },
     });
   }
@@ -178,23 +177,7 @@ function normalizeQuestions(value: unknown) {
 function interactionManifest(operation: string) {
   return {
     effect_kind: "interaction", operation, risk: "user_decision", owner: "runtime_interaction",
-    dispatch_phase: "interactive", dispatch_scope: "session", dispatch_side_effect: "external",
-    dispatch_mutating: false, dispatch_source: "registered_tool", stage_modes: ["mixed"],
-    output_kinds: ["interaction"], handoff_exports: [], evidence_hints: ["user_answer"],
-  };
-}
-
-function completed(context: ToolHandlerContext<unknown>, output: unknown): ToolResult {
-  return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL, tool_call_id: context.toolCall.id, success: true, output,
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL, receipt_id: `receipt_${randomUUID()}`,
-      action_manifest_id: context.actionManifest.manifest_id, status: "completed",
-      operation: context.actionManifest.operation, effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner, dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["interaction"], paths: [], execution_success: true, semantic_success: true,
-      verification_state: "verified", error_code: "",
-    }], artifacts: [], workspace_changes: [], guidance: [],
+    dispatch_scope: "session", mutating: false,
   };
 }
 

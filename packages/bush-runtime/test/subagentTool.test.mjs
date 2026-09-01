@@ -10,7 +10,7 @@ import {
   registerSubagentTool,
 } from "../dist/index.js";
 
-test("forks the pre-dispatch context, hides root-only tools and returns user guidance", async () => {
+test("forks the pre-dispatch context, hides root-only tools and returns the native child result", async () => {
   let childRequest;
   const registry = new ToolRegistry();
   registerCoordinationTools(registry, new (await import("../dist/index.js")).CoordinationStore());
@@ -75,7 +75,7 @@ test("forks the pre-dispatch context, hides root-only tools and returns user gui
     { request: parentRequest, contextMessages },
   );
 
-  assert.equal(outcome.kind, "completed", JSON.stringify(outcome.result));
+  assert.equal(outcome.kind, "returned", JSON.stringify(outcome.result));
   assert.deepEqual(childRequest.prefixMessages.map((message) => message.content), [
     "child-only system",
     "original objective",
@@ -90,11 +90,8 @@ test("forks the pre-dispatch context, hides root-only tools and returns user gui
   assert.equal(childRequest.metadata.childAgentModelId, "reviewer");
   assert.ok(childRequest.metadata.disabledTools.includes("subagent"));
   assert.ok(childRequest.metadata.disabledTools.includes("update_goal"));
-  assert.deepEqual(outcome.result.guidance, [{
-    role: "user",
-    name: "subagent_result",
-    content: "child result",
-  }]);
+  assert.equal(outcome.result.status, "completed");
+  assert.equal(outcome.result.finalResponse, "child result");
   assert.equal(tasks.get("parent_session", "task_1").status, "completed");
 });
 
@@ -133,7 +130,7 @@ test("a child Turn cannot invoke a root-only tool even by fabricating its name",
       contextMessages: [],
     },
   );
-  assert.equal(outcome.result.error.code, "tool_not_exposed");
+  assert.equal(outcome.error.code, "tool_not_exposed");
   assert.equal(invoked, false);
 });
 
@@ -285,7 +282,7 @@ test("tunnels a child permission request through the active parent Turn", async 
       request: {
         reason: "guarded child access",
         actions: ["read"],
-        resources: ["fixture://child"],
+        targets: [{ kind: "opaque", value: "fixture://child" }],
         capabilityIds: ["fixture:child"],
       },
     }),
@@ -588,7 +585,7 @@ test("joins outstanding children explicitly through await_subagents without poll
   assert.equal(terminal.payload.status, "completed");
   assert.equal(parentRound, 3);
   assert.ok(finalRequest.messages.some((message) =>
-    message.name === "subagent_result" && message.content.includes("joined evidence")
+    message.role === "tool" && message.content.includes("joined evidence")
   ));
 });
 
@@ -599,7 +596,6 @@ function deterministicIds() {
     createSessionId: () => "child_session",
     createTurnId: () => "child_turn",
     createMessageId: () => "child_message",
-    createReceiptId: () => "receipt_1",
   };
 }
 
@@ -662,44 +658,13 @@ function manifest() {
     operation: "fixture",
     risk: "low",
     owner: "fixture",
-    dispatch_phase: "execution",
     dispatch_scope: "turn",
-    dispatch_side_effect: "none",
-    dispatch_mutating: false,
-    dispatch_source: "registered_tool",
-    stage_modes: ["execute"],
-    output_kinds: ["structured_data"],
-    handoff_exports: [],
-    evidence_hints: [],
+    mutating: false,
   };
 }
 
-function success(toolCallId, manifestId) {
-  return {
-    protocol: "bush.tool_result.v1",
-    tool_call_id: toolCallId,
-    success: true,
-    output: {},
-    facts: [{
-      protocol: "bush.tool.execution_fact.v1",
-      receipt_id: "receipt_root",
-      action_manifest_id: manifestId,
-      status: "succeeded",
-      operation: "fixture",
-      effect_kind: "observation",
-      owner: "fixture",
-      dispatch_scope: "turn",
-      categories: [],
-      paths: [],
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
-  };
+function success(_toolCallId, _manifestId) {
+  return {};
 }
 
 const NOW = "2026-08-29T00:00:00.000Z";

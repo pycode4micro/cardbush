@@ -2,6 +2,7 @@ import type {
   RuntimeInteraction,
   RuntimeInteractionAnswer,
   RuntimePermissionAnswer,
+  RuntimePermissionRequest,
   RuntimeStopReceipt,
 } from '@cardbush/bush-protocol';
 
@@ -28,10 +29,7 @@ export function registerRuntimePermission(input: {
   sessionId: string;
   turnId: string;
   toolCallId?: string;
-  reason: string;
-  actions: string[];
-  resources: string[];
-  requestedCapabilityIds: string[];
+  request: RuntimePermissionRequest;
   sourceSessionId?: string;
   sourceTurnId?: string;
   parentSessionId?: string;
@@ -47,24 +45,12 @@ export function registerRuntimePermission(input: {
     sessionId: input.sessionId,
     turnId: input.turnId,
     title: fromSubagent ? 'Subagent permission' : 'Permission',
-    reason: input.reason,
-    message: input.reason,
+    reason: input.request.reason,
     submitLabel: 'Continue',
     cancelLabel: 'Deny',
     replyMode: 'single',
     toolName: 'request_permission',
-    permissionPreview: {
-      actions: [...input.actions],
-      resources: [...input.resources],
-      reason: input.reason,
-      toolCallId: input.toolCallId,
-      sourceSessionId: input.sourceSessionId,
-      sourceTurnId: input.sourceTurnId,
-      parentSessionId: input.parentSessionId,
-      parentTurnId: input.parentTurnId,
-      subagentTaskId: input.subagentTaskId,
-      permissionRouting: input.permissionRouting,
-    },
+    runtimePermission: structuredClone(input.request),
     questions: [{
       id: 'permission',
       label: 'Permission',
@@ -81,7 +67,7 @@ export function registerRuntimePermission(input: {
     raw: {
       protocol: 'bush.runtime_permission_answer.v1',
       permissionId: input.permissionId,
-      requestedCapabilityIds: [...input.requestedCapabilityIds],
+      requestedCapabilityIds: [...input.request.requestedCapabilityIds],
       sourceSessionId: input.sourceSessionId,
       sourceTurnId: input.sourceTurnId,
       parentSessionId: input.parentSessionId,
@@ -92,7 +78,7 @@ export function registerRuntimePermission(input: {
   };
   permissions.set(input.permissionId, {
     interaction,
-    requestedCapabilityIds: [...input.requestedCapabilityIds],
+    requestedCapabilityIds: [...input.request.requestedCapabilityIds],
     answer: input.answer,
   });
   return interaction;

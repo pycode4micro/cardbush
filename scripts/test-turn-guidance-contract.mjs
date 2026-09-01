@@ -18,6 +18,27 @@ vm.runInNewContext(transpiled.outputText, { module, exports: module.exports });
 
 const { assistantStreamChunkFromPayload, executionUpdateFromPayload } = module.exports;
 
+const projectionPath = path.join(
+  process.cwd(),
+  'src',
+  'backend',
+  'runtimeSessionMessageProjection.ts',
+);
+const projectionSource = fs.readFileSync(projectionPath, 'utf8');
+const projectionTranspiled = ts.transpileModule(projectionSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2022,
+  },
+});
+const projectionModule = { exports: {} };
+vm.runInNewContext(projectionTranspiled.outputText, {
+  module: projectionModule,
+  exports: projectionModule.exports,
+  Date,
+});
+const { projectRuntimeTurnMessages } = projectionModule.exports;
+
 assert.deepEqual(
   plain(assistantStreamChunkFromPayload({
     message_id: 'msg:assistant:session:turn:2',
@@ -186,6 +207,75 @@ const {
   optimisticGuidanceMessage,
   reconcileOptimisticGuidance,
 } = hookModule.exports;
+
+const persistedGuidanceProjection = projectRuntimeTurnMessages({
+  turnId: 'persisted-guidance-turn',
+  turnSequence: 1,
+  createdAt: '2026-09-01T14:40:51.000Z',
+  completedAt: '2026-09-01T14:42:15.000Z',
+  status: 'completed',
+  reason: 'model_response_completed',
+  usage: {},
+  messages: [
+    {
+      messageId: 'persisted-user',
+      turnId: 'persisted-guidance-turn',
+      turnSequence: 1,
+      messageIndex: 0,
+      createdAt: '2026-09-01T14:40:51.000Z',
+      message: { role: 'user', content: '原始问题' },
+    },
+    {
+      messageId: 'persisted-assistant-before-guidance',
+      turnId: 'persisted-guidance-turn',
+      turnSequence: 1,
+      messageIndex: 1,
+      createdAt: '2026-09-01T14:42:12.683Z',
+      message: { role: 'assistant', content: '引导前已完成的回答' },
+    },
+    {
+      messageId: 'persisted-guidance',
+      turnId: 'persisted-guidance-turn',
+      turnSequence: 1,
+      messageIndex: 2,
+      createdAt: '2026-09-01T14:42:11.254Z',
+      message: { role: 'user', name: 'turn_guidance', content: '不用了' },
+    },
+    {
+      messageId: 'persisted-assistant-after-guidance',
+      turnId: 'persisted-guidance-turn',
+      turnSequence: 1,
+      messageIndex: 3,
+      createdAt: '2026-09-01T14:42:15.000Z',
+      message: { role: 'assistant', content: '好的，那就到这' },
+    },
+  ],
+}, 'persisted-guidance-session');
+
+assert.equal(
+  persistedGuidanceProjection[1].metadata.segment_boundary,
+  'turn_guidance',
+  'a committed assistant reply immediately before guidance must remain user-visible',
+);
+assert.equal(persistedGuidanceProjection[2].metadata.turn_guidance, true);
+assert.equal(persistedGuidanceProjection[2].metadata.guidance_delivery, 'sent');
+assert.equal(
+  persistedGuidanceProjection[3].metadata.cardbush_turn_duration_ms,
+  3746,
+  'the post-guidance reply must use guidance-segment timing instead of whole-turn timing',
+);
+assert.deepEqual(
+  plain(normalizeChatMessagesForDisplay(persistedGuidanceProjection).map(
+    (message) => [message.role, message.content],
+  )),
+  [
+    ['user', '原始问题'],
+    ['assistant', '引导前已完成的回答'],
+    ['user', '不用了'],
+    ['assistant', '好的，那就到这'],
+  ],
+  'terminal rehydration must preserve both assistant replies around guidance',
+);
 
 const optimisticChatState = {
   'chat-session': [

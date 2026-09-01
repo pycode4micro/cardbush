@@ -79,6 +79,8 @@ const desktopApi = {
     },
   },
   rendererReady: () => ipcRenderer.invoke('app:renderer-ready') as Promise<void>,
+  ensureTaskWorkspace: (sessionId: string) =>
+    ipcRenderer.invoke('workspace:ensure-task-directory', sessionId) as Promise<string>,
   runtimeStartupStatus: () =>
     ipcRenderer.invoke('app:runtime-startup-status') as Promise<RuntimeStartupStatus>,
   retryRuntimeStartup: () =>
@@ -262,6 +264,13 @@ const desktopApi = {
       kind: 'file' | 'folder';
       size?: number;
     }>>,
+  inspectLocalReference: (targetPath: string) =>
+    ipcRenderer.invoke('files:inspect-local-reference', targetPath) as Promise<{
+      path: string;
+      name: string;
+      kind: 'file' | 'folder' | 'application';
+      icon?: string;
+    } | null>,
   listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
   readSkill: (skillName: string) =>
     ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
@@ -428,6 +437,17 @@ const desktopApi = {
     ipcRenderer.invoke('shell:file-context-menu', targetPath) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
+  showInspectorContextMenu: (payload: {
+    guestWebContentsId: number;
+    target: string;
+    x: number;
+    y: number;
+    mediaType?: string;
+    srcURL?: string;
+    linkURL?: string;
+    selectionText?: string;
+    isEditable?: boolean;
+  }) => ipcRenderer.invoke('clipboard:show-inspector-context-menu', payload) as Promise<void>,
   onOpenInspectorRequest: (
     callback: (payload: { target: string; title?: string }) => void,
   ) => {

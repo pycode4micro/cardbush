@@ -21,6 +21,7 @@ declare global {
         onStreamFrame: (callback: (message: unknown) => void) => () => void;
       };
       rendererReady: () => Promise<void>;
+      ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
       onRuntimeStartupStatus: (
@@ -202,6 +203,12 @@ declare global {
         kind: 'file' | 'folder';
         size?: number;
       }>>;
+      inspectLocalReference: (targetPath: string) => Promise<{
+        path: string;
+        name: string;
+        kind: 'file' | 'folder' | 'application';
+        icon?: string;
+      } | null>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;
       pickBackgroundImage: () => Promise<string | null>;
@@ -335,6 +342,17 @@ declare global {
       openFileInCardbush: (targetPath: string) => Promise<string>;
       showFileContextMenu: (targetPath: string) => Promise<string>;
       openUiPreview: (target: string) => Promise<void>;
+      showInspectorContextMenu: (payload: {
+        guestWebContentsId: number;
+        target: string;
+        x: number;
+        y: number;
+        mediaType?: string;
+        srcURL?: string;
+        linkURL?: string;
+        selectionText?: string;
+        isEditable?: boolean;
+      }) => Promise<void>;
       onOpenInspectorRequest: (
         callback: (payload: { target: string; title?: string }) => void,
       ) => () => void;

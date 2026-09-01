@@ -1,4 +1,8 @@
-import type { RuntimeEvent } from '@cardbush/bush-protocol';
+import type {
+  RuntimeEvent,
+  RuntimePermissionScope,
+  RuntimePermissionTarget,
+} from '@cardbush/bush-protocol';
 
 export type RuntimeTurnPhase =
   | 'idle'
@@ -41,10 +45,6 @@ export interface RuntimeToolView {
   assistantMessageId?: string;
   display?: { title: string; summary?: string };
   phase: RuntimeToolPhase;
-  receiptIds: string[];
-  executionFactIds: string[];
-  artifactIds: string[];
-  workspaceChangeIds: string[];
   error?: { code: string; message: string; details: Record<string, unknown> };
   reason?: string;
 }
@@ -62,7 +62,8 @@ export interface RuntimePermissionView {
   phase: RuntimePermissionPhase;
   reason?: string;
   actions: string[];
-  resources: string[];
+  targets: RuntimePermissionTarget[];
+  scope?: RuntimePermissionScope;
   answerId?: string;
   grantedCapabilityIds: string[];
   requestedCapabilityIds: string[];
@@ -142,7 +143,7 @@ export class RuntimeTurnProjection {
       case 'tool_running':
         upsertTool(this.#tools, event.payload, 'running');
         break;
-      case 'tool_completed':
+      case 'tool_returned':
         completeTool(this.#tools, event.payload, 'completed');
         break;
       case 'tool_failed':
@@ -160,7 +161,10 @@ export class RuntimeTurnProjection {
           phase: 'pending',
           reason: event.payload.reason,
           actions: [...event.payload.actions],
-          resources: [...event.payload.resources],
+          targets: event.payload.targets.map((target) => ({ ...target })),
+          scope: event.payload.scope
+            ? { mode: event.payload.scope.mode, roots: [...event.payload.scope.roots] }
+            : undefined,
           grantedCapabilityIds: [],
           requestedCapabilityIds: [...event.payload.requestedCapabilityIds],
         });
@@ -291,7 +295,7 @@ function sortedSegments(
 
 type RuntimeToolPayload = Extract<
   RuntimeEvent,
-  { kind: 'tool_queued' | 'tool_running' | 'tool_completed' | 'tool_failed' | 'tool_cancelled' }
+  { kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled' }
 >['payload'];
 
 function upsertTool(
@@ -308,10 +312,6 @@ function upsertTool(
     assistantMessageId: payload.assistantMessageId,
     display: payload.display ? { ...payload.display } : current?.display,
     phase,
-    receiptIds: current?.receiptIds ?? [],
-    executionFactIds: current?.executionFactIds ?? [],
-    artifactIds: current?.artifactIds ?? [],
-    workspaceChangeIds: current?.workspaceChangeIds ?? [],
     ...extra,
   });
 }
@@ -320,15 +320,11 @@ function completeTool(
   tools: Map<string, RuntimeToolView>,
   payload: Extract<
     RuntimeEvent,
-    { kind: 'tool_completed' | 'tool_failed' }
+    { kind: 'tool_returned' | 'tool_failed' }
   >['payload'],
   phase: Extract<RuntimeToolPhase, 'completed' | 'failed'>,
 ) {
   upsertTool(tools, payload, phase, {
-    receiptIds: [...payload.receiptIds],
-    executionFactIds: [...payload.executionFactIds],
-    artifactIds: [...payload.artifactIds],
-    workspaceChangeIds: [...payload.workspaceChangeIds],
     error: 'error' in payload
       ? { ...payload.error, details: { ...payload.error.details } }
       : undefined,
@@ -349,10 +345,6 @@ function cloneTool(tool: RuntimeToolView): RuntimeToolView {
   return {
     ...tool,
     display: tool.display ? { ...tool.display } : undefined,
-    receiptIds: [...tool.receiptIds],
-    executionFactIds: [...tool.executionFactIds],
-    artifactIds: [...tool.artifactIds],
-    workspaceChangeIds: [...tool.workspaceChangeIds],
     error: tool.error
       ? { ...tool.error, details: { ...tool.error.details } }
       : undefined,
@@ -382,7 +374,7 @@ function updatePermission(
     toolCallId: payload.toolCallId ?? current?.toolCallId,
     phase,
     actions: current?.actions ?? [],
-    resources: current?.resources ?? [],
+    targets: current?.targets ?? [],
     grantedCapabilityIds: current?.grantedCapabilityIds ?? [],
     requestedCapabilityIds: current?.requestedCapabilityIds ?? [],
     ...extra,
@@ -393,7 +385,10 @@ function clonePermission(permission: RuntimePermissionView): RuntimePermissionVi
   return {
     ...permission,
     actions: [...permission.actions],
-    resources: [...permission.resources],
+    targets: permission.targets.map((target) => ({ ...target })),
+    scope: permission.scope
+      ? { mode: permission.scope.mode, roots: [...permission.scope.roots] }
+      : undefined,
     grantedCapabilityIds: [...permission.grantedCapabilityIds],
     requestedCapabilityIds: [...permission.requestedCapabilityIds],
   };

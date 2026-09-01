@@ -180,20 +180,32 @@ function normalizeRequest(
   const reason = input.reason.trim();
   const toolCallId = input.toolCallId.trim();
   const actions = uniqueNonempty(input.actions);
-  const resources = uniqueNonempty(input.resources);
+  const targets = uniqueTargets(input.targets);
   const capabilityIds = uniqueNonempty(input.capabilityIds);
   if (
     !reason ||
     !toolCallId ||
     actions.length === 0 ||
-    resources.length === 0 ||
+    targets.length === 0 ||
     capabilityIds.length === 0
   ) {
     throw new Error(
-      "Permission requests require a reason, tool call, action, and resource.",
+      "Permission requests require a reason, tool call, action, target, and capability.",
     );
   }
-  return { reason, toolCallId, actions, resources, capabilityIds };
+  return {
+    reason,
+    toolCallId,
+    actions,
+    targets,
+    capabilityIds,
+    ...(input.scope ? {
+      scope: {
+        mode: input.scope.mode,
+        roots: uniqueNonempty(input.scope.roots),
+      },
+    } : {}),
+  };
 }
 
 function uniqueNonempty(values: string[]): string[] {
@@ -206,13 +218,30 @@ function sameSet(left: string[], right: string[]): boolean {
   return leftSet.size === rightSet.size && [...leftSet].every((item) => rightSet.has(item));
 }
 
+function uniqueTargets(targets: ToolPermissionRequest["targets"]): ToolPermissionRequest["targets"] {
+  const result = new Map<string, ToolPermissionRequest["targets"][number]>();
+  for (const target of targets) {
+    const value = target.value.trim();
+    if (!value) continue;
+    const label = target.label?.trim();
+    const normalized = { kind: target.kind, value, ...(label ? { label } : {}) };
+    result.set(`${normalized.kind}\u0000${normalized.value}`, normalized);
+  }
+  return [...result.values()];
+}
+
 function permissionRequestKey(
   request: ToolPermissionRequest & { toolCallId: string },
 ): string {
   return JSON.stringify({
     reason: request.reason,
     actions: [...request.actions].sort(),
-    resources: [...request.resources].sort(),
+    targets: request.targets
+      .map((target) => ({ ...target }))
+      .sort((left, right) => `${left.kind}:${left.value}`.localeCompare(`${right.kind}:${right.value}`)),
     capabilityIds: [...request.capabilityIds].sort(),
+    scope: request.scope
+      ? { mode: request.scope.mode, roots: [...request.scope.roots].sort() }
+      : undefined,
   });
 }

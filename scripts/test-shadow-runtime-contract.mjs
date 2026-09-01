@@ -18,7 +18,7 @@ assert.match(shadow, /shadowOfSessionId: input\.sessionId/);
 assert.match(shadow, /sourceThroughTurnSequence/);
 assert.match(shadow, /turn\.turnSequence <= frozenTurnSequence/);
 assert.match(shadow, /sourceSupersededMessageIds/);
-assert.match(shadow, /entry\.manifest\.dispatch_side_effect === 'none'/);
+assert.match(shadow, /entry\.manifest\.mutating === false/);
 assert.match(shadow, /entry\.visibleToChild/);
 assert.match(shadow, /CHILD_AGENT_SYSTEM_PROMPT/);
 assert.match(shadow, /fail closed on revision conflicts/);

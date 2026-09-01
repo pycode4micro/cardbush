@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   type ModelMessage,
   type SubagentTask,
   type TeamDefinition,
   type TeamMember,
-  type ToolResult,
 } from "@cardbush/bush-protocol";
 
 import {
@@ -52,7 +49,6 @@ export function registerTeamTool(
     createSessionId?: () => string;
     createTurnId?: () => string;
     createMessageId?: () => string;
-    createReceiptId?: () => string;
     permissionPolicy?: SubagentPermissionPolicy;
   } = {},
 ): void {
@@ -62,7 +58,6 @@ export function registerTeamTool(
   const createSessionId = options.createSessionId ?? (() => `team_session_${randomUUID()}`);
   const createTurnId = options.createTurnId ?? (() => `team_turn_${randomUUID()}`);
   const createMessageId = options.createMessageId ?? (() => `team_message_${randomUUID()}`);
-  const createReceiptId = options.createReceiptId ?? (() => `receipt_${randomUUID()}`);
 
   registry.register<TeamDelegateInput>({
     definition: {
@@ -98,15 +93,8 @@ export function registerTeamTool(
       operation: "agent.team_delegate",
       risk: "low",
       owner: "runtime_team",
-      dispatch_phase: "execution",
       dispatch_scope: "child_session",
-      dispatch_side_effect: "delegated_execution",
-      dispatch_mutating: true,
-      dispatch_source: "product_team_snapshot",
-      stage_modes: ["execute"],
-      output_kinds: ["structured_data", "user_guidance"],
-      handoff_exports: ["terminal_response"],
-      evidence_hints: ["team_task"],
+      mutating: true,
     },
     parallelSafe: false,
     visibleToChild: true,
@@ -137,7 +125,7 @@ export function registerTeamTool(
           permissionPolicy: options.permissionPolicy,
         })
       ));
-      return toolResult(context, team, [], execution, createReceiptId());
+      return nativeTeamResult(team, execution);
     },
   });
 }
@@ -288,16 +276,10 @@ function resolveAssignments(team: TeamDefinition, assignments: TeamAssignment[])
   });
 }
 
-function toolResult(
-  context: ToolHandlerContext<TeamDelegateInput>,
+function nativeTeamResult(
   team: TeamDefinition,
-  discussion: PhaseResult[],
   execution: PhaseResult[],
-  receiptId: string,
-): ToolResult {
-  const tasks = [...discussion, ...execution];
-  const completed = execution.length > 0 && execution.every(({ task }) => task.status === "completed");
-  const error = tasks.find(({ task }) => task.status !== "completed")?.task.errorMessage ?? "";
+): Record<string, unknown> {
   const members = execution.map(({ member, task }) => ({
     memberId: member.memberId,
     agentProfileId: member.agentProfileId,
@@ -310,47 +292,9 @@ function toolResult(
     usage: task.usage,
   }));
   return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: completed,
-    output: {
-      teamId: team.teamId,
-      fallbackMemberId: team.members.find((member) => member.fallback)?.memberId,
-      members,
-    },
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: receiptId,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: completed ? "succeeded" : "failed",
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["team_task"],
-      paths: [],
-      execution_success: true,
-      semantic_success: completed,
-      verification_state: completed ? "verified" : "failed",
-      error_code: completed ? "" : error || "team_task_failed",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: members
-      .filter((member) => member.finalResponse)
-      .map((member) => ({
-        role: "user" as const,
-        name: `team_result_${member.memberId}`,
-        content: member.finalResponse,
-      })),
-    ...(completed ? {} : {
-      error: {
-        kind: "tool" as const,
-        code: "team_task_failed",
-        message: error || "A configured Team phase did not complete.",
-        details: { teamId: team.teamId },
-      },
-    }),
+    teamId: team.teamId,
+    fallbackMemberId: team.members.find((member) => member.fallback)?.memberId,
+    members,
   };
 }
 

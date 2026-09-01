@@ -1,12 +1,7 @@
-import { randomUUID } from "node:crypto";
-
 import {
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   type ModelMessage,
   type ModelRequest,
   type SessionSnapshot,
-  type ToolResult,
 } from "@cardbush/bush-protocol";
 
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
@@ -77,15 +72,8 @@ export function registerContextCompactionTool(
       operation: "context.checkpoint",
       risk: "low",
       owner: "runtime",
-      dispatch_phase: "maintenance",
       dispatch_scope: "session",
-      dispatch_side_effect: "internal",
-      dispatch_mutating: false,
-      dispatch_source: "registered_tool",
-      stage_modes: ["maintenance"],
-      output_kinds: ["structured_data", "facts"],
-      handoff_exports: [],
-      evidence_hints: ["context_summary"],
+      mutating: false,
     },
     parallelSafe: false,
     visibleToChild: true,
@@ -201,34 +189,10 @@ export function contextPressureNotice(
 function checkpointResult(
   context: ToolHandlerContext<ContextCheckpointInput>,
   session: SessionSnapshot,
-): ToolResult {
+): Record<string, unknown> {
   return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: context.toolCall.id,
-    success: true,
-    output: {
-      session_id: session.sessionId,
-      session_revision: session.revision,
-      summarized_turns: context.input.summaries.map((item) => item.turnId),
-    },
-    facts: [{
-      protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-      receipt_id: `receipt_context_checkpoint_${randomUUID()}`,
-      action_manifest_id: context.actionManifest.manifest_id,
-      status: "completed",
-      operation: context.actionManifest.operation,
-      effect_kind: context.actionManifest.effect_kind,
-      owner: context.actionManifest.owner,
-      dispatch_scope: context.actionManifest.dispatch_scope,
-      categories: ["context_summary"],
-      paths: [],
-      execution_success: true,
-      semantic_success: true,
-      verification_state: "verified",
-      error_code: "",
-    }],
-    artifacts: [],
-    workspace_changes: [],
-    guidance: [],
+    session_id: session.sessionId,
+    session_revision: session.revision,
+    summarized_turns: context.input.summaries.map((item) => item.turnId),
   };
 }

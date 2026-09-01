@@ -11,12 +11,12 @@ import {
 import {
   GOAL_CONTINUATION_PROMPT,
   createProductAgentTurnRequest,
+  latestSessionEnvironmentLocalDate,
 } from '@cardbush/bush-product-agent';
 import type { ProductSubagentConfig } from '@cardbush/product-host';
 
 import type {
   AssistantStreamChunk,
-  ChatToolArtifact,
   ChatToolExecution,
   PendingInteraction,
   TaskPlanStreamUpdate,
@@ -40,6 +40,8 @@ import type {
 import { synchronizeProductMcpSnapshot } from './productMcp';
 import { synchronizeProductTeamSnapshot } from './productTeams';
 import { parseGoalCommand } from './goalCommand';
+import { toolArtifactsFromPayload } from './toolArtifacts';
+import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 
 export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
@@ -85,8 +87,11 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       disabledTools: subagentConfig.disabledTools,
     };
     await synchronizeProductMcpSnapshot(runtime.client);
-    const catalog = await runtime.client.getToolCatalogDetails(controller.signal);
-    const activeGoal = await runtime.client.getGoal(request.sessionId, controller.signal);
+    const [catalog, activeGoal, existingSession] = await Promise.all([
+      runtime.client.getToolCatalogDetails(controller.signal),
+      runtime.client.getGoal(request.sessionId, controller.signal),
+      runtime.client.getSession(request.sessionId, controller.signal),
+    ]);
     await synchronizeProductTeamSnapshot(
       runtime.client,
       catalog.map((entry) => entry.definition),
@@ -121,22 +126,17 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         `Invalid token limits for ${resolvedModel.model}: maxOutputTokens (${configuredMaxOutputTokens}) must be less than maxContextTokens (${maxContextTokens}).`,
       );
     }
-    const runtimeRequest = createProductAgentTurnRequest({
-      requestId,
+    const workspaceDir = request.workspaceDir?.trim() || request.projectDir?.trim() ||
+      await window.cardbushDesktop?.ensureTaskWorkspace?.(request.sessionId);
+    let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession);
+    const sharedAgentInput = {
       sessionId: request.sessionId,
-      turnId,
-      messageId: userMessageId,
-      createdAt: new Date().toISOString(),
-      localDate: new Date().toLocaleDateString('en-CA'),
-      userText: effectiveUserInput,
-      ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
       model: resolvedModel.model,
       providerBinding: resolvedModel.binding,
       tools,
       projectDir: request.projectDir,
+      workspaceDir,
       projectInstructions: request.projectUserPrompt,
-      files: request.files,
-      images: request.images?.map((image) => image.path),
       filesystemLocations,
       permissionMode,
       subagentPermissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
@@ -150,6 +150,21 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),
+    };
+    const initialCreatedAt = new Date().toISOString();
+    const initialLocalDate = new Date().toLocaleDateString('en-CA');
+    const runtimeRequest = createProductAgentTurnRequest({
+      ...sharedAgentInput,
+      requestId,
+      turnId,
+      messageId: userMessageId,
+      createdAt: initialCreatedAt,
+      localDate: initialLocalDate,
+      sessionEnvironmentLocalDate,
+      userText: effectiveUserInput,
+      ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
+      files: request.files,
+      images: request.images?.map((image) => image.path),
     });
     if (goalCommand) {
       await runtime.client.createGoal({
@@ -196,25 +211,28 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         unregisterTurn();
       }
 
+      sessionEnvironmentLocalDate = optionalString(
+        currentRequest.metadata.sessionEnvironmentLocalDate,
+      ) ?? sessionEnvironmentLocalDate;
+
       const goal = await runtime.client.getGoal(request.sessionId, controller.signal);
       if (goal?.status !== 'active' || terminal.payload.status !== 'completed') {
         break;
       }
-      currentRequest = {
-        ...runtimeRequest,
+      const continuationCreatedAt = new Date().toISOString();
+      const continuationLocalDate = new Date().toLocaleDateString('en-CA');
+      currentRequest = createProductAgentTurnRequest({
+        ...sharedAgentInput,
         requestId: `request_${crypto.randomUUID()}`,
         turnId: `turn_${crypto.randomUUID()}`,
-        inputMessages: [{
-          messageId: `message_${crypto.randomUUID()}`,
-          createdAt: new Date().toISOString(),
-          message: {
-            role: 'user',
-            name: 'goal_continuation',
-            content: GOAL_CONTINUATION_PROMPT,
-          },
-        }],
+        messageId: `message_${crypto.randomUUID()}`,
+        createdAt: continuationCreatedAt,
+        localDate: continuationLocalDate,
+        sessionEnvironmentLocalDate,
+        userText: GOAL_CONTINUATION_PROMPT,
+        userMessageName: 'goal_continuation',
         sessionMetadata: {},
-      };
+      });
     }
 
     const snapshot = await runtime.client.getSession(request.sessionId, controller.signal);
@@ -361,31 +379,9 @@ export async function streamRuntimeTurnEvents(
     const snapshot = await runtime.client.getSession(request.sessionId, request.signal);
     if (snapshot) {
       request.onMessages?.(
-        snapshot.turns.flatMap((turn) => turn.messages.map((message) => ({
-          id: message.messageId,
-          messageId: message.messageId,
-          role: message.message.role === 'developer' ? 'system' : message.message.role,
-          content: message.message.content,
-          conversationId: snapshot.sessionId,
-          turnId: message.turnId,
-          createdAt: message.createdAt,
-          ...(message.message.role === 'assistant' ? {
-            status: turn.status,
-          } : {}),
-          turnSequence: message.turnSequence,
-          messageIndex: message.messageIndex,
-          ...(message.message.role === 'assistant' ? {
-            metadata: {
-              toolCalls: message.message.toolCalls,
-              cardbush_turn_started_at: turn.createdAt,
-              cardbush_turn_completed_at: turn.completedAt,
-              cardbush_turn_duration_ms: Math.max(
-                0,
-                Date.parse(turn.completedAt) - Date.parse(turn.createdAt),
-              ),
-            },
-          } : {}),
-        }))),
+        snapshot.turns.flatMap((turn) =>
+          projectRuntimeTurnMessages(turn, snapshot.sessionId),
+        ),
         true,
       );
     }
@@ -455,7 +451,7 @@ async function consumeRuntimeEvents(
         request.onToolExecution?.(execution);
         break;
       }
-      case 'tool_completed':
+      case 'tool_returned':
       case 'tool_failed': {
         const terminalExecution = toolLifecycle(event);
         liveToolExecutions.set(event.payload.toolCallId, terminalExecution);
@@ -518,7 +514,7 @@ async function consumeRuntimeEvents(
               ...queuedExecution.metadata,
               permissionId: event.payload.permissionId,
               permissionReason: event.payload.reason,
-              permissionResources: [...event.payload.resources],
+              permissionTargets: event.payload.targets.map((target) => ({ ...target })),
             },
           };
           liveToolExecutions.set(toolCallId, awaitingPermission);
@@ -607,10 +603,18 @@ function permissionInteraction(
     sessionId: event.sessionId,
     turnId: event.turnId,
     toolCallId: event.payload.toolCallId,
-    reason: event.payload.reason,
-    actions: event.payload.actions,
-    resources: event.payload.resources,
-    requestedCapabilityIds: event.payload.requestedCapabilityIds,
+    request: {
+      reason: event.payload.reason,
+      actions: [...event.payload.actions],
+      targets: event.payload.targets.map((target) => ({ ...target })),
+      requestedCapabilityIds: [...event.payload.requestedCapabilityIds],
+      ...(event.payload.scope ? {
+        scope: {
+          mode: event.payload.scope.mode,
+          roots: [...event.payload.scope.roots],
+        },
+      } : {}),
+    },
     sourceSessionId: event.payload.sourceSessionId,
     sourceTurnId: event.payload.sourceTurnId,
     parentSessionId: event.payload.parentSessionId,
@@ -657,7 +661,7 @@ function thinking(
 
 function toolLifecycle(
   event: Extract<RuntimeEvent, {
-    kind: 'tool_queued' | 'tool_running' | 'tool_completed' | 'tool_failed' | 'tool_cancelled';
+    kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled';
   }>,
 ): ChatToolExecution {
   return {
@@ -666,7 +670,7 @@ function toolLifecycle(
     state: toolLifecycleState(event.kind),
     summary: event.payload.display?.summary || event.payload.display?.title || event.payload.toolName,
     output: '',
-    success: event.kind === 'tool_completed',
+    success: event.kind === 'tool_returned',
     durationMs: 0,
     createdAt: event.createdAt,
     contentOffset: 0,
@@ -674,10 +678,6 @@ function toolLifecycle(
     turnId: event.turnId,
     assistantMessageId: event.payload.assistantMessageId,
     metadata: {
-      receiptIds: 'receiptIds' in event.payload ? event.payload.receiptIds : [],
-      workspaceChangeIds: 'workspaceChangeIds' in event.payload
-        ? event.payload.workspaceChangeIds
-        : [],
       ...('error' in event.payload ? { error: event.payload.error } : {}),
     },
   };
@@ -685,41 +685,24 @@ function toolLifecycle(
 
 function toolRecord(
   record: ToolExecutionRecord,
-  event: Extract<RuntimeEvent, { kind: 'tool_completed' | 'tool_failed' }>,
+  event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ): ChatToolExecution {
+  const returned = record.outcome === 'returned';
+  const artifacts = returned
+    ? toolArtifactsFromPayload({ result: record.result })
+    : [];
   return {
     ...toolLifecycle(event),
-    state: record.outcome,
-    output: JSON.stringify(record.result.output, null, 2),
-    success: record.result.success,
-    artifacts: record.result.artifacts.map(artifact),
+    state: record.outcome === 'returned' ? 'completed' : record.outcome,
+    output: returned ? stringifyNativeResult(record.result) : '',
+    success: returned,
+    ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
-      facts: record.result.facts,
-      workspaceChanges: record.result.workspace_changes,
-      error: record.result.error,
+      nativeResult: record.result,
+      workspaceChanges: record.workspaceChanges,
+      error: record.error,
     },
-  };
-}
-
-function artifact(value: ToolExecutionRecord['result']['artifacts'][number]): ChatToolArtifact {
-  const path = value.path ?? value.uri ?? '';
-  const media = value.media_type ?? '';
-  const type: ChatToolArtifact['type'] = media.startsWith('image/')
-    ? 'image'
-    : media.startsWith('video/')
-      ? 'video'
-      : media.startsWith('audio/')
-        ? 'audio'
-        : 'document';
-  return {
-    id: value.artifact_id,
-    name: path.split(/[\\/]/).at(-1) || value.artifact_id,
-    type,
-    path,
-    mimeType: value.media_type,
-    display: value.display === 'inline' ? 'inline' : 'attachment',
-    readOnly: value.metadata.readOnly !== false,
   };
 }
 
@@ -731,7 +714,7 @@ function planUpdate(
     explanation: string;
     active: boolean;
   },
-  event: Extract<RuntimeEvent, { kind: 'tool_completed' | 'tool_failed' }>,
+  event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ): TaskPlanStreamUpdate {
   return {
     turnId: event.turnId,
@@ -749,9 +732,9 @@ function planUpdate(
 
 function subagentDispatches(
   record: ToolExecutionRecord,
-  event: Extract<RuntimeEvent, { kind: 'tool_completed' | 'tool_failed' }>,
+  event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ) {
-  const output = object(record.result.output);
+  const output = object(record.result);
   const members = Array.isArray(output.members)
     ? output.members.map((item) => object(item))
     : [];
@@ -760,16 +743,16 @@ function subagentDispatches(
     : [output];
   return items.map((item) => {
     const statusValue = item.status ?? output.status;
-    const status = statusValue == null && !record.result.success
+    const status = statusValue == null && record.outcome !== 'returned'
       ? 'failed'
       : subagentTaskStatusSchema.parse(statusValue);
     const terminal = status !== 'running';
     return {
     protocol: 'bush.subagent_task.v1',
-    phase: record.result.success ? 'dispatched' as const : 'failed' as const,
+    phase: record.outcome === 'returned' ? 'dispatched' as const : 'failed' as const,
     status,
     terminal,
-    accepted: record.result.success,
+    accepted: record.outcome === 'returned',
     taskId: optionalString(item.taskId),
     toolCallId: record.toolCall.id,
     parentSessionId: event.sessionId,
@@ -780,7 +763,7 @@ function subagentDispatches(
     teamId: optionalString(output.teamId),
     teamMemberId: optionalString(item.memberId),
     agentProfileId: optionalString(item.agentProfileId),
-    errorCode: record.result.error?.code,
+    errorCode: record.error?.code,
     raw: item,
     };
   });
@@ -812,12 +795,12 @@ function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
 }
 
 function toolLifecycleState(
-  kind: 'tool_queued' | 'tool_running' | 'tool_completed' | 'tool_failed' | 'tool_cancelled',
+  kind: 'tool_queued' | 'tool_running' | 'tool_returned' | 'tool_failed' | 'tool_cancelled',
 ): ChatToolExecution['state'] {
   switch (kind) {
     case 'tool_queued': return 'queued';
     case 'tool_running': return 'running';
-    case 'tool_completed': return 'completed';
+    case 'tool_returned': return 'completed';
     case 'tool_failed': return 'failed';
     case 'tool_cancelled': return 'cancelled';
   }
@@ -863,6 +846,11 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function stringifyNativeResult(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2) ?? 'null';
 }
 
 function optionalString(value: unknown): string | undefined {

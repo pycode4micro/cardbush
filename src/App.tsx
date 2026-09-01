@@ -1,14 +1,18 @@
 import {
   AlertCircle,
   ArrowDown,
+  ArrowLeft,
+  ArrowRight,
   ArrowUp,
   Check,
   CheckCircle2,
   Clipboard,
   ExternalLink,
+  FileText,
   Flag,
   Folder,
   Gamepad2,
+  Globe2,
   LoaderCircle,
   LogOut,
   Menu,
@@ -38,10 +42,12 @@ import {
   type UIEvent,
   type WheelEvent,
   createElement,
+  forwardRef,
   Suspense,
   lazy,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -897,6 +903,11 @@ function CardbushApp() {
     () => new Set(),
   );
   const [inspectorTarget, setInspectorTarget] = useState<InspectorOpenDetail | null>(null);
+  const [inspectorTabs, setInspectorTabs] = useState<InspectorOpenDetail[]>([]);
+  const inspectorWebviewRefs = useRef(new Map<string, InspectorWebviewHandle>());
+  const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
+    Record<string, InspectorNavigationState>
+  >({});
   const [workSummaryInspector, setWorkSummaryInspector] =
     useState<WorkSummaryInspectorDetail | null>(null);
   const [inspectorSummaryOpen, setInspectorSummaryOpen] = useState(false);
@@ -910,6 +921,40 @@ function CardbushApp() {
     inspectorWidthRef.current = next;
     setInspectorWidthState(next);
     window.localStorage.setItem('cardbush.inspector_width', String(next));
+  }, []);
+  const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
+    const target = stripWrappingQuotes(detail.target.trim());
+    if (!target) return;
+    const normalizedDetail: InspectorOpenDetail = {
+      target,
+      ...(detail.title?.trim() ? { title: detail.title.trim() } : {}),
+    };
+    const identity = inspectorTargetIdentity(target);
+    setInspectorTabs((current) => {
+      const existingIndex = current.findIndex(
+        (tab) => inspectorTargetIdentity(tab.target) === identity,
+      );
+      if (existingIndex < 0) return [...current, normalizedDetail];
+      const existing = current[existingIndex];
+      const nextDetail = {
+        ...existing,
+        ...normalizedDetail,
+        title: normalizedDetail.title || existing.title,
+      };
+      if (
+        existing.target === nextDetail.target &&
+        existing.title === nextDetail.title
+      ) {
+        return current;
+      }
+      const next = [...current];
+      next[existingIndex] = nextDetail;
+      return next;
+    });
+    setInspectorTarget(normalizedDetail);
+    setWorkSummaryInspector(null);
+    setChangeReviewConversationId('');
+    setInspectorSummaryOpen(false);
   }, []);
   const changeReportsByConversation = useMemo(
     () =>
@@ -997,6 +1042,70 @@ function CardbushApp() {
       ? null
       : retainedInspectorContent.workSummary
   );
+  const displayedInspectorTabs = displayedInspectorTarget
+    ? inspectorTabs.length > 0
+      ? inspectorTabs
+      : [displayedInspectorTarget]
+    : [];
+  const activeInspectorTabIdentity = displayedInspectorTarget
+    ? inspectorTargetIdentity(displayedInspectorTarget.target)
+    : '';
+  const activateInspectorTab = (tab: InspectorOpenDetail) => {
+    setInspectorTarget(tab);
+    setWorkSummaryInspector(null);
+    setChangeReviewConversationId('');
+    setInspectorSummaryOpen(false);
+  };
+  const closeInspectorTab = (target: string) => {
+    const closingIdentity = inspectorTargetIdentity(target);
+    const closingIndex = inspectorTabs.findIndex(
+      (tab) => inspectorTargetIdentity(tab.target) === closingIdentity,
+    );
+    if (closingIndex < 0) return;
+    const remaining = inspectorTabs.filter(
+      (tab) => inspectorTargetIdentity(tab.target) !== closingIdentity,
+    );
+    setInspectorTabs(remaining);
+    inspectorWebviewRefs.current.delete(closingIdentity);
+    setInspectorNavigationByTarget((current) => {
+      if (!(closingIdentity in current)) return current;
+      const next = { ...current };
+      delete next[closingIdentity];
+      return next;
+    });
+    if (activeInspectorTabIdentity === closingIdentity) {
+      setInspectorTarget(
+        remaining[Math.min(closingIndex, remaining.length - 1)] ?? null,
+      );
+      setInspectorSummaryOpen(false);
+    }
+  };
+  const updateInspectorNavigation = useCallback((
+    identity: string,
+    navigation: InspectorNavigationState,
+  ) => {
+    setInspectorNavigationByTarget((current) => {
+      const previous = current[identity];
+      if (
+        previous?.url === navigation.url &&
+        previous.title === navigation.title &&
+        previous.canGoBack === navigation.canGoBack &&
+        previous.canGoForward === navigation.canGoForward &&
+        previous.loading === navigation.loading
+      ) {
+        return current;
+      }
+      return { ...current, [identity]: navigation };
+    });
+  }, []);
+  const activeInspectorNavigation = activeInspectorTabIdentity
+    ? inspectorNavigationByTarget[activeInspectorTabIdentity]
+    : undefined;
+  const activeInspectorAddress = displayedInspectorTarget
+    ? /^https?:\/\//i.test(displayedInspectorTarget.target)
+      ? activeInspectorNavigation?.url || displayedInspectorTarget.target
+      : displayedInspectorTarget.target
+    : '';
   const sidebarPresence = useSoftPanelPresence(
     section !== 'os' && !sidebarCollapsed,
   );
@@ -1064,24 +1173,18 @@ function CardbushApp() {
     const handleOpenInspector = (event: Event) => {
       const detail = (event as CustomEvent<InspectorOpenDetail>).detail;
       if (!detail?.target?.trim()) return;
-      setInspectorTarget(detail);
-      setWorkSummaryInspector(null);
-      setChangeReviewConversationId('');
-      setInspectorSummaryOpen(false);
+      openInspectorTarget(detail);
     };
     window.addEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
     const removeDesktopListener = window.cardbushDesktop?.onOpenInspectorRequest?.((detail) => {
       if (!detail?.target?.trim()) return;
-      setInspectorTarget(detail);
-      setWorkSummaryInspector(null);
-      setChangeReviewConversationId('');
-      setInspectorSummaryOpen(false);
+      openInspectorTarget(detail);
     });
     return () => {
       window.removeEventListener(OPEN_INSPECTOR_EVENT, handleOpenInspector);
       removeDesktopListener?.();
     };
-  }, []);
+  }, [openInspectorTarget]);
 
   useEffect(() => {
     const handleOpenWorkSummaryInspector = (event: Event) => {
@@ -2340,7 +2443,9 @@ function CardbushApp() {
                             ? language === 'zh' ? '回合详情' : 'Turn details'
                             : language === 'zh' ? '子任务详情' : 'Subagent task'
                         )
-                    : displayedInspectorTarget?.title || basename(displayedInspectorTarget?.target ?? '')}
+                    : displayedInspectorTarget
+                      ? activeInspectorNavigation?.title || inspectorTabLabel(displayedInspectorTarget)
+                      : ''}
                 </strong>
                 {!displayedWorkSummaryInspector && (
                   <button
@@ -2356,7 +2461,9 @@ function CardbushApp() {
                 {displayedInspectorTarget && (
                   <button
                     type="button"
-                    onClick={() => void window.cardbushDesktop?.openUiPreview?.(displayedInspectorTarget.target)}
+                    onClick={() => void window.cardbushDesktop?.openUiPreview?.(
+                      activeInspectorAddress || displayedInspectorTarget.target,
+                    )}
                     title={language === 'zh' ? '弹出到独立窗口' : 'Pop out'}
                   >
                     <ExternalLink size={15} />
@@ -2385,7 +2492,94 @@ function CardbushApp() {
                           ? `${summary.fileCount} ${language === 'zh' ? '个文件' : 'files'} · +${summary.additions} -${summary.deletions}`
                           : (language === 'zh' ? '暂无修改摘要' : 'No change summary');
                       })()
-                    : displayedInspectorTarget?.target}
+                    : activeInspectorAddress || displayedInspectorTarget?.target}
+                </div>
+              )}
+              {displayedInspectorTarget && displayedInspectorTabs.length > 0 && (
+                <div
+                  className="right-inspector-tabs"
+                  role="tablist"
+                  aria-label={language === 'zh' ? '已打开的页面和文件' : 'Open pages and files'}
+                >
+                  {displayedInspectorTabs.map((tab) => {
+                    const identity = inspectorTargetIdentity(tab.target);
+                    const active = identity === activeInspectorTabIdentity;
+                    const remote = /^https?:\/\//i.test(tab.target);
+                    const navigation = inspectorNavigationByTarget[identity];
+                    const label = navigation?.title || inspectorTabLabel(tab);
+                    return (
+                      <div
+                        className={`right-inspector-tab${active ? ' active' : ''}`}
+                        key={identity}
+                      >
+                        <button
+                          type="button"
+                          className="right-inspector-tab-select"
+                          role="tab"
+                          aria-selected={active}
+                          title={tab.target}
+                          onClick={() => activateInspectorTab(tab)}
+                        >
+                          {remote
+                            ? <Globe2 size={13} aria-hidden="true" />
+                            : <FileText size={13} aria-hidden="true" />}
+                          <span>{label}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="right-inspector-tab-close"
+                          title={language === 'zh' ? '关闭标签页' : 'Close tab'}
+                          aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                          onClick={() => closeInspectorTab(tab.target)}
+                        >
+                          <X size={12} aria-hidden="true" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {displayedInspectorTarget && (
+                <div className="right-inspector-navigation">
+                  <button
+                    type="button"
+                    disabled={!activeInspectorNavigation?.canGoBack}
+                    title={language === 'zh' ? '后退' : 'Back'}
+                    aria-label={language === 'zh' ? '后退' : 'Back'}
+                    onClick={() => inspectorWebviewRefs.current
+                      .get(activeInspectorTabIdentity)?.goBack()}
+                  >
+                    <ArrowLeft size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!activeInspectorNavigation?.canGoForward}
+                    title={language === 'zh' ? '前进' : 'Forward'}
+                    aria-label={language === 'zh' ? '前进' : 'Forward'}
+                    onClick={() => inspectorWebviewRefs.current
+                      .get(activeInspectorTabIdentity)?.goForward()}
+                  >
+                    <ArrowRight size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    title={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
+                    aria-label={language === 'zh' ? '刷新当前页面' : 'Reload current page'}
+                    onClick={() => inspectorWebviewRefs.current
+                      .get(activeInspectorTabIdentity)?.reload()}
+                  >
+                    <RefreshCw
+                      className={activeInspectorNavigation?.loading ? 'spinning' : undefined}
+                      size={14}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <div className="right-inspector-address" title={activeInspectorAddress}>
+                    {/^https?:\/\//i.test(activeInspectorAddress)
+                      ? <Globe2 size={13} aria-hidden="true" />
+                      : <FileText size={13} aria-hidden="true" />}
+                    <span>{activeInspectorAddress}</span>
+                  </div>
                 </div>
               )}
               <div className="right-inspector-body">
@@ -2420,11 +2614,33 @@ function CardbushApp() {
                     )}
                   />
                 ) : displayedInspectorTarget ? (
-                  <InspectorWebview
-                    key={displayedInspectorTarget.target}
-                    source={inspectorSource(displayedInspectorTarget.target)}
-                    language={language}
-                  />
+                  <div className="right-inspector-tab-pages">
+                    {displayedInspectorTabs.map((tab) => {
+                      const identity = inspectorTargetIdentity(tab.target);
+                      const active = identity === activeInspectorTabIdentity;
+                      return (
+                        <section
+                          className={`right-inspector-tab-page${active ? ' active' : ''}`}
+                          key={identity}
+                          role="tabpanel"
+                          aria-hidden={!active}
+                        >
+                          <InspectorWebview
+                            ref={(handle) => {
+                              if (handle) inspectorWebviewRefs.current.set(identity, handle);
+                              else inspectorWebviewRefs.current.delete(identity);
+                            }}
+                            identity={identity}
+                            target={tab.target}
+                            source={inspectorSource(tab.target)}
+                            language={language}
+                            onNavigationStateChange={updateInspectorNavigation}
+                            onOpenTarget={openInspectorTarget}
+                          />
+                        </section>
+                      );
+                    })}
+                  </div>
                 ) : displayedWorkSummaryInspector ? (
                   <WorkSummaryInspector
                     detail={displayedWorkSummaryInspector}
@@ -7569,6 +7785,39 @@ function interactionReplyIsReady(
   });
 }
 
+function inspectorTargetIdentity(target: string) {
+  const value = stripWrappingQuotes(target.trim());
+  if (/^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\')) {
+    return value.replace(/\//g, '\\').toLowerCase();
+  }
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      return new URL(value).href;
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
+function inspectorTabLabel(detail: InspectorOpenDetail) {
+  const target = stripWrappingQuotes(detail.target.trim());
+  const title = detail.title?.trim();
+  if (title && title !== target) return title;
+  if (/^https?:\/\//i.test(target)) {
+    try {
+      const url = new URL(target);
+      const pathLabel = url.pathname === '/'
+        ? ''
+        : url.pathname.replace(/\/$/, '').split('/').pop() || '';
+      return pathLabel ? `${url.host} · ${pathLabel}` : url.host;
+    } catch {
+      return target;
+    }
+  }
+  return basename(target) || target;
+}
+
 function inspectorSource(target: string) {
   const value = stripWrappingQuotes(target.trim());
   if (/^https?:\/\//i.test(value)) {
@@ -7603,28 +7852,154 @@ function inspectorSource(target: string) {
   return usesNativeFilePreview(value) ? fileUrl(value) : textFilePreviewUrl(value);
 }
 
-function InspectorWebview({
-  source,
-  language,
-}: {
+type InspectorNavigationState = {
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  loading: boolean;
+};
+
+type InspectorWebviewHandle = {
+  goBack: () => void;
+  goForward: () => void;
+  reload: () => void;
+};
+
+type ElectronInspectorWebview = HTMLElement & {
+  canGoBack?: () => boolean;
+  canGoForward?: () => boolean;
+  getTitle?: () => string;
+  getURL?: () => string;
+  getWebContentsId?: () => number;
+  goBack?: () => void;
+  goForward?: () => void;
+  reload?: () => void;
+};
+
+const InspectorWebview = forwardRef<InspectorWebviewHandle, {
+  identity: string;
+  target: string;
   source: string;
   language: AppLanguage;
-}) {
-  const webviewRef = useRef<HTMLElement | null>(null);
+  onNavigationStateChange: (
+    identity: string,
+    navigation: InspectorNavigationState,
+  ) => void;
+  onOpenTarget: (detail: InspectorOpenDetail) => void;
+}>(function InspectorWebview({
+  identity,
+  target,
+  source,
+  language,
+  onNavigationStateChange,
+  onOpenTarget,
+}, forwardedRef) {
+  const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
+
+  const publishNavigation = useCallback(() => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    onNavigationStateChange(identity, {
+      url: webview.getURL?.() || source,
+      title: webview.getTitle?.().trim() || '',
+      canGoBack: webview.canGoBack?.() ?? false,
+      canGoForward: webview.canGoForward?.() ?? false,
+      loading: loadingRef.current,
+    });
+  }, [identity, onNavigationStateChange, source]);
+
+  useImperativeHandle(forwardedRef, () => ({
+    goBack: () => {
+      const webview = webviewRef.current;
+      if (webview?.canGoBack?.()) webview.goBack?.();
+    },
+    goForward: () => {
+      const webview = webviewRef.current;
+      if (webview?.canGoForward?.()) webview.goForward?.();
+    },
+    reload: () => {
+      loadingRef.current = true;
+      setLoading(true);
+      webviewRef.current?.reload?.();
+      publishNavigation();
+    },
+  }), [publishNavigation]);
 
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return undefined;
-    const finish = () => setLoading(false);
-    const fail = () => setLoading(false);
+    const start = () => {
+      loadingRef.current = true;
+      setLoading(true);
+      publishNavigation();
+    };
+    const finish = () => {
+      loadingRef.current = false;
+      setLoading(false);
+      publishNavigation();
+    };
+    const fail = () => {
+      loadingRef.current = false;
+      setLoading(false);
+      publishNavigation();
+    };
+    const navigate = () => publishNavigation();
+    const updateTitle = () => publishNavigation();
+    const openWindow = (event: Event) => {
+      const target = (event as Event & { url?: string }).url?.trim();
+      if (!target) return;
+      event.preventDefault();
+      onOpenTarget({ target, title: target });
+    };
+    const contextMenu = (event: Event) => {
+      const params = (event as Event & {
+        params?: {
+          x?: number;
+          y?: number;
+          mediaType?: string;
+          srcURL?: string;
+          linkURL?: string;
+          selectionText?: string;
+          isEditable?: boolean;
+        };
+      }).params;
+      const guestWebContentsId = webview.getWebContentsId?.();
+      if (!params || !guestWebContentsId) return;
+      event.preventDefault();
+      void window.cardbushDesktop?.showInspectorContextMenu?.({
+        guestWebContentsId,
+        target,
+        x: Number(params.x) || 0,
+        y: Number(params.y) || 0,
+        mediaType: params.mediaType,
+        srcURL: params.srcURL,
+        linkURL: params.linkURL,
+        selectionText: params.selectionText,
+        isEditable: params.isEditable,
+      });
+    };
+    webview.addEventListener('did-start-loading', start);
     webview.addEventListener('did-finish-load', finish);
     webview.addEventListener('did-fail-load', fail);
+    webview.addEventListener('did-navigate', navigate);
+    webview.addEventListener('did-navigate-in-page', navigate);
+    webview.addEventListener('page-title-updated', updateTitle);
+    webview.addEventListener('new-window', openWindow);
+    webview.addEventListener('context-menu', contextMenu);
     return () => {
+      webview.removeEventListener('did-start-loading', start);
       webview.removeEventListener('did-finish-load', finish);
       webview.removeEventListener('did-fail-load', fail);
+      webview.removeEventListener('did-navigate', navigate);
+      webview.removeEventListener('did-navigate-in-page', navigate);
+      webview.removeEventListener('page-title-updated', updateTitle);
+      webview.removeEventListener('new-window', openWindow);
+      webview.removeEventListener('context-menu', contextMenu);
     };
-  }, [source]);
+  }, [onOpenTarget, publishNavigation, source, target]);
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
@@ -7644,7 +8019,7 @@ function InspectorWebview({
       )}
     </div>
   );
-}
+});
 
 function isOfficeDocumentPath(value: string) {
   return /\.(?:docx?|xlsx?|pptx?)$/i.test(value.split(/[?#]/, 1)[0]);

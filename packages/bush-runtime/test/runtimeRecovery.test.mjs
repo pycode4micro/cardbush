@@ -9,8 +9,6 @@ import {
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
-  BUSH_EXECUTION_FACT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
   RESUME_MODEL_TURN_COMMAND,
 } from "@cardbush/bush-protocol";
@@ -110,7 +108,6 @@ test("blocks recovery after a tool entered execution beyond the checkpoint", () 
     },
     messages: request().messages,
     nextRound: 1,
-    completedReceiptIds: [],
     cacheChainState: new CacheChainTracker().snapshot(),
   });
   assert.equal(
@@ -314,7 +311,6 @@ test("atomically replaces checkpoints and fails closed after corruption", (t) =>
     request: request(),
     messages: request().messages,
     nextRound: 1,
-    completedReceiptIds: [],
     cacheChainState: new CacheChainTracker().snapshot(),
   });
   eventLog.append(identity, {
@@ -325,13 +321,12 @@ test("atomically replaces checkpoints and fails closed after corruption", (t) =>
     request: request(),
     messages: request().messages,
     nextRound: 2,
-    completedReceiptIds: ["receipt_1"],
     cacheChainState: new CacheChainTracker().snapshot(),
   });
   assert.equal(store.load(identity.sessionId, identity.turnId).nextRound, 2);
 
   const path = join(roots.checkpoints, readdirSync(roots.checkpoints)[0]);
-  const corrupted = readFileSync(path, "utf8").replace("receipt_1", "receipt_x");
+  const corrupted = readFileSync(path, "utf8").replace('"nextRound":2', '"nextRound":3');
   writeFileSync(path, corrupted, "utf8");
   assert.throws(
     () => store.load(identity.sessionId, identity.turnId),
@@ -464,42 +459,14 @@ function recoveryToolRegistry() {
       operation: "fixture.read",
       risk: "low",
       owner: "fixture_runtime",
-      dispatch_phase: "execution",
       dispatch_scope: "turn",
-      dispatch_side_effect: "none",
-      dispatch_mutating: false,
-      dispatch_source: "registered_tool",
-      stage_modes: ["execute"],
-      output_kinds: ["structured_data"],
-      handoff_exports: [],
-      evidence_hints: ["observation"],
+      mutating: false,
     },
     decodeInput(input) {
       return input;
     },
-    execute({ toolCall, actionManifest }) {
-      return {
-        protocol: BUSH_TOOL_RESULT_PROTOCOL,
-        tool_call_id: toolCall.id,
-        success: true,
-        output: { value: "fixture-result" },
-        facts: [{
-          protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-          receipt_id: `receipt_${toolCall.id}`,
-          action_manifest_id: actionManifest.manifest_id,
-          status: "succeeded",
-          operation: actionManifest.operation,
-          effect_kind: actionManifest.effect_kind,
-          owner: actionManifest.owner,
-          dispatch_scope: actionManifest.dispatch_scope,
-          categories: ["observation"],
-          paths: [],
-          execution_success: true,
-          semantic_success: true,
-          verification_state: "unverified",
-          error_code: "",
-        }],
-      };
+    execute() {
+      return { value: "fixture-result" };
     },
   });
 }

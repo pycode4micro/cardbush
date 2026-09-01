@@ -30,22 +30,22 @@ test("requires an exact observed revision before edit and permits inherited fork
     new_text: "after",
   });
   assert.equal(rejected.kind, "failed");
-  assert.match(rejected.result.error.message, /read_file first/);
+  assert.match(rejected.error.message, /read_file first/);
 
   const read = await setup.execute("parent", "read_file", { path });
-  assert.equal(read.kind, "completed");
+  assert.equal(read.kind, "returned");
   const edited = await setup.execute("child", "edit_file", {
     path,
     old_text: "before",
     new_text: "after",
   }, { inheritedObservationSessionId: "parent" });
-  assert.equal(edited.kind, "completed");
+  assert.equal(edited.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "after\n");
-  assert.equal(edited.result.workspace_changes[0].status, "modified");
-  assert.equal(edited.result.workspace_changes[0].additions, 1);
-  assert.equal(edited.result.workspace_changes[0].deletions, 1);
-  assert.match(edited.result.workspace_changes[0].metadata.diff, /-before/);
-  assert.match(edited.result.workspace_changes[0].metadata.diff, /\+after/);
+  assert.equal(edited.workspaceChanges[0].status, "modified");
+  assert.equal(edited.workspaceChanges[0].additions, 1);
+  assert.equal(edited.workspaceChanges[0].deletions, 1);
+  assert.match(edited.workspaceChanges[0].metadata.diff, /-before/);
+  assert.match(edited.workspaceChanges[0].metadata.diff, /\+after/);
 });
 
 test("invalidates read evidence when the file changes outside Runtime", async (t) => {
@@ -54,7 +54,7 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   writeFileSync(path, "observed");
   const setup = tools(root);
 
-  assert.equal((await setup.execute("session", "read_file", { path })).kind, "completed");
+  assert.equal((await setup.execute("session", "read_file", { path })).kind, "returned");
   writeFileSync(path, "changed externally");
   const outcome = await setup.execute("session", "edit_file", {
     path,
@@ -63,7 +63,7 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   });
 
   assert.equal(outcome.kind, "failed");
-  assert.match(outcome.result.error.message, /has not been observed/);
+  assert.match(outcome.error.message, /has not been observed/);
 });
 
 test("preserves filesystem error codes as Tool failures", async (t) => {
@@ -74,9 +74,8 @@ test("preserves filesystem error codes as Tool failures", async (t) => {
   });
 
   assert.equal(outcome.kind, "failed");
-  assert.equal(outcome.result.error.kind, "tool");
-  assert.equal(outcome.result.error.code, "ENOENT");
-  assert.equal(outcome.result.facts[0].categories[0], "tool_failure");
+  assert.equal(outcome.error.kind, "tool");
+  assert.equal(outcome.error.code, "ENOENT");
 });
 
 test("writes new files, treats search no-match as a successful fact, and reports exit codes", async (t) => {
@@ -87,45 +86,39 @@ test("writes new files, treats search no-match as a successful fact, and reports
     path,
     content: "hello",
   });
-  assert.equal(written.kind, "completed");
-  assert.equal(written.result.workspace_changes[0].status, "added");
+  assert.equal(written.kind, "returned");
+  assert.equal(written.workspaceChanges[0].status, "added");
 
   const searched = await setup.execute("session", "search_file_content", {
     path: root,
     query: "absent-value",
   });
-  assert.equal(searched.kind, "completed");
-  assert.equal(searched.result.output.matched, false);
+  assert.equal(searched.kind, "returned");
+  assert.equal(searched.result.matched, false);
 
   const terminal = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('ok')\"",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
   });
-  assert.equal(terminal.kind, "completed");
-  assert.equal(terminal.result.output.exitCode, 0);
-  assert.equal(terminal.result.output.stdout, "ok");
+  assert.equal(terminal.kind, "returned");
+  assert.equal(terminal.result.exitCode, 0);
+  assert.equal(terminal.result.stdout, "ok");
   assert.equal(
-    terminal.result.output.shell,
+    terminal.result.shell,
     process.platform === "win32" ? "powershell" : "posix",
   );
-  assert.equal(terminal.result.facts[0].metadata.shell, terminal.result.output.shell);
-  assert.equal(
-    terminal.result.facts[0].metadata.shellExecutable,
-    terminal.result.output.shellExecutable,
-  );
+  assert.equal(typeof terminal.result.shellExecutable, "string");
 
   const nonzero = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('out'); process.stderr.write('err'); process.exit(7)\"",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
   });
-  assert.equal(nonzero.kind, "failed");
-  assert.equal(nonzero.result.success, false);
-  assert.equal(nonzero.result.error.code, "terminal_exit_nonzero");
-  assert.equal(nonzero.result.output.exitCode, 7);
-  assert.equal(nonzero.result.output.stdout, "out");
-  assert.equal(nonzero.result.output.stderr, "err");
+  assert.equal(nonzero.kind, "returned");
+  assert.equal(nonzero.result.exitCode, 7);
+  assert.equal(nonzero.result.stdout, "out");
+  assert.equal(nonzero.result.stderr, "err");
 });
 
 test("searches with the Node fallback when ripgrep is unavailable in a packaged environment", async (t) => {
@@ -143,10 +136,10 @@ test("searches with the Node fallback when ripgrep is unavailable in a packaged 
       query: "needle",
       globs: ["**/*.txt"],
     });
-    assert.equal(outcome.kind, "completed");
-    assert.equal(outcome.result.output.matched, true);
-    assert.match(outcome.result.output.output, /first\.txt:2:1:needle here/);
-    assert.doesNotMatch(outcome.result.output.output, /ignored\.log/);
+    assert.equal(outcome.kind, "returned");
+    assert.equal(outcome.result.matched, true);
+    assert.match(outcome.result.output, /first\.txt:2:1:needle here/);
+    assert.doesNotMatch(outcome.result.output, /ignored\.log/);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
@@ -174,9 +167,9 @@ test("prefers the bundled ripgrep executable when the system PATH has no rg", as
       path: root,
       query: "needle",
     });
-    assert.equal(outcome.kind, "completed");
-    assert.match(outcome.result.output.output, /visible\.txt:1:9:bundled needle/);
-    assert.doesNotMatch(outcome.result.output.output, /hidden\.txt/);
+    assert.equal(outcome.kind, "returned");
+    assert.match(outcome.result.output, /visible\.txt:1:9:bundled needle/);
+    assert.doesNotMatch(outcome.result.output, /hidden\.txt/);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
@@ -191,30 +184,30 @@ test("preserves UTF-8 output and decodes legacy Windows shell output", async (t)
   const utf8 = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('中文文件')\"",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
   });
-  assert.equal(utf8.kind, "completed");
-  assert.equal(utf8.result.output.stdout, "中文文件");
+  assert.equal(utf8.kind, "returned");
+  assert.equal(utf8.result.stdout, "中文文件");
 
   if (process.platform !== "win32") return;
   writeFileSync(join(root, "中文目录.txt"), "content");
   const shellBuiltin = await setup.execute("session", "terminal_exec", {
     command: "dir /b",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
     shell: "cmd",
   });
-  assert.equal(shellBuiltin.kind, "completed");
-  assert.match(shellBuiltin.result.output.stdout, /中文目录\.txt/);
+  assert.equal(shellBuiltin.kind, "returned");
+  assert.match(shellBuiltin.result.stdout, /中文目录\.txt/);
 
   const legacy = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write(Buffer.from([0xd6,0xd0,0xce,0xc4])); process.stderr.write(Buffer.from([0xb4,0xed,0xce,0xf3]))\"",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
   });
-  assert.equal(legacy.kind, "completed");
-  assert.equal(legacy.result.output.stdout, "中文");
-  assert.equal(legacy.result.output.stderr, "错误");
+  assert.equal(legacy.kind, "returned");
+  assert.equal(legacy.result.stdout, "中文");
+  assert.equal(legacy.result.stderr, "错误");
 });
 
 test("publishes an explicit platform shell contract and rejects unavailable shells", async (t) => {
@@ -225,22 +218,22 @@ test("publishes an explicit platform shell contract and rejects unavailable shel
   const expected = process.platform === "win32" ? ["powershell", "cmd"] : ["posix"];
   assert.deepEqual(shellSchema.enum, expected);
   assert.equal(shellSchema.default, expected[0]);
-  assert.deepEqual(definition.inputSchema.required, ["command", "cwd", "timeout_ms", "shell"]);
-  assert.equal(definition.inputSchema.properties.timeout_ms.maximum, 30_000);
+  assert.deepEqual(definition.inputSchema.required, ["command", "cwd", "yield_time_ms", "shell"]);
+  assert.equal(definition.inputSchema.properties.yield_time_ms.maximum, 30_000);
   assert.match(definition.inputSchema.properties.cwd.description, /absolute path/i);
   assert.match(definition.description, /never rewrites commands/i);
 
   const unavailable = await setup.execute("session", "terminal_exec", {
     command: "echo blocked",
     cwd: root,
-    timeout_ms: 5_000,
+    yield_time_ms: 5_000,
     shell: process.platform === "win32" ? "posix" : "cmd",
   });
   assert.equal(unavailable.kind, "failed");
-  assert.match(unavailable.result.error.message, /shell must be one of/);
+  assert.match(unavailable.error.message, /shell must be one of/);
 });
 
-test("requires and enforces a bounded terminal execution deadline", async (t) => {
+test("returns a session handle at the bounded yield point and later reports exit", async (t) => {
   const root = temporaryRoot(t);
   const setup = tools(root);
 
@@ -249,28 +242,118 @@ test("requires and enforces a bounded terminal execution deadline", async (t) =>
     cwd: root,
   });
   assert.equal(missing.kind, "failed");
-  assert.match(missing.result.error.message, /timeout_ms is required/);
+  assert.match(missing.error.message, /yield_time_ms is required/);
 
   const excessive = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('should not run')\"",
     cwd: root,
-    timeout_ms: 30_001,
+    yield_time_ms: 30_001,
   });
   assert.equal(excessive.kind, "failed");
-  assert.match(excessive.result.error.message, /must not exceed 30000/);
+  assert.match(excessive.error.message, /must not exceed 30000/);
 
   const startedAt = Date.now();
-  const timedOut = await setup.execute("session", "terminal_exec", {
-    command: "node -e \"setTimeout(() => {}, 5000)\"",
+  const running = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"setTimeout(() => {}, 500)\"",
     cwd: root,
-    timeout_ms: 100,
+    yield_time_ms: 100,
   });
-  assert.equal(timedOut.kind, "failed");
-  assert.equal(timedOut.result.error.code, "terminal_timeout");
-  assert.equal(timedOut.result.output.timedOut, true);
-  assert.equal(timedOut.result.output.timeoutMs, 100);
-  assert.ok(timedOut.result.output.durationMs >= 90);
+  assert.equal(running.kind, "returned");
+  assert.equal(running.result.state, "running");
+  assert.match(running.result.terminalSessionId, /^terminal_/);
+  assert.equal(running.result.yieldTimeMs, 100);
+  assert.ok(running.result.durationMs >= 90);
   assert.ok(Date.now() - startedAt < 2_000);
+
+  const completed = await setup.execute("session", "terminal_poll", {
+    session_id: running.result.terminalSessionId,
+    yield_time_ms: 1_000,
+  });
+  assert.equal(completed.kind, "returned");
+  assert.equal(completed.result.state, "exited");
+  assert.equal(completed.result.exitCode, 0);
+});
+
+test("returns a session handle instead of waiting on inherited descendant stdio", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const startedAt = Date.now();
+  const outcome = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setTimeout(()=>{},750)'],{stdio:'inherit'}); child.unref();\"",
+    cwd: root,
+    yield_time_ms: 1_000,
+  });
+  assert.equal(outcome.kind, "returned");
+  assert.equal(outcome.result.state, "exited");
+  assert.match(outcome.result.terminalSessionId, /^terminal_/);
+  assert.ok(Date.now() - startedAt < 2_000);
+});
+
+test("writes to and explicitly stops persistent terminal sessions", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const interactive = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"process.stdin.once('data',d=>{process.stdout.write(d);process.exit(0)})\"",
+    cwd: root,
+    yield_time_ms: 100,
+  });
+  assert.equal(interactive.result.state, "running");
+  const written = await setup.execute("session", "terminal_write", {
+    session_id: interactive.result.terminalSessionId,
+    chars: "hello terminal\\n",
+    yield_time_ms: 1_000,
+  });
+  assert.equal(written.kind, "returned");
+  assert.match(written.result.stdout, /hello terminal/);
+  const interactiveCompleted = written.result.state === "exited"
+    ? written
+    : await setup.execute("session", "terminal_poll", {
+        session_id: interactive.result.terminalSessionId,
+        yield_time_ms: 1_000,
+      });
+  assert.equal(interactiveCompleted.result.state, "exited");
+
+  const persistent = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"setInterval(()=>{},1000)\"",
+    cwd: root,
+    yield_time_ms: 100,
+  });
+  assert.equal(persistent.result.state, "running");
+  const listed = await setup.execute("session", "terminal_list", {});
+  assert.equal(listed.kind, "returned");
+  assert.ok(listed.result.sessions.some(
+    (item) => item.terminalSessionId === persistent.result.terminalSessionId,
+  ));
+  const stopped = await setup.execute("session", "terminal_stop", {
+    session_id: persistent.result.terminalSessionId,
+  });
+  assert.equal(stopped.kind, "returned");
+  assert.equal(stopped.result.state, "stopped");
+  const afterStop = await setup.execute("session", "terminal_list", {});
+  assert.equal(afterStop.result.sessions.length, 0);
+});
+
+test("keeps a spawned terminal session available when the waiting Tool is cancelled", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const controller = new AbortController();
+  const execution = setup.execute("session", "terminal_exec", {
+    command: "node -e \"setInterval(()=>{},1000)\"",
+    cwd: root,
+    yield_time_ms: 5_000,
+  }, {}, controller.signal);
+  setTimeout(() => controller.abort(), 100);
+  const cancelled = await execution;
+  assert.equal(cancelled.kind, "cancelled");
+
+  const listed = await setup.execute("session", "terminal_list", {});
+  assert.equal(listed.kind, "returned");
+  assert.equal(listed.result.sessions.length, 1);
+  const stopped = await setup.execute("session", "terminal_stop", {
+    session_id: listed.result.sessions[0].terminalSessionId,
+  });
+  assert.equal(stopped.kind, "returned");
+  assert.equal(stopped.result.state, "stopped");
 });
 
 test("uses absolute filesystem paths safely when a Turn has no workspace", async (t) => {
@@ -301,9 +384,10 @@ test("uses absolute filesystem paths safely when a Turn has no workspace", async
     undefined,
     turn(registry, undefined, {}),
   );
-  assert.equal(written.kind, "completed");
+  assert.equal(written.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "hello world");
-  assert.deepEqual(permissionRequests[0].resources, [path]);
+  assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: path }]);
+  assert.deepEqual(permissionRequests[0].scope, { mode: "task_free", roots: [] });
 
   const relative = await coordinator.execute(
     call("write_file", { path: "relative.txt", content: "blocked" }),
@@ -312,7 +396,7 @@ test("uses absolute filesystem paths safely when a Turn has no workspace", async
     turn(registry, undefined, {}),
   );
   assert.equal(relative.kind, "failed");
-  assert.match(relative.result.error.message, /Relative paths require a workspaceDir/);
+  assert.match(relative.error.message, /Relative paths require a workspaceDir/);
 });
 
 test("canonicalizes a linked workspace root and rejects a linked escape", async (t) => {
@@ -352,7 +436,7 @@ test("canonicalizes a linked workspace root and rejects a linked escape", async 
     undefined,
     turn(registry, linkedWorkspace, {}),
   );
-  assert.equal(insideOutcome.kind, "completed");
+  assert.equal(insideOutcome.kind, "returned");
   assert.equal(requests.length, 0);
 
   const escapeOutcome = await coordinator.execute(
@@ -361,9 +445,11 @@ test("canonicalizes a linked workspace root and rejects a linked escape", async 
     undefined,
     turn(registry, linkedWorkspace, {}),
   );
-  assert.equal(escapeOutcome.kind, "completed");
+  assert.equal(escapeOutcome.kind, "returned");
   assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].resources, [outside]);
+  assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: outside }]);
+  assert.equal(requests[0].scope.mode, "task_free");
+  assert.equal(requests[0].scope.roots.length, 1);
 });
 
 test("binds external path approval to the exact requested capability", async (t) => {
@@ -395,8 +481,8 @@ test("binds external path approval to the exact requested capability", async (t)
     undefined,
     turn(registry, workspace, {}),
   );
-  assert.equal(outcome.kind, "completed");
-  assert.deepEqual(permissionRequest.resources, [path]);
+  assert.equal(outcome.kind, "returned");
+  assert.deepEqual(permissionRequest.targets, [{ kind: "filesystem_path", value: path }]);
   assert.equal(permissionRequest.capabilityIds.length, 1);
 });
 
@@ -406,15 +492,23 @@ function tools(workspace) {
   let ordinal = 0;
   const coordinator = new ToolExecutionCoordinator({
     registry,
-    permissions: { request: async () => { throw new Error("unexpected permission"); } },
+    permissions: {
+      request: async (input) => ({
+        protocol: "bush.runtime_permission_answer.v1",
+        permissionId: `permission_${Math.random()}`,
+        answerId: `answer_${Math.random()}`,
+        decision: "allow_once",
+        grantedCapabilityIds: input.capabilityIds,
+      }),
+    },
   });
   return {
     registry,
-    execute(sessionId, name, input, metadata = {}) {
+    execute(sessionId, name, input, metadata = {}, signal) {
       return coordinator.execute(
         call(name, input),
         { ...identity(sessionId), ordinal: ordinal++ },
-        undefined,
+        signal,
         turn(registry, workspace, metadata),
       );
     },

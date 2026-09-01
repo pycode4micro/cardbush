@@ -24,12 +24,16 @@ const localFileProtocol = read('electron', 'localFileProtocol.ts');
 assert.match(localPaths, /export function isVideoPath/);
 assert.match(localPaths, /export function isAudioPath/);
 assert.match(messageMedia, /export function splitMessageMedia/);
+assert.match(messageMedia, /export function splitMessageMediaBlocks/);
+assert.match(messageBubble, /<MessageInlineMediaContent content=\{assistantContent\}/);
+assert.match(messageBubble, /<MessageMediaPath pathValue=\{pathValue\}/);
+assert.match(messageBubble, /showPaths/);
 assert.match(types, /type:\s*'image' \| 'video' \| 'audio' \| 'document' \| 'folder'/);
 assert.match(chatHook, /isVideoPath\(pathValue\)[\s\S]*?'video'/);
 assert.match(chatHook, /isAudioPath\(pathValue\)[\s\S]*?'audio'/);
-assert.match(api, /toolArtifactsFromPayload\(\{[\s\S]*?record\.result\.artifacts/);
+assert.match(api, /toolArtifactsFromPayload\(\{ result: record\.result \}\)/);
 assert.match(api, /artifacts\.length > 0 \? \{ artifacts \} : \{\}/);
-assert.match(runtimeChat, /record\.result\.artifacts\.map\(artifact\)/);
+assert.match(runtimeChat, /toolArtifactsFromPayload\(\{ result: record\.result \}\)/);
 assert.match(runtimeChat, /images: request\.images\?\.map\(\(image\) => image\.path\)/);
 assert.match(productAgent, /images: input\.images\.slice\(0, 4\)\.map\(\(url\) => \(\{ url \}\)\)/);
 assert.match(runtimeWorker, /"native_image_inputs"/);
@@ -59,6 +63,60 @@ assert.match(electronMain, /function videoMimeTypeForPath/);
 assert.match(electronMain, /ipcMain\.handle\('image:read-data-url'/);
 assert.match(electronMain, /function readLocalImageDataUrl/);
 assert.match(electronPreload, /readImageDataUrl:/);
+
+const localPathsModule = { exports: {} };
+vm.runInNewContext(
+  ts.transpileModule(localPaths, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText,
+  {
+    URL,
+    module: localPathsModule,
+    exports: localPathsModule.exports,
+  },
+);
+const messageMediaModule = { exports: {} };
+vm.runInNewContext(
+  ts.transpileModule(messageMedia, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText,
+  {
+    module: messageMediaModule,
+    exports: messageMediaModule.exports,
+    require: (request) => request === '../shared/localPaths'
+      ? localPathsModule.exports
+      : {},
+  },
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(messageMediaModule.exports.splitMessageMediaBlocks([
+    '第一张图：',
+    'C:\\renders\\one.png',
+    '中间说明。',
+    'C:\\renders\\two.png',
+    'C:\\renders\\three.png',
+    '最终说明。',
+  ].join('\n')))),
+  [
+    { kind: 'text', content: '第一张图：' },
+    { kind: 'media', items: [{ path: 'C:\\renders\\one.png', type: 'image' }] },
+    { kind: 'text', content: '中间说明。' },
+    {
+      kind: 'media',
+      items: [
+        { path: 'C:\\renders\\two.png', type: 'image' },
+        { path: 'C:\\renders\\three.png', type: 'image' },
+      ],
+    },
+    { kind: 'text', content: '最终说明。' },
+  ],
+);
 
 const localFileProtocolModule = { exports: {} };
 vm.runInNewContext(

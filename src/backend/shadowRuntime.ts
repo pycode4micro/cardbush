@@ -2,6 +2,7 @@ import type { RuntimeEvent } from '@cardbush/bush-protocol';
 import {
   CHILD_AGENT_SYSTEM_PROMPT,
   createProductAgentTurnRequest,
+  latestSessionEnvironmentLocalDate,
 } from '@cardbush/bush-product-agent';
 
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
@@ -186,8 +187,9 @@ export async function streamRuntimeShadowConversationMessage(
     });
     streamLease = { controller, settled, resolveSettled };
     activeStreams.set(request.conversationId, streamLease);
-    const [source, resolved, catalog] = await Promise.all([
+    const [source, shadowSession, resolved, catalog] = await Promise.all([
       runtime.client.getSession(state.sessionId, controller.signal),
+      runtime.client.getSession(state.runtimeSessionId, controller.signal),
       resolveProductModel(request.modelConfig.id),
       runtime.client.getToolCatalogDetails(controller.signal),
     ]);
@@ -219,7 +221,7 @@ export async function streamRuntimeShadowConversationMessage(
       String(source.metadata?.projectDir ?? '');
     const tools = catalog
       .filter((entry) => entry.definition.name === 'checkpoint_context' || (readOnly
-        ? entry.manifest.dispatch_side_effect === 'none'
+        ? entry.manifest.mutating === false
         : entry.visibleToChild && (Boolean(workspaceDir) || entry.manifest.dispatch_scope !== 'resource')))
       .map((entry) => entry.definition);
     const base = createProductAgentTurnRequest({
@@ -229,6 +231,7 @@ export async function streamRuntimeShadowConversationMessage(
       messageId,
       createdAt: new Date().toISOString(),
       localDate: new Date().toLocaleDateString('en-CA'),
+      sessionEnvironmentLocalDate: latestSessionEnvironmentLocalDate(shadowSession),
       userText: request.content,
       userMessageName: 'shadow_user',
       model: resolved.model,

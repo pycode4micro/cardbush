@@ -23,8 +23,8 @@ assert.doesNotMatch(worker, /registerProductHostTools|host_tool_request|product_
 assert.doesNotMatch(main, /executeProductHostTool|captureDesktopForRuntime/);
 assert.match(worker, /id: 'cardbush_apps'/);
 assert.match(appsPlugin, /registerTool\('computer_use'/);
-assert.match(appsPlugin, /'cardbush\/action_manifest'/);
-assert.match(appsPlugin, /owner: 'cardbush_apps'/);
+assert.match(appsPlugin, /annotations: \{/);
+assert.doesNotMatch(appsPlugin, /cardbush\/action_manifest|execution_fact|receipt_id/);
 assert.match(appsPlugin, /Observe and interact with the user's current desktop/);
 assert.doesNotMatch(appsPlugin, /LAST-RESORT|last-resort fallback|prefer chrome_devtools/i);
 assert.doesNotMatch(runtimeChat, /entry\.manifest\.dispatch_scope !== 'resource'/);

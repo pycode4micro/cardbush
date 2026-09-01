@@ -33,7 +33,7 @@ test("reverts one Turn and persists reverted Workspace Change identities", async
   const result = await setup.revert(["turn-1"]);
   assert.equal(readFileSync(path, "utf8"), "before");
   assert.equal(result.revertedFiles, 1);
-  assert.deepEqual(result.revertedChangeIds, [edited.result.workspace_changes[0].change_id]);
+  assert.deepEqual(result.revertedChangeIds, [edited.workspaceChanges[0].change_id]);
   const session = await setup.host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: setup.sessionId },
@@ -157,7 +157,7 @@ async function environment(t, sessionId) {
           contextMessages: [],
         },
       );
-      assert.equal(outcome.kind, "completed");
+      assert.equal(outcome.kind, "returned");
       store.record(toolCall, identity, outcome);
       return outcome;
     },

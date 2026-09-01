@@ -91,7 +91,10 @@ import {
   goalToolUpdateFromExecution,
   isGoalSelfCheckMessage,
 } from '../shared/goalState';
-import { conversationProjectDir } from '../features/conversationWorkspace';
+import {
+  conversationProjectDir,
+  conversationWorkspaceRoot,
+} from '../features/conversationWorkspace';
 
 export type QueuedChatMessage = {
   id: string;
@@ -1666,6 +1669,7 @@ export function useCardbushChat(
         return;
       }
       const projectDir = conversationProjectRequestDir(conversation);
+      const workspaceDir = conversationWorkspaceRoot(conversation);
       const projectUserPrompt = mergedRequestContextPrompt(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
@@ -1736,6 +1740,7 @@ export function useCardbushChat(
           model: selectedModelName(managedModelConfigs, selectedModel),
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
           projectDir,
+          workspaceDir,
           projectUserPrompt,
           allowedSkills: skills
             .map((skill) => skill.name)
@@ -2609,6 +2614,7 @@ export function useCardbushChat(
       };
       const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
+      const workspaceDir = conversationWorkspaceRoot(conversation);
       const projectUserPrompt = mergedRequestContextPrompt(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
@@ -2634,6 +2640,7 @@ export function useCardbushChat(
             model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
+            workspaceDir,
             projectUserPrompt,
             allowedSkills: skills
               .map((skill) => skill.name)
@@ -2775,6 +2782,7 @@ export function useCardbushChat(
         tempAssistant,
       ];
       const projectDir = conversationProjectRequestDir(conversation);
+      const workspaceDir = conversationWorkspaceRoot(conversation);
       const projectUserPrompt = mergedRequestContextPrompt(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
@@ -2800,6 +2808,7 @@ export function useCardbushChat(
             model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
+            workspaceDir,
             projectUserPrompt,
             allowedSkills: skills
               .map((skill) => skill.name)

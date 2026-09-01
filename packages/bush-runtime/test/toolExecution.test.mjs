@@ -3,13 +3,11 @@ import test from "node:test";
 
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
-  BUSH_EXECUTION_FACT_PROTOCOL,
   BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_MODEL_REQUEST_PROTOCOL,
   BUSH_RUNTIME_GUIDANCE_PROTOCOL,
   BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL,
   BUSH_RUNTIME_TOOL_CANCEL_RECEIPT_PROTOCOL,
-  BUSH_TOOL_RESULT_PROTOCOL,
   CANCEL_RUNTIME_TOOL_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
@@ -33,15 +31,8 @@ const manifest = {
   operation: "fixture.read",
   risk: "low",
   owner: "fixture_runtime",
-  dispatch_phase: "execution",
   dispatch_scope: "turn",
-  dispatch_side_effect: "none",
-  dispatch_mutating: false,
-  dispatch_source: "registered_tool",
-  stage_modes: ["execute"],
-  output_kinds: ["structured_data"],
-  handoff_exports: [],
-  evidence_hints: ["observation"],
+  mutating: false,
 };
 
 test("executes a registered tool and continues the same Turn to a final model response", async () => {
@@ -58,11 +49,10 @@ test("executes a registered tool and continues the same Turn to a final model re
     events
       .filter((event) => event.kind.startsWith("tool_"))
       .map((event) => event.kind),
-    ["tool_queued", "tool_running", "tool_completed"],
+    ["tool_queued", "tool_running", "tool_returned"],
   );
-  const completed = events.find((event) => event.kind === "tool_completed");
-  assert.deepEqual(completed.payload.receiptIds, ["receipt_call_fixture"]);
-  assert.deepEqual(completed.payload.executionFactIds, ["receipt_call_fixture"]);
+  const completed = events.find((event) => event.kind === "tool_returned");
+  assert.equal(completed.payload.toolCallId, "call_fixture");
   assert.equal(provider.requests.length, 2);
   assert.deepEqual(provider.requests[0].providerState, {
     strategy: "response_chain",
@@ -74,7 +64,7 @@ test("executes a registered tool and continues the same Turn to a final model re
   });
   assert.equal(provider.requests[1].messages.at(-2).role, "assistant");
   assert.equal(provider.requests[1].messages.at(-1).role, "tool");
-  assert.match(provider.requests[1].messages.at(-1).content, /receipt_call_fixture/);
+  assert.match(provider.requests[1].messages.at(-1).content, /fixture-result/);
 });
 
 test("cancels one active Tool without stopping the Turn", async () => {
@@ -162,7 +152,7 @@ test("isolates non-parallel-safe tools by execution channel", async () => {
   assert.equal(fallbackStarted, true);
   assert.equal(
     host.events("session_tools", "turn_tools")
-      .filter((event) => event.kind === "tool_completed").length,
+      .filter((event) => event.kind === "tool_returned").length,
     2,
   );
   assert.deepEqual(
@@ -191,7 +181,7 @@ test("does not issue desktop input while another Tool permission is pending", as
         request: {
           reason: "Allow the fixture operation.",
           actions: ["read"],
-          resources: ["fixture://permission"],
+          targets: [{ kind: "opaque", value: "fixture://permission" }],
           capabilityIds: ["fixture_permission"],
         },
       };
@@ -209,8 +199,7 @@ test("does not issue desktop input while another Tool permission is pending", as
       risk: "medium",
       owner: "mcp:desktop",
       dispatch_scope: "process",
-      dispatch_side_effect: "desktop_control",
-      dispatch_mutating: true,
+      mutating: true,
     },
     executionChannel: "mcp:desktop",
     decodeInput: (input) => input,
@@ -248,7 +237,7 @@ test("does not issue desktop input while another Tool permission is pending", as
     event.kind === "tool_cancelled" && event.payload.toolCallId === "call_second"
   ));
   assert.ok(events.some((event) =>
-    event.kind === "tool_completed" && event.payload.toolCallId === "call_first"
+    event.kind === "tool_returned" && event.payload.toolCallId === "call_first"
   ));
 });
 
@@ -392,26 +381,25 @@ test("returns malformed JSON as one factual tool failure and lets the model reco
   assert.doesNotMatch(failed.payload.error.message, /fixture_tool/);
 });
 
-test("projects only tool-declared Artifact and Workspace Change references", async () => {
+test("stores native tool output and Runtime-owned workspace changes separately", async () => {
   const registry = registryWithExecution({
-    execute({ toolCall, actionManifest }) {
-      const base = result(toolCall.id, actionManifest);
+    execute({ recordWorkspaceChange }) {
+      recordWorkspaceChange({
+        change_id: "change_fixture",
+        path: "src/fixture.ts",
+        status: "modified",
+        additions: 2,
+        deletions: 1,
+        metadata: {},
+      });
       return {
-        ...base,
+        value: "fixture-result",
         artifacts: [{
           artifact_id: "artifact_fixture",
           type: "image",
           path: "C:\\tmp\\fixture.png",
           media_type: "image/png",
           display: "inline",
-          metadata: {},
-        }],
-        workspace_changes: [{
-          change_id: "change_fixture",
-          path: "src/fixture.ts",
-          status: "modified",
-          additions: 2,
-          deletions: 1,
           metadata: {},
         }],
       };
@@ -422,9 +410,6 @@ test("projects only tool-declared Artifact and Workspace Change references", asy
     registry,
   );
   await host.runModelTurn(request());
-  const completed = host.events("session_tools", "turn_tools").find(
-    (event) => event.kind === "tool_completed",
-  );
   const record = await host.sendCommand({
     kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
     payload: {
@@ -438,56 +423,66 @@ test("projects only tool-declared Artifact and Workspace Change references", asy
     payload: { sessionId: "session_tools", turnId: "turn_tools" },
   });
 
-  assert.deepEqual(completed.payload.artifactIds, ["artifact_fixture"]);
-  assert.deepEqual(completed.payload.workspaceChangeIds, ["change_fixture"]);
   assert.equal(record.result.artifacts[0].path, "C:\\tmp\\fixture.png");
+  assert.deepEqual(record.workspaceChanges.map((change) => change.change_id), ["change_fixture"]);
   assert.equal(listed.length, 1);
 });
 
-test("rejects a mismatched Execution Fact instead of trusting tool output prose", async () => {
+test("archives only the model projection while retaining the complete native result", async () => {
+  const largeText = "原生结果-😀-".repeat(3_000);
   const registry = registryWithExecution({
-    execute({ toolCall, actionManifest }) {
-      return result(toolCall.id, actionManifest, {
-        action_manifest_id: "attempt:someone-else",
-      });
+    execute() {
+      return {
+        content: largeText,
+        semantic_success: false,
+        nested: { retained: true },
+      };
     },
   });
-  const host = createHost(
-    providerWithRounds([toolRound(), answerRound("handled")]),
-    registry,
-  );
+  const provider = providerWithRounds([toolRound(), answerRound("read archive if needed")]);
+  const host = createHost(provider, registry);
 
   await host.runModelTurn(request());
-  const failed = host
-    .events("session_tools", "turn_tools")
-    .find((event) => event.kind === "tool_failed");
+  const record = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: { sessionId: "session_tools", turnId: "turn_tools", toolCallId: "call_fixture" },
+  });
+  const projected = JSON.parse(provider.requests[1].messages.at(-1).content);
 
-  assert.equal(failed.payload.error.code, "execution_fact_manifest_mismatch");
-  assert.equal(failed.payload.receiptIds.length, 1);
-  assert.match(failed.payload.receiptIds[0], /^failed:attempt:turn_tools:1:/);
+  assert.equal(record.outcome, "returned");
+  assert.equal(record.result.content, largeText);
+  assert.equal(record.result.semantic_success, false);
+  assert.equal(projected.archived, true);
+  assert.match(projected.locator, /^tool-result:\/\/session_tools\/turn_tools\/call_fixture$/);
+  assert.ok(projected.originalChars > 16_000);
+  assert.ok(projected.preview.length < projected.originalChars);
 });
 
-test("rejects contradictory Tool result facts before they enter the event log", async () => {
+test("preserves tool-owned fields without applying Runtime semantic validation", async () => {
   const registry = registryWithExecution({
-    execute({ toolCall, actionManifest }) {
-      return result(toolCall.id, actionManifest, {
+    execute() {
+      return {
+        action_manifest_id: "attempt:someone-else",
         execution_success: false,
         semantic_success: true,
         verification_state: "verified",
-      });
+      };
     },
   });
   const host = createHost(
     providerWithRounds([toolRound(), answerRound("handled")]),
     registry,
   );
+
   await host.runModelTurn(request());
-  const failed = host
-    .events("session_tools", "turn_tools")
-    .find((event) => event.kind === "tool_failed");
-  assert.equal(failed.payload.error.code, "tool_result_schema_invalid");
-  assert.equal(failed.payload.receiptIds.length, 1);
-  assert.equal(failed.payload.error.kind, "protocol");
+  const record = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: { sessionId: "session_tools", turnId: "turn_tools", toolCallId: "call_fixture" },
+  });
+  assert.equal(record.outcome, "returned");
+  assert.equal(record.result.action_manifest_id, "attempt:someone-else");
+  assert.equal(record.result.execution_success, false);
+  assert.equal(record.result.semantic_success, true);
 });
 
 test("classifies handler rejections as Tool failures with stable codes", async () => {
@@ -512,10 +507,10 @@ test("classifies handler rejections as Tool failures with stable codes", async (
   assert.equal(failed.payload.error.code, "edit_old_text_not_found");
 });
 
-test("rejects duplicate receipt identities across separate tool executions", async () => {
+test("does not interpret duplicate identities inside native tool results", async () => {
   const registry = registryWithExecution({
-    execute({ toolCall, actionManifest }) {
-      return result(toolCall.id, actionManifest, { receipt_id: "receipt_shared" });
+    execute() {
+      return { receipt_id: "receipt_shared" };
     },
   });
   const host = createHost(
@@ -526,14 +521,10 @@ test("rejects duplicate receipt identities across separate tool executions", asy
   await host.runModelTurn(request());
   const toolEvents = host
     .events("session_tools", "turn_tools")
-    .filter((event) => event.kind === "tool_completed" || event.kind === "tool_failed");
+    .filter((event) => event.kind === "tool_returned" || event.kind === "tool_failed");
 
-  assert.equal(toolEvents[0].kind, "tool_completed");
-  assert.equal(toolEvents[1].kind, "tool_failed");
-  assert.equal(
-    toolEvents[1].payload.error.code,
-    "execution_fact_identity_conflict",
-  );
+  assert.equal(toolEvents[0].kind, "tool_returned");
+  assert.equal(toolEvents[1].kind, "tool_returned");
 });
 
 test("rejects invalid input against the registration decoder without invoking admission", async () => {
@@ -584,7 +575,7 @@ test("requires an explicit permission answer before running a protected tool", a
         request: {
           reason: "Read the selected external fixture.",
           actions: ["read"],
-          resources: ["file:///external/fixture.txt"],
+          targets: [{ kind: "filesystem_path", value: "file:///external/fixture.txt" }],
           capabilityIds: ["capability_fixture"],
         },
       };
@@ -647,7 +638,7 @@ test("a rejected permission never invokes the tool handler", async () => {
         request: {
           reason: "Read the selected external fixture.",
           actions: ["read"],
-          resources: ["file:///external/fixture.txt"],
+          targets: [{ kind: "filesystem_path", value: "file:///external/fixture.txt" }],
           capabilityIds: ["capability_fixture"],
         },
       };
@@ -699,7 +690,7 @@ test("reuses allow_session only for the exact capability in the same Session", a
         request: {
           reason: "Read the selected external fixture.",
           actions: ["read"],
-          resources: ["file:///external/fixture.txt"],
+          targets: [{ kind: "filesystem_path", value: "file:///external/fixture.txt" }],
           capabilityIds: ["capability_fixture"],
         },
       };
@@ -763,7 +754,7 @@ test("cancelling while permission is pending closes both permission and Turn fac
         request: {
           reason: "Read the selected external fixture.",
           actions: ["read"],
-          resources: ["file:///external/fixture.txt"],
+          targets: [{ kind: "filesystem_path", value: "file:///external/fixture.txt" }],
           capabilityIds: ["capability_fixture"],
         },
       };
@@ -784,6 +775,35 @@ test("cancelling while permission is pending closes both permission and Turn fac
   assert.ok(events.find((event) => event.kind === "tool_cancelled"));
 });
 
+test("Stop settles an uncooperative Tool without waiting for its Promise", async () => {
+  const registry = registryWithExecution({
+    async execute() {
+      await new Promise(() => {});
+    },
+  });
+  const host = createHost(providerWithRounds([toolRound()]), registry);
+  const running = host.runModelTurn(request());
+  await waitForEvent(host, "tool_running");
+
+  const receipt = await host.sendCommand({
+    kind: "runtime.stop_turn",
+    payload: { sessionId: "session_tools", turnId: "turn_tools" },
+  });
+  const terminal = await Promise.race([
+    running,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("Stop remained blocked by an uncooperative Tool.")),
+      1_000,
+    )),
+  ]);
+  const events = host.events("session_tools", "turn_tools");
+
+  assert.equal(receipt.accepted, true);
+  assert.equal(terminal.payload.status, "stopped");
+  assert.equal(events.filter((event) => event.kind === "tool_cancelled").length, 1);
+  assert.equal(events.at(-1).kind, "turn_terminal");
+});
+
 test("targeted Tool cancellation closes its pending permission and continues the Turn", async () => {
   const registry = registryWithExecution({
     authorize() {
@@ -792,7 +812,7 @@ test("targeted Tool cancellation closes its pending permission and continues the
         request: {
           reason: "Control the selected desktop application.",
           actions: ["control"],
-          resources: ["desktop://current"],
+          targets: [{ kind: "process", value: "desktop://current" }],
           capabilityIds: ["desktop_control"],
         },
       };
@@ -869,32 +889,8 @@ function registryWithExecution(overrides = {}) {
   });
 }
 
-function result(toolCallId, actionManifest, factOverrides = {}) {
-  return {
-    protocol: BUSH_TOOL_RESULT_PROTOCOL,
-    tool_call_id: toolCallId,
-    success: true,
-    output: { value: "fixture-result" },
-    facts: [
-      {
-        protocol: BUSH_EXECUTION_FACT_PROTOCOL,
-        receipt_id: `receipt_${toolCallId}`,
-        action_manifest_id: actionManifest.manifest_id,
-        status: "succeeded",
-        operation: actionManifest.operation,
-        effect_kind: actionManifest.effect_kind,
-        owner: actionManifest.owner,
-        dispatch_scope: actionManifest.dispatch_scope,
-        categories: ["observation"],
-        paths: [],
-        execution_success: true,
-        semantic_success: true,
-        verification_state: "unverified",
-        error_code: "",
-        ...factOverrides,
-      },
-    ],
-  };
+function result(_toolCallId, _actionManifest, overrides = {}) {
+  return { value: "fixture-result", ...overrides };
 }
 
 function toolRound(overrides = {}) {

@@ -36,11 +36,11 @@ terminal fact.
 
 The product layer needs structured lifecycle facts for:
 
-- tool queued, running, completed, failed and cancelled;
+- tool queued, running, returned, failed and cancelled;
 - tool call ID, display metadata and ordered association with assistant segments;
 - permission requested, answered, rejected, expired and cancelled;
-- Execution Facts and Receipts associated with their originating tool call;
-- Artifact and Workspace Change references.
+- exact native results loaded through the originating tool call identity;
+- Runtime-owned Workspace Changes and Runtime invocation errors.
 
 Human-readable summaries may be included for display, but they cannot replace
 the machine-readable lifecycle and associations.

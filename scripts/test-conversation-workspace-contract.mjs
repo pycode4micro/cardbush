@@ -25,6 +25,7 @@ vm.runInNewContext(transpiled.outputText, {
 
 const {
   conversationProjectDir,
+  conversationWorkspaceRoot,
   conversationWorkspaceMode,
   isOnlyTalkConversation,
 } = module.exports;
@@ -50,7 +51,28 @@ const pollutedTaskConversation = {
 
 assert.equal(conversationWorkspaceMode(pollutedTaskConversation), 'task');
 assert.equal(conversationProjectDir(pollutedTaskConversation), '');
+assert.equal(conversationWorkspaceRoot(pollutedTaskConversation), taskRoot);
 assert.equal(isOnlyTalkConversation(pollutedTaskConversation), true);
+
+const cleanTaskConversation = {
+  id: 'local-clean-task',
+  metadata: {
+    workspace_mode: 'task',
+    workspace_dir: taskRoot,
+    task_dir: taskRoot,
+    session_workspace_dir: taskRoot,
+  },
+  workspaceContext: {
+    mode: 'task',
+    executionRoot: taskRoot,
+    taskDir: taskRoot,
+  },
+};
+
+assert.equal(conversationWorkspaceMode(cleanTaskConversation), 'task');
+assert.equal(conversationProjectDir(cleanTaskConversation), '');
+assert.equal(conversationWorkspaceRoot(cleanTaskConversation), taskRoot);
+assert.equal(isOnlyTalkConversation(cleanTaskConversation), true);
 
 const genuineProjectRoot = String.raw`C:\Users\tester\Desktop\game`;
 const genuineProjectConversation = {

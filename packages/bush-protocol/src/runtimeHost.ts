@@ -49,7 +49,7 @@ export const runtimeEventKindSchema = z.enum([
   "guidance_applied",
   "tool_queued",
   "tool_running",
-  "tool_completed",
+  "tool_returned",
   "tool_failed",
   "tool_cancelled",
   "permission_requested",
@@ -115,13 +115,6 @@ const toolIdentitySchema = z.object({
     .optional(),
 });
 
-const factReferencesSchema = z.object({
-  receiptIds: z.array(z.string().min(1)).default([]),
-  executionFactIds: z.array(z.string().min(1)).default([]),
-  artifactIds: z.array(z.string().min(1)).default([]),
-  workspaceChangeIds: z.array(z.string().min(1)).default([]),
-});
-
 const permissionIdentitySchema = z.object({
   permissionId: z.string().min(1),
   toolCallId: z.string().min(1).optional(),
@@ -132,6 +125,56 @@ const permissionIdentitySchema = z.object({
   subagentTaskId: z.string().min(1).optional(),
   permissionRouting: z.enum(["user", "parent"]).optional(),
 });
+
+export const runtimePermissionTargetSchema = z.object({
+  kind: z.enum([
+    "filesystem_path",
+    "process",
+    "network",
+    "mcp_resource",
+    "opaque",
+  ]),
+  value: z.string().min(1),
+  label: z.string().min(1).optional(),
+});
+
+export const runtimePermissionScopeSchema = z.object({
+  mode: z.enum(["task_free", "user_free", "all_free"]),
+  roots: z.array(z.string().min(1)),
+});
+
+export const runtimePermissionRequestSchema = z.object({
+  reason: z.string().min(1),
+  actions: z.array(z.string().min(1)).min(1),
+  targets: z.array(runtimePermissionTargetSchema).min(1),
+  requestedCapabilityIds: z.array(z.string().min(1)).min(1),
+  scope: runtimePermissionScopeSchema.optional(),
+});
+
+export type RuntimePermissionTarget = z.infer<typeof runtimePermissionTargetSchema>;
+export type RuntimePermissionScope = z.infer<typeof runtimePermissionScopeSchema>;
+export type RuntimePermissionRequest = z.infer<typeof runtimePermissionRequestSchema>;
+
+// Event journals are append-only. Decode the earlier v1 string-resource shape
+// at the protocol boundary as opaque targets, without guessing path/process
+// semantics. New producers must emit RuntimePermissionRequest directly.
+const legacyRuntimePermissionRequestSchema = z.object({
+  reason: z.string().min(1),
+  actions: z.array(z.string().min(1)).min(1),
+  resources: z.array(z.string().min(1)).min(1),
+  requestedCapabilityIds: z.array(z.string().min(1)).default([]),
+});
+
+const permissionRequestedPayloadSchema = z.union([
+  permissionIdentitySchema.merge(runtimePermissionRequestSchema),
+  permissionIdentitySchema.merge(legacyRuntimePermissionRequestSchema).transform(
+    ({ resources, ...request }) => ({
+      ...request,
+      targets: resources.map((value) => ({ kind: "opaque" as const, value })),
+      scope: undefined,
+    }),
+  ),
+]);
 
 export const runtimeEventSchema = z.discriminatedUnion("kind", [
   runtimeEventEnvelopeSchema.extend({
@@ -184,12 +227,12 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: toolIdentitySchema,
   }),
   runtimeEventEnvelopeSchema.extend({
-    kind: z.literal("tool_completed"),
-    payload: toolIdentitySchema.merge(factReferencesSchema),
+    kind: z.literal("tool_returned"),
+    payload: toolIdentitySchema,
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("tool_failed"),
-    payload: toolIdentitySchema.merge(factReferencesSchema).extend({
+    payload: toolIdentitySchema.extend({
       error: z.object({
         kind: toolErrorKindSchema.default("tool"),
         code: z.string().min(1),
@@ -204,12 +247,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("permission_requested"),
-    payload: permissionIdentitySchema.extend({
-      reason: z.string().min(1),
-      actions: z.array(z.string().min(1)),
-      resources: z.array(z.string().min(1)),
-      requestedCapabilityIds: z.array(z.string().min(1)).default([]),
-    }),
+    payload: permissionRequestedPayloadSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("permission_answered"),

@@ -82,6 +82,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { executeModelRound } from "./modelRound.js";
+import { abortError, settleAtAbort } from "./abortSettlement.js";
 import {
   DEFAULT_SUBAGENT_PERMISSION_POLICY,
   type SubagentPermissionPolicy,
@@ -98,6 +99,7 @@ import {
   registerContextCompactionTool,
   type ContextCompactionState,
 } from "./contextCompaction.js";
+
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
@@ -195,8 +197,8 @@ export interface RuntimeHostCommand {
 function logicIdsFromExecutions(records: ToolExecutionRecord[]): string[] {
   const ids = new Set<string>();
   for (const record of records) {
-    if (!record.result.success) continue;
-    const output = recordOutput(record.result.output);
+    if (record.outcome !== "returned") continue;
+    const output = recordOutput(record.result);
     if (record.toolCall.name === "consult_logic" && Array.isArray(output.matched_logic)) {
       for (const candidate of output.matched_logic) {
         if (!candidate || typeof candidate !== "object") continue;
@@ -394,7 +396,7 @@ export class InMemoryRuntimeHost {
           "guidance_applied",
           "tool_queued",
           "tool_running",
-          "tool_completed",
+          "tool_returned",
           "tool_failed",
           "tool_cancelled",
           "permission_requested",
@@ -462,6 +464,8 @@ export class InMemoryRuntimeHost {
         "same_turn_guidance",
         "checkpoint_recovery",
         "cache_chain_observation",
+        "cross_turn_cache_chain",
+        "stopped_turn_continuation",
         ...(options.durableRecovery ? ["durable_restart_recovery"] : []),
         "append_only_session_context",
         "semantic_turn_context_compaction",
@@ -741,6 +745,7 @@ export class InMemoryRuntimeHost {
       return await this.#runModelTurn(prepared.modelRequest, {
         signal: options.signal,
         sessionCommit: prepared.sessionCommit,
+        cacheChainState: prepared.cacheChainState,
       });
     } catch (error) {
       this.#sessions.abandon(input.sessionId, input.turnId);
@@ -754,6 +759,7 @@ export class InMemoryRuntimeHost {
       signal?: AbortSignal;
       onFinalized?: TurnFinalizedObserver;
       sessionCommit?: RuntimeSessionCommitCheckpoint;
+      cacheChainState?: CacheChainState;
     } = {},
   ): Promise<RuntimeEvent> {
     const request = modelRequestSchema.parse(input);
@@ -784,6 +790,8 @@ export class InMemoryRuntimeHost {
     const detachAbort = forwardAbort(options.signal, turnController);
     this.#activeTurns.add(turnKey);
     this.#activeTurnControllers.set(turnKey, turnController);
+    const initialCacheChainState = options.cacheChainState ??
+      new CacheChainTracker().snapshot();
     try {
       this.#eventLog.append(identity, {
         kind: "turn_accepted",
@@ -797,8 +805,7 @@ export class InMemoryRuntimeHost {
         request,
         messages: request.messages,
         nextRound: 1,
-        completedReceiptIds: [],
-        cacheChainState: new CacheChainTracker().snapshot(),
+        cacheChainState: initialCacheChainState,
         sessionCommit: options.sessionCommit,
       });
     } catch (error) {
@@ -812,8 +819,7 @@ export class InMemoryRuntimeHost {
       identity,
       messages: request.messages,
       nextRound: 1,
-      completedReceiptIds: [],
-      cacheChainState: new CacheChainTracker().snapshot(),
+      cacheChainState: initialCacheChainState,
       signal: turnController.signal,
       onSettled: detachAbort,
       sessionCommit: options.sessionCommit,
@@ -852,7 +858,6 @@ export class InMemoryRuntimeHost {
       identity: recovery.identity,
       messages: recovery.checkpoint.request.messages,
       nextRound: recovery.nextRound,
-      completedReceiptIds: recovery.checkpoint.completedReceiptIds,
       cacheChainState: recovery.checkpoint.cacheChainState,
       signal: turnController.signal,
       onSettled: detachAbort,
@@ -871,7 +876,6 @@ export class InMemoryRuntimeHost {
     identity: RuntimeEventIdentity;
     messages: ModelMessage[];
     nextRound: number;
-    completedReceiptIds: string[];
     cacheChainState: CacheChainState;
     signal?: AbortSignal;
     onSettled?: () => void;
@@ -885,14 +889,12 @@ export class InMemoryRuntimeHost {
       identity,
       registry: this.#toolRegistry,
       createPermissionId: this.#createPermissionId,
-      existingReceiptIds: input.completedReceiptIds,
       executionStore: this.#toolExecutions,
       capabilities: this.#capabilityGrants,
       ...childPermissionRuntimeOptions(request, identity),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
-    let completedReceiptIds = [...input.completedReceiptIds];
     let round = input.nextRound - 1;
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
@@ -912,7 +914,12 @@ export class InMemoryRuntimeHost {
       if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
         this.#activeTurnControllers.get(turnKey)?.abort();
       }
-      input.onFinalized?.(payload, generatedMessages, usage);
+      input.onFinalized?.(
+        payload,
+        generatedMessages,
+        usage,
+        cacheChain.snapshot(),
+      );
       return this.#finishTurn(identity, payload);
     };
     const stop = (finalMessageId?: string): RuntimeEvent =>
@@ -1025,7 +1032,6 @@ export class InMemoryRuntimeHost {
             request,
             messages,
             nextRound: round,
-            completedReceiptIds,
             cacheChainState: cacheChain.snapshot(),
             sessionCommit: input.sessionCommit
               ? { ...input.sessionCommit, generatedMessages, usage }
@@ -1046,23 +1052,32 @@ export class InMemoryRuntimeHost {
           > = [];
           let result;
           try {
-            result = await executeModelRound(
-              this.#provider,
-              roundRequest,
-              {
-                signal: input.signal,
-                onEvent: (event) => {
-                  if (input.signal?.aborted) {
-                    throw new Error("Runtime Turn was stopped.");
-                  }
-                  if (deferProviderProjection) deferredProviderEvents.push(event);
-                  else projector.accept(event);
+            result = await settleAtAbort(
+              executeModelRound(
+                this.#provider,
+                roundRequest,
+                {
+                  signal: input.signal,
+                  onEvent: (event) => {
+                    if (input.signal?.aborted) {
+                      throw abortError("Runtime Turn was stopped.");
+                    }
+                    if (deferProviderProjection) deferredProviderEvents.push(event);
+                    else projector.accept(event);
+                  },
                 },
-              },
+              ),
+              input.signal,
+              "Provider execution was cancelled.",
             );
           } catch (error) {
             projector.completeOpenSegment();
             if (input.signal?.aborted) {
+              appendInterruptedAssistantMessage(
+                projector,
+                generatedMessages,
+                this.#sessionNow,
+              );
               return stop(projector.finalMessageId);
             }
             return finalize({
@@ -1082,6 +1097,11 @@ export class InMemoryRuntimeHost {
           projector.completeOpenSegment();
           mergeUsage(usage, result.usage);
           if (input.signal?.aborted) {
+            appendInterruptedAssistantMessage(
+              projector,
+              generatedMessages,
+              this.#sessionNow,
+            );
             return stop(projector.finalMessageId);
           }
           if (result.status === "completed") {
@@ -1209,7 +1229,6 @@ export class InMemoryRuntimeHost {
               request,
               messages,
               nextRound: round + 1,
-              completedReceiptIds,
               cacheChainState: cacheChain.snapshot(),
               sessionCommit: { ...input.sessionCommit!, generatedMessages, usage },
             });
@@ -1300,7 +1319,6 @@ export class InMemoryRuntimeHost {
               request,
               messages,
               nextRound: round + 1,
-              completedReceiptIds,
               cacheChainState: cacheChain.snapshot(),
               sessionCommit: input.sessionCommit
                 ? { ...input.sessionCommit, generatedMessages, usage }
@@ -1441,9 +1459,6 @@ export class InMemoryRuntimeHost {
             message,
           });
         });
-        completedReceiptIds = [
-          ...new Set([...completedReceiptIds, ...toolRound.receiptIds]),
-        ];
         const readyAgentResults = this.#takeSettledAgentGuidance(turnKey);
         if (readyAgentResults.length > 0) {
           messages = this.#appendAgentGuidance(
@@ -1466,7 +1481,6 @@ export class InMemoryRuntimeHost {
           request,
           messages,
           nextRound: round + 1,
-          completedReceiptIds,
           cacheChainState: cacheChain.snapshot(),
           sessionCommit: input.sessionCommit
             ? { ...input.sessionCommit, generatedMessages, usage }
@@ -1664,6 +1678,7 @@ export class InMemoryRuntimeHost {
             payload,
             sessionCommit.generatedMessages,
             sessionCommit.usage,
+            checkpoint.cacheChainState,
           );
         }
         this.#finishTurn({
@@ -1777,8 +1792,8 @@ export class InMemoryRuntimeHost {
       this.#toolExecutions.listTurn(input.sessionId, turnId)
         .reverse()
         .flatMap((record) => {
-          recordedChangeCount += record.result.workspace_changes.length;
-          return [...record.result.workspace_changes].reverse();
+          recordedChangeCount += record.workspaceChanges.length;
+          return [...record.workspaceChanges].reverse();
         }),
     ).filter((change) => !previouslyReverted.has(change.change_id));
     if (recordedChangeCount === 0) {
@@ -2041,6 +2056,29 @@ function continuedResponseChain(
   return previousResponseId
     ? { strategy: "response_chain", previousResponseId, inputMessageOffset }
     : freshResponseChain();
+}
+
+function appendInterruptedAssistantMessage(
+  projector: RuntimeEventProjector,
+  generatedMessages: GeneratedMessageFact[],
+  now: () => string,
+): void {
+  const messageId = projector.finalMessageId;
+  if (!messageId || generatedMessages.some((item) => item.messageId === messageId)) {
+    return;
+  }
+  generatedMessages.push({
+    messageId,
+    createdAt: now(),
+    message: {
+      role: "assistant",
+      content: projector.assistantContent,
+      ...(projector.reasoningContent
+        ? { reasoningContent: projector.reasoningContent }
+        : {}),
+      toolCalls: [],
+    },
+  });
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

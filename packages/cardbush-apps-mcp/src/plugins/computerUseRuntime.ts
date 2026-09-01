@@ -5,15 +5,23 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
 
-import type { Artifact } from '@cardbush/bush-protocol';
 import type { ComputerUsePluginConfig } from '../config.js';
+
+export interface ComputerUseArtifact {
+  artifact_id: string;
+  type: string;
+  path: string;
+  media_type: string;
+  display: 'inline' | 'attachment' | 'hidden';
+  metadata: Record<string, unknown>;
+}
 
 const execFileAsync = promisify(execFile);
 
 export interface ComputerUseResult {
   output: unknown;
   paths: string[];
-  artifacts: Artifact[];
+  artifacts: ComputerUseArtifact[];
 }
 
 export async function executeComputerUse(
@@ -149,7 +157,7 @@ try {
     { CARDBUSH_CAPTURE_PATH: path },
     signal,
   )));
-  const artifact: Artifact = {
+  const artifact: ComputerUseArtifact = {
     artifact_id: `artifact_${randomUUID()}`,
     type: 'image',
     path,

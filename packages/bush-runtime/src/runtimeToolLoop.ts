@@ -4,7 +4,6 @@ import {
   type RuntimeEvent,
   type RuntimePermissionAnswer,
   type ToolCall,
-  type ToolResult,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -26,7 +25,6 @@ export interface RuntimeToolLoopOptions {
   identity: RuntimeEventIdentity;
   registry: ToolRegistry;
   createPermissionId?: () => string;
-  existingReceiptIds?: string[];
   executionStore?: ToolExecutionStore;
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
@@ -43,7 +41,6 @@ export interface RuntimeToolLoopOptions {
 
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
-  receiptIds: string[];
 }
 
 export class RuntimeToolLoop {
@@ -77,8 +74,9 @@ export class RuntimeToolLoop {
             toolCallId: permission.toolCallId,
             reason: permission.reason,
             actions: permission.actions,
-            resources: permission.resources,
+            targets: permission.targets,
             requestedCapabilityIds: permission.capabilityIds,
+            scope: permission.scope,
             ...this.#permissionSource,
           },
         });
@@ -108,7 +106,6 @@ export class RuntimeToolLoop {
           }
         },
       },
-      existingReceiptIds: options.existingReceiptIds,
       capabilities: options.capabilities,
       capabilitySessionId: options.capabilitySessionId,
     });
@@ -161,8 +158,6 @@ export class RuntimeToolLoop {
       });
     });
     const toolMessages: ModelMessage[] = [];
-    const guidanceMessages: ModelMessage[] = [];
-    const receiptIds: string[] = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const controller = new AbortController();
@@ -206,23 +201,22 @@ export class RuntimeToolLoop {
     );
     for (const [ordinal, outcome] of outcomes.entries()) {
       const toolCall = toolCalls[ordinal]!;
-      receiptIds.push(...outcome.result.facts.map((fact) => fact.receipt_id));
       toolMessages.push({
         role: "tool",
         toolCallId: toolCall.id,
-        content: JSON.stringify(projectToolResult(
-          { ...outcome.result, guidance: [] },
+        content: JSON.stringify(projectNativeToolResult(
+          outcome.kind === "returned" ? outcome.result : { runtimeError: outcome.error },
           this.#identity.sessionId,
           this.#identity.turnId,
           toolCall.id,
         )),
       });
-      guidanceMessages.push(...outcome.result.guidance);
     }
-    const imageFollowup = toolImageFollowup(outcomes.map((outcome) => outcome.result));
+    const imageFollowup = toolImageFollowup(
+      outcomes.flatMap((outcome) => outcome.kind === "returned" ? [outcome.result] : []),
+    );
     return {
-      messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : []), ...guidanceMessages],
-      receiptIds,
+      messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : [])],
     };
   }
 
@@ -300,60 +294,47 @@ export class RuntimeToolLoop {
     if (outcome.kind === "cancelled") {
       return this.#eventLog.append(this.#identity, {
         kind: "tool_cancelled",
-        payload: { ...payload, reason: outcome.reason },
+        payload: { ...payload, reason: outcome.error.code },
       });
     }
-    const references = factReferences(outcome.result);
-    if (outcome.kind === "completed") {
+    if (outcome.kind === "returned") {
       return this.#eventLog.append(this.#identity, {
-        kind: "tool_completed",
-        payload: { ...payload, ...references },
+        kind: "tool_returned",
+        payload,
       });
     }
-    const error = outcome.result.error ?? {
-      kind: "runtime" as const,
-      code: "tool_execution_failed",
-      message: "Tool execution failed without an error description.",
-      details: {},
-    };
     return this.#eventLog.append(this.#identity, {
       kind: "tool_failed",
       payload: {
         ...payload,
-        ...references,
-        error: { ...error, details: error.details ?? {} },
+        error: outcome.error,
       },
     });
   }
 }
 
-function projectToolResult(
-  result: ToolResult,
+function projectNativeToolResult(
+  result: unknown,
   sessionId: string,
   turnId: string,
   toolCallId: string,
   maxChars = 16_000,
-): ToolResult {
+): unknown {
   const serialized = JSON.stringify(result);
   if (serialized.length <= maxChars) return result;
   const locator = `tool-result://${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}/${encodeURIComponent(toolCallId)}`;
   return {
-    ...result,
-    output: {
-      archived: true,
-      locator,
-      originalChars: serialized.length,
-      preview: JSON.stringify(result.output).slice(0, Math.max(2_000, maxChars - 6_000)),
-      note: "The complete authoritative Tool result is archived. Use read_archived_tool_result only with this exact locator to retrieve exact chunks.",
-    },
+    archived: true,
+    locator,
+    originalChars: serialized.length,
+    preview: serialized.slice(0, Math.max(2_000, maxChars - 1_000)),
   };
 }
-
-function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
-  const images = results.flatMap((result) => result.artifacts)
+function toolImageFollowup(results: unknown[]): ModelMessage | undefined {
+  const images = results.flatMap(nativeImageArtifacts)
     .filter((artifact) =>
       artifact.type === "image" &&
-      artifact.metadata?.model_input === true &&
+      artifact.modelInput === true &&
       (
         typeof artifact.path === "string" && artifact.path.trim().length > 0 ||
         typeof artifact.uri === "string" && artifact.uri.trim().length > 0
@@ -361,7 +342,7 @@ function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
     )
     .slice(0, 4)
     .map((artifact): { url: string; detail?: "auto" | "low" | "high" } => {
-      const detail = artifact.metadata?.detail;
+      const detail = artifact.detail;
       return {
         url: artifact.path ?? artifact.uri!,
         ...(detail === "low" || detail === "high" ? { detail } : {}),
@@ -372,12 +353,38 @@ function toolImageFollowup(results: ToolResult[]): ModelMessage | undefined {
     role: "user",
     name: "tool_image_observation",
     visibility: "internal",
-    content: [
-      "Visual observations produced by the preceding Tool are attached.",
-      "Inspect their pixels before making visual claims or deciding the next visual action.",
-    ].join(" "),
+    content: JSON.stringify({ source: "tool_output", attachedImages: images.length }),
     images,
   };
+}
+
+function nativeImageArtifacts(result: unknown): Array<{
+  type: string;
+  path?: string;
+  uri?: string;
+  modelInput?: boolean;
+  detail?: unknown;
+}> {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const value = result as Record<string, unknown>;
+  const structured = value.structuredContent && typeof value.structuredContent === "object"
+    ? value.structuredContent as Record<string, unknown>
+    : value;
+  if (!Array.isArray(structured.artifacts)) return [];
+  return structured.artifacts.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const artifact = candidate as Record<string, unknown>;
+    const metadata = artifact.metadata && typeof artifact.metadata === "object"
+      ? artifact.metadata as Record<string, unknown>
+      : {};
+    return [{
+      type: String(artifact.type ?? ""),
+      ...(typeof artifact.path === "string" ? { path: artifact.path } : {}),
+      ...(typeof artifact.uri === "string" ? { uri: artifact.uri } : {}),
+      modelInput: metadata.model_input === true,
+      detail: metadata.detail,
+    }];
+  });
 }
 
 async function sequential<TInput, TOutput>(
@@ -447,20 +454,5 @@ function toolIdentity(
     toolName: toolCall.name,
     ordinal: identity.ordinal,
     assistantMessageId: identity.assistantMessageId,
-  };
-}
-
-function factReferences(result: ToolResult): {
-  receiptIds: string[];
-  executionFactIds: string[];
-  artifactIds: string[];
-  workspaceChangeIds: string[];
-} {
-  const receiptIds = result.facts.map((fact) => fact.receipt_id);
-  return {
-    receiptIds,
-    executionFactIds: [...receiptIds],
-    artifactIds: result.artifacts.map((artifact) => artifact.artifact_id),
-    workspaceChangeIds: result.workspace_changes.map((change) => change.change_id),
   };
 }
