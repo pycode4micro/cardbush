@@ -79,7 +79,7 @@ import {
 } from "@cardbush/bush-protocol";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { executeModelRound } from "./modelRound.js";
 import { abortError, settleAtAbort } from "./abortSettlement.js";
@@ -91,7 +91,6 @@ import { CacheChainTracker } from "./cacheChainTracker.js";
 import {
   CHECKPOINT_CONTEXT_TOOL,
   CONTEXT_COMPACTION_HARD_PRESSURE,
-  CONTEXT_COMPACTION_SOFT_PRESSURE,
   CONTEXT_SUMMARY_FALLBACK_TURNS,
   contextPressureNotice,
   decodeContextCheckpointInput,
@@ -909,6 +908,9 @@ export class InMemoryRuntimeHost {
       inputTokens?: number;
       outputTokens?: number;
       cachedInputTokens?: number;
+      lastRequestInputTokens?: number;
+      lastRequestOutputTokens?: number;
+      lastRequestCachedInputTokens?: number;
     } = input.sessionCommit ? { ...input.sessionCommit.usage } : {};
     const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
       if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
@@ -949,26 +951,25 @@ export class InMemoryRuntimeHost {
           let state = this.#sessions.contextCompactionState(request.sessionId);
           if (
             pressure &&
-            pressure.ratio >= CONTEXT_COMPACTION_SOFT_PRESSURE &&
+            pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE &&
             state.unsummarizedTurnIds.length > 0
           ) {
             this.#contextCompactionAuthorizations.set(turnKey, state);
-            contextCompactionRequired =
-              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE;
+            contextCompactionRequired = true;
             if (contextPressureNoticeRevision !== state.revision) {
               messages = [
                 ...messages,
-                contextPressureNotice(state, pressure, contextCompactionRequired),
+                contextPressureNotice(state, pressure),
               ];
               contextPressureNoticeRevision = state.revision;
-              pressure = estimateContextPressure(request, messages);
-              contextCompactionRequired =
-                contextCompactionRequired ||
-                Boolean(pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE);
             }
-          } else if (state.unsummarizedTurnIds.length === 0) {
+          } else {
             this.#contextCompactionAuthorizations.delete(turnKey);
-            if (pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE) {
+            if (
+              state.unsummarizedTurnIds.length === 0 &&
+              pressure &&
+              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE
+            ) {
               let summaryLimit = Math.min(
                 CONTEXT_SUMMARY_FALLBACK_TURNS,
                 state.totalTurns,
@@ -1008,15 +1009,11 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-          const roundRequest = contextCompactionRequired
-            ? {
-                ...request,
-                messages,
-                providerState,
-                tools: request.tools.filter((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL),
-              }
-            : { ...request, messages, providerState };
-          if (contextCompactionRequired && roundRequest.tools.length !== 1) {
+          const roundRequest = { ...request, messages, providerState };
+          if (
+            contextCompactionRequired &&
+            !roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)
+          ) {
             return finalize({
               status: "failed",
               reason: "context_compaction_tool_unavailable",
@@ -1096,6 +1093,7 @@ export class InMemoryRuntimeHost {
           }
           projector.completeOpenSegment();
           mergeUsage(usage, result.usage);
+          replaceLastRequestUsage(usage, result.usage);
           if (input.signal?.aborted) {
             appendInterruptedAssistantMessage(
               projector,
@@ -1249,7 +1247,7 @@ export class InMemoryRuntimeHost {
             const pressure = estimateContextPressure(request, messages);
             const mayRetry = Boolean(
               pressure &&
-              pressure.ratio >= CONTEXT_COMPACTION_SOFT_PRESSURE &&
+              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE &&
               state.unsummarizedTurnIds.length > 0,
             );
             if (mayRetry) {
@@ -1264,7 +1262,7 @@ export class InMemoryRuntimeHost {
               visibility: "internal",
               content: mayRetry
                 ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision and Turn order.`
-                : `The checkpoint_context call was rejected because Runtime has not authorized compaction at the current pressure. Continue the task normally and do not call checkpoint_context without a context_pressure notice.`,
+                : `The checkpoint_context call was rejected because Runtime has not issued an authorizing user-role context_pressure instruction at the mandatory threshold. Continue the task normally and do not call checkpoint_context proactively.`,
             }];
             providerState = freshResponseChain();
             continue;
@@ -1811,11 +1809,15 @@ export class InMemoryRuntimeHost {
       };
     }
 
+    const projectPathAliases = projectPathAliasesMetadata(
+      session.metadata?.project_path_aliases,
+      session.metadata?.projectDir,
+    );
     const paths = [...new Set(changes.map((change) => {
       if (!isAbsolute(change.path)) {
         throw new Error(`Cannot revert ${change.path}; workspace change paths must be absolute.`);
       }
-      return resolve(change.path);
+      return resolveProjectPathAlias(change.path, projectPathAliases);
     }))].sort();
     const releases: Array<() => void> = [];
     try {
@@ -1825,7 +1827,7 @@ export class InMemoryRuntimeHost {
       const virtual = new Map(initial);
       const operations: WorkspaceRevertOperation[] = [];
       for (const change of changes) {
-        const path = resolve(change.path);
+        const path = resolveProjectPathAlias(change.path, projectPathAliases);
         const current = virtual.get(path) ?? { exists: false };
         assertWorkspaceChangeRevision(change, current);
         const restored = restoredWorkspaceSnapshot(change);
@@ -1928,6 +1930,76 @@ function stringArrayMetadata(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
     : [];
+}
+
+interface ProjectPathAlias {
+  from: string;
+  to: string;
+}
+
+function projectPathAliasesMetadata(value: unknown, currentRootValue: unknown): ProjectPathAlias[] {
+  const currentRoot = typeof currentRootValue === "string" && isAbsolute(currentRootValue)
+    ? resolve(currentRootValue)
+    : "";
+  if (!Array.isArray(value) || !currentRoot) return [];
+  const parsed = value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const record = candidate as Record<string, unknown>;
+    const from = typeof record.from === "string" ? record.from.trim() : "";
+    const to = typeof record.to === "string" ? record.to.trim() : "";
+    if (!from || !to || !isAbsolute(from) || !isAbsolute(to)) return [];
+    return [{ from: resolve(from), to: resolve(to) }];
+  });
+  return parsed
+    .filter((alias) => aliasReachesCurrentRoot(alias, parsed, currentRoot))
+    .sort((left, right) => right.from.length - left.from.length);
+}
+
+function aliasReachesCurrentRoot(
+  alias: ProjectPathAlias,
+  aliases: ProjectPathAlias[],
+  currentRoot: string,
+): boolean {
+  let current = alias.to;
+  const visited = new Set<string>();
+  for (let step = 0; step <= aliases.length; step += 1) {
+    if (sameFilesystemPath(current, currentRoot)) return true;
+    const identity = filesystemPathIdentity(current);
+    if (visited.has(identity)) return false;
+    visited.add(identity);
+    const next = aliases.find((candidate) => sameFilesystemPath(candidate.from, current));
+    if (!next) return false;
+    current = next.to;
+  }
+  return false;
+}
+
+function resolveProjectPathAlias(value: string, aliases: ProjectPathAlias[]): string {
+  let current = resolve(value);
+  const visited = new Set<string>();
+  for (let step = 0; step <= aliases.length; step += 1) {
+    const identity = filesystemPathIdentity(current);
+    if (visited.has(identity)) break;
+    visited.add(identity);
+    const alias = aliases.find((candidate) => isPathInside(candidate.from, current));
+    if (!alias) break;
+    current = resolve(alias.to, relative(alias.from, current));
+  }
+  return current;
+}
+
+function filesystemPathIdentity(value: string): string {
+  const normalized = resolve(value);
+  return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;
+}
+
+function sameFilesystemPath(left: string, right: string): boolean {
+  return filesystemPathIdentity(left) === filesystemPathIdentity(right);
+}
+
+function isPathInside(root: string, candidate: string): boolean {
+  const remainder = relative(root, candidate);
+  return remainder === "" || (!remainder.startsWith("..") && !isAbsolute(remainder));
 }
 
 async function readWorkspaceFile(path: string): Promise<WorkspaceFileSnapshot> {
@@ -2100,6 +2172,26 @@ function mergeUsage(
 ): void {
   for (const key of ["inputTokens", "outputTokens", "cachedInputTokens"] as const) {
     if (source[key] !== undefined) target[key] = (target[key] ?? 0) + source[key];
+  }
+}
+
+function replaceLastRequestUsage(
+  target: {
+    lastRequestInputTokens?: number;
+    lastRequestOutputTokens?: number;
+    lastRequestCachedInputTokens?: number;
+  },
+  source: { inputTokens?: number; outputTokens?: number; cachedInputTokens?: number },
+): void {
+  const mappings = [
+    ["lastRequestInputTokens", "inputTokens"],
+    ["lastRequestOutputTokens", "outputTokens"],
+    ["lastRequestCachedInputTokens", "cachedInputTokens"],
+  ] as const;
+  for (const [targetKey, sourceKey] of mappings) {
+    const value = source[sourceKey];
+    if (value === undefined) delete target[targetKey];
+    else target[targetKey] = value;
   }
 }
 

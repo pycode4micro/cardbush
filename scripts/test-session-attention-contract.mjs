@@ -133,8 +133,13 @@ assert.match(app, /onOpenSessionAttention[\s\S]*?consumeSessionAttentionOpen/);
 assert.match(app, /pendingSessionAttentionRef\.current = normalized/);
 assert.match(
   app,
-  /chat\.conversations\.some\(\(conversation\) => conversation\.id === pending\)[\s\S]*?chat\.openConversation\(pending\)/,
+  /chat\.conversations\.some\(\(conversation\) => conversation\.id === pending\)[\s\S]*?openSessionAttention\(pending\)/,
   'A notification intent must survive until the asynchronous conversation list contains its session',
+);
+assert.match(
+  app,
+  /const target = chat\.conversations\.find[\s\S]*?setOnlyTalkMode\(taskMode\)[\s\S]*?chat\.openConversation\(normalized\)/,
+  'Opening a notification must restore its task or project scope before selecting the session',
 );
 assert.match(sidebar, /conversation-attention-indicator/);
 assert.match(sidebar, /已完成，待查看/);

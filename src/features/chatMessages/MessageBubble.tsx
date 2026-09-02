@@ -71,6 +71,10 @@ import {
   localFileReferenceScheme,
   remarkLocalFileReferences,
 } from './fileReferences';
+import {
+  remapProjectPath,
+  type ProjectPathAlias,
+} from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import {
   copyText,
@@ -296,10 +300,12 @@ const LazyMarkdownContent = lazy(async () => {
   function MarkdownRenderer({
     content,
     workspaceRoot,
+    pathAliases,
     language,
   }: {
     content: string;
     workspaceRoot: string;
+    pathAliases: ProjectPathAlias[];
     language: AppLanguage;
   }) {
     return (
@@ -319,7 +325,7 @@ const LazyMarkdownContent = lazy(async () => {
             : '';
           if (localPath) {
             return (
-              <LocalFileReferenceLink path={localPath}>
+              <LocalFileReferenceLink path={remapProjectPath(localPath, pathAliases)}>
                 {children}
               </LocalFileReferenceLink>
             );
@@ -342,14 +348,17 @@ const LazyMarkdownContent = lazy(async () => {
         },
         img: ({ src, alt, ...props }) => {
           const reference = explicitMarkdownLocalReference(src, workspaceRoot);
-          const resolvedSource = reference ? fileUrl(reference.path) : src;
+          const resolvedPath = reference
+            ? remapProjectPath(reference.path, pathAliases)
+            : '';
+          const resolvedSource = reference ? fileUrl(resolvedPath) : src;
           return (
             <img
               {...props}
               src={resolvedSource}
               alt={alt ?? ''}
               onClick={reference
-                ? () => openInspector(reference.path, reference.label)
+                ? () => openInspector(resolvedPath, reference.label)
                 : undefined}
             />
           );
@@ -361,7 +370,7 @@ const LazyMarkdownContent = lazy(async () => {
             : null;
           if (reference) {
             return (
-              <LocalFileReferenceLink path={reference.path}>
+              <LocalFileReferenceLink path={remapProjectPath(reference.path, pathAliases)}>
                 {reference.label}
               </LocalFileReferenceLink>
             );
@@ -414,17 +423,22 @@ function explicitMarkdownLocalReference(
 }
 
 const FileReferenceWorkspaceContext = createContext('');
+const FileReferencePathAliasesContext = createContext<ProjectPathAlias[]>([]);
 
 export function MessageFileReferenceScope({
   workspaceRoot,
+  pathAliases = [],
   children,
 }: {
   workspaceRoot?: string;
+  pathAliases?: ProjectPathAlias[];
   children: ReactNode;
 }) {
   return (
     <FileReferenceWorkspaceContext.Provider value={workspaceRoot?.trim() ?? ''}>
-      {children}
+      <FileReferencePathAliasesContext.Provider value={pathAliases}>
+        {children}
+      </FileReferencePathAliasesContext.Provider>
     </FileReferenceWorkspaceContext.Provider>
   );
 }
@@ -549,6 +563,7 @@ function MessageBubbleView({
     rating: AssistantFeedbackRating | null,
   ) => void | Promise<unknown>;
 }) {
+  const pathAliases = useContext(FileReferencePathAliasesContext);
   const contentParts = splitMessageMedia(message.content);
   const userContentParts =
     message.role === 'user'
@@ -685,7 +700,7 @@ function MessageBubbleView({
         ...videoPaths,
         ...audioPaths,
         ...fileAttachments.map((attachment) => attachment.path ?? ''),
-      ]).map((pathValue) => `@${pathValue}`),
+      ]).map((pathValue) => `@${remapProjectPath(pathValue, pathAliases)}`),
       editText.trim(),
     ]
       .filter(Boolean)
@@ -1225,6 +1240,7 @@ function AssistantChangedFilesSummary({
   onRevert?: () => Promise<void>;
 }) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
+  const pathAliases = useContext(FileReferencePathAliasesContext);
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -1300,7 +1316,10 @@ function AssistantChangedFilesSummary({
                 onOpenReview(file.path);
                 return;
               }
-              const target = resolveChangedFilePath(file.path, workspaceRoot);
+              const target = remapProjectPath(
+                resolveChangedFilePath(file.path, workspaceRoot),
+                pathAliases,
+              );
               openInspector(target, basename(file.path));
             }}
           >
@@ -2606,10 +2625,12 @@ function MessageMediaStrip({
   language: AppLanguage;
   showPaths?: boolean;
 }) {
+  const pathAliases = useContext(FileReferencePathAliasesContext);
   if (videoPaths.length === 0 && audioPaths.length === 0) return null;
   return (
     <div className="message-media-strip">
-      {videoPaths.map((pathValue) => {
+      {videoPaths.map((storedPathValue) => {
+        const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
         return (
           <figure className="message-video-player" key={`video-${pathValue}`}>
@@ -2626,7 +2647,8 @@ function MessageMediaStrip({
           </figure>
         );
       })}
-      {audioPaths.map((pathValue) => {
+      {audioPaths.map((storedPathValue) => {
+        const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
         return (
           <figure className="message-audio-player" key={`audio-${pathValue}`}>
@@ -2716,17 +2738,24 @@ function MessageFileAttachmentStrip({
   attachments: ChatAttachment[];
   language: AppLanguage;
 }) {
+  const pathAliases = useContext(FileReferencePathAliasesContext);
+  const resolvedAttachments = attachments.map((attachment) => ({
+    ...attachment,
+    path: attachment.path
+      ? remapProjectPath(attachment.path, pathAliases)
+      : attachment.path,
+  }));
   const [metadata, setMetadata] = useState<Record<string, {
     name: string;
     kind: 'file' | 'folder';
     size?: number;
   }>>({});
-  const attachmentKey = attachments
+  const attachmentKey = resolvedAttachments
     .map((attachment) => `${attachment.path ?? ''}:${attachment.size ?? ''}`)
     .join('|');
 
   useEffect(() => {
-    const missingPaths = attachments
+    const missingPaths = resolvedAttachments
       .filter((attachment) => attachment.path && !Number.isFinite(attachment.size))
       .map((attachment) => attachment.path as string)
       .filter((pathValue) => metadata[pathValue] == null);
@@ -2749,10 +2778,10 @@ function MessageFileAttachmentStrip({
     };
   }, [attachmentKey]);
 
-  if (attachments.length === 0) return null;
+  if (resolvedAttachments.length === 0) return null;
   return (
     <div className="message-file-strip">
-      {attachments.map((attachment) => {
+      {resolvedAttachments.map((attachment) => {
         const pathValue = attachment.path?.trim() ?? '';
         const inspected = metadata[pathValue];
         const name = inspected?.name || attachment.name || basename(pathValue);
@@ -2794,14 +2823,16 @@ function MessageImageStrip({
   language: AppLanguage;
   showPaths?: boolean;
 }) {
+  const pathAliases = useContext(FileReferencePathAliasesContext);
+  const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
   const [preview, setPreview] = useState<ImagePreview | null>(null);
-  if (paths.length === 0) {
+  if (resolvedPaths.length === 0) {
     return null;
   }
   return (
     <>
       <div className="message-image-strip">
-        {paths.map((pathValue, index) => {
+        {resolvedPaths.map((pathValue, index) => {
           return (
             <figure className="message-image-item" key={`${pathValue}-${index}`}>
               <MessageImagePreviewButton
@@ -2984,12 +3015,14 @@ export const MarkdownContent = memo(function MarkdownContent({
   language: AppLanguage;
 }) {
   const workspaceRoot = useContext(FileReferenceWorkspaceContext);
+  const pathAliases = useContext(FileReferencePathAliasesContext);
   return (
     <div className="markdown-content">
       <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
         <LazyMarkdownContent
           content={content}
           workspaceRoot={workspaceRoot}
+          pathAliases={pathAliases}
           language={language}
         />
       </Suspense>

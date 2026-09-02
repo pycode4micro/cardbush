@@ -62,6 +62,7 @@ import {
 } from './productProjectContext';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
+import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import {
   projectRuntimeSessionMessage,
@@ -172,6 +173,7 @@ export interface A2ATask {
 export interface ChatStreamRequest {
   sessionId: string;
   userInput: string;
+  submittedAt?: string;
   model: string;
   modelConfig?: ManagedModelConfig;
   projectDir?: string;
@@ -1648,11 +1650,15 @@ function runtimeConversation(
     initialRuntimeConversationTitle(firstUserMessage?.message.content) ||
     defaultConversationTitle(snapshot.sessionId);
   const projectDir = optionalString(snapshot.metadata?.projectDir);
+  const projectId =
+    optionalString(snapshot.metadata?.project_id) ||
+    optionalString(snapshot.metadata?.projectId);
   return {
     id: snapshot.sessionId,
     title,
     preview: lastAssistantMessage?.message.content ?? '',
     updatedAt: snapshot.updatedAt,
+    ...(projectId ? { projectId } : {}),
     ...(projectDir ? { projectDir } : {}),
     ...(snapshot.metadata ? { metadata: { ...snapshot.metadata } } : {}),
   };
@@ -1740,16 +1746,19 @@ function runtimeHistoryToolExecution(
 
 export async function createConversation({
   title = '新会话',
+  projectId,
   projectDir,
   sessionId,
   metadata,
 }: {
   title?: string;
+  projectId?: string;
   projectDir?: string;
   sessionId?: string;
   metadata?: Record<string, unknown>;
 } = {}): Promise<ConversationSummary> {
   const normalizedProjectDir = projectDir?.trim() || '';
+  const normalizedProjectId = projectId?.trim() || '';
   const normalizedSessionId = sessionId?.trim() || `local-${crypto.randomUUID()}`;
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
   if (normalizedProjectDir) {
@@ -1757,6 +1766,7 @@ export async function createConversation({
     normalizedMetadata.workspace_dir = normalizedProjectDir;
     normalizedMetadata.user_project_dir = normalizedProjectDir;
     normalizedMetadata.project_dir = normalizedProjectDir;
+    if (normalizedProjectId) normalizedMetadata.project_id = normalizedProjectId;
   } else {
     const taskDir = await window.cardbushDesktop?.ensureTaskWorkspace?.(normalizedSessionId);
     normalizedMetadata.workspace_mode = 'task';
@@ -1785,11 +1795,13 @@ export async function createConversation({
 export async function updateConversation({
   sessionId,
   title,
+  projectId,
   projectDir,
   metadata,
 }: {
   sessionId: string;
   title?: string;
+  projectId?: string | null;
   projectDir?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<ConversationSummary> {
@@ -1800,6 +1812,9 @@ export async function updateConversation({
     );
   }
   const normalizedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
+  if (projectId !== undefined) {
+    normalizedMetadata.project_id = projectId?.trim() || null;
+  }
   if (projectDir !== undefined) {
     const normalizedProjectDir = projectDir?.trim() || '';
     const taskDir = normalizedProjectDir
@@ -2241,6 +2256,36 @@ export async function fetchSessionMessageWindow({
   }
 }
 
+export async function fetchSessionTurnMessages({
+  sessionId,
+  messageId,
+  signal,
+}: {
+  sessionId: string;
+  messageId: string;
+  signal?: AbortSignal;
+}): Promise<ChatMessage[]> {
+  const runtime = createDesktopRuntimeSession();
+  try {
+    const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
+    const turn = snapshot?.turns.find((candidate) =>
+      candidate.messages.some((message) => message.messageId === messageId.trim()),
+    );
+    if (!turn) {
+      throw new Error(
+        localizedClientMessage('消息不存在', 'Message does not exist'),
+      );
+    }
+    const restored = restoreRuntimeTurnAttachmentMetadata(turn);
+    return projectRuntimeTurnMessages({
+      ...restored,
+      messages: restored.messages.filter((message) => !isInternalRuntimeMessage(message)),
+    }, snapshot?.sessionId ?? sessionId);
+  } finally {
+    runtime.dispose();
+  }
+}
+
 export async function fetchSessionContextWindowUsage(
   sessionId: string,
   signal?: AbortSignal,
@@ -2251,23 +2296,20 @@ export async function fetchSessionContextWindowUsage(
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    const [snapshot, context] = await Promise.all([
-      runtime.client.getSession(normalizedSessionId, signal),
-      runtime.client.assembleSessionContext({ sessionId: normalizedSessionId }, signal),
-    ]);
+    const snapshot = await runtime.client.getSession(normalizedSessionId, signal);
     const latest = snapshot?.turns.at(-1);
+    const contextMetrics = contextWindowMetrics(latest?.usage);
     return {
       sessionId: normalizedSessionId,
       turnId: latest?.turnId ?? '',
       model: '',
-      usedTokens: context.estimatedTokens,
+      ...contextMetrics,
       measuredAt:
         latest?.completedAt ?? snapshot?.updatedAt ?? new Date().toISOString(),
-      source: 'electron_runtime',
+      source: 'electron_runtime_latest_request',
       raw: {
         usage: latest?.usage ?? {},
-        sourceMessageIds: context.sourceMessageIds,
-        truncated: context.truncated,
+        measurement: 'last_request_input_tokens',
       },
     };
   } finally {
@@ -2589,6 +2631,9 @@ export async function fetchSkills(): Promise<SkillSummary[]> {
       path: String(value.path ?? ''),
       logoPath: String(value.logoPath ?? value.logo_path ?? ''),
       logoDarkPath: String(value.logoDarkPath ?? value.logo_dark_path ?? ''),
+      source: skillSource(value.source),
+      sourceId: String(value.sourceId ?? value.source_id ?? ''),
+      sourceLabel: String(value.sourceLabel ?? value.source_label ?? ''),
     };
   });
 }
@@ -3031,6 +3076,9 @@ function skillDetailFromPayload(item: unknown): SkillDetail {
     path: String(value.path ?? ''),
     logoPath: String(value.logoPath ?? value.logo_path ?? ''),
     logoDarkPath: String(value.logoDarkPath ?? value.logo_dark_path ?? ''),
+    source: skillSource(value.source),
+    sourceId: String(value.sourceId ?? value.source_id ?? ''),
+    sourceLabel: String(value.sourceLabel ?? value.source_label ?? ''),
     packageDir: String(value.packageDir ?? value.package_dir ?? ''),
     content: String(value.content ?? ''),
     version: optionalString(value.version),
@@ -3058,6 +3106,13 @@ function stringList(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
     : [];
+}
+
+function skillSource(value: unknown): SkillSummary['source'] {
+  const normalized = String(value ?? '').trim();
+  return ['bundled', 'user', 'plugin', 'external'].includes(normalized)
+    ? normalized as NonNullable<SkillSummary['source']>
+    : undefined;
 }
 
 function numberRecord(value: unknown) {

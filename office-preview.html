@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cardbush-file:; font-src 'self' data: blob:; connect-src 'self' cardbush-file: ws:; worker-src 'self' blob:; media-src 'self' data: blob: cardbush-file:;"
+    />
+    <title>Office 只读预览</title>
+  </head>
+  <body>
+    <div id="office-preview-root">
+      <div class="office-preview-boot" role="status">正在准备完整预览…</div>
+    </div>
+    <script type="module" src="/src/officePreviewMain.ts"></script>
+  </body>
+</html>

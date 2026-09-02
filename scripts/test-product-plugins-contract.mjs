@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 
 import {
   installProductPlugin,
+  loadEnabledProductPluginSkillRootEntries,
   loadEnabledProductPluginSkillRoots,
   loadProductPluginCatalog,
 } from '../dist-electron/productPlugins.js';
@@ -25,7 +26,12 @@ for (const plugin of catalog) {
   assert.ok(plugin.name);
   assert.ok(plugin.version);
 }
-assert.deepEqual(catalog.find((plugin) => plugin.id === 'computer-use')?.components.map((item) => item.kind), ['mcp']);
+const computerUsePlugin = catalog.find((plugin) => plugin.id === 'computer-use');
+assert.deepEqual(computerUsePlugin?.components.map((item) => item.kind), ['skill', 'mcp']);
+assert.deepEqual(
+  computerUsePlugin?.components.filter((item) => item.kind === 'skill').map((item) => item.id),
+  ['windows-control'],
+);
 assert.deepEqual(catalog.find((plugin) => plugin.id === 'cardbush-bot')?.components.map((item) => item.kind), ['app']);
 const chromePlugin = catalog.find((plugin) => plugin.id === 'chrome');
 assert.deepEqual(
@@ -77,7 +83,27 @@ try {
       [{ path: bundledRoot, source: 'bundled' }],
       appsConfigPath,
     ),
-    chromePlugin?.skillRoots,
+    [...(computerUsePlugin?.skillRoots ?? []), ...(chromePlugin?.skillRoots ?? [])],
+  );
+  assert.deepEqual(
+    await loadEnabledProductPluginSkillRootEntries(
+      [{ path: bundledRoot, source: 'bundled' }],
+      appsConfigPath,
+    ),
+    [
+      ...(computerUsePlugin?.skillRoots ?? []).map((skillRoot) => ({
+        path: skillRoot,
+        pluginId: 'computer-use',
+        pluginName: 'Computer Use',
+        pluginSource: 'bundled',
+      })),
+      ...(chromePlugin?.skillRoots ?? []).map((skillRoot) => ({
+        path: skillRoot,
+        pluginId: 'chrome',
+        pluginName: 'Chrome',
+        pluginSource: 'bundled',
+      })),
+    ],
   );
   await writeFile(appsConfigPath, JSON.stringify({
     protocol: 'cardbush.apps_config.v1',
@@ -90,7 +116,7 @@ try {
       [{ path: bundledRoot, source: 'bundled' }],
       appsConfigPath,
     ),
-    [],
+    computerUsePlugin?.skillRoots,
   );
 
   const installed = await installProductPlugin(join(bundledRoot, 'chrome'), temporary);
@@ -112,8 +138,12 @@ assert.match(managementSource, /activeTab === 'mcp'/);
 assert.match(managementSource, /返回插件/);
 assert.match(managementSource, /scope === 'public' \? plugin\.source === 'bundled' : plugin\.source === 'user'/);
 assert.match(managementSource, /setScope\('personal'\)/);
+assert.match(managementSource, /skill\.sourceLabel/);
+assert.match(managementSource, /skill-plugin-group/);
+assert.match(managementSource, /来自 \$\{plugin\}/);
 assert.doesNotMatch(managementSource, /'插件' : 'Plugins'\}<ChevronRight[^>]*\/>\{plugin\.name\}/);
 
 const managementStyles = readFileSync(resolve('src', 'features', 'plugins', 'plugin-management.css'), 'utf8');
 assert.match(managementStyles, /\.plugin-installed-icons button:hover > span:not\(\.plugin-logo\)/);
 assert.match(managementStyles, /opacity: 0/);
+assert.match(managementStyles, /\.skill-plugin-group/);

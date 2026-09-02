@@ -7,7 +7,6 @@ import {
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 
 export const CHECKPOINT_CONTEXT_TOOL = "checkpoint_context" as const;
-export const CONTEXT_COMPACTION_SOFT_PRESSURE = 0.85;
 export const CONTEXT_COMPACTION_HARD_PRESSURE = 0.95;
 export const CONTEXT_SUMMARY_FALLBACK_TURNS = 20;
 
@@ -42,7 +41,8 @@ export function registerContextCompactionTool(
       name: CHECKPOINT_CONTEXT_TOOL,
       description: [
         "Replace every unsummarized preceding Turn in the active Session context with one concise semantic Turn summary.",
-        "Call only after Runtime emits a context_pressure notice, and call it alone.",
+        "Never call this Tool proactively or decide that compaction is needed yourself.",
+        "Call it alone only when an explicit user-role context_pressure message requires compaction.",
         "Summaries must preserve why the Turn happened, inspected scope, conclusions, changes, verification, important artifacts or identifiers, and remaining work; omit ordinary Tool-call order and logs.",
       ].join(" "),
       inputSchema: {
@@ -165,17 +165,14 @@ export function estimateContextPressure(
 export function contextPressureNotice(
   state: ContextCompactionState,
   pressure: ContextPressure,
-  required: boolean,
 ): ModelMessage {
   return {
     role: "user",
     name: "context_pressure",
     visibility: "internal",
     content: [
-      `<context_pressure mode="${required ? "required" : "optional"}" ratio="${pressure.ratio.toFixed(4)}" session_revision="${state.revision}">`,
-      required
-        ? "The active context has reached the mandatory compaction threshold. Call checkpoint_context now and call it alone."
-        : "The active context is above the soft threshold. If attention pressure is materially affecting the task, call checkpoint_context alone; otherwise continue normally.",
+      `<context_pressure mode="required" ratio="${pressure.ratio.toFixed(4)}" session_revision="${state.revision}">`,
+      "The local Runtime has measured the active context at or above the mandatory 95% threshold. Call checkpoint_context now and call it alone. This user-role instruction is the only authorization to use that Tool.",
       "Summarize every listed preceding Turn exactly once and in this order:",
       ...state.unsummarizedTurnIds.map((turnId) => `- ${turnId}`),
       "Each natural-language summary must preserve: user intent; inspected scope; conclusions; files or resources changed; external side effects; test/build/publish results; important errors, paths, URLs, hashes or task IDs; and unresolved work.",

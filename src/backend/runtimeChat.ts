@@ -42,6 +42,7 @@ import { synchronizeProductTeamSnapshot } from './productTeams';
 import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
+import { contextWindowMetrics } from './contextWindowUsage';
 
 export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
@@ -128,7 +129,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     }
     const workspaceDir = request.workspaceDir?.trim() || request.projectDir?.trim() ||
       await window.cardbushDesktop?.ensureTaskWorkspace?.(request.sessionId);
-    let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession);
+    let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession ?? undefined);
     const sharedAgentInput = {
       sessionId: request.sessionId,
       model: resolvedModel.model,
@@ -151,7 +152,10 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),
     };
-    const initialCreatedAt = new Date().toISOString();
+    const submittedAt = Date.parse(request.submittedAt ?? '');
+    const initialCreatedAt = Number.isFinite(submittedAt)
+      ? new Date(submittedAt).toISOString()
+      : new Date().toISOString();
     const initialLocalDate = new Date().toLocaleDateString('en-CA');
     const runtimeRequest = createProductAgentTurnRequest({
       ...sharedAgentInput,
@@ -250,23 +254,21 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
         streamChunk(terminal, lastAssistantMessageId || finalMessage?.messageId || ''),
       );
     }
+    const contextMetrics = contextWindowMetrics(
+      committed?.usage,
+      request.modelConfig?.maxContextTokens,
+    );
     request.onContextWindowUsage?.({
       sessionId: request.sessionId,
       turnId,
       model: runtimeRequest.model,
-      usedTokens: committed?.usage.inputTokens,
-      maxTokens: request.modelConfig?.maxContextTokens,
-      remainingTokens:
-        request.modelConfig?.maxContextTokens && committed?.usage.inputTokens != null
-          ? Math.max(0, request.modelConfig.maxContextTokens - committed.usage.inputTokens)
-          : undefined,
-      usageRatio:
-        request.modelConfig?.maxContextTokens && committed?.usage.inputTokens != null
-          ? committed.usage.inputTokens / request.modelConfig.maxContextTokens
-          : undefined,
+      ...contextMetrics,
       measuredAt: committed?.completedAt ?? new Date().toISOString(),
-      source: 'electron_runtime',
-      raw: { usage: committed?.usage ?? {} },
+      source: 'electron_runtime_latest_request',
+      raw: {
+        usage: committed?.usage ?? {},
+        measurement: 'last_request_input_tokens',
+      },
     });
     request.onDone?.(terminalSnapshot(terminal));
   } finally {
@@ -786,7 +788,9 @@ function terminalSnapshot(
   };
 }
 
-function reasoningEffort(value: ChatStreamRequest['reasoningLevel']) {
+function reasoningEffort(
+  value: ChatStreamRequest['reasoningLevel'],
+): 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined {
   const normalized = String(value ?? '').trim().toLowerCase();
   return normalized === 'none' || normalized === 'low' ||
     normalized === 'medium' || normalized === 'high' ||

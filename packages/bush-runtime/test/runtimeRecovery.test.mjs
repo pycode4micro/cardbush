@@ -230,6 +230,8 @@ test("resumes a Session Turn with prior tool messages and commits it exactly onc
   assert.equal(snapshot.turns[0].messages.at(-1).message.content, "recovered");
   assert.equal(snapshot.turns[0].usage.inputTokens, 30);
   assert.equal(snapshot.turns[0].usage.outputTokens, 5);
+  assert.equal(snapshot.turns[0].usage.lastRequestInputTokens, 20);
+  assert.equal(snapshot.turns[0].usage.lastRequestOutputTokens, 3);
   secondEvents.close();
   secondSessions.close();
 });

@@ -25,6 +25,9 @@ export interface SessionUsageFact {
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;
+  lastRequestInputTokens?: number;
+  lastRequestOutputTokens?: number;
+  lastRequestCachedInputTokens?: number;
 }
 
 export type TurnTerminalPayload = Extract<

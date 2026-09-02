@@ -10,6 +10,7 @@ files:
   - packages/*/dist/**/*
   - packages/*/package.json
   - assets/**/*
+  - '!assets/skills/**/*'
   - '!assets/runtime-tools/**/*'
   - package.json
   - node_modules/**/*
@@ -20,6 +21,12 @@ extraResources:
     to: runtime-tools
     filter:
       - '**/*'
+  - from: assets/skills
+    to: skills
+    filter:
+      - '**/*'
+      - '!**/__pycache__/**/*'
+      - '!**/*.pyc'
 win:
   icon: assets/cardbush.ico
   target:

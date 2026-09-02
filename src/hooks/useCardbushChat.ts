@@ -83,6 +83,7 @@ import {
   isAudioPath,
   isImagePath,
   isVideoPath,
+  samePath,
   stripWrappingQuotes,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
@@ -95,6 +96,13 @@ import {
   conversationProjectDir,
   conversationWorkspaceRoot,
 } from '../features/conversationWorkspace';
+import {
+  conversationProjectId,
+  conversationProjectPathAliases,
+  conversationScopeKey,
+  remapProjectPath,
+  type ConversationScope,
+} from '../features/conversationScope';
 
 export type QueuedChatMessage = {
   id: string;
@@ -128,6 +136,7 @@ export function useCardbushChat(
     defaultReasoningLevel?: ReasoningLevel;
     contextWindowUsageAvailable?: boolean;
     workspaceChangesAvailable?: boolean;
+    defaultProjectId?: string;
     defaultProjectDir?: string;
   } = {},
 ) {
@@ -138,6 +147,9 @@ export function useCardbushChat(
     [],
   );
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [preparedConversationsByScope, setPreparedConversationsByScope] = useState<
+    Record<string, ConversationSummary>
+  >({});
   const [activeConversationId, setActiveConversationId] = useState('');
   const [messagesByConversation, setMessagesByConversation] = useState<
     Record<string, ChatMessage[]>
@@ -208,9 +220,14 @@ export function useCardbushChat(
   const contextWindowUsageRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
   const activeConversationIdRef = useRef(activeConversationId);
   const conversationsRef = useRef(conversations);
+  const preparedConversationsRef = useRef(preparedConversationsByScope);
+  const conversationCreationPromisesRef = useRef<
+    Map<string, Promise<ConversationSummary>>
+  >(new Map());
   const attentionByConversationRef = useRef(attentionByConversation);
   activeConversationIdRef.current = activeConversationId;
   conversationsRef.current = conversations;
+  preparedConversationsRef.current = preparedConversationsByScope;
   attentionByConversationRef.current = attentionByConversation;
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
@@ -467,7 +484,11 @@ export function useCardbushChat(
         setActiveConversationId((current) =>
           loadedConversations.some((item) => item.id === current)
             ? current
-            : loadedConversations[0]?.id ?? '',
+            : Object.values(preparedConversationsRef.current).some(
+                (item) => item.id === current,
+              )
+              ? current
+              : '',
         );
         setMessagesByConversation((current) => {
           const validIds = new Set(loadedConversations.map((item) => item.id));
@@ -683,8 +704,10 @@ export function useCardbushChat(
   const activeConversation = useMemo(
     () =>
       conversations.find((item) => item.id === activeConversationId) ??
-      conversations[0],
-    [activeConversationId, conversations],
+      Object.values(preparedConversationsByScope).find(
+        (item) => item.id === activeConversationId,
+      ),
+    [activeConversationId, conversations, preparedConversationsByScope],
   );
 
   const activeMessages = activeConversationId
@@ -850,7 +873,11 @@ export function useCardbushChat(
     setActiveConversationId((current) =>
       loadedConversations.some((item) => item.id === current)
         ? current
-        : loadedConversations[0]?.id ?? '',
+        : Object.values(preparedConversationsRef.current).some(
+            (item) => item.id === current,
+          )
+          ? current
+          : '',
     );
   }, []);
 
@@ -1379,7 +1406,13 @@ export function useCardbushChat(
   const openConversation = useCallback(
     (conversationId: string) => {
       const normalized = conversationId.trim();
-      if (!normalized || !conversations.some((item) => item.id === normalized)) {
+      if (
+        !normalized ||
+        (!conversations.some((item) => item.id === normalized) &&
+          !Object.values(preparedConversationsRef.current).some(
+            (item) => item.id === normalized,
+          ))
+      ) {
         return;
       }
       setActiveConversationId(normalized);
@@ -1394,8 +1427,114 @@ export function useCardbushChat(
     setError(null);
   }, []);
 
-  const startConversation = useCallback(async (projectDir?: string, initialTitle?: string) => {
-    const optimistic = localConversation(projectDir, initialTitle);
+  const prepareConversation = useCallback((
+    projectDir?: string,
+    initialTitle?: string,
+    projectId?: string,
+  ) => {
+    const normalizedProjectDir = projectDir?.trim() || undefined;
+    const normalizedProjectId = projectId?.trim() || undefined;
+    const scope: ConversationScope = normalizedProjectDir
+      ? {
+          mode: 'project',
+          projectId: normalizedProjectId,
+          projectDir: normalizedProjectDir,
+        }
+      : { mode: 'task' };
+    const scopeKey = conversationScopeKey(scope);
+    const existing = preparedConversationsRef.current[scopeKey];
+    const draft = existing ?? localConversation(
+      normalizedProjectDir,
+      initialTitle,
+      normalizedProjectId,
+    );
+    if (!existing) {
+      const next = {
+        ...preparedConversationsRef.current,
+        [scopeKey]: draft,
+      };
+      preparedConversationsRef.current = next;
+      setPreparedConversationsByScope(next);
+    }
+    setMessagesByConversation((current) => ({
+      ...current,
+      [draft.id]: current[draft.id] ?? [],
+    }));
+    setActiveConversationId(draft.id);
+    setError(null);
+    return draft;
+  }, []);
+
+  const persistPreparedConversation = useCallback(async (
+    conversation: ConversationSummary,
+  ): Promise<ConversationSummary> => {
+    const prepared = Object.values(preparedConversationsRef.current).find(
+      (item) => item.id === conversation.id,
+    );
+    if (!prepared) return conversation;
+    const inFlight = conversationCreationPromisesRef.current.get(prepared.id);
+    if (inFlight) return inFlight;
+
+    const creation = (async () => {
+      let created: ConversationSummary;
+      try {
+        created = await createConversation({
+          sessionId: prepared.id,
+          title: prepared.title,
+          projectId: conversationProjectId(prepared) || undefined,
+          projectDir: conversationProjectDir(prepared) || undefined,
+        });
+      } catch (caught) {
+        const existing = (await fetchConversations().catch(() => []))
+          .find((item) => item.id === prepared.id);
+        if (!existing) throw caught;
+        created = existing;
+      }
+      const synced: ConversationSummary = {
+        ...prepared,
+        ...created,
+        id: prepared.id,
+        projectId:
+          created.projectId ?? (conversationProjectId(prepared) || undefined),
+        projectDir:
+          created.projectDir ?? (conversationProjectDir(prepared) || undefined),
+        title: mergeSyncedConversationTitle(
+          prepared.title,
+          created.title,
+          prepared.id,
+        ),
+      };
+      setConversations((current) => [
+        synced,
+        ...current.filter((item) => item.id !== synced.id),
+      ]);
+      const nextPrepared = Object.fromEntries(
+        Object.entries(preparedConversationsRef.current)
+          .filter(([, item]) => item.id !== prepared.id),
+      );
+      preparedConversationsRef.current = nextPrepared;
+      setPreparedConversationsByScope(nextPrepared);
+      return synced;
+    })();
+    conversationCreationPromisesRef.current.set(prepared.id, creation);
+    try {
+      return await creation;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      throw caught;
+    } finally {
+      if (conversationCreationPromisesRef.current.get(prepared.id) === creation) {
+        conversationCreationPromisesRef.current.delete(prepared.id);
+      }
+    }
+  }, []);
+
+  const startConversation = useCallback(async (
+    projectDir?: string,
+    initialTitle?: string,
+    projectId?: string,
+  ) => {
+    const optimistic = localConversation(projectDir, initialTitle, projectId);
     setConversations((current) => [
       optimistic,
       ...current.filter((item) => item.id !== optimistic.id),
@@ -1410,12 +1549,14 @@ export function useCardbushChat(
     void createConversation({
       sessionId: optimistic.id,
       title: optimistic.title,
+      projectId,
       projectDir,
     })
       .then((created) => {
         const synced = {
           ...created,
           id: optimistic.id,
+          projectId: created.projectId ?? projectId,
           projectDir: created.projectDir ?? projectDir,
         };
         setConversations((current) =>
@@ -1441,7 +1582,7 @@ export function useCardbushChat(
     setConversations((current) => {
       const next = current.filter((item) => item.id !== conversationId);
       setActiveConversationId((active) =>
-        active === conversationId ? next[0]?.id ?? '' : active,
+        active === conversationId ? '' : active,
       );
       return next;
     });
@@ -1499,16 +1640,54 @@ export function useCardbushChat(
   const setConversationProject = useCallback(async (
     conversationId: string,
     projectDir: string | null,
+    projectId?: string | null,
   ) => {
     const sessionId = conversationId.trim();
     if (!sessionId) return;
     const normalizedProjectDir = projectDir?.trim() || undefined;
+    const normalizedProjectId = projectId === undefined
+      ? undefined
+      : projectId?.trim() || null;
+    const preparedEntry = Object.entries(preparedConversationsRef.current)
+      .find(([, item]) => item.id === sessionId);
+    if (preparedEntry) {
+      const [previousScopeKey, draft] = preparedEntry;
+      const updatedDraft: ConversationSummary = {
+        ...draft,
+        projectId: normalizedProjectId || undefined,
+        projectDir: normalizedProjectDir,
+        workspaceContext: undefined,
+        metadata: {
+          ...(draft.metadata ?? {}),
+          workspace_mode: normalizedProjectDir ? 'project' : 'task',
+          project_id: normalizedProjectId,
+        },
+      };
+      const nextScopeKey = conversationScopeKey(normalizedProjectDir
+        ? {
+            mode: 'project',
+            projectId: normalizedProjectId || undefined,
+            projectDir: normalizedProjectDir,
+          }
+        : { mode: 'task' });
+      const nextPrepared = { ...preparedConversationsRef.current };
+      delete nextPrepared[previousScopeKey];
+      nextPrepared[nextScopeKey] = updatedDraft;
+      preparedConversationsRef.current = nextPrepared;
+      setPreparedConversationsByScope(nextPrepared);
+      setError(null);
+      return;
+    }
     const previous = conversationsRef.current.find((item) => item.id === sessionId);
     setConversations((current) =>
       current.map((item) => {
         if (item.id !== sessionId) return item;
         return {
           ...item,
+          projectId:
+            normalizedProjectId === undefined
+              ? item.projectId
+              : normalizedProjectId || undefined,
           projectDir: normalizedProjectDir,
           workspaceContext: undefined,
         };
@@ -1517,6 +1696,9 @@ export function useCardbushChat(
     try {
       const synced = await updateConversation({
         sessionId,
+        projectId: normalizedProjectDir
+          ? normalizedProjectId
+          : null,
         projectDir: normalizedProjectDir ?? null,
       });
       setConversations((current) =>
@@ -1526,6 +1708,8 @@ export function useCardbushChat(
                 ...item,
                 ...synced,
                 id: sessionId,
+                projectId:
+                  synced.projectId ?? normalizedProjectId ?? item.projectId,
                 projectDir: synced.projectDir ?? normalizedProjectDir,
               }
             : item,
@@ -1541,6 +1725,100 @@ export function useCardbushChat(
       setError(errorMessage(caught));
       throw caught;
     }
+  }, []);
+
+  const relocateProjectConversations = useCallback(async (
+    projectId: string,
+    previousProjectDir: string,
+    nextProjectDir: string,
+  ) => {
+    const normalizedProjectId = projectId.trim();
+    const previousRoot = previousProjectDir.trim();
+    const nextRoot = nextProjectDir.trim();
+    if (!normalizedProjectId || !previousRoot || !nextRoot) {
+      throw new Error('Project relocation requires an id and both paths.');
+    }
+    const targets = conversationsRef.current.filter((conversation) => {
+      const sessionProjectId = conversationProjectId(conversation);
+      if (sessionProjectId) return sessionProjectId === normalizedProjectId;
+      const sessionProjectDir = conversationProjectDir(conversation);
+      return Boolean(sessionProjectDir && samePath(sessionProjectDir, previousRoot));
+    });
+    const completed: ConversationSummary[] = [];
+    try {
+      for (const snapshot of targets) {
+        const aliases = appendProjectPathAlias(
+          snapshot.metadata?.project_path_aliases,
+          previousRoot,
+          nextRoot,
+        );
+        const synced = await updateConversation({
+          sessionId: snapshot.id,
+          projectId: normalizedProjectId,
+          projectDir: nextRoot,
+          metadata: { project_path_aliases: aliases },
+        });
+        completed.push(snapshot);
+        setConversations((current) => current.map((item) =>
+          item.id === snapshot.id
+            ? {
+                ...item,
+                ...synced,
+                id: snapshot.id,
+                projectId: normalizedProjectId,
+                projectDir: nextRoot,
+                workspaceContext: undefined,
+              }
+            : item,
+        ));
+      }
+    } catch (caught) {
+      for (const snapshot of completed.reverse()) {
+        await updateConversation({
+          sessionId: snapshot.id,
+          projectId: conversationProjectId(snapshot) || null,
+          projectDir: conversationProjectDir(snapshot) || null,
+          metadata: {
+            project_path_aliases: snapshot.metadata?.project_path_aliases ?? null,
+          },
+        }).catch(() => undefined);
+      }
+      setConversations((current) => current.map((item) =>
+        completed.find((snapshot) => snapshot.id === item.id) ?? item,
+      ));
+      throw caught;
+    }
+
+    const nextPrepared = Object.fromEntries(
+      Object.entries(preparedConversationsRef.current).map(([scopeKey, draft]) => {
+        const draftProjectId = conversationProjectId(draft);
+        const draftProjectDir = conversationProjectDir(draft);
+        if (
+          draftProjectId !== normalizedProjectId &&
+          !(draftProjectDir && samePath(draftProjectDir, previousRoot))
+        ) {
+          return [scopeKey, draft];
+        }
+        const updated: ConversationSummary = {
+          ...draft,
+          projectId: normalizedProjectId,
+          projectDir: nextRoot,
+          metadata: {
+            ...(draft.metadata ?? {}),
+            project_id: normalizedProjectId,
+          },
+        };
+        const nextScopeKey = conversationScopeKey({
+          mode: 'project',
+          projectId: normalizedProjectId,
+          projectDir: nextRoot,
+        });
+        return [nextScopeKey, updated];
+      }),
+    );
+    preparedConversationsRef.current = nextPrepared;
+    setPreparedConversationsByScope(nextPrepared);
+    return targets.length;
   }, []);
 
   const recoverInterruptedSession = useCallback(async ({
@@ -1641,14 +1919,19 @@ export function useCardbushChat(
         outbound.displayInput ||
         optimisticAttachments.map((attachment) => attachment.name).join(', ') ||
         outbound.userInput;
-      const conversation =
+      if (!selectedModel.trim()) {
+        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
+        return;
+      }
+      const candidate =
         queuedConversation ??
         activeConversation ??
-        (await startConversation(
+        prepareConversation(
           requestContext.defaultProjectDir?.trim() || undefined,
           conversationTitleFromUserText(visibleUserInput),
-        ));
-      const sessionId = conversation.id;
+          requestContext.defaultProjectId?.trim() || undefined,
+        );
+      const sessionId = candidate.id;
       const turnTeamId = (queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
       const turnTeamName = (queuedTeamName ?? requestContext.selectedTeamName)?.trim() || undefined;
       setConnectionRecoveryByConversation((current) => ({
@@ -1661,11 +1944,19 @@ export function useCardbushChat(
         enqueueMessage({
           id: `queued-${crypto.randomUUID()}`,
           text: trimmed,
-          conversation,
+          conversation: candidate,
           createdAt: new Date().toISOString(),
           teamId: turnTeamId,
           teamName: turnTeamName,
         });
+        return;
+      }
+      markSessionRunning(sessionId);
+      let conversation: ConversationSummary;
+      try {
+        conversation = await persistPreparedConversation(candidate);
+      } catch {
+        clearSessionRunning(sessionId);
         return;
       }
       const projectDir = conversationProjectRequestDir(conversation);
@@ -1674,18 +1965,15 @@ export function useCardbushChat(
         projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
         requestContext.teamModeEnabled === true,
       );
-      if (!selectedModel.trim()) {
-        setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
-        return;
-      }
       const userMessageId = `user-${crypto.randomUUID()}`;
+      const submittedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
         id: userMessageId,
         clientMessageId: userMessageId,
         role: 'user',
         content: outbound.displayInput,
         conversationId: sessionId,
-        createdAt: new Date().toISOString(),
+        createdAt: submittedAt,
         attachments:
           optimisticAttachments.length > 0 ? optimisticAttachments : undefined,
         status: 'pending',
@@ -1700,7 +1988,7 @@ export function useCardbushChat(
         role: 'assistant',
         content: '',
         conversationId: sessionId,
-        createdAt: new Date().toISOString(),
+        createdAt: submittedAt,
         metadata: {
           optimistic_request_id: userMessage.id,
         },
@@ -1719,7 +2007,6 @@ export function useCardbushChat(
         ),
       );
       persistAutoConversationTitle(conversation, titleSource);
-      markSessionRunning(sessionId);
       setError(null);
       const controller = new AbortController();
       const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
@@ -1737,6 +2024,7 @@ export function useCardbushChat(
         await streamChat({
           sessionId,
           userInput: outbound.userInput,
+          submittedAt,
           model: selectedModelName(managedModelConfigs, selectedModel),
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
           projectDir,
@@ -2103,6 +2391,8 @@ export function useCardbushChat(
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
+      requestContext.defaultProjectDir,
+      requestContext.defaultProjectId,
       requestContext.interactiveRequestsAvailable,
       requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
@@ -2113,11 +2403,12 @@ export function useCardbushChat(
       requestContext.projectContexts,
       referencePlanMode,
       permissionMode,
+      persistPreparedConversation,
+      prepareConversation,
       subagentPermissionRouting,
       reasoningLevel,
       selectedModel,
       skills,
-      startConversation,
     ],
   );
 
@@ -2138,10 +2429,11 @@ export function useCardbushChat(
         setError(localize('未找到原会话，无法重试消息', 'The original conversation was not found, so the message cannot be retried'));
         return;
       }
+      const projectPathAliases = conversationProjectPathAliases(conversation);
       const attachmentMentions = (message.attachments ?? [])
         .map((attachment) => attachment.path?.trim() ?? '')
         .filter(Boolean)
-        .map((pathValue) => `@${pathValue}`);
+        .map((pathValue) => `@${remapProjectPath(pathValue, projectPathAliases)}`);
       const retryText = [...attachmentMentions, message.content.trim()]
         .filter(Boolean)
         .join('\n');
@@ -3438,6 +3730,7 @@ export function useCardbushChat(
 
   return {
     conversations,
+    preparedConversations: Object.values(preparedConversationsByScope),
     activeConversation,
     activeConversationId,
     activeMessages,
@@ -3479,10 +3772,12 @@ export function useCardbushChat(
     setReasoningLevel,
     openConversation,
     clearConversationSelection,
+    prepareConversation,
     startConversation,
     deleteConversation,
     renameConversation,
     setConversationProject,
+    relocateProjectConversations,
     reloadConversations,
     reloadSkills,
     loadSkillDetail,
@@ -3674,6 +3969,33 @@ export function selectedModelName(configs: ManagedModelConfig[], selectedModel: 
 
 function projectKey(projectDir: string) {
   return projectDir.trim().replace(/\\/g, '/').toLowerCase();
+}
+
+function appendProjectPathAlias(
+  value: unknown,
+  from: string,
+  to: string,
+): Array<{ from: string; to: string; movedAt: string }> {
+  const aliases = Array.isArray(value)
+    ? value.flatMap((candidate) => {
+        if (candidate == null || typeof candidate !== 'object') return [];
+        const record = candidate as Record<string, unknown>;
+        const aliasFrom = String(record.from ?? '').trim();
+        const aliasTo = String(record.to ?? '').trim();
+        if (!aliasFrom || !aliasTo) return [];
+        return [{
+          from: aliasFrom,
+          to: aliasTo,
+          movedAt: String(record.movedAt ?? record.moved_at ?? '').trim(),
+        }];
+      })
+    : [];
+  const normalizedFrom = projectKey(from);
+  const withoutDuplicate = aliases.filter((alias) => projectKey(alias.from) !== normalizedFrom);
+  return [
+    ...withoutDuplicate,
+    { from: from.trim(), to: to.trim(), movedAt: new Date().toISOString() },
+  ];
 }
 
 function mergedRequestContextPrompt(projectPrompt: string | undefined, teamModeEnabled: boolean) {
@@ -3987,6 +4309,7 @@ export function appendAssistantDelta(
   if (targetIndex < 0) {
     const messageId = route?.messageId.trim() ?? '';
     const segmentIndex = route?.assistantSegmentIndex ?? 1;
+    const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
     messages.push({
       id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex}`,
       messageId: messageId || undefined,
@@ -3999,6 +4322,7 @@ export function appendAssistantDelta(
       metadata: {
         ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
         ...(messageId ? { message_id: messageId } : {}),
+        ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
       },
     });
     return { ...current, [sessionId]: messages };
@@ -4114,6 +4438,7 @@ export function applyAssistantSegmentBoundary(
     turnId: update.turnId,
   });
   if (nextIndex < 0) {
+    const turnStartedAt = chatTurnStartedAt(messages, update.turnId);
     messages.push({
       id:
         nextMessageId ||
@@ -4129,6 +4454,7 @@ export function applyAssistantSegmentBoundary(
       metadata: {
         assistant_segment_index: nextSegmentIndex,
         ...(nextMessageId ? { message_id: nextMessageId } : {}),
+        ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
       },
     });
   }
@@ -4452,10 +4778,14 @@ function assignTurnToLocalMessages(
   route?: AssistantStreamRoute,
 ) {
   const ids = new Set(messageIds);
-  const startedAt = new Date().toISOString();
+  const messages = current[sessionId] ?? [];
+  const startedAt = chatTurnStartedAt(
+    messages.filter((message) => ids.has(message.id)),
+    undefined,
+  ) ?? new Date().toISOString();
   return {
     ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) =>
+    [sessionId]: messages.map((message) =>
       ids.has(message.id)
         ? markLocalMessageTurnStarted(
             applyAssistantStreamRoute(
@@ -4511,13 +4841,18 @@ function markLocalAssistantTurnCompleted(
         return message;
       }
       const routed = applyAssistantStreamRoute(message, route);
+      const startedAt = chatTurnStartedAt(
+        messages,
+        chatMessageTurnId(routed),
+        routed.createdAt,
+      );
       return {
         ...routed,
         content: routed.content || finalText,
         metadata: {
           ...(routed.metadata ?? {}),
           cardbush_turn_started_at:
-            routed.metadata?.cardbush_turn_started_at ?? routed.createdAt,
+            startedAt ?? routed.metadata?.cardbush_turn_started_at ?? routed.createdAt,
           cardbush_turn_completed_at:
             routed.metadata?.cardbush_turn_completed_at ?? completedAt,
         },
@@ -4565,6 +4900,8 @@ export function applyTurnTerminalSnapshot(
     : terminal.status === 'failed'
       ? 'failed'
       : 'completed';
+  const turnStartedAt = chatTurnStartedAt(messages, turnId);
+  const turnDurationMs = timestampDurationMs(turnStartedAt, completedAt);
   const terminalMetadata = (message?: ChatMessage) => ({
     ...(message?.metadata ?? {}),
     status: terminal.status,
@@ -4578,8 +4915,12 @@ export function applyTurnTerminalSnapshot(
     cardbush_terminal_snapshot: true,
     cardbush_terminal_stopped: terminal.stopped,
     cardbush_turn_started_at:
-      message?.metadata?.cardbush_turn_started_at ?? message?.createdAt ?? completedAt,
+      turnStartedAt ??
+      message?.metadata?.cardbush_turn_started_at ??
+      message?.createdAt ??
+      completedAt,
     cardbush_turn_completed_at: completedAt,
+    ...(turnDurationMs != null ? { cardbush_turn_duration_ms: turnDurationMs } : {}),
   });
   let matchedAssistant = false;
   const nextMessages = messages.map((message) => {
@@ -4943,6 +5284,11 @@ export function mergeFinalStreamMessages(
         message,
         existingMessage,
         completedAt,
+        chatTurnStartedAt(
+          existing,
+          chatMessageTurnId(message) || targetTurnId,
+          existingMessage?.createdAt,
+        ),
       ),
       toolExecutions:
         (message.toolExecutions?.length ?? 0) > 0
@@ -5066,6 +5412,7 @@ function mergeFinalAssistantTimingMetadata(
   message: ChatMessage,
   existingMessage: ChatMessage | undefined,
   completedAt: string,
+  turnStartedAt?: string,
 ) {
   if (message.role !== 'assistant' || isSupersededLoopAssistant(message)) {
     return message.metadata;
@@ -5073,6 +5420,7 @@ function mergeFinalAssistantTimingMetadata(
   return {
     ...(message.metadata ?? {}),
     cardbush_turn_started_at:
+      turnStartedAt ??
       message.metadata?.cardbush_turn_started_at ??
       existingMessage?.metadata?.cardbush_turn_started_at ??
       existingMessage?.createdAt ??
@@ -6630,6 +6978,62 @@ function streamAttachmentsForVision(
   };
 }
 
+function chatTurnStartedAt(
+  messages: ChatMessage[],
+  turnId?: string,
+  fallback?: string,
+) {
+  const normalizedTurnId = turnId?.trim() ?? '';
+  const matching = normalizedTurnId
+    ? messages.filter((message) => chatMessageTurnId(message) === normalizedTurnId)
+    : messages;
+  const userStartedAt = earliestValidTimestamp(
+    matching
+      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message))
+      .map((message) => message.createdAt),
+  );
+  if (userStartedAt) return userStartedAt;
+  const metadataStartedAt = earliestValidTimestamp(
+    matching.flatMap((message) => [
+      message.metadata?.cardbush_turn_started_at,
+      message.metadata?.cardbushTurnStartedAt,
+      message.metadata?.turn_started_at,
+      message.metadata?.turnStartedAt,
+    ]),
+  );
+  return metadataStartedAt ?? earliestValidTimestamp([fallback]);
+}
+
+function isTurnGuidanceMessage(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.turn_guidance === true ||
+    metadata.turnGuidance === true ||
+    String(metadata.name ?? '').trim() === 'turn_guidance'
+  );
+}
+
+function earliestValidTimestamp(values: unknown[]) {
+  let earliest: { value: string; timestamp: number } | undefined;
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const timestamp = Date.parse(value);
+    if (!Number.isFinite(timestamp)) continue;
+    if (!earliest || timestamp < earliest.timestamp) {
+      earliest = { value, timestamp };
+    }
+  }
+  return earliest?.value;
+}
+
+function timestampDurationMs(startedAt?: string, completedAt?: string) {
+  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
+  const completed = completedAt ? Date.parse(completedAt) : Number.NaN;
+  return Number.isFinite(started) && Number.isFinite(completed) && completed >= started
+    ? completed - started
+    : undefined;
+}
+
 function streamAttachmentsFromChatAttachments(
   attachments: ChatAttachment[] | undefined,
   standardImageInputEnabled: boolean,
@@ -6661,14 +7065,23 @@ function attachmentPathFromLine(value: string) {
   return '';
 }
 
-function localConversation(projectDir?: string, initialTitle?: string): ConversationSummary {
+function localConversation(
+  projectDir?: string,
+  initialTitle?: string,
+  projectId?: string,
+): ConversationSummary {
   const id = `local-${crypto.randomUUID()}`;
   return {
     id,
     title: initialTitle?.trim() || '新会话',
     preview: '',
     updatedAt: new Date().toISOString(),
+    projectId: projectId?.trim() || undefined,
     projectDir,
+    metadata: {
+      ui_draft: true,
+      ...(projectId?.trim() ? { project_id: projectId.trim() } : {}),
+    },
   };
 }
 

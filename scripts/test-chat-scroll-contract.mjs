@@ -8,6 +8,10 @@ const quickContextSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
   'utf8',
 );
+const backendApiSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'api.ts'),
+  'utf8',
+);
 
 assert.doesNotMatch(
   appSource,
@@ -181,6 +185,36 @@ assert.match(
   'Turn details must provide a real jump back to the source message',
 );
 assert.match(quickContextSource, /跳转到该轮/);
+assert.match(
+  quickContextSource,
+  /fetchSessionTurnMessages\(\{[\s\S]*?sessionId,[\s\S]*?messageId: match\.serverMessageId/,
+  'Quick Turn details must fetch the complete committed Turn instead of a truncated message window',
+);
+assert.doesNotMatch(
+  quickContextSource,
+  /fetchSessionMessageWindow|after:\s*12/,
+  'Quick Turn details must not depend on a fixed-size message window',
+);
+assert.match(
+  quickContextSource,
+  /function quickTurnPreviewMessages[\s\S]*?message\.role === 'user'[\s\S]*?!isTurnGuidanceMessage[\s\S]*?transcript_kind === 'assistant_final'[\s\S]*?\.reverse\(\)\.find/,
+  'Quick Turn details must render the user request and protocol-marked final assistant reply, with a legacy fallback',
+);
+assert.match(
+  quickContextSource,
+  /previewMessages\.map\(\(message\)[\s\S]*?<MarkdownContent content=\{message\.content\}/,
+  'Quick Turn details must reuse the main chat Markdown renderer for the compact final projection',
+);
+assert.doesNotMatch(
+  quickContextSource,
+  /selectedTurnMessages\.map\(/,
+  'Quick Turn details must not render raw tool and intermediate-loop messages',
+);
+assert.match(
+  backendApiSource,
+  /export async function fetchSessionTurnMessages[\s\S]*?snapshot\?\.turns\.find[\s\S]*?projectRuntimeTurnMessages/,
+  'The backend must project the complete stored Turn through the standard chat projection protocol',
+);
 assert.doesNotMatch(
   quickContextSource,
   /filter\(\(message\) => message\.role === 'user'\)\.slice\(/,

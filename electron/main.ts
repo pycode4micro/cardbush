@@ -30,16 +30,18 @@ import type {
 } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 import { inspectProjectRoots } from './projectRoots';
+import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import {
   listProductSkills,
   migrateLegacyProductSkills,
   readProductSkill,
+  type ProductSkillRoot,
 } from './productSkills';
 import {
   installProductPlugin,
-  loadEnabledProductPluginSkillRoots,
+  loadEnabledProductPluginSkillRootEntries,
   type PluginRoot,
 } from './productPlugins';
 import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
@@ -195,6 +197,17 @@ let osTaskbarWatchdog: ReturnType<typeof spawn> | null = null;
 let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null = null;
 let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
 let legacyProductSkillMigration: Promise<void> | null = null;
+const legacyProductSkillNamesOwnedByCardbush = [
+  'browser-assistant',
+  'interior-cad-design',
+  'interior-design-cn',
+  'pptx',
+  'scheduled-delivery',
+  'skill-manager',
+  'transport-delivery',
+  'windows-control',
+  'xlsx',
+];
 type RuntimeStartupStatus = {
   phase: 'initializing' | 'ready' | 'error';
   attempt: number;
@@ -2524,6 +2537,17 @@ ipcMain.handle('project:validate-roots', (_, rootPaths: string[]) => {
   return inspectProjectRoots(Array.isArray(rootPaths) ? rootPaths : []);
 });
 
+ipcMain.handle(
+  'project:rename-directory',
+  (event, input: { rootPath?: string; name?: string }) => {
+    assertMainWindowSender(event.sender.id);
+    return renameProjectDirectory(
+      String(input?.rootPath ?? ''),
+      String(input?.name ?? ''),
+    );
+  },
+);
+
 ipcMain.handle('project:search-files', (_, rootPath: string, query: string) => {
   return searchProjectFiles(rootPath, query);
 });
@@ -3445,7 +3469,7 @@ async function initializeProductHost(controller: RuntimeHostController) {
   ).href;
   const productModule = await import(moduleUrl);
   const runtimeStateRoot = path.join(app.getPath('userData'), 'runtime-state');
-  const bundledSkillRoot = path.join(app.getAppPath(), 'assets', 'skills');
+  const bundledSkillRoot = bundledProductSkillRoot();
   const userSkillRoot = path.join(app.getPath('userData'), 'skills');
   const bundledPluginRoot = path.join(app.getAppPath(), 'assets', 'plugins');
   const userPluginRoot = path.join(app.getPath('userData'), 'plugins');
@@ -3495,6 +3519,7 @@ function ensureLegacyProductSkillsMigrated(): Promise<void> {
   legacyProductSkillMigration ??= migrateLegacyProductSkills(
     legacyBushserverSkillRoots(),
     path.join(app.getPath('userData'), 'skills'),
+    { excludedNames: legacyProductSkillNamesOwnedByCardbush },
   ).then((result) => {
     if (result.imported.length > 0) {
       console.info(
@@ -3521,10 +3546,16 @@ function productSkillRoots(): string[] {
     ? configuredRoots.split(path.delimiter).map((item) => item.trim()).filter(Boolean)
     : [];
   return [
-    path.join(app.getAppPath(), 'assets', 'skills'),
+    bundledProductSkillRoot(),
     path.join(app.getPath('userData'), 'skills'),
     ...externalRoots,
   ];
+}
+
+function bundledProductSkillRoot(): string {
+  return cardbushRuntimeIsPackaged
+    ? path.join(process.resourcesPath, 'skills')
+    : path.join(app.getAppPath(), 'assets', 'skills');
 }
 
 function resolveBundledRipgrepPath(): string | undefined {
@@ -3546,16 +3577,37 @@ function productAppsConfigPath(): string {
   return path.join(app.getPath('userData'), 'product-host', 'config', 'apps.json');
 }
 
-async function activeProductSkillRoots(): Promise<string[]> {
+async function activeProductSkillRoots(): Promise<ProductSkillRoot[]> {
   const productRoots = productSkillRoots();
-  const pluginRoots = await loadEnabledProductPluginSkillRoots(
+  const pluginRoots = await loadEnabledProductPluginSkillRootEntries(
     productPluginRoots(),
     productAppsConfigPath(),
   );
   return [
-    ...productRoots.slice(0, 1),
-    ...pluginRoots,
-    ...productRoots.slice(1),
+    {
+      path: productRoots[0],
+      source: 'bundled',
+      sourceId: 'cardbush',
+      sourceLabel: 'CardBush',
+    },
+    ...pluginRoots.map((root) => ({
+      path: root.path,
+      source: 'plugin' as const,
+      sourceId: root.pluginId,
+      sourceLabel: root.pluginName,
+    })),
+    {
+      path: productRoots[1],
+      source: 'user',
+      sourceId: 'user',
+      sourceLabel: 'User',
+    },
+    ...productRoots.slice(2).map((root, index) => ({
+      path: root,
+      source: 'external' as const,
+      sourceId: `external-${index + 1}`,
+      sourceLabel: path.basename(root),
+    })),
   ];
 }
 
@@ -3566,11 +3618,43 @@ function registerLocalFileProtocol() {
   protocol.handle(localFileProtocol, async (request) => {
     try {
       const parsed = new URL(request.url);
-      if (parsed.hostname.toLowerCase() === 'office-preview') {
+      const protocolHost = parsed.hostname.toLowerCase();
+      if (protocolHost === 'office-source') {
+        const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
+        const stats = await fs.promises.stat(officePath);
+        if (!stats.isFile() || !isHighFidelityOfficePreviewPath(officePath)) {
+          return new Response('Not found', { status: 404 });
+        }
+        const bytes = request.method === 'HEAD'
+          ? null
+          : await fs.promises.readFile(officePath);
+        return new Response(bytes ? new Uint8Array(bytes) : null, {
+          headers: {
+            'content-type': contentTypeForPath(officePath),
+            'content-length': String(stats.size),
+            'cache-control': 'no-store',
+            'x-content-type-options': 'nosniff',
+          },
+        });
+      }
+      if (protocolHost === 'office-preview') {
+        if (parsed.pathname.startsWith('/assets/')) {
+          return await officePreviewRendererAssetResponse(parsed.pathname)
+            ?? new Response('Not found', { status: 404 });
+        }
         const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
         const stats = await fs.promises.stat(officePath);
         if (!stats.isFile() || !isOfficePreviewPath(officePath)) {
           return new Response('Not found', { status: 404 });
+        }
+        if (
+          isHighFidelityOfficePreviewPath(officePath) &&
+          parsed.searchParams.get('renderer') !== 'compat'
+        ) {
+          const rendererResponse = await officePreviewRendererEntryResponse(officePath);
+          if (rendererResponse != null) {
+            return rendererResponse;
+          }
         }
         let previewHtml: string;
         try {
@@ -3647,6 +3731,60 @@ function registerLocalFileProtocol() {
       console.error(`[${localFileProtocol}] failed to load ${request.url}`, error);
       return new Response('Not found', { status: 404 });
     }
+  });
+}
+
+function isHighFidelityOfficePreviewPath(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase();
+  return extension === '.xlsx' || extension === '.pptx' || extension === '.ppt';
+}
+
+async function officePreviewRendererEntryResponse(officePath: string) {
+  if (devServerUrl) {
+    const url = new URL('/office-preview.html', devServerUrl);
+    url.searchParams.set('path', officePath);
+    return Response.redirect(url.toString(), 302);
+  }
+  return officePreviewRendererAssetResponse('/office-preview.html', false);
+}
+
+async function officePreviewRendererAssetResponse(
+  requestPath: string,
+  immutable = true,
+): Promise<Response | null> {
+  const rendererRoot = path.resolve(__dirname, '../dist');
+  const relativePath = decodeURIComponent(requestPath)
+    .replace(/^[/\\]+/, '')
+    .replaceAll('/', path.sep);
+  if (!relativePath) {
+    return null;
+  }
+  const assetPath = path.resolve(rendererRoot, relativePath);
+  const relativeToRoot = path.relative(rendererRoot, assetPath);
+  if (
+    !relativeToRoot ||
+    relativeToRoot.startsWith('..') ||
+    path.isAbsolute(relativeToRoot)
+  ) {
+    return null;
+  }
+  let stats: fs.Stats;
+  try {
+    stats = await fs.promises.stat(assetPath);
+  } catch {
+    return null;
+  }
+  if (!stats.isFile()) {
+    return null;
+  }
+  const bytes = await fs.promises.readFile(assetPath);
+  return new Response(new Uint8Array(bytes), {
+    headers: {
+      'content-type': contentTypeForPath(assetPath),
+      'content-length': String(stats.size),
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   });
 }
 
@@ -3857,6 +3995,30 @@ function contentTypeForPath(filePath: string) {
     return audioMimeType;
   }
   const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.html' || extension === '.htm') {
+    return 'text/html; charset=utf-8';
+  }
+  if (extension === '.js' || extension === '.mjs') {
+    return 'text/javascript; charset=utf-8';
+  }
+  if (extension === '.css') {
+    return 'text/css; charset=utf-8';
+  }
+  if (extension === '.json' || extension === '.map') {
+    return 'application/json; charset=utf-8';
+  }
+  if (extension === '.wasm') {
+    return 'application/wasm';
+  }
+  if (extension === '.xlsx') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  }
+  if (extension === '.pptx') {
+    return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+  }
+  if (extension === '.ppt') {
+    return 'application/vnd.ms-powerpoint';
+  }
   if (extension === '.ttf') {
     return 'font/ttf';
   }

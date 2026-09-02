@@ -164,6 +164,7 @@ export function PluginManagementPanel({
     skill.name,
     skill.description,
     skill.descriptionZh ?? '',
+    skill.sourceLabel ?? '',
   ].join(' ').toLocaleLowerCase().includes(normalizedQuery)), [localSkills, normalizedQuery]);
 
   const selectedPlugin = page.kind === 'plugin'
@@ -356,6 +357,28 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
   onOpen: (skill: SkillSummary) => void;
   onToggle: (name: string, enabled: boolean) => void;
 }) {
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const standaloneSkills = skills.filter((skill) => skill.source !== 'plugin');
+  const pluginGroups = [...skills.reduce((groups, skill) => {
+    if (skill.source !== 'plugin') return groups;
+    const key = skill.sourceId || skill.sourceLabel || 'plugin';
+    const group = groups.get(key) ?? {
+      key,
+      label: skill.sourceLabel || skill.sourceId || (language === 'zh' ? '插件' : 'Plugin'),
+      skills: [] as SkillSummary[],
+    };
+    group.skills.push(skill);
+    groups.set(key, group);
+    return groups;
+  }, new Map<string, { key: string; label: string; skills: SkillSummary[] }>()).values()]
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const searching = Boolean(query.trim());
+  const toggleGroup = (key: string) => setExpandedGroups((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
   return (
     <div className="plugin-catalog-page">
       <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '技能' : 'Skills'}</h2><p>{language === 'zh' ? '通过任务专用技能扩展 CardBush' : 'Extend CardBush with task-specific skills'}</p></header>
@@ -363,21 +386,76 @@ function SkillCatalog({ language, skills, query, disabledSkillNames, onQuery, on
       <section className="plugin-featured-section">
         <div className="plugin-section-title"><h3>{language === 'zh' ? '已安装' : 'Installed'}</h3><span>{skills.length}</span></div>
         <div className="skill-catalog-grid">
-          {skills.map((skill) => {
-            const enabled = !disabledSkillNames.has(skill.name);
+          {standaloneSkills.map((skill) => (
+            <SkillCatalogCard
+              key={skill.name}
+              language={language}
+              skill={skill}
+              enabled={!disabledSkillNames.has(skill.name)}
+              onOpen={onOpen}
+              onToggle={onToggle}
+            />
+          ))}
+          {pluginGroups.map((group) => {
+            const expanded = searching || expandedGroups.has(group.key);
+            const countLabel = language === 'zh'
+              ? `${group.skills.length} 个技能`
+              : `${group.skills.length} ${group.skills.length === 1 ? 'skill' : 'skills'}`;
             return (
-              <article key={skill.name}>
-                <button className="plugin-featured-main" type="button" onClick={() => onOpen(skill)}>
-                  <SkillIcon skill={skill} />
-                  <span><strong>{skill.name}</strong><small>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</small></span>
+              <section className={`skill-plugin-group${expanded ? ' expanded' : ''}`} key={group.key}>
+                <button
+                  className="skill-plugin-group-header"
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={() => toggleGroup(group.key)}
+                >
+                  <span className="skill-plugin-group-icon"><PackagePlus size={20} /></span>
+                  <strong>{group.label} · {countLabel}</strong>
+                  <ChevronRight size={17} />
                 </button>
-                <button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" aria-pressed={enabled} onClick={() => onToggle(skill.name, !enabled)}><span /></button>
-              </article>
+                {expanded && (
+                  <div className="skill-plugin-group-grid">
+                    {group.skills.map((skill) => (
+                      <SkillCatalogCard
+                        key={skill.name}
+                        language={language}
+                        skill={skill}
+                        enabled={!disabledSkillNames.has(skill.name)}
+                        onOpen={onOpen}
+                        onToggle={onToggle}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
             );
           })}
+          {skills.length === 0 && <p className="plugin-catalog-empty">{language === 'zh' ? '没有匹配的技能' : 'No matching skills'}</p>}
         </div>
       </section>
     </div>
+  );
+}
+
+function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
+  language: AppLanguage;
+  skill: SkillSummary;
+  enabled: boolean;
+  onOpen: (skill: SkillSummary) => void;
+  onToggle: (name: string, enabled: boolean) => void;
+}) {
+  const source = skillSourceText(language, skill);
+  return (
+    <article>
+      <button className="plugin-featured-main" type="button" onClick={() => onOpen(skill)}>
+        <SkillIcon skill={skill} />
+        <span>
+          <span className="skill-card-title"><strong>{skill.name}</strong>{source && <em>{source}</em>}</span>
+          <small>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</small>
+        </span>
+      </button>
+      <button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" aria-pressed={enabled} onClick={() => onToggle(skill.name, !enabled)}><span /></button>
+    </article>
   );
 }
 
@@ -518,7 +596,18 @@ function ChromeConnectionSettings({ language, plugin, onReplace, onPersist }: {
 }
 
 function SkillDetailPage({ language, skill, loading, error, enabled, onBack, onToggle }: { language: AppLanguage; skill: SkillSummary | SkillDetail | null; loading: boolean; error: string; enabled: boolean; onBack: () => void; onToggle: (enabled: boolean) => void }) {
-  return <div className="plugin-detail-page"><button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>{loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <><header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header><section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>{'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}</> : <p className="plugin-hub-error">{error}</p>}</div>;
+  return <div className="plugin-detail-page"><button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>{loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <><header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header><section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '来源' : 'Source'} value={skillSourceText(language, skill) || '—'} /><Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>{'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}</> : <p className="plugin-hub-error">{error}</p>}</div>;
+}
+
+function skillSourceText(language: AppLanguage, skill: SkillSummary): string {
+  if (skill.source === 'plugin') {
+    const plugin = skill.sourceLabel || skill.sourceId || (language === 'zh' ? '插件' : 'Plugin');
+    return language === 'zh' ? `来自 ${plugin}` : `From ${plugin}`;
+  }
+  if (skill.source === 'bundled') return language === 'zh' ? '内置' : 'Built in';
+  if (skill.source === 'user') return language === 'zh' ? '用户' : 'User';
+  if (skill.source === 'external') return language === 'zh' ? '外部' : 'External';
+  return '';
 }
 
 function PluginLogo({ plugin, large = false, compact = false }: { plugin: CardbushAppPlugin; large?: boolean; compact?: boolean }) {

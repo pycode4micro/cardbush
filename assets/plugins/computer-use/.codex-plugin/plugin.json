@@ -5,6 +5,7 @@
   "author": { "name": "CardBush" },
   "license": "Proprietary",
   "keywords": ["desktop", "windows", "automation"],
+  "skills": "./skills",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Computer Use",

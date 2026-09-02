@@ -6,9 +6,10 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
 const app = read('src/App.tsx');
 const chat = read('src/hooks/useCardbushChat.ts');
+const composer = read('src/features/composer/Composer.tsx');
 const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');
-const consoleDock = read('src/features/console/ConsoleDock.tsx');
 const api = read('src/backend/api.ts');
+const styles = read('src/styles/app.css');
 const packageJson = JSON.parse(read('package.json'));
 const readme = read('README.md');
 const readmeZh = read('README.zh-CN.md');
@@ -41,7 +42,7 @@ assert(
 );
 assert(
   app.includes('onToggleWorkSummary={renderMessages.length > 0') &&
-    app.includes('onOpenReview={changeReports.length > 0 ? onOpenChangeReview : undefined}') &&
+    app.includes('onOpenReview={changeReports.length > 0 ? openChangeReview : undefined}') &&
     app.includes('conversationContentAvailable={renderMessages.length > 0}') &&
     app.includes('{conversationContentAvailable && onToggleWorkSummary && (') &&
     app.includes('{conversationContentAvailable && onOpenReview && reviewAvailable && ('),
@@ -49,9 +50,15 @@ assert(
 );
 assert(
   app.includes('const [refreshError, setRefreshError]') &&
-    app.includes('onRefreshActiveSession={refreshBackendWithFeedback}') &&
+    app.includes('await refreshBackendWithFeedback({ silent: false })') &&
     app.includes('{(error || refreshError) && ('),
   'runtime refresh failures must use the shared retryable status banner',
+);
+assert(
+  !app.includes('native-refresh-square') &&
+    !app.includes('historyRefreshing') &&
+    !app.includes('Reconnect backend and refresh sessions'),
+  'the integrated client must not expose a permanent manual backend refresh in the chat toolbar',
 );
 assert(
   !app.includes('title="Git 控制台"') && !app.includes('title="终端控制台"'),
@@ -59,16 +66,15 @@ assert(
 );
 assert(
   !app.includes('onToggleGit') &&
-    !consoleDock.includes("ConsoleMode = 'git'") &&
-    !consoleDock.includes('gitCheckout('),
-  'the retired topbar Git console must not return',
-);
-assert(
-  consoleDock.includes('className="native-terminal-add"') &&
-    consoleDock.includes('onClick={addTerminal}') &&
-    consoleDock.includes('className="native-terminal-tab-close"') &&
-    consoleDock.includes('terminalClose(id)'),
-  'the terminal dock must support creating and closing independent sessions',
+    !app.includes('onToggleTerminal') &&
+    !app.includes('ConsoleDock') &&
+    !composer.includes('onOpenTerminalConsole') &&
+    !composer.includes('terminalAvailable') &&
+    !styles.includes('.console-dock') &&
+    !styles.includes('.native-terminal') &&
+    !existsSync(resolve(root, 'src/features/console/ConsoleDock.tsx')) &&
+    packageJson.dependencies?.['@xterm/xterm'] == null,
+  'retired product-side Git and terminal consoles must not return',
 );
 assert(
   app.includes("language === 'zh' ? '缓存' : 'Cache'") &&

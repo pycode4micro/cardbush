@@ -1,0 +1,229 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: #eef1f4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#office-preview-root,
+.office-preview-shell {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  min-width: 280px;
+  background: #eef1f4;
+}
+
+button {
+  font: inherit;
+}
+
+.office-preview-boot {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  color: #616975;
+  font-size: 13px;
+}
+
+.office-preview-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: 46px minmax(0, 1fr);
+  background: #eef1f4;
+}
+
+.office-preview-toolbar {
+  position: relative;
+  z-index: 30;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: #353a42;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 3px solid var(--office-preview-accent, #4f667e);
+  border-bottom: 1px solid #d9dde3;
+  box-shadow: 0 2px 9px rgba(30, 38, 48, 0.08);
+}
+
+html[data-office-preview-kind='spreadsheet'] {
+  --office-preview-accent: #107c41;
+}
+
+html[data-office-preview-kind='presentation'] {
+  --office-preview-accent: #c43e1c;
+}
+
+.office-preview-app-mark {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--office-preview-accent, #4f667e);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.office-preview-readonly {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  color: #68707b;
+  background: #f3f4f6;
+  border: 1px solid #e2e4e8;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.office-preview-progress {
+  min-width: 0;
+  overflow: hidden;
+  color: #777f89;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.office-preview-progress[hidden] {
+  display: none;
+}
+
+.office-preview-toolbar-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+.office-preview-toolbar button {
+  min-width: 31px;
+  height: 29px;
+  padding: 0 9px;
+  color: #3d444d;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.office-preview-toolbar button:hover:not(:disabled) {
+  color: var(--office-preview-accent, #4f667e);
+  background: #f2f4f6;
+  border-color: #dfe3e8;
+}
+
+.office-preview-toolbar button:focus-visible,
+.office-preview-error button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--office-preview-accent, #4f667e) 70%, white);
+  outline-offset: 1px;
+}
+
+.office-preview-toolbar button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.office-preview-zoom {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px;
+  background: #f3f4f6;
+  border-radius: 8px;
+}
+
+.office-preview-zoom .office-preview-zoom-value {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+
+.office-preview-surface {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #eef1f4;
+}
+
+.office-preview-error {
+  position: absolute;
+  z-index: 60;
+  inset: 50% auto auto 50%;
+  width: min(460px, calc(100% - 32px));
+  padding: 20px;
+  color: #7c2d12;
+  background: rgba(255, 251, 235, 0.98);
+  border: 1px solid rgba(194, 65, 12, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(66, 38, 21, 0.18);
+  transform: translate(-50%, -50%);
+}
+
+.office-preview-error[hidden] {
+  display: none;
+}
+
+.office-preview-error strong {
+  display: block;
+  font-size: 16px;
+}
+
+.office-preview-error p {
+  margin: 8px 0 14px;
+  color: #8a4b2b;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.office-preview-error button {
+  height: 32px;
+  padding: 0 12px;
+  color: #fff;
+  background: #9a3412;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+@media (max-width: 520px) {
+  .office-preview-toolbar {
+    gap: 4px;
+    padding-inline: 7px;
+  }
+
+  .office-preview-progress,
+  .office-preview-readonly {
+    display: none;
+  }
+
+  .office-preview-toolbar > button[data-office-action='fit'] {
+    padding-inline: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

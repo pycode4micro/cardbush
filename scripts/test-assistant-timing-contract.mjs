@@ -194,5 +194,53 @@ assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].name, 'brief
 assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].type, 'document');
 assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].path, 'C:\\work\\brief.xlsx');
 
+const projectedLoopTurn = projectionModule.exports.projectRuntimeTurnMessages({
+  turnId: 'turn-with-loop',
+  turnSequence: 2,
+  createdAt: '2026-09-01T01:00:02Z',
+  completedAt: '2026-09-01T01:02:05Z',
+  status: 'completed',
+  reason: 'complete',
+  usage: {},
+  messages: [
+    {
+      messageId: 'loop-user',
+      turnId: 'turn-with-loop',
+      turnSequence: 2,
+      messageIndex: 0,
+      createdAt: '2026-09-01T01:00:00Z',
+      message: { role: 'user', content: '完成整个任务' },
+    },
+    {
+      messageId: 'loop-preamble',
+      turnId: 'turn-with-loop',
+      turnSequence: 2,
+      messageIndex: 1,
+      createdAt: '2026-09-01T01:01:20Z',
+      message: { role: 'assistant', content: '我先检查文件。' },
+    },
+    {
+      messageId: 'loop-final',
+      turnId: 'turn-with-loop',
+      turnSequence: 2,
+      messageIndex: 2,
+      createdAt: '2026-09-01T01:02:01Z',
+      message: { role: 'assistant', content: '任务已完成。' },
+    },
+  ],
+}, 'session-with-loop');
+assert.equal(
+  projectedLoopTurn[2].metadata.cardbush_turn_started_at,
+  '2026-09-01T01:00:00Z',
+  'the final assistant must start timing at the visible user bubble',
+);
+assert.equal(
+  projectedLoopTurn[2].metadata.cardbush_turn_completed_at,
+  '2026-09-01T01:02:05Z',
+  'the final assistant must stop timing at committed done',
+);
+assert.equal(projectedLoopTurn[2].metadata.cardbush_turn_duration_ms, 125_000);
+assert.equal(projectedLoopTurn[2].metadata.cardbush_segment_duration_ms, 45_000);
+
 console.log('assistant turn timing persistence contract tests passed');
 

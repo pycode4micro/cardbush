@@ -157,6 +157,11 @@ assert.deepEqual(
   'A failed turn without model text must create a visible assistant failure record',
 );
 assert.equal(failedTerminalTranscript[1].status, 'failed');
+assert.equal(
+  failedTerminalTranscript[1].metadata.cardbush_turn_duration_ms,
+  1_000,
+  'Terminal timing must cover the user bubble through the done event',
+);
 
 const finalStreamFailedTerminal = mergeFinalStreamMessages(
   { session: failedTerminalTranscript },

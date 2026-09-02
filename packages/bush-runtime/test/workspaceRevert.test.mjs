@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   GET_RUNTIME_SESSION_COMMAND,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
   RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY,
+  UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
 } from "@cardbush/bush-protocol";
 import {
   InMemoryRuntimeHost,
@@ -100,6 +101,42 @@ test("reports an unavailable Runtime snapshot instead of a false zero-file succe
     setup.revert(["turn-without-records"]),
     (error) => error?.code === "runtime_workspace_snapshot_unavailable",
   );
+});
+
+test("replays a historical workspace change after its project folder is renamed", async (t) => {
+  const setup = await environment(t, "renamed-project-session");
+  const previousPath = join(setup.root, "file.txt");
+  writeFileSync(previousPath, "before");
+  await setup.execute("turn-1", 1, "read_file", { path: previousPath });
+  await setup.execute("turn-1", 2, "edit_file", {
+    path: previousPath,
+    old_text: "before",
+    new_text: "after",
+  });
+
+  const nextRoot = `${setup.root}-renamed`;
+  t.after(() => rmSync(nextRoot, { recursive: true, force: true }));
+  renameSync(setup.root, nextRoot);
+  const session = await setup.host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: setup.sessionId },
+  });
+  await setup.host.sendCommand({
+    kind: UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
+    payload: {
+      sessionId: setup.sessionId,
+      expectedRevision: session.revision,
+      metadata: {
+        ...session.metadata,
+        projectDir: nextRoot,
+        project_path_aliases: [{ from: setup.root, to: nextRoot }],
+      },
+    },
+  });
+
+  const result = await setup.revert(["turn-1"]);
+  assert.equal(result.revertedFiles, 1);
+  assert.equal(readFileSync(join(nextRoot, "file.txt"), "utf8"), "before");
 });
 
 async function environment(t, sessionId) {

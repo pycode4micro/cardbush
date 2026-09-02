@@ -8,6 +8,18 @@ export interface ProductSkillSummary {
   path: string;
   logoPath: string;
   logoDarkPath: string;
+  source: ProductSkillSource;
+  sourceId: string;
+  sourceLabel: string;
+}
+
+export type ProductSkillSource = 'bundled' | 'user' | 'plugin' | 'external';
+
+export interface ProductSkillRoot {
+  path: string;
+  source: ProductSkillSource;
+  sourceId?: string;
+  sourceLabel?: string;
 }
 
 export interface ProductSkillDetail extends ProductSkillSummary {
@@ -29,32 +41,63 @@ export interface ProductSkillDetail extends ProductSkillSummary {
 export interface LegacyProductSkillMigrationResult {
   imported: string[];
   skipped: string[];
+  excluded: string[];
   failed: Array<{ name: string; message: string }>;
+  alreadyCompleted: boolean;
+  markerPath: string;
 }
+
+export interface LegacyProductSkillMigrationOptions {
+  excludedNames?: Iterable<string>;
+}
+
+export const legacyProductSkillMigrationMarker =
+  '.legacy-bushserver-skill-migration-v1.json';
 
 /**
  * Imports only catalogued legacy Skill packages that do not already exist in
- * CardBush-owned storage. Existing Product Skills are never overwritten.
+ * CardBush-owned storage. A persistent completion marker makes the migration
+ * one-shot, so removing an imported Skill later cannot make it reappear.
+ * Existing Product Skills are never overwritten.
  */
 export async function migrateLegacyProductSkills(
   legacyRoots: string[],
   userRoot: string,
+  options: LegacyProductSkillMigrationOptions = {},
 ): Promise<LegacyProductSkillMigrationResult> {
+  const targetRoot = path.resolve(userRoot);
+  const markerPath = path.join(targetRoot, legacyProductSkillMigrationMarker);
   const result: LegacyProductSkillMigrationResult = {
     imported: [],
     skipped: [],
+    excluded: [],
     failed: [],
+    alreadyCompleted: false,
+    markerPath,
   };
-  const targetRoot = path.resolve(userRoot);
   await fs.promises.mkdir(targetRoot, { recursive: true });
+  if (await pathExists(markerPath)) {
+    result.alreadyCompleted = true;
+    return result;
+  }
+  const excludedNames = new Set(
+    [...(options.excludedNames ?? [])]
+      .map((name) => String(name).trim())
+      .filter(isSafePackageName),
+  );
+  const resolvedLegacyRoots = [...new Set(legacyRoots.map((root) => path.resolve(root)))];
 
-  for (const configuredRoot of [...new Set(legacyRoots.map((root) => path.resolve(root)))]) {
+  for (const configuredRoot of resolvedLegacyRoots) {
     const legacyRoot = await fs.promises.realpath(configuredRoot).catch(() => null);
     if (!legacyRoot) continue;
     const packageRoot = await fs.promises.realpath(path.join(legacyRoot, 'package')).catch(() => null);
     if (!packageRoot || escapes(legacyRoot, packageRoot)) continue;
     const names = await legacyCatalogSkillNames(path.join(legacyRoot, 'catalog.json'));
     for (const name of names) {
+      if (excludedNames.has(name)) {
+        result.excluded.push(name);
+        continue;
+      }
       const target = path.join(targetRoot, name);
       if (await pathExists(target)) {
         result.skipped.push(name);
@@ -90,10 +133,21 @@ export async function migrateLegacyProductSkills(
       }
     }
   }
+  await persistLegacyMigrationMarker(markerPath, {
+    protocol: 'cardbush.legacy_skill_migration.v1',
+    completedAt: new Date().toISOString(),
+    legacyRoots: resolvedLegacyRoots,
+    imported: [...new Set(result.imported)],
+    skipped: [...new Set(result.skipped)],
+    excluded: [...new Set(result.excluded)],
+    failed: result.failed,
+  });
   return result;
 }
 
-export async function listProductSkills(roots: string[]): Promise<ProductSkillSummary[]> {
+export async function listProductSkills(
+  roots: Array<string | ProductSkillRoot>,
+): Promise<ProductSkillSummary[]> {
   const skills = await loadProductSkills(roots);
   return [...skills.values()]
     .map(({ content: _content, packageDir: _packageDir, ...summary }) => summary)
@@ -101,7 +155,7 @@ export async function listProductSkills(roots: string[]): Promise<ProductSkillSu
 }
 
 export async function readProductSkill(
-  roots: string[],
+  roots: Array<string | ProductSkillRoot>,
   requestedName: string,
 ): Promise<ProductSkillDetail> {
   const name = requestedName.trim();
@@ -111,10 +165,12 @@ export async function readProductSkill(
   return skill;
 }
 
-async function loadProductSkills(roots: string[]): Promise<Map<string, ProductSkillDetail>> {
+async function loadProductSkills(
+  roots: Array<string | ProductSkillRoot>,
+): Promise<Map<string, ProductSkillDetail>> {
   const skills = new Map<string, ProductSkillDetail>();
-  for (const configuredRoot of roots) {
-    const root = path.resolve(configuredRoot);
+  for (const configuredRoot of roots.map(normalizeProductSkillRoot)) {
+    const root = path.resolve(configuredRoot.path);
     const rootRealPath = await fs.promises.realpath(root).catch(() => null);
     if (!rootRealPath) continue;
     const entries = await fs.promises.readdir(rootRealPath, { withFileTypes: true });
@@ -141,6 +197,9 @@ async function loadProductSkills(roots: string[]): Promise<Map<string, ProductSk
         path: skillPath,
         logoPath,
         logoDarkPath,
+        source: configuredRoot.source,
+        sourceId: configuredRoot.sourceId,
+        sourceLabel: configuredRoot.sourceLabel,
         packageDir,
         content,
         version: optionalString(metadata.version),
@@ -158,6 +217,23 @@ async function loadProductSkills(roots: string[]): Promise<Map<string, ProductSk
     }
   }
   return skills;
+}
+
+function normalizeProductSkillRoot(root: string | ProductSkillRoot): Required<ProductSkillRoot> {
+  if (typeof root === 'string') {
+    return {
+      path: root,
+      source: 'external',
+      sourceId: '',
+      sourceLabel: '',
+    };
+  }
+  return {
+    path: root.path,
+    source: root.source,
+    sourceId: root.sourceId?.trim() ?? '',
+    sourceLabel: root.sourceLabel?.trim() ?? '',
+  };
 }
 
 const skillLogoNames = [
@@ -285,6 +361,24 @@ async function legacyCatalogSkillNames(catalogPath: string): Promise<string[]> {
     }))];
   } catch {
     return [];
+  }
+}
+
+async function persistLegacyMigrationMarker(
+  markerPath: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const temporary = `${markerPath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.promises.writeFile(temporary, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+    await fs.promises.rename(temporary, markerPath);
+  } catch (error) {
+    await fs.promises.rm(temporary, { force: true }).catch(() => undefined);
+    if (await pathExists(markerPath)) return;
+    throw error;
   }
 }
 

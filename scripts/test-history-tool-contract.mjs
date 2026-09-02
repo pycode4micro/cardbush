@@ -277,7 +277,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /className="topbar-inspector-action"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
+  /className="topbar-inspector-action icon-only"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
   'The top-bar review button must not forward its React click event as a file path.',
 );
 assert.match(
@@ -317,8 +317,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /onOpenChangeReview=\{onOpenChangeReview\}/,
-  'Chat messages must receive the existing right-side review action',
+  /const openChangeReview = useCallback\(\(filePath\?: string\) => \{[\s\S]*?onOpenChangeReview\(filePath\);[\s\S]*?onOpenChangeReview=\{openChangeReview\}/,
+  'Chat messages must receive the guarded right-side review action',
 );
 assert.match(
   bubbleSource,
@@ -795,6 +795,16 @@ assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(reports\)/);
 assert.match(sidebarReviewSource, /new Set\(reviewGroups\[0\] \? \[reviewGroups\[0\]\.id\]/);
 assert.match(sidebarReviewSource, /className="change-review-group-toggle"[\s\S]*?aria-expanded=\{expanded\}/);
 assert.match(sidebarReviewSource, /initialFilePath[\s\S]*?setSelectedKey\(item\.key\)/);
+assert.match(
+  sidebarReviewSource,
+  /<FileTypeIcon path=\{selectedItem\.file\.path\} \/>/,
+  'The selected review file must use the shared extension-aware file icon',
+);
+assert.match(
+  sidebarReviewSource,
+  /<FileTypeIcon path=\{item\.file\.path\} \/>/,
+  'Review navigation entries must use the shared extension-aware file icon',
+);
 assert.match(
   appSource,
   /if \(changeReviewReports\.length === 0\) return null;[\s\S]*?id: changeReviewConversationId/,

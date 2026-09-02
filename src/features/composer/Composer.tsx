@@ -34,7 +34,6 @@ import {
   Sparkles,
   Square,
   Target,
-  Terminal,
   Trash2,
   Unlock,
   UsersRound,
@@ -345,7 +344,6 @@ export function Composer({
   visualInputAvailable,
   visualInputEnabled,
   gitAvailable = false,
-  terminalAvailable = false,
   activeProjectDir,
   projectContext = '',
   onQuickLoad,
@@ -355,7 +353,6 @@ export function Composer({
   onRemoveQueuedMessage,
   onConfigureModels,
   onCreateConversation,
-  onOpenTerminalConsole,
   onToggleSkill,
   onVisualInputEnabledChange,
   shadowActive = false,
@@ -399,7 +396,6 @@ export function Composer({
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
   gitAvailable?: boolean;
-  terminalAvailable?: boolean;
   activeProjectDir?: string;
   projectContext?: string;
   onQuickLoad?: (payload: QuickLoadPayload) => void;
@@ -409,7 +405,6 @@ export function Composer({
   onRemoveQueuedMessage?: (queuedId: string) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
-  onOpenTerminalConsole?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
   shadowActive?: boolean;
@@ -1411,16 +1406,6 @@ export function Composer({
               <span>{modelLabel}</span>
               <ChevronDown size={15} />
             </button>
-            {terminalAvailable && onOpenTerminalConsole && (
-              <button
-                className="tool-chip terminal-chip"
-                type="button"
-                title={language === 'zh' ? '终端控制台' : 'Terminal console'}
-                onClick={() => onOpenTerminalConsole()}
-              >
-                <Terminal size={15} />
-              </button>
-            )}
             <button
               className={`send-button ${sending && hasContent ? guidanceDeliveryMode : ''} ${stopping ? 'stopping' : ''}`}
               type="button"

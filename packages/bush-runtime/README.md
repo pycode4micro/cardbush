@@ -24,9 +24,10 @@ event; model context then projects that Turn as one internal semantic summary,
 while history replay, audit and Fork continue to read the original message and
 Tool facts. Tool call/result adjacency is validated mechanically.
 
-`checkpoint_context` is always present in the stable Tool schema. At 85% of the
-usable input budget Runtime emits one optional internal pressure notice; at 95%
-it temporarily requires that Tool before normal work can continue. One atomic
+`checkpoint_context` is always present in the stable Tool schema and Runtime
+never narrows the Tool list for a compaction round. The model must not invoke it
+proactively. At 95% of the usable input budget Runtime appends one explicit
+internal user-role instruction requiring it before normal work can continue. One atomic
 checkpoint must summarize every still-unsummarized preceding Turn in order and
 never summarizes the active Turn. If fully summarized context later still
 reaches 95%, projection keeps the newest 20 summaries and drops older summaries

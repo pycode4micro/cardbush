@@ -261,8 +261,13 @@ assert.equal(persistedGuidanceProjection[2].metadata.turn_guidance, true);
 assert.equal(persistedGuidanceProjection[2].metadata.guidance_delivery, 'sent');
 assert.equal(
   persistedGuidanceProjection[3].metadata.cardbush_turn_duration_ms,
+  84_000,
+  'the final reply must retain whole-turn timing from the original user bubble to done',
+);
+assert.equal(
+  persistedGuidanceProjection[3].metadata.cardbush_segment_duration_ms,
   3746,
-  'the post-guidance reply must use guidance-segment timing instead of whole-turn timing',
+  'the post-guidance reply must preserve its own segment timing separately',
 );
 assert.deepEqual(
   plain(normalizeChatMessagesForDisplay(persistedGuidanceProjection).map(

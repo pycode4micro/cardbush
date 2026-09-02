@@ -1624,6 +1624,22 @@ body.sidebar-resizing .sidebar-resizer {
   opacity: 0.38;
 }
 
+.project-block.missing .project-row-icon,
+.project-block.missing .project-title {
+  opacity: 0.46;
+}
+
+.project-block.missing .project-title span {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.topbar-inspector-action.icon-only {
+  width: 32px;
+  padding: 0;
+  gap: 0;
+}
+
 .right-inspector {
   position: relative;
   z-index: 8;
@@ -1755,18 +1771,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 .right-inspector-toolbar > button.active {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-.right-inspector-summary {
-  padding: 9px 13px;
-  overflow-wrap: anywhere;
-  color: var(--text-mid);
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  border-bottom: 1px solid var(--border);
-  font-size: 11.5px;
-  line-height: 1.5;
-  transform-origin: top center;
-  animation: inspector-summary-reveal 150ms ease-out both;
 }
 
 .right-inspector-tabs {
@@ -1941,17 +1945,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-@keyframes inspector-summary-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .right-inspector-body {
@@ -2667,16 +2660,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .native-chevron-icon {
   color: color-mix(in srgb, var(--text-soft) 86%, transparent);
-}
-
-.native-refresh-square {
-  color: var(--text-soft);
-  background: transparent;
-}
-
-.native-refresh-square:hover:not(:disabled) {
-  color: var(--text);
-  background: color-mix(in srgb, gray 16%, transparent);
 }
 
 .topbar-pill:disabled {
@@ -9580,7 +9563,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 @media (prefers-reduced-motion: reduce) {
   .right-inspector,
-  .right-inspector-summary,
   .conversation-work-summary {
     animation: none;
   }
@@ -11057,10 +11039,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .reference-plan-toggle svg {
   flex: 0 0 auto;
-}
-
-.terminal-chip {
-  display: none;
 }
 
 .model-select {
@@ -12716,442 +12694,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 .token-stat strong {
   font-size: 14px;
 }
-
-.console-dock {
-  flex: 0 0 auto;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-}
-
-.console-dock.terminal {
-  background: #15130f;
-}
-
-.console-header {
-  height: 36px;
-  padding: 0 10px 0 12px;
-  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-}
-
-.console-dock.terminal .console-header {
-  color: #f2ece0;
-  background: #1a1813;
-  border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-.console-header strong {
-  font-size: 13px;
-}
-
-.console-header span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-soft);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.console-content {
-  margin: 0;
-  padding: 10px 18px 12px;
-}
-
-.console-content.git {
-  display: grid;
-  gap: 7px;
-  max-height: 260px;
-  overflow: auto;
-  scrollbar-width: thin;
-}
-
-.console-content.terminal {
-  min-height: 188px;
-  max-height: 320px;
-  overflow: auto;
-  color: #f2ece0;
-  background: #15130f;
-  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
-  font-size: 12.5px;
-  line-height: 1.5;
-  scrollbar-width: thin;
-}
-
-.console-content.terminal.native-terminal-shell {
-  height: 260px;
-  min-height: 260px;
-  max-height: 360px;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  background: #111111;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.native-terminal-tabs {
-  flex: 0 0 38px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
-  overflow-x: auto;
-  background: #111111;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
-  scrollbar-width: thin;
-}
-
-.native-terminal-tab {
-  flex: 0 0 auto;
-  min-width: 108px;
-  max-width: 260px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: rgba(243, 243, 243, 0.72);
-  background: transparent;
-  border-radius: 9px;
-}
-
-.native-terminal-tab.active {
-  color: #f3f3f3;
-  background: #242424;
-}
-
-.native-terminal-tab-select {
-  width: auto !important;
-  min-width: 0;
-  flex: 1;
-  gap: 7px;
-  justify-content: flex-start !important;
-  padding: 0 2px 0 9px;
-  color: inherit !important;
-}
-
-.native-terminal-tab-select span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.native-terminal-tabs button {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(243, 243, 243, 0.56);
-  background: transparent;
-  border-radius: 8px;
-}
-
-.native-terminal-tabs button:hover {
-  color: #f3f3f3;
-  background: rgba(255, 255, 255, 0.075);
-}
-
-.native-terminal-tab-close {
-  width: 22px !important;
-  height: 22px !important;
-  flex: 0 0 22px;
-  opacity: 0.62;
-}
-
-.native-terminal-tab-close:hover {
-  opacity: 1;
-}
-
-.native-terminal-add {
-  flex: 0 0 28px;
-}
-
-.native-terminal-session {
-  display: none;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.native-terminal-session.active {
-  display: flex;
-}
-
-.native-terminal-empty {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: rgba(243, 243, 243, 0.6);
-  background: #111111;
-  border-radius: 0;
-}
-
-.native-terminal-empty:hover {
-  color: #f3f3f3;
-  background: #151515;
-}
-
-.native-terminal-viewport {
-  flex: 1;
-  min-height: 0;
-  padding: 8px 10px 10px;
-  background: #111111;
-}
-
-.native-terminal-viewport .xterm {
-  height: 100%;
-  padding: 0;
-}
-
-.native-terminal-viewport .xterm-viewport {
-  scrollbar-width: thin;
-}
-
-.native-terminal-viewport .xterm-screen {
-  min-height: 100%;
-}
-
-.native-terminal-status {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  color: rgba(243, 243, 243, 0.62);
-  background: #111111;
-  border-top: 1px solid rgba(255, 255, 255, 0.045);
-  font-size: 12px;
-}
-
-.console-row {
-  display: grid;
-  grid-template-columns: 82px 1fr;
-  gap: 10px;
-  align-items: center;
-}
-
-.console-row span {
-  color: var(--text-soft);
-  font-size: 12px;
-}
-
-.console-row code {
-  overflow: hidden;
-  color: var(--text);
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 12.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.console-empty {
-  margin: 3px 0;
-  color: var(--text-soft);
-  font-size: 12.5px;
-}
-
-.console-error {
-  margin: 3px 0;
-  color: var(--danger);
-  font-size: 12.5px;
-  line-height: 1.4;
-}
-
-.git-actions {
-  display: grid;
-  gap: 8px;
-  padding: 10px 0 8px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
-}
-
-.git-action-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.git-action-row input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  color: var(--text);
-  background: var(--surface-strong);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-}
-
-.git-action-row button {
-  flex: 0 0 auto;
-}
-
-.git-action-output {
-  overflow: auto;
-  max-height: 86px;
-  margin: 0;
-  padding: 8px 10px;
-  color: var(--text-mid);
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
-  border-radius: 8px;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.git-file-list {
-  display: grid;
-  gap: 4px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 54%, transparent);
-}
-
-.git-file-row {
-  min-height: 28px;
-  display: grid;
-  grid-template-columns: 34px 1fr;
-  align-items: center;
-  gap: 9px;
-  color: var(--text-mid);
-  font-size: 12.5px;
-}
-
-.git-file-row code {
-  justify-self: start;
-  min-width: 26px;
-  padding: 2px 5px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-radius: 5px;
-  text-align: center;
-}
-
-.git-file-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-form {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-bottom: 9px;
-  background: #15130f;
-}
-
-.terminal-prompt {
-  flex: 0 1 auto;
-  max-width: 210px;
-  overflow: hidden;
-  color: #a6e3b6;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-input {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  padding: 0 9px;
-  color: #f2ece0;
-  background: rgba(255, 255, 255, 0.055);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  font: inherit;
-}
-
-.terminal-input:focus {
-  border-color: rgba(166, 227, 182, 0.55);
-  outline: none;
-}
-
-.terminal-run {
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #15130f;
-  background: #f2ece0;
-  border-radius: 8px;
-}
-
-.terminal-run:disabled {
-  opacity: 0.58;
-}
-
-.terminal-run svg {
-  flex: 0 0 auto;
-}
-
-.terminal-run:disabled svg {
-  animation: cardbush-spin 900ms linear infinite;
-}
-
-.terminal-error {
-  margin: 0 0 8px;
-  color: #ff9d9d;
-}
-
-.terminal-log {
-  display: grid;
-  gap: 10px;
-}
-
-.terminal-empty {
-  margin: 2px 0;
-  color: rgba(242, 236, 224, 0.58);
-}
-
-.terminal-entry {
-  display: grid;
-  gap: 6px;
-  padding: 9px 10px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  border-radius: 10px;
-}
-
-.terminal-entry-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.terminal-entry-head code {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: #a6e3b6;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-entry-head span {
-  flex: 0 0 auto;
-  color: rgba(242, 236, 224, 0.58);
-}
-
-.terminal-entry pre {
-  max-height: 180px;
-  overflow: auto;
-  margin: 0;
-  color: #f2ece0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.terminal-entry pre.terminal-stderr {
-  color: #ffb4b4;
-}
-
 .feature-content,
 .settings-content {
   flex: 1;
@@ -20219,6 +19761,164 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: rgba(0, 0, 0, 0.28);
 }
 
+.project-rename-backdrop {
+  z-index: 64;
+  background: rgba(0, 0, 0, 0.34);
+}
+
+.project-rename-dialog {
+  width: min(440px, calc(100vw - 48px));
+  overflow: hidden;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 98%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 14px;
+  box-shadow: 0 20px 48px color-mix(in srgb, var(--shadow) 170%, transparent);
+}
+
+.project-rename-dialog > header {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+}
+
+.project-rename-dialog > header > svg {
+  color: var(--text-soft);
+}
+
+.project-rename-dialog > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.project-rename-dialog > header strong,
+.project-rename-dialog > header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-rename-dialog > header strong {
+  font-size: 13.5px;
+}
+
+.project-rename-dialog > header span {
+  color: var(--text-soft);
+  font-size: 10.5px;
+}
+
+.project-rename-dialog > header button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+  background: transparent;
+  border-radius: 8px;
+}
+
+.project-rename-dialog > label {
+  display: grid;
+  gap: 7px;
+  padding: 16px 16px 10px;
+}
+
+.project-rename-dialog > label > span {
+  color: var(--text-mid);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.project-rename-dialog input {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+}
+
+.project-rename-dialog input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 13%, transparent);
+}
+
+.project-rename-dialog input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.project-rename-dialog label small {
+  color: var(--danger);
+  font-size: 10.5px;
+}
+
+.project-rename-path {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 16px;
+  color: var(--text-soft);
+  font-size: 10.5px;
+}
+
+.project-rename-path svg {
+  flex: 0 0 auto;
+}
+
+.project-rename-path span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-rename-dialog > .project-rename-folder-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 0;
+  color: var(--text-mid);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.project-rename-dialog > .project-rename-folder-option input {
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.project-rename-error {
+  margin: 10px 16px 0;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.project-rename-dialog > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px;
+}
+
+.project-rename-dialog > footer button {
+  min-width: 78px;
+  height: 32px;
+}
+
 .image-preview-backdrop {
   z-index: 62;
   padding: 28px;
@@ -21148,6 +20848,19 @@ body.change-review-resizing {
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.change-review-diff-pane > header > .local-file-type-icon,
+.change-review-file-item > .local-file-type-icon {
+  width: 15px;
+  height: 15px;
+  justify-self: center;
+}
+
+.change-review-diff-pane > header > .local-file-type-icon svg,
+.change-review-file-item > .local-file-type-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 .change-review-diff-pane > header strong,

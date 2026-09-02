@@ -296,6 +296,12 @@ const desktopApi = {
     ipcRenderer.invoke('project:validate-roots', rootPaths) as Promise<
       Array<{ rootPath: string; resolvedPath: string; exists: boolean }>
     >,
+  renameProjectDirectory: (input: { rootPath: string; name: string }) =>
+    ipcRenderer.invoke('project:rename-directory', input) as Promise<{
+      previousPath: string;
+      nextPath: string;
+      changed: boolean;
+    }>,
   searchProjectFiles: (rootPath: string, query: string) =>
     ipcRenderer.invoke('project:search-files', rootPath, query) as Promise<
       Array<{ name: string; path: string; relativePath: string; kind: 'file' | 'folder' }>

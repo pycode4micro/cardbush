@@ -331,6 +331,7 @@ export interface ConversationSummary {
   title: string;
   preview: string;
   updatedAt: string;
+  projectId?: string;
   projectDir?: string;
   metadata?: Record<string, unknown>;
   workspaceContext?: WorkspaceContext;
@@ -359,6 +360,7 @@ export interface ProjectItem {
   id: string;
   title: string;
   rootPath: string;
+  missing?: boolean;
   pinned?: boolean;
   archived?: boolean;
   branch?: string;
@@ -717,6 +719,9 @@ export interface SkillSummary {
   path: string;
   logoPath?: string;
   logoDarkPath?: string;
+  source?: 'bundled' | 'user' | 'plugin' | 'external';
+  sourceId?: string;
+  sourceLabel?: string;
 }
 
 export interface RuntimeStartupStatus {

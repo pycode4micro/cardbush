@@ -65,6 +65,10 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
     "fixed-prefix",
     "first",
   ]);
+  assert.deepEqual(
+    observedRequests[0].tools.map((tool) => tool.name),
+    ["checkpoint_context"],
+  );
   assert.deepEqual(observedRequests[1].messages.map((message) => message.content), [
     "fixed-prefix",
     "first",
@@ -77,7 +81,9 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   });
   assert.equal(snapshot.turns.length, 2);
   assert.equal(snapshot.turns[0].usage.inputTokens, 10);
+  assert.equal(snapshot.turns[0].usage.lastRequestInputTokens, 10);
   assert.equal(snapshot.turns[1].usage.cachedInputTokens, 10);
+  assert.equal(snapshot.turns[1].usage.lastRequestCachedInputTokens, 10);
   assert.equal(snapshot.turns[0].cacheChainState.requestOrdinal, 1);
   assert.equal(snapshot.turns[1].cacheChainState.requestOrdinal, 2);
   assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 4);
@@ -344,12 +350,16 @@ test("forces atomic context compaction and resumes the same active Turn", async 
         yield event(request.requestId, 0, "response_started");
         if (call === 1) {
           yield event(request.requestId, 1, "text_delta", { delta: "first complete" });
-          yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+          yield event(request.requestId, 2, "usage", {
+            inputTokens: 60,
+            outputTokens: 4,
+            cachedInputTokens: 20,
+          });
+          yield event(request.requestId, 3, "response_completed", { finishReason: "stop" });
           return;
         }
         if (
-          request.tools.length === 1 &&
-          request.tools[0]?.name === "checkpoint_context" &&
+          request.tools.some((tool) => tool.name === "checkpoint_context") &&
           request.messages.some((message) => message.name === "context_pressure")
         ) {
           const argumentsText = JSON.stringify({
@@ -365,11 +375,21 @@ test("forces atomic context compaction and resumes the same active Turn", async 
             nameDelta: "checkpoint_context",
             argumentsDelta: argumentsText,
           });
-          yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          yield event(request.requestId, 2, "usage", {
+            inputTokens: 90,
+            outputTokens: 8,
+            cachedInputTokens: 50,
+          });
+          yield event(request.requestId, 3, "response_completed", { finishReason: "tool_calls" });
           return;
         }
         yield event(request.requestId, 1, "text_delta", { delta: "second complete" });
-        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+        yield event(request.requestId, 2, "usage", {
+          inputTokens: 110,
+          outputTokens: 5,
+          cachedInputTokens: 80,
+        });
+        yield event(request.requestId, 3, "response_completed", { finishReason: "stop" });
       },
     },
     sessionNow: () => NOW,
@@ -392,13 +412,20 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     "user_compact_2",
     "continue",
   );
-  second.tools = [checkpointToolDefinition()];
+  second.tools = [ordinaryToolDefinition()];
   second.maxOutputTokens = 1000;
   second.metadata = { contextWindowTokens: 4000 };
   await host.runSessionTurn(second);
 
   assert.equal(observedRequests.length, 3);
-  assert.deepEqual(observedRequests[1].tools.map((tool) => tool.name), ["checkpoint_context"]);
+  assert.deepEqual(
+    observedRequests[1].tools.map((tool) => tool.name),
+    ["ordinary_tool", "checkpoint_context"],
+  );
+  assert.deepEqual(
+    observedRequests[2].tools.map((tool) => tool.name),
+    ["ordinary_tool", "checkpoint_context"],
+  );
   assert.match(
     observedRequests[2].messages.find((message) => message.name === "turn_context_summary")?.content ?? "",
     /large prior payload/,
@@ -410,6 +437,9 @@ test("forces atomic context compaction and resumes the same active Turn", async 
   assert.match(snapshot.turns[0].contextSummary, /large prior payload/);
   assert.equal(snapshot.turns[0].messages[0].message.content.length, 20_000);
   assert.equal(snapshot.turns[1].messages.length, 2);
+  assert.equal(snapshot.turns[1].usage.inputTokens, 200);
+  assert.equal(snapshot.turns[1].usage.lastRequestInputTokens, 110);
+  assert.equal(snapshot.turns[1].usage.lastRequestCachedInputTokens, 80);
   assert.equal(
     snapshot.turns[1].messages.some((message) =>
       message.message.role === "assistant" &&
@@ -420,6 +450,84 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     host.events("session_1", "turn_compact_2")
       .filter((event) => event.kind === "assistant_segment_started").length,
     1,
+  );
+});
+
+test("keeps checkpoint_context visible but rejects proactive compaction below 95 percent", async () => {
+  const observedRequests = [];
+  let call = 0;
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async *stream(request) {
+        observedRequests.push(structuredClone(request));
+        call += 1;
+        yield event(request.requestId, 0, "response_started");
+        if (call === 2) {
+          yield event(request.requestId, 1, "tool_call_delta", {
+            index: 0,
+            toolCallId: "call_proactive_checkpoint",
+            nameDelta: "checkpoint_context",
+            argumentsDelta: JSON.stringify({
+              session_revision: 2,
+              summaries: [{ turn_id: "turn_proactive_1", summary: "Should be rejected." }],
+            }),
+          });
+          yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          return;
+        }
+        yield event(request.requestId, 1, "text_delta", {
+          delta: call === 1 ? "first complete" : "continued without compaction",
+        });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+    projectorOptions: {
+      createMessageId: counter("assistant_proactive"),
+      createSegmentId: counter("segment_proactive"),
+    },
+  });
+
+  await host.runSessionTurn(sessionRequest(
+    "request_proactive_1",
+    "turn_proactive_1",
+    "user_proactive_1",
+    "x".repeat(9_000),
+  ));
+  const second = sessionRequest(
+    "request_proactive_2",
+    "turn_proactive_2",
+    "user_proactive_2",
+    "continue",
+  );
+  second.maxOutputTokens = 1000;
+  second.metadata = { contextWindowTokens: 4000 };
+  const terminal = await host.runSessionTurn(second);
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(observedRequests.length, 3);
+  assert.ok(observedRequests.every((request) =>
+    request.tools.some((tool) => tool.name === "checkpoint_context")));
+  assert.equal(
+    observedRequests[1].messages.some((message) => message.name === "context_pressure"),
+    false,
+  );
+  assert.match(
+    observedRequests[2].messages.find((message) =>
+      message.name === "context_compaction_correction")?.content ?? "",
+    /do not call checkpoint_context proactively/,
+  );
+  const snapshot = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1" },
+  });
+  assert.equal(snapshot.turns[0].contextSummary, undefined);
+  assert.equal(
+    snapshot.turns[1].messages.some((message) =>
+      message.message.role === "assistant" &&
+      message.message.toolCalls.some((toolCall) => toolCall.name === "checkpoint_context")),
+    false,
   );
 });
 
@@ -448,18 +556,11 @@ function event(requestId, sequence, kind, payload = {}) {
   };
 }
 
-function checkpointToolDefinition() {
+function ordinaryToolDefinition() {
   return {
-    name: "checkpoint_context",
-    description: "Checkpoint context.",
-    inputSchema: {
-      type: "object",
-      required: ["session_revision", "summaries"],
-      properties: {
-        session_revision: { type: "integer" },
-        summaries: { type: "array" },
-      },
-    },
+    name: "ordinary_tool",
+    description: "An ordinary Tool that must remain in the stable schema.",
+    inputSchema: { type: "object", properties: {} },
   };
 }
 

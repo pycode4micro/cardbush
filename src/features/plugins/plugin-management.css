@@ -308,6 +308,94 @@
 .plugin-featured-main strong { font-size: 15px; }
 .plugin-featured-main small { color: var(--text-soft); font-size: 12.5px; }
 
+.skill-card-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-card-title strong {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.skill-card-title em {
+  max-width: 132px;
+  flex: 0 1 auto;
+  overflow: hidden;
+  padding: 2px 6px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-style: normal;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-plugin-group {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.skill-plugin-group-header {
+  width: 100%;
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+
+.skill-plugin-group-header > strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-plugin-group-header > svg {
+  color: var(--text-soft);
+  transition: transform 160ms ease;
+}
+
+.skill-plugin-group.expanded .skill-plugin-group-header > svg {
+  transform: rotate(90deg);
+}
+
+.skill-plugin-group-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+  border-radius: 12px;
+}
+
+.skill-plugin-group-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 56px;
+  padding: 0 0 8px 56px;
+  animation: skill-plugin-group-enter 140ms ease-out;
+}
+
+@keyframes skill-plugin-group-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .plugin-install-button,
 .plugin-detail-primary {
   min-height: 32px;
@@ -458,6 +546,7 @@
 @media (max-width: 760px) {
   .plugin-featured-grid,
   .skill-catalog-grid { grid-template-columns: 1fr; }
+  .skill-plugin-group-grid { grid-template-columns: 1fr; padding-left: 0; }
   .plugin-hub-toolbar { align-items: flex-start; }
   .plugin-prompt-showcase { padding: 24px 16px; }
   .plugin-info-row { grid-template-columns: 110px minmax(0, 1fr); }

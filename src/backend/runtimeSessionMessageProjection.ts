@@ -63,6 +63,7 @@ export function projectRuntimeTurnMessages(
   let assistantSegmentIndex = 0;
   let segmentStartedAt = turn.createdAt;
   const lastAssistantIndex = findLastAssistantIndex(turn.messages);
+  const turnStartedAt = visibleTurnUserStartedAt(turn) ?? turn.createdAt;
 
   return turn.messages.map((message, index) => {
     const next = turn.messages[index + 1];
@@ -105,21 +106,31 @@ export function projectRuntimeTurnMessages(
         metadata.next_assistant_segment_index = assistantSegmentIndex + 1;
       }
 
-      const startedAt = isRuntimeGuidanceMessage(previous)
+      const segmentStart = isRuntimeGuidanceMessage(previous)
         ? previous.createdAt
         : segmentStartedAt;
-      const completedAt = isGuidanceBoundary
+      const segmentCompletedAt = isGuidanceBoundary
         ? message.createdAt
         : index === lastAssistantIndex
           ? turn.completedAt
           : message.createdAt;
+      const segmentDurationMs = timestampDuration(segmentStart, segmentCompletedAt);
+      metadata.cardbush_segment_started_at = segmentStart;
+      metadata.cardbush_segment_completed_at = segmentCompletedAt;
+      if (segmentDurationMs != null) {
+        metadata.cardbush_segment_duration_ms = segmentDurationMs;
+      }
+
+      const isFinalAssistant = index === lastAssistantIndex;
+      const startedAt = isFinalAssistant ? turnStartedAt : segmentStart;
+      const completedAt = isFinalAssistant ? turn.completedAt : segmentCompletedAt;
       const durationMs = timestampDuration(startedAt, completedAt);
       metadata.cardbush_turn_started_at = startedAt;
       metadata.cardbush_turn_completed_at = completedAt;
       if (durationMs != null) {
         metadata.cardbush_turn_duration_ms = durationMs;
       }
-      segmentStartedAt = completedAt;
+      segmentStartedAt = segmentCompletedAt;
     }
 
     return {
@@ -161,6 +172,14 @@ export function projectRuntimeSessionMessage(
       : {}),
     ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
   };
+}
+
+function visibleTurnUserStartedAt(turn: RuntimeCommittedTurn) {
+  return turn.messages.find((message) =>
+    message.message.role === 'user' &&
+    message.message.visibility !== 'internal' &&
+    !isRuntimeGuidanceMessage(message)
+  )?.createdAt;
 }
 
 function runtimeMessageAttachments(

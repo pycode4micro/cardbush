@@ -29,7 +29,6 @@ import {
   Search,
   Settings2,
   Sparkles,
-  Terminal,
   X,
 } from 'lucide-react';
 import {
@@ -128,15 +127,18 @@ import {
   type QuickLoadPayload,
 } from './features/composer';
 import {
-  ConsoleDock,
-  type ConsoleMode,
-} from './features/console';
-import {
   changeRootForConversation,
   conversationProjectDir as conversationProjectRoot,
   conversationWorkspaceRoot,
   isOnlyTalkConversation,
 } from './features/conversationWorkspace';
+import {
+  conversationMatchesScope,
+  conversationProjectId,
+  conversationProjectPathAliases,
+  firstConversationInScope,
+  type ConversationScope,
+} from './features/conversationScope';
 import {
   ChatSidebar,
   ConversationChangeDialog,
@@ -437,13 +439,13 @@ function CardbushApp() {
     useState<SettingsSection>('profile');
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
+  const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectItem | null>(null);
   const [recentProjectDir, setRecentProjectDir] = useState(
     () => window.localStorage.getItem(recentProjectStorageKey)?.trim() ?? '',
   );
   const [onlyTalkMode, setOnlyTalkMode] = useState(
     () => window.localStorage.getItem(onlyTalkModeStorageKey) === 'true',
   );
-  const onlyTalkModeSyncedRef = useRef(false);
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [osWallpaperSource, setOsWallpaperSource] = useState('');
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
@@ -710,14 +712,15 @@ function CardbushApp() {
     backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const reasoningTraceVisible =
     backendCapabilities.reasoningStream && appSettings.thinking.visible;
-  const fallbackProjectDir = useMemo(() => {
-    const available = projectItems.filter((project) => !project.archived);
+  const fallbackProject = useMemo(() => {
+    const available = projectItems.filter((project) => !project.archived && !project.missing);
     return (
-      available.find((project) => samePath(project.rootPath, recentProjectDir))?.rootPath.trim() ||
-      available[0]?.rootPath.trim() ||
-      ''
+      available.find((project) => samePath(project.rootPath, recentProjectDir)) ??
+      available[0]
     );
   }, [projectItems, recentProjectDir]);
+  const fallbackProjectDir = fallbackProject?.rootPath.trim() ?? '';
+  const fallbackProjectId = fallbackProject?.id.trim() ?? '';
   const teamWorkspace = useTeamWorkspaceState();
   useEffect(() => {
     void loadTeamWorkspace().catch(() => undefined);
@@ -740,6 +743,7 @@ function CardbushApp() {
     defaultReasoningLevel: backendCapabilities.defaultReasoningLevel,
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
+    defaultProjectId: onlyTalkMode ? '' : fallbackProjectId,
     defaultProjectDir: onlyTalkMode ? '' : fallbackProjectDir,
   });
   const refreshBackendAndActiveSession = useCallback(
@@ -875,7 +879,9 @@ function CardbushApp() {
   const conversationProjectDir = conversationWorkspaceRoot(chat.activeConversation);
   const activeProjectDir =
     conversationProjectDir ||
-    (!chat.activeConversation ? fallbackProjectDir || undefined : undefined);
+    (!onlyTalkMode && !chat.activeConversation
+      ? fallbackProjectDir || undefined
+      : undefined);
 
   const rememberRecentProject = useCallback((projectDir: string) => {
     const normalized = projectDir.trim();
@@ -913,7 +919,6 @@ function CardbushApp() {
   >({});
   const [workSummaryInspector, setWorkSummaryInspector] =
     useState<WorkSummaryInspectorDetail | null>(null);
-  const [inspectorSummaryOpen, setInspectorSummaryOpen] = useState(false);
   const [inspectorWidth, setInspectorWidthState] = useState(() => {
     const stored = Number.parseFloat(window.localStorage.getItem('cardbush.inspector_width') ?? '');
     return Number.isFinite(stored) ? Math.min(900, Math.max(380, stored)) : 620;
@@ -960,7 +965,6 @@ function CardbushApp() {
     setInspectorTarget(normalizedDetail);
     setWorkSummaryInspector(null);
     setChangeReviewConversationId('');
-    setInspectorSummaryOpen(false);
   }, []);
   const changeReportsByConversation = useMemo(
     () =>
@@ -1009,6 +1013,13 @@ function CardbushApp() {
       inspectorTarget ||
       workSummaryInspector,
   );
+  const closeInspector = useCallback(() => {
+    setInspectorTarget(null);
+    setWorkSummaryInspector(null);
+    setChangeReviewFilePath('');
+    setChangeReviewConversationId('');
+    setChangeReviewNotice('');
+  }, []);
   const [retainedInspectorContent, setRetainedInspectorContent] = useState<{
     target: InspectorOpenDetail | null;
     workSummary: WorkSummaryInspectorDetail | null;
@@ -1060,7 +1071,6 @@ function CardbushApp() {
     setInspectorTarget(tab);
     setWorkSummaryInspector(null);
     setChangeReviewConversationId('');
-    setInspectorSummaryOpen(false);
   };
   const closeInspectorTab = (target: string) => {
     const closingIdentity = inspectorTargetIdentity(target);
@@ -1083,7 +1093,6 @@ function CardbushApp() {
       setInspectorTarget(
         remaining[Math.min(closingIndex, remaining.length - 1)] ?? null,
       );
-      setInspectorSummaryOpen(false);
     }
   };
   const updateInspectorNavigation = useCallback((
@@ -1199,7 +1208,6 @@ function CardbushApp() {
       setWorkSummaryInspector(detail);
       setInspectorTarget(null);
       setChangeReviewConversationId('');
-      setInspectorSummaryOpen(false);
     };
     window.addEventListener(
       OPEN_WORK_SUMMARY_INSPECTOR_EVENT,
@@ -1338,18 +1346,17 @@ function CardbushApp() {
         if (disposed) {
           return;
         }
-        const missingRoots = statuses
-          .filter((status) => !status.exists)
-          .map((status) => status.rootPath);
-        if (missingRoots.length === 0) {
-          return;
-        }
         setProjectItems((current) => {
-          const next = current.filter(
-            (project) =>
-              !missingRoots.some((rootPath) => samePath(rootPath, project.rootPath)),
-          );
-          return next.length === current.length ? current : next;
+          let changed = false;
+          const next = current.map((project) => {
+            const status = statuses.find((candidate) =>
+              samePath(candidate.rootPath, project.rootPath),
+            );
+            if (!status || project.missing === !status.exists) return project;
+            changed = true;
+            return { ...project, missing: !status.exists };
+          });
+          return changed ? next : current;
         });
       } catch {
         // Keep saved projects when the desktop bridge is temporarily unavailable.
@@ -1505,75 +1512,127 @@ function CardbushApp() {
 
   const createConversation = useCallback(
     (projectDir?: string | null) => {
+      const activeProject = activeConversationProjectDir
+        ? projectItems.find((project) =>
+            !project.archived &&
+            !project.missing &&
+            samePath(project.rootPath, activeConversationProjectDir),
+          )
+        : undefined;
       const resolvedProjectDir = projectDir === undefined
-        ? fallbackProjectDir || undefined
+        ? activeProject?.rootPath.trim() || fallbackProjectDir || undefined
         : projectDir?.trim() || undefined;
+      const resolvedProjectId = resolvedProjectDir
+        ? projectItems.find((project) => samePath(project.rootPath, resolvedProjectDir))?.id
+        : undefined;
+      if (!onlyTalkMode && !resolvedProjectDir) {
+        setSection('chat');
+        chat.clearConversationSelection();
+        return;
+      }
       if (resolvedProjectDir) rememberRecentProject(resolvedProjectDir);
       setSection('chat');
-      void chat.startConversation(resolvedProjectDir);
+      chat.prepareConversation(resolvedProjectDir, undefined, resolvedProjectId);
     },
-    [chat, fallbackProjectDir, rememberRecentProject],
+    [
+      activeConversationProjectDir,
+      chat,
+      fallbackProjectDir,
+      onlyTalkMode,
+      projectItems,
+      rememberRecentProject,
+    ],
   );
 
   const changeOnlyTalkMode = useCallback((enabled: boolean) => {
-    onlyTalkModeSyncedRef.current = enabled;
     setOnlyTalkMode(enabled);
     window.localStorage.setItem(onlyTalkModeStorageKey, String(enabled));
     setSection('chat');
-    if (enabled) {
-      const recentTaskConversation = chat.conversations.find(isOnlyTalkConversation);
-      if (recentTaskConversation) {
-        chat.openConversation(recentTaskConversation.id);
-      } else {
-        chat.clearConversationSelection();
-      }
-      return;
-    }
-    if (!fallbackProjectDir) {
-      chat.clearConversationSelection();
-      return;
-    }
-    const recentProjectConversation = chat.conversations.find((conversation) => {
-      const projectDir = conversationProjectRoot(conversation);
-      return Boolean(projectDir && samePath(projectDir, fallbackProjectDir));
-    });
-    if (recentProjectConversation) {
-      chat.openConversation(recentProjectConversation.id);
-    } else {
-      chat.clearConversationSelection();
-    }
-  }, [chat, fallbackProjectDir]);
+    chat.clearConversationSelection();
+  }, [chat]);
+
+  const openConversationInScope = useCallback((conversationId: string) => {
+    const normalized = conversationId.trim();
+    if (!normalized) return false;
+    const target = chat.conversations.find((conversation) => conversation.id === normalized);
+    if (!target) return false;
+    const taskMode = isOnlyTalkConversation(target);
+    setOnlyTalkMode(taskMode);
+    window.localStorage.setItem(onlyTalkModeStorageKey, String(taskMode));
+    const targetProjectDir = conversationProjectRoot(target);
+    if (targetProjectDir) rememberRecentProject(targetProjectDir);
+    chat.openConversation(normalized);
+    setSection('chat');
+    return true;
+  }, [chat.conversations, chat.openConversation, rememberRecentProject]);
 
   useEffect(() => {
-    if (!onlyTalkMode) {
-      onlyTalkModeSyncedRef.current = false;
+    if (section !== 'chat' || chat.loading) return;
+    const scope: ConversationScope = onlyTalkMode
+      ? { mode: 'task' }
+      : fallbackProjectDir
+        ? {
+            mode: 'project',
+            projectId: fallbackProjectId || undefined,
+            projectDir: fallbackProjectDir,
+          }
+        : { mode: 'project', projectDir: '' };
+    const activeMatchesMode = onlyTalkMode
+      ? conversationMatchesScope(chat.activeConversation, { mode: 'task' })
+      : Boolean(chat.activeConversation && !isOnlyTalkConversation(chat.activeConversation));
+    if (activeMatchesMode) return;
+    const preparedConversation = firstConversationInScope(
+      chat.preparedConversations,
+      scope,
+    );
+    if (preparedConversation) {
+      chat.openConversation(preparedConversation.id);
       return;
     }
-    if (chat.loading || onlyTalkModeSyncedRef.current) return;
-    onlyTalkModeSyncedRef.current = true;
-    const recentTaskConversation = chat.conversations.find(isOnlyTalkConversation);
-    if (recentTaskConversation) {
-      chat.openConversation(recentTaskConversation.id);
-    } else {
-      chat.clearConversationSelection();
+    const recentConversation = firstConversationInScope(chat.conversations, scope);
+    if (recentConversation) {
+      chat.openConversation(recentConversation.id);
+      return;
     }
+    if (scope.mode === 'task') {
+      chat.prepareConversation();
+      return;
+    }
+    if (scope.projectDir) {
+      chat.prepareConversation(scope.projectDir, undefined, scope.projectId);
+      return;
+    }
+    if (chat.activeConversationId) chat.clearConversationSelection();
   }, [
+    chat.activeConversation,
+    chat.activeConversationId,
     chat.clearConversationSelection,
     chat.conversations,
     chat.loading,
     chat.openConversation,
+    chat.preparedConversations,
+    chat.prepareConversation,
+    fallbackProjectDir,
+    fallbackProjectId,
     onlyTalkMode,
+    section,
   ]);
 
   const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
     const normalized = projectDir?.trim() || null;
-    if (normalized) rememberRecentProject(normalized);
+    if (!normalized) {
+      changeOnlyTalkMode(true);
+      return;
+    }
+    const projectId =
+      projectItems.find((project) => samePath(project.rootPath, normalized))?.id ?? null;
+    rememberRecentProject(normalized);
     if (!chat.activeConversationId.trim()) {
       createConversation(normalized);
       return;
     }
-    await chat.setConversationProject(chat.activeConversationId, normalized);
-  }, [chat, createConversation, rememberRecentProject]);
+    await chat.setConversationProject(chat.activeConversationId, normalized, projectId);
+  }, [changeOnlyTalkMode, chat, createConversation, projectItems, rememberRecentProject]);
 
   const enterOsMode = useCallback(async () => {
     if (section !== 'os') {
@@ -1603,8 +1662,8 @@ function CardbushApp() {
       chat.openConversation(previousId);
       return;
     }
-    void chat.startConversation();
-  }, [chat.conversations, chat.openConversation, chat.setReasoningLevel, chat.startConversation]);
+    chat.clearConversationSelection();
+  }, [chat.clearConversationSelection, chat.conversations, chat.openConversation, chat.setReasoningLevel]);
 
   useEffect(() => {
     const enabled = section === 'os';
@@ -1623,11 +1682,10 @@ function CardbushApp() {
     setSettingsOpen(false);
     setSection('chat');
     pendingSessionAttentionRef.current = normalized;
-    if (chat.conversations.some((conversation) => conversation.id === normalized)) {
-      chat.openConversation(normalized);
+    if (openConversationInScope(normalized)) {
       pendingSessionAttentionRef.current = '';
     }
-  }, [chat.conversations, chat.openConversation]);
+  }, [openConversationInScope]);
 
   const consumeSessionAttentionOpen = useCallback(async () => {
     const consume = window.cardbushDesktop?.consumeSessionAttentionOpen;
@@ -1652,9 +1710,8 @@ function CardbushApp() {
     if (!pending || !chat.conversations.some((conversation) => conversation.id === pending)) {
       return;
     }
-    chat.openConversation(pending);
-    pendingSessionAttentionRef.current = '';
-  }, [chat.conversations, chat.openConversation]);
+    openSessionAttention(pending);
+  }, [chat.conversations, openSessionAttention]);
 
   useEffect(() => {
     if (osStartupHandledRef.current) {
@@ -1686,18 +1743,41 @@ function CardbushApp() {
     } catch {
       branch = '';
     }
+    const recoveredProjectConversation = chat.conversations
+      .find((conversation) => {
+        const projectDir = conversationProjectRoot(conversation);
+        return Boolean(projectDir && samePath(projectDir, selected));
+      });
+    const projectId = conversationProjectId(recoveredProjectConversation);
     setProjectItems((current) => {
       const existing = current.find((item) => samePath(item.rootPath, selected));
       if (existing) {
         return current.map((item) =>
           item.id === existing.id
-            ? { ...item, archived: false, branch, changedCount }
+            ? { ...item, missing: false, archived: false, branch, changedCount }
+            : item,
+        );
+      }
+      const existingIdentity = projectId
+        ? current.find((item) => item.id === projectId)
+        : undefined;
+      if (existingIdentity) {
+        return current.map((item) =>
+          item.id === existingIdentity.id
+            ? {
+                ...item,
+                rootPath: selected,
+                missing: false,
+                archived: false,
+                branch,
+                changedCount,
+              }
             : item,
         );
       }
       return [
         {
-          id: `project-${crypto.randomUUID()}`,
+          id: projectId || stableProjectId(selected),
           title,
           rootPath: selected,
           branch,
@@ -1706,7 +1786,107 @@ function CardbushApp() {
         ...current,
       ];
     });
-  }, [runtimeStartup.phase]);
+  }, [chat.conversations, runtimeStartup.phase]);
+
+  const renameProject = useCallback(async (
+    project: ProjectItem,
+    title: string,
+    renameFolder: boolean,
+  ): Promise<string | null> => {
+    const nextTitle = title.trim();
+    if (!nextTitle) return language === 'zh' ? '项目名称不能为空' : 'Project name is required';
+    if (!renameFolder || basename(project.rootPath) === nextTitle) {
+      setProjectItems((current) => current.map((item) =>
+        item.id === project.id ? { ...item, title: nextTitle } : item,
+      ));
+      return null;
+    }
+    if (project.missing) {
+      return language === 'zh'
+        ? '项目文件夹不存在，请先重新添加或定位项目'
+        : 'The project folder is missing. Locate or add it again first.';
+    }
+    if (Object.keys(chat.runningByConversation).length > 0) {
+      return language === 'zh'
+        ? '有会话仍在运行，完成或停止后才能重命名文件夹'
+        : 'A conversation is still running. Stop or finish it before renaming the folder.';
+    }
+    const renameDirectory = window.cardbushDesktop?.renameProjectDirectory;
+    if (!renameDirectory) {
+      return language === 'zh' ? '当前运行环境不支持重命名文件夹' : 'Folder rename is unavailable.';
+    }
+
+    let moved: Awaited<ReturnType<typeof renameDirectory>>;
+    try {
+      moved = await renameDirectory({ rootPath: project.rootPath, name: nextTitle });
+    } catch (caught) {
+      return caught instanceof Error ? caught.message : String(caught);
+    }
+    if (!moved.changed) {
+      setProjectItems((current) => current.map((item) =>
+        item.id === project.id ? { ...item, title: nextTitle, missing: false } : item,
+      ));
+      return null;
+    }
+
+    try {
+      await chat.relocateProjectConversations(
+        project.id,
+        moved.previousPath,
+        moved.nextPath,
+      );
+    } catch (caught) {
+      const rollbackName = basename(moved.previousPath);
+      const rolledBack = await renameDirectory({
+        rootPath: moved.nextPath,
+        name: rollbackName,
+      }).then(() => true).catch(() => false);
+      if (rolledBack) {
+        return language === 'zh'
+          ? `会话路径迁移失败，文件夹已恢复原名：${caught instanceof Error ? caught.message : String(caught)}`
+          : `Session migration failed and the folder name was restored: ${caught instanceof Error ? caught.message : String(caught)}`;
+      }
+      setProjectItems((current) => current.map((item) =>
+        item.id === project.id
+          ? { ...item, title: nextTitle, rootPath: moved.nextPath, missing: false }
+          : item,
+      ));
+      return language === 'zh'
+        ? '文件夹已改名，但部分会话路径迁移失败且无法自动回滚；项目已保留在真实的新路径'
+        : 'The folder was renamed, but some session paths could not be migrated or rolled back. The project now points to the real new path.';
+    }
+
+    setProjectItems((current) => {
+      const next = current.map((item) =>
+        item.id === project.id
+          ? { ...item, title: nextTitle, rootPath: moved.nextPath, missing: false }
+          : item,
+      );
+      persistProjectItems(next);
+      return next;
+    });
+    if (samePath(recentProjectDir, moved.previousPath)) {
+      setRecentProjectDir(moved.nextPath);
+      window.localStorage.setItem(recentProjectStorageKey, moved.nextPath);
+    }
+    const previousContextKey = projectContextKey(moved.previousPath);
+    const nextContextKey = projectContextKey(moved.nextPath);
+    const savedContext = projectContexts[previousContextKey];
+    setProjectContexts((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, previousContextKey)) return current;
+      const next = { ...current, [nextContextKey]: current[previousContextKey] ?? '' };
+      delete next[previousContextKey];
+      persistProjectContexts(next);
+      return next;
+    });
+    if (savedContext !== undefined) {
+      void saveProjectContext({
+        projectDir: moved.nextPath,
+        userPrompt: savedContext,
+      }).catch(() => undefined);
+    }
+    return null;
+  }, [chat, language, projectContexts, recentProjectDir]);
 
   const handleProjectAction = useCallback(
     async (action: ProjectAction, project: ProjectItem) => {
@@ -1742,23 +1922,30 @@ function CardbushApp() {
         return;
       }
       if (action === 'rename') {
-        const nextTitle = window.prompt(
-          language === 'zh' ? '重命名项目' : 'Rename project',
-          project.title,
-        );
-        if (!nextTitle?.trim()) {
-          return;
-        }
-        setProjectItems((current) =>
-          current.map((item) =>
-            item.id === project.id ? { ...item, title: nextTitle.trim() } : item,
-          ),
-        );
+        setProjectRenameTarget(project);
         return;
       }
       if (action === 'remove') {
+        if (conversationMatchesScope(chat.activeConversation, {
+          mode: 'project',
+          projectId: project.id,
+          projectDir: project.rootPath,
+        })) {
+          chat.clearConversationSelection();
+        }
         setProjectItems((current) => current.filter((item) => item.id !== project.id));
         return;
+      }
+      if (
+        action === 'archive' &&
+        !project.archived &&
+        conversationMatchesScope(chat.activeConversation, {
+          mode: 'project',
+          projectId: project.id,
+          projectDir: project.rootPath,
+        })
+      ) {
+        chat.clearConversationSelection();
       }
       setProjectItems((current) =>
         current.map((item) => {
@@ -1775,7 +1962,7 @@ function CardbushApp() {
         }),
       );
     },
-    [createConversation, language],
+    [chat.activeConversation, chat.clearConversationSelection, createConversation, language],
   );
 
   const refreshProjectGitStatus = useCallback(async (rootPath: string) => {
@@ -2257,8 +2444,7 @@ function CardbushApp() {
                     setSection(nextSection);
                   }}
                   onConversationChange={(id) => {
-                    chat.openConversation(id);
-                    setSection('chat');
+                    openConversationInScope(id);
                   }}
                   onCreateConversation={() => {
                     createConversation(onlyTalkMode ? null : undefined);
@@ -2315,18 +2501,18 @@ function CardbushApp() {
                 onOsSettingsChange={(os) => updateAppSettings((current) => ({ ...current, os }))}
                 onExitOsMode={exitOsMode}
                 sidebarCollapsed={sidebarCollapsed}
-                inspectorOpen={inspectorOpen}
                 windowMaximized={windowMaximized}
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={section === 'os' ? undefined : activeProjectDir}
+                projectPathAliases={conversationProjectPathAliases(chat.activeConversation)}
                 selectedProjectDir={
                   section === 'os' || onlyTalkMode ? '' : activeConversationProjectDir
                 }
                 availableProjects={
                   onlyTalkMode
                     ? []
-                    : projectItems.filter((project) => !project.archived)
+                    : projectItems.filter((project) => !project.archived && !project.missing)
                 }
                 onWelcomeProjectChange={changeWelcomeProject}
                 projectContext={
@@ -2359,7 +2545,6 @@ function CardbushApp() {
                 thinkingNotice={section === 'chat' ? thinkingNotice : null}
                 thinkingVisible={reasoningTraceVisible}
                 guidanceDeliveryMode={appSettings.guidance.deliveryMode}
-                terminalRuntime={appSettings.terminal.runtime}
                 loading={chat.loading || chat.messagesLoading}
                 sending={chat.sending}
                 stopping={chat.stopping}
@@ -2388,7 +2573,6 @@ function CardbushApp() {
                 reasoningLevel={chat.reasoningLevel}
                 reasoningLevels={backendCapabilities.reasoningLevels}
                 gitAvailable={section === 'chat' && backendCapabilities.git}
-                terminalAvailable={section === 'chat' && backendCapabilities.terminal}
                 onModelChange={chat.setSelectedModel}
                 onReferencePlanModeChange={chat.setReferencePlanMode}
                 onPermissionModeChange={chat.setPermissionMode}
@@ -2396,7 +2580,7 @@ function CardbushApp() {
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
                 onCreateConversation={() =>
-                  createConversation(onlyTalkMode ? null : activeProjectDir)
+                  createConversation(onlyTalkMode ? null : activeConversationProjectDir || undefined)
                 }
                 onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
@@ -2450,11 +2634,10 @@ function CardbushApp() {
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
                 onCreateConversation={() =>
-                  createConversation(onlyTalkMode ? null : activeProjectDir)
+                  createConversation(onlyTalkMode ? null : activeConversationProjectDir || undefined)
                 }
                 onOpenConversation={(conversationId) => {
-                  chat.openConversation(conversationId);
-                  setSection('chat');
+                  openConversationInScope(conversationId);
                 }}
               />
             )}
@@ -2531,17 +2714,6 @@ function CardbushApp() {
                         : ''}
                   </strong>
                 )}
-                {!displayedWorkSummaryInspector && (
-                  <button
-                    type="button"
-                    className={inspectorSummaryOpen ? 'active' : ''}
-                    onClick={() => setInspectorSummaryOpen((current) => !current)}
-                    title={language === 'zh' ? '摘要' : 'Summary'}
-                  >
-                    <Clipboard size={15} />
-                    <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
-                  </button>
-                )}
                 {displayedInspectorTarget && (
                   <button
                     type="button"
@@ -2555,30 +2727,12 @@ function CardbushApp() {
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    setInspectorTarget(null);
-                    setWorkSummaryInspector(null);
-                    setChangeReviewFilePath('');
-                    setChangeReviewConversationId('');
-                    setChangeReviewNotice('');
-                  }}
+                  onClick={closeInspector}
                   title={language === 'zh' ? '关闭右侧栏' : 'Close inspector'}
                 >
                   <PanelRightClose size={16} />
                 </button>
               </header>
-              {!displayedWorkSummaryInspector && inspectorSummaryOpen && (
-                <div className="right-inspector-summary">
-                  {displayedReviewConversation
-                    ? (() => {
-                        const summary = summarizeChangeReports(displayedReviewReports);
-                        return summary
-                          ? `${summary.fileCount} ${language === 'zh' ? '个文件' : 'files'} · +${summary.additions} -${summary.deletions}`
-                          : (language === 'zh' ? '暂无修改摘要' : 'No change summary');
-                      })()
-                    : activeInspectorAddress || displayedInspectorTarget?.target}
-                </div>
-              )}
               {displayedInspectorTarget && (
                 <div className="right-inspector-navigation">
                   <button
@@ -2694,7 +2848,175 @@ function CardbushApp() {
             </aside>
           ) : null}
       </main>
+      {projectRenameTarget && (
+        <ProjectRenameDialog
+          key={projectRenameTarget.id}
+          language={language}
+          project={projectRenameTarget}
+          onClose={() => setProjectRenameTarget(null)}
+          onRename={(title, renameFolder) =>
+            renameProject(projectRenameTarget, title, renameFolder)
+          }
+        />
+      )}
       <CopyToastHost language={language} />
+    </div>
+  );
+}
+
+function ProjectRenameDialog({
+  language,
+  project,
+  onClose,
+  onRename,
+}: {
+  language: AppLanguage;
+  project: ProjectItem;
+  onClose: () => void;
+  onRename: (title: string, renameFolder: boolean) => Promise<string | null>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const onCloseRef = useRef(onClose);
+  const [title, setTitle] = useState(project.title);
+  const [renameFolder, setRenameFolder] = useState(
+    () => project.title.trim() === basename(project.rootPath),
+  );
+  const [invalid, setInvalid] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const busyRef = useRef(false);
+  onCloseRef.current = onClose;
+  busyRef.current = busy;
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    });
+    const closeWithKeyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !busyRef.current) onCloseRef.current();
+    };
+    document.addEventListener('keydown', closeWithKeyboard);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', closeWithKeyboard);
+    };
+  }, []);
+
+  const submit = async () => {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      setInvalid(true);
+      inputRef.current?.focus();
+      return;
+    }
+    if (
+      nextTitle === project.title.trim() &&
+      (!renameFolder || nextTitle === basename(project.rootPath))
+    ) {
+      onClose();
+      return;
+    }
+    setBusy(true);
+    setError('');
+    const failure = await onRename(nextTitle, renameFolder).catch((caught) =>
+      caught instanceof Error ? caught.message : String(caught),
+    );
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <div
+      className="modal-backdrop project-rename-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (!busy && event.target === event.currentTarget) onClose();
+      }}
+    >
+      <form
+        className="project-rename-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-rename-title"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <header>
+          <Folder size={17} aria-hidden="true" />
+          <div>
+            <strong id="project-rename-title">
+              {language === 'zh' ? '重命名项目' : 'Rename project'}
+            </strong>
+            <span>{language === 'zh' ? '可同时重命名真实项目文件夹' : 'You can also rename the real project folder'}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            title={language === 'zh' ? '关闭' : 'Close'}
+            aria-label={language === 'zh' ? '关闭重命名' : 'Close rename dialog'}
+          >
+            <X size={15} />
+          </button>
+        </header>
+        <label>
+          <span>{language === 'zh' ? '项目名称' : 'Project name'}</span>
+          <input
+            ref={inputRef}
+            value={title}
+            maxLength={120}
+            disabled={busy}
+            aria-invalid={invalid}
+            onChange={(event) => {
+              setTitle(event.target.value);
+              setInvalid(false);
+            }}
+          />
+          {invalid && (
+            <small role="alert">
+              {language === 'zh' ? '项目名称不能为空' : 'Project name cannot be empty'}
+            </small>
+          )}
+        </label>
+        <div className="project-rename-path" title={project.rootPath}>
+          <Folder size={13} aria-hidden="true" />
+          <span>{project.rootPath}</span>
+        </div>
+        <label className="project-rename-folder-option">
+          <input
+            type="checkbox"
+            checked={renameFolder}
+            disabled={busy}
+            onChange={(event) => {
+              setRenameFolder(event.currentTarget.checked);
+              setError('');
+            }}
+          />
+          <span>
+            {language === 'zh'
+              ? '同时重命名项目文件夹（同一父目录）'
+              : 'Also rename the project folder (same parent directory)'}
+          </span>
+        </label>
+        {error ? <p className="project-rename-error" role="alert">{error}</p> : null}
+        <footer>
+          <button type="button" className="secondary-button" onClick={onClose} disabled={busy}>
+            {language === 'zh' ? '取消' : 'Cancel'}
+          </button>
+          <button type="submit" className="primary-button" disabled={!title.trim() || busy}>
+            {busy
+              ? language === 'zh' ? '处理中…' : 'Renaming…'
+              : language === 'zh' ? '重命名' : 'Rename'}
+          </button>
+        </footer>
+      </form>
     </div>
   );
 }
@@ -2797,14 +3119,19 @@ function readProjectItems(): ProjectItem[] {
         ? (item as Record<string, unknown>)
         : {};
       const rootPath = String(value.rootPath ?? '').trim();
-      if (!rootPath || result.some((project) => samePath(project.rootPath, rootPath))) {
+      const id = String(value.id ?? '').trim() || stableProjectId(rootPath);
+      if (
+        !rootPath ||
+        result.some((project) => project.id === id || samePath(project.rootPath, rootPath))
+      ) {
         continue;
       }
       const changedCount = Number(value.changedCount);
       result.push({
-        id: String(value.id ?? '').trim() || stableProjectId(rootPath),
+        id,
         title: String(value.title ?? '').trim() || basename(rootPath),
         rootPath,
+        missing: Boolean(value.missing),
         pinned: Boolean(value.pinned),
         archived: Boolean(value.archived),
         branch: String(value.branch ?? '').trim(),
@@ -3917,11 +4244,11 @@ function ChatPanel({
   onOsSettingsChange,
   onExitOsMode,
   sidebarCollapsed,
-  inspectorOpen,
   windowMaximized,
   onRevealSidebar,
   activeConversationId,
   activeProjectDir,
+  projectPathAliases,
   selectedProjectDir,
   availableProjects,
   onWelcomeProjectChange,
@@ -3943,7 +4270,6 @@ function ChatPanel({
   thinkingNotice,
   thinkingVisible,
   guidanceDeliveryMode,
-  terminalRuntime,
   loading,
   sending,
   stopping,
@@ -3968,7 +4294,6 @@ function ChatPanel({
   reasoningLevel,
   reasoningLevels,
   gitAvailable,
-  terminalAvailable,
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
@@ -4009,11 +4334,11 @@ function ChatPanel({
   onOsSettingsChange: (settings: AppSettingsState['os']) => void;
   onExitOsMode: () => void;
   sidebarCollapsed: boolean;
-  inspectorOpen: boolean;
   windowMaximized: boolean;
   onRevealSidebar: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
+  projectPathAliases: Array<{ from: string; to: string }>;
   selectedProjectDir: string;
   availableProjects: ProjectItem[];
   onWelcomeProjectChange: (projectDir: string | null) => Promise<void>;
@@ -4035,7 +4360,6 @@ function ChatPanel({
   thinkingNotice: ThinkingNotice | null;
   thinkingVisible: boolean;
   guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
-  terminalRuntime: TerminalRuntime;
   loading: boolean;
   sending: boolean;
   stopping: boolean;
@@ -4060,7 +4384,6 @@ function ChatPanel({
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
   gitAvailable: boolean;
-  terminalAvailable: boolean;
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
@@ -4235,7 +4558,6 @@ function ChatPanel({
     }
     return '';
   })();
-  const [consoleMode, setConsoleMode] = useState<ConsoleMode | null>(null);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [osSystemSurface, setOsSystemSurface] = useState<OsSystemSurfaceMode | null>(null);
   const [osNineKeyOpen, setOsNineKeyOpen] = useState(false);
@@ -6092,31 +6414,18 @@ function ChatPanel({
     ],
   );
 
-  const toggleConsole = useCallback(
-    (mode: ConsoleMode) => {
-      if (!terminalAvailable) {
-        return;
-      }
-      setConsoleMode((current) => (current === mode ? null : mode));
-    },
-    [terminalAvailable],
-  );
-
-  useEffect(() => {
-    if (consoleMode && !terminalAvailable) {
-      setConsoleMode(null);
-    }
-  }, [consoleMode, terminalAvailable]);
-
   const [workSummaryVisible, setWorkSummaryVisible] = useState(false);
   const [workSummaryAnchorRight, setWorkSummaryAnchorRight] = useState(12);
+  const openChangeReview = useCallback((filePath?: string) => {
+    onOpenChangeReview(filePath);
+  }, [onOpenChangeReview]);
   const chatBodyStyle = {
     '--composer-dock-height': `${composerDockHeight}px`,
     '--quick-context-bottom-inset': `${quickContextBottomInset}px`,
     '--stream-status-height': `${streamStatusHeight}px`,
     '--work-summary-anchor-right': `${workSummaryAnchorRight}px`,
   } as CSSProperties;
-  const showWorkSummary = workSummaryVisible && !inspectorOpen;
+  const showWorkSummary = workSummaryVisible;
   const workSummaryPresence = useSoftPanelPresence(showWorkSummary);
   const updateRestoredWorkSummaryAnchor = useCallback((anchor?: HTMLElement | null) => {
     if (windowMaximized) return;
@@ -6152,7 +6461,9 @@ function ChatPanel({
       }
       if (
         target.closest('.conversation-work-summary') ||
-        target.closest('[data-work-summary-toggle]')
+        target.closest('[data-work-summary-toggle]') ||
+        target.closest('[data-change-review-toggle]') ||
+        target.closest('.right-inspector')
       ) {
         return;
       }
@@ -6222,18 +6533,19 @@ function ChatPanel({
           sidebarCollapsed={sidebarCollapsed}
           language={language}
           conversationContentAvailable={renderMessages.length > 0}
-          onRefreshActiveSession={refreshBackendWithFeedback}
-          activeConsole={consoleMode}
-          onToggleTerminal={terminalAvailable ? () => toggleConsole('terminal') : undefined}
           workSummaryVisible={showWorkSummary}
           reviewAvailable={changeReports.length > 0}
           onToggleWorkSummary={renderMessages.length > 0
             ? (anchor) => {
+                if (showWorkSummary) {
+                  setWorkSummaryVisible(false);
+                  return;
+                }
                 updateRestoredWorkSummaryAnchor(anchor);
-                setWorkSummaryVisible((current) => !current);
+                setWorkSummaryVisible(true);
               }
             : undefined}
-          onOpenReview={changeReports.length > 0 ? onOpenChangeReview : undefined}
+          onOpenReview={changeReports.length > 0 ? openChangeReview : undefined}
           onRevealSidebar={onRevealSidebar}
         />
       )}
@@ -6318,7 +6630,7 @@ function ChatPanel({
             sessionId={activeConversationId}
             messages={renderMessages}
             changeReports={changeReports}
-            onOpenChangeReview={onOpenChangeReview}
+            onOpenChangeReview={openChangeReview}
             subagentObservabilityAvailable={subagentObservabilityAvailable}
             softVisible={workSummaryPresence.visible}
           />
@@ -6378,7 +6690,6 @@ function ChatPanel({
             visualInputAvailable={visualInputAvailable}
             visualInputEnabled={visualInputEnabled}
             gitAvailable={gitAvailable}
-            terminalAvailable={terminalAvailable}
             onToggleSkill={onToggleSkill}
             onVisualInputEnabledChange={onVisualInputEnabledChange}
             onSaveProjectContext={onSaveProjectContext}
@@ -6415,7 +6726,10 @@ function ChatPanel({
                   data-message-id={message.id}
                   data-message-role={message.role}
                 >
-                  <MessageFileReferenceScope workspaceRoot={activeProjectDir}>
+                  <MessageFileReferenceScope
+                    workspaceRoot={activeProjectDir}
+                    pathAliases={projectPathAliases}
+                  >
                     <MessageBubble
                       key={message.id}
                       message={message}
@@ -6433,7 +6747,7 @@ function ChatPanel({
                       onRetryMessage={onRetryMessage}
                       onRetryGuidance={onRetryGuidance}
                       onRevertChangeReport={onRevertChangeReport}
-                      onOpenChangeReview={onOpenChangeReview}
+                      onOpenChangeReview={openChangeReview}
                       onOpenScene={openScene}
                       onAssistantFeedback={recordAssistantLogicFeedback}
                     />
@@ -6521,7 +6835,7 @@ function ChatPanel({
                 }}
                 onCloseThinking={() => setThinkingOpen(false)}
                 onCancelGoal={onCancelGoal}
-                onOpenChangeReview={onOpenChangeReview}
+                onOpenChangeReview={openChangeReview}
                 onEditQueuedMessage={editQueuedMessage}
                 onGuideQueuedMessage={(queuedId) =>
                   onGuideQueuedMessage(queuedId, 'append_context')
@@ -6575,7 +6889,6 @@ function ChatPanel({
               visualInputAvailable={visualInputAvailable}
               visualInputEnabled={visualInputEnabled}
               gitAvailable={gitAvailable}
-              terminalAvailable={terminalAvailable}
               onToggleSkill={onToggleSkill}
               onVisualInputEnabledChange={onVisualInputEnabledChange}
               activeProjectDir={activeProjectDir}
@@ -6584,9 +6897,6 @@ function ChatPanel({
               onSaveProjectContext={onSaveProjectContext}
               onConfigureModels={onConfigureModels}
               onCreateConversation={onCreateConversation}
-              onOpenTerminalConsole={
-                terminalAvailable ? () => toggleConsole('terminal') : undefined
-              }
             />
           </div>
         )}
@@ -6604,14 +6914,6 @@ function ChatPanel({
           <ArrowDown size={16} strokeWidth={1.8} />
         </button>
       </div>
-      {consoleMode && terminalAvailable && (
-          <ConsoleDock
-            language={language}
-            activeProjectDir={activeProjectDir}
-            terminalRuntime={terminalRuntime}
-            onClose={() => setConsoleMode(null)}
-          />
-        )}
     </div>
   );
 }
@@ -6790,7 +7092,6 @@ function WelcomeComposer({
   visualInputAvailable,
   visualInputEnabled,
   gitAvailable,
-  terminalAvailable,
   onToggleSkill,
   onVisualInputEnabledChange,
   onModelChange,
@@ -6840,7 +7141,6 @@ function WelcomeComposer({
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
   gitAvailable: boolean;
-  terminalAvailable: boolean;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onVisualInputEnabledChange: (enabled: boolean) => void;
   onModelChange: (value: string) => void;
@@ -6895,7 +7195,6 @@ function WelcomeComposer({
       visualInputAvailable={visualInputAvailable}
       visualInputEnabled={visualInputEnabled}
       gitAvailable={gitAvailable}
-      terminalAvailable={terminalAvailable}
       onToggleSkill={onToggleSkill}
       onVisualInputEnabledChange={onVisualInputEnabledChange}
       onSaveProjectContext={onSaveProjectContext}
@@ -6932,6 +7231,7 @@ function WelcomeComposer({
               language={language}
               projects={availableProjects}
               selectedProjectDir={selectedProjectDir}
+              disabled={sending}
               onSelect={onProjectChange}
             />
           )}
@@ -6955,11 +7255,13 @@ function WelcomeProjectSwitcher({
   language,
   projects,
   selectedProjectDir,
+  disabled,
   onSelect,
 }: {
   language: AppLanguage;
   projects: ProjectItem[];
   selectedProjectDir: string;
+  disabled: boolean;
   onSelect: (projectDir: string | null) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -6992,7 +7294,12 @@ function WelcomeProjectSwitcher({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   async function selectProject(projectDir: string | null) {
+    if (disabled) return;
     setBusy(true);
     try {
       await onSelect(projectDir);
@@ -7027,7 +7334,7 @@ function WelcomeProjectSwitcher({
                   type="button"
                   role="menuitemradio"
                   aria-checked={selected}
-                  disabled={busy}
+                  disabled={busy || disabled}
                   onClick={() => void selectProject(project.rootPath)}
                 >
                   <Folder size={14} />
@@ -7047,7 +7354,7 @@ function WelcomeProjectSwitcher({
               type="button"
               role="menuitemradio"
               aria-checked={!selectedProject}
-              disabled={busy}
+              disabled={busy || disabled}
               onClick={() => void selectProject(null)}
             >
               <X size={14} />
@@ -7061,6 +7368,7 @@ function WelcomeProjectSwitcher({
         className="welcome-project-trigger"
         type="button"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
       >
         {busy ? <LoaderCircle className="spinning" size={14} /> : <Folder size={14} />}
@@ -7405,9 +7713,6 @@ function TopBar({
   sidebarCollapsed,
   language,
   conversationContentAvailable = false,
-  onRefreshActiveSession,
-  activeConsole,
-  onToggleTerminal,
   workSummaryVisible,
   reviewAvailable,
   onToggleWorkSummary,
@@ -7418,31 +7723,12 @@ function TopBar({
   sidebarCollapsed: boolean;
   language: AppLanguage;
   conversationContentAvailable?: boolean;
-  onRefreshActiveSession?: RefreshActiveSession;
-  activeConsole?: ConsoleMode | null;
-  onToggleTerminal?: () => void;
   workSummaryVisible?: boolean;
   reviewAvailable?: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
   onOpenReview?: () => void;
   onRevealSidebar: () => void;
 }) {
-  const [historyRefreshing, setHistoryRefreshing] = useState(false);
-
-  const refreshHistory = useCallback(async () => {
-    if (!onRefreshActiveSession) {
-      return;
-    }
-    setHistoryRefreshing(true);
-    try {
-      await onRefreshActiveSession({ silent: true });
-    } catch {
-      // The shared runtime status banner owns the visible failure state.
-    } finally {
-      setHistoryRefreshing(false);
-    }
-  }, [onRefreshActiveSession]);
-
   return (
     <div className="topbar">
       {sidebarCollapsed && (
@@ -7451,50 +7737,28 @@ function TopBar({
         </button>
       )}
       <h1>{title}</h1>
+      {conversationContentAvailable && onOpenReview && reviewAvailable && (
+        <button
+          className="topbar-inspector-action icon-only"
+          type="button"
+          data-change-review-toggle
+          onClick={() => onOpenReview()}
+          title={language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right'}
+          aria-label={language === 'zh' ? '打开修改审查' : 'Open change review'}
+        >
+          <PanelRightOpen size={15} />
+        </button>
+      )}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
-          className={`topbar-inspector-action ${workSummaryVisible ? 'active' : ''}`}
+          className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}
           type="button"
           data-work-summary-toggle
           onClick={(event) => onToggleWorkSummary(event.currentTarget)}
           title={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
+          aria-label={language === 'zh' ? '显示或隐藏工作摘要' : 'Show or hide work summary'}
         >
           <Clipboard size={15} />
-          <span>{language === 'zh' ? '摘要' : 'Summary'}</span>
-        </button>
-      )}
-      {conversationContentAvailable && onOpenReview && reviewAvailable && (
-        <button
-          className="topbar-inspector-action"
-          type="button"
-          onClick={() => onOpenReview()}
-          title={language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right'}
-        >
-          <PanelRightOpen size={15} />
-          <span>{language === 'zh' ? '审查' : 'Review'}</span>
-        </button>
-      )}
-      <button
-        className="topbar-square native-refresh-square"
-        type="button"
-        disabled={!onRefreshActiveSession || historyRefreshing}
-        onClick={() => void refreshHistory()}
-        title={language === 'zh'
-          ? '重新连接后端并刷新会话'
-          : 'Reconnect backend and refresh sessions'}
-      >
-        {historyRefreshing ? <LoaderCircle size={16} /> : <RefreshCw size={16} />}
-      </button>
-      {onToggleTerminal && (
-        <button
-          className={`topbar-square ${
-            activeConsole === 'terminal' ? 'active' : ''
-          }`}
-          type="button"
-          onClick={onToggleTerminal}
-          title={language === 'zh' ? '终端控制台' : 'Terminal console'}
-        >
-          <Terminal size={16} />
         </button>
       )}
     </div>
@@ -8341,7 +8605,6 @@ function FeaturePanel({
         title={label}
         sidebarCollapsed={sidebarCollapsed}
         language={language}
-        activeConsole={null}
         onRevealSidebar={onRevealSidebar}
       />
       <Suspense fallback={<FeaturePanelLoading language={language} />}>

@@ -231,7 +231,7 @@ export async function streamRuntimeShadowConversationMessage(
       messageId,
       createdAt: new Date().toISOString(),
       localDate: new Date().toLocaleDateString('en-CA'),
-      sessionEnvironmentLocalDate: latestSessionEnvironmentLocalDate(shadowSession),
+      sessionEnvironmentLocalDate: latestSessionEnvironmentLocalDate(shadowSession ?? undefined),
       userText: request.content,
       userMessageName: 'shadow_user',
       model: resolved.model,

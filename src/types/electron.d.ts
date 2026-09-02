@@ -228,6 +228,14 @@ declare global {
         resolvedPath: string;
         exists: boolean;
       }>>;
+      renameProjectDirectory: (input: {
+        rootPath: string;
+        name: string;
+      }) => Promise<{
+        previousPath: string;
+        nextPath: string;
+        changed: boolean;
+      }>;
       searchProjectFiles: (
         rootPath: string,
         query: string,

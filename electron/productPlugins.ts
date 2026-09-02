@@ -12,6 +12,13 @@ export interface PluginRoot {
   source: 'bundled' | 'user';
 }
 
+export interface EnabledProductPluginSkillRoot {
+  path: string;
+  pluginId: string;
+  pluginName: string;
+  pluginSource: PluginRoot['source'];
+}
+
 interface MarketplaceEntry {
   name: string;
   path: string;
@@ -57,6 +64,14 @@ export async function loadEnabledProductPluginSkillRoots(
   roots: PluginRoot[],
   configPath: string,
 ): Promise<string[]> {
+  return (await loadEnabledProductPluginSkillRootEntries(roots, configPath))
+    .map((entry) => entry.path);
+}
+
+export async function loadEnabledProductPluginSkillRootEntries(
+  roots: PluginRoot[],
+  configPath: string,
+): Promise<EnabledProductPluginSkillRoot[]> {
   const catalog = await loadProductPluginCatalog(roots);
   let snapshot: Record<string, unknown> | null = null;
   try {
@@ -73,16 +88,25 @@ export async function loadEnabledProductPluginSkillRoots(
       if (id) stored.set(id, state);
     }
   }
-  const result: string[] = [];
+  const result = new Map<string, EnabledProductPluginSkillRoot>();
   for (const plugin of catalog) {
     const state = stored.get(plugin.id);
     const installed = state
       ? state.installed === true
       : plugin.installation === 'INSTALLED_BY_DEFAULT';
     const enabled = installed && (state ? state.enabled === true : installed);
-    if (enabled) result.push(...(plugin.skillRoots ?? []));
+    if (!enabled) continue;
+    for (const root of plugin.skillRoots ?? []) {
+      const resolvedRoot = resolve(root);
+      result.set(resolvedRoot, {
+        path: resolvedRoot,
+        pluginId: plugin.id,
+        pluginName: plugin.name,
+        pluginSource: plugin.source,
+      });
+    }
   }
-  return [...new Set(result.map((root) => resolve(root)))];
+  return [...result.values()];
 }
 
 export async function installProductPlugin(

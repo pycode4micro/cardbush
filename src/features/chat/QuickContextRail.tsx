@@ -9,7 +9,7 @@ import {
 
 import type { AppLanguage, ChatMessage } from '../../types';
 import {
-  fetchSessionMessageWindow,
+  fetchSessionTurnMessages,
   searchSessionContext,
 } from '../../backend/api';
 import { MarkdownContent } from '../chatMessages/MessageBubble';
@@ -306,10 +306,7 @@ export function QuickContextRail({
   if (!serverSearchAvailable && !index && !searching) return null;
 
   const localSelectedTurnMessages = selectedMatch
-    ? messages.slice(
-      selectedMatch.messageIndex,
-      findNextUserMessageIndex(messages, selectedMatch.messageIndex + 1),
-    )
+    ? turnMessagesFromTranscript(messages, selectedMatch.messageIndex)
     : [];
   const selectedTurnMessages = remoteTurnMessages ?? localSelectedTurnMessages;
   const selectedSourceMessage = selectedMatch
@@ -322,11 +319,10 @@ export function QuickContextRail({
       ))
     )) ?? null
     : null;
-  const assistantReply = selectedTurnMessages
-    .filter((message) => message.role === 'assistant')
-    .map((message) => message.content.trim())
-    .filter(Boolean)
-    .join('\n\n');
+  const previewMessages = quickTurnPreviewMessages(selectedTurnMessages);
+  const assistantReply = previewMessages
+    .find((message) => message.role === 'assistant')
+    ?.content.trim() ?? '';
 
   const selectMatch = (match: ContextMatch) => {
     detailRequestRef.current?.abort();
@@ -342,15 +338,13 @@ export function QuickContextRail({
     const controller = new AbortController();
     detailRequestRef.current = controller;
     setDetailLoading(true);
-    void fetchSessionMessageWindow({
+    void fetchSessionTurnMessages({
       sessionId,
       messageId: match.serverMessageId,
-      before: 0,
-      after: 12,
       signal: controller.signal,
-    }).then((result) => {
+    }).then((turnMessages) => {
       if (controller.signal.aborted) return;
-      setRemoteTurnMessages(turnMessagesFromWindow(result.messages, match.serverMessageId!));
+      setRemoteTurnMessages(turnMessages);
     }).catch(() => undefined).finally(() => {
       if (detailRequestRef.current !== controller) return;
       detailRequestRef.current = null;
@@ -538,7 +532,7 @@ export function QuickContextRail({
             <>
               <div className="quick-context-turn">
                 {detailLoading && <span className="quick-context-list-loading" />}
-                {selectedTurnMessages.map((message) => (
+                {previewMessages.map((message) => (
                   <article className={`quick-context-message ${message.role}`} key={message.id}>
                     <div>
                       <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
@@ -584,13 +578,40 @@ function selectorEscape(value: string) {
   return value.replace(/["\\]/g, '\\$&');
 }
 
-function turnMessagesFromWindow(messages: ChatMessage[], anchorMessageId: string) {
-  const anchorIndex = messages.findIndex((message) => (
-    message.id === anchorMessageId || message.messageId === anchorMessageId
-  ));
-  if (anchorIndex < 0) return messages;
-  const end = findNextUserMessageIndex(messages, anchorIndex + 1);
-  return messages.slice(anchorIndex, end);
+function turnMessagesFromTranscript(messages: ChatMessage[], anchorIndex: number) {
+  const anchor = messages[anchorIndex];
+  if (!anchor) return [];
+  const turnId = anchor.turnId?.trim() ?? '';
+  if (!turnId) {
+    return messages.slice(
+      anchorIndex,
+      findNextUserMessageIndex(messages, anchorIndex + 1),
+    );
+  }
+  return messages.slice(anchorIndex).filter((message) => message.turnId?.trim() === turnId);
+}
+
+export function quickTurnPreviewMessages(messages: ChatMessage[]) {
+  const user = messages.find((message) =>
+    message.role === 'user' && !isTurnGuidanceMessage(message),
+  );
+  const assistant = messages.find((message) =>
+    message.role === 'assistant' &&
+    message.metadata?.transcript_kind === 'assistant_final' &&
+    Boolean(message.content.trim()),
+  ) ?? [...messages].reverse().find((message) =>
+    message.role === 'assistant' && Boolean(message.content.trim()),
+  );
+  return [user, assistant].filter((message): message is ChatMessage => Boolean(message));
+}
+
+function isTurnGuidanceMessage(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.turn_guidance === true ||
+    metadata.turnGuidance === true ||
+    String(metadata.name ?? '').trim() === 'turn_guidance'
+  );
 }
 
 function buildContextIndexLazily(

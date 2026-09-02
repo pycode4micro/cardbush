@@ -128,14 +128,54 @@ assert.doesNotMatch(
 assert.match(app, /!showWorkSummary \|\| windowMaximized/);
 assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
 assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);
+assert.match(app, /target\.closest\('\[data-change-review-toggle\]'\)/);
+assert.match(app, /target\.closest\('\.right-inspector'\)/);
 assert.match(app, /data-work-summary-toggle/);
+assert.match(app, /data-change-review-toggle/);
+assert.match(
+  app,
+  /data-change-review-toggle[\s\S]*?<PanelRightOpen[\s\S]*?data-work-summary-toggle[\s\S]*?<Clipboard/,
+  'The compact toolbar must place review before the far-right summary action',
+);
+assert.doesNotMatch(
+  app,
+  /<span>\{language === 'zh' \? '(?:摘要|审查)'/,
+  'Summary and review toolbar controls must remain icon-only',
+);
+assert.doesNotMatch(app, /onToggleTerminal|ConsoleDock|consoleMode|终端控制台|Terminal console/);
 assert.match(app, /--work-summary-anchor-right/);
 assert.match(app, /bodyBounds\.right - toggleBounds\.right/);
 assert.match(app, /onToggleWorkSummary\(event\.currentTarget\)/);
 assert.match(
+  app,
+  /const showWorkSummary = workSummaryVisible;/,
+  'The work summary must stay visible independently of the external inspector',
+);
+assert.doesNotMatch(
+  app,
+  /const showWorkSummary = workSummaryVisible && !inspectorOpen|if \(inspectorOpen\) \{\s*onCloseInspector\(\)/,
+  'Opening the work summary must not close or be hidden by the external inspector',
+);
+assert.match(
+  app,
+  /const openChangeReview = useCallback\(\(filePath\?: string\) => \{\s*onOpenChangeReview\(filePath\);/,
+  'Opening review must preserve the independently visible work summary',
+);
+assert.doesNotMatch(
+  app,
+  /inspectorSummaryOpen|setInspectorSummaryOpen|className="right-inspector-summary"/,
+  'The inspector must not keep a duplicate change-count summary control',
+);
+assert.doesNotMatch(css, /\.right-inspector-summary\s*\{/);
+assert.match(
   css,
   /\.window-restored \.conversation-work-summary\s*\{[\s\S]*?top:\s*8px;[\s\S]*?right:\s*var\(--work-summary-anchor-right, 12px\)/,
   'Restored windows must anchor the summary below its toolbar button instead of presenting it as a right sidebar',
+);
+assert.match(
+  css,
+  /\.window-maximized\.work-summary-requested \.chat-content-frame\s*\{[\s\S]*?right:\s*328px/,
+  'A maximized conversation must keep its summary indentation even while the external inspector is open',
 );
 assert.match(app, /retainedInspectorContent/);
 assert.match(app, /sidebarPreviewWidth/);
@@ -153,6 +193,11 @@ assert.match(css, /\.work-summary-history-turn\s*\{/);
 assert.match(workSummaryInspector, /<AssistantLoopHistoryBlock/);
 assert.match(app, /<WorkSummaryInspector/);
 assert.match(css, /\.work-summary-inspector\s*\{/);
+assert.match(
+  sidebar,
+  /\{!embedded && \([\s\S]*?会话修改[\s\S]*?conversation\.title[\s\S]*?onClick=\{onClose\}/,
+  'Embedded review must rely on the unified outer inspector title and close control',
+);
 assert.match(
   summary,
   /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"[\s\S]*?className="work-summary-section work-summary-a2a-section"/,

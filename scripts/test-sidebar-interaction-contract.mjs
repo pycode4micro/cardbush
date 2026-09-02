@@ -153,13 +153,13 @@ assert.match(sidebarSource, /className=\{`only-talk-toggle\$\{onlyTalkMode \? ' 
 assert.match(sidebarSource, /aria-pressed=\{onlyTalkMode\}/);
 assert.match(
   sidebarSource,
-  /onlyTalkMode \? <Folder size=\{12\} \/> : <Cloud size=\{12\} \/>/,
-  'The only-talk toggle must show the destination mode with project and cloud icons',
+  /onlyTalkMode \? <Cloud size=\{12\} \/> : <Folder size=\{12\} \/>/,
+  'The only-talk toggle must show the current mode with project and cloud icons',
 );
 assert.match(
   sidebarSource,
-  /onlyTalkMode[\s\S]*?language === 'zh' \? '项目' : 'Projects'[\s\S]*?language === 'zh' \? '仅会话' : 'Only talk'/,
-  'The only-talk toggle label must describe the mode reached after clicking',
+  /onlyTalkMode[\s\S]*?language === 'zh' \? '仅会话' : 'Only talk'[\s\S]*?language === 'zh' \? '项目' : 'Projects'/,
+  'The only-talk toggle label must describe the current mode',
 );
 assert.match(sidebarSource, /onlyTalkConversations\.map\(renderStandaloneConversation\)/);
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
@@ -172,6 +172,17 @@ assert.match(sidebarSource, /className="conversation-unread-indicator"/);
 assert.match(stylesSource, /\.conversation-unread-indicator\s*\{[\s\S]*?background:\s*var\(--accent\)/);
 assert.match(stylesSource, /\.conversation-row\.unread \.conversation-title\s*\{/);
 assert.doesNotMatch(sidebarSource, /window\.prompt\([\s\S]{0,120}重命名对话/);
+assert.doesNotMatch(appSource, /window\.prompt\([\s\S]{0,120}重命名项目/);
+assert.match(appSource, /const \[projectRenameTarget, setProjectRenameTarget\]/);
+assert.match(appSource, /if \(action === 'rename'\) \{[\s\S]*?setProjectRenameTarget\(project\)/);
+assert.match(appSource, /function ProjectRenameDialog\(/);
+assert.match(appSource, /可同时重命名真实项目文件夹/);
+assert.match(appSource, /同时重命名项目文件夹（同一父目录）/);
+assert.match(appSource, /const renameProject = useCallback/);
+assert.match(appSource, /chat\.relocateProjectConversations/);
+assert.match(appSource, /renameProject\(projectRenameTarget, title, renameFolder\)/);
+assert.match(stylesSource, /\.project-rename-dialog\s*\{/);
+assert.match(stylesSource, /\.project-rename-folder-option\s*\{/);
 assert.match(sidebarSource, /className=\{`conversation-rename-form\$\{renameFailed \? ' invalid' : ''\}`\}/);
 assert.match(sidebarSource, /maxLength=\{160\}/);
 assert.match(sidebarSource, /if \(event\.key === 'Escape'\)/);
@@ -189,7 +200,7 @@ assert.match(
 assert.match(sidebarSource, /key=\{onlyTalkMode \? 'only-talk' : 'projects'\}/);
 assert.match(
   appSource,
-  /createConversation\(onlyTalkMode \? null : undefined\)/,
+  /createConversation\(onlyTalkMode \? null : activeConversationProjectDir \|\| undefined\)/,
   'Only-talk new chats must explicitly bypass the recent-project fallback',
 );
 assert.match(appSource, /cardbush_only_talk_mode/);
@@ -199,7 +210,7 @@ assert.match(
   'Switching chat modes without a matching conversation must show an empty draft instead of creating a session.',
 );
 const onlyTalkModeBlock = appSource.match(
-  /const changeOnlyTalkMode[\s\S]*?\}, \[chat, fallbackProjectDir\]\);/,
+  /const changeOnlyTalkMode[\s\S]*?\}, \[chat\]\);/,
 )?.[0] ?? '';
 assert.doesNotMatch(
   onlyTalkModeBlock,
@@ -254,8 +265,8 @@ assert.match(
 assert.match(appSource, /cardbush_recent_project_dir/);
 assert.match(
   appSource,
-  /projectDir === undefined[\s\S]*?fallbackProjectDir \|\| undefined[\s\S]*?chat\.startConversation\(resolvedProjectDir\)/,
-  'New chat must default to the most recently used available project',
+  /const activeProject = activeConversationProjectDir[\s\S]*?projectDir === undefined[\s\S]*?activeProject\?\.rootPath\.trim\(\) \|\| fallbackProjectDir \|\| undefined[\s\S]*?chat\.prepareConversation\(resolvedProjectDir, undefined, resolvedProjectId\)/,
+  'New chat must prefer the active available project, then reserve a draft without persisting it',
 );
 assert.match(appSource, /function WelcomeProjectSwitcher\(/);
 assert.match(appSource, /placeholder=\{language === 'zh' \? '搜索项目' : 'Search projects'\}/);

@@ -45,10 +45,12 @@ import type {
   SessionAttentionState,
 } from '../../types';
 import { sectionLabels } from '../appSections';
+import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import {
   conversationProjectDir,
   isOnlyTalkConversation,
 } from '../conversationWorkspace';
+import { conversationProjectId } from '../conversationScope';
 import { copyText } from '../messageFeedback';
 import {
   groupChangeReportsByTurn,
@@ -511,18 +513,21 @@ export function ChatSidebar({
         key: 'open',
         icon: <FolderOpen size={15} />,
         label: language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer',
+        disabled: project.missing,
         onClick: () => onProjectAction('open', project),
       },
       {
         key: 'refresh',
         icon: <RefreshCw size={15} />,
         label: language === 'zh' ? '刷新 Git 状态' : 'Refresh Git status',
+        disabled: project.missing,
         onClick: () => onProjectAction('refreshGit', project),
       },
       {
         key: 'new-chat',
         icon: <Edit3 size={15} />,
         label: language === 'zh' ? '新建项目会话' : 'New project chat',
+        disabled: project.missing,
         onClick: () => onProjectAction('newChat', project),
       },
       {
@@ -619,6 +624,8 @@ export function ChatSidebar({
         key={project.id}
         project={project}
         conversations={regularConversations.filter((item) => {
+          const projectId = conversationProjectId(item);
+          if (projectId) return projectId === project.id;
           const projectDir = conversationProjectDir(item);
           return Boolean(projectDir && samePath(projectDir, project.rootPath));
         })}
@@ -735,16 +742,16 @@ export function ChatSidebar({
             }
             title={
               onlyTalkMode
-                ? language === 'zh' ? '项目' : 'Projects'
-                : language === 'zh' ? '仅会话' : 'Only talk'
+                ? language === 'zh' ? '当前：仅会话；点击切换到项目' : 'Current: only talk; switch to projects'
+                : language === 'zh' ? '当前：项目；点击切换到仅会话' : 'Current: projects; switch to only talk'
             }
             onClick={() => onOnlyTalkModeChange(!onlyTalkMode)}
           >
-            {onlyTalkMode ? <Folder size={12} /> : <Cloud size={12} />}
+            {onlyTalkMode ? <Cloud size={12} /> : <Folder size={12} />}
             <span>
               {onlyTalkMode
-                ? language === 'zh' ? '项目' : 'Projects'
-                : language === 'zh' ? '仅会话' : 'Only talk'}
+                ? language === 'zh' ? '仅会话' : 'Only talk'
+                : language === 'zh' ? '项目' : 'Projects'}
             </span>
           </button>
         </div>
@@ -1025,7 +1032,7 @@ function ProjectBlock({
   onOpenConversationChanges: (conversationId: string) => void;
 }) {
   return (
-    <div className="project-block">
+    <div className={`project-block${project.missing ? ' missing' : ''}`}>
       <div
         className="project-row"
         role="button"
@@ -1043,12 +1050,18 @@ function ProjectBlock({
           <Folder size={14} />
         </span>
         <div className="project-title">
-          <span>{project.title}</span>
+          <span title={project.missing
+            ? language === 'zh' ? '项目文件夹不存在' : 'Project folder is missing'
+            : undefined}
+          >
+            {project.title}
+          </span>
         </div>
         <button
           className="row-new-chat"
           data-sidebar-menu-trigger="true"
           type="button"
+          disabled={project.missing}
           aria-label={language === 'zh' ? '新建项目会话' : 'New project chat'}
           title={language === 'zh' ? '新建项目会话' : 'New project chat'}
           onClick={(event) => {
@@ -1091,13 +1104,13 @@ function ProjectBlock({
                   ? '置顶项目'
                   : 'Pin project'}
             </SidebarMenuButton>
-            <SidebarMenuButton icon={<FolderOpen size={15} />} onClick={() => onProjectAction('open')}>
+            <SidebarMenuButton disabled={project.missing} icon={<FolderOpen size={15} />} onClick={() => onProjectAction('open')}>
               {language === 'zh' ? '在资源管理器中打开' : 'Open in Explorer'}
             </SidebarMenuButton>
-            <SidebarMenuButton icon={<RefreshCw size={15} />} onClick={() => onProjectAction('refreshGit')}>
+            <SidebarMenuButton disabled={project.missing} icon={<RefreshCw size={15} />} onClick={() => onProjectAction('refreshGit')}>
               {language === 'zh' ? '刷新 Git 状态' : 'Refresh Git status'}
             </SidebarMenuButton>
-            <SidebarMenuButton icon={<Edit3 size={15} />} onClick={() => onProjectAction('newChat')}>
+            <SidebarMenuButton disabled={project.missing} icon={<Edit3 size={15} />} onClick={() => onProjectAction('newChat')}>
               {language === 'zh' ? '新建项目会话' : 'New project chat'}
             </SidebarMenuButton>
             <SidebarMenuButton icon={<Edit3 size={15} />} onClick={() => onProjectAction('rename')}>
@@ -1549,11 +1562,13 @@ function SidebarContextMenu({
 function SidebarMenuButton({
   icon,
   danger,
+  disabled,
   onClick,
   children,
 }: {
   icon: React.ReactNode;
   danger?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -1561,7 +1576,9 @@ function SidebarMenuButton({
     <button
       className={`sidebar-menu-button ${danger ? 'danger' : ''}`}
       type="button"
+      disabled={disabled}
       onClick={(event) => {
+        if (disabled) return;
         event.stopPropagation();
         window.dispatchEvent(new CustomEvent(sidebarMenuCloseEvent));
         onClick();
@@ -1682,15 +1699,17 @@ export function ConversationChangeDialog({
   const allReverted = reports.every((report) => revertedChangeIds.has(report.id));
   const dialog = (
       <section className={`change-review-dialog${embedded ? ' embedded' : ''}`}>
-        <header>
-          <div>
-            <strong>{language === 'zh' ? '会话修改' : 'Chat changes'}</strong>
-            <span>{conversation.title}</span>
-          </div>
-          <button type="button" onClick={onClose}>
-            <X size={16} />
-          </button>
-        </header>
+        {!embedded && (
+          <header>
+            <div>
+              <strong>{language === 'zh' ? '会话修改' : 'Chat changes'}</strong>
+              <span>{conversation.title}</span>
+            </div>
+            <button type="button" onClick={onClose}>
+              <X size={16} />
+            </button>
+          </header>
+        )}
         <div className="change-review-summary">
           <Code2 size={16} />
           <span>
@@ -1723,6 +1742,7 @@ export function ConversationChangeDialog({
             {selectedItem ? (
               <>
                 <header>
+                  <FileTypeIcon path={selectedItem.file.path} />
                   <div>
                     <strong title={selectedItem.file.path}>{selectedItem.file.path}</strong>
                     <span>
@@ -1814,7 +1834,7 @@ export function ConversationChangeDialog({
                             title={item.file.path}
                             onClick={() => setSelectedKey(item.key)}
                           >
-                            <Code2 size={13} />
+                            <FileTypeIcon path={item.file.path} />
                             <span>
                               <strong>{basename(item.file.path)}</strong>
                               <small>{item.file.path}</small>
