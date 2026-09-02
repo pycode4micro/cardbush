@@ -1761,6 +1761,7 @@ export function useCardbushChat(
           disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
           images: attachments.images,
           files: attachments.files,
+          attachments: optimisticAttachments,
           signal: controller.signal,
           onStart: (start) => {
             streamStarted = true;
@@ -2601,6 +2602,10 @@ export function useCardbushChat(
         conversationId,
         createdAt,
       };
+      const replayAttachments = streamAttachmentsFromChatAttachments(
+        sourceUserMessage.attachments,
+        requestContext.standardImageInputEnabled === true,
+      );
       const tempAssistant: ChatMessage = {
         ...message,
         id: `assistant-regenerate-${crypto.randomUUID()}`,
@@ -2659,6 +2664,9 @@ export function useCardbushChat(
             osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
+            images: replayAttachments.images,
+            files: replayAttachments.files,
+            attachments: sourceUserMessage.attachments,
             signal: controller.signal,
             ...handlers,
           }),
@@ -2702,6 +2710,7 @@ export function useCardbushChat(
         outbound,
         requestContext.standardImageInputEnabled === true,
       );
+      const optimisticAttachments = await chatAttachmentsFromOutbound(outbound);
       const conversationId = message.conversationId?.trim() || activeConversationId;
       if (isSessionSending(conversationId)) {
         return;
@@ -2760,6 +2769,15 @@ export function useCardbushChat(
         ));
         return;
       }
+      const editedAttachments = optimisticAttachments.length > 0
+        ? optimisticAttachments
+        : editSourceMessage.attachments?.map((attachment) => ({ ...attachment })) ?? [];
+      const editedStreamAttachments = optimisticAttachments.length > 0
+        ? attachments
+        : streamAttachmentsFromChatAttachments(
+            editedAttachments,
+            requestContext.standardImageInputEnabled === true,
+          );
       const createdAt = new Date().toISOString();
       const editedUser: ChatMessage = {
         ...editSourceMessage,
@@ -2767,7 +2785,7 @@ export function useCardbushChat(
         conversationId,
         turnId: undefined,
         createdAt,
-        attachments: await chatAttachmentsFromOutbound(outbound),
+        attachments: editedAttachments.length > 0 ? editedAttachments : undefined,
       };
       const tempAssistant: ChatMessage = {
         id: `assistant-edit-${crypto.randomUUID()}`,
@@ -2827,8 +2845,9 @@ export function useCardbushChat(
             osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
-            images: attachments.images,
-            files: attachments.files,
+            images: editedStreamAttachments.images,
+            files: editedStreamAttachments.files,
+            attachments: editedAttachments,
             signal: controller.signal,
             ...handlers,
           }),
@@ -6609,6 +6628,23 @@ function streamAttachmentsForVision(
       ...attachments.images.map((image) => image.path).filter(Boolean),
     ],
   };
+}
+
+function streamAttachmentsFromChatAttachments(
+  attachments: ChatAttachment[] | undefined,
+  standardImageInputEnabled: boolean,
+) {
+  const paths = (attachments ?? []).flatMap((attachment) =>
+    attachment.path?.trim() ? [attachment.path.trim()] : [],
+  );
+  const images = paths
+    .filter(isImagePath)
+    .map((path) => ({ path }));
+  const files = paths.filter((path) => !isImagePath(path));
+  return streamAttachmentsForVision(
+    { displayInput: '', userInput: '', images, files },
+    standardImageInputEnabled,
+  );
 }
 
 function attachmentPathFromLine(value: string) {

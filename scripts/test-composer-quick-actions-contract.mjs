@@ -128,6 +128,17 @@ assert.match(mainSource, /ipcMain\.handle\('files:inspect-attachments'/);
 assert.match(mainSource, /size:\s*stats\.size/);
 assert.match(mainSource, /kind:\s*stats\.isDirectory\(\) \? 'folder'/);
 assert.match(preloadSource, /inspectAttachments:[\s\S]*?files:inspect-attachments/);
+assert.match(preloadSource, /import \{[^}]*webUtils[^}]*\} from 'electron'/);
+assert.match(preloadSource, /getPathForFile:\s*\(file:\s*File\)\s*=>\s*webUtils\.getPathForFile\(file\)/);
+assert.match(source, /function addTransferredFiles\(files:\s*File\[\]\)/);
+assert.match(source, /getPathForFile\?\.\(file\)/);
+assert.match(source, /event\.clipboardData\.files/);
+assert.match(source, /event\.dataTransfer\.files/);
+assert.match(source, /dataTransfer\.types\.includes\('Files'\)/);
+assert.match(source, /className=\{`composer-surface\$\{fileDragActive/);
+assert.match(source, /composer-file-drop-overlay/);
+assert.match(stylesSource, /\.composer-surface\.is-file-dragging\s*\{/);
+assert.match(stylesSource, /\.composer-file-drop-overlay\s*\{/);
 assert.match(stylesSource, /\.composer-file-attachment\s*\{/);
 assert.match(stylesSource, /\.composer-file-meta small\s*\{[\s\S]*?color:\s*var\(--text-soft\)/);
 assert.match(

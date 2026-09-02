@@ -47,6 +47,11 @@ import {
   DesktopControlOverlay,
   type DesktopControlTurn,
 } from './desktopControlOverlay';
+import {
+  SessionAttentionOpenQueue,
+  decodeSessionAttentionActivation,
+  encodeSessionAttentionActivation,
+} from './sessionAttentionRouting';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -225,6 +230,8 @@ let cardlingDragState: {
 } | null = null;
 let lastCardlingState: CardlingDesktopState | null = null;
 let sessionAttentionCount = 0;
+const sessionAttentionOpenQueue = new SessionAttentionOpenQueue();
+const activeSessionAttentionNotifications = new Set<Notification>();
 const terminalSessions = new Map<
   string,
   {
@@ -1847,23 +1854,58 @@ function showSessionAttentionNotification(value: unknown) {
   if (!shouldShow || !Notification.isSupported()) {
     return { shown: false };
   }
+  const activationArguments = encodeSessionAttentionActivation(payload.sessionId);
   const notification = new Notification({
+    id: `cardbush-attention-${randomUUID()}`,
     title: payload.title,
     body: payload.body,
     icon: loadCardbushIcon(64),
     silent: false,
+    ...(process.platform === 'win32'
+      ? { toastXml: sessionAttentionToastXml(payload.title, payload.body, activationArguments) }
+      : {}),
   });
-  notification.on('click', () => {
-    showMainWindow();
-    if (mainWindow != null && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('attention:open-session', {
-        sessionId: payload.sessionId,
-      });
-    }
-  });
+  const release = () => activeSessionAttentionNotifications.delete(notification);
+  notification.on('click', () => activateSessionAttention(payload.sessionId));
+  notification.on('close', release);
+  notification.on('failed', release);
+  activeSessionAttentionNotifications.add(notification);
   notification.show();
   mainWindow?.flashFrame(true);
   return { shown: true };
+}
+
+function sessionAttentionToastXml(title: string, body: string, launch: string) {
+  return `<toast activationType="foreground" launch="${escapeXmlAttribute(launch)}"><visual><binding template="ToastGeneric"><text>${escapeXmlText(title)}</text><text>${escapeXmlText(body)}</text></binding></visual></toast>`;
+}
+
+function escapeXmlAttribute(value: string) {
+  return escapeXmlText(value).replace(/'/g, '&apos;').replace(/"/g, '&quot;');
+}
+
+function escapeXmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function activateSessionAttention(sessionId: string) {
+  if (sessionAttentionOpenQueue.enqueue(sessionId)) {
+    publishSessionAttentionOpenAvailable();
+  }
+  showMainWindow();
+  publishSessionAttentionOpenAvailable();
+}
+
+function publishSessionAttentionOpenAvailable() {
+  if (
+    sessionAttentionOpenQueue.size === 0 ||
+    mainWindow == null ||
+    mainWindow.isDestroyed() ||
+    mainWindow.webContents.isLoadingMainFrame()
+  ) return;
+  mainWindow.webContents.send('attention:open-session');
 }
 
 function showMainWindow() {
@@ -1874,10 +1916,10 @@ function showMainWindow() {
   applyMainWindowVisualMaterial(mainWindow, lastMainWindowTheme);
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
-  } else {
-    mainWindow.show();
   }
+  mainWindow.show();
   mainWindow.focus();
+  mainWindow.moveTop();
 }
 
 ipcMain.handle('window:minimize', () => {
@@ -1950,6 +1992,13 @@ ipcMain.handle('attention:set-count', (event, count: number) => {
   applySessionAttentionBadge();
 });
 
+ipcMain.handle('attention:consume-open-session', (event) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
+    return null;
+  }
+  return sessionAttentionOpenQueue.consume();
+});
+
 ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
     throw new Error('debug log is only available to the main window');
@@ -1997,6 +2046,7 @@ ipcMain.handle('app:renderer-ready', (event) => {
   });
   if (packagedSmokeMode) return;
   sourceWindow.show();
+  publishSessionAttentionOpenAvailable();
   // Windows can briefly restore the executable icon while creating the
   // taskbar button. Reapply once after the HWND has become visible.
   setTimeout(() => {
@@ -3007,6 +3057,14 @@ function withPackagedSmokeTimeout<T>(
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
+    Notification.handleActivation((details) => {
+      const sessionId = decodeSessionAttentionActivation(details.arguments);
+      if (sessionId) {
+        activateSessionAttention(sessionId);
+      } else {
+        showMainWindow();
+      }
+    });
   }
   registerLocalFileProtocol();
   if (packagedSmokeMode) {

@@ -40,6 +40,7 @@ export const sessionMessageSchema = z.object({
   messageIndex: z.number().int().nonnegative(),
   createdAt: z.string().min(1),
   message: modelMessageSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type SessionMessage = z.infer<typeof sessionMessageSchema>;
@@ -169,12 +170,14 @@ export const runtimeSessionInputMessageSchema = z.object({
   messageId: z.string().min(1),
   createdAt: z.string().min(1).optional(),
   message: modelMessageSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const runtimeSessionCheckpointMessageSchema = z.object({
   messageId: z.string().min(1),
   createdAt: z.string().min(1),
   message: modelMessageSchema,
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const runtimeSessionCommitCheckpointSchema = z.object({

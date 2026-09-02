@@ -43,6 +43,31 @@ const {
   persistAssistantTurnTiming,
 } = loaded.exports;
 
+const projectionTranspiled = ts.transpileModule(
+  fs.readFileSync(
+    path.join(process.cwd(), 'src', 'backend', 'runtimeSessionMessageProjection.ts'),
+    'utf8',
+  ),
+  {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  },
+);
+const projectionModule = { exports: {} };
+vm.runInNewContext(projectionTranspiled.outputText, {
+  module: projectionModule,
+  exports: projectionModule.exports,
+  Set,
+  Array,
+  Object,
+  String,
+  Number,
+  Date,
+  decodeURIComponent,
+});
+
 assert.equal(formatCompactDuration(null), '');
 assert.equal(formatCompactDuration(999), '<1s');
 assert.equal(formatCompactDuration(59_000), '59s');
@@ -126,6 +151,48 @@ assert.match(
   /cardbush_turn_duration_ms\s*=\s*durationMs/,
   'assistant history should derive duration only from committed Runtime timestamps',
 );
+assert.match(
+  projectionSource,
+  /runtimeMessageAttachments\(message\.metadata\)/,
+  'history projection must restore durable attachment metadata for user bubbles',
+);
+
+const legacyTurn = {
+  turnId: 'turn-with-legacy-file',
+  turnSequence: 1,
+  createdAt: '2026-09-01T00:00:00Z',
+  completedAt: '2026-09-01T00:00:01Z',
+  status: 'completed',
+  reason: 'complete',
+  usage: {},
+  messages: [
+    {
+      messageId: 'legacy-context',
+      turnId: 'turn-with-legacy-file',
+      turnSequence: 1,
+      messageIndex: 0,
+      createdAt: '2026-09-01T00:00:00Z',
+      message: {
+        role: 'user',
+        name: 'turn_runtime_context',
+        visibility: 'internal',
+        content: '<turn_runtime_context>\nAttached files:\nC:\\work\\brief.xlsx\n</turn_runtime_context>',
+      },
+    },
+    {
+      messageId: 'legacy-user',
+      turnId: 'turn-with-legacy-file',
+      turnSequence: 1,
+      messageIndex: 1,
+      createdAt: '2026-09-01T00:00:00Z',
+      message: { role: 'user', content: '分析这个文件' },
+    },
+  ],
+};
+const restoredLegacyTurn = projectionModule.exports.restoreRuntimeTurnAttachmentMetadata(legacyTurn);
+assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].name, 'brief.xlsx');
+assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].type, 'document');
+assert.equal(restoredLegacyTurn.messages[1].metadata.attachments[0].path, 'C:\\work\\brief.xlsx');
 
 console.log('assistant turn timing persistence contract tests passed');
 

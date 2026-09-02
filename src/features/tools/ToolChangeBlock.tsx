@@ -5,7 +5,7 @@ import type { AppLanguage } from '../../types';
 import type { DiffLine, ToolChangeReport, ToolFileChange } from './toolChangeReports';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { ToolLogo } from './ToolLogo';
-import { diffLinePrefix, diffLineSource } from './diffSyntax';
+import { diffLineNumbers, diffLinePrefix, diffLineSource } from './diffSyntax';
 
 const DiffSyntaxLines = lazy(() => import('./DiffSyntaxLines'));
 
@@ -180,6 +180,7 @@ export function ToolFileChangeView({
 }
 
 function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
+  const lineNumbers = diffLineNumbers(lines);
   return (
     <div className="diff-lines">
       {lines.map((line, index) => (
@@ -187,16 +188,28 @@ function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
           // eslint-disable-next-line react/no-array-index-key
           key={index}
           line={line}
+          oldLine={lineNumbers[index]?.oldLine ?? null}
+          newLine={lineNumbers[index]?.newLine ?? null}
         />
       ))}
     </div>
   );
 }
 
-function DiffLineView({ line }: { line: DiffLine }) {
+function DiffLineView({
+  line,
+  oldLine,
+  newLine,
+}: {
+  line: DiffLine;
+  oldLine: number | null;
+  newLine: number | null;
+}) {
   return (
     <div className={`diff-line ${line.kind}`}>
       <span className="diff-marker" />
+      <span className="diff-line-number old">{oldLine ?? ''}</span>
+      <span className="diff-line-number new">{newLine ?? ''}</span>
       <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>
       <code>{diffLineSource(line) || ' '}</code>
     </div>

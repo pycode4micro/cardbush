@@ -11,6 +11,7 @@ const summary = read('src', 'features', 'chat', 'ConversationWorkSummary.tsx');
 const workSummaryInspector = read('src', 'features', 'chat', 'WorkSummaryInspector.tsx');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 const rightInspectorResizer = read('src', 'components', 'RightInspectorResizer.tsx');
+const rightInspectorSizing = read('src', 'components', 'rightInspectorSizing.ts');
 const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
@@ -34,15 +35,33 @@ assert.match(css, /body\.right-inspector-resizing \.right-inspector[\s\S]*transi
 assert.match(css, /--conversation-pane-min-width:\s*440px/);
 assert.match(
   css,
+  /\.desktop-shell\.window-maximized\s*\{[\s\S]*?--conversation-pane-min-width:\s*clamp\(340px,\s*18vw,\s*440px\)/,
+  'Only an actually maximized window may yield more horizontal space to the inspector',
+);
+assert.match(
+  css,
   /calc\(100% - var\(--layout-sidebar-space\) - var\(--conversation-pane-min-width\)\)/,
   'The inspector width must preserve the shared conversation-pane minimum instead of a separate hard-coded limit',
 );
-assert.match(rightInspectorResizer, /const minimumConversationPaneWidth = 440/);
+assert.match(
+  rightInspectorResizer,
+  /conversationPaneMinimum\(\s*windowMaximized,\s*window\.innerWidth/,
+);
 assert.match(
   rightInspectorResizer,
   /mainWidth \+ currentWidth - minimumConversationPaneWidth/,
   'Pointer resizing must use the same narrower conversation-pane limit as the flex layout',
 );
+assert.match(rightInspectorSizing, /maximizedConversationPaneMinimum = 340/);
+assert.match(rightInspectorSizing, /maximizedConversationPanePreferredRatio = 0\.18/);
+assert.match(rightInspectorSizing, /maximizedConversationPaneMaximum = 440/);
+assert.doesNotMatch(rightInspectorSizing, /maximizedInspectorMaximum/);
+assert.match(
+  rightInspectorSizing,
+  /windowMaximized[\s\S]*?Math\.max\(minimumInspectorWidth, viewportWidth\)/,
+  'A maximized inspector should use the available viewport instead of a fixed pixel ceiling',
+);
+assert.match(app, /<RightInspectorResizer[\s\S]*?windowMaximized=\{windowMaximized\}/);
 assert.doesNotMatch(rightInspectorResizer, /minimumMainStageWidth\s*=\s*560/);
 assert.match(app, /const inspectorWidthRef = useRef\(inspectorWidth\)/);
 assert.match(app, /const rightEdgeDelta = nextLeft \+ nextOuterWidth/);

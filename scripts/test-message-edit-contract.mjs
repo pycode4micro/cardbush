@@ -29,8 +29,13 @@ assert.match(
 );
 assert.match(
   hookSource,
-  /const editedUser:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:\s*await chatAttachmentsFromOutbound\(outbound\)/,
+  /const editedAttachments = optimisticAttachments\.length > 0[\s\S]*?: editSourceMessage\.attachments\?\.map[\s\S]*?const editedUser:[\s\S]*?content:\s*outbound\.displayInput,[\s\S]*?attachments:\s*editedAttachments\.length > 0/,
   'The edited optimistic bubble must keep attachment cards without exposing @ paths',
+);
+assert.match(
+  hookSource,
+  /const editedStreamAttachments = optimisticAttachments\.length > 0[\s\S]*?streamAttachmentsFromChatAttachments\([\s\S]*?editedAttachments/,
+  'Editing only the text of an attached message must keep its original files in the rerun',
 );
 
 const apiSource = fs.readFileSync(

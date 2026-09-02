@@ -43,9 +43,18 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
     },
   });
 
+  const firstRequest = sessionRequest("request_1", "turn_1", "user_1", "first");
+  firstRequest.inputMessages[0].metadata = {
+    attachments: [{
+      id: "attachment-1",
+      name: "brief.md",
+      type: "document",
+      path: "C:\\workspace\\brief.md",
+    }],
+  };
   await host.sendCommand({
     kind: RUN_RUNTIME_SESSION_TURN_COMMAND,
-    payload: sessionRequest("request_1", "turn_1", "user_1", "first"),
+    payload: firstRequest,
   });
   await host.sendCommand({
     kind: RUN_RUNTIME_SESSION_TURN_COMMAND,
@@ -72,6 +81,12 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   assert.equal(snapshot.turns[0].cacheChainState.requestOrdinal, 1);
   assert.equal(snapshot.turns[1].cacheChainState.requestOrdinal, 2);
   assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 4);
+  assert.deepEqual(snapshot.turns[0].messages[0].metadata.attachments, [{
+    id: "attachment-1",
+    name: "brief.md",
+    type: "document",
+    path: "C:\\workspace\\brief.md",
+  }]);
   assert.ok(host.capabilities().features.includes("append_only_session_context"));
   assert.ok(host.capabilities().features.includes("cross_turn_cache_chain"));
   assert.ok(host.capabilities().features.includes("stopped_turn_continuation"));

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 type CardlingDesktopState = {
@@ -116,11 +116,13 @@ const desktopApi = {
     ipcRenderer.invoke('attention:notify-session', payload) as Promise<{ shown: boolean }>,
   setSessionAttentionCount: (count: number) =>
     ipcRenderer.invoke('attention:set-count', count) as Promise<void>,
-  onOpenSessionAttention: (callback: (payload: { sessionId: string }) => void) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: { sessionId: string },
-    ) => callback(payload);
+  consumeSessionAttentionOpen: () =>
+    ipcRenderer.invoke('attention:consume-open-session') as Promise<{
+      sessionId: string;
+      queuedAt: number;
+    } | null>,
+  onOpenSessionAttention: (callback: () => void) => {
+    const listener = () => callback();
     ipcRenderer.on('attention:open-session', listener);
     return () => ipcRenderer.removeListener('attention:open-session', listener);
   },
@@ -257,6 +259,7 @@ const desktopApi = {
       rawCount: number;
     }>,
   pickAttachments: () => ipcRenderer.invoke('dialog:pick-attachments') as Promise<string[]>,
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   inspectAttachments: (paths: string[]) =>
     ipcRenderer.invoke('files:inspect-attachments', paths) as Promise<Array<{
       path: string;

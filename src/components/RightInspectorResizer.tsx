@@ -1,10 +1,10 @@
 import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 
-const minimumInspectorWidth = 380;
-const maximumInspectorWidth = 900;
-// Keep the conversation usable while still allowing wide document/review previews.
-// This value mirrors --conversation-pane-min-width in app.css.
-const minimumConversationPaneWidth = 440;
+import {
+  conversationPaneMinimum,
+  inspectorMaximum,
+  minimumInspectorWidth,
+} from './rightInspectorSizing';
 
 type InspectorDragState = {
   startX: number;
@@ -19,10 +19,12 @@ type InspectorDragState = {
 
 export function RightInspectorResizer({
   width,
+  windowMaximized,
   onWidthChange,
   label,
 }: {
   width: number;
+  windowMaximized: boolean;
   onWidthChange: (width: number) => void;
   label: string;
 }) {
@@ -39,7 +41,7 @@ export function RightInspectorResizer({
       startX: event.clientX,
       startWidth: currentWidth,
       currentWidth,
-      maximumWidth: readMaximumInspectorWidth(currentWidth),
+      maximumWidth: readMaximumInspectorWidth(currentWidth, windowMaximized),
       pointerId: event.pointerId,
       scope,
       animationFrame: 0,
@@ -96,7 +98,7 @@ export function RightInspectorResizer({
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerCancel);
-  }, [onWidthChange, width]);
+  }, [onWidthChange, width, windowMaximized]);
 
   return (
     <div
@@ -117,11 +119,15 @@ function readCurrentInspectorWidth(scope: HTMLElement, fallbackWidth: number) {
     : fallbackWidth;
 }
 
-function readMaximumInspectorWidth(currentWidth: number) {
+function readMaximumInspectorWidth(currentWidth: number, windowMaximized: boolean) {
+  const minimumConversationPaneWidth = conversationPaneMinimum(
+    windowMaximized,
+    window.innerWidth,
+  );
   const mainWidth = document.querySelector<HTMLElement>('.main-stage')
     ?.getBoundingClientRect().width ?? minimumConversationPaneWidth;
   return Math.min(
-    maximumInspectorWidth,
+    inspectorMaximum(windowMaximized, window.innerWidth),
     Math.max(
       minimumInspectorWidth,
       mainWidth + currentWidth - minimumConversationPaneWidth,

@@ -423,11 +423,13 @@ export function Composer({
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileDragDepthRef = useRef(0);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
+  const [fileDragActive, setFileDragActive] = useState(false);
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
@@ -591,14 +593,7 @@ export function Composer({
   function loadPayload(payload: QuickLoadPayload) {
     if (payload.kind === 'file' && payload.value.trim()) {
       const pathValue = payload.value.trim();
-      if (isImagePath(pathValue)) {
-        setImageAttachments((current) => [
-          ...current,
-          imageAttachmentFromPath(pathValue),
-        ]);
-      } else {
-        void addFileAttachments([pathValue]);
-      }
+      void addAttachmentPaths([pathValue]);
       setActiveMenu(null);
       setPopoverAnchor(null);
       setCommandState(null);
@@ -610,8 +605,9 @@ export function Composer({
     setCommandState(null);
   }
 
-  async function addFileAttachments(paths: string[]) {
-    const uniquePaths = [...new Set(paths.map((value) => value.trim()).filter(Boolean))];
+  async function addAttachmentPaths(paths: string[]) {
+    const uniquePaths = [...new Set(paths.map((value) => value.trim()).filter(Boolean))]
+      .slice(0, 32);
     if (uniquePaths.length === 0) {
       return;
     }
@@ -621,11 +617,33 @@ export function Composer({
     const metadataByPath = new Map(
       (inspected ?? []).map((item) => [item.path.toLowerCase(), item]),
     );
+    const imagePaths = uniquePaths.filter((pathValue) => {
+      const metadata = metadataByPath.get(pathValue.toLowerCase());
+      return metadata?.kind !== 'folder' && isImagePath(pathValue);
+    });
+    if (imagePaths.length > 0) {
+      setImageAttachments((current) => {
+        const existing = new Set(current.map((item) => item.path.toLowerCase()));
+        return [
+          ...current,
+          ...imagePaths
+            .filter((pathValue) => !existing.has(pathValue.toLowerCase()))
+            .map((pathValue) => imageAttachmentFromPath(pathValue)),
+        ];
+      });
+    }
+    const imagePathSet = new Set(imagePaths.map((pathValue) => pathValue.toLowerCase()));
+    const filePaths = uniquePaths.filter(
+      (pathValue) => !imagePathSet.has(pathValue.toLowerCase()),
+    );
+    if (filePaths.length === 0) {
+      return;
+    }
     setFileAttachments((current) => {
       const existing = new Set(current.map((item) => item.path.toLowerCase()));
       return [
         ...current,
-        ...uniquePaths
+        ...filePaths
           .filter((pathValue) => !existing.has(pathValue.toLowerCase()))
           .map((pathValue) =>
             fileAttachmentFromPath(
@@ -681,20 +699,28 @@ export function Composer({
     };
   }, [commandState]);
 
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    fileDragDepthRef.current = 0;
+    setFileDragActive(false);
     const raw = event.dataTransfer.getData('application/x-cardbush-quickload');
-    if (!raw) {
+    if (raw) {
+      event.preventDefault();
+      try {
+        loadPayload(JSON.parse(raw) as QuickLoadPayload);
+      } catch {
+        const text = event.dataTransfer.getData('text/plain');
+        if (text.trim()) {
+          onDraftChange(draft.trim() ? `${draft.trimEnd()}\n${text}` : text);
+        }
+      }
+      return;
+    }
+    const files = [...event.dataTransfer.files];
+    if (files.length === 0) {
       return;
     }
     event.preventDefault();
-    try {
-      loadPayload(JSON.parse(raw) as QuickLoadPayload);
-    } catch {
-      const text = event.dataTransfer.getData('text/plain');
-      if (text.trim()) {
-        onDraftChange(draft.trim() ? `${draft.trimEnd()}\n${text}` : text);
-      }
-    }
+    await addTransferredFiles(files);
   }
 
   async function pickAttachments() {
@@ -702,33 +728,41 @@ export function Composer({
     if (!paths || paths.length === 0) {
       return;
     }
-    const imagePaths = paths.filter(isImagePath);
-    if (imagePaths.length > 0) {
-      setImageAttachments((current) => [
-        ...current,
-        ...imagePaths.map((pathValue) => imageAttachmentFromPath(pathValue)),
-      ]);
-    }
-    const otherPaths = paths.filter((pathValue) => !isImagePath(pathValue));
-    if (otherPaths.length > 0) {
-      await addFileAttachments(otherPaths);
-    }
+    await addAttachmentPaths(paths);
   }
 
-  async function pasteImages(event: React.ClipboardEvent<HTMLDivElement>) {
-    const files = [...event.clipboardData.files].filter((file) =>
-      file.type.startsWith('image/'),
-    );
+  async function pasteAttachments(event: React.ClipboardEvent<HTMLDivElement>) {
+    const files = [...event.clipboardData.files];
     if (files.length === 0) {
       return;
     }
     event.preventDefault();
+    await addTransferredFiles(files);
+  }
+
+  async function addTransferredFiles(files: File[]) {
+    const pathBacked: string[] = [];
+    const transientImages: File[] = [];
+    for (const file of files.slice(0, 32)) {
+      const pathValue = pathForTransferredFile(file);
+      if (pathValue) {
+        pathBacked.push(pathValue);
+      } else if (file.type.startsWith('image/')) {
+        transientImages.push(file);
+      }
+    }
+    if (pathBacked.length > 0) {
+      await addAttachmentPaths(pathBacked);
+    }
+    if (transientImages.length === 0) {
+      return;
+    }
     if (!window.cardbushDesktop?.saveImageDataUrl) {
       return;
     }
     try {
       const saved = await Promise.all(
-        files.map(async (file) => {
+        transientImages.map(async (file) => {
           const dataUrl = await readFileAsDataUrl(file);
           const result = await window.cardbushDesktop!.saveImageDataUrl(
             dataUrl,
@@ -746,6 +780,18 @@ export function Composer({
     } catch (caught) {
       console.warn(caught);
     }
+  }
+
+  function pathForTransferredFile(file: File): string {
+    try {
+      return window.cardbushDesktop?.getPathForFile?.(file)?.trim() ?? '';
+    } catch {
+      return '';
+    }
+  }
+
+  function hasFileTransfer(dataTransfer: DataTransfer): boolean {
+    return dataTransfer.files.length > 0 || dataTransfer.types.includes('Files');
   }
 
   function selectModel(model: string) {
@@ -1060,7 +1106,7 @@ export function Composer({
         </div>
       )}
       <div
-        className="composer-surface"
+        className={`composer-surface${fileDragActive ? ' is-file-dragging' : ''}`}
         onPointerDown={(event) => {
           const target = event.target;
           if (
@@ -1071,15 +1117,42 @@ export function Composer({
           }
           textareaRef.current?.focus();
         }}
-        onPaste={(event) => void pasteImages(event)}
+        onPaste={(event) => void pasteAttachments(event)}
+        onDragEnter={(event) => {
+          if (!hasFileTransfer(event.dataTransfer)) {
+            return;
+          }
+          event.preventDefault();
+          fileDragDepthRef.current += 1;
+          setFileDragActive(true);
+        }}
         onDragOver={(event) => {
-          if (event.dataTransfer.types.includes('application/x-cardbush-quickload')) {
+          if (
+            hasFileTransfer(event.dataTransfer) ||
+            event.dataTransfer.types.includes('application/x-cardbush-quickload')
+          ) {
             event.preventDefault();
             event.dataTransfer.dropEffect = 'copy';
           }
         }}
-        onDrop={handleDrop}
+        onDragLeave={(event) => {
+          if (!hasFileTransfer(event.dataTransfer)) {
+            return;
+          }
+          fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+          if (fileDragDepthRef.current === 0) {
+            setFileDragActive(false);
+          }
+        }}
+        onDrop={(event) => void handleDrop(event)}
       >
+        {fileDragActive && (
+          <div className="composer-file-drop-overlay" role="status">
+            <Paperclip size={20} />
+            <strong>{language === 'zh' ? '松开即可添加' : 'Drop to attach'}</strong>
+            <span>{language === 'zh' ? '支持文件、文件夹和图片' : 'Files, folders and images are supported'}</span>
+          </div>
+        )}
         {imageAttachments.length > 0 && (
           <div className="composer-image-strip">
             {imageAttachments.map((image) => (

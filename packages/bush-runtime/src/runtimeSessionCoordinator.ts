@@ -201,6 +201,7 @@ export class RuntimeSessionCoordinator {
           messageId: item.messageId,
           createdAt: item.createdAt ?? createdAt,
           message: item.message,
+          ...(item.metadata ? { metadata: item.metadata } : {}),
         })),
         generatedMessages: [],
         usage: {},
@@ -230,6 +231,7 @@ export class RuntimeSessionCoordinator {
           messageIndex: index,
           createdAt: item.createdAt,
           message: item.message,
+          ...(item.metadata ? { metadata: item.metadata } : {}),
         }));
         const generated = generatedMessages.map((item, index) => ({
           messageId: item.messageId,

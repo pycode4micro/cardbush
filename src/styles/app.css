@@ -356,6 +356,10 @@ textarea {
   overflow: hidden;
 }
 
+.desktop-shell.window-maximized {
+  --conversation-pane-min-width: clamp(340px, 18vw, 440px);
+}
+
 .app > .settings-shell {
   position: absolute;
   inset: 29px 0 0;
@@ -2276,30 +2280,93 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: var(--surface);
 }
 
-.markdown-inspector-header {
-  z-index: 1;
-  min-width: 0;
-  padding: 10px 14px;
-  background: color-mix(in srgb, var(--surface-raised) 88%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-}
-
-.markdown-inspector-header strong,
-.markdown-inspector-header small {
-  display: block;
+.source-inspector-preview {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface);
 }
 
-.markdown-inspector-header strong { font-size: 11px; font-weight: 650; }
-.markdown-inspector-header small { margin-top: 3px; color: var(--muted); font-size: 9.5px; }
+.source-inspector-document {
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  background: color-mix(in srgb, var(--surface) 96%, black);
+}
+
+.source-code-lines {
+  width: max-content;
+  min-width: 100%;
+  padding: 10px 0 28px;
+  color: var(--diff-syntax-text);
+  font-family: var(--mono-font-family);
+  font-size: 12px;
+  line-height: 1.62;
+  tab-size: 2;
+}
+
+.source-code-line {
+  min-width: 100%;
+  min-height: 20px;
+  display: grid;
+  grid-template-columns: 52px max-content;
+}
+
+.source-code-line:hover {
+  background: color-mix(in srgb, var(--text) 4.5%, transparent);
+}
+
+.source-line-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding: 0 11px 0 8px;
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  background: color-mix(in srgb, var(--surface) 97%, black);
+  border-right: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.source-code-line code {
+  min-width: max-content;
+  padding: 0 18px 0 12px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  white-space: pre;
+}
 
 .markdown-inspector-document {
   min-height: 0;
   overflow: auto;
   padding: clamp(18px, 3vw, 34px) clamp(20px, 5vw, 64px) 48px;
   scrollbar-gutter: stable;
+}
+
+.inspector-preview-notice {
+  width: min(100%, 920px);
+  margin: 0 auto 14px;
+  padding: 7px 10px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface-raised));
+  border: 1px solid color-mix(in srgb, var(--warning) 22%, var(--border));
+  border-radius: 7px;
+  font-size: 10.5px;
+}
+
+.inspector-preview-notice.source {
+  position: sticky;
+  top: 8px;
+  z-index: 3;
+  width: max-content;
+  max-width: calc(100% - 20px);
+  margin: 8px 10px 0;
 }
 
 .markdown-inspector-document > .markdown-content {
@@ -7774,7 +7841,8 @@ body.right-inspector-resizing .right-inspector-resizer {
   font-size: 12px;
 }
 
-.diff-lines {
+.diff-lines,
+.source-code-lines {
   --diff-syntax-text: var(--text-mid);
   --diff-syntax-comment: #6f7d71;
   --diff-syntax-punctuation: #68727c;
@@ -7797,11 +7865,12 @@ body.right-inspector-resizing .right-inspector-resizer {
   min-width: 100%;
   min-height: 24px;
   display: grid;
-  grid-template-columns: 3px 18px max-content;
+  grid-template-columns: 3px 40px 40px 18px max-content;
   color: var(--text-mid);
 }
 
-.theme-dark .diff-lines {
+.theme-dark .diff-lines,
+.theme-dark .source-code-lines {
   --diff-syntax-text: #c5ccd5;
   --diff-syntax-comment: #77837c;
   --diff-syntax-punctuation: #98a3ad;
@@ -7813,6 +7882,19 @@ body.right-inspector-resizing .right-inspector-resizer {
   --diff-syntax-function: #82aaff;
   --diff-syntax-variable: #f2a36f;
   --diff-syntax-deleted: #ff7770;
+}
+
+.diff-line-number {
+  padding: 2px 7px 3px 4px;
+  overflow: hidden;
+  color: color-mix(in srgb, currentColor 50%, var(--muted));
+  border-right: 1px solid color-mix(in srgb, var(--border) 44%, transparent);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.77;
+  text-align: right;
+  user-select: none;
 }
 
 .diff-line.addition {
@@ -10472,6 +10554,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .composer-surface {
+  position: relative;
   width: 100%;
   padding: 10px 8px 8px 12px;
   cursor: text;
@@ -10484,6 +10567,62 @@ body.right-inspector-resizing .right-inspector-resizer {
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 16px;
   box-shadow: 0 5px 14px color-mix(in srgb, var(--shadow) 80%, transparent);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.composer-surface.is-file-dragging {
+  border-color: color-mix(in srgb, var(--accent) 74%, var(--border));
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 8px 22px color-mix(in srgb, var(--accent) 16%, var(--shadow));
+}
+
+.composer-surface > .composer-file-drop-overlay,
+.app.has-custom-background .composer-surface > .composer-file-drop-overlay {
+  position: absolute;
+  inset: 5px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 72%, var(--border));
+  border-radius: 12px;
+  box-shadow: inset 0 0 24px color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+  animation: composer-file-drop-in 140ms ease-out;
+}
+
+.composer-file-drop-overlay svg {
+  color: var(--accent);
+}
+
+.composer-file-drop-overlay strong {
+  font-size: 13px;
+}
+
+.composer-file-drop-overlay span {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+@keyframes composer-file-drop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .theme-dark .composer-surface {
@@ -15465,7 +15604,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   max-height: min(720px, calc(100vh - 56px));
   min-height: 420px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   color: var(--text);
   background: color-mix(in srgb, var(--surface) 90%, transparent);
   border: 1px solid var(--team-agent-line-strong);

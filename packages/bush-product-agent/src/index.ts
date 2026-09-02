@@ -45,6 +45,13 @@ export interface ProductAgentTurnInput {
   projectInstructions?: string;
   files?: string[];
   images?: string[];
+  attachments?: Array<{
+    id: string;
+    name: string;
+    type: "image" | "video" | "audio" | "document" | "folder";
+    path?: string;
+    size?: number;
+  }>;
   filesystemLocations?: Array<{
     id: string;
     name: string;
@@ -91,6 +98,9 @@ function createBaseProductAgentTurnRequest(
       {
         messageId: input.messageId,
         createdAt: input.createdAt,
+        ...(input.attachments?.length
+          ? { metadata: { attachments: input.attachments.map((item) => ({ ...item })) } }
+          : {}),
         message: {
           role: "user",
           ...(input.userMessageName ? { name: input.userMessageName } : {}),

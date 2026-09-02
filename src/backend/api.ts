@@ -1,6 +1,7 @@
 import type {
   AssistantRevision,
   BackendCapabilities,
+  ChatAttachment,
   ChatMessage,
   ChatToolExecution,
   ConversationSummary,
@@ -65,6 +66,7 @@ import { toolArtifactsFromPayload } from './toolArtifacts';
 import {
   projectRuntimeSessionMessage,
   projectRuntimeTurnMessages,
+  restoreRuntimeTurnAttachmentMetadata,
 } from './runtimeSessionMessageProjection';
 import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
@@ -190,6 +192,7 @@ export interface ChatStreamRequest {
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
+  attachments?: ChatAttachment[];
   disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
@@ -271,6 +274,7 @@ export interface ControlStreamRequest {
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
+  attachments?: ChatAttachment[];
   disabledTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
@@ -1562,14 +1566,15 @@ export async function fetchSessionMessages(
     const superseded = new Set(
       options.includeSuperseded === false ? snapshot.supersededMessageIds : [],
     );
-    const messages = snapshot.turns.flatMap((turn) =>
-      projectRuntimeTurnMessages({
-        ...turn,
-        messages: turn.messages
+    const messages = snapshot.turns.flatMap((turn) => {
+      const restoredTurn = restoreRuntimeTurnAttachmentMetadata(turn);
+      return projectRuntimeTurnMessages({
+        ...restoredTurn,
+        messages: restoredTurn.messages
           .filter((message) => !superseded.has(message.messageId))
           .filter((message) => !isInternalRuntimeMessage(message)),
-      }, snapshot.sessionId),
-    );
+      }, snapshot.sessionId);
+    });
     const records = (
       await Promise.all(
         snapshot.turns.map((turn) =>

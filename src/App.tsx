@@ -76,6 +76,7 @@ import {
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
+import { inspectorMaximum } from './components/rightInspectorSizing';
 import {
   MessageListFooter,
   absoluteBottomScrollTop,
@@ -235,6 +236,7 @@ const LazyFeatureContentPanel = lazy(async () => {
   const module = await import('./features/panels');
   return { default: module.FeatureContentPanel };
 });
+const SourceSyntaxLines = lazy(() => import('./features/tools/SourceSyntaxLines'));
 
 const LazyRuntimeStreamPreTest = import.meta.env.DEV
   ? lazy(async () => {
@@ -918,11 +920,14 @@ function CardbushApp() {
   });
   const inspectorWidthRef = useRef(inspectorWidth);
   const setInspectorWidth = useCallback((width: number) => {
-    const next = Math.min(900, Math.max(380, Math.round(width)));
+    const next = Math.min(
+      inspectorMaximum(windowMaximized, window.innerWidth),
+      Math.max(380, Math.round(width)),
+    );
     inspectorWidthRef.current = next;
     setInspectorWidthState(next);
     window.localStorage.setItem('cardbush.inspector_width', String(next));
-  }, []);
+  }, [windowMaximized]);
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
     const target = stripWrappingQuotes(detail.target.trim());
     if (!target) return;
@@ -1611,13 +1616,45 @@ function CardbushApp() {
     };
   }, [section]);
 
-  useEffect(() => window.cardbushDesktop?.onOpenSessionAttention?.(({ sessionId }) => {
+  const pendingSessionAttentionRef = useRef('');
+  const openSessionAttention = useCallback((sessionId: string) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
     setSettingsOpen(false);
     setSection('chat');
-    chat.openConversation(normalized);
-  }), [chat.openConversation]);
+    pendingSessionAttentionRef.current = normalized;
+    if (chat.conversations.some((conversation) => conversation.id === normalized)) {
+      chat.openConversation(normalized);
+      pendingSessionAttentionRef.current = '';
+    }
+  }, [chat.conversations, chat.openConversation]);
+
+  const consumeSessionAttentionOpen = useCallback(async () => {
+    const consume = window.cardbushDesktop?.consumeSessionAttentionOpen;
+    if (!consume) return;
+    for (let index = 0; index < 20; index += 1) {
+      const intent = await consume().catch(() => null);
+      if (!intent) break;
+      openSessionAttention(intent.sessionId);
+    }
+  }, [openSessionAttention]);
+
+  useEffect(() => {
+    const dispose = window.cardbushDesktop?.onOpenSessionAttention?.(() => {
+      void consumeSessionAttentionOpen();
+    });
+    void consumeSessionAttentionOpen();
+    return dispose;
+  }, [consumeSessionAttentionOpen]);
+
+  useEffect(() => {
+    const pending = pendingSessionAttentionRef.current;
+    if (!pending || !chat.conversations.some((conversation) => conversation.id === pending)) {
+      return;
+    }
+    chat.openConversation(pending);
+    pendingSessionAttentionRef.current = '';
+  }, [chat.conversations, chat.openConversation]);
 
   useEffect(() => {
     if (osStartupHandledRef.current) {
@@ -2165,7 +2202,7 @@ function CardbushApp() {
         </Suspense>
       )}
       <main
-        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''} ${section === 'os' ? 'os-desktop-shell' : ''}`}
+        className={`desktop-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${settingsVisible ? ' app-content-suspended' : ''}${windowMaximized ? ' window-maximized' : ' window-restored'} ${section === 'os' ? 'os-desktop-shell' : ''}`}
         aria-hidden={settingsVisible}
         inert={settingsVisible ? true : undefined}
         style={section === 'os'
@@ -2431,6 +2468,7 @@ function CardbushApp() {
             >
               <RightInspectorResizer
                 width={inspectorWidth}
+                windowMaximized={windowMaximized}
                 onWidthChange={setInspectorWidth}
                 label={language === 'zh' ? '拖动调整右侧栏宽度' : 'Drag to resize inspector'}
               />
@@ -7938,6 +7976,8 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
   const markdownPath = inspectorMarkdownPath(target);
   const markdownPreview = isMarkdownInspectorTarget(target);
+  const sourcePreview = !markdownPreview && /^cardbush-file:\/\/text-preview(?:\/|\?|$)/i.test(source);
+  const rendererPreview = markdownPreview || sourcePreview;
   const [markdownRevision, setMarkdownRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
@@ -7966,7 +8006,7 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     reload: () => {
       loadingRef.current = true;
       setLoading(true);
-      if (markdownPreview) {
+      if (rendererPreview) {
         setMarkdownRevision((value) => value + 1);
         onNavigationStateChange(identity, {
           url: target,
@@ -7980,7 +8020,7 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         publishNavigation();
       }
     },
-  }), [identity, markdownPath, markdownPreview, onNavigationStateChange, publishNavigation, target]);
+  }), [identity, markdownPath, onNavigationStateChange, publishNavigation, rendererPreview, target]);
 
   const publishMarkdownNavigation = useCallback((isLoading: boolean) => {
     loadingRef.current = isLoading;
@@ -7995,7 +8035,7 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   }, [identity, markdownPath, onNavigationStateChange, target]);
 
   useEffect(() => {
-    if (markdownPreview) return undefined;
+    if (rendererPreview) return undefined;
     const webview = webviewRef.current;
     if (!webview) return undefined;
     const start = () => {
@@ -8066,12 +8106,19 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('new-window', openWindow);
       webview.removeEventListener('context-menu', contextMenu);
     };
-  }, [markdownPreview, onOpenTarget, publishNavigation, source, target]);
+  }, [onOpenTarget, publishNavigation, rendererPreview, source, target]);
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
       {markdownPreview ? (
         <MarkdownInspectorPreview
+          key={`${markdownPath}:${markdownRevision}`}
+          path={markdownPath}
+          language={language}
+          onLoadingChange={publishMarkdownNavigation}
+        />
+      ) : sourcePreview ? (
+        <SourceInspectorPreview
           key={`${markdownPath}:${markdownRevision}`}
           path={markdownPath}
           language={language}
@@ -8140,23 +8187,85 @@ function MarkdownInspectorPreview({
 
   return (
     <article className="markdown-inspector-preview">
-      <header className="markdown-inspector-header">
-        <strong title={path}>{path}</strong>
-        <small>
-          {error
-            ? language === 'zh' ? 'Markdown 预览加载失败' : 'Markdown preview failed'
-            : truncated
-              ? language === 'zh' ? 'Markdown 预览 · 文件较大，仅显示前 2 MiB' : 'Markdown preview · showing the first 2 MiB'
-              : language === 'zh' ? 'Markdown 预览' : 'Markdown preview'}
-        </small>
-      </header>
       <div className="markdown-inspector-document">
         {error ? (
           <div className="markdown-inspector-error" role="alert">{error}</div>
         ) : (
-          <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
-            <MarkdownContent content={content} language={language} />
-          </MessageFileReferenceScope>
+          <>
+            {truncated && (
+              <div className="inspector-preview-notice">
+                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
+              </div>
+            )}
+            <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
+              <MarkdownContent content={content} language={language} />
+            </MessageFileReferenceScope>
+          </>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function SourceInspectorPreview({
+  path,
+  language,
+  onLoadingChange,
+}: {
+  path: string;
+  language: AppLanguage;
+  onLoadingChange: (loading: boolean) => void;
+}) {
+  const [content, setContent] = useState('');
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    onLoadingChange(true);
+    setError('');
+    const readTextPreview = window.cardbushDesktop?.readTextPreview;
+    if (!readTextPreview) {
+      setError(language === 'zh' ? '当前环境不支持本地源码预览。' : 'Local source preview is unavailable.');
+      onLoadingChange(false);
+      return () => {
+        disposed = true;
+      };
+    }
+    void readTextPreview(path)
+      .then((result) => {
+        if (disposed) return;
+        setContent(result.content);
+        setTruncated(result.truncated);
+      })
+      .catch((reason: unknown) => {
+        if (disposed) return;
+        setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!disposed) onLoadingChange(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [language, onLoadingChange, path]);
+
+  return (
+    <article className="source-inspector-preview">
+      <div className="source-inspector-document">
+        {error ? (
+          <div className="markdown-inspector-error" role="alert">{error}</div>
+        ) : (
+          <>
+            {truncated && (
+              <div className="inspector-preview-notice source">
+                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
+              </div>
+            )}
+            <Suspense fallback={null}>
+              <SourceSyntaxLines content={content} path={path} />
+            </Suspense>
+          </>
         )}
       </div>
     </article>

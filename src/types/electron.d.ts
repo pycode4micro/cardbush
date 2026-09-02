@@ -68,8 +68,12 @@ declare global {
         kind: 'completed' | 'waiting' | 'error';
       }) => Promise<{ shown: boolean }>;
       setSessionAttentionCount: (count: number) => Promise<void>;
+      consumeSessionAttentionOpen: () => Promise<{
+        sessionId: string;
+        queuedAt: number;
+      } | null>;
       onOpenSessionAttention: (
-        callback: (payload: { sessionId: string }) => void,
+        callback: () => void,
       ) => () => void;
       writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
       wallpaperAccent: () => Promise<{
@@ -197,6 +201,7 @@ declare global {
         rawCount: number;
       }>;
       pickAttachments: () => Promise<string[]>;
+      getPathForFile: (file: File) => string;
       inspectAttachments: (paths: string[]) => Promise<Array<{
         path: string;
         name: string;

@@ -1,9 +1,14 @@
 import { Highlight, type PrismTheme } from 'prism-react-renderer';
 
 import type { DiffLine } from './toolChangeReports';
-import { diffLanguageForPath, diffLinePrefix, diffLineSource } from './diffSyntax';
+import {
+  diffLanguageForPath,
+  diffLineNumbers,
+  diffLinePrefix,
+  diffLineSource,
+} from './diffSyntax';
 
-const cardbushDiffTheme: PrismTheme = {
+export const cardbushSyntaxTheme: PrismTheme = {
   plain: { color: 'var(--diff-syntax-text)' },
   styles: [
     {
@@ -57,11 +62,12 @@ export default function DiffSyntaxLines({
   path: string;
 }) {
   const sources = lines.map(diffLineSource);
+  const lineNumbers = diffLineNumbers(lines);
   return (
     <Highlight
       code={sources.join('\n')}
       language={diffLanguageForPath(path)}
-      theme={cardbushDiffTheme}
+      theme={cardbushSyntaxTheme}
     >
       {({ tokens, getTokenProps }) => (
         <div className="diff-lines syntax-highlighted">
@@ -73,6 +79,12 @@ export default function DiffSyntaxLines({
               key={lineIndex}
             >
               <span className="diff-marker" />
+              <span className="diff-line-number old" aria-label={`Old line ${lineNumbers[lineIndex]?.oldLine ?? ''}`}>
+                {lineNumbers[lineIndex]?.oldLine ?? ''}
+              </span>
+              <span className="diff-line-number new" aria-label={`New line ${lineNumbers[lineIndex]?.newLine ?? ''}`}>
+                {lineNumbers[lineIndex]?.newLine ?? ''}
+              </span>
               <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>
               <code>
                 {sources[lineIndex]

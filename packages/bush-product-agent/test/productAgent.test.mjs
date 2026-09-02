@@ -19,6 +19,13 @@ test("builds one stable explicit product Turn for desktop and transport callers"
     model: "fixture",
     tools: [],
     projectDir: "C:\\workspace",
+    attachments: [{
+      id: "attachment-1",
+      name: "brief.md",
+      type: "document",
+      path: "C:\\workspace\\brief.md",
+      size: 128,
+    }],
     filesystemLocations: [
       { id: "home", name: "Home", path: "C:\\Users\\fixture" },
       { id: "desktop", name: "Desktop", path: "C:\\Users\\fixture\\Desktop" },
@@ -48,6 +55,13 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   assert.match(request.prefixMessages[1].content, /Desktop: C:\\Users\\fixture\\Desktop/);
   assert.deepEqual(request.metadata.mcpContext.filesystemRoots, ["C:\\workspace"]);
   assert.equal(request.inputMessages[0].message.content, "完成任务");
+  assert.deepEqual(request.inputMessages[0].metadata.attachments, [{
+    id: "attachment-1",
+    name: "brief.md",
+    type: "document",
+    path: "C:\\workspace\\brief.md",
+    size: 128,
+  }]);
   assert.equal(request.metadata.subagentPermissionRouting, "user");
   assert.deepEqual(request.metadata.childAgentPolicy.disabledTools, ["subagent"]);
 

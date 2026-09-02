@@ -165,6 +165,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
       ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
       files: request.files,
       images: request.images?.map((image) => image.path),
+      attachments: request.attachments,
     });
     if (goalCommand) {
       await runtime.client.createGoal({
