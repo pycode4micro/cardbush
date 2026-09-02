@@ -230,22 +230,26 @@ export class McpClientManager {
       executionChannel: `mcp:${connection.config.id}`,
       visibleToChild: tool.policy.visibleToChild,
       decodeInput: jsonObject,
-      authorize: tool.policy.permission === "allow"
-        ? () => ({ kind: "allow" as const })
-        : () => {
-            const capabilityId = `capability:mcp:${createHash("sha256")
-              .update(resource)
-              .digest("hex")}`;
-            return {
-              kind: "ask" as const,
-              request: {
-                reason: "The selected external MCP tool requires explicit permission.",
-                actions: ["external_tool_call"],
-                targets: [{ kind: "mcp_resource" as const, value: resource }],
-                capabilityIds: [capabilityId],
-              },
-            };
+      authorize: (context) => {
+        if (
+          tool.policy.permission === "allow" ||
+          context.turn?.request.permissionMode === "all_free"
+        ) {
+          return { kind: "allow" as const };
+        }
+        const capabilityId = `capability:mcp:${createHash("sha256")
+          .update(resource)
+          .digest("hex")}`;
+        return {
+          kind: "ask" as const,
+          request: {
+            reason: "The selected external MCP tool requires explicit permission.",
+            actions: ["external_tool_call"],
+            targets: [{ kind: "mcp_resource" as const, value: resource }],
+            capabilityIds: [capabilityId],
           },
+        };
+      },
       execute: async (context) => {
         if (connection.health !== "ready") {
           throw codedMcpError(

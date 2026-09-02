@@ -216,6 +216,22 @@ assert.match(
 );
 assert.match(localReferenceLinkSource, /inspectLocalReference/);
 assert.match(localReferenceLinkSource, /applicationLike[\s\S]*?openPath\?\.\(path\)/);
+assert.match(localReferenceLinkSource, /<FileTypeIcon path=\{path\} \/>/);
+
+const fileTypeIconSource = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'src',
+    'features',
+    'chatMessages',
+    'FileTypeIcon.tsx',
+  ),
+  'utf8',
+);
+assert.match(fileTypeIconSource, /tsx.*jsx/);
+assert.match(fileTypeIconSource, /typescript/);
+assert.match(fileTypeIconSource, /javascript/);
+assert.match(fileTypeIconSource, /function FileTypeIcon/);
 
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),

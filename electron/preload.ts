@@ -437,6 +437,14 @@ const desktopApi = {
     ipcRenderer.invoke('shell:file-context-menu', targetPath) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
+  readTextPreview: (targetPath: string) =>
+    ipcRenderer.invoke('shell:read-text-preview', targetPath) as Promise<{
+      path: string;
+      content: string;
+      size: number;
+      modifiedAt: number;
+      truncated: boolean;
+    }>,
   showInspectorContextMenu: (payload: {
     guestWebContentsId: number;
     target: string;

@@ -91,6 +91,7 @@ import {
 } from './features/chatScroll';
 import { sectionLabels } from './features/appSections';
 import {
+  MarkdownContent,
   MessageBubble,
   MessageFileReferenceScope,
 } from './features/chatMessages';
@@ -2433,20 +2434,65 @@ function CardbushApp() {
                 onWidthChange={setInspectorWidth}
                 label={language === 'zh' ? '拖动调整右侧栏宽度' : 'Drag to resize inspector'}
               />
-              <header className="right-inspector-toolbar">
-                <strong>
-                  {displayedReviewConversation
-                    ? (language === 'zh' ? '审查' : 'Review')
-                    : displayedWorkSummaryInspector
-                      ? displayedWorkSummaryInspector.title || (
-                          displayedWorkSummaryInspector.kind === 'turn-history'
-                            ? language === 'zh' ? '回合详情' : 'Turn details'
-                            : language === 'zh' ? '子任务详情' : 'Subagent task'
-                        )
-                    : displayedInspectorTarget
-                      ? activeInspectorNavigation?.title || inspectorTabLabel(displayedInspectorTarget)
-                      : ''}
-                </strong>
+              <header className={`right-inspector-toolbar${
+                displayedInspectorTarget && displayedInspectorTabs.length > 0 ? ' with-tabs' : ''
+              }`}>
+                {displayedInspectorTarget && displayedInspectorTabs.length > 0 ? (
+                  <div
+                    className="right-inspector-tabs"
+                    role="tablist"
+                    aria-label={language === 'zh' ? '已打开的页面和文件' : 'Open pages and files'}
+                  >
+                    {displayedInspectorTabs.map((tab) => {
+                      const identity = inspectorTargetIdentity(tab.target);
+                      const active = identity === activeInspectorTabIdentity;
+                      const remote = /^https?:\/\//i.test(tab.target);
+                      const navigation = inspectorNavigationByTarget[identity];
+                      const label = navigation?.title || inspectorTabLabel(tab);
+                      return (
+                        <div
+                          className={`right-inspector-tab${active ? ' active' : ''}`}
+                          key={identity}
+                        >
+                          <button
+                            type="button"
+                            className="right-inspector-tab-select"
+                            role="tab"
+                            aria-selected={active}
+                            title={tab.target}
+                            onClick={() => activateInspectorTab(tab)}
+                          >
+                            {remote
+                              ? <Globe2 size={13} aria-hidden="true" />
+                              : <FileText size={13} aria-hidden="true" />}
+                            <span>{label}</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="right-inspector-tab-close"
+                            title={language === 'zh' ? '关闭标签页' : 'Close tab'}
+                            aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                            onClick={() => closeInspectorTab(tab.target)}
+                          >
+                            <X size={12} aria-hidden="true" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <strong>
+                    {displayedReviewConversation
+                      ? (language === 'zh' ? '审查' : 'Review')
+                      : displayedWorkSummaryInspector
+                        ? displayedWorkSummaryInspector.title || (
+                            displayedWorkSummaryInspector.kind === 'turn-history'
+                              ? language === 'zh' ? '回合详情' : 'Turn details'
+                              : language === 'zh' ? '子任务详情' : 'Subagent task'
+                          )
+                        : ''}
+                  </strong>
+                )}
                 {!displayedWorkSummaryInspector && (
                   <button
                     type="button"
@@ -2493,50 +2539,6 @@ function CardbushApp() {
                           : (language === 'zh' ? '暂无修改摘要' : 'No change summary');
                       })()
                     : activeInspectorAddress || displayedInspectorTarget?.target}
-                </div>
-              )}
-              {displayedInspectorTarget && displayedInspectorTabs.length > 0 && (
-                <div
-                  className="right-inspector-tabs"
-                  role="tablist"
-                  aria-label={language === 'zh' ? '已打开的页面和文件' : 'Open pages and files'}
-                >
-                  {displayedInspectorTabs.map((tab) => {
-                    const identity = inspectorTargetIdentity(tab.target);
-                    const active = identity === activeInspectorTabIdentity;
-                    const remote = /^https?:\/\//i.test(tab.target);
-                    const navigation = inspectorNavigationByTarget[identity];
-                    const label = navigation?.title || inspectorTabLabel(tab);
-                    return (
-                      <div
-                        className={`right-inspector-tab${active ? ' active' : ''}`}
-                        key={identity}
-                      >
-                        <button
-                          type="button"
-                          className="right-inspector-tab-select"
-                          role="tab"
-                          aria-selected={active}
-                          title={tab.target}
-                          onClick={() => activateInspectorTab(tab)}
-                        >
-                          {remote
-                            ? <Globe2 size={13} aria-hidden="true" />
-                            : <FileText size={13} aria-hidden="true" />}
-                          <span>{label}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="right-inspector-tab-close"
-                          title={language === 'zh' ? '关闭标签页' : 'Close tab'}
-                          aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
-                          onClick={() => closeInspectorTab(tab.target)}
-                        >
-                          <X size={12} aria-hidden="true" />
-                        </button>
-                      </div>
-                    );
-                  })}
                 </div>
               )}
               {displayedInspectorTarget && (
@@ -7852,6 +7854,44 @@ function inspectorSource(target: string) {
   return usesNativeFilePreview(value) ? fileUrl(value) : textFilePreviewUrl(value);
 }
 
+function inspectorMarkdownPath(target: string) {
+  const value = stripWrappingQuotes(target.trim());
+  if (/^cardbush-file:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      if (['text-preview', 'office-preview'].includes(parsed.hostname.toLowerCase())) {
+        return inspectorMarkdownPath(parsed.searchParams.get('path') ?? '');
+      }
+      const decoded = decodeURIComponent(parsed.pathname);
+      return decoded.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
+    } catch {
+      return '';
+    }
+  }
+  if (/^file:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      const decoded = decodeURIComponent(parsed.pathname);
+      return parsed.hostname
+        ? `\\\\${parsed.hostname}${decoded.replaceAll('/', '\\')}`
+        : decoded.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
+    } catch {
+      return '';
+    }
+  }
+  return value;
+}
+
+function isMarkdownInspectorTarget(target: string) {
+  return /\.(?:md|markdown)$/i.test(inspectorMarkdownPath(target).split(/[?#]/, 1)[0]);
+}
+
+function parentDirectory(value: string) {
+  const normalized = value.replace(/[\\/]+$/, '');
+  const lastSeparator = Math.max(normalized.lastIndexOf('\\'), normalized.lastIndexOf('/'));
+  return lastSeparator > 0 ? normalized.slice(0, lastSeparator) : normalized;
+}
+
 type InspectorNavigationState = {
   url: string;
   title: string;
@@ -7896,6 +7936,9 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const markdownPath = inspectorMarkdownPath(target);
+  const markdownPreview = isMarkdownInspectorTarget(target);
+  const [markdownRevision, setMarkdownRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
 
@@ -7923,12 +7966,36 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     reload: () => {
       loadingRef.current = true;
       setLoading(true);
-      webviewRef.current?.reload?.();
-      publishNavigation();
+      if (markdownPreview) {
+        setMarkdownRevision((value) => value + 1);
+        onNavigationStateChange(identity, {
+          url: target,
+          title: basename(markdownPath),
+          canGoBack: false,
+          canGoForward: false,
+          loading: true,
+        });
+      } else {
+        webviewRef.current?.reload?.();
+        publishNavigation();
+      }
     },
-  }), [publishNavigation]);
+  }), [identity, markdownPath, markdownPreview, onNavigationStateChange, publishNavigation, target]);
+
+  const publishMarkdownNavigation = useCallback((isLoading: boolean) => {
+    loadingRef.current = isLoading;
+    setLoading(isLoading);
+    onNavigationStateChange(identity, {
+      url: target,
+      title: basename(markdownPath),
+      canGoBack: false,
+      canGoForward: false,
+      loading: isLoading,
+    });
+  }, [identity, markdownPath, onNavigationStateChange, target]);
 
   useEffect(() => {
+    if (markdownPreview) return undefined;
     const webview = webviewRef.current;
     if (!webview) return undefined;
     const start = () => {
@@ -7999,16 +8066,23 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('new-window', openWindow);
       webview.removeEventListener('context-menu', contextMenu);
     };
-  }, [onOpenTarget, publishNavigation, source, target]);
+  }, [markdownPreview, onOpenTarget, publishNavigation, source, target]);
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
-      {createElement('webview', {
-        ref: webviewRef,
-        className: 'right-inspector-webview',
-        src: source,
-        webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
-      })}
+      {markdownPreview ? (
+        <MarkdownInspectorPreview
+          key={`${markdownPath}:${markdownRevision}`}
+          path={markdownPath}
+          language={language}
+          onLoadingChange={publishMarkdownNavigation}
+        />
+      ) : createElement('webview', {
+          ref: webviewRef,
+          className: 'right-inspector-webview',
+          src: source,
+          webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
+        })}
       {loading && (
         <div className="right-inspector-preview-loading" role="status">
           <span />
@@ -8020,6 +8094,74 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     </div>
   );
 });
+
+function MarkdownInspectorPreview({
+  path,
+  language,
+  onLoadingChange,
+}: {
+  path: string;
+  language: AppLanguage;
+  onLoadingChange: (loading: boolean) => void;
+}) {
+  const [content, setContent] = useState('');
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let disposed = false;
+    onLoadingChange(true);
+    setError('');
+    const readTextPreview = window.cardbushDesktop?.readTextPreview;
+    if (!readTextPreview) {
+      setError(language === 'zh' ? '当前环境不支持本地 Markdown 预览。' : 'Local Markdown preview is unavailable.');
+      onLoadingChange(false);
+      return () => {
+        disposed = true;
+      };
+    }
+    void readTextPreview(path)
+      .then((result) => {
+        if (disposed) return;
+        setContent(result.content);
+        setTruncated(result.truncated);
+      })
+      .catch((reason: unknown) => {
+        if (disposed) return;
+        setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (!disposed) onLoadingChange(false);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [language, onLoadingChange, path]);
+
+  return (
+    <article className="markdown-inspector-preview">
+      <header className="markdown-inspector-header">
+        <strong title={path}>{path}</strong>
+        <small>
+          {error
+            ? language === 'zh' ? 'Markdown 预览加载失败' : 'Markdown preview failed'
+            : truncated
+              ? language === 'zh' ? 'Markdown 预览 · 文件较大，仅显示前 2 MiB' : 'Markdown preview · showing the first 2 MiB'
+              : language === 'zh' ? 'Markdown 预览' : 'Markdown preview'}
+        </small>
+      </header>
+      <div className="markdown-inspector-document">
+        {error ? (
+          <div className="markdown-inspector-error" role="alert">{error}</div>
+        ) : (
+          <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
+            <MarkdownContent content={content} language={language} />
+          </MessageFileReferenceScope>
+        )}
+      </div>
+    </article>
+  );
+}
 
 function isOfficeDocumentPath(value: string) {
   return /\.(?:docx?|xlsx?|pptx?)$/i.test(value.split(/[?#]/, 1)[0]);

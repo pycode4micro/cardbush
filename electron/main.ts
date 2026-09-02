@@ -2835,6 +2835,35 @@ ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
   return openUiPreview(target);
 });
 
+ipcMain.handle('shell:read-text-preview', async (event, targetPath: string) => {
+  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!sourceWindow || sourceWindow !== mainWindow) {
+    throw new Error('Text preview is only available from the main CardBush window.');
+  }
+  const normalizedPath = normalizeShellPath(targetPath);
+  if (!normalizedPath) {
+    throw new Error('Invalid preview path.');
+  }
+  const stats = await fs.promises.stat(normalizedPath);
+  if (!stats.isFile()) {
+    throw new Error('Preview target is not a file.');
+  }
+  const maxPreviewBytes = 2 * 1024 * 1024;
+  const byteCount = Math.min(stats.size, maxPreviewBytes);
+  const bytes = await readFilePrefix(normalizedPath, byteCount);
+  const zeroBytes = bytes.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
+  if (bytes.length > 0 && zeroBytes / bytes.length > 0.01) {
+    throw new Error('Preview target is not a text file.');
+  }
+  return {
+    path: normalizedPath,
+    content: bytes.toString('utf8'),
+    size: stats.size,
+    modifiedAt: stats.mtimeMs,
+    truncated: stats.size > maxPreviewBytes,
+  };
+});
+
 async function runPackagedApplicationSmoke(): Promise<void> {
   const startedAt = Date.now();
   const report: Record<string, unknown> = {

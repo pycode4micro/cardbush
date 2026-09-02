@@ -79,6 +79,28 @@ assert.match(presence, /prefers-reduced-motion/);
 assert.match(app, /sidebarPresence\.mounted/);
 assert.match(app, /inspectorPresence\.mounted/);
 assert.match(app, /workSummaryPresence\.mounted/);
+assert.equal(
+  (app.match(/className="right-inspector-tabs"/g) ?? []).length,
+  1,
+  'The inspector must render one shared tab strip instead of duplicating its active title',
+);
+assert.match(
+  app,
+  /<header className=\{`right-inspector-toolbar[\s\S]*?className="right-inspector-tabs"[\s\S]*?<\/header>/,
+  'Browser and file tabs must live in the inspector title bar',
+);
+assert.match(css, /\.right-inspector-toolbar\.with-tabs\s*\{/);
+assert.match(css, /\.right-inspector-toolbar\s*>\s*button\s*\{/);
+assert.match(
+  css,
+  /\.right-inspector-tab\s*\{[\s\S]*?background:\s*var\(--surface\)/,
+  'Inactive inspector tabs must blend into the title bar',
+);
+assert.match(
+  css,
+  /\.right-inspector-tab\.active\s*\{[\s\S]*?background:\s*var\(--right-inspector-active-tab-background\)/,
+  'Only the active inspector tab should use the raised gray surface',
+);
 assert.doesNotMatch(
   app,
   /window\.innerWidth\s*<\s*1220[\s\S]{0,120}setSidebarCollapsed\(true\)/,

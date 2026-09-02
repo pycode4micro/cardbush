@@ -127,6 +127,85 @@ test("binds default MCP permission to one exact server Tool resource", async () 
   assert.equal(requested.capabilityIds.length, 1);
 });
 
+test("lets an all_free Turn execute a default-ask MCP Tool without another prompt", async () => {
+  const registry = new ToolRegistry();
+  const fake = fakeClient(successfulToolResult);
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fake,
+    createTransport: () => ({}),
+  });
+  await manager.apply(snapshot());
+  let permissionRequests = 0;
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: {
+      async request() {
+        permissionRequests += 1;
+        throw new Error("permission was not expected in all_free mode");
+      },
+    },
+  });
+
+  const outcome = await executeEcho(
+    coordinator,
+    "call_all_free",
+    undefined,
+    turnContext(registry, "all_free"),
+  );
+
+  assert.equal(outcome.kind, "returned", JSON.stringify(outcome));
+  assert.equal(permissionRequests, 0);
+  assert.equal(fake.calls.length, 1);
+  await manager.close();
+});
+
+test("keeps default-ask MCP permission for task_free and user_free Turns", async (t) => {
+  for (const permissionMode of ["task_free", "user_free"]) {
+    await t.test(permissionMode, async () => {
+      const registry = new ToolRegistry();
+      const fake = fakeClient(successfulToolResult);
+      const manager = new McpClientManager({
+        registry,
+        createClient: () => fake,
+        createTransport: () => ({}),
+      });
+      await manager.apply(snapshot());
+      let requested;
+      const coordinator = new ToolExecutionCoordinator({
+        registry,
+        permissions: {
+          async request(input) {
+            requested = input;
+            return {
+              protocol: "bush.runtime_permission_answer.v1",
+              permissionId: "permission",
+              answerId: "answer",
+              decision: "allow_once",
+              grantedCapabilityIds: input.capabilityIds,
+            };
+          },
+        },
+      });
+
+      const outcome = await executeEcho(
+        coordinator,
+        `call_${permissionMode}`,
+        undefined,
+        turnContext(registry, permissionMode),
+      );
+
+      assert.equal(outcome.kind, "returned", JSON.stringify(outcome));
+      assert.deepEqual(requested.actions, ["external_tool_call"]);
+      assert.deepEqual(requested.targets, [{
+        kind: "mcp_resource",
+        value: "mcp://server/tools/echo.tool",
+      }]);
+      await manager.close();
+    });
+  }
+});
+
 test("preserves a standard successful MCP response exactly", async () => {
   const registry = new ToolRegistry();
   const manager = new McpClientManager({
@@ -555,7 +634,7 @@ function fakeClient(result, options = {}) {
   };
 }
 
-function executeEcho(coordinator, id, signal) {
+function executeEcho(coordinator, id, signal, turn) {
   return coordinator.execute(
     {
       protocol: "bush.tool_call.v1",
@@ -571,7 +650,25 @@ function executeEcho(coordinator, id, signal) {
       ordinal: 0,
     },
     signal,
+    turn,
   );
+}
+
+function turnContext(registry, permissionMode) {
+  return {
+    request: {
+      protocol: "bush.model_request.v1",
+      requestId: "request",
+      sessionId: "session",
+      turnId: "turn",
+      model: "fixture",
+      messages: [],
+      tools: [registry.resolve("mcp__server__echo_tool").definition],
+      permissionMode,
+      metadata: {},
+    },
+    contextMessages: [],
+  };
 }
 
 async function waitFor(predicate) {

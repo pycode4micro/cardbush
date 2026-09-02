@@ -1,10 +1,13 @@
 import { ChevronDown, LoaderCircle, RotateCcw } from 'lucide-react';
-import { useCallback, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useRef, useState } from 'react';
 
 import type { AppLanguage } from '../../types';
 import type { DiffLine, ToolChangeReport, ToolFileChange } from './toolChangeReports';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { ToolLogo } from './ToolLogo';
+import { diffLinePrefix, diffLineSource } from './diffSyntax';
+
+const DiffSyntaxLines = lazy(() => import('./DiffSyntaxLines'));
 
 type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
 
@@ -168,17 +171,25 @@ export function ToolFileChangeView({
       {file.lines.length === 0 ? (
         <p>{language === 'zh' ? '没有可展开的 diff 内容' : 'No diff details available'}</p>
       ) : (
-        <div className="diff-lines">
-          {file.lines.map((line, index) => (
-            <DiffLineView
-              // eslint-disable-next-line react/no-array-index-key
-              key={index}
-              line={line}
-            />
-          ))}
-        </div>
+        <Suspense fallback={<PlainDiffLines lines={file.lines} />}>
+          <DiffSyntaxLines lines={file.lines} path={file.path} />
+        </Suspense>
       )}
     </section>
+  );
+}
+
+function PlainDiffLines({ lines }: { lines: DiffLine[] }) {
+  return (
+    <div className="diff-lines">
+      {lines.map((line, index) => (
+        <DiffLineView
+          // eslint-disable-next-line react/no-array-index-key
+          key={index}
+          line={line}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -186,7 +197,8 @@ function DiffLineView({ line }: { line: DiffLine }) {
   return (
     <div className={`diff-line ${line.kind}`}>
       <span className="diff-marker" />
-      <code>{line.text || ' '}</code>
+      <span className="diff-prefix" aria-hidden="true">{diffLinePrefix(line)}</span>
+      <code>{diffLineSource(line) || ' '}</code>
     </div>
   );
 }

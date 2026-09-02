@@ -38,9 +38,18 @@ vm.runInNewContext(transpiled.outputText, {
 
 const {
   assistantTurnTimingFingerprint,
+  formatCompactDuration,
   hydrateAssistantTurnTiming,
   persistAssistantTurnTiming,
 } = loaded.exports;
+
+assert.equal(formatCompactDuration(null), '');
+assert.equal(formatCompactDuration(999), '<1s');
+assert.equal(formatCompactDuration(59_000), '59s');
+assert.equal(formatCompactDuration(60_000), '1m');
+assert.equal(formatCompactDuration(61_000), '1m 1s');
+assert.equal(formatCompactDuration(3_600_000), '1h');
+assert.equal(formatCompactDuration((4 * 3600 + 26 * 60 + 57) * 1000), '4h 26m 57s');
 
 const derived = hydrateAssistantTurnTiming([
   {
@@ -98,23 +107,23 @@ assert.ok(
   assistantTurnTimingFingerprint({ 'session-exact': [completed] }).includes('turn-exact'),
 );
 
-const apiSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'backend', 'api.ts'),
+const projectionSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'runtimeSessionMessageProjection.ts'),
   'utf8',
 );
 assert.match(
-  apiSource,
-  /cardbush_turn_started_at\s*=\s*turn\.createdAt/,
+  projectionSource,
+  /cardbush_turn_started_at\s*=\s*startedAt/,
   'assistant history should project the Runtime-owned Turn start timestamp',
 );
 assert.match(
-  apiSource,
-  /cardbush_turn_completed_at\s*=\s*turn\.completedAt/,
+  projectionSource,
+  /cardbush_turn_completed_at\s*=\s*completedAt/,
   'assistant history should project the Runtime-owned Turn completion timestamp',
 );
 assert.match(
-  apiSource,
-  /cardbush_turn_duration_ms\s*=\s*completedAt\s*-\s*startedAt/,
+  projectionSource,
+  /cardbush_turn_duration_ms\s*=\s*durationMs/,
   'assistant history should derive duration only from committed Runtime timestamps',
 );
 

@@ -98,6 +98,7 @@ import {
   readToolExecutionDisclosure,
   writeToolExecutionDisclosure,
 } from '../tools/toolExecutionDisclosure';
+import { formatCompactDuration } from './assistantTurnTiming';
 
 export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
 
@@ -312,9 +313,7 @@ const LazyMarkdownContent = lazy(async () => {
       }
       components={{
         a: ({ href, children, ...props }) => {
-          const directReference = href
-            ? localFileReference(href, workspaceRoot)
-            : null;
+          const directReference = explicitMarkdownLocalReference(href, workspaceRoot);
           const localPath = href
             ? localFileReferenceFromHref(href) || directReference?.path || ''
             : '';
@@ -339,6 +338,20 @@ const LazyMarkdownContent = lazy(async () => {
             >
               {children}
             </a>
+          );
+        },
+        img: ({ src, alt, ...props }) => {
+          const reference = explicitMarkdownLocalReference(src, workspaceRoot);
+          const resolvedSource = reference ? fileUrl(reference.path) : src;
+          return (
+            <img
+              {...props}
+              src={resolvedSource}
+              alt={alt ?? ''}
+              onClick={reference
+                ? () => openInspector(reference.path, reference.label)
+                : undefined}
+            />
           );
         },
         code: ({ children, className, ...props }) => {
@@ -388,6 +401,17 @@ const LazyMarkdownContent = lazy(async () => {
 
   return { default: MarkdownRenderer };
 });
+
+function explicitMarkdownLocalReference(
+  href: string | undefined,
+  workspaceRoot: string,
+) {
+  if (!href || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href)) {
+    return null;
+  }
+  return localFileReference(href, workspaceRoot) ??
+    localFileReference(`./${href}`, workspaceRoot);
+}
 
 const FileReferenceWorkspaceContext = createContext('');
 
@@ -1978,20 +2002,6 @@ function parseTimestamp(value: unknown) {
   }
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : undefined;
-}
-
-function formatCompactDuration(durationMs: number | null) {
-  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
-    return '';
-  }
-  if (durationMs < 1000) return '<1s';
-  const seconds = Math.max(1, Math.round(durationMs / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
 }
 
 function inferToolContentOffset(content: string, execution: ChatToolExecution) {

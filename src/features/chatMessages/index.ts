@@ -1,5 +1,6 @@
 export {
   AssistantLoopHistoryBlock,
+  MarkdownContent,
   MessageBubble,
   MessageFileReferenceScope,
 } from './MessageBubble';

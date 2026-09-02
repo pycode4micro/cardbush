@@ -12,6 +12,22 @@ type AssistantTurnTiming = {
 
 type AssistantTurnTimingCache = Record<string, AssistantTurnTiming>;
 
+export function formatCompactDuration(durationMs: number | null) {
+  if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
+    return '';
+  }
+  if (durationMs < 1000) return '<1s';
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [
+    hours > 0 ? `${hours}h` : '',
+    minutes > 0 ? `${minutes}m` : '',
+    seconds > 0 ? `${seconds}s` : '',
+  ].filter(Boolean).join(' ');
+}
+
 export function hydrateAssistantTurnTiming(messages: ChatMessage[]) {
   if (messages.length === 0) return messages;
   const cache = readAssistantTurnTimingCache();

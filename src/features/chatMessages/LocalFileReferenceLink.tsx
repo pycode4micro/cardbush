@@ -1,8 +1,9 @@
-import { FileCode2, FolderOpen, Play } from 'lucide-react';
+import { FolderOpen, Play } from 'lucide-react';
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
 import { openInspector } from '../inspector/inspectorEvents';
+import { FileTypeIcon } from './FileTypeIcon';
 
 type LocalReferenceMetadata = {
   path: string;
@@ -81,7 +82,7 @@ export function LocalFileReferenceLink({
           ? <Play size={12} aria-hidden="true" />
           : directoryLike
             ? <FolderOpen size={12} aria-hidden="true" />
-            : <FileCode2 size={12} aria-hidden="true" />}
+            : <FileTypeIcon path={path} />}
       <span>{label}</span>
     </a>
   );

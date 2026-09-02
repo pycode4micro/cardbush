@@ -342,6 +342,13 @@ declare global {
       openFileInCardbush: (targetPath: string) => Promise<string>;
       showFileContextMenu: (targetPath: string) => Promise<string>;
       openUiPreview: (target: string) => Promise<void>;
+      readTextPreview: (targetPath: string) => Promise<{
+        path: string;
+        content: string;
+        size: number;
+        modifiedAt: number;
+        truncated: boolean;
+      }>;
       showInspectorContextMenu: (payload: {
         guestWebContentsId: number;
         target: string;
