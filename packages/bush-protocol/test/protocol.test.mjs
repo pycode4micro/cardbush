@@ -173,6 +173,37 @@ test("runtime event decoder keeps reasoning separate from assistant content", ()
   assert.equal(event.payload.delta, "private reasoning");
 });
 
+test("runtime event decoder exposes per-request model usage inside a Turn", () => {
+  const event = decodeRuntimeEvent({
+    protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
+    eventId: "evt_usage_1",
+    sequence: 4,
+    requestId: "req_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    createdAt: "2026-09-03T00:00:00.000Z",
+    kind: "model_request_usage",
+    payload: {
+      round: 2,
+      attempt: 1,
+      model: "gpt-5.6",
+      contextWindowTokens: 256_000,
+      inputTokens: 42_000,
+      outputTokens: 900,
+      cachedInputTokens: 36_000,
+      preflightInputTokens: 41_500,
+      preflightMeasurement: "provider",
+      usableInputTokens: 247_808,
+    },
+  });
+
+  assert.equal(event.kind, "model_request_usage");
+  assert.equal(event.payload.round, 2);
+  assert.equal(event.payload.inputTokens, 42_000);
+  assert.equal(event.payload.contextWindowTokens, 256_000);
+  assert.equal(event.payload.preflightInputTokens, 41_500);
+});
+
 test("runtime guidance application is an explicit delivery fact", () => {
   const event = decodeRuntimeEvent({
     protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
@@ -194,6 +225,60 @@ test("runtime guidance application is an explicit delivery fact", () => {
   assert.equal(event.kind, "guidance_applied");
   assert.equal(event.payload.messageId, "guidance_1");
   assert.equal(event.payload.queueDepth, 0);
+});
+
+test("context compaction lifecycle is explicit without exposing summary text", () => {
+  const envelope = {
+    protocol: BUSH_RUNTIME_EVENT_PROTOCOL,
+    requestId: "req_compaction",
+    sessionId: "session_compaction",
+    turnId: "turn_compaction",
+    createdAt: "2026-09-03T00:00:00.000Z",
+  };
+  const started = decodeRuntimeEvent({
+    ...envelope,
+    eventId: "evt_compaction_started",
+    sequence: 5,
+    kind: "context_compaction_started",
+    payload: {
+      compactionId: "context_compaction:turn_compaction:1",
+      round: 4,
+      attempt: 1,
+      assistantMessageId: "assistant_3",
+      assistantContentOffset: 42,
+      thresholdRatio: 0.95,
+      triggerRatio: 0.962,
+      estimatedInputTokens: 238_400,
+      usableInputTokens: 247_808,
+      measurement: "provider",
+      precedingTurnCount: 2,
+      activeTurnIncluded: true,
+      activeThroughMessageId: "tool_result_3",
+    },
+  });
+  const completed = decodeRuntimeEvent({
+    ...envelope,
+    eventId: "evt_compaction_completed",
+    sequence: 7,
+    kind: "context_compaction_completed",
+    payload: {
+      compactionId: "context_compaction:turn_compaction:1",
+      round: 4,
+      attempt: 1,
+      assistantMessageId: "assistant_3",
+      assistantContentOffset: 42,
+      summarizedTurnCount: 2,
+      activeTurnCheckpointed: true,
+      activeThroughMessageId: "tool_result_3",
+    },
+  });
+
+  assert.equal(started.kind, "context_compaction_started");
+  assert.equal(started.payload.triggerRatio, 0.962);
+  assert.equal(completed.kind, "context_compaction_completed");
+  assert.equal(completed.payload.summarizedTurnCount, 2);
+  assert.equal(completed.payload.assistantContentOffset, 42);
+  assert.equal("summary" in completed.payload, false);
 });
 
 test("runtime capability decoder rejects undeclared protocol versions", () => {

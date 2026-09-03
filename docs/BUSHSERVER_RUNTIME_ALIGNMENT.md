@@ -24,8 +24,9 @@ as disabled or installable Built-ins.
   message identities. Regenerate/edit uses explicit supersession.
 - Semantic context compaction is also append-only: `turn_context_summarized`
   projects prior completed Turns as concise summaries for the model without
-  changing raw history replay. The active Turn remains exact, including Tool
-  calls and results, until it reaches its terminal state.
+  changing raw history replay. At a safe Tool boundary the completed prefix of
+  an active Turn may likewise receive one cumulative checkpoint projection;
+  exact assistant, Tool and execution facts remain available to history and audit.
 - Stop has an independent typed acceptance receipt and is a resumable Session
   boundary rather than a rollback. The active Provider/Tool wait receives one
   uniform 250 ms settlement grace and is then detached when its Promise does not
@@ -47,7 +48,8 @@ as disabled or installable Built-ins.
   reasoning-budget exhaustion have separate bounded terminal failures.
 - Large Tool results remain complete in the durable Tool execution archive and
   receive a bounded model projection with a `tool-result://` locator readable by
-  `read_archived_tool_result`.
+  `read_archived_tool_result`. Parallel results share one context-ingress budget,
+  so one Tool batch cannot consume the reserve needed by mandatory compaction.
 - Project file observations persist across Sessions, are validated by SHA-256,
   and share a same-resource mutation fence. Workspace revert verifies the current
   after-revision and uses recorded before-images.

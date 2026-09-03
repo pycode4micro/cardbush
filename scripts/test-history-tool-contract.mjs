@@ -29,6 +29,182 @@ vm.runInNewContext(transpiled.outputText, {
 });
 const { attachHistoryToolExecutions } = loaded.exports;
 
+const contextCompactionPresentationPath = path.join(
+  process.cwd(),
+  'src',
+  'backend',
+  'contextCompactionPresentation.ts',
+);
+const contextCompactionPresentationSource = fs.readFileSync(
+  contextCompactionPresentationPath,
+  'utf8',
+);
+const contextCompactionPresentationTranspiled = ts.transpileModule(
+  contextCompactionPresentationSource,
+  {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  },
+);
+const contextCompactionPresentationModule = { exports: {} };
+vm.runInNewContext(contextCompactionPresentationTranspiled.outputText, {
+  module: contextCompactionPresentationModule,
+  exports: contextCompactionPresentationModule.exports,
+  Date,
+  Map,
+  Number,
+});
+const { contextCompactionPresentationExecutions } =
+  contextCompactionPresentationModule.exports;
+const compactionEnvelope = {
+  protocol: 'bush.runtime_event.v1',
+  requestId: 'request-compaction',
+  sessionId: 'session-compaction',
+  turnId: 'turn-compaction',
+};
+const contextCompactionExecutions = contextCompactionPresentationExecutions([
+  {
+    ...compactionEnvelope,
+    eventId: 'event-compaction-start',
+    sequence: 8,
+    createdAt: '2026-09-03T00:00:00.000Z',
+    kind: 'context_compaction_started',
+    payload: {
+      compactionId: 'context_compaction:turn-compaction:1',
+      round: 4,
+      attempt: 1,
+      assistantMessageId: 'assistant-before-compaction',
+      assistantContentOffset: 24,
+      thresholdRatio: 0.95,
+      triggerRatio: 0.961,
+      estimatedInputTokens: 238_100,
+      usableInputTokens: 247_808,
+      measurement: 'provider',
+      precedingTurnCount: 3,
+      activeTurnIncluded: true,
+    },
+  },
+  {
+    ...compactionEnvelope,
+    eventId: 'event-compaction-completed',
+    sequence: 10,
+    createdAt: '2026-09-03T00:00:02.000Z',
+    kind: 'context_compaction_completed',
+    payload: {
+      compactionId: 'context_compaction:turn-compaction:1',
+      round: 4,
+      attempt: 1,
+      assistantMessageId: 'assistant-before-compaction',
+      assistantContentOffset: 24,
+      summarizedTurnCount: 3,
+      activeTurnCheckpointed: true,
+    },
+  },
+]);
+assert.equal(contextCompactionExecutions.length, 1);
+assert.equal(contextCompactionExecutions[0].state, 'completed');
+assert.equal(contextCompactionExecutions[0].durationMs, 2_000);
+assert.equal(contextCompactionExecutions[0].sequence, 8);
+assert.equal(contextCompactionExecutions[0].contentOffset, 24);
+assert.equal(contextCompactionExecutions[0].contentOffsetExplicit, true);
+assert.equal(
+  contextCompactionExecutions[0].assistantMessageId,
+  'assistant-before-compaction',
+);
+assert.equal(contextCompactionExecutions[0].metadata.summarizedTurnCount, 3);
+assert.equal('summary' in contextCompactionExecutions[0].metadata, false);
+
+const retriedContextCompaction = contextCompactionPresentationExecutions([
+  {
+    ...compactionEnvelope,
+    eventId: 'event-compaction-start-retry',
+    sequence: 10,
+    createdAt: '2026-09-03T00:01:00.000Z',
+    kind: 'context_compaction_started',
+    payload: {
+      compactionId: 'context_compaction:turn-compaction:2',
+      round: 5,
+      attempt: 1,
+      thresholdRatio: 0.95,
+      triggerRatio: 0.97,
+      estimatedInputTokens: 240_000,
+      usableInputTokens: 247_808,
+      measurement: 'provider',
+      precedingTurnCount: 0,
+      activeTurnIncluded: true,
+      activeThroughMessageId: 'tool-result-4',
+    },
+  },
+  {
+    ...compactionEnvelope,
+    eventId: 'event-compaction-retry',
+    sequence: 11,
+    createdAt: '2026-09-03T00:01:01.000Z',
+    kind: 'context_compaction_retrying',
+    payload: {
+      compactionId: 'context_compaction:turn-compaction:2',
+      round: 6,
+      attempt: 2,
+      reason: 'checkpoint_not_atomic',
+      message: 'checkpoint_context must be called alone.',
+    },
+  },
+  {
+    ...compactionEnvelope,
+    eventId: 'event-compaction-completed-retry',
+    sequence: 12,
+    createdAt: '2026-09-03T00:01:02.000Z',
+    kind: 'context_compaction_completed',
+    payload: {
+      compactionId: 'context_compaction:turn-compaction:2',
+      round: 6,
+      attempt: 2,
+      summarizedTurnCount: 0,
+      activeTurnCheckpointed: true,
+      activeThroughMessageId: 'tool-result-4',
+    },
+  },
+]);
+assert.equal(retriedContextCompaction[0].state, 'completed');
+assert.equal(
+  'message' in retriedContextCompaction[0].metadata,
+  false,
+  'A successful retry must not retain the prior correction as a failure message.',
+);
+
+const transcriptPresentationPath = path.join(
+  process.cwd(),
+  'src',
+  'features',
+  'chatMessages',
+  'assistantTranscriptPresentation.ts',
+);
+const transcriptPresentationSource = fs.readFileSync(
+  transcriptPresentationPath,
+  'utf8',
+);
+const transcriptPresentationTranspiled = ts.transpileModule(
+  transcriptPresentationSource,
+  {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  },
+);
+const transcriptPresentationModule = { exports: {} };
+vm.runInNewContext(transcriptPresentationTranspiled.outputText, {
+  module: transcriptPresentationModule,
+  exports: transcriptPresentationModule.exports,
+  Array,
+  Map,
+  Math,
+  Number,
+});
+const { coalesceStoppedAssistantTranscript } = transcriptPresentationModule.exports;
+
 const messages = [
   { id: 'user-1', role: 'user', content: '检查项目', turnId: 'turn-1' },
   {
@@ -107,6 +283,181 @@ assert.equal(
   'Persisted tools must reattach to the assistant message that issued the tool call.',
 );
 assert.equal(toolCallAttached[2].toolExecutions, undefined);
+
+const stoppedTranscript = [
+  {
+    id: 'stopped-segment-1',
+    role: 'assistant',
+    turnId: 'turn-stopped-presentation',
+    content: '先查看截图：',
+    toolExecutions: [{
+      ...baseTool,
+      id: 'stopped-tool-1',
+      contentOffset: 6,
+    }],
+  },
+  {
+    id: 'stopped-segment-2',
+    role: 'assistant',
+    turnId: 'turn-stopped-presentation',
+    content: '',
+    toolExecutions: [{
+      ...baseTool,
+      id: 'stopped-tool-2',
+      contentOffset: 0,
+    }],
+  },
+  {
+    id: 'stopped-segment-3',
+    role: 'assistant',
+    turnId: 'turn-stopped-presentation',
+    content: '',
+    toolExecutions: [{
+      ...baseTool,
+      id: 'stopped-tool-3',
+      contentOffset: 0,
+    }],
+  },
+  {
+    id: 'stopped-segment-4',
+    role: 'assistant',
+    turnId: 'turn-stopped-presentation',
+    content: '换一种方式：',
+    toolExecutions: [{
+      ...baseTool,
+      id: 'stopped-tool-4',
+      contentOffset: 6,
+    }],
+  },
+  {
+    id: 'stopped-segment-5',
+    role: 'assistant',
+    turnId: 'turn-stopped-presentation',
+    content: '',
+    toolExecutions: [{
+      ...baseTool,
+      id: 'stopped-tool-5',
+      contentOffset: 0,
+    }],
+  },
+];
+const compactStoppedTranscript = coalesceStoppedAssistantTranscript(stoppedTranscript);
+assert.equal(
+  compactStoppedTranscript.length,
+  2,
+  'Stopping must retain the live narration groups instead of rendering one history row per tool-only round.',
+);
+assert.deepEqual(
+  Array.from(compactStoppedTranscript[0].toolExecutions, (execution) => execution.id),
+  ['stopped-tool-1', 'stopped-tool-2', 'stopped-tool-3'],
+);
+assert.deepEqual(
+  Array.from(compactStoppedTranscript[1].toolExecutions, (execution) => execution.id),
+  ['stopped-tool-4', 'stopped-tool-5'],
+);
+assert.equal(
+  compactStoppedTranscript[0].toolExecutions[1].contentOffset,
+  stoppedTranscript[0].content.length,
+  'A folded tool-only round must stay after the narration that preceded it.',
+);
+assert.equal(
+  stoppedTranscript[1].toolExecutions[0].contentOffset,
+  0,
+  'Stopped presentation compaction must not mutate the archived transcript projection.',
+);
+const isolatedStoppedTranscript = coalesceStoppedAssistantTranscript([
+  stoppedTranscript[0],
+  {
+    ...stoppedTranscript[1],
+    id: 'different-turn-tool-round',
+    turnId: 'different-turn',
+  },
+]);
+assert.equal(
+  isolatedStoppedTranscript.length,
+  2,
+  'Presentation compaction must not cross Turn boundaries.',
+);
+const attachmentBoundaryTranscript = coalesceStoppedAssistantTranscript([
+  stoppedTranscript[0],
+  {
+    ...stoppedTranscript[1],
+    id: 'attachment-tool-round',
+    attachments: [{ id: 'artifact', name: 'result.png', type: 'image' }],
+  },
+]);
+assert.equal(
+  attachmentBoundaryTranscript.length,
+  2,
+  'Presentation compaction must not hide an attachment-bearing round.',
+);
+
+const detailedWorkspaceExecution = {
+  ...baseTool,
+  id: 'tool-workspace-detail',
+  name: 'edit_file',
+  turnId: 'turn-workspace-detail',
+  sequence: 3,
+  metadata: {
+    workspaceChanges: [{
+      change_id: 'change-workspace-detail',
+      path: 'src/detail.ts',
+      status: 'modified',
+      additions: 1,
+      deletions: 1,
+      metadata: { diff: '@@ -1,1 +1,1 @@\n-before\n+after' },
+    }],
+  },
+};
+const upgradedWorkspaceDetails = attachHistoryToolExecutions([
+  { id: 'user-workspace-detail', role: 'user', content: '修改文件', turnId: 'turn-workspace-detail' },
+  {
+    id: 'assistant-workspace-detail',
+    role: 'assistant',
+    content: '正在修改。',
+    turnId: 'turn-workspace-detail',
+    metadata: { toolCalls: [{ id: 'tool-workspace-detail', name: 'edit_file' }] },
+    toolExecutions: [{
+      ...baseTool,
+      id: 'tool-workspace-detail',
+      name: 'edit_file',
+      turnId: 'turn-workspace-detail',
+      sequence: 3,
+      metadata: {
+        workspaceChangeDetailsDeferred: true,
+        workspaceChanges: [{
+          change_id: 'change-workspace-detail',
+          path: 'src/detail.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 1,
+          detailAvailable: true,
+        }],
+      },
+    }],
+  },
+  {
+    id: 'assistant-workspace-final',
+    role: 'assistant',
+    content: '完成。',
+    turnId: 'turn-workspace-detail',
+  },
+], [detailedWorkspaceExecution]);
+assert.equal(
+  upgradedWorkspaceDetails[1].toolExecutions.length,
+  1,
+  'Full Workspace Change details must replace the summary without creating a duplicate.',
+);
+assert.equal(
+  upgradedWorkspaceDetails[1].toolExecutions[0].metadata.workspaceChanges[0].metadata.diff,
+  '@@ -1,1 +1,1 @@\n-before\n+after',
+  'A historical diff must stay on the assistant segment that issued the Tool call.',
+);
+assert.equal(
+  upgradedWorkspaceDetails[2].toolExecutions,
+  undefined,
+  'Full details must not be detached onto the final assistant segment.',
+);
 
 const historyProjectionPath = path.join(
   process.cwd(),
@@ -194,8 +545,15 @@ const apiSource = fs.readFileSync(
   'utf8',
 );
 assert.match(apiSource, /runtime\.client\.listTurnToolExecutions\(\{/);
+assert.match(
+  apiSource,
+  /runtime\.client\.listTurnContextCompactions\(\{[\s\S]*?contextCompactionPresentationExecutions\(compactionEvents\)/,
+  'Session replay must restore durable context-maintenance rows.',
+);
 assert.match(apiSource, /messages:\s*attachHistoryToolExecutions\(messages, toolExecutions\)/);
-assert.match(apiSource, /options\.includeSuperseded === false \? snapshot\.supersededMessageIds : \[\]/);
+assert.match(apiSource, /const superseded = new Set\(snapshot\.supersededMessageIds\)/);
+assert.match(apiSource, /const excludedSuperseded = options\.includeSuperseded === false/);
+assert.match(apiSource, /markRuntimeSupersededMessages\(projected, superseded\)/);
 assert.match(
   apiSource,
   /\{ status: turn\.status \}/,
@@ -289,6 +647,11 @@ const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
+assert.match(
+  chatHookSource,
+  /function mergeWorkspaceChangeExecutions[\s\S]*?attachHistoryToolExecutions\(messages, workspaceChanges\)/,
+  'Historical Workspace Change details must upgrade the original Tool-call segment.',
+);
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
@@ -314,6 +677,11 @@ assert.match(
   bubbleSource,
   /className="assistant-changed-files-revert"[\s\S]*?await onRevert\(\)/,
   'The final change summary must expose the same safe revert action as review',
+);
+assert.match(
+  bubbleSource,
+  /<AssistantLoopHistoryBlock[\s\S]*?active=\{isActiveAssistantTurn\}/,
+  'Archived execution segments must inherit the active Turn state so they cannot expose stale revert controls mid-loop',
 );
 assert.match(
   appSource,
@@ -557,6 +925,11 @@ assert.match(
   'Tool record enrichment must have a bounded local timeout.',
 );
 assert.match(
+  runtimeChatSource,
+  /case 'context_compaction_started':[\s\S]*?case 'context_compaction_completed':[\s\S]*?contextCompactionPresentationExecution\(event, current\)[\s\S]*?onToolExecution\?\.\(execution\)/,
+  'Context maintenance lifecycle must reach the live transcript through the shared execution-row boundary.',
+);
+assert.match(
   chatHookSource,
   /setPendingInteraction\(\(current\) => keepFirstPendingInteraction\(/,
   'Runtime interaction events must preserve the first visible permission.',
@@ -585,8 +958,48 @@ const styleSource = fs.readFileSync(
   'utf8',
 );
 assert.match(toolBlockSource, /历史执行记录 · \$\{runSummary\}/);
+assert.match(
+  toolBlockSource,
+  /historyLabel = !active[\s\S]*?historyLabel && !running/,
+  'Execution activity and historical labeling must remain independent presentation facts.',
+);
+assert.match(toolBlockSource, /正在压缩上下文/);
+assert.match(toolBlockSource, /已压缩上下文/);
+assert.match(
+  bubbleSource,
+  /!isContextCompactionPresentationExecution\(execution\)[\s\S]*?!previous\.executions\.some\(isContextCompactionPresentationExecution\)/,
+  'A context-maintenance row must not merge into an adjacent ordinary Tool group.',
+);
+assert.match(
+  toolBlockSource,
+  /原始会话与工具记录保持不变/,
+  'Context maintenance must explain that canonical history remains intact',
+);
+assert.match(
+  bubbleSource,
+  /coalesceStoppedAssistantTranscript\(transcript\)/,
+  'A stopped Turn must rebuild the compact live-loop narration groups.',
+);
+assert.match(
+  bubbleSource,
+  /activeTranscriptMessages\.length > 1 \|\|[\s\S]*?freezeStoppedTranscript && activeTranscriptMessages\.length > 0/,
+  'A stopped transcript that compacts to one group must still render that merged group.',
+);
+assert.match(
+  bubbleSource,
+  /<AssistantActiveTranscript[\s\S]*?function AssistantActiveTranscript[\s\S]*?historyLabel=\{false\}/,
+  'The live-style transcript must not relabel stopped execution groups as history.',
+);
 assert.match(toolBlockSource, /writeToolExecutionDisclosure\(browserStorage\(\), disclosureId, next\)/);
-assert.equal((toolBlockSource.match(/<ToolLogo /g) ?? []).length, 2);
+assert.match(
+  toolBlockSource,
+  /onRevert=\{active\s*\? undefined\s*:\s*\(\) => onRevertChangeReport/,
+  'Workspace-change cards must keep diff viewing available but omit revert while the Turn is active',
+);
+assert.ok(
+  (toolBlockSource.match(/<ToolLogo /g) ?? []).length >= 2,
+  'Tool and Runtime-maintenance rows must use the shared Tool logo renderer',
+);
 assert.match(toolLogoSource, /normalized\.startsWith\('mcp__'\)/);
 assert.match(toolLogoSource, /read_file: \{ icon: FileText/);
 assert.match(toolLogoSource, /subagent: \{ icon: GitFork/);
@@ -688,7 +1101,11 @@ vm.runInNewContext(changeReportTranspiled.outputText, {
   Set,
   Number,
 });
-const { changeReportsFromMessages, groupChangeReportsByTurn } = changeReportModule.exports;
+const {
+  changeReportsFromMessages,
+  groupChangeReportsByTurn,
+  hydrateConversationChangeReport,
+} = changeReportModule.exports;
 const changeExecution = (id, pathValue) => ({
   id,
   name: 'apply_patch',
@@ -765,6 +1182,99 @@ assert.equal(runtimeWorkspaceReports.length, 1, 'Native Runtime workspace_change
 assert.equal(runtimeWorkspaceReports[0].files[0].path, 'src/runtime.ts');
 assert.equal(runtimeWorkspaceReports[0].additions, 1);
 assert.equal(runtimeWorkspaceReports[0].deletions, 1);
+const deferredWorkspaceReports = changeReportsFromMessages([
+  { id: 'user-deferred', role: 'user', content: '继续修改', turnId: 'turn-deferred' },
+  {
+    id: 'assistant-deferred',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-deferred',
+    toolExecutions: [{
+      id: 'runtime-deferred-target',
+      name: 'edit_file',
+      state: 'completed',
+      summary: 'edit_file',
+      output: '',
+      success: true,
+      durationMs: 10,
+      createdAt: '2026-08-15T08:00:00Z',
+      contentOffset: 0,
+      metadata: {
+        workspaceChangeDetailsDeferred: true,
+        workspaceChanges: [{
+          change_id: 'change-deferred-target',
+          path: 'src/repeated.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+          detailAvailable: true,
+        }],
+      },
+    }],
+  },
+]);
+assert.deepEqual(
+  Array.from(deferredWorkspaceReports[0].executionIds),
+  ['runtime-deferred-target'],
+  'Review summaries must retain their exact Tool execution identity for lazy hydration.',
+);
+assert.equal(deferredWorkspaceReports[0].detailsDeferred, true);
+assert.equal(deferredWorkspaceReports[0].files[0].lines.length, 0);
+const hydratedDeferredReport = hydrateConversationChangeReport(
+  deferredWorkspaceReports[0],
+  [
+    {
+      id: 'runtime-deferred-other',
+      name: 'edit_file',
+      state: 'completed',
+      summary: 'edit_file',
+      output: '',
+      success: true,
+      durationMs: 10,
+      createdAt: '2026-08-15T08:00:01Z',
+      contentOffset: 0,
+      metadata: {
+        workspaceChanges: [{
+          change_id: 'change-deferred-other',
+          path: 'src/repeated.ts',
+          status: 'modified',
+          additions: 9,
+          deletions: 9,
+          metadata: { diff: '@@ -1,1 +1,1 @@\n-wrong\n+also-wrong' },
+        }],
+      },
+    },
+    {
+      id: 'runtime-deferred-target',
+      name: 'edit_file',
+      state: 'completed',
+      summary: 'edit_file',
+      output: '',
+      success: true,
+      durationMs: 10,
+      createdAt: '2026-08-15T08:00:00Z',
+      contentOffset: 0,
+      metadata: {
+        workspaceChanges: [{
+          change_id: 'change-deferred-target',
+          path: 'src/repeated.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 0,
+          metadata: { diff: '@@ -1,1 +1,2 @@\n stable\n+target' },
+        }],
+      },
+    },
+  ],
+);
+assert.equal(hydratedDeferredReport.files[0].additions, 1);
+assert.equal(hydratedDeferredReport.files[0].deletions, 0);
+assert.match(hydratedDeferredReport.files[0].diff, /\+target/);
+assert.doesNotMatch(
+  hydratedDeferredReport.files[0].diff,
+  /wrong/,
+  'Repeated edits of one path must hydrate the selected execution, not a neighboring revision.',
+);
 const reviewGroups = groupChangeReportsByTurn(reviewReports);
 assert.equal(reviewGroups.length, 2, 'Change history must group reports by conversation turn');
 assert.equal(reviewGroups[0].id, 'turn:turn-b', 'The latest turn must appear first');
@@ -796,10 +1306,15 @@ const sidebarReviewSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
 );
-assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(reports\)/);
+assert.match(sidebarReviewSource, /groupChangeReportsByTurn\(resolvedReports\)/);
 assert.match(sidebarReviewSource, /new Set\(reviewGroups\[0\] \? \[reviewGroups\[0\]\.id\]/);
 assert.match(sidebarReviewSource, /className="change-review-group-toggle"[\s\S]*?aria-expanded=\{expanded\}/);
 assert.match(sidebarReviewSource, /initialFilePath[\s\S]*?setSelectedKey\(item\.key\)/);
+assert.match(
+  sidebarReviewSource,
+  /fetchRuntimeTurnToolExecutionDetails\([\s\S]*?hydrateConversationChangeReport\(candidate, details\)/,
+  'Review must lazily hydrate a compact historical change even while another Turn is active.',
+);
 assert.match(
   sidebarReviewSource,
   /<FileTypeIcon path=\{selectedItem\.file\.path\} \/>/,
@@ -809,6 +1324,21 @@ assert.match(
   sidebarReviewSource,
   /<FileTypeIcon path=\{item\.file\.path\} \/>/,
   'Review navigation entries must use the shared extension-aware file icon',
+);
+assert.equal(
+  (sidebarReviewSource.match(/\{revertAvailable && \(/g) ?? []).length,
+  2,
+  'The review panel must hide both single-set and all-changes revert actions during an active Turn',
+);
+assert.equal(
+  (appSource.match(/if \(chat\.processingConversationIds\.has\(conversationId\)\) \{/g) ?? []).length,
+  2,
+  'Both revert mutation paths must reject stale UI actions while that conversation is running',
+);
+assert.match(
+  appSource,
+  /revertAvailable=\{!chat\.processingConversationIds\.has\([\s\S]*?displayedReviewConversation\.id/,
+  'The review panel must follow the target conversation lifecycle',
 );
 assert.match(
   appSource,

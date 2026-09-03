@@ -213,8 +213,6 @@ export function registerWorkspaceTools(
         throw new Error(execution.stderr || `ripgrep exited with code ${execution.exitCode}.`);
       }
       return {
-        path,
-        query: context.input.query,
         matched: execution.exitCode === 0,
         output: execution.stdout,
       };
@@ -224,7 +222,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "write_file",
-      description: "Create or replace one file. Existing files must have been read at their current SHA-256 revision first. Use an absolute path when the Turn has no workspace.",
+      description: "Create or replace one file. Existing files must have been read at their current SHA-256 revision first. Use an absolute path when the Turn has no workspace. Returns a compact execution receipt; full review and revert evidence is stored separately by Runtime.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         content: { type: "string" },
@@ -263,7 +261,7 @@ export function registerWorkspaceTools(
   registerIfMissing(registry, {
     definition: {
       name: "edit_file",
-      description: "Replace exact text in one previously read file. Fails if the current file revision was not observed or the old text is absent/ambiguous.",
+      description: "Replace exact text in one previously read file. Fails if the current file revision was not observed or the old text is absent/ambiguous. Returns a compact execution receipt; full review and revert evidence is stored separately by Runtime.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         old_text: { type: "string", minLength: 1 },
@@ -652,8 +650,11 @@ function changeResult(
   context.recordWorkspaceChange(change);
   return {
     path,
-    sha256: digest(after),
-    change,
+    status,
+    sha256: change.after_hash,
+    change_id: change.change_id,
+    additions: change.additions,
+    deletions: change.deletions,
   };
 }
 
@@ -999,7 +1000,7 @@ class TerminalSessionManager {
     });
 
     await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
-    const result = this.#consume(terminal, input.yieldTimeMs);
+    const result = this.#consume(terminal);
     if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
     return result;
   }
@@ -1017,7 +1018,7 @@ class TerminalSessionManager {
     ) {
       await this.#waitForRevision(terminal, terminal.revision, input.yieldTimeMs, signal);
     }
-    const result = this.#consume(terminal, input.yieldTimeMs);
+    const result = this.#consume(terminal);
     if (terminal.state !== "running") this.#sessions.delete(terminal.sessionId);
     return result;
   }
@@ -1052,7 +1053,7 @@ class TerminalSessionManager {
       terminal.state = "stopped";
       this.#notify(terminal);
     }
-    const result = this.#consume(terminal, 0);
+    const result = this.#consume(terminal);
     this.#sessions.delete(terminal.sessionId);
     terminal.child.stdout?.destroy();
     terminal.child.stderr?.destroy();
@@ -1094,7 +1095,7 @@ class TerminalSessionManager {
     return terminal;
   }
 
-  #consume(terminal: ManagedTerminalSession, yieldTimeMs: number): Record<string, unknown> {
+  #consume(terminal: ManagedTerminalSession): Record<string, unknown> {
     const stdout = decodeProcessOutput(Buffer.concat(terminal.stdout));
     const stderr = decodeProcessOutput(Buffer.concat(terminal.stderr));
     terminal.stdout = [];
@@ -1109,11 +1110,7 @@ class TerminalSessionManager {
       terminalSessionId: terminal.sessionId,
       pid: terminal.pid,
       state: terminal.state,
-      command: terminal.command,
-      cwd: terminal.cwd,
-      shell: terminal.shell,
       shellExecutable: terminal.shellExecutable,
-      yieldTimeMs,
       durationMs: Date.now() - terminal.startedAt,
       exitCode: terminal.exitCode,
       signal: terminal.signal,

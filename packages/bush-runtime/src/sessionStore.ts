@@ -338,6 +338,17 @@ export function validateCommittedTurn(turn: CommittedTurn): void {
     if (messageIds.has(message.messageId)) throw new Error(`Duplicate message ${message.messageId}.`);
     messageIds.add(message.messageId);
   }
+  if (turn.contextCheckpoint) {
+    if (turn.contextCheckpoint.inputMessageCount >= turn.messages.length) {
+      throw new Error("Turn context checkpoint must point into generated Turn messages.");
+    }
+    const boundaryIndex = turn.messages.findIndex((message) =>
+      message.messageId === turn.contextCheckpoint!.throughMessageId
+    );
+    if (boundaryIndex < turn.contextCheckpoint.inputMessageCount) {
+      throw new Error("Turn context checkpoint boundary must be a generated Turn message.");
+    }
+  }
   validateConversation(turn.messages.map((message) => message.message));
 }
 

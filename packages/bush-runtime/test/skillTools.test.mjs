@@ -27,6 +27,7 @@ test('registers only the published Skill discovery tool', async () => {
     const search = registry.resolve('search_skills');
     const searchInput = search.decodeInput({ query: 'spreadsheet', limit: 5 });
     const searchResult = await search.execute(context(searchInput, 'search_skills'));
+    assert.equal('query' in searchResult, false);
     assert.equal(searchResult.matches[0].name, 'xlsx');
     assert.equal(searchResult.matches[0].mainResource, join(packageDir, 'SKILL.md'));
 

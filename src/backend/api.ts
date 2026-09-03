@@ -53,6 +53,7 @@ import type {
   SubagentTask as RuntimeSubagentTask,
   ToolExecutionRecord as RuntimeToolExecutionRecord,
   ToolExecutionSummary as RuntimeToolExecutionSummary,
+  RuntimeContextCompactionEvent,
 } from '@cardbush/bush-protocol';
 import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 import { AGENT_PROFILE_PROTOCOL } from '../types';
@@ -65,7 +66,9 @@ import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
+import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
 import {
+  markRuntimeSupersededMessages,
   projectRuntimeSessionMessage,
   projectRuntimeTurnMessages,
   restoreRuntimeTurnAttachmentMetadata,
@@ -1570,29 +1573,45 @@ export async function fetchSessionMessages(
         toolExecutions: [],
       };
     }
-    const superseded = new Set(
-      options.includeSuperseded === false ? snapshot.supersededMessageIds : [],
-    );
+    const superseded = new Set(snapshot.supersededMessageIds);
+    const excludedSuperseded = options.includeSuperseded === false
+      ? superseded
+      : new Set<string>();
     const messages = snapshot.turns.flatMap((turn) => {
       const restoredTurn = restoreRuntimeTurnAttachmentMetadata(turn);
-      return projectRuntimeTurnMessages({
+      const projected = projectRuntimeTurnMessages({
         ...restoredTurn,
         messages: restoredTurn.messages
-          .filter((message) => !superseded.has(message.messageId))
+          .filter((message) => !excludedSuperseded.has(message.messageId))
           .filter((message) => !isInternalRuntimeMessage(message)),
       }, snapshot.sessionId);
+      return markRuntimeSupersededMessages(projected, superseded);
     });
-    const records = (
-      await Promise.all(
+    const [recordGroups, compactionEventGroups] = await Promise.all([
+      Promise.all(
         snapshot.turns.map((turn) =>
           runtime.client.listTurnToolExecutionSummaries({
             sessionId: snapshot.sessionId,
             turnId: turn.turnId,
           }),
         ),
-      )
-    ).flat();
-    const toolExecutions = records.map(runtimeHistoryToolExecution);
+      ),
+      Promise.all(
+        snapshot.turns.map((turn) =>
+          runtime.client.listTurnContextCompactions({
+            sessionId: snapshot.sessionId,
+            turnId: turn.turnId,
+          }),
+        ),
+      ),
+    ]);
+    const records = recordGroups.flat();
+    const compactionEvents: RuntimeContextCompactionEvent[] =
+      compactionEventGroups.flat();
+    const toolExecutions = [
+      ...records.map(runtimeHistoryToolExecution),
+      ...contextCompactionPresentationExecutions(compactionEvents),
+    ];
     const latest = snapshot.turns.at(-1);
     const projectDir = optionalString(snapshot.metadata?.projectDir);
     const taskDir = projectDir ? '' : taskWorkspaceDirectory(snapshot.metadata);
@@ -2926,6 +2945,7 @@ export async function editMessage(request: EditMessageRequest) {
       localizedClientMessage('消息内容为空', 'Message content is empty'),
     );
   }
+  const replacementTurnId = `turn_${crypto.randomUUID()}`;
   const runtime = createDesktopRuntimeSession();
   try {
     const snapshot = await runtime.client.getSession(sessionId, request.signal);
@@ -2959,13 +2979,17 @@ export async function editMessage(request: EditMessageRequest) {
           .slice(supersedeFrom)
           .map((message) => message.messageId),
         reason: 'user_edit_regenerate',
+        replacementTurnId,
       },
       request.signal,
     );
   } finally {
     runtime.dispose();
   }
-  return streamRuntimeChat({ ...request, userInput: content });
+  return streamRuntimeChat(
+    { ...request, userInput: content },
+    { turnId: replacementTurnId },
+  );
 }
 
 export async function sendGuidance(request: SendGuidanceRequest) {

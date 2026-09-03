@@ -66,6 +66,7 @@ import type {
 } from '../types';
 import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
 import { mergeToolArtifacts } from '../backend/toolArtifacts';
+import { attachHistoryToolExecutions } from '../backend/historyToolAssociation';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   assistantTurnTimingFingerprint,
@@ -1002,19 +1003,22 @@ export function useCardbushChat(
         ),
       );
     };
-    const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
-      ensureAssistant(route.createdAt);
-      setMessagesByConversation((state) =>
-        appendAssistantDelta(
-          state,
-          normalizedSessionId,
-          assistantId,
-          delta,
-          route,
-          release,
-        ),
-      );
-    });
+    const streamBuffer = createSegmentedAssistantStreamBuffers(
+      (delta, route, release) => {
+        ensureAssistant(route.createdAt);
+        setMessagesByConversation((state) =>
+          appendAssistantDelta(
+            state,
+            normalizedSessionId,
+            assistantId,
+            delta,
+            route,
+            release,
+          ),
+        );
+      },
+      { shouldAnimate: () => activeConversationIdRef.current === normalizedSessionId },
+    );
     markSessionRunning(normalizedSessionId, normalizedTurnId);
     void streamTurnEvents({
       sessionId: normalizedSessionId,
@@ -1074,16 +1078,18 @@ export function useCardbushChat(
         }
       },
       onToolExecution: (execution) => {
-        ensureAssistant();
-        applyGoalExecution(normalizedSessionId, execution);
-        setMessagesByConversation((state) =>
-          appendToolExecution(
-            state,
-            normalizedSessionId,
-            assistantId,
-            execution,
-          ),
-        );
+        void streamBuffer.releaseToolBoundary().then(() => {
+          ensureAssistant();
+          applyGoalExecution(normalizedSessionId, execution);
+          setMessagesByConversation((state) =>
+            appendToolExecution(
+              state,
+              normalizedSessionId,
+              assistantId,
+              execution,
+            ),
+          );
+        });
       },
       onTaskPlanUpdate: (update) => {
         ensureAssistant();
@@ -2035,11 +2041,14 @@ export function useCardbushChat(
       persistAutoConversationTitle(conversation, titleSource);
       setError(null);
       const controller = new AbortController();
-      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
-        setMessagesByConversation((current) =>
-          appendAssistantDelta(current, sessionId, assistantId, delta, route, release),
-        );
-      });
+      const streamBuffer = createSegmentedAssistantStreamBuffers(
+        (delta, route, release) => {
+          setMessagesByConversation((current) =>
+            appendAssistantDelta(current, sessionId, assistantId, delta, route, release),
+          );
+        },
+        { shouldAnimate: () => activeConversationIdRef.current === sessionId },
+      );
       controllersRef.current[sessionId] = controller;
       let finalSnapshotPromise: Promise<void> | null = null;
       let finalAssistantText = '';
@@ -2143,10 +2152,12 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            applyGoalExecution(sessionId, execution);
-            setMessagesByConversation((current) =>
-              appendToolExecution(current, sessionId, assistantId, execution),
-            );
+            void streamBuffer.releaseToolBoundary().then(() => {
+              applyGoalExecution(sessionId, execution);
+              setMessagesByConversation((current) =>
+                appendToolExecution(current, sessionId, assistantId, execution),
+              );
+            });
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
@@ -2537,18 +2548,21 @@ export function useCardbushChat(
       const sessionId = conversation.id;
       const controller = new AbortController();
       let finalSnapshot: ChatMessage[] | null = null;
-      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
-        setMessagesByConversation((current) =>
-          appendAssistantDelta(
-            current,
-            sessionId,
-            tempAssistant.id,
-            delta,
-            route,
-            release,
-          ),
-        );
-      });
+      const streamBuffer = createSegmentedAssistantStreamBuffers(
+        (delta, route, release) => {
+          setMessagesByConversation((current) =>
+            appendAssistantDelta(
+              current,
+              sessionId,
+              tempAssistant.id,
+              delta,
+              route,
+              release,
+            ),
+          );
+        },
+        { shouldAnimate: () => activeConversationIdRef.current === sessionId },
+      );
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
       const replacementIds = temporaryMessageIds ?? [tempAssistant.id];
       let finalSnapshotPromise: Promise<void> | null = null;
@@ -2642,10 +2656,12 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            applyGoalExecution(sessionId, execution);
-            setMessagesByConversation((current) =>
-              appendToolExecution(current, sessionId, tempAssistant.id, execution),
-            );
+            void streamBuffer.releaseToolBoundary().then(() => {
+              applyGoalExecution(sessionId, execution);
+              setMessagesByConversation((current) =>
+                appendToolExecution(current, sessionId, tempAssistant.id, execution),
+              );
+            });
           },
           onContextWindowUsage: (usage) => {
             mergeContextWindowUsage(sessionId, usage);
@@ -3099,10 +3115,9 @@ export function useCardbushChat(
         return;
       }
       if (!editSourceMessage || !messageId) {
-        await sendMessage(content, conversation);
-        setNotice(localize(
-          '未定位到原消息，已作为新提问发送。',
-          'The original message was not found, so this was sent as a new request.',
+        setError(localize(
+          '未定位到原消息，更新重跑已取消，没有创建新轮次。',
+          'The original message was not found. Update and rerun was cancelled without creating a new Turn.',
         ));
         return;
       }
@@ -4086,11 +4101,14 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
 }
 
 // Assistant deltas stay outside React while their Runtime segment is open. A
-// canonical segment-completed fact releases loop text once; the terminal fact
-// releases any final-only fallback. Releasing character slices on animation
-// frames reparses an ever-growing Markdown tree and invalidates the whole
-// application layout at display rate. The message component owns the visual
-// entrance; this buffer owns factual boundaries, never animation timing.
+// canonical segment-completed fact releases loop text; the terminal fact
+// releases any final-only fallback. A release is deliberately projected in a
+// small, bounded number of accelerated chunks. This gives the reader a visible
+// hand-off without returning to unbounded token-by-token Markdown reparsing.
+
+const assistantRevealMinimumChunkCharacters = 10;
+const assistantRevealMaximumCommits = 72;
+const assistantRevealIntervalMs = 32;
 
 type AssistantStreamBufferRelease = {
   reason: 'segment_completed' | 'terminal' | 'boundary';
@@ -4099,13 +4117,35 @@ type AssistantStreamBufferRelease = {
   segmentOrdinal?: number;
 };
 
+type AssistantStreamDeltaBufferOptions = {
+  revealIntervalMs?: number;
+  shouldAnimate?: () => boolean;
+};
+
+type AssistantRevealBatch = {
+  characters: string[];
+  index: number;
+  chunkSize: number;
+  release: AssistantStreamBufferRelease;
+};
+
 export function createAssistantStreamDeltaBuffer(
   append: (delta: string, release?: AssistantStreamBufferRelease) => void,
+  options: AssistantStreamDeltaBufferOptions = {},
 ) {
   let pending = '';
   let emitted = '';
   let terminalRequested = false;
+  let revealTimer: number | undefined;
+  let lateTerminalTimer: number | undefined;
+  let activeBatch: AssistantRevealBatch | undefined;
+  const queuedBatches: AssistantRevealBatch[] = [];
+  const drainWaiters: Array<() => void> = [];
   const completedSegmentKeys = new Set<string>();
+  const revealInterval = Math.max(
+    0,
+    Math.round(options.revealIntervalMs ?? assistantRevealIntervalMs),
+  );
 
   const emit = (delta: string, release?: AssistantStreamBufferRelease) => {
     if (!delta) {
@@ -4115,13 +4155,156 @@ export function createAssistantStreamDeltaBuffer(
     emitted += delta;
   };
 
-  const bufferedText = () => emitted + pending;
+  const unrevealedText = () => [
+    activeBatch?.characters.slice(activeBatch.index).join('') ?? '',
+    ...queuedBatches.map((batch) => batch.characters.slice(batch.index).join('')),
+    pending,
+  ].join('');
+
+  const bufferedText = () => emitted + unrevealedText();
+
+  const shouldAnimateReveal = () => {
+    if (options.shouldAnimate && !options.shouldAnimate()) {
+      return false;
+    }
+    if (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ) {
+      return false;
+    }
+    return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+  };
+
+  const isDrained = () =>
+    !pending &&
+    !activeBatch &&
+    queuedBatches.length === 0 &&
+    revealTimer === undefined &&
+    lateTerminalTimer === undefined;
+
+  const resolveDrainWaiters = () => {
+    if (!isDrained() || drainWaiters.length === 0) return;
+    const waiters = drainWaiters.splice(0);
+    for (const resolve of waiters) resolve();
+  };
+
+  const waitForDrain = () => new Promise<void>((resolve) => {
+    if (isDrained()) {
+      resolve();
+      return;
+    }
+    drainWaiters.push(resolve);
+  });
+
+  const cancelRevealTimer = () => {
+    if (revealTimer !== undefined) {
+      window.clearTimeout(revealTimer);
+      revealTimer = undefined;
+    }
+    if (lateTerminalTimer !== undefined) {
+      window.clearTimeout(lateTerminalTimer);
+      lateTerminalTimer = undefined;
+    }
+  };
+
+  const preferredRevealEnd = (batch: AssistantRevealBatch) => {
+    const minimumEnd = Math.min(
+      batch.characters.length,
+      batch.index + batch.chunkSize,
+    );
+    if (minimumEnd >= batch.characters.length) return minimumEnd;
+    const maximumEnd = Math.min(batch.characters.length, minimumEnd + 6);
+    for (let index = minimumEnd; index < maximumEnd; index += 1) {
+      if (/\s|[，。！？；：、,.!?;:)}\]]/.test(batch.characters[index])) {
+        return index + 1;
+      }
+    }
+    return minimumEnd;
+  };
+
+  const queuePending = (release: AssistantStreamBufferRelease) => {
+    if (!pending) return;
+    const characters = Array.from(pending);
+    pending = '';
+    queuedBatches.push({
+      characters,
+      index: 0,
+      chunkSize: Math.max(
+        assistantRevealMinimumChunkCharacters,
+        Math.ceil(characters.length / assistantRevealMaximumCommits),
+      ),
+      release,
+    });
+  };
+
+  const startNextReveal = () => {
+    if (activeBatch || revealTimer !== undefined) return;
+    activeBatch = queuedBatches.shift();
+    if (!activeBatch) {
+      if (terminalRequested && pending) {
+        queuePending({ reason: 'terminal' });
+        activeBatch = queuedBatches.shift();
+      }
+      if (!activeBatch) {
+        resolveDrainWaiters();
+        return;
+      }
+    }
+
+    const revealNextChunk = () => {
+      revealTimer = undefined;
+      const batch = activeBatch;
+      if (!batch) {
+        startNextReveal();
+        return;
+      }
+      if (!shouldAnimateReveal()) {
+        emit(
+          batch.characters.slice(batch.index).join(''),
+          batch.release,
+        );
+        activeBatch = undefined;
+        startNextReveal();
+        return;
+      }
+      const nextIndex = preferredRevealEnd(batch);
+      const finished = nextIndex >= batch.characters.length;
+      emit(
+        batch.characters.slice(batch.index, nextIndex).join(''),
+        finished ? batch.release : undefined,
+      );
+      batch.index = nextIndex;
+      if (finished) {
+        activeBatch = undefined;
+        startNextReveal();
+        return;
+      }
+      revealTimer = window.setTimeout(revealNextChunk, revealInterval);
+    };
+
+    revealNextChunk();
+  };
+
+  const flushAllImmediately = (release?: AssistantStreamBufferRelease) => {
+    cancelRevealTimer();
+    const queuedRelease =
+      queuedBatches.at(-1)?.release ?? activeBatch?.release;
+    const remainder = unrevealedText();
+    activeBatch = undefined;
+    queuedBatches.length = 0;
+    pending = '';
+    emit(remainder, release ?? queuedRelease);
+    resolveDrainWaiters();
+    return Promise.resolve();
+  };
 
   const flushAllStreaming = (release?: AssistantStreamBufferRelease) => {
-    const remainder = pending;
-    pending = '';
-    emit(remainder, release);
-    return Promise.resolve();
+    if (terminalRequested && shouldAnimateReveal() && !isDrained()) {
+      startNextReveal();
+      return waitForDrain();
+    }
+    return flushAllImmediately(release);
   };
 
   const reconcileSnapshot = (finalText: string) => {
@@ -4130,8 +4313,14 @@ export function createAssistantStreamDeltaBuffer(
     if (snapshot.startsWith(buffered)) {
       pending += snapshot.slice(buffered.length);
     } else if (snapshot.startsWith(emitted)) {
+      cancelRevealTimer();
+      activeBatch = undefined;
+      queuedBatches.length = 0;
       pending = snapshot.slice(emitted.length);
     } else {
+      cancelRevealTimer();
+      activeBatch = undefined;
+      queuedBatches.length = 0;
       emitted = '';
       pending = snapshot;
     }
@@ -4139,7 +4328,12 @@ export function createAssistantStreamDeltaBuffer(
 
   const reconcileSegmentSnapshot = (segmentText: string) => {
     const snapshot = segmentText ?? '';
-    if (snapshot.startsWith(pending)) {
+    const buffered = bufferedText();
+    if (snapshot.startsWith(buffered)) {
+      pending += snapshot.slice(buffered.length);
+    } else if (buffered.startsWith(snapshot)) {
+      return;
+    } else if (snapshot.startsWith(pending)) {
       pending += snapshot.slice(pending.length);
     } else {
       // Segment-completed content is scoped to the open protocol segment, not
@@ -4151,9 +4345,15 @@ export function createAssistantStreamDeltaBuffer(
 
   const completeFinalSnapshot = (finalText: string) => {
     reconcileSnapshot(finalText);
-    return terminalRequested
-      ? flushAllStreaming({ reason: 'terminal' })
-      : Promise.resolve();
+    if (terminalRequested) {
+      if (lateTerminalTimer !== undefined) {
+        window.clearTimeout(lateTerminalTimer);
+        lateTerminalTimer = undefined;
+      }
+      queuePending({ reason: 'terminal' });
+      startNextReveal();
+    }
+    return waitForDrain();
   };
 
   const completeSegmentSnapshot = (
@@ -4167,9 +4367,16 @@ export function createAssistantStreamDeltaBuffer(
       return Promise.resolve();
     }
     reconcileSegmentSnapshot(content);
-    const flushed = flushAllStreaming(release);
+    queuePending(release);
     if (completionKey) completedSegmentKeys.add(completionKey);
-    return flushed;
+    startNextReveal();
+    return waitForDrain();
+  };
+
+  const releaseToolBoundary = () => {
+    queuePending({ reason: 'boundary' });
+    startNextReveal();
+    return waitForDrain();
   };
 
   const flushToolBoundary = () => {
@@ -4182,6 +4389,21 @@ export function createAssistantStreamDeltaBuffer(
         return;
       }
       pending += delta;
+      if (
+        terminalRequested &&
+        !activeBatch &&
+        queuedBatches.length === 0 &&
+        lateTerminalTimer === undefined
+      ) {
+        // A terminal event may race slightly ahead of its final delta/snapshot.
+        // Coalesce that burst once instead of turning every late token into a
+        // separate React commit.
+        lateTerminalTimer = window.setTimeout(() => {
+          lateTerminalTimer = undefined;
+          queuePending({ reason: 'terminal' });
+          startNextReveal();
+        }, revealInterval);
+      }
     },
     flushAllStreaming() {
       return flushAllStreaming();
@@ -4195,24 +4417,42 @@ export function createAssistantStreamDeltaBuffer(
     ) {
       return completeSegmentSnapshot(content, release);
     },
+    releaseToolBoundary() {
+      return releaseToolBoundary();
+    },
     releaseTerminal() {
       terminalRequested = true;
-      return flushAllStreaming({ reason: 'terminal' });
+      if (lateTerminalTimer !== undefined) {
+        window.clearTimeout(lateTerminalTimer);
+        lateTerminalTimer = undefined;
+      }
+      queuePending({ reason: 'terminal' });
+      startNextReveal();
+      return waitForDrain();
     },
     flushToolBoundary() {
       flushToolBoundary();
     },
     reset(nextEmitted = '') {
+      cancelRevealTimer();
       terminalRequested = false;
+      activeBatch = undefined;
+      queuedBatches.length = 0;
       pending = '';
       emitted = nextEmitted;
       completedSegmentKeys.clear();
+      resolveDrainWaiters();
     },
     dispose() {
+      cancelRevealTimer();
       terminalRequested = false;
+      activeBatch = undefined;
+      queuedBatches.length = 0;
       pending = '';
       emitted = '';
       completedSegmentKeys.clear();
+      const waiters = drainWaiters.splice(0);
+      for (const resolve of waiters) resolve();
     },
   };
 }
@@ -4234,6 +4474,7 @@ function createSegmentedAssistantStreamBuffers(
     route: AssistantStreamRoute,
     release?: AssistantStreamBufferRelease,
   ) => void,
+  options: AssistantStreamDeltaBufferOptions = {},
 ) {
   const buffers = new Map<string, ReturnType<typeof createAssistantStreamDeltaBuffer>>();
 
@@ -4245,8 +4486,10 @@ function createSegmentedAssistantStreamBuffers(
     const key = routeKey(route);
     const existing = buffers.get(key);
     if (existing) return existing;
-    const created = createAssistantStreamDeltaBuffer((delta, release) =>
-      append(delta, route, release));
+    const created = createAssistantStreamDeltaBuffer(
+      (delta, release) => append(delta, route, release),
+      options,
+    );
     buffers.set(key, created);
     return created;
   };
@@ -4271,6 +4514,11 @@ function createSegmentedAssistantStreamBuffers(
         segmentId: route.segmentId,
         segmentOrdinal: route.segmentOrdinal,
       });
+    },
+    releaseToolBoundary() {
+      return Promise.all(
+        [...buffers.values()].map((buffer) => buffer.releaseToolBoundary()),
+      ).then(() => undefined);
     },
     releaseTerminal() {
       return Promise.all(
@@ -4323,7 +4571,7 @@ export function appendAssistantDelta(
         ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
         ...(messageId ? { message_id: messageId } : {}),
         ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
-        ...assistantStreamReleaseMetadata(release, route),
+        ...assistantStreamReleaseMetadata(release),
       },
     });
     return { ...current, [sessionId]: messages };
@@ -4347,7 +4595,7 @@ export function appendAssistantDelta(
           loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
           metadata: {
             ...(routed.metadata ?? {}),
-            ...assistantStreamReleaseMetadata(release, route),
+            ...assistantStreamReleaseMetadata(release),
           },
         };
       }
@@ -4356,7 +4604,7 @@ export function appendAssistantDelta(
         content: appendAssistantTextAfterToolBoundary(routed, delta),
         metadata: {
           ...(routed.metadata ?? {}),
-          ...assistantStreamReleaseMetadata(release, route),
+          ...assistantStreamReleaseMetadata(release),
         },
       };
     }),
@@ -4670,14 +4918,8 @@ function applyAssistantStreamRoute(
 
 function assistantStreamReleaseMetadata(
   release?: AssistantStreamBufferRelease,
-  route?: AssistantStreamRoute,
 ): Record<string, unknown> {
   if (!release) return {};
-  const revealKey = (
-    release.eventId ||
-    release.segmentId ||
-    `${route?.turnId ?? ''}:${route?.messageId ?? ''}:${release.reason}`
-  ).trim();
   return {
     assistant_stream_release: release.reason,
     ...(release.reason === 'segment_completed' ? { segment_complete: true } : {}),
@@ -4685,7 +4927,6 @@ function assistantStreamReleaseMetadata(
     ...(release.segmentOrdinal != null
       ? { assistant_segment_index: release.segmentOrdinal }
       : {}),
-    ...(revealKey ? { cardbush_atomic_reveal_key: revealKey } : {}),
   };
 }
 
@@ -5703,33 +5944,10 @@ function mergeWorkspaceChangeExecutions(
   workspaceChanges: ChatToolExecution[],
 ) {
   if (workspaceChanges.length === 0) return messages;
-  const changesByTurn = new Map<string, ChatToolExecution[]>();
-  for (const execution of workspaceChanges) {
-    const metadata = execution.metadata ?? {};
-    const turnId = String(metadata.turn_id ?? metadata.turnId ?? '').trim();
-    if (!turnId) continue;
-    const current = changesByTurn.get(turnId) ?? [];
-    current.push(execution);
-    changesByTurn.set(turnId, current);
-  }
-  if (changesByTurn.size === 0) return messages;
-  return messages.map((message, index) => {
-    const turnId = message.turnId?.trim() ?? '';
-    const changes = changesByTurn.get(turnId);
-    if (!changes || message.role !== 'assistant') return message;
-    const laterAssistantInTurn = messages.slice(index + 1).some(
-      (candidate) => candidate.role === 'assistant'
-        && (candidate.turnId?.trim() ?? '') === turnId,
-    );
-    if (laterAssistantInTurn) return message;
-    return {
-      ...message,
-      toolExecutions: mergeToolExecutionLists(
-        changes,
-        message.toolExecutions ?? [],
-      ),
-    };
-  });
+  // The transcript initially carries compact Tool execution summaries. Upgrade
+  // each summary in the assistant segment that issued the Tool call so loop
+  // collapsing cannot leave the summary ahead of a detached full-detail copy.
+  return attachHistoryToolExecutions(messages, workspaceChanges);
 }
 
 function preserveLocalAssistantTimingMetadata(
@@ -6500,6 +6718,7 @@ function isPersistedChatMessageId(value: string) {
     /^msg:\S+$/.test(normalized) ||
     /^msg-[\w-]+$/.test(normalized) ||
     /^msg_[\w-]+$/.test(normalized) ||
+    /^message_[\w-]+$/.test(normalized) ||
     /^\d+$/.test(normalized)
   );
 }

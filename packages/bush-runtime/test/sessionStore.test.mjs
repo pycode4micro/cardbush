@@ -95,6 +95,69 @@ test("preserves complete tool-call adjacency as durable context facts", () => {
   assert.equal(assembleContext({ session: snapshot }).messages.length, 4);
 });
 
+test("projects a partial active-Turn checkpoint while retaining raw Tool history", () => {
+  const store = deterministicStore();
+  const candidate = turn("turn_1", 1, [
+    { role: "user", content: "inspect and finish" },
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: "call_1", name: "read_file", argumentsText: "{}" }],
+    },
+    { role: "tool", toolCallId: "call_1", content: "large result" },
+    { role: "assistant", content: "finished after checkpoint", toolCalls: [] },
+  ]);
+  candidate.contextCheckpoint = {
+    throughMessageId: "turn_1_message_2",
+    summary: "The requested file was inspected successfully; report the verified result next.",
+    inputMessageCount: 1,
+  };
+  const committed = store.commitTurn("session_1", candidate);
+
+  assert.equal(committed.turns[0].messages[2].message.content, "large result");
+  const projected = assembleContext({ session: committed });
+  assert.deepEqual(projected.messages.map((message) => message.role), [
+    "user",
+    "assistant",
+    "assistant",
+  ]);
+  assert.match(projected.messages[1].content, /active_turn_checkpoint/);
+  assert.match(projected.messages[1].content, /inspected successfully/);
+  assert.equal(projected.messages[2].content, "finished after checkpoint");
+  assert.deepEqual(projected.sourceMessageIds, candidate.messages.map((message) =>
+    message.messageId));
+
+  const summarized = store.summarizeTurns({
+    sessionId: "session_1",
+    expectedRevision: committed.revision,
+    summaries: [{
+      turnId: "turn_1",
+      summary: "The file inspection and final report both completed successfully.",
+    }],
+  });
+  const fullyProjected = assembleContext({ session: summarized });
+  assert.equal(fullyProjected.messages.length, 1);
+  assert.equal(fullyProjected.messages[0].name, "turn_context_summary");
+  assert.equal(summarized.turns[0].messages[2].message.content, "large result");
+});
+
+test("rejects active-Turn checkpoints outside generated message boundaries", () => {
+  const store = deterministicStore();
+  const candidate = turn("turn_1", 1, [
+    { role: "user", content: "inspect" },
+    { role: "assistant", content: "done", toolCalls: [] },
+  ]);
+  candidate.contextCheckpoint = {
+    throughMessageId: "turn_1_message_0",
+    summary: "invalid boundary",
+    inputMessageCount: 1,
+  };
+  assert.throws(
+    () => store.commitTurn("session_1", candidate),
+    /boundary must be a generated Turn message/,
+  );
+});
+
 test("only explicit supersession changes committed context", () => {
   const store = deterministicStore();
   store.commitTurn("session_1", turn("turn_1", 1, [

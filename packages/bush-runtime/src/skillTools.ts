@@ -65,7 +65,7 @@ function searchRegistration(
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
         .slice(0, context.input.limit);
-      return { query: context.input.query, matches };
+      return { matches };
     },
   };
 }

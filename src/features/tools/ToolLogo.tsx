@@ -11,6 +11,7 @@ import {
   ListChecks,
   ListTodo,
   Lightbulb,
+  Minimize2,
   Search,
   ShieldCheck,
   SquareTerminal,
@@ -48,6 +49,7 @@ const toolLogos: Record<string, ToolLogoDefinition> = {
   update_goal: { icon: Target, tone: 'planning' },
   request_permission: { icon: ShieldCheck, tone: 'permission' },
   request_user_choice: { icon: ListTodo, tone: 'permission' },
+  runtime_context_compaction: { icon: Minimize2, tone: 'reasoning' },
 };
 
 export function ToolLogo({

@@ -8,10 +8,12 @@ export {
 export {
   changeReportsFromMessages,
   groupChangeReportsByTurn,
+  hydrateConversationChangeReport,
   serializeToolChangeReport,
   summarizeChangeReports,
   type ConversationChangeReport,
   type ConversationChangeSummary,
+  type ToolChangeReport,
   type ToolFileChange,
 } from './toolChangeReports';
 export { ToolFileChangeView } from './ToolChangeBlock';

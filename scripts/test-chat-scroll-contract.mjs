@@ -12,6 +12,10 @@ const backendApiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
+const chatScrollSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'features', 'chatScroll.tsx'),
+  'utf8',
+);
 
 assert.doesNotMatch(
   appSource,
@@ -96,14 +100,39 @@ assert.match(
   'Streaming content must ease into view instead of snapping the reading surface',
 );
 assert.match(
+  appSource,
+  /const desiredTop = Math\.round\([\s\S]*?scroller\.clientHeight \* 0\.07[\s\S]*?--submitted-user-reading-anchor[\s\S]*?behavior:\s*gentleAutoFollowScrollBehavior\(\)/,
+  'A submitted user bubble must glide to a compact measured reading anchor below the title bar',
+);
+assert.match(
   styles,
-  /\.assistant-atomic-reveal\.is-visible\s*\{[\s\S]*?transition:\s*opacity 90ms linear/,
-  'A completed assistant segment must use one short composited reveal after layout is reserved',
+  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?min-height:\s*max\([\s\S]*?--message-list-viewport-height[\s\S]*?--quick-context-bottom-inset[\s\S]*?--submitted-user-reading-anchor/,
+  'The active assistant must reserve the measured region between the reading anchor and composer',
+);
+assert.match(
+  appSource,
+  /setAssistantStageReservationActive\(shouldFollowSubmission\)[\s\S]*?sending &&\s*assistantStageReservationActive &&\s*message\.role === 'assistant'/,
+  'The empty response stage must exist only for a submission that is still under automatic follow',
+);
+assert.match(
+  appSource,
+  /const releaseAssistantStageReservation = useCallback[\s\S]*?setAssistantStageReservationActive\(false\)[\s\S]*?if \(event\.deltaY !== 0\) \{\s*releaseAssistantStageReservation\(\)/,
+  'Any manual wheel movement must release the synthetic response height instead of exposing blank scroll content',
+);
+assert.match(
+  appSource,
+  /classList\.contains\('assistant-render-stage'\)[\s\S]*?querySelector<HTMLElement>\('\.message-row\.assistant'\)/,
+  'Automatic following must measure real assistant content instead of the reserved blank stage',
+);
+assert.match(
+  chatScrollSource,
+  /classList\.contains\('assistant-render-stage'\)[\s\S]*?querySelector<HTMLElement>\('\.message-row\.assistant'\)[\s\S]*?stagedContent \?\? item/,
+  'Tail visibility must ignore the synthetic stage and measure only rendered assistant content',
 );
 assert.doesNotMatch(
   styles,
-  /@keyframes assistant-stream-segment-enter|\.assistant-atomic-reveal[^}]*transform:/,
-  'Assistant text must not animate geometry after its layout is reserved',
+  /assistant-atomic-reveal|@keyframes assistant-stream-segment-enter/,
+  'Released text must not be hidden behind a second atomic reveal or geometry animation',
 );
 assert.match(
   appSource,

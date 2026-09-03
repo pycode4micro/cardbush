@@ -50,6 +50,14 @@ export const sessionMessageSchema = z.object({
 
 export type SessionMessage = z.infer<typeof sessionMessageSchema>;
 
+export const turnContextCheckpointSchema = z.object({
+  throughMessageId: z.string().min(1),
+  summary: z.string().min(1),
+  inputMessageCount: z.number().int().positive(),
+});
+
+export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
+
 export const committedTurnSchema = z.object({
   turnId: z.string().min(1),
   turnSequence: z.number().int().positive(),
@@ -61,6 +69,7 @@ export const committedTurnSchema = z.object({
   usage: sessionUsageSchema.default({}),
   cacheChainState: cacheChainStateSchema.optional(),
   contextSummary: z.string().min(1).optional(),
+  contextCheckpoint: turnContextCheckpointSchema.optional(),
 });
 
 export type CommittedTurn = z.infer<typeof committedTurnSchema>;
@@ -206,6 +215,7 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   inputMessages: z.array(runtimeSessionCheckpointMessageSchema).min(1),
   generatedMessages: z.array(runtimeSessionCheckpointMessageSchema).default([]),
   usage: sessionUsageSchema.default({}),
+  activeContextCheckpoint: turnContextCheckpointSchema.optional(),
 });
 
 export type RuntimeSessionCommitCheckpoint = z.infer<

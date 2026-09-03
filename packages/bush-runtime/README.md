@@ -27,11 +27,41 @@ Tool facts. Tool call/result adjacency is validated mechanically.
 `checkpoint_context` is always present in the stable Tool schema and Runtime
 never narrows the Tool list for a compaction round. The model must not invoke it
 proactively. At 95% of the usable input budget Runtime appends one explicit
-internal user-role instruction requiring it before normal work can continue. One atomic
-checkpoint must summarize every still-unsummarized preceding Turn in order and
-never summarizes the active Turn. If fully summarized context later still
-reaches 95%, projection keeps the newest 20 summaries and drops older summaries
-from active model context only. Durable history is never deleted.
+internal user-role instruction requiring it before normal work can continue. Runtime
+may issue it slightly earlier when the configured maximum response would otherwise
+consume the space required by the next checkpoint request. The same output reserve is
+enforced on the Provider request; when a caller omits a limit, Runtime derives the same
+bounded default (at most 8,192 tokens) instead of assuming an unenforced reserve.
+One atomic checkpoint must summarize every still-unsummarized preceding Turn in order and
+may also replace the completed prefix of the active Turn with one cumulative
+assistant checkpoint through an exact message boundary. Runtime then adds one
+fixed developer continuation instruction, keeps the original user input, and
+continues the same Tool loop without replaying completed side effects. Repeated
+active checkpoints overwrite the prior checkpoint projection rather than stacking.
+The latest checkpoint boundary and summary are persisted with the Turn, while all
+original assistant and Tool messages remain in the append-only journal for replay
+and audit. If compacted context later still reaches 95%, projection keeps the newest
+20 summaries and drops older summaries from active model context only. Durable
+history is never deleted.
+
+Every completed Tool round receives one aggregate context-ingress budget derived from
+the latest measured input, actual model output and checkpoint reserve. Parallel Tool
+results share that budget rather than each receiving an independent 16,000-character
+allowance. Exact native results remain in `ToolExecutionStore`; only their model
+projection is shortened, with a durable `tool-result://` locator. Image follow-ups
+consume the same budget. This keeps the following checkpoint request inside the
+configured context window even when one parallel batch returns many large results.
+An already-oversized legacy Session has a request-only recovery projection which first
+omits hidden reasoning and then shortens large archived results; it never rewrites the
+append-only Session or Tool journals.
+
+Runtime emits a durable context-compaction lifecycle (started, retrying,
+completed, failed or cancelled) with one stable compaction identity. These are
+maintenance facts rather than model messages or Tool execution records: the
+desktop may render them with the familiar Tool-row treatment, but they never
+enter model context, Workspace Change review/revert, or ordinary Tool activity
+counts. Summary text remains in the context-checkpoint store and is not copied
+into presentation events.
 
 Session events are checksummed JSONL records. Complete corruption fails closed;
 only an incomplete final record may be removed after a crash. A Session-aware

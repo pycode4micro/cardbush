@@ -43,8 +43,12 @@ import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
 import { contextWindowMetrics } from './contextWindowUsage';
+import { contextCompactionPresentationExecution } from './contextCompactionPresentation';
 
-export async function streamRuntimeChat(request: ChatStreamRequest): Promise<void> {
+export async function streamRuntimeChat(
+  request: ChatStreamRequest,
+  options: { turnId?: string } = {},
+): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
     throw new Error('Electron Runtime bridge is unavailable.');
   }
@@ -52,7 +56,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
   const runtime = createDesktopRuntimeSession();
   const controller = new AbortController();
   const detachAbort = forwardAbort(request.signal, controller);
-  const turnId = `turn_${crypto.randomUUID()}`;
+  const turnId = options.turnId?.trim() || `turn_${crypto.randomUUID()}`;
   const requestId = `request_${crypto.randomUUID()}`;
   const userMessageId = `message_${crypto.randomUUID()}`;
   const goalCommand = parseGoalCommand(request.userInput);
@@ -404,6 +408,7 @@ async function consumeRuntimeEvents(
   cursor?: { afterSequence?: number; lastEventId?: string },
 ) {
   const liveToolExecutions = new Map<string, ChatToolExecution>();
+  const liveContextCompactions = new Map<string, ChatToolExecution>();
   for await (const event of runtime.client.events({
     sessionId: runtimeRequest.sessionId,
     turnId: runtimeRequest.turnId,
@@ -454,6 +459,44 @@ async function consumeRuntimeEvents(
           guidanceRoundIndex: event.payload.afterRound,
         });
         break;
+      case 'model_request_usage': {
+        const contextMetrics = contextWindowMetrics({
+          lastRequestInputTokens: event.payload.inputTokens,
+          contextWindowTokens: event.payload.contextWindowTokens,
+        });
+        request.onContextWindowUsage?.({
+          sessionId: event.sessionId,
+          turnId: event.turnId,
+          model: event.payload.model,
+          ...contextMetrics,
+          measuredAt: event.createdAt,
+          source: 'electron_runtime_model_request',
+          raw: {
+            round: event.payload.round,
+            attempt: event.payload.attempt,
+            inputTokens: event.payload.inputTokens,
+            outputTokens: event.payload.outputTokens,
+            cachedInputTokens: event.payload.cachedInputTokens,
+            providerResponseId: event.payload.providerResponseId,
+            preflightInputTokens: event.payload.preflightInputTokens,
+            preflightMeasurement: event.payload.preflightMeasurement,
+            usableInputTokens: event.payload.usableInputTokens,
+            measurement: 'model_request_usage_event',
+          },
+        });
+        break;
+      }
+      case 'context_compaction_started':
+      case 'context_compaction_retrying':
+      case 'context_compaction_completed':
+      case 'context_compaction_failed':
+      case 'context_compaction_cancelled': {
+        const current = liveContextCompactions.get(event.payload.compactionId);
+        const execution = contextCompactionPresentationExecution(event, current);
+        liveContextCompactions.set(event.payload.compactionId, execution);
+        request.onToolExecution?.(execution);
+        break;
+      }
       case 'tool_queued':
       case 'tool_running': {
         const execution = toolLifecycle(event);

@@ -219,19 +219,24 @@ assert.match(
   'sidebar change summaries must stay frozen while a Turn is producing live facts',
 );
 assert.match(
-  messageBubbleSource,
-  /function AssistantAtomicReveal[\s\S]*?getBoundingClientRect\(\)\.height/,
-  'a complete assistant segment must reserve its measured layout before becoming visible',
+  hookSource,
+  /assistantRevealMinimumChunkCharacters = 10;[\s\S]*?assistantRevealMaximumCommits = 72;/,
+  'accelerated reveal must have a minimum useful chunk and a hard React commit budget',
 );
 assert.match(
-  messageBubbleSource,
-  /function AssistantAtomicReveal[\s\S]*?classList\.add\('is-visible'\)/,
-  'the measured assistant segment must reveal without another React state update',
+  hookSource,
+  /Math\.ceil\(characters\.length \/ assistantRevealMaximumCommits\)/,
+  'large terminal replies must automatically use larger chunks',
 );
 assert.doesNotMatch(
+  messageBubbleSource,
+  /AssistantAtomicReveal/,
+  'the paced buffer must be the only reveal scheduler',
+);
+assert.match(
   styleSource,
-  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp/,
-  'assistant layout reservation must use measured content rather than a fixed viewport-sized gap',
+  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?--message-list-viewport-height[\s\S]*?--quick-context-bottom-inset/,
+  'assistant layout reservation must use the measured viewport and composer rather than a generic vh clamp',
 );
 
 console.log('ui performance isolation contract tests passed');

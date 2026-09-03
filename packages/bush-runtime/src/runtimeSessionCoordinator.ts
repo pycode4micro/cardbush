@@ -10,10 +10,16 @@ import {
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
+  type TurnContextCheckpoint,
 } from "@cardbush/bush-protocol";
+import { isDeepStrictEqual } from "node:util";
 
-import { assembleContext, type AssembleContextInput } from "./contextAssembler.js";
-import { SessionStore } from "./sessionStore.js";
+import {
+  assembleContext,
+  projectActiveTurnContext,
+  type AssembleContextInput,
+} from "./contextAssembler.js";
+import { SessionStore, validateConversation } from "./sessionStore.js";
 
 export interface GeneratedMessageFact {
   messageId: string;
@@ -42,6 +48,7 @@ export type TurnFinalizedObserver = (
   generatedMessages: GeneratedMessageFact[],
   usage: SessionUsageFact,
   cacheChainState: CacheChainState,
+  activeContextCheckpoint?: TurnContextCheckpoint,
 ) => void;
 
 export interface PreparedSessionTurn {
@@ -134,6 +141,7 @@ export class RuntimeSessionCoordinator {
         "Context checkpoint is stale or does not summarize every unsummarized preceding Turn in order.",
       );
     }
+    if (input.summaries.length === 0) return this.#store.ensureSession(input.sessionId);
     return this.#store.summarizeTurns(input);
   }
 
@@ -227,7 +235,18 @@ export class RuntimeSessionCoordinator {
     checkpoint: RuntimeSessionCommitCheckpoint,
   ): TurnFinalizedObserver {
     validateSessionCheckpoint(request, checkpoint);
-    return (payload, generatedMessages, usage, cacheChainState) => {
+    const activeTurnId = this.#activeSessions.get(request.sessionId);
+    if (activeTurnId && activeTurnId !== request.turnId) {
+      throw new Error(`Session ${request.sessionId} already has active Turn ${activeTurnId}.`);
+    }
+    this.#activeSessions.set(request.sessionId, request.turnId);
+    return (
+      payload,
+      generatedMessages,
+      usage,
+      cacheChainState,
+      activeContextCheckpoint,
+    ) => {
       try {
         const inputMessages = checkpoint.inputMessages.map((item, index) => ({
           messageId: item.messageId,
@@ -256,6 +275,9 @@ export class RuntimeSessionCoordinator {
           messages: [...inputMessages, ...generated],
           usage,
           cacheChainState,
+          ...(activeContextCheckpoint
+            ? { contextCheckpoint: activeContextCheckpoint }
+            : {}),
         });
       } finally {
         this.abandon(request.sessionId, request.turnId);
@@ -268,15 +290,58 @@ function validateSessionCheckpoint(
   request: ModelRequest,
   checkpoint: RuntimeSessionCommitCheckpoint,
 ): void {
-  if (
-    request.messages.length !==
-    checkpoint.initialMessageCount + checkpoint.generatedMessages.length
-  ) {
-    throw new Error("Session checkpoint message boundary does not match the model request.");
+  if (checkpoint.initialMessageCount < checkpoint.prefixMessages.length + checkpoint.inputMessages.length) {
+    throw new Error("Session checkpoint initial message boundary is smaller than its fixed inputs.");
   }
-  const suffix = request.messages.slice(checkpoint.initialMessageCount);
-  const generated = checkpoint.generatedMessages.map((item) => item.message);
-  if (JSON.stringify(suffix) !== JSON.stringify(generated)) {
-    throw new Error("Session checkpoint generated messages do not match the request suffix.");
+  if (!isDeepStrictEqual(
+    request.messages.slice(0, checkpoint.prefixMessages.length),
+    checkpoint.prefixMessages,
+  )) {
+    throw new Error("Session checkpoint fixed prefix does not match the model request.");
   }
+  const messageIds = new Set<string>();
+  for (const item of [...checkpoint.inputMessages, ...checkpoint.generatedMessages]) {
+    if (messageIds.has(item.messageId)) {
+      throw new Error(`Session checkpoint contains duplicate message ${item.messageId}.`);
+    }
+    messageIds.add(item.messageId);
+  }
+  validateConversation([
+    ...checkpoint.inputMessages.map((item) => item.message),
+    ...checkpoint.generatedMessages.map((item) => item.message),
+  ]);
+  const projectedCurrent = projectActiveTurnContext({
+    turnId: request.turnId,
+    inputMessages: checkpoint.inputMessages,
+    generatedMessages: checkpoint.generatedMessages,
+    checkpoint: checkpoint.activeContextCheckpoint,
+    includeResumeInstruction: true,
+  });
+  if (!containsMessageSubsequence(request.messages, projectedCurrent)) {
+    throw new Error(
+      `Session checkpoint current-Turn projection does not match the model request (${projectedCurrent.map(messageProjectionLabel).join(",")} not in ${request.messages.map(messageProjectionLabel).join(",")}).`,
+    );
+  }
+}
+
+function messageProjectionLabel(message: ModelMessage): string {
+  return `${message.role}:${"name" in message ? message.name ?? "" : ""}:${message.content.length}`;
+}
+
+function containsMessageSubsequence(
+  messages: ModelMessage[],
+  expected: ModelMessage[],
+): boolean {
+  if (expected.length === 0) return true;
+  for (let start = 0; start <= messages.length - expected.length; start += 1) {
+    let matches = true;
+    for (let offset = 0; offset < expected.length; offset += 1) {
+      if (!isDeepStrictEqual(messages[start + offset], expected[offset])) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
 }

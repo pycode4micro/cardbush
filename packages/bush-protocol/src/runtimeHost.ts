@@ -13,6 +13,8 @@ export const RUN_MODEL_TURN_COMMAND = "runtime.run_model_turn" as const;
 export const ANSWER_RUNTIME_PERMISSION_COMMAND =
   "runtime.answer_permission" as const;
 export const SHUTDOWN_RUNTIME_COMMAND = "runtime.shutdown" as const;
+export const LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND =
+  "runtime.list_turn_context_compactions" as const;
 export const BUSH_RUNTIME_PERMISSION_ANSWER_PROTOCOL =
   "bush.runtime_permission_answer.v1" as const;
 
@@ -62,6 +64,12 @@ export const runtimeEventKindSchema = z.enum([
   "interaction_cancelled",
   "interaction_expired",
   "cache_chain_observed",
+  "model_request_usage",
+  "context_compaction_started",
+  "context_compaction_retrying",
+  "context_compaction_completed",
+  "context_compaction_failed",
+  "context_compaction_cancelled",
   "provider_retry",
   "connection_interrupted",
   "stream_resumed",
@@ -113,6 +121,14 @@ const toolIdentitySchema = z.object({
       summary: z.string().optional(),
     })
     .optional(),
+});
+
+const contextCompactionIdentitySchema = z.object({
+  compactionId: z.string().min(1),
+  round: z.number().int().positive(),
+  attempt: z.number().int().positive(),
+  assistantMessageId: z.string().min(1).optional(),
+  assistantContentOffset: z.number().int().nonnegative().optional(),
 });
 
 const permissionIdentitySchema = z.object({
@@ -311,6 +327,63 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: cacheChainObservationPayloadSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("model_request_usage"),
+    payload: z.object({
+      round: z.number().int().positive(),
+      attempt: z.number().int().positive(),
+      model: z.string().min(1),
+      contextWindowTokens: z.number().int().positive().optional(),
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative().optional(),
+      cachedInputTokens: z.number().int().nonnegative().optional(),
+      providerResponseId: z.string().min(1).optional(),
+      preflightInputTokens: z.number().int().nonnegative().optional(),
+      preflightMeasurement: z.enum(["provider", "fallback_estimate"]).optional(),
+      usableInputTokens: z.number().int().positive().optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("context_compaction_started"),
+    payload: contextCompactionIdentitySchema.extend({
+      thresholdRatio: z.number().positive(),
+      triggerRatio: z.number().nonnegative(),
+      estimatedInputTokens: z.number().int().nonnegative(),
+      usableInputTokens: z.number().int().positive(),
+      measurement: z.enum(["provider", "fallback_estimate"]),
+      precedingTurnCount: z.number().int().nonnegative(),
+      activeTurnIncluded: z.boolean(),
+      activeThroughMessageId: z.string().min(1).optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("context_compaction_retrying"),
+    payload: contextCompactionIdentitySchema.extend({
+      reason: z.string().min(1),
+      message: z.string(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("context_compaction_completed"),
+    payload: contextCompactionIdentitySchema.extend({
+      summarizedTurnCount: z.number().int().nonnegative(),
+      activeTurnCheckpointed: z.boolean(),
+      activeThroughMessageId: z.string().min(1).optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("context_compaction_failed"),
+    payload: contextCompactionIdentitySchema.extend({
+      reason: z.string().min(1),
+      message: z.string(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("context_compaction_cancelled"),
+    payload: contextCompactionIdentitySchema.extend({
+      reason: z.string().min(1),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
     kind: z.literal("provider_retry"),
     payload: z.object({
       attempt: z.number().int().positive(),
@@ -360,6 +433,18 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type RuntimeEvent = z.infer<typeof runtimeEventSchema>;
+
+export type RuntimeContextCompactionEvent = Extract<
+  RuntimeEvent,
+  {
+    kind:
+      | "context_compaction_started"
+      | "context_compaction_retrying"
+      | "context_compaction_completed"
+      | "context_compaction_failed"
+      | "context_compaction_cancelled";
+  }
+>;
 
 export function decodeRuntimeEvent(input: unknown): RuntimeEvent {
   return runtimeEventSchema.parse(input);

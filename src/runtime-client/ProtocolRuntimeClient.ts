@@ -15,6 +15,7 @@ import {
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   LIST_RUNTIME_SESSIONS_COMMAND,
+  LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
@@ -69,6 +70,7 @@ import {
   type ContextSnapshot,
   type RuntimeCapabilities,
   type RuntimeEvent,
+  type RuntimeContextCompactionEvent,
   type RuntimeSessionTurnRequest,
   type RuntimeStopReceipt,
   type RuntimeGuidanceRequest,
@@ -318,6 +320,18 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     );
   }
 
+  listTurnContextCompactions(
+    input: { sessionId: string; turnId: string },
+    signal?: AbortSignal,
+  ): Promise<RuntimeContextCompactionEvent[]> {
+    const payload = runtimeTurnIdentitySchema.parse(input);
+    return this.command(
+      { kind: LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND, payload },
+      (value) => runtimeEventArray(value).filter(isRuntimeContextCompactionEvent),
+      signal,
+    );
+  }
+
   getToolCatalog(signal?: AbortSignal): Promise<ToolDefinition[]> {
     return this.command(
       { kind: GET_RUNTIME_TOOL_CATALOG_COMMAND, payload: {} },
@@ -466,4 +480,21 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       signal,
     );
   }
+}
+
+function runtimeEventArray(value: unknown): RuntimeEvent[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Runtime event list response must be an array.');
+  }
+  return value.map(decodeRuntimeEvent);
+}
+
+function isRuntimeContextCompactionEvent(
+  event: RuntimeEvent,
+): event is RuntimeContextCompactionEvent {
+  return event.kind === 'context_compaction_started' ||
+    event.kind === 'context_compaction_retrying' ||
+    event.kind === 'context_compaction_completed' ||
+    event.kind === 'context_compaction_failed' ||
+    event.kind === 'context_compaction_cancelled';
 }

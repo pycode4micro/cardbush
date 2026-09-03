@@ -109,10 +109,15 @@ assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /isBushServerHttpError/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
-assert.doesNotMatch(
+assert.match(
   hookSource,
-  /terminalRevealCharactersPerSecond|scheduleFrame|animationCharacters/,
-  'terminal output must not drive React and Markdown parsing from an animation-frame loop',
+  /assistantRevealMinimumChunkCharacters = 10;[\s\S]*?assistantRevealMaximumCommits = 72;[\s\S]*?assistantRevealIntervalMs = 32;/,
+  'released assistant text must use a deliberate 10-character, bounded accelerated projection',
+);
+assert.match(
+  hookSource,
+  /Math\.ceil\(characters\.length \/ assistantRevealMaximumCommits\)/,
+  'long replies must raise the chunk size instead of creating an unbounded number of Markdown commits',
 );
 assert.equal(
   (hookSource.match(
@@ -132,6 +137,13 @@ assert.doesNotMatch(
   hookSource,
   /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/,
   'tool lifecycle events must not be used to guess assistant text boundaries',
+);
+assert.equal(
+  (hookSource.match(
+    /onToolExecution: \(execution\) => \{[\s\S]{0,100}?streamBuffer\.releaseToolBoundary\(\)\.then/g,
+  ) ?? []).length,
+  3,
+  'foreground, control, and Goal tools must wait for the preceding visual text queue',
 );
 assert.match(
   runtimeChatSource,
@@ -378,7 +390,7 @@ boundaryBuffer.dispose();
 const completedSegmentChunks = [];
 const completedSegmentBuffer = createAssistantStreamDeltaBuffer((delta, release) => {
   completedSegmentChunks.push({ delta, release });
-});
+}, { revealIntervalMs: 1 });
 completedSegmentBuffer.push('协议完成事件前');
 completedSegmentBuffer.push('保持在 React 之外。');
 assert.equal(completedSegmentChunks.length, 0);
@@ -391,15 +403,25 @@ await completedSegmentBuffer.completeSegmentSnapshot(
     segmentOrdinal: 1,
   },
 );
-assert.deepEqual(plain(completedSegmentChunks), [{
-  delta: '协议完成事件前保持在 React 之外。',
-  release: {
+assert.equal(
+  completedSegmentChunks.map((chunk) => chunk.delta).join(''),
+  '协议完成事件前保持在 React 之外。',
+);
+assert.ok(
+  completedSegmentChunks.length > 1 && completedSegmentChunks.length <= 72,
+  'a released segment should visibly advance in a bounded number of chunks',
+);
+assert.deepEqual(
+  plain(completedSegmentChunks.at(-1)?.release),
+  {
     reason: 'segment_completed',
     eventId: 'event-segment-completed-1',
     segmentId: 'assistant-segment-1',
     segmentOrdinal: 1,
   },
-}]);
+  'only the settled chunk should carry the canonical completion metadata',
+);
+const firstSegmentCommitCount = completedSegmentChunks.length;
 await completedSegmentBuffer.completeSegmentSnapshot(
   '协议完成事件前保持在 React 之外。',
   {
@@ -411,7 +433,7 @@ await completedSegmentBuffer.completeSegmentSnapshot(
 );
 assert.equal(
   completedSegmentChunks.length,
-  1,
+  firstSegmentCommitCount,
   'duplicate completed facts must not create duplicate React commits',
 );
 completedSegmentBuffer.push('第二段先以 delta 到达。');
@@ -435,10 +457,64 @@ assert.equal(
 );
 completedSegmentBuffer.dispose();
 
+const toolPreludeSessionId = 'tool-prelude-session';
+const toolPreludeAssistantId = 'tool-prelude-assistant';
+const toolPreludeText = '好，把这个升级为一条命令出整套月报。先侦察现有脚本的输入输出结构：';
+let toolPreludeState = {
+  [toolPreludeSessionId]: [{
+    id: toolPreludeAssistantId,
+    role: 'assistant',
+    content: '',
+    createdAt: '2026-09-03T03:08:08.000Z',
+  }],
+};
+const toolPreludeBuffer = createAssistantStreamDeltaBuffer((delta, release) => {
+  toolPreludeState = appendAssistantDelta(
+    toolPreludeState,
+    toolPreludeSessionId,
+    toolPreludeAssistantId,
+    delta,
+    undefined,
+    release,
+  );
+}, { revealIntervalMs: 1 });
+toolPreludeBuffer.push(toolPreludeText);
+void toolPreludeBuffer.completeSegmentSnapshot(toolPreludeText, {
+  reason: 'segment_completed',
+  eventId: 'tool-prelude-completed',
+  segmentId: 'tool-prelude-segment',
+  segmentOrdinal: 1,
+});
+await toolPreludeBuffer.releaseToolBoundary();
+toolPreludeState = appendToolExecution(
+  toolPreludeState,
+  toolPreludeSessionId,
+  toolPreludeAssistantId,
+  {
+    id: 'tool-after-prelude',
+    name: 'terminal',
+    state: 'running',
+    summary: '执行命令',
+    output: '',
+    success: true,
+    durationMs: 0,
+    createdAt: '2026-09-03T03:08:09.000Z',
+    contentOffset: 0,
+    metadata: {},
+  },
+);
+assert.equal(toolPreludeState[toolPreludeSessionId][0].content, toolPreludeText);
+assert.equal(
+  toolPreludeState[toolPreludeSessionId][0].toolExecutions[0].contentOffset,
+  toolPreludeText.length,
+  'a tool must attach after the complete prelude, never after its first accelerated chunk',
+);
+toolPreludeBuffer.dispose();
+
 const eagerStreamChunks = [];
 const eagerStreamBuffer = createAssistantStreamDeltaBuffer((delta) => {
   eagerStreamChunks.push(delta);
-});
+}, { revealIntervalMs: 1 });
 eagerStreamBuffer.push('这是一个足够长的首段内容，用来验证持续到达的 token 会尽早显示。');
 assert.equal(
   eagerStreamChunks.length,
@@ -456,12 +532,53 @@ assert.equal(
   eagerStreamChunks.join(''),
   '这是一个足够长的首段内容，用来验证持续到达的 token 会尽早显示。',
 );
+assert.ok(eagerStreamChunks.length > 1 && eagerStreamChunks.length <= 72);
 eagerStreamBuffer.dispose();
+
+const backgroundRevealChunks = [];
+const backgroundRevealBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  backgroundRevealChunks.push(delta);
+}, {
+  revealIntervalMs: 1,
+  shouldAnimate: () => false,
+});
+backgroundRevealBuffer.push('后台会话不应该消耗前台的 Markdown 动画预算。'.repeat(64));
+await backgroundRevealBuffer.releaseTerminal();
+assert.equal(
+  backgroundRevealChunks.length,
+  1,
+  'a background or reduced-motion release must settle in one commit',
+);
+backgroundRevealBuffer.dispose();
+
+const interruptedRevealChunks = [];
+const interruptedRevealBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  interruptedRevealChunks.push(delta);
+}, { revealIntervalMs: 20 });
+const interruptedRevealText = '正在加速呈现但随后进入停止或失败收尾。'.repeat(24);
+interruptedRevealBuffer.push(interruptedRevealText);
+const interruptedRevealDrain = interruptedRevealBuffer.completeSegmentSnapshot(
+  interruptedRevealText,
+  {
+    reason: 'segment_completed',
+    eventId: 'event-interrupted-reveal',
+    segmentId: 'assistant-interrupted-reveal',
+    segmentOrdinal: 3,
+  },
+);
+await interruptedRevealBuffer.flushAllStreaming();
+await interruptedRevealDrain;
+assert.equal(interruptedRevealChunks.join(''), interruptedRevealText);
+assert.ok(
+  interruptedRevealChunks.length <= 2,
+  'an explicit non-terminal flush must cancel the visual delay and preserve all text',
+);
+interruptedRevealBuffer.dispose();
 
 const finalSnapshotChunks = [];
 const finalSnapshotBuffer = createAssistantStreamDeltaBuffer((delta) => {
   finalSnapshotChunks.push(delta);
-});
+}, { revealIntervalMs: 1 });
 const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端只提交一次稳定快照。'.repeat(256);
 const finalSnapshotDrain = finalSnapshotBuffer.completeFinalSnapshot(finalSnapshotText);
 assert.equal(
@@ -472,17 +589,16 @@ assert.equal(
 const finalSnapshotReveal = finalSnapshotBuffer.releaseTerminal();
 await Promise.all([finalSnapshotDrain, finalSnapshotReveal]);
 assert.equal(finalSnapshotChunks.join(''), finalSnapshotText);
-assert.equal(
-  finalSnapshotChunks.length,
-  1,
-  'a final-only snapshot must produce one React commit instead of reparsing Markdown per frame',
+assert.ok(
+  finalSnapshotChunks.length > 1 && finalSnapshotChunks.length <= 72,
+  'a final-only snapshot should animate, but never exceed the render budget',
 );
 finalSnapshotBuffer.dispose();
 
 const reorderedTerminalChunks = [];
 const reorderedTerminalBuffer = createAssistantStreamDeltaBuffer((delta) => {
   reorderedTerminalChunks.push(delta);
-});
+}, { revealIntervalMs: 1 });
 await reorderedTerminalBuffer.releaseTerminal();
 const reorderedTerminalText = Array.from(
   { length: 2_000 },
@@ -498,16 +614,16 @@ assert.equal(
 );
 await reorderedTerminalBuffer.completeFinalSnapshot(reorderedTerminalText);
 assert.equal(reorderedTerminalChunks.join(''), reorderedTerminalText);
-assert.equal(
-  reorderedTerminalChunks.length,
-  1,
-  'terminal-before-final reordering must still produce one React commit',
+assert.ok(
+  reorderedTerminalChunks.length > 1 && reorderedTerminalChunks.length <= 72,
+  'terminal-before-final reordering must still use the bounded accelerated projection',
 );
+const reorderedTerminalCommitCount = reorderedTerminalChunks.length;
 await reorderedTerminalBuffer.completeFinalSnapshot(reorderedTerminalText);
 await reorderedTerminalBuffer.releaseTerminal();
 assert.equal(
   reorderedTerminalChunks.length,
-  1,
+  reorderedTerminalCommitCount,
   'duplicate final snapshots and terminal events must be idempotent',
 );
 reorderedTerminalBuffer.dispose();

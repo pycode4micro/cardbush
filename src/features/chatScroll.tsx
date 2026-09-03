@@ -75,7 +75,10 @@ export function isMessageTailVisible(
     return false;
   }
   const scrollerRect = scroller.getBoundingClientRect();
-  const itemRect = item.getBoundingClientRect();
+  const stagedContent = item.classList.contains('assistant-render-stage')
+    ? item.querySelector<HTMLElement>('.message-row.assistant')
+    : null;
+  const itemRect = (stagedContent ?? item).getBoundingClientRect();
   const visibleBottom =
     scrollerRect.bottom -
     Math.max(0, options.composerDockHeight) -

@@ -211,6 +211,31 @@ function runtimeMessageAttachments(
   });
 }
 
+/**
+ * Session reads may intentionally include superseded rows so history tooling
+ * can retain the immutable audit trail. Mark those rows at the transport edge
+ * so every conversation projection can exclude the stale revision while the
+ * canonical append-only Session remains intact.
+ */
+export function markRuntimeSupersededMessages(
+  messages: ChatMessage[],
+  supersededMessageIds: Iterable<string>,
+): ChatMessage[] {
+  const superseded = new Set(supersededMessageIds);
+  if (superseded.size === 0) return messages;
+  return messages.map((message) => {
+    const messageId = message.messageId?.trim() || message.id.trim();
+    if (!superseded.has(messageId)) return message;
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata ?? {}),
+        __bush_superseded: true,
+      },
+    };
+  });
+}
+
 function isLegacyAttachmentContext(message: RuntimeSessionMessage): boolean {
   return message.message.role === 'user' && (
     message.message.name === 'turn_runtime_context' ||

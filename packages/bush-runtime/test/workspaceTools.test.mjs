@@ -66,6 +66,41 @@ test("invalidates read evidence when the file changes outside Runtime", async (t
   assert.match(outcome.error.message, /has not been observed/);
 });
 
+test("write and edit return compact receipts while Runtime retains full change evidence", async (t) => {
+  const root = temporaryRoot(t);
+  const path = join(root, "large.txt");
+  const setup = tools(root);
+  const original = `unique-write-payload\n${"filler line\n".repeat(4_000)}`;
+
+  const written = await setup.execute("session", "write_file", {
+    path,
+    content: original,
+  });
+  assert.equal(written.kind, "returned");
+  assert.equal(written.result.path, path);
+  assert.equal(written.result.status, "added");
+  assert.equal(typeof written.result.sha256, "string");
+  assert.equal(typeof written.result.change_id, "string");
+  assert.equal("change" in written.result, false);
+  assert.ok(JSON.stringify(written.result).length < 512);
+  assert.match(written.workspaceChanges[0].metadata.diff, /unique-write-payload/);
+
+  const edited = await setup.execute("session", "edit_file", {
+    path,
+    old_text: "unique-write-payload",
+    new_text: "unique-edited-payload",
+  });
+  assert.equal(edited.kind, "returned");
+  assert.equal(edited.result.path, path);
+  assert.equal(edited.result.status, "modified");
+  assert.equal("change" in edited.result, false);
+  assert.ok(JSON.stringify(edited.result).length < 512);
+  assert.doesNotMatch(JSON.stringify(edited.result), /unique-(?:write|edited)-payload/);
+  assert.ok(edited.workspaceChanges[0].metadata.beforeContentBase64.length > 40_000);
+  assert.match(edited.workspaceChanges[0].metadata.diff, /-unique-write-payload/);
+  assert.match(edited.workspaceChanges[0].metadata.diff, /\+unique-edited-payload/);
+});
+
 test("preserves filesystem error codes as Tool failures", async (t) => {
   const root = temporaryRoot(t);
   const setup = tools(root);
@@ -95,6 +130,8 @@ test("writes new files, treats search no-match as a successful fact, and reports
   });
   assert.equal(searched.kind, "returned");
   assert.equal(searched.result.matched, false);
+  assert.equal("path" in searched.result, false);
+  assert.equal("query" in searched.result, false);
 
   const terminal = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('ok')\"",
@@ -104,11 +141,10 @@ test("writes new files, treats search no-match as a successful fact, and reports
   assert.equal(terminal.kind, "returned");
   assert.equal(terminal.result.exitCode, 0);
   assert.equal(terminal.result.stdout, "ok");
-  assert.equal(
-    terminal.result.shell,
-    process.platform === "win32" ? "powershell" : "posix",
-  );
   assert.equal(typeof terminal.result.shellExecutable, "string");
+  for (const echoedInput of ["command", "cwd", "shell", "yieldTimeMs"]) {
+    assert.equal(echoedInput in terminal.result, false);
+  }
 
   const nonzero = await setup.execute("session", "terminal_exec", {
     command: "node -e \"process.stdout.write('out'); process.stderr.write('err'); process.exit(7)\"",
@@ -261,7 +297,7 @@ test("returns a session handle at the bounded yield point and later reports exit
   assert.equal(running.kind, "returned");
   assert.equal(running.result.state, "running");
   assert.match(running.result.terminalSessionId, /^terminal_/);
-  assert.equal(running.result.yieldTimeMs, 100);
+  assert.equal("yieldTimeMs" in running.result, false);
   assert.ok(running.result.durationMs >= 90);
   assert.ok(Date.now() - startedAt < 2_000);
 
@@ -272,6 +308,9 @@ test("returns a session handle at the bounded yield point and later reports exit
   assert.equal(completed.kind, "returned");
   assert.equal(completed.result.state, "exited");
   assert.equal(completed.result.exitCode, 0);
+  for (const echoedInvocation of ["command", "cwd", "shell", "yieldTimeMs"]) {
+    assert.equal(echoedInvocation in completed.result, false);
+  }
 });
 
 test("returns a session handle instead of waiting on inherited descendant stdio", async (t) => {

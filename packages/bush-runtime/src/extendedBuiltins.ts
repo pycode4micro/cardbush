@@ -63,8 +63,13 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
       ].filter(Boolean);
       return { ...input, scenario_conditions: conditions };
     },
-    execute: async (context) =>
-      success(context, await store.consult(context.input), [store.path], ["logic", "lem"]),
+    execute: async (context) => {
+      const result = { ...await store.consult(context.input) };
+      delete result.query;
+      delete result.scenario_conditions;
+      delete result.cognitive_patterns;
+      return success(context, result, [store.path], ["logic", "lem"]);
+    },
   });
   registry.register<Record<string, unknown>>({
     definition: {
@@ -192,7 +197,7 @@ function registerImageInput(registry: ToolRegistry) {
       const url = requiredText(context.input.url, "url");
       if (!isAbsolute(url) && !/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) throw new Error("url must be an absolute path, http(s) URL, or data image.");
       if (isAbsolute(url)) await stat(url);
-      return success(context, { queued: true, url, label: text(context.input.label), caption: text(context.input.caption) }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, detail: text(context.input.detail) || "auto" } }]);
+      return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, detail: text(context.input.detail) || "auto" } }]);
     },
   });
 }
@@ -279,9 +284,9 @@ function registerParallel(registry: ToolRegistry) {
       const results = await Promise.all(context.input.calls.map(async (call) => {
         try {
           const child = await context.invokeTool(call.name, call.arguments);
-          return { name: call.name, reason: call.reason, returned: true, result: child };
+          return { name: call.name, returned: true, result: child };
         } catch (error) {
-          return { name: call.name, reason: call.reason, success: false, error: { code: "child_exception", message: error instanceof Error ? error.message : String(error) } };
+          return { name: call.name, success: false, error: { code: "child_exception", message: error instanceof Error ? error.message : String(error) } };
         }
       }));
       return success(context, {

@@ -271,6 +271,11 @@ class AppErrorBoundary extends Component<
 
   componentDidCatch(error: unknown, info: ErrorInfo) {
     console.error('CardBush render error', error, info);
+    void window.cardbushDesktop?.writeDebugLog('renderer-lifecycle', {
+      stage: 'react-error-boundary',
+      error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      componentStack: info.componentStack,
+    }).catch(() => undefined);
   }
 
   render() {
@@ -1984,6 +1989,14 @@ function CardbushApp() {
 
   const revertChangeReport = useCallback(
     async (conversationId: string, report: ConversationChangeReport) => {
+      if (chat.processingConversationIds.has(conversationId)) {
+        setChangeReviewNotice(
+          language === 'zh'
+            ? '当前回合仍在运行，完成或停止后才能撤回修改。'
+            : 'This turn is still running. Changes can be reverted after it completes or stops.',
+        );
+        return;
+      }
       const conversation =
         chat.conversations.find((item) => item.id === conversationId) ??
         chat.activeConversation;
@@ -2085,6 +2098,7 @@ function CardbushApp() {
       activeProjectDir,
       chat.activeConversation,
       chat.conversations,
+      chat.processingConversationIds,
       changeReportsByConversation,
       language,
       refreshProjectGitStatus,
@@ -2093,6 +2107,14 @@ function CardbushApp() {
 
   const revertConversationReports = useCallback(
     async (conversationId: string, reports: ConversationChangeReport[]) => {
+      if (chat.processingConversationIds.has(conversationId)) {
+        setChangeReviewNotice(
+          language === 'zh'
+            ? '当前回合仍在运行，完成或停止后才能撤回修改。'
+            : 'This turn is still running. Changes can be reverted after it completes or stops.',
+        );
+        return;
+      }
       const conversation =
         chat.conversations.find((item) => item.id === conversationId) ??
         chat.activeConversation;
@@ -2210,6 +2232,7 @@ function CardbushApp() {
       activeProjectDir,
       chat.activeConversation,
       chat.conversations,
+      chat.processingConversationIds,
       language,
       refreshProjectGitStatus,
     ],
@@ -2812,6 +2835,9 @@ function CardbushApp() {
                           `${displayedReviewConversation.id}:${report.id}`,
                         ),
                       ),
+                    )}
+                    revertAvailable={!chat.processingConversationIds.has(
+                      displayedReviewConversation.id,
                     )}
                   />
                 ) : displayedInspectorTarget ? (
@@ -4554,6 +4580,8 @@ function ChatPanel({
   const activeScrollTraceIdRef = useRef('');
   const scrollTraceObserveUntilRef = useRef(0);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [assistantStageReservationActive, setAssistantStageReservationActive] =
+    useState(false);
   const [enteringUserMessageIds, setEnteringUserMessageIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -4784,6 +4812,16 @@ function ChatPanel({
     setShowScrollBottom(visible);
   }, []);
 
+  const releaseAssistantStageReservation = useCallback(() => {
+    setAssistantStageReservationActive(false);
+  }, []);
+
+  useEffect(() => {
+    if (!sending) {
+      setAssistantStageReservationActive(false);
+    }
+  }, [sending]);
+
   const readBottomMetrics = useCallback((scroller: HTMLElement): ScrollBottomMetrics => {
     const absoluteBottomDistance = absoluteBottomScrollTop(scroller) - scroller.scrollTop;
     const visualBottomDistance =
@@ -5011,7 +5049,13 @@ function ChatPanel({
       }
       const scrollerRect = scroller.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
-      const desiredTop = Math.max(72, Math.round(scroller.clientHeight * 0.28));
+      const desiredTop = Math.round(
+        Math.min(56, Math.max(34, scroller.clientHeight * 0.07)),
+      );
+      scroller.style.setProperty(
+        '--submitted-user-reading-anchor',
+        `${desiredTop}px`,
+      );
       const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
       const nextTop = Math.max(
         0,
@@ -5037,7 +5081,10 @@ function ChatPanel({
           scrollHeight: scroller.scrollHeight,
         });
       }
-      scroller.scrollTo({ top: nextTop, behavior: 'auto' });
+      scroller.scrollTo({
+        top: nextTop,
+        behavior: gentleAutoFollowScrollBehavior(),
+      });
     },
     [],
   );
@@ -5051,7 +5098,6 @@ function ChatPanel({
       userDetachedFromBottomRef.current = false;
       setScrollBottomVisible(false);
       window.requestAnimationFrame(() => {
-        positionMessageAtReadingAnchor(messageId);
         window.requestAnimationFrame(() => {
           positionMessageAtReadingAnchor(messageId);
         });
@@ -5073,7 +5119,10 @@ function ChatPanel({
         return;
       }
       const scrollerRect = scroller.getBoundingClientRect();
-      const itemRect = item.getBoundingClientRect();
+      const stagedContent = item.classList.contains('assistant-render-stage')
+        ? item.querySelector<HTMLElement>('.message-row.assistant')
+        : null;
+      const itemRect = (stagedContent ?? item).getBoundingClientRect();
       const visibleBottom =
         scrollerRect.bottom - Math.max(0, quickContextBottomInset) - streamStatusHeight - 18;
       if (itemRect.bottom <= visibleBottom) {
@@ -5270,12 +5319,14 @@ function ChatPanel({
       autoFollowStreamRef.current = false;
       userDetachedFromBottomRef.current = true;
       pendingSubmittedUserFocusRef.current = false;
+      releaseAssistantStageReservation();
       cancelScheduledStreamFollow();
       setScrollBottomVisible(shouldShowScrollBottomForScroller(listScrollerRef.current));
       return true;
     },
     [
       cancelScheduledStreamFollow,
+      releaseAssistantStageReservation,
       setScrollBottomVisible,
       shouldShowScrollBottomForScroller,
     ],
@@ -5296,6 +5347,7 @@ function ChatPanel({
     userDetachedFromBottomRef.current = true;
     autoFollowStreamRef.current = false;
     pendingSubmittedUserFocusRef.current = false;
+    releaseAssistantStageReservation();
     const shouldShow = shouldShowScrollBottomForScroller(listScrollerRef.current);
     if (!atBottomRef.current) {
       setScrollBottomVisible(shouldShow);
@@ -5311,6 +5363,7 @@ function ChatPanel({
   }, [
     cancelScheduledStreamFollow,
     captureScrollGeometry,
+    releaseAssistantStageReservation,
     sending,
     setScrollBottomVisible,
     shouldShowScrollBottomForScroller,
@@ -5328,6 +5381,9 @@ function ChatPanel({
         deltaY: Math.round(event.deltaY),
         deltaMode: event.deltaMode,
       });
+      if (event.deltaY !== 0) {
+        releaseAssistantStageReservation();
+      }
       if (event.deltaY < 0) {
         if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
@@ -5346,6 +5402,7 @@ function ChatPanel({
       captureScrollGeometry,
       markUserDetachedFromBottom,
       markWheelHandled,
+      releaseAssistantStageReservation,
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
     ],
@@ -5363,6 +5420,9 @@ function ChatPanel({
         deltaY: Math.round(event.deltaY),
         deltaMode: event.deltaMode,
       });
+      if (event.deltaY !== 0) {
+        releaseAssistantStageReservation();
+      }
       if (event.deltaY < 0) {
         if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
@@ -5381,6 +5441,7 @@ function ChatPanel({
       captureScrollGeometry,
       markUserDetachedFromBottom,
       markWheelHandled,
+      releaseAssistantStageReservation,
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
     ],
@@ -5396,6 +5457,9 @@ function ChatPanel({
         return;
       }
       lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY !== 0) {
+        releaseAssistantStageReservation();
+      }
       if (event.deltaY < 0) {
         if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
@@ -5407,6 +5471,7 @@ function ChatPanel({
     [
       markUserDetachedFromBottom,
       markWheelHandled,
+      releaseAssistantStageReservation,
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
       wheelTargetIsListSurface,
@@ -5427,6 +5492,9 @@ function ChatPanel({
         return;
       }
       lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY !== 0) {
+        releaseAssistantStageReservation();
+      }
       if (releaseWheelBottomFreeze(event)) {
         markWheelHandled(event);
         return;
@@ -5448,6 +5516,7 @@ function ChatPanel({
   }, [
     lockNativeWheelDownAtBottom,
     markWheelHandled,
+    releaseAssistantStageReservation,
     releaseWheelBottomFreeze,
     wheelAlreadyHandled,
     wheelTargetIsListSurface,
@@ -5587,6 +5656,7 @@ function ChatPanel({
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
+        releaseAssistantStageReservation();
         setScrollBottomVisible(shouldShow);
       }
     },
@@ -5595,6 +5665,7 @@ function ChatPanel({
       lockStreamFollow,
       quickContextBottomInset,
       readBottomMetrics,
+      releaseAssistantStageReservation,
       renderMessages,
       sending,
       setScrollBottomVisible,
@@ -5620,6 +5691,7 @@ function ChatPanel({
       autoFollowStreamRef.current = false;
       userDetachedFromBottomRef.current = true;
       pendingSubmittedUserFocusRef.current = false;
+      releaseAssistantStageReservation();
       cancelScheduledStreamFollow();
       setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
       scrollDebug('scrollbar-pointer-down', {
@@ -5633,6 +5705,7 @@ function ChatPanel({
       cancelScheduledStreamFollow,
       isPointerOnVerticalScrollbar,
       readBottomMetrics,
+      releaseAssistantStageReservation,
       sending,
       setScrollBottomVisible,
       shouldShowScrollBottomForMetrics,
@@ -5680,6 +5753,7 @@ function ChatPanel({
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
+        releaseAssistantStageReservation();
         cancelScheduledStreamFollow();
         setScrollBottomVisible(shouldShowScrollBottomForMetrics(scroller, metrics));
         scrollDebug('scrollbar-scroll', {
@@ -5707,6 +5781,7 @@ function ChatPanel({
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
+        releaseAssistantStageReservation();
         cancelScheduledStreamFollow();
         if (!shouldShowScrollBottomForMetrics(scroller, metrics)) {
           lockStreamFollow('scroll:tail-visible-after-up');
@@ -5725,6 +5800,7 @@ function ChatPanel({
         autoFollowStreamRef.current = false;
         userDetachedFromBottomRef.current = true;
         pendingSubmittedUserFocusRef.current = false;
+        releaseAssistantStageReservation();
         cancelScheduledStreamFollow();
         if (!shouldShowScrollBottomForMetrics(scroller, metrics)) {
           lockStreamFollow('scroll:wheel-lock-tail-visible');
@@ -5779,6 +5855,7 @@ function ChatPanel({
       captureScrollGeometry,
       lockStreamFollow,
       readBottomMetrics,
+      releaseAssistantStageReservation,
       sending,
       setScrollBottomVisible,
       shouldShowScrollBottomForMetrics,
@@ -5794,6 +5871,7 @@ function ChatPanel({
       chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
+      chatBody?.style.removeProperty('--message-list-viewport-height');
       return undefined;
     }
     const dock = composerDockRef.current;
@@ -5804,6 +5882,7 @@ function ChatPanel({
       chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
+      chatBody?.style.removeProperty('--message-list-viewport-height');
       return undefined;
     }
     let lastMeasurement = '';
@@ -5844,8 +5923,12 @@ function ChatPanel({
           '--message-list-scrollbar-inset',
           `${scrollbarInset}px`,
         );
+        chatBody.style.setProperty(
+          '--message-list-viewport-height',
+          `${Math.max(0, scroller.clientHeight)}px`,
+        );
       }
-      const measurement = `${nextDockHeight}:${nextBottomInset}:${Math.round(dockRect.width)}`;
+      const measurement = `${nextDockHeight}:${nextBottomInset}:${Math.round(dockRect.width)}:${listScrollerRef.current?.clientHeight ?? 0}`;
       if (measurement !== lastMeasurement) {
         lastMeasurement = measurement;
         captureScrollGeometry('trace-composer-measure', {
@@ -5884,6 +5967,7 @@ function ChatPanel({
       chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
       chatBody?.style.removeProperty('--message-list-scrollbar-inset');
+      chatBody?.style.removeProperty('--message-list-viewport-height');
     };
   }, [captureScrollGeometry, loading, pendingInteraction, showWelcome]);
 
@@ -5961,6 +6045,21 @@ function ChatPanel({
           captureScrollGeometry('trace-outer-resize-follow-abort');
           return;
         }
+        const preparedStage = scroller.querySelector<HTMLElement>(
+          '.message-list-item.assistant-render-stage',
+        );
+        const preparedMessageId = preparedStage?.dataset.messageId ?? '';
+        if (preparedMessageId) {
+          ensureMessageBottomVisible(preparedMessageId);
+          lastScrollTopRef.current = scroller.scrollTop;
+          setScrollBottomVisible(false);
+          captureScrollGeometry('trace-outer-resize-follow', {
+            strategy: 'assistant-render-stage',
+            preparedMessageId,
+            scrollTopBeforeCorrection: Math.round(scroller.scrollTop),
+          });
+          return;
+        }
         const scrollTopBeforeCorrection = scroller.scrollTop;
         const targetScrollTop = absoluteBottomScrollTop(scroller);
         if (Math.abs(targetScrollTop - scrollTopBeforeCorrection) > 0.5) {
@@ -5990,6 +6089,7 @@ function ChatPanel({
     };
   }, [
     captureScrollGeometry,
+    ensureMessageBottomVisible,
     loading,
     setScrollBottomVisible,
     showWelcome,
@@ -6306,6 +6406,9 @@ function ChatPanel({
           return;
         }
         lastWheelEventAtRef.current = Date.now();
+        if (event.deltaY !== 0) {
+          releaseAssistantStageReservation();
+        }
         if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
           return;
@@ -6327,6 +6430,7 @@ function ChatPanel({
     [
       lockNativeWheelDownAtBottom,
       markWheelHandled,
+      releaseAssistantStageReservation,
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
     ],
@@ -6345,6 +6449,9 @@ function ChatPanel({
           return;
         }
         lastWheelEventAtRef.current = Date.now();
+        if (event.deltaY !== 0) {
+          releaseAssistantStageReservation();
+        }
         if (releaseWheelBottomFreeze(event)) {
           markWheelHandled(event);
           return;
@@ -6366,6 +6473,7 @@ function ChatPanel({
     [
       lockNativeWheelDownAtBottom,
       markWheelHandled,
+      releaseAssistantStageReservation,
       releaseWheelBottomFreeze,
       wheelAlreadyHandled,
     ],
@@ -6400,6 +6508,7 @@ function ChatPanel({
         const shouldFollowSubmission =
           !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
         pendingSubmittedUserFocusRef.current = shouldFollowSubmission;
+        setAssistantStageReservationActive(shouldFollowSubmission);
         if (shouldFollowSubmission) {
           programmaticScrollUntilRef.current = Date.now() + 1200;
           autoFollowStreamRef.current = true;
@@ -6732,6 +6841,13 @@ function ChatPanel({
                         pendingSubmittedUserEntryMessageId === message.id
                       )
                         ? ' user-message-entering'
+                        : ''
+                    }${
+                      sending &&
+                      assistantStageReservationActive &&
+                      message.role === 'assistant' &&
+                      activeAssistantForRender?.message.id === message.id
+                        ? ' assistant-render-stage'
                         : ''
                     }`}
                     data-message-id={message.id}

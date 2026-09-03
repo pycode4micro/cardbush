@@ -24,6 +24,7 @@ import {
   SessionStore,
   ToolRegistry,
   CacheChainTracker,
+  projectActiveTurnContext,
 } from "../dist/index.js";
 
 test("resumes from the last stable checkpoint and supersedes partial provider output", async (t) => {
@@ -234,6 +235,280 @@ test("resumes a Session Turn with prior tool messages and commits it exactly onc
   assert.equal(snapshot.turns[0].usage.lastRequestOutputTokens, 3);
   secondEvents.close();
   secondSessions.close();
+});
+
+test("recovers a compacted active Session Turn without replaying its completed Tool prefix", async (t) => {
+  const roots = stateRoots(t);
+  const firstEvents = new FileRuntimeEventPersistence({ root: roots.events });
+  const firstSessions = new FileSessionEventPersistence({ root: roots.sessions });
+  const firstLog = persistedEventLog(firstEvents);
+  let providerRound = 0;
+  const first = new InMemoryRuntimeHost({
+    provider: {
+      async countInputTokens(modelRequest) {
+        if (modelRequest.messages.some((message) => message.name === "context_pressure")) {
+          return { inputTokens: 2_900, source: "provider" };
+        }
+        if (modelRequest.messages.some((message) => message.role === "tool")) {
+          return { inputTokens: 2_860, source: "provider" };
+        }
+        return { inputTokens: 100, source: "provider" };
+      },
+      async *stream(modelRequest) {
+        providerRound += 1;
+        yield recoveryEvent(modelRequest.requestId, 0, "response_started");
+        if (providerRound === 1) {
+          yield recoveryEvent(modelRequest.requestId, 1, "tool_call_delta", {
+            index: 0,
+            toolCallId: "call_before_recovery_checkpoint",
+            nameDelta: "fixture_tool",
+            argumentsDelta: '{"value":"fixture"}',
+          });
+          yield recoveryEvent(modelRequest.requestId, 2, "response_completed", {
+            finishReason: "tool_calls",
+          });
+          return;
+        }
+        const pressure = modelRequest.messages.find((message) =>
+          message.name === "context_pressure");
+        if (pressure) {
+          const activeTurnId = pressure.content.match(/- turn_id: (.+)/)?.[1];
+          const throughMessageId = pressure.content.match(
+            /- through_message_id: (.+)/,
+          )?.[1];
+          assert.ok(activeTurnId);
+          assert.ok(throughMessageId);
+          yield recoveryEvent(modelRequest.requestId, 1, "tool_call_delta", {
+            index: 0,
+            toolCallId: "call_recovery_checkpoint",
+            nameDelta: "checkpoint_context",
+            argumentsDelta: JSON.stringify({
+              session_revision: 1,
+              summaries: [],
+              active_turn: {
+                turn_id: activeTurnId,
+                through_message_id: throughMessageId,
+                summary: "The fixture Tool completed successfully; continue by returning the final answer without rerunning it.",
+              },
+            }),
+          });
+          yield recoveryEvent(modelRequest.requestId, 2, "response_completed", {
+            finishReason: "tool_calls",
+          });
+          return;
+        }
+        yield recoveryEvent(modelRequest.requestId, 1, "text_delta", { delta: "partial" });
+        await new Promise(() => {});
+      },
+    },
+    eventLog: firstLog,
+    checkpointStore: new FileRuntimeCheckpointStore(roots.checkpoints),
+    sessionStore: new SessionStore({ persistence: firstSessions }),
+    toolRegistry: recoveryToolRegistry(),
+    sessionNow: () => "2026-08-29T00:00:00.000Z",
+    checkpointNow: () => "2026-08-29T00:00:00.000Z",
+    projectorOptions: {
+      createMessageId: counter("first_compacted_message"),
+      createSegmentId: counter("first_compacted_segment"),
+    },
+  });
+  void first.runSessionTurn({
+    protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
+    requestId: "request_session_recovery",
+    sessionId: "session_recovery",
+    turnId: "turn_recovery",
+    model: "fixture-model",
+    prefixMessages: [{ role: "system", content: "fixed" }],
+    inputMessages: [{
+      messageId: "user_recovery",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      message: { role: "user", content: "run the fixture once and finish" },
+    }],
+    tools: [recoveryToolDefinition],
+    maxOutputTokens: 1_000,
+    metadata: { contextWindowTokens: 4_000 },
+  });
+  await waitForEvent(firstLog, "assistant_segment_delta");
+  const durableCheckpoint = new FileRuntimeCheckpointStore(roots.checkpoints).load(
+    "session_recovery",
+    "turn_recovery",
+  );
+  assert.match(durableCheckpoint.sessionCommit.activeContextCheckpoint.summary, /completed successfully/);
+  assert.equal(durableCheckpoint.request.messages.some((message) =>
+    message.name === "context_checkpoint_resume"), true);
+  assert.deepEqual(
+    durableCheckpoint.request.messages.slice(1),
+    projectActiveTurnContext({
+      turnId: "turn_recovery",
+      inputMessages: durableCheckpoint.sessionCommit.inputMessages,
+      generatedMessages: durableCheckpoint.sessionCommit.generatedMessages,
+      checkpoint: durableCheckpoint.sessionCommit.activeContextCheckpoint,
+      includeResumeInstruction: true,
+    }),
+  );
+  firstEvents.close();
+  firstSessions.close();
+
+  const secondEvents = new FileRuntimeEventPersistence({ root: roots.events });
+  const secondSessions = new FileSessionEventPersistence({ root: roots.sessions });
+  const secondStore = new SessionStore({ persistence: secondSessions });
+  const resumedProvider = providerWithRounds([[
+    recoveryEvent("request_session_recovery", 0, "response_started"),
+    recoveryEvent("request_session_recovery", 1, "text_delta", {
+      delta: "recovered from active checkpoint",
+    }),
+    recoveryEvent("request_session_recovery", 2, "response_completed", {
+      finishReason: "stop",
+    }),
+  ]]);
+  const second = new InMemoryRuntimeHost({
+    provider: resumedProvider,
+    eventLog: persistedEventLog(secondEvents),
+    checkpointStore: new FileRuntimeCheckpointStore(roots.checkpoints),
+    sessionStore: secondStore,
+    toolRegistry: recoveryToolRegistry(),
+    sessionNow: () => "2026-08-29T00:00:01.000Z",
+    checkpointNow: () => "2026-08-29T00:00:01.000Z",
+    projectorOptions: {
+      createMessageId: counter("second_compacted_message"),
+      createSegmentId: counter("second_compacted_segment"),
+    },
+  });
+
+  const terminal = await second.sendCommand({
+    kind: RESUME_MODEL_TURN_COMMAND,
+    payload: { sessionId: "session_recovery", turnId: "turn_recovery" },
+  });
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(resumedProvider.requests[0].messages.some((message) =>
+    message.name === "context_checkpoint_resume"), true);
+  assert.equal(resumedProvider.requests[0].messages.some((message) =>
+    message.role === "tool" && message.toolCallId === "call_before_recovery_checkpoint"), false);
+  const committed = secondStore.snapshot("session_recovery").turns[0];
+  assert.equal(committed.messages.some((message) =>
+    message.message.role === "tool" &&
+    message.message.toolCallId === "call_before_recovery_checkpoint"), true);
+  assert.match(committed.contextCheckpoint.summary, /completed successfully/);
+  assert.equal(committed.messages.at(-1).message.content, "recovered from active checkpoint");
+  secondEvents.close();
+  secondSessions.close();
+});
+
+test("rebuilds a resumed Session request from newer summary facts instead of stale maintenance input", async () => {
+  const sessionStore = new SessionStore({
+    createEventId: counter("session_event"),
+    now: () => "2026-08-29T00:00:00.000Z",
+  });
+  const committed = sessionStore.commitTurn("session_recovery", {
+    turnId: "turn_prior",
+    turnSequence: 1,
+    createdAt: "2026-08-29T00:00:00.000Z",
+    completedAt: "2026-08-29T00:00:00.000Z",
+    status: "completed",
+    reason: "model_response_completed",
+    usage: {},
+    messages: [
+      {
+        messageId: "prior_user",
+        turnId: "turn_prior",
+        turnSequence: 1,
+        messageIndex: 0,
+        createdAt: "2026-08-29T00:00:00.000Z",
+        message: { role: "user", content: "large raw prior request" },
+      },
+      {
+        messageId: "prior_assistant",
+        turnId: "turn_prior",
+        turnSequence: 1,
+        messageIndex: 1,
+        createdAt: "2026-08-29T00:00:00.000Z",
+        message: { role: "assistant", content: "large raw prior answer", toolCalls: [] },
+      },
+    ],
+  });
+  sessionStore.summarizeTurns({
+    sessionId: "session_recovery",
+    expectedRevision: committed.revision,
+    summaries: [{ turnId: "turn_prior", summary: "The prior work completed." }],
+  });
+  const eventLog = new InMemoryRuntimeEventLog({
+    createEventId: ({ sequence }) => `runtime_event_${sequence}`,
+    now: () => "2026-08-29T00:00:00.000Z",
+  });
+  const identity = {
+    requestId: "request_session_recovery",
+    sessionId: "session_recovery",
+    turnId: "turn_recovery",
+  };
+  eventLog.append(identity, { kind: "turn_accepted", payload: { status: "accepted" } });
+  eventLog.append(identity, { kind: "turn_started", payload: { status: "running" } });
+  const checkpoints = new InMemoryRuntimeCheckpointStore();
+  const staleRequest = {
+    protocol: BUSH_MODEL_REQUEST_PROTOCOL,
+    ...identity,
+    model: "fixture-model",
+    messages: [
+      { role: "system", content: "fixed" },
+      { role: "user", content: "large raw prior request" },
+      { role: "assistant", content: "large raw prior answer", toolCalls: [] },
+      { role: "user", content: "continue" },
+      {
+        role: "user",
+        name: "context_pressure",
+        visibility: "internal",
+        content: "stale compaction instruction",
+      },
+    ],
+    tools: [],
+    metadata: {},
+  };
+  new RuntimeRecoveryCoordinator({ eventLog, checkpoints }).save({
+    request: staleRequest,
+    messages: staleRequest.messages,
+    nextRound: 1,
+    cacheChainState: new CacheChainTracker().snapshot(),
+    sessionCommit: {
+      turnSequence: 2,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      initialMessageCount: 4,
+      prefixMessages: [{ role: "system", content: "fixed" }],
+      inputMessages: [{
+        messageId: "current_user",
+        createdAt: "2026-08-29T00:00:00.000Z",
+        message: { role: "user", content: "continue" },
+      }],
+      generatedMessages: [],
+      usage: {},
+    },
+  });
+  const resumedProvider = providerWithRounds([[
+    recoveryEvent("request_session_recovery", 0, "response_started"),
+    recoveryEvent("request_session_recovery", 1, "text_delta", {
+      delta: "resumed from current facts",
+    }),
+    recoveryEvent("request_session_recovery", 2, "response_completed", {
+      finishReason: "stop",
+    }),
+  ]]);
+  const host = new InMemoryRuntimeHost({
+    provider: resumedProvider,
+    eventLog,
+    checkpointStore: checkpoints,
+    sessionStore,
+    sessionNow: () => "2026-08-29T00:00:01.000Z",
+  });
+
+  const terminal = await host.resumeModelTurn("session_recovery", "turn_recovery");
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.deepEqual(
+    resumedProvider.requests[0].messages.map((message) => message.name ?? message.content),
+    ["fixed", "turn_context_summary", "continue"],
+  );
+  assert.equal(resumedProvider.requests[0].messages.some((message) =>
+    message.name === "context_pressure"), false);
+  assert.equal(sessionStore.snapshot("session_recovery").turns.length, 2);
 });
 
 test("settles an orphaned durable Session Turn as stopped during product startup", async (t) => {

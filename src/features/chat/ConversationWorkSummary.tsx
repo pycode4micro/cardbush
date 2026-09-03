@@ -15,6 +15,9 @@ import {
   fetchSubagentTask,
   fetchSubagentTasks,
 } from '../../backend/api';
+import {
+  isContextCompactionPresentationExecution,
+} from '../../backend/contextCompactionPresentation';
 import type {
   AppLanguage,
   ChatMessage,
@@ -68,6 +71,9 @@ export function ConversationWorkSummary({
         ...(message.toolExecutions ?? []),
         ...(message.loopHistory ?? []).flatMap((history) => history.toolExecutions ?? []),
       ])
+      // Context compaction deliberately reuses the Tool-row presentation in
+      // the transcript, but it is Runtime maintenance rather than user work.
+      .filter((execution) => !isContextCompactionPresentationExecution(execution))
       .filter((execution, index, all) =>
         all.findIndex((candidate) => candidate.id === execution.id) === index)
       .slice(-6)

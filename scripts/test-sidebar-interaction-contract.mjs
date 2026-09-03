@@ -95,6 +95,9 @@ assert.doesNotMatch(
 );
 const windowDragRule = stylesSource.match(/\.window-drag\s*\{([^}]*)\}/)?.[1] ?? '';
 const windowSpacerRule = stylesSource.match(/\.window-spacer\s*\{([^}]*)\}/)?.[1] ?? '';
+const windowSpacerHitLayerRule = stylesSource.match(
+  /\.window-spacer::before\s*\{([^}]*)\}/,
+)?.[1] ?? '';
 const noDragRule = stylesSource.match(
   /\.no-drag,\s*button,\s*select,\s*input,\s*textarea\s*\{([^}]*)\}/,
 )?.[1] ?? '';
@@ -103,6 +106,11 @@ assert.match(windowDragRule, /-webkit-app-region:\s*drag/);
 assert.match(windowSpacerRule, /min-width:\s*48px/);
 assert.match(windowSpacerRule, /height:\s*100%/);
 assert.match(windowSpacerRule, /app-region:\s*drag/);
+assert.match(windowSpacerHitLayerRule, /content:\s*["']{2}/);
+assert.match(windowSpacerHitLayerRule, /position:\s*absolute/);
+assert.match(windowSpacerHitLayerRule, /inset:\s*0/);
+assert.match(windowSpacerHitLayerRule, /app-region:\s*drag/);
+assert.match(windowSpacerHitLayerRule, /-webkit-app-region:\s*drag/);
 assert.match(noDragRule, /app-region:\s*no-drag/);
 assert.match(
   appSource,

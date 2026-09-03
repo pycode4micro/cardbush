@@ -18,20 +18,20 @@ const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.ts
 const theme = read('src', 'styles', 'theme.css');
 
 assert.match(messageBubble, /message-row assistant\$\{isActiveAssistantTurn \? ' streaming' : ''\}/);
-assert.match(
+assert.doesNotMatch(
   messageBubble,
-  /function AssistantAtomicReveal[\s\S]*?getBoundingClientRect\(\)\.height/,
-  'A completed assistant segment must measure its real layout before becoming visible',
+  /AssistantAtomicReveal/,
+  'accelerated stream chunks must render directly without a second hidden atomic phase',
 );
 assert.match(
   css,
-  /\.assistant-atomic-reveal\.measuring\s*\{[\s\S]*?visibility:\s*hidden/,
-  'The measured assistant content must reserve normal-flow space without painting partial text',
+  /\.message-list-item\.assistant-render-stage\s*\{[\s\S]*?--message-list-viewport-height[\s\S]*?--submitted-user-reading-anchor/,
+  'the prepared response stage must derive from measured viewport geometry',
 );
 assert.doesNotMatch(
   css,
-  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp/,
-  'The active assistant must not reserve an unrelated viewport-sized blank block',
+  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp|assistant-atomic-reveal/,
+  'the prepared stage must not revive the old unrelated row clamp or atomic flash',
 );
 
 assert.match(css, /--panel-motion-duration:\s*240ms/);

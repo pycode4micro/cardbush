@@ -564,9 +564,11 @@ function createWindow(options: { reveal?: boolean } = {}) {
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
+  window.setMenu(null);
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
   installMainWindowNavigationGuard(window);
+  installMainRendererResilience(window);
   window.webContents.once('did-finish-load', () => {
     applyCardbushWindowIcon(window, windowIcon, 'did-finish-load', loadedWindowIcon.sourcePath);
   });
@@ -824,6 +826,76 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     event.preventDefault();
     void openTargetExternally(targetUrl);
   });
+}
+
+function installMainRendererResilience(target: BrowserWindow) {
+  let lastRecoveryAt = 0;
+  let recoveryAttempts = 0;
+
+  target.webContents.on('before-input-event', (event, input) => {
+    const key = input.key.toLowerCase();
+    const reloadShortcut = key === 'f5' || ((input.control || input.meta) && key === 'r');
+    if (!reloadShortcut) return;
+    event.preventDefault();
+    appendDebugLog('renderer-lifecycle', {
+      stage: 'keyboard-reload-blocked',
+      key: input.key,
+      control: input.control,
+      shift: input.shift,
+      meta: input.meta,
+    });
+  });
+
+  target.webContents.on('render-process-gone', (_event, details) => {
+    appendDebugLog('renderer-lifecycle', {
+      stage: 'render-process-gone',
+      reason: details.reason,
+      exitCode: details.exitCode,
+    });
+    if (isQuitting || target.isDestroyed() || details.reason === 'clean-exit') return;
+
+    const now = Date.now();
+    if (now - lastRecoveryAt > 30_000) recoveryAttempts = 0;
+    lastRecoveryAt = now;
+    recoveryAttempts += 1;
+    if (recoveryAttempts > 2) {
+      appendDebugLog('renderer-lifecycle', {
+        stage: 'automatic-reload-suppressed',
+        reason: 'repeated_renderer_failure',
+        recoveryAttempts,
+      });
+      return;
+    }
+
+    setTimeout(() => {
+      if (isQuitting || target.isDestroyed() || target.webContents.isDestroyed()) return;
+      applyMainWindowVisualMaterial(target, lastMainWindowTheme);
+      appendDebugLog('renderer-lifecycle', {
+        stage: 'automatic-reload',
+        recoveryAttempts,
+      });
+      target.webContents.reload();
+    }, 250);
+  });
+
+  target.on('unresponsive', () => {
+    appendDebugLog('renderer-lifecycle', { stage: 'unresponsive' });
+  });
+  target.on('responsive', () => {
+    appendDebugLog('renderer-lifecycle', { stage: 'responsive' });
+  });
+  target.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) return;
+      appendDebugLog('renderer-lifecycle', {
+        stage: 'main-frame-load-failed',
+        errorCode,
+        errorDescription,
+        validatedURL,
+      });
+    },
+  );
 }
 
 function sendLocalPreviewToInspector(target: BrowserWindow, value: string) {
@@ -3078,6 +3150,10 @@ function withPackagedSmokeTimeout<T>(
 }
 
 app.whenReady().then(async () => {
+  // CardBush owns its complete frameless application chrome. Removing
+  // Electron's hidden default menu also removes browser-style reload
+  // accelerators that can otherwise blank the integrated renderer mid-Turn.
+  Menu.setApplicationMenu(null);
   if (process.platform === 'win32') {
     app.setAppUserModelId(cardbushAppUserModelId);
     Notification.handleActivation((details) => {

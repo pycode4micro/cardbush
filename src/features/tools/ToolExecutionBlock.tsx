@@ -8,7 +8,14 @@ import {
   Sparkles,
   WrapText,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  type RefObject,
+} from 'react';
 
 import {
   dispatchSubagent,
@@ -50,11 +57,13 @@ import { goalToolUpdateFromExecution } from '../../shared/goalState';
 import { GoalUpdateNotice } from './GoalUpdateNotice';
 import { ToolImageArtifactViewer } from './ToolImageArtifactViewer';
 import { ToolLogo } from './ToolLogo';
+import { isContextCompactionPresentationExecution } from '../../backend/contextCompactionPresentation';
 export function ToolExecutionBlock({
   executions,
   language,
   message,
   active,
+  historyLabel = !active,
   onRevertChangeReport,
   onOpenScene,
 }: {
@@ -62,6 +71,7 @@ export function ToolExecutionBlock({
   language: AppLanguage;
   message: ChatMessage;
   active: boolean;
+  historyLabel?: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -152,6 +162,22 @@ export function ToolExecutionBlock({
     });
   }, [disclosureId]);
 
+  if (
+    renderedExecutions.length > 0 &&
+    renderedExecutions.every(isContextCompactionPresentationExecution)
+  ) {
+    return (
+      <RuntimeContextCompactionBlock
+        active={active}
+        blockRef={blockRef}
+        executions={renderedExecutions}
+        expanded={expanded}
+        language={language}
+        onToggle={toggleExpanded}
+      />
+    );
+  }
+
   if (messageChangeReport) {
     return (
       <ToolChangeBlock
@@ -164,7 +190,9 @@ export function ToolExecutionBlock({
         )?.name ?? executions[0]?.name ?? 'edit_file'}
         detailsDeferred={detailsDeferred}
         onRequestDetails={requestDeferredDetails}
-        onRevert={() => onRevertChangeReport(messageChangeReport, message)}
+        onRevert={active
+          ? undefined
+          : () => onRevertChangeReport(messageChangeReport, message)}
       />
     );
   }
@@ -178,7 +206,7 @@ export function ToolExecutionBlock({
       : language === 'zh'
         ? `已运行 ${renderedExecutions.length} 条命令`
         : `Ran ${renderedExecutions.length} tools`;
-  const historySummary = !active && !running
+  const historySummary = historyLabel && !running
     ? language === 'zh'
       ? `历史执行记录 · ${runSummary}`
       : `Execution history · ${runSummary}`
@@ -218,6 +246,176 @@ export function ToolExecutionBlock({
       )}
     </div>
   );
+}
+
+function RuntimeContextCompactionBlock({
+  active,
+  blockRef,
+  executions,
+  expanded,
+  language,
+  onToggle,
+}: {
+  active: boolean;
+  blockRef: RefObject<HTMLDivElement | null>;
+  executions: ChatToolExecution[];
+  expanded: boolean;
+  language: AppLanguage;
+  onToggle: () => void;
+}) {
+  const execution = executions.at(-1)!;
+  const running = active && isToolRunning(execution);
+  const failed = execution.state === 'failed';
+  const cancelled = execution.state === 'cancelled' ||
+    (!active && isToolRunning(execution));
+  const label = running
+    ? language === 'zh' ? '正在压缩上下文' : 'Compacting context'
+    : failed
+      ? language === 'zh' ? '上下文压缩失败' : 'Context compaction failed'
+      : cancelled
+        ? language === 'zh' ? '上下文压缩已中止' : 'Context compaction stopped'
+        : language === 'zh' ? '已压缩上下文' : 'Context compacted';
+  const tone = failed ? 'warning' : 'neutral';
+
+  return (
+    <div
+      ref={blockRef}
+      className={`tool-execution-block runtime-context-compaction ${expanded ? 'expanded' : ''} ${running ? 'running' : ''} ${tone}`}
+    >
+      <button
+        className="tool-execution-summary"
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        {running ? (
+          <LoaderCircle
+            className="runtime-context-compaction-spinner"
+            size={16}
+            aria-hidden="true"
+          />
+        ) : (
+          <ToolLogo name={execution.name} size={16} />
+        )}
+        <span className="tool-execution-label" role="status" aria-live="polite">
+          {label}
+        </span>
+        <ChevronDown size={16} className={expanded ? 'expanded' : ''} />
+      </button>
+      {expanded && (
+        <div className="tool-execution-details">
+          {executions.map((item) => (
+            <RuntimeContextCompactionDetail
+              key={item.id}
+              execution={item}
+              active={active}
+              language={language}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RuntimeContextCompactionDetail({
+  execution,
+  active,
+  language,
+}: {
+  execution: ChatToolExecution;
+  active: boolean;
+  language: AppLanguage;
+}) {
+  const metadata = execution.metadata;
+  const running = active && isToolRunning(execution);
+  const failed = execution.state === 'failed';
+  const cancelled = execution.state === 'cancelled' ||
+    (!active && isToolRunning(execution));
+  const duration = formatDuration(execution.durationMs);
+  const attempt = finiteMetadataNumber(metadata.attempt);
+  const triggerRatio = finiteMetadataNumber(metadata.triggerRatio);
+  const estimatedInputTokens = finiteMetadataNumber(metadata.estimatedInputTokens);
+  const usableInputTokens = finiteMetadataNumber(metadata.usableInputTokens);
+  const precedingTurnCount = finiteMetadataNumber(
+    metadata.summarizedTurnCount ?? metadata.precedingTurnCount,
+  );
+  const activeTurnIncluded =
+    metadata.activeTurnCheckpointed === true || metadata.activeTurnIncluded === true;
+  const scope = [
+    precedingTurnCount != null && precedingTurnCount > 0
+      ? language === 'zh'
+        ? `${precedingTurnCount} 个前置轮次`
+        : `${precedingTurnCount} preceding turn${precedingTurnCount === 1 ? '' : 's'}`
+      : '',
+    activeTurnIncluded
+      ? language === 'zh' ? '当前轮次已完成部分' : 'completed active-turn work'
+      : '',
+  ].filter(Boolean).join(language === 'zh' ? '与' : ' and ');
+  const status = running
+    ? attempt && attempt > 1
+      ? language === 'zh' ? `重试中 · 第 ${attempt} 次` : `Retrying · attempt ${attempt}`
+      : language === 'zh' ? '压缩中' : 'Compacting'
+    : failed
+      ? language === 'zh' ? '失败' : 'Failed'
+      : cancelled
+        ? language === 'zh' ? '已中止' : 'Stopped'
+        : language === 'zh' ? '完成' : 'Done';
+  const pressure = triggerRatio != null
+    ? `${(triggerRatio * 100).toFixed(1)}%`
+    : '';
+  const tokenUsage = estimatedInputTokens != null && usableInputTokens != null
+    ? `${formatTokenCount(estimatedInputTokens)} / ${formatTokenCount(usableInputTokens)}`
+    : '';
+  const failureMessage = typeof metadata.message === 'string'
+    ? metadata.message.trim()
+    : '';
+
+  return (
+    <section className="tool-execution-detail runtime-context-compaction-detail">
+      <header>
+        <ToolLogo name={execution.name} size={16} />
+        <strong>{language === 'zh' ? '上下文维护' : 'Context maintenance'}</strong>
+        <span className={failed ? 'failed' : cancelled ? 'warning' : ''}>
+          {duration ? `${status} · ${duration}` : status}
+        </span>
+      </header>
+      <p>
+        {scope
+          ? language === 'zh'
+            ? `已将${scope}转换为可续跑的事实摘要；原始会话与工具记录保持不变。`
+            : `Converted ${scope} into resumable facts; the original conversation and Tool history remain unchanged.`
+          : language === 'zh'
+            ? '正在把已完成上下文转换为可续跑的事实摘要。'
+            : 'Converting completed context into resumable facts.'}
+      </p>
+      {(pressure || tokenUsage) && (
+        <p className="runtime-context-compaction-metrics">
+          {[
+            pressure
+              ? language === 'zh' ? `触发占用 ${pressure}` : `Triggered at ${pressure}`
+              : '',
+            tokenUsage
+              ? language === 'zh' ? `输入 ${tokenUsage}` : `Input ${tokenUsage}`
+              : '',
+          ].filter(Boolean).join(' · ')}
+        </p>
+      )}
+      {failureMessage && <p className="runtime-context-compaction-error">{failureMessage}</p>}
+    </section>
+  );
+}
+
+function finiteMetadataNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formatTokenCount(value: number) {
+  const rounded = Math.max(0, Math.round(value));
+  return rounded >= 1_000
+    ? `${(rounded / 1_000).toFixed(rounded >= 100_000 ? 0 : 1)}k`
+    : String(rounded);
 }
 
 function browserStorage() {

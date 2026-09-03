@@ -38,7 +38,6 @@ import {
   useContext,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -104,6 +103,8 @@ import {
   writeToolExecutionDisclosure,
 } from '../tools/toolExecutionDisclosure';
 import { formatCompactDuration } from './assistantTurnTiming';
+import { coalesceStoppedAssistantTranscript } from './assistantTranscriptPresentation';
+import { isContextCompactionPresentationExecution } from '../../backend/contextCompactionPresentation';
 
 export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
 
@@ -918,9 +919,15 @@ function MessageBubbleView({
   const visibleLoopHistory =
     isActiveAssistantTurn || freezeStoppedTranscript ? [] : loopHistory;
   const activeTranscriptMessages = isActiveAssistantTurn || freezeStoppedTranscript
-    ? activeAssistantTranscriptMessages(loopHistory, message)
+    ? activeAssistantTranscriptMessages(
+        loopHistory,
+        message,
+        freezeStoppedTranscript,
+      )
     : [];
-  const renderActiveTranscript = activeTranscriptMessages.length > 1;
+  const renderActiveTranscript =
+    activeTranscriptMessages.length > 1 ||
+    (freezeStoppedTranscript && activeTranscriptMessages.length > 0);
   const guidanceBoundaryRound =
     !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
   const preserveStoppedExecutionRecord =
@@ -960,7 +967,6 @@ function MessageBubbleView({
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const failurePresentation = assistantFailurePresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
-  const atomicRevealKey = assistantAtomicRevealKey(message);
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
@@ -1007,6 +1013,11 @@ function MessageBubbleView({
           language={language}
           message={message}
           active={isActiveAssistantTurn}
+          historyLabel={
+            !isActiveAssistantTurn &&
+            !stoppedAssistantRound &&
+            !guidanceBoundaryRound
+          }
           selectedModel={selectedModel}
           showThinkingPlaceholder={isActiveAssistantTurn}
           onRevertChangeReport={onRevertChangeReport}
@@ -1030,6 +1041,7 @@ function MessageBubbleView({
           history={visibleLoopHistory}
           archivedPlan={archiveTaskPlanInHistory ? taskPlan : undefined}
           language={language}
+          active={isActiveAssistantTurn}
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />
@@ -1039,29 +1051,23 @@ function MessageBubbleView({
       )}
     </>
   );
-  const assistantBody = renderActiveTranscript ? assistantBodyContent : (
-    <AssistantAtomicReveal key={atomicRevealKey || 'unbuffered'} revealKey={atomicRevealKey}>
-      {assistantBodyContent}
-    </AssistantAtomicReveal>
-  );
+  const assistantBody = assistantBodyContent;
   const finalAnswerBody = (
-    <AssistantAtomicReveal key={atomicRevealKey || 'unbuffered'} revealKey={atomicRevealKey}>
-      <div className="assistant-final-answer">
-        <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
-        <MessageMediaStrip
-          videoPaths={detachedVideoPaths}
-          audioPaths={detachedAudioPaths}
+    <div className="assistant-final-answer">
+      <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
+      <MessageMediaStrip
+        videoPaths={detachedVideoPaths}
+        audioPaths={detachedAudioPaths}
+        language={language}
+        showPaths
+      />
+      {assistantContent && (
+        <MessageInlineMediaContent
+          content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
           language={language}
-          showPaths
         />
-        {assistantContent && (
-          <MessageInlineMediaContent
-            content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
-            language={language}
-          />
-        )}
-      </div>
-    </AssistantAtomicReveal>
+      )}
+    </div>
   );
   return (
     <>
@@ -1452,37 +1458,35 @@ function AssistantActiveTranscript({
       {visibleMessages.map((segment, index) => {
         const executions = segment.toolExecutions ?? [];
         const isLastSegment = index === visibleMessages.length - 1;
-        const revealKey = assistantAtomicRevealKey(segment);
         return (
           <section
             key={segment.id}
             className="assistant-active-transcript-segment"
           >
-            <AssistantAtomicReveal revealKey={revealKey}>
-              {executions.length > 0 ? (
-                <AssistantMessageContent
-                  content={segment.content}
-                  executions={executions}
-                  language={language}
-                  message={segment}
-                  active={active}
-                  selectedModel={selectedModel}
-                  showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
-                  onRevertChangeReport={onRevertChangeReport}
-                  onOpenScene={onOpenScene}
-                />
-              ) : segment.content ? (
-                <>
-                  <MessageInlineMediaContent content={segment.content} language={language} />
-                  {showThinkingPlaceholder && isLastSegment && (
-                    <AssistantThinkingProcessLine
-                      language={language}
-                      model={selectedModel}
-                    />
-                  )}
-                </>
-              ) : null}
-            </AssistantAtomicReveal>
+            {executions.length > 0 ? (
+              <AssistantMessageContent
+                content={segment.content}
+                executions={executions}
+                language={language}
+                message={segment}
+                active={active}
+                historyLabel={false}
+                selectedModel={selectedModel}
+                showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
+                onRevertChangeReport={onRevertChangeReport}
+                onOpenScene={onOpenScene}
+              />
+            ) : segment.content ? (
+              <>
+                <MessageInlineMediaContent content={segment.content} language={language} />
+                {showThinkingPlaceholder && isLastSegment && (
+                  <AssistantThinkingProcessLine
+                    language={language}
+                    model={selectedModel}
+                  />
+                )}
+              </>
+            ) : null}
           </section>
         );
       })}
@@ -1490,106 +1494,16 @@ function AssistantActiveTranscript({
   );
 }
 
-const revealedAssistantSegmentLimit = 4_096;
-const revealedAssistantSegmentKeys = new Set<string>();
-const revealedAssistantSegmentOrder: string[] = [];
-
-function assistantAtomicRevealKey(message: ChatMessage) {
-  const value = message.metadata?.cardbush_atomic_reveal_key;
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function rememberRevealedAssistantSegment(key: string) {
-  if (!key || revealedAssistantSegmentKeys.has(key)) return;
-  revealedAssistantSegmentKeys.add(key);
-  revealedAssistantSegmentOrder.push(key);
-  while (revealedAssistantSegmentOrder.length > revealedAssistantSegmentLimit) {
-    const expired = revealedAssistantSegmentOrder.shift();
-    if (expired) revealedAssistantSegmentKeys.delete(expired);
-  }
-}
-
-/**
- * A completed Runtime segment enters React once, already containing its full
- * Markdown tree. It is initially invisible but remains in normal document flow,
- * so the browser reserves the exact final height before any text is painted.
- * The reveal is an imperative class change and cannot invalidate React again.
- */
-function AssistantAtomicReveal({
-  revealKey,
-  children,
-}: {
-  revealKey: string;
-  children: ReactNode;
-}) {
-  const normalizedKey = revealKey.trim();
-  const alreadyRevealed = !normalizedKey || revealedAssistantSegmentKeys.has(normalizedKey);
-  const elementRef = useRef<HTMLDivElement | null>(null);
-
-  useLayoutEffect(() => {
-    const element = elementRef.current;
-    if (!element) return undefined;
-    if (!normalizedKey || revealedAssistantSegmentKeys.has(normalizedKey)) {
-      element.classList.remove('measuring');
-      element.classList.add('is-visible');
-      element.removeAttribute('aria-hidden');
-      element.style.removeProperty('min-height');
-      return undefined;
-    }
-
-    let animationFrame = 0;
-    let measuredFrames = 0;
-    let stableFrames = 0;
-    let previousHeight = -1;
-    let cancelled = false;
-    const reveal = () => {
-      if (cancelled) return;
-      rememberRevealedAssistantSegment(normalizedKey);
-      element.classList.remove('measuring');
-      element.classList.add('is-visible');
-      element.removeAttribute('aria-hidden');
-      element.style.removeProperty('min-height');
-    };
-    const measure = () => {
-      if (cancelled) return;
-      const height = Math.ceil(element.getBoundingClientRect().height);
-      element.style.minHeight = `${height}px`;
-      measuredFrames += 1;
-      if (Math.abs(height - previousHeight) < 1) {
-        stableFrames += 1;
-      } else {
-        stableFrames = 0;
-        previousHeight = height;
-      }
-      if (stableFrames >= 2 || measuredFrames >= 6) {
-        reveal();
-        return;
-      }
-      animationFrame = window.requestAnimationFrame(measure);
-    };
-    animationFrame = window.requestAnimationFrame(measure);
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(animationFrame);
-    };
-  }, [normalizedKey]);
-
-  return (
-    <div
-      ref={elementRef}
-      className={`assistant-atomic-reveal ${alreadyRevealed ? 'is-visible' : 'measuring'}`}
-      aria-hidden={alreadyRevealed ? undefined : true}
-    >
-      {children}
-    </div>
-  );
-}
-
 function activeAssistantTranscriptMessages(
   loopHistory: ChatMessage[],
   currentMessage: ChatMessage,
+  stopped = false,
 ) {
-  return [...loopHistory, currentMessage].filter(hasVisibleLoopHistoryMessage);
+  const transcript = [...loopHistory, currentMessage]
+    .filter(hasVisibleLoopHistoryMessage);
+  return stopped
+    ? coalesceStoppedAssistantTranscript(transcript)
+    : transcript;
 }
 
 function AssistantMessageContent({
@@ -1598,6 +1512,7 @@ function AssistantMessageContent({
   language,
   message,
   active,
+  historyLabel = !active,
   selectedModel = '',
   showThinkingPlaceholder = false,
   onRevertChangeReport,
@@ -1608,6 +1523,7 @@ function AssistantMessageContent({
   language: AppLanguage;
   message: ChatMessage;
   active: boolean;
+  historyLabel?: boolean;
   selectedModel?: string;
   showThinkingPlaceholder?: boolean;
   onRevertChangeReport: (
@@ -1643,6 +1559,7 @@ function AssistantMessageContent({
         language={language}
         message={message}
         active={active}
+        historyLabel={historyLabel}
         onRevertChangeReport={onRevertChangeReport}
         onOpenScene={onOpenScene}
       />,
@@ -1780,7 +1697,12 @@ function groupExecutionsByContentOffset(
   for (const item of annotated) {
     const { execution, offset } = item;
     const previous = groups.at(-1);
-    if (previous && previous.offset === offset) {
+    if (
+      previous &&
+      previous.offset === offset &&
+      !isContextCompactionPresentationExecution(execution) &&
+      !previous.executions.some(isContextCompactionPresentationExecution)
+    ) {
       previous.executions.push(execution);
       continue;
     }
@@ -2308,12 +2230,14 @@ export function AssistantLoopHistoryBlock({
   history,
   archivedPlan,
   language,
+  active = false,
   onRevertChangeReport = async () => undefined,
   onOpenScene = () => undefined,
 }: {
   history: ChatMessage[];
   archivedPlan?: NonNullable<ChatMessage['taskPlan']>;
   language: AppLanguage;
+  active?: boolean;
   onRevertChangeReport?: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -2348,6 +2272,7 @@ export function AssistantLoopHistoryBlock({
             key={`${historyMessage.id}-${index}`}
             message={historyMessage}
             language={language}
+            active={active}
             onRevertChangeReport={onRevertChangeReport}
             onOpenScene={onOpenScene}
           />
@@ -2360,11 +2285,13 @@ export function AssistantLoopHistoryBlock({
 function AssistantLoopHistoryItem({
   message,
   language,
+  active,
   onRevertChangeReport,
   onOpenScene,
 }: {
   message: ChatMessage;
   language: AppLanguage;
+  active: boolean;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -2386,7 +2313,7 @@ function AssistantLoopHistoryItem({
           executions={executions}
           language={language}
           message={message}
-          active={false}
+          active={active}
           onRevertChangeReport={onRevertChangeReport}
           onOpenScene={onOpenScene}
         />

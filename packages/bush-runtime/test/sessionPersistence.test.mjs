@@ -12,6 +12,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  assembleContext,
   FileSessionEventPersistence,
   SessionJournalCorruptionError,
   SessionStore,
@@ -51,6 +52,90 @@ test("recovers append-only Turn context summaries without altering raw history",
     assert.equal(recovered?.turns[0].messages[0].message.content, "hello");
     assert.equal(recovered?.turns[0].contextSummary, "The user said hello.");
     assert.equal(recovered?.revision, 3);
+    reopened.close();
+  });
+});
+
+test("recovers an active-Turn context checkpoint and its raw history", () => {
+  withRoot((root) => {
+    const persistence = new FileSessionEventPersistence({ root });
+    const store = deterministicStore(persistence);
+    const candidate = {
+      turnId: "turn_1",
+      turnSequence: 1,
+      createdAt: NOW,
+      completedAt: NOW,
+      status: "completed",
+      reason: "model_response_completed",
+      usage: {},
+      contextCheckpoint: {
+        throughMessageId: "turn_1_message_2",
+        summary: "The first inspection completed; the final answer followed.",
+        inputMessageCount: 1,
+      },
+      messages: [
+        { role: "user", content: "inspect and finish" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "call_1", name: "read_file", argumentsText: "{}" }],
+        },
+        { role: "tool", toolCallId: "call_1", content: "raw durable result" },
+        { role: "assistant", content: "finished", toolCalls: [] },
+      ].map((message, messageIndex) => ({
+        messageId: `turn_1_message_${messageIndex}`,
+        turnId: "turn_1",
+        turnSequence: 1,
+        messageIndex,
+        createdAt: NOW,
+        message,
+      })),
+    };
+    store.commitTurn("session_1", candidate);
+    persistence.close();
+
+    const reopened = new FileSessionEventPersistence({ root });
+    const recovered = new SessionStore({ persistence: reopened }).snapshot("session_1");
+    assert.equal(recovered?.turns[0].messages[2].message.content, "raw durable result");
+    assert.match(recovered?.turns[0].contextCheckpoint.summary, /first inspection/);
+    const projected = assembleContext({ session: recovered });
+    assert.equal(projected.messages.some((message) => message.role === "tool"), false);
+    assert.match(projected.messages[1].content, /active_turn_checkpoint/);
+    reopened.close();
+  });
+});
+
+test("recovers an edit rerun as one durable replacement branch", () => {
+  withRoot((root) => {
+    const persistence = new FileSessionEventPersistence({ root });
+    const store = deterministicStore(persistence);
+    store.commitTurn("session_1", turn("turn_1", 1, "keep before edit"));
+    store.commitTurn("session_1", turn("turn_2", 2, "old user request"));
+    store.supersedeMessages({
+      sessionId: "session_1",
+      messageIds: ["turn_2_message_0"],
+      reason: "user_edit_regenerate",
+      replacementTurnId: "turn_3",
+    });
+    store.commitTurn("session_1", turn("turn_3", 3, "updated user request"));
+    persistence.close();
+
+    const records = readFileSync(journalPath(root), "utf8")
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    const replacementEvent = records.find(
+      (record) => record.event?.kind === "messages_superseded",
+    )?.event;
+    assert.equal(replacementEvent?.payload.replacementTurnId, "turn_3");
+
+    const reopened = new FileSessionEventPersistence({ root });
+    const recovered = new SessionStore({ persistence: reopened }).snapshot("session_1");
+    assert.deepEqual(recovered?.supersededMessageIds, ["turn_2_message_0"]);
+    assert.deepEqual(
+      assembleContext({ session: recovered }).messages.map((message) => message.content),
+      ["keep before edit", "updated user request"],
+    );
     reopened.close();
   });
 });

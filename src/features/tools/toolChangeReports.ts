@@ -26,6 +26,8 @@ export type ToolChangeReport = {
 export type ConversationChangeReport = ToolChangeReport & {
   id: string;
   messageId: string;
+  executionIds?: string[];
+  detailsDeferred?: boolean;
   turnId?: string;
   createdAt?: string;
   userMessageId?: string;
@@ -169,6 +171,10 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
       ...report,
       id: `${message.id || fallbackIndex}:${message.turnId ?? ''}:${reportIndex}`,
       messageId: message.id,
+      executionIds: executions.map((execution) => execution.id),
+      detailsDeferred: executions.some(
+        (execution) => execution.metadata.workspaceChangeDetailsDeferred === true,
+      ),
       turnId: message.turnId,
       createdAt: message.createdAt,
       userMessageId: userTurn?.messageId,
@@ -193,6 +199,19 @@ export function changeReportsFromMessages(messages: ChatMessage[]): Conversation
     appendMessageReport(message, index);
   });
   return reports;
+}
+
+export function hydrateConversationChangeReport(
+  report: ConversationChangeReport,
+  executions: ChatToolExecution[],
+): ToolChangeReport | null {
+  const executionIds = new Set(
+    (report.executionIds ?? []).map((value) => value.trim()).filter(Boolean),
+  );
+  if (executionIds.size === 0) return null;
+  return toolChangeReportFromExecutions(
+    executions.filter((execution) => executionIds.has(execution.id)),
+  );
 }
 
 export function groupChangeReportsByTurn(

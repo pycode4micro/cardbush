@@ -16,6 +16,7 @@ import {
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   LIST_RUNTIME_SESSIONS_COMMAND,
+  LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   INSPECT_RUNTIME_RECOVERY_COMMAND,
@@ -70,11 +71,13 @@ import {
   type ModelProviderState,
   type CacheChainState,
   type RuntimeCapabilities,
+  type RuntimeContextCompactionEvent,
   type RuntimeEvent,
   type RuntimePermissionAnswer,
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
+  type TurnContextCheckpoint,
   type RuntimeInteraction,
   type ToolExecutionRecord,
   type WorkspaceChange,
@@ -94,12 +97,18 @@ import {
   CHECKPOINT_CONTEXT_TOOL,
   CONTEXT_COMPACTION_HARD_PRESSURE,
   CONTEXT_SUMMARY_FALLBACK_TURNS,
+  contextToolIngressTokenBudget,
   contextPressureNotice,
   decodeContextCheckpointInput,
   estimateContextPressure,
+  projectContextCompactionMaintenanceMessages,
   registerContextCompactionTool,
+  requiresContextCompactionBeforeRound,
+  resolveContextOutputTokens,
   type ContextCompactionState,
+  type ContextPressure,
 } from "./contextCompaction.js";
+import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
@@ -416,6 +425,12 @@ export class InMemoryRuntimeHost {
           "interaction_cancelled",
           "interaction_expired",
           "cache_chain_observed",
+          "model_request_usage",
+          "context_compaction_started",
+          "context_compaction_retrying",
+          "context_compaction_completed",
+          "context_compaction_failed",
+          "context_compaction_cancelled",
           "provider_retry",
           "replay_reset",
           "stream_resumed",
@@ -444,6 +459,7 @@ export class InMemoryRuntimeHost {
         CANCEL_RUNTIME_TOOL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+        LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
         RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
@@ -587,6 +603,12 @@ export class InMemoryRuntimeHost {
         return input.detail === "summary"
           ? this.#toolExecutions.listTurnSummaries(input.sessionId, input.turnId)
           : this.#toolExecutions.listTurn(input.sessionId, input.turnId);
+      }
+      case LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND: {
+        const input = runtimeTurnIdentitySchema.parse(command.payload);
+        return effectiveContextCompactionEvents(
+          this.#eventLog.replay(input.sessionId, input.turnId),
+        );
       }
       case GET_RUNTIME_TOOL_CATALOG_COMMAND:
         return this.#toolRegistry.definitions();
@@ -774,18 +796,7 @@ export class InMemoryRuntimeHost {
       cacheChainState?: CacheChainState;
     } = {},
   ): Promise<RuntimeEvent> {
-    const request = modelRequestSchema.parse(input);
-    const contextWindowTokens = Number(request.metadata.contextWindowTokens);
-    if (
-      Number.isInteger(contextWindowTokens) &&
-      contextWindowTokens > 0 &&
-      request.maxOutputTokens !== undefined &&
-      request.maxOutputTokens >= contextWindowTokens
-    ) {
-      throw new Error(
-        `Invalid model token limits: maxOutputTokens (${request.maxOutputTokens}) must be less than contextWindowTokens (${contextWindowTokens}).`,
-      );
-    }
+    const request = resolveModelRequestContextLimits(modelRequestSchema.parse(input));
     const identity: RuntimeEventIdentity = {
       requestId: request.requestId,
       sessionId: request.sessionId,
@@ -865,19 +876,33 @@ export class InMemoryRuntimeHost {
       detachAbort();
       throw error;
     }
+    const sessionCommit = recovery.checkpoint.sessionCommit;
+    const messages = sessionCommit
+      ? this.#rebuildCompactedMessages(
+          sessionId,
+          turnId,
+          sessionCommit,
+          sessionCommit.generatedMessages,
+          sessionCommit.activeContextCheckpoint,
+        )
+      : recovery.checkpoint.request.messages;
+    const request = resolveModelRequestContextLimits(modelRequestSchema.parse({
+      ...recovery.checkpoint.request,
+      messages,
+    }));
     return this.#continueModelTurn({
-      request: recovery.checkpoint.request,
+      request,
       identity: recovery.identity,
-      messages: recovery.checkpoint.request.messages,
+      messages,
       nextRound: recovery.nextRound,
       cacheChainState: recovery.checkpoint.cacheChainState,
       signal: turnController.signal,
       onSettled: detachAbort,
-      sessionCommit: recovery.checkpoint.sessionCommit,
-      onFinalized: recovery.checkpoint.sessionCommit
+      sessionCommit,
+      onFinalized: sessionCommit
         ? this.#sessions.finalizer(
-            recovery.checkpoint.request,
-            recovery.checkpoint.sessionCommit,
+            request,
+            sessionCommit,
           )
         : undefined,
     });
@@ -911,12 +936,19 @@ export class InMemoryRuntimeHost {
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
     let contextCompactionFailures = 0;
-    let contextPressureNoticeRevision: number | undefined;
+    let contextPressureNoticeKey: string | undefined;
     let providerState: ModelProviderState = freshResponseChain();
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
       ? structuredClone(input.sessionCommit.generatedMessages)
       : [];
+    let activeContextCheckpoint: TurnContextCheckpoint | undefined = input.sessionCommit
+      ?.activeContextCheckpoint
+      ? structuredClone(input.sessionCommit.activeContextCheckpoint)
+      : undefined;
+    const previousCommittedUsage = input.sessionCommit
+      ? this.#sessions.snapshot(request.sessionId)?.turns.at(-1)?.usage
+      : undefined;
     const usage: {
       model?: string;
       contextWindowTokens?: number;
@@ -934,15 +966,144 @@ export class InMemoryRuntimeHost {
         ? { contextWindowTokens: Number(request.metadata.contextWindowTokens) }
         : {}),
     };
+    let fallbackTokenScale = 1;
+    let appendOnlyInputFloorTokens = input.sessionCommit?.usage.lastRequestInputTokens ??
+      (
+        previousCommittedUsage?.model === request.model &&
+        previousCommittedUsage.contextWindowTokens === usage.contextWindowTokens
+          ? previousCommittedUsage.lastRequestInputTokens
+          : undefined
+      );
+    const sessionCommitCheckpoint = (): RuntimeSessionCommitCheckpoint | undefined =>
+      input.sessionCommit
+        ? {
+            ...input.sessionCommit,
+            generatedMessages,
+            usage,
+            ...(activeContextCheckpoint ? { activeContextCheckpoint } : {}),
+          }
+        : undefined;
+    const priorContextCompactionEvents = effectiveContextCompactionEvents(
+      this.#eventLog.replay(request.sessionId, request.turnId),
+    );
+    let contextCompactionOrdinal = priorContextCompactionEvents.filter((event) =>
+      event.kind === "context_compaction_started"
+    ).length;
+    let activeContextCompaction = pendingContextCompactionLifecycle(
+      priorContextCompactionEvents,
+    );
+    const latestAssistantAnchor = () => {
+      const item = [...generatedMessages]
+        .reverse()
+        .find((candidate) => candidate.message.role === "assistant");
+      return item
+        ? {
+            assistantMessageId: item.messageId,
+            assistantContentOffset: item.message.content.length,
+          }
+        : { assistantContentOffset: 0 };
+    };
+    const beginContextCompaction = (
+      state: ContextCompactionState,
+      pressure: ContextPressure,
+    ) => {
+      if (activeContextCompaction) return;
+      contextCompactionOrdinal += 1;
+      const assistantAnchor = latestAssistantAnchor();
+      activeContextCompaction = {
+        compactionId: `context_compaction:${request.turnId}:${contextCompactionOrdinal}`,
+        round,
+        attempt: 1,
+        ...assistantAnchor,
+      };
+      this.#eventLog.append(identity, {
+        kind: "context_compaction_started",
+        payload: {
+          ...activeContextCompaction,
+          thresholdRatio: CONTEXT_COMPACTION_HARD_PRESSURE,
+          triggerRatio: pressure.ratio,
+          estimatedInputTokens: pressure.estimatedPromptTokens,
+          usableInputTokens: pressure.usableInputTokens,
+          measurement: pressure.measurement,
+          precedingTurnCount: state.unsummarizedTurnIds.length,
+          activeTurnIncluded: state.activeTurn !== undefined,
+          ...(state.activeTurn
+            ? { activeThroughMessageId: state.activeTurn.throughMessageId }
+            : {}),
+        },
+      });
+    };
+    const retryContextCompaction = (reason: string, message: string) => {
+      if (!activeContextCompaction) return;
+      activeContextCompaction = {
+        ...activeContextCompaction,
+        round,
+        attempt: activeContextCompaction.attempt + 1,
+      };
+      this.#eventLog.append(identity, {
+        kind: "context_compaction_retrying",
+        payload: {
+          ...activeContextCompaction,
+          reason,
+          message,
+        },
+      });
+    };
+    const completeContextCompaction = (
+      checkpoint: ReturnType<typeof decodeContextCheckpointInput>,
+    ) => {
+      if (!activeContextCompaction) return;
+      this.#eventLog.append(identity, {
+        kind: "context_compaction_completed",
+        payload: {
+          ...activeContextCompaction,
+          round,
+          summarizedTurnCount: checkpoint.summaries.length,
+          activeTurnCheckpointed: checkpoint.activeTurn !== undefined,
+          ...(checkpoint.activeTurn
+            ? { activeThroughMessageId: checkpoint.activeTurn.throughMessageId }
+            : {}),
+        },
+      });
+      activeContextCompaction = undefined;
+    };
+    const settleActiveContextCompaction = (payload: TurnTerminalPayload) => {
+      if (!activeContextCompaction) return;
+      if (payload.status === "stopped") {
+        this.#eventLog.append(identity, {
+          kind: "context_compaction_cancelled",
+          payload: {
+            ...activeContextCompaction,
+            round,
+            reason: payload.reason,
+          },
+        });
+      } else {
+        this.#eventLog.append(identity, {
+          kind: "context_compaction_failed",
+          payload: {
+            ...activeContextCompaction,
+            round,
+            reason: payload.reason,
+            message: typeof payload.details.message === "string"
+              ? payload.details.message
+              : "Context compaction did not complete.",
+          },
+        });
+      }
+      activeContextCompaction = undefined;
+    };
     const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
       if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
         this.#activeTurnControllers.get(turnKey)?.abort();
       }
+      settleActiveContextCompaction(payload);
       input.onFinalized?.(
         payload,
         generatedMessages,
         usage,
         cacheChain.snapshot(),
+        activeContextCheckpoint,
       );
       return this.#finishTurn(identity, payload);
     };
@@ -956,6 +1117,7 @@ export class InMemoryRuntimeHost {
     try {
       while (true) {
         round += 1;
+        let dispatchPressure: ContextPressure | undefined;
         if (input.signal?.aborted) return stop();
         const readyAtRoundBoundary = this.#takeSettledAgentGuidance(turnKey);
         if (readyAtRoundBoundary.length > 0) {
@@ -974,38 +1136,52 @@ export class InMemoryRuntimeHost {
             messages,
             providerState,
             input.signal,
+            fallbackTokenScale,
+            appendOnlyInputFloorTokens,
           );
-          let state = this.#sessions.contextCompactionState(request.sessionId);
+          dispatchPressure = pressure;
+          let state = this.#contextCompactionState(
+            request.sessionId,
+            request.turnId,
+            generatedMessages,
+            activeContextCheckpoint,
+          );
           if (
             pressure &&
-            pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE &&
-            state.unsummarizedTurnIds.length > 0
+            requiresContextCompactionBeforeRound(pressure) &&
+            (state.unsummarizedTurnIds.length > 0 || state.activeTurn !== undefined)
           ) {
             this.#contextCompactionAuthorizations.set(turnKey, state);
             contextCompactionRequired = true;
-            if (contextPressureNoticeRevision !== state.revision) {
+            beginContextCompaction(state, pressure);
+            const noticeKey = contextCompactionStateKey(state);
+            if (contextPressureNoticeKey !== noticeKey) {
               messages = [
                 ...messages,
                 contextPressureNotice(state, pressure),
               ];
-              contextPressureNoticeRevision = state.revision;
+              contextPressureNoticeKey = noticeKey;
             }
           } else {
             this.#contextCompactionAuthorizations.delete(turnKey);
             if (
               state.unsummarizedTurnIds.length === 0 &&
+              state.activeTurn === undefined &&
               pressure &&
-              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE
+              requiresContextCompactionBeforeRound(pressure)
             ) {
               let summaryLimit = Math.min(
                 CONTEXT_SUMMARY_FALLBACK_TURNS,
                 state.totalTurns,
               );
               do {
+                appendOnlyInputFloorTokens = undefined;
                 messages = this.#rebuildCompactedMessages(
                   request.sessionId,
+                  request.turnId,
                   input.sessionCommit,
                   generatedMessages,
+                  activeContextCheckpoint,
                   summaryLimit,
                 );
                 providerState = freshResponseChain();
@@ -1014,11 +1190,14 @@ export class InMemoryRuntimeHost {
                   messages,
                   providerState,
                   input.signal,
+                  fallbackTokenScale,
+                  appendOnlyInputFloorTokens,
                 );
-                if (!pressure || pressure.ratio < CONTEXT_COMPACTION_HARD_PRESSURE) break;
+                dispatchPressure = pressure;
+                if (!pressure || !requiresContextCompactionBeforeRound(pressure)) break;
                 summaryLimit -= 1;
               } while (summaryLimit >= 0);
-              if (pressure && pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE) {
+              if (pressure && requiresContextCompactionBeforeRound(pressure)) {
                 return finalize({
                   status: "failed",
                   reason: "current_turn_context_limit_exceeded",
@@ -1034,14 +1213,60 @@ export class InMemoryRuntimeHost {
           }
         }
 
+        let dispatchMessages = messages;
+        let dispatchProviderState = providerState;
         if (contextCompactionRequired) {
-          const maintenancePressure = await this.#measureContextPressure(
+          let maintenancePressure = await this.#measureContextPressure(
             request,
-            messages,
-            providerState,
+            dispatchMessages,
+            dispatchProviderState,
             input.signal,
+            fallbackTokenScale,
+            appendOnlyInputFloorTokens,
           );
-          if (maintenancePressure && maintenancePressure.ratio >= 1) {
+          dispatchPressure = maintenancePressure;
+          let acceptedOverLimitRecovery = acceptsBoundedOverLimitRecovery(
+            maintenancePressure,
+            appendOnlyInputFloorTokens,
+          );
+          while (
+            maintenancePressure &&
+            maintenancePressure.ratio >= 1 &&
+            !acceptedOverLimitRecovery
+          ) {
+            const projection = projectContextCompactionMaintenanceMessages({
+              messages: dispatchMessages,
+              sessionId: request.sessionId,
+              turnId: request.turnId,
+              pressure: maintenancePressure,
+            });
+            if (
+              projection.omittedReasoningMessages === 0 &&
+              projection.compactedToolResults === 0
+            ) {
+              break;
+            }
+            dispatchMessages = projection.messages;
+            dispatchProviderState = freshResponseChain();
+            maintenancePressure = await this.#measureContextPressure(
+              request,
+              dispatchMessages,
+              dispatchProviderState,
+              input.signal,
+              fallbackTokenScale,
+              appendOnlyInputFloorTokens,
+            );
+            dispatchPressure = maintenancePressure;
+            acceptedOverLimitRecovery = acceptsBoundedOverLimitRecovery(
+              maintenancePressure,
+              appendOnlyInputFloorTokens,
+            );
+          }
+          if (
+            maintenancePressure &&
+            maintenancePressure.ratio >= 1 &&
+            !acceptedOverLimitRecovery
+          ) {
             return finalize({
               status: "failed",
               reason: "context_compaction_request_limit_exceeded",
@@ -1062,7 +1287,11 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
-          const roundRequest = { ...request, messages, providerState };
+          const roundRequest = {
+            ...request,
+            messages: dispatchMessages,
+            providerState: dispatchProviderState,
+          };
           if (
             contextCompactionRequired &&
             !roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)
@@ -1083,9 +1312,7 @@ export class InMemoryRuntimeHost {
             messages,
             nextRound: round,
             cacheChainState: cacheChain.snapshot(),
-            sessionCommit: input.sessionCommit
-              ? { ...input.sessionCommit, generatedMessages, usage }
-              : undefined,
+            sessionCommit: sessionCommitCheckpoint(),
           });
           const projector = new RuntimeEventProjector(
             this.#eventLog,
@@ -1147,6 +1374,48 @@ export class InMemoryRuntimeHost {
           projector.completeOpenSegment();
           mergeUsage(usage, result.usage);
           replaceLastRequestUsage(usage, result.usage);
+          if (result.usage.inputTokens !== undefined) {
+            appendOnlyInputFloorTokens = result.usage.inputTokens;
+            if (
+              dispatchPressure?.measurement === "fallback_estimate" &&
+              dispatchPressure.fallbackPromptTokens > 0
+            ) {
+              fallbackTokenScale = Math.max(
+                fallbackTokenScale,
+                result.usage.inputTokens / dispatchPressure.fallbackPromptTokens,
+              );
+            }
+          }
+          if (result.usage.inputTokens !== undefined) {
+            this.#eventLog.append(identity, {
+              kind: "model_request_usage",
+              payload: {
+                round,
+                attempt,
+                model: request.model,
+                ...(usage.contextWindowTokens !== undefined
+                  ? { contextWindowTokens: usage.contextWindowTokens }
+                  : {}),
+                inputTokens: result.usage.inputTokens,
+                ...(result.usage.outputTokens !== undefined
+                  ? { outputTokens: result.usage.outputTokens }
+                  : {}),
+                ...(result.usage.cachedInputTokens !== undefined
+                  ? { cachedInputTokens: result.usage.cachedInputTokens }
+                  : {}),
+                ...(result.providerResponseId
+                  ? { providerResponseId: result.providerResponseId }
+                  : {}),
+                ...(dispatchPressure
+                  ? {
+                      preflightInputTokens: dispatchPressure.estimatedPromptTokens,
+                      preflightMeasurement: dispatchPressure.measurement,
+                      usableInputTokens: dispatchPressure.usableInputTokens,
+                    }
+                  : {}),
+              },
+            });
+          }
           if (input.signal?.aborted) {
             appendInterruptedAssistantMessage(
               projector,
@@ -1228,7 +1497,11 @@ export class InMemoryRuntimeHost {
               details: { message: "The model did not produce the required context checkpoint." },
             });
           }
-          contextPressureNoticeRevision = undefined;
+          retryContextCompaction(
+            "checkpoint_not_produced",
+            "The model did not produce the required context checkpoint.",
+          );
+          contextPressureNoticeKey = undefined;
           messages = [...messages, {
             role: "user",
             name: "context_compaction_correction",
@@ -1249,11 +1522,15 @@ export class InMemoryRuntimeHost {
                 details: { message: "checkpoint_context must be called alone." },
               });
             }
+            retryContextCompaction(
+              "checkpoint_not_atomic",
+              "checkpoint_context must be called alone.",
+            );
             messages = [...messages, {
               role: "user",
               name: "context_compaction_correction",
               visibility: "internal",
-              content: "checkpoint_context must be the only Tool call in this maintenance round. Call it again alone with every requested Turn summary.",
+              content: "checkpoint_context must be the only Tool call in this maintenance round. Call it again alone with every requested context segment.",
             }];
             providerState = freshResponseChain();
             continue;
@@ -1267,21 +1544,44 @@ export class InMemoryRuntimeHost {
               activeTurnId: request.turnId,
               checkpoint,
             });
+            if (checkpoint.activeTurn) {
+              activeContextCheckpoint = {
+                throughMessageId: checkpoint.activeTurn.throughMessageId,
+                summary: checkpoint.activeTurn.summary,
+                inputMessageCount: input.sessionCommit!.inputMessages.length,
+              };
+            }
+            completeContextCompaction(checkpoint);
             this.#contextCompactionAuthorizations.delete(turnKey);
-            contextPressureNoticeRevision = undefined;
+            contextPressureNoticeKey = undefined;
             contextCompactionFailures = 0;
+            appendOnlyInputFloorTokens = undefined;
             messages = this.#rebuildCompactedMessages(
               request.sessionId,
+              request.turnId,
               input.sessionCommit!,
               generatedMessages,
+              activeContextCheckpoint,
             );
+            const previousAssistantMessageId = [...generatedMessages]
+              .reverse()
+              .find((item) => item.message.role === "assistant")
+              ?.messageId;
+            messages = this.#appendQueuedTurnGuidance({
+              turnKey,
+              identity,
+              round,
+              previousAssistantMessageId,
+              messages,
+              generatedMessages,
+            }).messages;
             providerState = freshResponseChain();
             this.#recovery.save({
               request,
               messages,
               nextRound: round + 1,
               cacheChainState: cacheChain.snapshot(),
-              sessionCommit: { ...input.sessionCommit!, generatedMessages, usage },
+              sessionCommit: sessionCommitCheckpoint(),
             });
             continue;
           } catch (error) {
@@ -1296,30 +1596,53 @@ export class InMemoryRuntimeHost {
                 },
               });
             }
-            const state = this.#sessions.contextCompactionState(request.sessionId);
+            const state = this.#contextCompactionState(
+              request.sessionId,
+              request.turnId,
+              generatedMessages,
+              activeContextCheckpoint,
+            );
             const pressure = await this.#measureContextPressure(
               request,
               messages,
               providerState,
               input.signal,
+              fallbackTokenScale,
+              appendOnlyInputFloorTokens,
             );
             const mayRetry = Boolean(
               pressure &&
-              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE &&
-              state.unsummarizedTurnIds.length > 0,
+              requiresContextCompactionBeforeRound(pressure) &&
+              (state.unsummarizedTurnIds.length > 0 || state.activeTurn !== undefined),
             );
             if (mayRetry) {
               this.#contextCompactionAuthorizations.set(turnKey, state);
-              contextPressureNoticeRevision = undefined;
+              contextPressureNoticeKey = undefined;
+              retryContextCompaction(
+                "checkpoint_rejected",
+                error instanceof Error ? error.message : String(error),
+              );
             } else {
               this.#contextCompactionAuthorizations.delete(turnKey);
+              if (activeContextCompaction) {
+                this.#eventLog.append(identity, {
+                  kind: "context_compaction_failed",
+                  payload: {
+                    ...activeContextCompaction,
+                    round,
+                    reason: "checkpoint_rejected",
+                    message: error instanceof Error ? error.message : String(error),
+                  },
+                });
+                activeContextCompaction = undefined;
+              }
             }
             messages = [...messages, {
               role: "user",
               name: "context_compaction_correction",
               visibility: "internal",
               content: mayRetry
-                ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision and Turn order.`
+                ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision, Turn order, and active message boundary.`
                 : `The checkpoint_context call was rejected because Runtime has not issued an authorizing user-role context_pressure instruction at the mandatory threshold. Continue the task normally and do not call checkpoint_context proactively.`,
             }];
             providerState = freshResponseChain();
@@ -1376,9 +1699,7 @@ export class InMemoryRuntimeHost {
               messages,
               nextRound: round + 1,
               cacheChainState: cacheChain.snapshot(),
-              sessionCommit: input.sessionCommit
-                ? { ...input.sessionCommit, generatedMessages, usage }
-                : undefined,
+              sessionCommit: sessionCommitCheckpoint(),
             });
             continue;
           }
@@ -1471,13 +1792,6 @@ export class InMemoryRuntimeHost {
           });
         }
 
-        const toolRound = await toolLoop.execute(completedRound.toolCalls, {
-          round,
-          assistantMessageId: completedProjector.messageId,
-          signal: input.signal,
-          request,
-          contextMessages: messages,
-        });
         const assistantMessage: ModelMessage = {
           role: "assistant",
           content: completedRound.text,
@@ -1490,6 +1804,18 @@ export class InMemoryRuntimeHost {
             argumentsText: call.argumentsText,
           })),
         };
+        const toolRound = await toolLoop.execute(completedRound.toolCalls, {
+          round,
+          assistantMessageId: completedProjector.messageId,
+          signal: input.signal,
+          request,
+          contextMessages: messages,
+          modelContextIngressBudgetTokens: contextToolIngressTokenBudget({
+            pressure: dispatchPressure,
+            actualInputTokens: completedRound.usage.inputTokens,
+            actualOutputTokens: completedRound.usage.outputTokens,
+          }),
+        });
         const continuationOffset = messages.length + 1;
         messages = [
           ...messages,
@@ -1538,9 +1864,7 @@ export class InMemoryRuntimeHost {
           messages,
           nextRound: round + 1,
           cacheChainState: cacheChain.snapshot(),
-          sessionCommit: input.sessionCommit
-            ? { ...input.sessionCommit, generatedMessages, usage }
-            : undefined,
+          sessionCommit: sessionCommitCheckpoint(),
         });
       }
     } catch (error) {
@@ -1566,6 +1890,8 @@ export class InMemoryRuntimeHost {
     messages: ModelMessage[],
     providerState: ModelProviderState,
     signal?: AbortSignal,
+    fallbackScale = 1,
+    minimumInputTokens?: number,
   ) {
     const contextWindowTokens = Number(request.metadata.contextWindowTokens);
     if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) {
@@ -1587,7 +1913,30 @@ export class InMemoryRuntimeHost {
     } catch (error) {
       throw new ProviderInputTokenCountError(error);
     }
-    return estimateContextPressure(request, messages, providerInputTokens);
+    return estimateContextPressure(
+      request,
+      messages,
+      providerInputTokens,
+      { scale: fallbackScale, minimumInputTokens },
+    );
+  }
+
+  #contextCompactionState(
+    sessionId: string,
+    activeTurnId: string,
+    generatedMessages: GeneratedMessageFact[],
+    activeContextCheckpoint?: TurnContextCheckpoint,
+  ): ContextCompactionState {
+    const state = this.#sessions.contextCompactionState(sessionId);
+    const boundary = generatedMessages.at(-1)?.messageId;
+    if (!boundary || boundary === activeContextCheckpoint?.throughMessageId) return state;
+    return {
+      ...state,
+      activeTurn: {
+        turnId: activeTurnId,
+        throughMessageId: boundary,
+      },
+    };
   }
 
   #applyContextCheckpoint(input: {
@@ -1600,12 +1949,22 @@ export class InMemoryRuntimeHost {
     if (!authorized) {
       throw new Error("Runtime has not authorized context compaction for this Turn.");
     }
+    const authorizedActiveTurn = authorized.activeTurn ?? null;
+    const receivedActiveTurn = input.checkpoint.activeTurn
+      ? {
+          turnId: input.checkpoint.activeTurn.turnId,
+          throughMessageId: input.checkpoint.activeTurn.throughMessageId,
+        }
+      : null;
     if (
       input.checkpoint.sessionRevision !== authorized.revision ||
       JSON.stringify(input.checkpoint.summaries.map((item) => item.turnId)) !==
-        JSON.stringify(authorized.unsummarizedTurnIds)
+        JSON.stringify(authorized.unsummarizedTurnIds) ||
+      JSON.stringify(receivedActiveTurn) !== JSON.stringify(authorizedActiveTurn)
     ) {
-      throw new Error("Context checkpoint does not match the authorized Session revision and Turn order.");
+      throw new Error(
+        "Context checkpoint does not match the authorized Session revision, Turn order, or active message boundary.",
+      );
     }
     return this.#sessions.summarizeContext({
       sessionId: input.sessionId,
@@ -1617,17 +1976,22 @@ export class InMemoryRuntimeHost {
 
   #rebuildCompactedMessages(
     sessionId: string,
+    activeTurnId: string,
     checkpoint: RuntimeSessionCommitCheckpoint,
     generatedMessages: GeneratedMessageFact[],
+    activeContextCheckpoint?: TurnContextCheckpoint,
     maxSummaryTurns?: number,
   ): ModelMessage[] {
     return this.#sessions.rebuildActiveContext({
       sessionId,
       prefix: checkpoint.prefixMessages,
-      current: [
-        ...checkpoint.inputMessages.map((item) => item.message),
-        ...generatedMessages.map((item) => item.message),
-      ],
+      current: projectActiveTurnContext({
+        turnId: activeTurnId,
+        inputMessages: checkpoint.inputMessages,
+        generatedMessages,
+        checkpoint: activeContextCheckpoint,
+        includeResumeInstruction: true,
+      }),
       ...(maxSummaryTurns === undefined ? {} : { maxSummaryTurns }),
     }).messages;
   }
@@ -1771,6 +2135,7 @@ export class InMemoryRuntimeHost {
             sessionCommit.generatedMessages,
             sessionCommit.usage,
             checkpoint.cacheChainState,
+            sessionCommit.activeContextCheckpoint,
           );
         }
         this.#finishTurn({
@@ -1833,7 +2198,9 @@ export class InMemoryRuntimeHost {
     );
     const record = this.#toolExecutions.get(sessionId!, turnId!, toolCallId!);
     if (!record) throw new Error("Archived Tool result was not found.");
-    return record.result;
+    return record.outcome === "returned"
+      ? record.result
+      : { runtimeError: record.error };
   }
 
   async #recordLogicFeedback(input: {
@@ -2211,8 +2578,92 @@ function metadataString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+interface ActiveContextCompactionLifecycle {
+  compactionId: string;
+  round: number;
+  attempt: number;
+  assistantMessageId?: string;
+  assistantContentOffset?: number;
+}
+
+function contextCompactionStateKey(state: ContextCompactionState): string {
+  return JSON.stringify({
+    revision: state.revision,
+    unsummarizedTurnIds: state.unsummarizedTurnIds,
+    activeTurn: state.activeTurn ?? null,
+  });
+}
+
+function isContextCompactionEvent(
+  event: RuntimeEvent,
+): event is RuntimeContextCompactionEvent {
+  return event.kind === "context_compaction_started" ||
+    event.kind === "context_compaction_retrying" ||
+    event.kind === "context_compaction_completed" ||
+    event.kind === "context_compaction_failed" ||
+    event.kind === "context_compaction_cancelled";
+}
+
+function effectiveContextCompactionEvents(
+  events: RuntimeEvent[],
+): RuntimeContextCompactionEvent[] {
+  const supersededEventIds = new Set(
+    events.flatMap((event) =>
+      event.kind === "replay_reset" ? event.payload.supersededEventIds : []
+    ),
+  );
+  return events.filter((event): event is RuntimeContextCompactionEvent =>
+    isContextCompactionEvent(event) && !supersededEventIds.has(event.eventId)
+  );
+}
+
+function pendingContextCompactionLifecycle(
+  events: RuntimeContextCompactionEvent[],
+): ActiveContextCompactionLifecycle | undefined {
+  let active: ActiveContextCompactionLifecycle | undefined;
+  for (const event of events) {
+    if (event.kind === "context_compaction_started") {
+      active = {
+        compactionId: event.payload.compactionId,
+        round: event.payload.round,
+        attempt: event.payload.attempt,
+        ...(event.payload.assistantMessageId
+          ? { assistantMessageId: event.payload.assistantMessageId }
+          : {}),
+        ...(event.payload.assistantContentOffset !== undefined
+          ? { assistantContentOffset: event.payload.assistantContentOffset }
+          : {}),
+      };
+      continue;
+    }
+    if (!active || event.payload.compactionId !== active.compactionId) continue;
+    if (event.kind === "context_compaction_retrying") {
+      active = {
+        ...active,
+        round: event.payload.round,
+        attempt: event.payload.attempt,
+      };
+    } else {
+      active = undefined;
+    }
+  }
+  return active;
+}
+
 function freshResponseChain(): ModelProviderState {
   return { strategy: "response_chain" };
+}
+
+function resolveModelRequestContextLimits(request: ModelRequest): ModelRequest {
+  const contextWindowTokens = Number(request.metadata.contextWindowTokens);
+  if (!Number.isInteger(contextWindowTokens) || contextWindowTokens <= 0) return request;
+  return modelRequestSchema.parse({
+    ...request,
+    maxOutputTokens: resolveContextOutputTokens(
+      contextWindowTokens,
+      request.maxOutputTokens,
+    ),
+  });
 }
 
 function continuedResponseChain(
@@ -2222,6 +2673,19 @@ function continuedResponseChain(
   return previousResponseId
     ? { strategy: "response_chain", previousResponseId, inputMessageOffset }
     : freshResponseChain();
+}
+
+function acceptsBoundedOverLimitRecovery(
+  pressure: ContextPressure | undefined,
+  appendOnlyInputFloorTokens: number | undefined,
+): boolean {
+  return Boolean(
+    pressure &&
+    appendOnlyInputFloorTokens !== undefined &&
+    appendOnlyInputFloorTokens >= pressure.usableInputTokens &&
+    pressure.estimatedPromptTokens <=
+      appendOnlyInputFloorTokens + pressure.reservedOutputTokens,
+  );
 }
 
 function appendInterruptedAssistantMessage(

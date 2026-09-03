@@ -129,6 +129,22 @@ textarea {
   -webkit-app-region: drag;
 }
 
+/*
+ * Electron 42 on Windows can invalidate a regular element's draggable region
+ * after an unrelated scroll. Keep the flex item for layout, but expose a
+ * separate painted hit-test layer: pseudo-element drag regions remain active
+ * in the affected Electron path (electron/electron#52063).
+ */
+.window-spacer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  user-select: none;
+  app-region: drag;
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+}
+
 .window-brand,
 .window-separator {
   app-region: drag;
@@ -4302,6 +4318,18 @@ body.right-inspector-resizing .right-inspector-resizer {
   contain-intrinsic-block-size: auto 220px;
 }
 
+.message-list-item.assistant-render-stage {
+  min-height: max(
+    180px,
+    calc(
+      var(--message-list-viewport-height, 0px) -
+      var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) -
+      var(--submitted-user-reading-anchor, 44px) -
+      64px
+    )
+  );
+}
+
 .message-list-item.user-message-entering .user-bubble {
   transform-origin: right bottom;
   animation: user-message-enter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -6953,22 +6981,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   padding-top: 2px;
 }
 
-.assistant-atomic-reveal {
-  min-width: 0;
-}
-
-.assistant-atomic-reveal.measuring {
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.assistant-atomic-reveal.is-visible {
-  visibility: visible;
-  opacity: 1;
-  transition: opacity 90ms linear;
-}
-
 .assistant-final-answer {
   min-width: 0;
 }
@@ -7679,6 +7691,22 @@ body.right-inspector-resizing .right-inspector-resizer {
   opacity: 1;
 }
 
+.runtime-context-compaction-spinner {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--accent) 84%, var(--text));
+  animation: cardbush-spin 900ms linear infinite;
+}
+
+.runtime-context-compaction-detail .runtime-context-compaction-metrics {
+  color: var(--text-soft);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+}
+
+.runtime-context-compaction-detail .runtime-context-compaction-error {
+  color: var(--danger);
+}
+
 .tool-logo-files { color: #6ba7df; }
 .tool-logo-search { color: #68b8a8; }
 .tool-logo-terminal { color: #92a06e; }
@@ -7775,12 +7803,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   border: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
   border-radius: 8px;
   scrollbar-width: thin;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .assistant-atomic-reveal.is-visible {
-    transition: none;
-  }
 }
 
 .tool-change-details-loading {
@@ -19752,7 +19774,8 @@ body.right-inspector-resizing .right-inspector-resizer {
      Keep a slower, steady rotation when the OS reduces motion so they do not
      become indistinguishable from a stalled task. */
   .assistant-thinking-model.fallback svg,
-  .composer-runtime-screen.running .runtime-screen-line.processing > svg {
+  .composer-runtime-screen.running .runtime-screen-line.processing > svg,
+  .runtime-context-compaction-spinner {
     animation-name: cardbush-spin !important;
     animation-duration: 1.8s !important;
     animation-timing-function: linear !important;

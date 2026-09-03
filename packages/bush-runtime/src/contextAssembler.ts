@@ -5,6 +5,7 @@ import {
   type ContextSnapshot,
   type ModelMessage,
   type SessionSnapshot,
+  type TurnContextCheckpoint,
 } from "@cardbush/bush-protocol";
 
 import { validateConversation } from "./sessionStore.js";
@@ -16,6 +17,66 @@ export interface AssembleContextInput {
   throughTurnSequence?: number;
   maxChars?: number;
   maxSummaryTurns?: number;
+}
+
+export const ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME = "active_turn_checkpoint" as const;
+export const ACTIVE_TURN_RESUME_MESSAGE_NAME = "context_checkpoint_resume" as const;
+
+interface CheckpointMessageFact {
+  messageId: string;
+  message: ModelMessage;
+}
+
+export function projectActiveTurnContext(input: {
+  turnId: string;
+  inputMessages: CheckpointMessageFact[];
+  generatedMessages: CheckpointMessageFact[];
+  checkpoint?: TurnContextCheckpoint;
+  includeResumeInstruction?: boolean;
+}): ModelMessage[] {
+  const inputs = input.inputMessages.map((item) => item.message);
+  if (!input.checkpoint) {
+    return [...inputs, ...input.generatedMessages.map((item) => item.message)];
+  }
+  if (input.checkpoint.inputMessageCount !== input.inputMessages.length) {
+    throw new Error("Active Turn checkpoint input boundary does not match the Turn inputs.");
+  }
+  const boundaryIndex = input.generatedMessages.findIndex((item) =>
+    item.messageId === input.checkpoint!.throughMessageId
+  );
+  if (boundaryIndex < 0) {
+    throw new Error(
+      `Active Turn checkpoint boundary ${input.checkpoint.throughMessageId} does not exist.`,
+    );
+  }
+  const projected: ModelMessage[] = [
+    ...inputs,
+    activeTurnCheckpointMessage(input.turnId, input.checkpoint),
+  ];
+  if (input.includeResumeInstruction) projected.push(activeTurnResumeMessage());
+  projected.push(
+    ...input.generatedMessages.slice(boundaryIndex + 1).map((item) => item.message),
+  );
+  return projected;
+}
+
+export function activeTurnCheckpointMessage(
+  turnId: string,
+  checkpoint: TurnContextCheckpoint,
+): ModelMessage {
+  return {
+    role: "assistant",
+    content: `<${ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME} turn_id="${escapeAttribute(turnId)}" through_message_id="${escapeAttribute(checkpoint.throughMessageId)}">\n${checkpoint.summary}\n</${ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME}>`,
+    toolCalls: [],
+  };
+}
+
+export function activeTurnResumeMessage(): ModelMessage {
+  return {
+    role: "developer",
+    name: ACTIVE_TURN_RESUME_MESSAGE_NAME,
+    content: "The preceding assistant message is an intermediate factual checkpoint for the active Turn, not a final answer. Continue the original user request from its unresolved work and exact next action. Do not repeat completed writes, Tool operations, or external side effects. If the requested work is already complete, return the final user-facing answer.",
+  };
 }
 
 export function assembleContext(input: AssembleContextInput): ContextSnapshot {
@@ -55,6 +116,17 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
           visibility: "internal" as const,
           content: `<turn_context_summary turn_id="${escapeAttribute(turn.turnId)}" turn_sequence="${turn.turnSequence}">\n${turn.contextSummary}\n</turn_context_summary>`,
         }],
+      }];
+    }
+    if (turn.contextCheckpoint && source.length === turn.messages.length) {
+      return [{
+        source,
+        messages: projectActiveTurnContext({
+          turnId: turn.turnId,
+          inputMessages: turn.messages.slice(0, turn.contextCheckpoint.inputMessageCount),
+          generatedMessages: turn.messages.slice(turn.contextCheckpoint.inputMessageCount),
+          checkpoint: turn.contextCheckpoint,
+        }),
       }];
     }
     return [{ source, messages: source.map((message) => message.message) }];

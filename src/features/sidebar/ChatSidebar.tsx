@@ -37,6 +37,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
@@ -56,8 +57,10 @@ import { conversationProjectId } from '../conversationScope';
 import { copyText } from '../messageFeedback';
 import {
   groupChangeReportsByTurn,
+  hydrateConversationChangeReport,
   ToolFileChangeView,
   type ConversationChangeReport,
+  type ToolChangeReport,
 } from '../tools';
 export type ProjectAction =
   | 'pin'
@@ -1648,6 +1651,7 @@ export function ConversationChangeDialog({
   onClose,
   onRevert,
   onRevertAll,
+  revertAvailable = true,
   embedded = false,
 }: {
   language: AppLanguage;
@@ -1660,9 +1664,26 @@ export function ConversationChangeDialog({
   onClose: () => void;
   onRevert: (report: ConversationChangeReport) => Promise<void>;
   onRevertAll: () => Promise<void>;
+  revertAvailable?: boolean;
   embedded?: boolean;
 }) {
-  const reviewGroups = useMemo(() => groupChangeReportsByTurn(reports), [reports]);
+  const [hydratedReports, setHydratedReports] = useState<
+    Map<string, ToolChangeReport>
+  >(() => new Map());
+  const [detailRequests, setDetailRequests] = useState<
+    Map<string, 'loading' | 'loaded' | 'failed'>
+  >(() => new Map());
+  const resolvedReports = useMemo(
+    () => reports.map((report) => {
+      const hydrated = hydratedReports.get(reviewDetailKey(conversation.id, report.id));
+      return hydrated ? { ...report, ...hydrated } : report;
+    }),
+    [conversation.id, hydratedReports, reports],
+  );
+  const reviewGroups = useMemo(
+    () => groupChangeReportsByTurn(resolvedReports),
+    [resolvedReports],
+  );
   const reviewItems = useMemo(
     () => reviewGroups.flatMap((group) => group.items),
     [reviewGroups],
@@ -1697,6 +1718,74 @@ export function ConversationChangeDialog({
   }, []);
   const selectedItem = reviewItems.find((item) => item.key === selectedKey) ??
     reviewItems[0] ?? null;
+  const selectedDetailKey = selectedItem
+    ? reviewDetailKey(conversation.id, selectedItem.report.id)
+    : '';
+  const selectedDetailStatus = selectedDetailKey
+    ? detailRequests.get(selectedDetailKey)
+    : undefined;
+  useEffect(() => {
+    if (!selectedItem || !selectedDetailKey || selectedDetailStatus) return undefined;
+    const { report, file } = selectedItem;
+    const turnId = report.turnId?.trim() ?? '';
+    const executionIds = new Set(
+      (report.executionIds ?? []).map((value) => value.trim()).filter(Boolean),
+    );
+    const missingKnownDetails =
+      file.lines.length === 0 &&
+      (report.detailsDeferred === true || file.additions > 0 || file.deletions > 0);
+    if (!missingKnownDetails || !turnId || executionIds.size === 0) return undefined;
+
+    const turnReports = reports.filter(
+      (candidate) =>
+        candidate.turnId?.trim() === turnId &&
+        (candidate.executionIds?.length ?? 0) > 0,
+    );
+    const turnDetailKeys = turnReports.map((candidate) =>
+      reviewDetailKey(conversation.id, candidate.id),
+    );
+    let cancelled = false;
+    setDetailRequests((current) => {
+      const next = new Map(current);
+      for (const key of turnDetailKeys) {
+        if (!next.has(key)) next.set(key, 'loading');
+      }
+      return next;
+    });
+    void fetchRuntimeTurnToolExecutionDetails({
+      sessionId: conversation.id,
+      turnId,
+    })
+      .then((details) => {
+        if (cancelled) return;
+        const hydratedByKey = turnReports.map((candidate) => ({
+          key: reviewDetailKey(conversation.id, candidate.id),
+          report: hydrateConversationChangeReport(candidate, details),
+        }));
+        setHydratedReports((current) => {
+          const next = new Map(current);
+          for (const hydrated of hydratedByKey) {
+            if (hydrated.report) next.set(hydrated.key, hydrated.report);
+          }
+          return next;
+        });
+        setDetailRequests((current) => {
+          const next = new Map(current);
+          for (const hydrated of hydratedByKey) {
+            next.set(hydrated.key, hydrated.report ? 'loaded' : 'failed');
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetailRequests((current) => new Map(current).set(selectedDetailKey, 'failed'));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conversation.id, reports, selectedDetailKey, selectedDetailStatus, selectedItem]);
   useEffect(() => {
     if (reviewItems.length === 0) {
       setSelectedKey('');
@@ -1730,7 +1819,7 @@ export function ConversationChangeDialog({
       return next;
     });
   }, [newestGroupId, reviewGroups]);
-  const totals = reports.reduce(
+  const totals = resolvedReports.reduce(
     (sum, report) => ({
       additions: sum.additions + report.additions,
       deletions: sum.deletions + report.deletions,
@@ -1743,7 +1832,7 @@ export function ConversationChangeDialog({
       .filter(Boolean),
   ).size;
   const allBusy = revertingChangeId === `conversation:${conversation.id}`;
-  const allReverted = reports.every((report) => revertedChangeIds.has(report.id));
+  const allReverted = resolvedReports.every((report) => revertedChangeIds.has(report.id));
   const dialog = (
       <section className={`change-review-dialog${embedded ? ' embedded' : ''}`}>
         {!embedded && (
@@ -1766,19 +1855,21 @@ export function ConversationChangeDialog({
           </span>
           {totals.additions > 0 && <b className="diff-count add">+{totals.additions}</b>}
           {totals.deletions > 0 && <b className="diff-count del">-{totals.deletions}</b>}
-          <button
-            className="danger-soft-button"
-            type="button"
-            disabled={Boolean(revertingChangeId) || allReverted}
-            onClick={() => void onRevertAll()}
-          >
-            {allBusy ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
-            <span>
-              {allReverted
-                ? (language === 'zh' ? '已全部撤回' : 'All reverted')
-                : (language === 'zh' ? '撤回全部修改' : 'Revert all')}
-            </span>
-          </button>
+          {revertAvailable && (
+            <button
+              className="danger-soft-button"
+              type="button"
+              disabled={Boolean(revertingChangeId) || allReverted}
+              onClick={() => void onRevertAll()}
+            >
+              {allBusy ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
+              <span>
+                {allReverted
+                  ? (language === 'zh' ? '已全部撤回' : 'All reverted')
+                  : (language === 'zh' ? '撤回全部修改' : 'Revert all')}
+              </span>
+            </button>
+          )}
         </div>
         {notice && <pre className="change-review-notice">{notice}</pre>}
         <div
@@ -1798,26 +1889,35 @@ export function ConversationChangeDialog({
                         : `Turn ${selectedItem.turnIndex} · ${formatChangeTimestamp(selectedItem.report.createdAt, language)}`}
                     </span>
                   </div>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={
-                      Boolean(revertingChangeId) ||
-                      revertedChangeIds.has(selectedItem.report.id)
-                    }
-                    onClick={() => void onRevert(selectedItem.report)}
-                  >
-                    {revertingChangeId === selectedItem.report.id
-                      ? <LoaderCircle size={14} />
-                      : <RotateCcw size={14} />}
-                    <span>
-                      {revertedChangeIds.has(selectedItem.report.id)
-                        ? (language === 'zh' ? '已撤回' : 'Reverted')
-                        : (language === 'zh' ? '撤回这组' : 'Revert set')}
-                    </span>
-                  </button>
+                  {revertAvailable && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={
+                        Boolean(revertingChangeId) ||
+                        revertedChangeIds.has(selectedItem.report.id)
+                      }
+                      onClick={() => void onRevert(selectedItem.report)}
+                    >
+                      {revertingChangeId === selectedItem.report.id
+                        ? <LoaderCircle size={14} />
+                        : <RotateCcw size={14} />}
+                      <span>
+                        {revertedChangeIds.has(selectedItem.report.id)
+                          ? (language === 'zh' ? '已撤回' : 'Reverted')
+                          : (language === 'zh' ? '撤回这组' : 'Revert set')}
+                      </span>
+                    </button>
+                  )}
                 </header>
-                <ToolFileChangeView file={selectedItem.file} language={language} />
+                {selectedDetailStatus === 'loading' && selectedItem.file.lines.length === 0 ? (
+                  <p className="tool-change-details-loading">
+                    <LoaderCircle size={14} />
+                    <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>
+                  </p>
+                ) : (
+                  <ToolFileChangeView file={selectedItem.file} language={language} />
+                )}
               </>
             ) : (
               <div className="change-review-empty">
@@ -1915,6 +2015,10 @@ export function ConversationChangeDialog({
       {dialog}
     </div>
   );
+}
+
+function reviewDetailKey(conversationId: string, reportId: string) {
+  return `${conversationId}\u0000${reportId}`;
 }
 
 function formatChangeTimestamp(value: string | undefined, language: AppLanguage) {

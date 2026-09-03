@@ -85,6 +85,9 @@ assert.deepEqual(
   'persisted request usage must stay bound to the model window used for that request',
 );
 assert.match(runtimeChat, /contextWindowMetrics\(\s*committed\?\.usage/);
+assert.match(runtimeChat, /case 'model_request_usage'/);
+assert.match(runtimeChat, /lastRequestInputTokens: event\.payload\.inputTokens/);
+assert.match(runtimeChat, /source: 'electron_runtime_model_request'/);
 assert.match(api, /contextWindowMetrics\(latest\?\.usage\)/);
 assert.doesNotMatch(api, /usedTokens:\s*context\.estimatedTokens/);
 
