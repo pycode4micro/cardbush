@@ -34,6 +34,7 @@ import {
   decodeRuntimeCapabilities,
   decodeRuntimeEvent,
   runtimeSessionIdentitySchema,
+  runtimeSessionReadRequestSchema,
   runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
   runtimeTurnIdentitySchema,
@@ -55,12 +56,14 @@ import {
   sessionSnapshotSchema,
   toolExecutionIdentitySchema,
   toolExecutionRecordSchema,
+  toolExecutionSummarySchema,
   toolDefinitionSchema,
   toolCatalogEntrySchema,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
   subagentTaskSchema,
   turnToolExecutionsIdentitySchema,
+  turnToolExecutionsRequestSchema,
   updateRuntimeSessionMetadataRequestSchema,
   supersedeRuntimeSessionMessagesRequestSchema,
   type ContextSnapshot,
@@ -80,6 +83,7 @@ import {
   type TeamSnapshotResult,
   type SessionSnapshot,
   type ToolExecutionRecord,
+  type ToolExecutionSummary,
   type ToolDefinition,
   type ToolCatalogEntry,
   type SubagentTask,
@@ -116,6 +120,21 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     signal?: AbortSignal,
   ): Promise<SessionSnapshot | null> {
     const payload = runtimeSessionIdentitySchema.parse({ sessionId });
+    return this.command(
+      { kind: GET_RUNTIME_SESSION_COMMAND, payload },
+      (input) => input == null ? null : sessionSnapshotSchema.parse(input),
+      signal,
+    );
+  }
+
+  getConversationSession(
+    sessionId: string,
+    signal?: AbortSignal,
+  ): Promise<SessionSnapshot | null> {
+    const payload = runtimeSessionReadRequestSchema.parse({
+      sessionId,
+      messageProjection: 'conversation',
+    });
     return this.command(
       { kind: GET_RUNTIME_SESSION_COMMAND, payload },
       (input) => input == null ? null : sessionSnapshotSchema.parse(input),
@@ -280,6 +299,21 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, payload },
       (value) => toolExecutionRecordSchema.array().parse(value),
+      signal,
+    );
+  }
+
+  listTurnToolExecutionSummaries(
+    input: { sessionId: string; turnId: string },
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionSummary[]> {
+    const payload = turnToolExecutionsRequestSchema.parse({
+      ...input,
+      detail: 'summary',
+    });
+    return this.command(
+      { kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND, payload },
+      (value) => toolExecutionSummarySchema.array().parse(value),
       signal,
     );
   }

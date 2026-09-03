@@ -12,6 +12,7 @@ import {
   OpenAIResponsesProvider,
   resolveLocalImageInputs,
   toResponsesCreateParams,
+  toResponsesInputTokenCountParams,
 } from "../dist/index.js";
 
 function response(overrides = {}) {
@@ -424,6 +425,239 @@ test("posts directly to the Responses endpoint and streams stable model events",
     "response_completed",
   ]);
 
+});
+
+test("counts inherited response-chain context with the same continuation identity", () => {
+  const projected = toResponsesCreateParams({
+    protocol: "bush.model_request.v1",
+    requestId: "request_count_continuation",
+    sessionId: "session_count_continuation",
+    turnId: "turn_count_continuation",
+    model: "response-model",
+    messages: [
+      { role: "user", content: "initial" },
+      { role: "tool", toolCallId: "call_1", content: "new result" },
+    ],
+    tools: [{ name: "inspect", inputSchema: { type: "object" } }],
+    providerState: {
+      strategy: "response_chain",
+      previousResponseId: "resp_previous",
+      inputMessageOffset: 1,
+    },
+    metadata: {},
+  });
+
+  const counted = toResponsesInputTokenCountParams(projected);
+  assert.equal(counted.previous_response_id, "resp_previous");
+  assert.deepEqual(counted.input, projected.input);
+  assert.deepEqual(counted.tools, projected.tools);
+});
+
+test("counts the same projected Responses input before dispatch", async (context) => {
+  const received = [];
+  const server = createServer(async (request, responseStream) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    received.push({ url: request.url, body });
+    if (request.url === "/v1/responses/input_tokens") {
+      responseStream.writeHead(200, { "content-type": "application/json" });
+      responseStream.end(JSON.stringify({
+        object: "response.input_tokens",
+        input_tokens: 1234,
+      }));
+      return;
+    }
+    responseStream.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    for (const event of [
+      {
+        type: "response.created",
+        sequence_number: 0,
+        response: response({ status: "in_progress" }),
+      },
+      {
+        type: "response.completed",
+        sequence_number: 1,
+        response: response(),
+      },
+    ]) {
+      responseStream.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+    responseStream.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const provider = new OpenAIResponsesProvider({
+    apiKey: "response-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+  });
+  const request = {
+    protocol: "bush.model_request.v1",
+    requestId: "request_count",
+    sessionId: "session_count",
+    turnId: "turn_count",
+    model: "response-model",
+    messages: [{ role: "user", content: "count exactly" }],
+    tools: [{
+      name: "inspect",
+      description: "Inspect",
+      inputSchema: { type: "object" },
+    }],
+    reasoningEffort: "high",
+    providerState: { strategy: "response_chain" },
+    metadata: {},
+  };
+
+  const count = await provider.countInputTokens(request);
+  for await (const _event of provider.stream(request)) {
+    // Drain the response.
+  }
+
+  assert.deepEqual(count, { inputTokens: 1234, source: "provider" });
+  assert.equal(received.length, 2);
+  assert.equal(received[0].url, "/v1/responses/input_tokens");
+  assert.equal(received[1].url, "/v1/responses");
+  assert.deepEqual(received[0].body.input, received[1].body.input);
+  assert.deepEqual(received[0].body.tools, received[1].body.tools);
+  assert.deepEqual(received[0].body.reasoning, received[1].body.reasoning);
+});
+
+test("falls back once and remembers an unsupported input-token count endpoint", async (context) => {
+  const countRequests = new Map();
+  let responseRequests = 0;
+  const server = createServer(async (request, responseStream) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (request.url === "/v1/responses/input_tokens") {
+      const status = Number(String(body.model).split("-").at(-1));
+      countRequests.set(status, (countRequests.get(status) ?? 0) + 1);
+      responseStream.writeHead(status);
+      responseStream.end();
+      return;
+    }
+    responseRequests += 1;
+    responseStream.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    });
+    for (const event of [
+      {
+        type: "response.created",
+        sequence_number: 0,
+        response: response({ status: "in_progress" }),
+      },
+      {
+        type: "response.completed",
+        sequence_number: 1,
+        response: response(),
+      },
+    ]) {
+      responseStream.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }
+    responseStream.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const capabilityStore = new InMemoryProviderCapabilityStore();
+  const provider = new OpenAIResponsesProvider({
+    apiKey: "response-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capabilityStore,
+    capabilityScope: "unsupported-count-endpoint",
+  });
+  const requestFor = (status) => ({
+    protocol: "bush.model_request.v1",
+    requestId: `request_count_${status}`,
+    sessionId: "session_count_unsupported",
+    turnId: `turn_count_${status}`,
+    model: `response-model-${status}`,
+    messages: [{ role: "user", content: "continue without exact count" }],
+    tools: [],
+    metadata: {},
+  });
+
+  for (const status of [404, 405, 501]) {
+    const request = requestFor(status);
+    assert.equal(await provider.countInputTokens(request), undefined);
+    assert.equal(await provider.countInputTokens(request), undefined);
+    assert.equal(countRequests.get(status), 1);
+    const observation = capabilityStore.read({
+      scope: "unsupported-count-endpoint",
+      model: request.model,
+      capability: "input_token_count",
+    });
+    assert.equal(observation.status, "unsupported");
+    assert.equal(observation.reason, `http_${status}`);
+  }
+
+  const events = [];
+  for await (const event of provider.stream(requestFor(404))) events.push(event);
+  assert.equal(responseRequests, 1);
+  assert.equal(events.at(-1).kind, "response_completed");
+});
+
+test("does not hide authentication failures from input-token counting", async (context) => {
+  let countRequests = 0;
+  const server = createServer(async (_request, responseStream) => {
+    countRequests += 1;
+    responseStream.writeHead(401, { "content-type": "application/json" });
+    responseStream.end(JSON.stringify({
+      error: {
+        message: "invalid credential",
+        type: "authentication_error",
+        code: "invalid_api_key",
+      },
+    }));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  context.after(() => new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const capabilityStore = new InMemoryProviderCapabilityStore();
+  const provider = new OpenAIResponsesProvider({
+    apiKey: "invalid-secret",
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capabilityStore,
+    capabilityScope: "count-auth-failure",
+  });
+  const request = {
+    protocol: "bush.model_request.v1",
+    requestId: "request_count_auth",
+    sessionId: "session_count_auth",
+    turnId: "turn_count_auth",
+    model: "response-model",
+    messages: [{ role: "user", content: "must surface auth failures" }],
+    tools: [],
+    metadata: {},
+  };
+
+  await assert.rejects(() => provider.countInputTokens(request), (error) => error?.status === 401);
+  await assert.rejects(() => provider.countInputTokens(request), (error) => error?.status === 401);
+  assert.equal(countRequests, 2);
+  assert.deepEqual(capabilityStore.read({
+    scope: "count-auth-failure",
+    model: request.model,
+    capability: "input_token_count",
+  }), { status: "unknown" });
 });
 
 test("uses full input when continuation support has not been observed", async (context) => {

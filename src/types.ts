@@ -561,6 +561,8 @@ export interface StreamStart {
 export interface AssistantStreamChunk {
   messageId: string;
   assistantSegmentIndex?: number;
+  segmentId?: string;
+  segmentOrdinal?: number;
   turnId: string;
   createdAt?: string;
   sequence?: number;

@@ -62,7 +62,6 @@ const cardbushDevelopmentRuntime =
   process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() === '1';
 const cardbushRuntimeIsPackaged = app.isPackaged && !cardbushDevelopmentRuntime;
 const windowCompositionDebugEnabled =
-  !cardbushRuntimeIsPackaged ||
   process.env.CARDBUSH_WINDOW_COMPOSITION_DEBUG?.trim() === '1';
 const cardbushDevelopmentRuntimeIdentity =
   path
@@ -4255,21 +4254,41 @@ function isLoopback(host: string) {
   return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
 }
 
-function readWallpaperAccent() {
+type WallpaperAccentResult = {
+  r: number;
+  g: number;
+  b: number;
+  hex: string;
+  source: 'wallpaper' | 'fallback';
+};
+
+let wallpaperAccentCache: {
+  signature: string;
+  value: WallpaperAccentResult;
+} | null = null;
+
+function readWallpaperAccent(): WallpaperAccentResult {
   const fallback = normalizeAccent({ r: 99, g: 123, b: 97 });
   try {
     const wallpaperPath = currentWallpaperPath();
     if (!wallpaperPath) {
       return { ...fallback, source: 'fallback' };
     }
+    const stats = fs.statSync(wallpaperPath);
+    const signature = `${wallpaperPath}\u0000${stats.size}\u0000${stats.mtimeMs}`;
+    if (wallpaperAccentCache?.signature === signature) {
+      return wallpaperAccentCache.value;
+    }
     const color = dominantColorFromImage(wallpaperPath);
     if (!color) {
       return { ...fallback, source: 'fallback' };
     }
-    return {
+    const value: WallpaperAccentResult = {
       ...normalizeAccent(color),
       source: 'wallpaper',
     };
+    wallpaperAccentCache = { signature, value };
+    return value;
   } catch {
     return { ...fallback, source: 'fallback' };
   }

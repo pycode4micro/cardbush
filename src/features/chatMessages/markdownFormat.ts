@@ -66,10 +66,59 @@ export function normalizeMarkdownContentForDisplay(content: string) {
       return line;
     },
   );
-  return normalized.replace(
+  const withoutEmptyFences = normalized.replace(
     /^[ \t]*(`{3,}|~{3,})[^\r\n]*\r?\n(?:[ \t]*\r?\n)*[ \t]*\1[ \t]*$/gm,
     '',
   );
+  return transformMarkdownProse(withoutEmptyFences, normalizeEmphasizedBareLinks);
+}
+
+function normalizeEmphasizedBareLinks(value: string) {
+  return value.replace(
+    /(\*\*|__)(https?:\/\/[^\s<>()]+?)\1(?=$|[\s([{（【])/gi,
+    (_match, marker: string, url: string) => `${marker}[${url}](${url})${marker}`,
+  );
+}
+
+function transformMarkdownProse(
+  content: string,
+  transform: (value: string) => string,
+) {
+  const lines = content.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? [];
+  let fence: { marker: string; length: number } | null = null;
+  return lines.map((line) => {
+    const fenceMatch = /^[ \t]{0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (!fence) {
+        fence = { marker, length: fenceMatch[1].length };
+      } else if (fence.marker === marker && fenceMatch[1].length >= fence.length) {
+        fence = null;
+      }
+      return line;
+    }
+    return fence ? line : transformOutsideInlineCode(line, transform);
+  }).join('');
+}
+
+function transformOutsideInlineCode(
+  value: string,
+  transform: (value: string) => string,
+) {
+  let cursor = 0;
+  let openingTicks = 0;
+  let result = '';
+  for (const match of value.matchAll(/`+/g)) {
+    const index = match.index ?? 0;
+    const segment = value.slice(cursor, index);
+    result += openingTicks === 0 ? transform(segment) : segment;
+    result += match[0];
+    if (openingTicks === 0) openingTicks = match[0].length;
+    else if (match[0].length === openingTicks) openingTicks = 0;
+    cursor = index + match[0].length;
+  }
+  const tail = value.slice(cursor);
+  return result + (openingTicks === 0 ? transform(tail) : tail);
 }
 
 export function normalizeExecutionNarrationForDisplay(

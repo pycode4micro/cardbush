@@ -27,14 +27,10 @@ import type {
   ConversationChangeSummary,
   ToolFileChange,
 } from '../tools';
+import { useLiveThinkingNotice } from './useLiveThinkingNotice';
+import type { ThinkingNotice } from './thinkingNoticeProjection';
 
-export type ThinkingNotice = {
-  id: string;
-  turnId: string;
-  preview: string;
-  content: string;
-  createdAt: string;
-};
+export type { ThinkingNotice } from './thinkingNoticeProjection';
 
 type RuntimeRailItem = {
   kind: 'processing' | 'thinking' | 'changes' | 'queue';
@@ -640,6 +636,43 @@ export function ComposerRuntimeRail({
         </span>
       </button>
     </div>
+  );
+}
+
+type LiveComposerRuntimeRailProps = Omit<
+  Parameters<typeof ComposerRuntimeRail>[0],
+  'thinkingNotice' | 'thinkingOpen' | 'onToggleThinking' | 'onCloseThinking'
+> & {
+  activeConversationId: string;
+  thinkingVisible: boolean;
+};
+
+export function LiveComposerRuntimeRail({
+  activeConversationId,
+  thinkingVisible,
+  running,
+  ...props
+}: LiveComposerRuntimeRailProps) {
+  const thinkingNotice = useLiveThinkingNotice({
+    activeConversationId,
+    enabled: thinkingVisible,
+    running,
+  });
+  const [thinkingOpen, setThinkingOpen] = useState(false);
+
+  useEffect(() => {
+    setThinkingOpen(false);
+  }, [thinkingNotice?.id]);
+
+  return (
+    <ComposerRuntimeRail
+      {...props}
+      running={running}
+      thinkingNotice={thinkingNotice}
+      thinkingOpen={thinkingOpen}
+      onToggleThinking={() => setThinkingOpen((current) => !current)}
+      onCloseThinking={() => setThinkingOpen(false)}
+    />
   );
 }
 

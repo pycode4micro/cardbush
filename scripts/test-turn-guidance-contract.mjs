@@ -100,20 +100,43 @@ const hookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
+const runtimeChatSource = fs.readFileSync(
+  path.join(process.cwd(), 'src', 'backend', 'runtimeChat.ts'),
+  'utf8',
+);
 assert.match(hookSource, /optimisticGuidanceMessage\(/);
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/);
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /isBushServerHttpError/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
-assert.match(hookSource, /const terminalRevealMinDurationMs = 700/);
-assert.match(hookSource, /const terminalRevealMaxDurationMs = 2800/);
-assert.match(hookSource, /const terminalRevealCharactersPerSecond = 560/);
+assert.doesNotMatch(
+  hookSource,
+  /terminalRevealCharactersPerSecond|scheduleFrame|animationCharacters/,
+  'terminal output must not drive React and Markdown parsing from an animation-frame loop',
+);
 assert.equal(
   (hookSource.match(
     /streamBuffer\.flushToolBoundary\(animateFinal \? route : undefined\);[\s\S]{0,300}?streamBuffer\.reset\(route,/g,
   ) ?? []).length,
   3,
   'foreground, control, and Goal streams must preserve process boundaries without exposing the final route before terminal',
+);
+assert.equal(
+  (hookSource.match(
+    /onAssistantSegmentCompleted: \(content, chunk\) => \{[\s\S]{0,100}?streamBuffer\.completeSegment\(content, chunk\)/g,
+  ) ?? []).length,
+  3,
+  'foreground, control, and Goal streams must commit loop text from the canonical segment-completed fact',
+);
+assert.doesNotMatch(
+  hookSource,
+  /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/,
+  'tool lifecycle events must not be used to guess assistant text boundaries',
+);
+assert.match(
+  runtimeChatSource,
+  /case 'assistant_segment_completed':[\s\S]{0,240}?onAssistantSegmentCompleted\?\.\(/,
+  'the GUI stream adapter must expose the Runtime segment-completed fact',
 );
 
 const appSource = fs.readFileSync(
@@ -352,6 +375,66 @@ assert.equal(
 );
 boundaryBuffer.dispose();
 
+const completedSegmentChunks = [];
+const completedSegmentBuffer = createAssistantStreamDeltaBuffer((delta, release) => {
+  completedSegmentChunks.push({ delta, release });
+});
+completedSegmentBuffer.push('协议完成事件前');
+completedSegmentBuffer.push('保持在 React 之外。');
+assert.equal(completedSegmentChunks.length, 0);
+await completedSegmentBuffer.completeSegmentSnapshot(
+  '协议完成事件前保持在 React 之外。',
+  {
+    reason: 'segment_completed',
+    eventId: 'event-segment-completed-1',
+    segmentId: 'assistant-segment-1',
+    segmentOrdinal: 1,
+  },
+);
+assert.deepEqual(plain(completedSegmentChunks), [{
+  delta: '协议完成事件前保持在 React 之外。',
+  release: {
+    reason: 'segment_completed',
+    eventId: 'event-segment-completed-1',
+    segmentId: 'assistant-segment-1',
+    segmentOrdinal: 1,
+  },
+}]);
+await completedSegmentBuffer.completeSegmentSnapshot(
+  '协议完成事件前保持在 React 之外。',
+  {
+    reason: 'segment_completed',
+    eventId: 'event-segment-completed-1',
+    segmentId: 'assistant-segment-1',
+    segmentOrdinal: 1,
+  },
+);
+assert.equal(
+  completedSegmentChunks.length,
+  1,
+  'duplicate completed facts must not create duplicate React commits',
+);
+completedSegmentBuffer.push('第二段先以 delta 到达。');
+await completedSegmentBuffer.completeSegmentSnapshot(
+  '第二段先以 delta 到达。',
+  {
+    reason: 'segment_completed',
+    eventId: 'event-segment-completed-2',
+    segmentId: 'assistant-segment-2',
+    segmentOrdinal: 2,
+  },
+);
+await completedSegmentBuffer.completeFinalSnapshot(
+  '协议完成事件前保持在 React 之外。第二段先以 delta 到达。',
+);
+await completedSegmentBuffer.releaseTerminal();
+assert.equal(
+  completedSegmentChunks.map((chunk) => chunk.delta).join(''),
+  '协议完成事件前保持在 React 之外。第二段先以 delta 到达。',
+  'an aggregate final snapshot must not duplicate individually completed protocol segments',
+);
+completedSegmentBuffer.dispose();
+
 const eagerStreamChunks = [];
 const eagerStreamBuffer = createAssistantStreamDeltaBuffer((delta) => {
   eagerStreamChunks.push(delta);
@@ -379,7 +462,7 @@ const finalSnapshotChunks = [];
 const finalSnapshotBuffer = createAssistantStreamDeltaBuffer((delta) => {
   finalSnapshotChunks.push(delta);
 });
-const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端仍会分段加速呈现。'.repeat(4);
+const finalSnapshotText = '这是仅在 done 事件中返回的完整终轮内容，用于验证前端只提交一次稳定快照。'.repeat(256);
 const finalSnapshotDrain = finalSnapshotBuffer.completeFinalSnapshot(finalSnapshotText);
 assert.equal(
   finalSnapshotChunks.join(''),
@@ -389,11 +472,45 @@ assert.equal(
 const finalSnapshotReveal = finalSnapshotBuffer.releaseTerminal();
 await Promise.all([finalSnapshotDrain, finalSnapshotReveal]);
 assert.equal(finalSnapshotChunks.join(''), finalSnapshotText);
-assert.ok(
-  finalSnapshotChunks.length > 2,
-  'a final-only snapshot must use multiple accelerated rendering chunks',
+assert.equal(
+  finalSnapshotChunks.length,
+  1,
+  'a final-only snapshot must produce one React commit instead of reparsing Markdown per frame',
 );
 finalSnapshotBuffer.dispose();
+
+const reorderedTerminalChunks = [];
+const reorderedTerminalBuffer = createAssistantStreamDeltaBuffer((delta) => {
+  reorderedTerminalChunks.push(delta);
+});
+await reorderedTerminalBuffer.releaseTerminal();
+const reorderedTerminalText = Array.from(
+  { length: 2_000 },
+  (_, index) => `延迟片段-${index};`,
+).join('');
+for (let index = 0; index < reorderedTerminalText.length; index += 7) {
+  reorderedTerminalBuffer.push(reorderedTerminalText.slice(index, index + 7));
+}
+assert.equal(
+  reorderedTerminalChunks.length,
+  0,
+  'late token events after an early terminal must remain coalesced outside React',
+);
+await reorderedTerminalBuffer.completeFinalSnapshot(reorderedTerminalText);
+assert.equal(reorderedTerminalChunks.join(''), reorderedTerminalText);
+assert.equal(
+  reorderedTerminalChunks.length,
+  1,
+  'terminal-before-final reordering must still produce one React commit',
+);
+await reorderedTerminalBuffer.completeFinalSnapshot(reorderedTerminalText);
+await reorderedTerminalBuffer.releaseTerminal();
+assert.equal(
+  reorderedTerminalChunks.length,
+  1,
+  'duplicate final snapshots and terminal events must be idempotent',
+);
+reorderedTerminalBuffer.dispose();
 
 const interruptedChunks = [];
 const interruptedBuffer = createAssistantStreamDeltaBuffer((delta) => {
@@ -666,18 +783,17 @@ const loopState = mergeFinalStreamMessages(
   },
 );
 
-assert.match(hookSource, /onToolExecution: \(execution\) => \{\s*streamBuffer\.flushToolBoundary\(\);/);
 assert.match(
   hookSource,
   /onFinalAssistantText: \(text, chunk\) => \{[\s\S]{0,180}streamBuffer\.completeRoute\(text, chunk\)/,
-  'final assistant snapshots must pass through the animated stream buffer',
+  'final assistant snapshots must pass through the factual stream buffer',
 );
 assert.equal(
   (hookSource.match(
     /!terminalSnapshot\.stopped && terminalSnapshot\.status === 'completed'[\s\S]{0,100}?streamBuffer\.releaseTerminal\(\)[\s\S]{0,100}?streamBuffer\.flushAllStreaming\(\)/g,
   ) ?? []).length,
   2,
-  'foreground and control streams must animate completed terminals and flush interrupted terminals immediately',
+  'foreground and control streams must release completed terminals and flush interrupted terminals immediately',
 );
 assert.doesNotMatch(
   hookSource,
@@ -892,6 +1008,11 @@ const activeProjection = normalizeActiveTurnTranscriptForDisplay([
   },
 ], 'active-turn');
 assert.equal(activeProjection.length, 1);
+assert.equal(
+  activeProjection[0].id,
+  'active-segment-1',
+  'the first visible assistant segment must keep ownership of the active React row key',
+);
 assert.equal(activeProjection[0].content, '第二段惯性回复');
 assert.deepEqual(
   plain(activeProjection[0].loopHistory.map((message) => message.content)),

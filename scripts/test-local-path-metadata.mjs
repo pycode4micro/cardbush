@@ -41,15 +41,15 @@ assert.equal(
 
 assertJsonEqual(
   collectAllowedResourcePaths({
-    projectDir: 'C:\\Users\\wfang\\Desktop\\cardbush-electron',
+    projectDir: 'C:\\Users\\wfang\\Desktop\\cardbush',
     images: [{ path: pastedImage }],
     files: [
-      'C:\\Users\\wfang\\Desktop\\cardbush-electron\\README.md',
+      'C:\\Users\\wfang\\Desktop\\cardbush\\README.md',
       pastedImage,
     ],
   }),
   [
-    'C:\\Users\\wfang\\Desktop\\cardbush-electron',
+    'C:\\Users\\wfang\\Desktop\\cardbush',
     'C:\\Users\\wfang\\Pictures\\cardbush-images',
   ],
 );

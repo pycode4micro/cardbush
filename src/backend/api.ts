@@ -52,6 +52,7 @@ import type {
   SessionSnapshot as RuntimeSessionSnapshot,
   SubagentTask as RuntimeSubagentTask,
   ToolExecutionRecord as RuntimeToolExecutionRecord,
+  ToolExecutionSummary as RuntimeToolExecutionSummary,
 } from '@cardbush/bush-protocol';
 import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 import { AGENT_PROFILE_PROTOCOL } from '../types';
@@ -199,6 +200,7 @@ export interface ChatStreamRequest {
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onAssistantSegmentCompleted?: (content: string, chunk: AssistantStreamChunk) => void;
   onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
@@ -223,6 +225,7 @@ export type ChatStreamEventHandlers = Pick<
   | 'signal'
   | 'onStart'
   | 'onDelta'
+  | 'onAssistantSegmentCompleted'
   | 'onExecution'
   | 'onAssistantRevision'
   | 'onToolExecution'
@@ -281,6 +284,7 @@ export interface ControlStreamRequest {
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onAssistantSegmentCompleted?: (content: string, chunk: AssistantStreamChunk) => void;
   onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
@@ -315,6 +319,7 @@ export interface SendGuidanceRequest {
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
+  onAssistantSegmentCompleted?: (content: string, chunk: AssistantStreamChunk) => void;
   onExecution?: (update: StreamExecutionUpdate) => void;
   onAssistantRevision?: (revision: AssistantRevision) => void;
   onToolExecution?: (execution: ChatToolExecution) => void;
@@ -1552,7 +1557,7 @@ export async function fetchSessionMessages(
 ): Promise<SessionMessagesResult> {
   const runtime = createDesktopRuntimeSession();
   try {
-    const snapshot = await runtime.client.getSession(sessionId);
+    const snapshot = await runtime.client.getConversationSession(sessionId);
     if (!snapshot) {
       return {
         conversation: {
@@ -1580,7 +1585,7 @@ export async function fetchSessionMessages(
     const records = (
       await Promise.all(
         snapshot.turns.map((turn) =>
-          runtime.client.listTurnToolExecutions({
+          runtime.client.listTurnToolExecutionSummaries({
             sessionId: snapshot.sessionId,
             turnId: turn.turnId,
           }),
@@ -1712,15 +1717,17 @@ function lexicalScore(content: string, terms: string[]) {
 }
 
 function runtimeHistoryToolExecution(
-  record: RuntimeToolExecutionRecord,
+  record: RuntimeToolExecutionRecord | RuntimeToolExecutionSummary,
 ): ChatToolExecution {
-  const artifacts = record.outcome === 'returned'
+  const hasNativeResult = 'result' in record && record.result !== undefined;
+  const artifacts = record.outcome === 'returned' && hasNativeResult
     ? toolArtifactsFromPayload({ result: record.result })
     : [];
-  const output =
-    typeof record.result === 'string'
+  const output = hasNativeResult
+    ? typeof record.result === 'string'
       ? record.result
-      : JSON.stringify(record.result, null, 2) ?? 'null';
+      : JSON.stringify(record.result, null, 2) ?? 'null'
+    : '';
   return {
     id: record.toolCall.id,
     name: record.toolCall.name,
@@ -1737,11 +1744,54 @@ function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
-      nativeResult: record.result,
+      ...(hasNativeResult
+        ? { nativeResult: record.result }
+        : 'resultAvailable' in record
+          ? {
+              nativeResultDeferred: record.resultAvailable === true,
+              workspaceChangeDetailsDeferred: record.workspaceChanges.some(
+                (change) => change.detailAvailable,
+              ),
+            }
+          : {}),
       workspaceChanges: record.workspaceChanges,
       error: record.error,
     },
   };
+}
+
+const runtimeTurnToolExecutionDetailCache = new Map<
+  string,
+  Promise<ChatToolExecution[]>
+>();
+
+export function fetchRuntimeTurnToolExecutionDetails(input: {
+  sessionId: string;
+  turnId: string;
+}): Promise<ChatToolExecution[]> {
+  const sessionId = input.sessionId.trim();
+  const turnId = input.turnId.trim();
+  if (!sessionId || !turnId) return Promise.resolve([]);
+  const key = `${sessionId}\u0000${turnId}`;
+  const cached = runtimeTurnToolExecutionDetailCache.get(key);
+  if (cached) return cached;
+  const pending = (async () => {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const records = await runtime.client.listTurnToolExecutions({ sessionId, turnId });
+      return records.map(runtimeHistoryToolExecution);
+    } finally {
+      runtime.dispose();
+    }
+  })();
+  runtimeTurnToolExecutionDetailCache.set(key, pending);
+  const release = () => {
+    if (runtimeTurnToolExecutionDetailCache.get(key) === pending) {
+      runtimeTurnToolExecutionDetailCache.delete(key);
+    }
+  };
+  void pending.then(release, release);
+  return pending;
 }
 
 export async function createConversation({
@@ -2302,7 +2352,7 @@ export async function fetchSessionContextWindowUsage(
     return {
       sessionId: normalizedSessionId,
       turnId: latest?.turnId ?? '',
-      model: '',
+      model: typeof latest?.usage.model === 'string' ? latest.usage.model : '',
       ...contextMetrics,
       measuredAt:
         latest?.completedAt ?? snapshot?.updatedAt ?? new Date().toISOString(),

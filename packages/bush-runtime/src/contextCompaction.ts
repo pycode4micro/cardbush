@@ -23,6 +23,7 @@ export interface ContextCompactionState {
 
 export interface ContextPressure {
   estimatedPromptTokens: number;
+  measurement: "provider" | "fallback_estimate";
   reservedOutputTokens: number;
   usableInputTokens: number;
   ratio: number;
@@ -123,6 +124,7 @@ export function decodeContextCheckpointInput(value: unknown): ContextCheckpointI
 export function estimateContextPressure(
   request: ModelRequest,
   messages: ModelMessage[],
+  providerInputTokens?: number,
 ): ContextPressure | undefined {
   const contextWindowTokens = Number(request.metadata.contextWindowTokens);
   if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) return undefined;
@@ -153,9 +155,14 @@ export function estimateContextPressure(
   };
   const imageTokens = messages.reduce((total, message) =>
     total + (message.role === "user" ? (message.images?.length ?? 0) * 1024 : 0), 0);
-  const estimatedPromptTokens = Math.ceil(JSON.stringify(promptShape).length / 4) + imageTokens;
+  const fallbackEstimate = Math.ceil(JSON.stringify(promptShape).length / 4) + imageTokens;
+  const hasProviderMeasurement = Number.isInteger(providerInputTokens) && providerInputTokens! >= 0;
+  const estimatedPromptTokens = hasProviderMeasurement
+    ? providerInputTokens!
+    : fallbackEstimate;
   return {
     estimatedPromptTokens,
+    measurement: hasProviderMeasurement ? "provider" : "fallback_estimate",
     reservedOutputTokens,
     usableInputTokens,
     ratio: estimatedPromptTokens / usableInputTokens,

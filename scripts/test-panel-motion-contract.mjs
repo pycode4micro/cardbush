@@ -19,9 +19,19 @@ const theme = read('src', 'styles', 'theme.css');
 
 assert.match(messageBubble, /message-row assistant\$\{isActiveAssistantTurn \? ' streaming' : ''\}/);
 assert.match(
+  messageBubble,
+  /function AssistantAtomicReveal[\s\S]*?getBoundingClientRect\(\)\.height/,
+  'A completed assistant segment must measure its real layout before becoming visible',
+);
+assert.match(
   css,
-  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp\(132px,\s*22vh,\s*240px\)/,
-  'The active assistant must reserve reading space before streamed Markdown arrives',
+  /\.assistant-atomic-reveal\.measuring\s*\{[\s\S]*?visibility:\s*hidden/,
+  'The measured assistant content must reserve normal-flow space without painting partial text',
+);
+assert.doesNotMatch(
+  css,
+  /\.message-row\.assistant\.streaming\s*\{[\s\S]*?min-height:\s*clamp/,
+  'The active assistant must not reserve an unrelated viewport-sized blank block',
 );
 
 assert.match(css, /--panel-motion-duration:\s*240ms/);

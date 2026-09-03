@@ -916,6 +916,7 @@ interface ManagedTerminalSession {
   startedAt: number;
   revision: number;
   stopRequested: boolean;
+  closed: boolean;
   stdout: Buffer[];
   stderr: Buffer[];
   stdoutBytes: number;
@@ -958,6 +959,7 @@ class TerminalSessionManager {
       startedAt: Date.now(),
       revision: 0,
       stopRequested: false,
+      closed: false,
       stdout: [],
       stderr: [],
       stdoutBytes: 0,
@@ -990,6 +992,10 @@ class TerminalSessionManager {
         child.stderr?.destroy();
       }, 100);
       releaseStreams.unref?.();
+    });
+    child.on("close", () => {
+      terminal.closed = true;
+      this.#notify(terminal);
     });
 
     await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
@@ -1038,6 +1044,10 @@ class TerminalSessionManager {
     const terminal = this.#owned(ownerSessionId, sessionId);
     terminal.stopRequested = true;
     await terminateProcessTree(terminal);
+    // `taskkill` completion and ChildProcess `exit` do not guarantee that the
+    // inherited stdio handles have closed. Wait for the bounded `close` fact so
+    // callers can safely reuse or delete the terminal working directory.
+    await this.#waitForClose(terminal, 1_000);
     if (terminal.state === "running") {
       terminal.state = "stopped";
       this.#notify(terminal);
@@ -1127,6 +1137,14 @@ class TerminalSessionManager {
   ): Promise<void> {
     if (terminal.state !== "running") return Promise.resolve();
     return this.#wait(terminal, yieldTimeMs, signal, () => terminal.state !== "running");
+  }
+
+  #waitForClose(
+    terminal: ManagedTerminalSession,
+    yieldTimeMs: number,
+  ): Promise<void> {
+    if (terminal.closed) return Promise.resolve();
+    return this.#wait(terminal, yieldTimeMs, undefined, () => terminal.closed);
   }
 
   #waitForRevision(

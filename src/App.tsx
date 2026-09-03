@@ -47,6 +47,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -94,6 +95,7 @@ import {
   MarkdownContent,
   MessageBubble,
   MessageFileReferenceScope,
+  projectRenderableChatMessages,
 } from './features/chatMessages';
 import { QuickContextRail } from './features/chat/QuickContextRail';
 import { ConversationWorkSummary } from './features/chat/ConversationWorkSummary';
@@ -121,9 +123,8 @@ import {
 } from './features/pre_test/runtimeStreamPreTestActivation';
 import {
   Composer,
-  ComposerRuntimeRail,
+  LiveComposerRuntimeRail,
   quickPayloadText,
-  type ThinkingNotice,
   type QuickLoadPayload,
 } from './features/composer';
 import {
@@ -221,6 +222,11 @@ import type {
   ThemeMode,
 } from './types';
 import { SUBAGENT_DISPATCH_EVENT_PROTOCOL } from './types';
+import {
+  installUiLongTaskObserver,
+  recordUiPerformanceMetric,
+  setUiPerformanceActiveSession,
+} from './shared/uiPerformanceTrace';
 
 let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
 
@@ -304,17 +310,16 @@ const osConversationStorageKey = 'cardbush_os_conversation_id';
 const recentProjectStorageKey = 'cardbush_recent_project_dir';
 const onlyTalkModeStorageKey = 'cardbush_only_talk_mode';
 const defaultShadowAccentColor = '#a8d5b5';
-const thinkingEventName = 'cardbush:thinking';
-
 function scrollDebug(label: string, data: Record<string, unknown>) {
-  if (!import.meta.env.DEV) {
-    try {
-      if (window.localStorage.getItem('cardbush_scroll_debug') !== 'true') {
-        return;
-      }
-    } catch {
+  try {
+    // Detailed scroll traces are intentionally session-scoped. A persisted
+    // localStorage switch previously left synchronous IPC logging enabled in
+    // ordinary GUI runs long after the original diagnosis had finished.
+    if (window.sessionStorage.getItem('cardbush_scroll_debug') !== 'true') {
       return;
     }
+  } catch {
+    return;
   }
   const entry = {
     at: new Date().toISOString(),
@@ -493,9 +498,6 @@ function CardbushApp() {
       window.removeEventListener('resize', refresh);
     };
   }, []);
-  const [thinkingNotice, setThinkingNotice] = useState<ThinkingNotice | null>(null);
-  const activeConversationForThinkingRef = useRef('');
-  const reasoningTraceVisibleRef = useRef(false);
   const [backendCapabilities, setBackendCapabilities] =
     useState<BackendCapabilities>(defaultBackendCapabilities);
   const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
@@ -524,62 +526,6 @@ function CardbushApp() {
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
   }, [language]);
-
-  useEffect(() => {
-    const receiveThinking = (event: Event) => {
-      if (!(event instanceof CustomEvent) || !event.detail || typeof event.detail !== 'object') {
-        return;
-      }
-      const detail = event.detail as Record<string, unknown>;
-      const sessionId = String(detail.sessionId ?? detail.session_id ?? '').trim();
-      if (
-        sessionId &&
-        activeConversationForThinkingRef.current &&
-        sessionId !== activeConversationForThinkingRef.current
-      ) {
-        return;
-      }
-      const turnId = String(detail.turnId ?? detail.turn_id ?? detail.id ?? '').trim();
-      const channel = String(detail.channel ?? 'reasoning').trim().toLowerCase();
-      if (channel !== 'reasoning') return;
-      const generationId = String(
-        detail.generationId ?? detail.generation_id ?? detail.id ?? turnId,
-      ).trim();
-      const phase = String(detail.phase ?? 'delta');
-      if (phase === 'start') {
-        setThinkingNotice(null);
-        return;
-      }
-      if (phase === 'end') {
-        setThinkingNotice((current) => {
-          if (!current) return null;
-          if (generationId && current.id === generationId) return null;
-          if (!detail.generationId && !detail.generation_id && turnId && current.turnId === turnId) {
-            return null;
-          }
-          return current;
-        });
-        return;
-      }
-      if (!reasoningTraceVisibleRef.current) return;
-      const delta = String(detail.delta ?? '');
-      if (!delta || !turnId || !generationId) return;
-      setThinkingNotice((current) => {
-        const nextContent = current?.id === generationId
-          ? `${current.content}${delta}`
-          : delta;
-        return {
-          id: generationId,
-          turnId,
-          preview: nextContent.replace(/\s+/g, ' ').trim(),
-          content: nextContent,
-          createdAt: String(detail.createdAt ?? new Date().toISOString()),
-        };
-      });
-    };
-    window.addEventListener(thinkingEventName, receiveThinking);
-    return () => window.removeEventListener(thinkingEventName, receiveThinking);
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -746,6 +692,10 @@ function CardbushApp() {
     defaultProjectId: onlyTalkMode ? '' : fallbackProjectId,
     defaultProjectDir: onlyTalkMode ? '' : fallbackProjectDir,
   });
+  useEffect(() => installUiLongTaskObserver(), []);
+  useEffect(() => {
+    setUiPerformanceActiveSession(chat.activeConversationId);
+  }, [chat.activeConversationId]);
   const refreshBackendAndActiveSession = useCallback(
     async (options?: { silent?: boolean }) => {
       let capabilityError: unknown = null;
@@ -794,24 +744,6 @@ function CardbushApp() {
       await loadTeamWorkspace(true);
     }
   }, [language]);
-  useEffect(() => {
-    activeConversationForThinkingRef.current = chat.activeConversationId;
-    setThinkingNotice(null);
-  }, [chat.activeConversationId]);
-
-  useEffect(() => {
-    reasoningTraceVisibleRef.current = reasoningTraceVisible;
-    if (!reasoningTraceVisible) {
-      setThinkingNotice(null);
-    }
-  }, [reasoningTraceVisible]);
-
-  useEffect(() => {
-    if (!chat.sending) {
-      setThinkingNotice(null);
-    }
-  }, [chat.sending]);
-
   useEffect(() => {
     const defaultSelection = backendDefaultModelName.trim();
     if (!defaultSelection) {
@@ -980,6 +912,53 @@ function CardbushApp() {
       ) as Record<string, ConversationChangeReport[]>,
     [chat.messagesByConversation],
   );
+  const [sidebarChangeReportsByConversation, setSidebarChangeReportsByConversation] =
+    useState<Record<string, ConversationChangeReport[]>>({});
+  const sidebarChangeReportSourcesRef = useRef(new Map<string, ChatMessage[]>());
+  const sidebarChangeReportFingerprintsRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    const sources = sidebarChangeReportSourcesRef.current;
+    const fingerprints = sidebarChangeReportFingerprintsRef.current;
+    const availableConversationIds = new Set(Object.keys(chat.messagesByConversation));
+    const updates = new Map<string, ConversationChangeReport[] | null>();
+
+    for (const conversationId of sources.keys()) {
+      if (availableConversationIds.has(conversationId)) continue;
+      sources.delete(conversationId);
+      fingerprints.delete(conversationId);
+      updates.set(conversationId, null);
+    }
+    for (const [conversationId, messages] of Object.entries(chat.messagesByConversation)) {
+      // While a Turn is running, message/tool facts may update frequently. The
+      // sidebar owns only the submit -> done lifecycle and keeps its last
+      // completed report snapshot until that lifecycle reaches done.
+      if (chat.processingConversationIds.has(conversationId)) continue;
+      if (sources.get(conversationId) === messages) continue;
+      sources.set(conversationId, messages);
+      const reports = changeReportsFromMessages(
+        normalizeChatMessagesForDisplay(messages),
+      );
+      const fingerprint = JSON.stringify(reports);
+      if (fingerprints.get(conversationId) === fingerprint) continue;
+      fingerprints.set(conversationId, fingerprint);
+      updates.set(conversationId, reports.length > 0 ? reports : null);
+    }
+    if (updates.size === 0) return;
+    setSidebarChangeReportsByConversation((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const [conversationId, reports] of updates) {
+        if (reports) {
+          next[conversationId] = reports;
+          changed = true;
+        } else if (conversationId in next) {
+          delete next[conversationId];
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [chat.messagesByConversation, chat.processingConversationIds]);
   const changeReviewReports = useMemo(
     () => changeReviewConversationId
       ? changeReportsByConversation[changeReviewConversationId] ?? []
@@ -1456,7 +1435,15 @@ function CardbushApp() {
     async function refreshWallpaperAccent() {
       const accent = await window.cardbushDesktop?.wallpaperAccent?.().catch(() => null);
       if (!cancelled && accent) {
-        setWallpaperAccent(accent);
+        setWallpaperAccent((current) =>
+          current?.r === accent.r &&
+          current.g === accent.g &&
+          current.b === accent.b &&
+          current.hex === accent.hex &&
+          current.source === accent.source
+            ? current
+            : accent,
+        );
       }
     }
     const scheduleRefresh = () => {
@@ -1536,7 +1523,8 @@ function CardbushApp() {
     },
     [
       activeConversationProjectDir,
-      chat,
+      chat.clearConversationSelection,
+      chat.prepareConversation,
       fallbackProjectDir,
       onlyTalkMode,
       projectItems,
@@ -1549,7 +1537,7 @@ function CardbushApp() {
     window.localStorage.setItem(onlyTalkModeStorageKey, String(enabled));
     setSection('chat');
     chat.clearConversationSelection();
-  }, [chat]);
+  }, [chat.clearConversationSelection]);
 
   const openConversationInScope = useCallback((conversationId: string) => {
     const normalized = conversationId.trim();
@@ -2324,6 +2312,42 @@ function CardbushApp() {
     [visualInputAvailable],
   );
 
+  // Keep the sidebar outside high-frequency chat/reasoning renders. These
+  // handlers used to be recreated by App on every message update, defeating
+  // React.memo and making an unrelated stream interrupt title animations.
+  const handleSidebarSectionChange = useCallback((nextSection: AppSection) => {
+    if (nextSection === 'os') {
+      void enterOsMode();
+      return;
+    }
+    setSection(nextSection);
+  }, [enterOsMode]);
+  const handleSidebarConversationChange = useCallback((conversationId: string) => {
+    openConversationInScope(conversationId);
+  }, [openConversationInScope]);
+  const handleSidebarCreateConversation = useCallback(() => {
+    createConversation(onlyTalkMode ? null : undefined);
+  }, [createConversation, onlyTalkMode]);
+  const handleSidebarAddProject = useCallback(() => {
+    void addProject();
+  }, [addProject]);
+  const handleSidebarProjectAction = useCallback((
+    action: ProjectAction,
+    project: ProjectItem,
+  ) => {
+    void handleProjectAction(action, project);
+  }, [handleProjectAction]);
+  const handleSidebarOpenConversationChanges = useCallback((conversationId: string) => {
+    setInspectorTarget(null);
+    setWorkSummaryInspector(null);
+    setChangeReviewFilePath('');
+    setChangeReviewConversationId(conversationId);
+    setChangeReviewNotice('');
+  }, []);
+  const handleSidebarOpenSettings = useCallback(() => {
+    openSettings('profile');
+  }, [openSettings]);
+
   return (
     <div
       className={`app theme-${theme}${customBackgroundImagePath ? ' has-custom-background' : ''}${section === 'os' ? ' os-shell-active' : ''}`}
@@ -2429,38 +2453,22 @@ function CardbushApp() {
                   language={language}
                   section={section}
                   activeConversationId={chat.activeConversationId}
-                  runningConversationIds={runningConversationIds}
+                  runningConversationIds={chat.processingConversationIds}
                   attentionByConversation={chat.attentionByConversation}
                   projects={projectItems}
                   conversations={chat.conversations}
-                  changeReportsByConversation={changeReportsByConversation}
+                  changeReportsByConversation={sidebarChangeReportsByConversation}
                   onlyTalkMode={onlyTalkMode}
                   onOnlyTalkModeChange={changeOnlyTalkMode}
-                  onSectionChange={(nextSection) => {
-                    if (nextSection === 'os') {
-                      void enterOsMode();
-                      return;
-                    }
-                    setSection(nextSection);
-                  }}
-                  onConversationChange={(id) => {
-                    openConversationInScope(id);
-                  }}
-                  onCreateConversation={() => {
-                    createConversation(onlyTalkMode ? null : undefined);
-                  }}
-                  onAddProject={() => void addProject()}
-                  onProjectAction={(action, project) => void handleProjectAction(action, project)}
+                  onSectionChange={handleSidebarSectionChange}
+                  onConversationChange={handleSidebarConversationChange}
+                  onCreateConversation={handleSidebarCreateConversation}
+                  onAddProject={handleSidebarAddProject}
+                  onProjectAction={handleSidebarProjectAction}
                   onDeleteConversation={chat.deleteConversation}
                   onRenameConversation={chat.renameConversation}
-                  onOpenConversationChanges={(conversationId) => {
-                    setInspectorTarget(null);
-                    setWorkSummaryInspector(null);
-                    setChangeReviewFilePath('');
-                    setChangeReviewConversationId(conversationId);
-                    setChangeReviewNotice('');
-                  }}
-                  onOpenSettings={() => openSettings('profile')}
+                  onOpenConversationChanges={handleSidebarOpenConversationChanges}
+                  onOpenSettings={handleSidebarOpenSettings}
                   softVisible={sidebarPresence.visible}
                 />
               )}
@@ -2542,7 +2550,6 @@ function CardbushApp() {
                   section === 'chat' && backendCapabilities.shadowConversationActivation
                 }
                 shadowAccentColor={appSettings.shadow.accentColor}
-                thinkingNotice={section === 'chat' ? thinkingNotice : null}
                 thinkingVisible={reasoningTraceVisible}
                 guidanceDeliveryMode={appSettings.guidance.deliveryMode}
                 loading={chat.loading || chat.messagesLoading}
@@ -4267,7 +4274,6 @@ function ChatPanel({
   subagentObservabilityAvailable,
   shadowAvailable,
   shadowAccentColor,
-  thinkingNotice,
   thinkingVisible,
   guidanceDeliveryMode,
   loading,
@@ -4357,7 +4363,6 @@ function ChatPanel({
   subagentObservabilityAvailable: boolean;
   shadowAvailable: boolean;
   shadowAccentColor: string;
-  thinkingNotice: ThinkingNotice | null;
   thinkingVisible: boolean;
   guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
   loading: boolean;
@@ -4424,11 +4429,19 @@ function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
 }) {
+  const chatPanelRenderStartedAt = performance.now();
+  useLayoutEffect(() => {
+    recordUiPerformanceMetric('chat_panel_commit_ms', {
+      sessionId: activeConversationId,
+      value: performance.now() - chatPanelRenderStartedAt,
+    });
+  });
   const renderMessages = useMemo(() => {
     const normalized = normalizeChatMessagesForDisplay(messages);
-    return sending
+    const activeTranscript = sending
       ? normalizeActiveTurnTranscriptForDisplay(normalized, activeTurnId)
       : normalized;
+    return projectRenderableChatMessages(activeTranscript);
   }, [activeTurnId, messages, sending]);
   const [refreshError, setRefreshError] = useState('');
   const refreshBackendWithFeedback = useCallback(async (
@@ -4558,7 +4571,6 @@ function ChatPanel({
     }
     return '';
   })();
-  const [thinkingOpen, setThinkingOpen] = useState(false);
   const [osSystemSurface, setOsSystemSurface] = useState<OsSystemSurfaceMode | null>(null);
   const [osNineKeyOpen, setOsNineKeyOpen] = useState(false);
   const [osSettingsOpen, setOsSettingsOpen] = useState(false);
@@ -4571,17 +4583,12 @@ function ChatPanel({
     text: string;
   } | null>(null);
 
-  useEffect(() => {
-    setThinkingOpen(false);
-  }, [thinkingNotice?.id]);
-
   const shadowCanActivate = shadowAvailable && !sending && Boolean(activeConversationId) &&
     Boolean(selectedModelConfig) && Boolean(window.cardbushDesktop?.openShadowWindow) &&
     messages.some((message) => message.role === 'user');
 
   const openShadowPopup = useCallback(async () => {
     if (!shadowCanActivate || !selectedModelConfig) return;
-    setThinkingOpen(false);
     try {
       await window.cardbushDesktop?.openShadowWindow({
         sessionId: activeConversationId,
@@ -6711,24 +6718,24 @@ function ChatPanel({
             onTouchStartCapture={() => markUserDetachedFromBottom('touch')}
             onScrollCapture={handleListScrollCapture}
           >
-            <div className="message-list-content">
-              {renderMessages.map((message, index) => (
-                <div
-                  key={message.id}
-                  className={`message-list-item${index === 0 ? ' first' : ''}${
-                    message.role === 'user' && (
-                      enteringUserMessageIds.has(message.id) ||
-                      pendingSubmittedUserEntryMessageId === message.id
-                    )
-                      ? ' user-message-entering'
-                      : ''
-                  }`}
-                  data-message-id={message.id}
-                  data-message-role={message.role}
-                >
-                  <MessageFileReferenceScope
-                    workspaceRoot={activeProjectDir}
-                    pathAliases={projectPathAliases}
+            <MessageFileReferenceScope
+              workspaceRoot={activeProjectDir}
+              pathAliases={projectPathAliases}
+            >
+              <div className="message-list-content">
+                {renderMessages.map((message, index) => (
+                  <div
+                    key={message.id}
+                    className={`message-list-item${index === 0 ? ' first' : ''}${
+                      message.role === 'user' && (
+                        enteringUserMessageIds.has(message.id) ||
+                        pendingSubmittedUserEntryMessageId === message.id
+                      )
+                        ? ' user-message-entering'
+                        : ''
+                    }`}
+                    data-message-id={message.id}
+                    data-message-role={message.role}
                   >
                     <MessageBubble
                       key={message.id}
@@ -6751,16 +6758,16 @@ function ChatPanel({
                       onOpenScene={openScene}
                       onAssistantFeedback={recordAssistantLogicFeedback}
                     />
-                  </MessageFileReferenceScope>
-                </div>
-              ))}
-              {connectionRecovery && connectionRecovery.state !== 'recovered' && (
-                <ConversationConnectionNotice
-                  language={language}
-                  update={connectionRecovery}
-                />
-              )}
-            </div>
+                  </div>
+                ))}
+                {connectionRecovery && connectionRecovery.state !== 'recovered' && (
+                  <ConversationConnectionNotice
+                    language={language}
+                    update={connectionRecovery}
+                  />
+                )}
+              </div>
+            </MessageFileReferenceScope>
             <MessageListFooter />
           </div>
         )}
@@ -6804,7 +6811,7 @@ function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && (
           <div
             className={`composer-dock${
-              sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0
+              sending || activeGoal || currentTurnChangeSummary || queuedMessageCount > 0
                 ? ' runtime-attached'
                 : ''
             }`}
@@ -6813,8 +6820,10 @@ function ChatPanel({
               '--shadow-accent': shadowAccentColor,
             } as CSSProperties}
           >
-            {(sending || activeGoal || (thinkingVisible && thinkingNotice) || currentTurnChangeSummary || queuedMessageCount > 0) && (
-              <ComposerRuntimeRail
+            {(sending || activeGoal || currentTurnChangeSummary || queuedMessageCount > 0) && (
+              <LiveComposerRuntimeRail
+                activeConversationId={activeConversationId}
+                thinkingVisible={thinkingVisible}
                 language={language}
                 running={sending || (activeGoal?.status === 'active' && !goalWaiting)}
                 stopping={stopping}
@@ -6823,17 +6832,11 @@ function ChatPanel({
                 goalRounds={activeGoalRounds}
                 goalCancelling={goalCancelling}
                 goalWaiting={goalWaiting}
-                thinkingNotice={thinkingVisible ? thinkingNotice : null}
-                thinkingOpen={thinkingOpen}
                 changeReports={currentTurnChangeReports}
                 changeSummary={currentTurnChangeSummary}
                 queuedMessageCount={queuedMessageCount}
                 queuedMessagePreview={queuedMessagePreview}
                 queuedMessages={queuedMessages}
-                onToggleThinking={() => {
-                  setThinkingOpen((current) => !current);
-                }}
-                onCloseThinking={() => setThinkingOpen(false)}
                 onCancelGoal={onCancelGoal}
                 onOpenChangeReview={openChangeReview}
                 onEditQueuedMessage={editQueuedMessage}
@@ -6880,7 +6883,9 @@ function ChatPanel({
               onToggleShadow={shadowCanActivate ? openShadowPopup : undefined}
               contextWindow={{
                 usedTokens: contextWindowUsage?.usedTokens,
-                maxTokens: contextWindowUsage?.maxTokens ?? contextWindowMaxTokens,
+                maxTokens: contextWindowUsage
+                  ? contextWindowUsage.maxTokens
+                  : contextWindowMaxTokens,
                 remainingTokens: contextWindowUsage?.remainingTokens,
                 measuredAt: contextWindowUsage?.measuredAt,
               }}

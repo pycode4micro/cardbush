@@ -160,6 +160,9 @@ export function useCardbushChat(
   const [runningByConversation, setRunningByConversation] = useState<
     Record<string, { activeTurnId: string; stopping: boolean }>
   >({});
+  const [processingConversationIds, setProcessingConversationIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [attentionByConversation, setAttentionByConversation] = useState<
     Record<string, SessionAttentionState>
   >(readSessionAttentionState);
@@ -820,6 +823,12 @@ export function useCardbushChat(
     if (turnId.trim()) {
       activeTurnIdsRef.current[normalized] = turnId.trim();
     }
+    setProcessingConversationIds((current) => {
+      if (current.has(normalized)) return current;
+      const next = new Set(current);
+      next.add(normalized);
+      return next;
+    });
     setRunningByConversation((current) => ({
       ...current,
       [normalized]: {
@@ -828,6 +837,17 @@ export function useCardbushChat(
       },
     }));
   }, [clearSessionAttention]);
+
+  const markSessionDone = useCallback((sessionId: string) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    setProcessingConversationIds((current) => {
+      if (!current.has(normalized)) return current;
+      const next = new Set(current);
+      next.delete(normalized);
+      return next;
+    });
+  }, []);
 
   const markSessionStopping = useCallback((sessionId: string, value: boolean) => {
     const normalized = sessionId.trim();
@@ -850,6 +870,7 @@ export function useCardbushChat(
     sendingSessionsRef.current.delete(normalized);
     stoppingRequestsRef.current.delete(normalized);
     delete activeTurnIdsRef.current[normalized];
+    markSessionDone(normalized);
     setRunningByConversation((current) => {
       if (!(normalized in current)) {
         return current;
@@ -858,7 +879,7 @@ export function useCardbushChat(
       delete next[normalized];
       return next;
     });
-  }, []);
+  }, [markSessionDone]);
 
   const isSessionSending = useCallback(
     (sessionId: string) => sendingSessionsRef.current.has(sessionId.trim()),
@@ -981,7 +1002,7 @@ export function useCardbushChat(
         ),
       );
     };
-    const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
+    const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
       ensureAssistant(route.createdAt);
       setMessagesByConversation((state) =>
         appendAssistantDelta(
@@ -990,6 +1011,7 @@ export function useCardbushChat(
           assistantId,
           delta,
           route,
+          release,
         ),
       );
     });
@@ -1012,9 +1034,11 @@ export function useCardbushChat(
         markSessionRunning(normalizedSessionId, start.turnId || normalizedTurnId);
       },
       onDelta: (delta, chunk) => streamBuffer.push(delta, chunk),
+      onAssistantSegmentCompleted: (content, chunk) => {
+        void streamBuffer.completeSegment(content, chunk);
+      },
       onExecution: (update) => {
         if (isTurnGuidanceBoundary(update)) {
-          streamBuffer.flushToolBoundary();
           ensureAssistant();
           setMessagesByConversation((state) =>
             applyAssistantSegmentBoundary(
@@ -1050,7 +1074,6 @@ export function useCardbushChat(
         }
       },
       onToolExecution: (execution) => {
-        streamBuffer.flushToolBoundary();
         ensureAssistant();
         applyGoalExecution(normalizedSessionId, execution);
         setMessagesByConversation((state) =>
@@ -1105,6 +1128,7 @@ export function useCardbushChat(
         });
       },
       onDone: (terminal) => {
+        markSessionDone(normalizedSessionId);
         setPendingInteraction((current) =>
           current?.sessionId === normalizedSessionId ? null : current,
         );
@@ -1135,6 +1159,7 @@ export function useCardbushChat(
         parentSessionId: event.parentSessionId || normalizedSessionId,
       }),
       onThinking: (event) => {
+        if (requestContext.reasoningTraceVisible !== true) return;
         window.dispatchEvent(new CustomEvent('cardbush:thinking', {
           detail: { ...event, sessionId: normalizedSessionId },
         }));
@@ -1217,6 +1242,7 @@ export function useCardbushChat(
     clearSessionRunning,
     localize,
     markSessionAttention,
+    markSessionDone,
     markSessionRunning,
     mergeContextWindowUsage,
     mergeTeamFlowStreamEvent,
@@ -2009,9 +2035,9 @@ export function useCardbushChat(
       persistAutoConversationTitle(conversation, titleSource);
       setError(null);
       const controller = new AbortController();
-      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
+      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
         setMessagesByConversation((current) =>
-          appendAssistantDelta(current, sessionId, assistantId, delta, route),
+          appendAssistantDelta(current, sessionId, assistantId, delta, route, release),
         );
       });
       controllersRef.current[sessionId] = controller;
@@ -2074,9 +2100,11 @@ export function useCardbushChat(
           onDelta: (delta, chunk) => {
             streamBuffer.push(delta, chunk);
           },
+          onAssistantSegmentCompleted: (content, chunk) => {
+            void streamBuffer.completeSegment(content, chunk);
+          },
           onExecution: (update) => {
             if (isTurnGuidanceBoundary(update)) {
-              streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
                   current,
@@ -2115,7 +2143,6 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            streamBuffer.flushToolBoundary();
             applyGoalExecution(sessionId, execution);
             setMessagesByConversation((current) =>
               appendToolExecution(current, sessionId, assistantId, execution),
@@ -2161,6 +2188,7 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            markSessionDone(sessionId);
             setPendingInteraction((current) =>
               current?.sessionId === sessionId ? null : current,
             );
@@ -2214,6 +2242,7 @@ export function useCardbushChat(
             });
           },
           onThinking: (event) => {
+            if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
               detail: { ...event, sessionId },
             }));
@@ -2379,6 +2408,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      markSessionDone,
       markSessionRunning,
       mergeTeamFlowStreamEvent,
       mergeContextWindowUsage,
@@ -2482,6 +2512,10 @@ export function useCardbushChat(
         handlers: {
           onStart: (start: import('../types').StreamStart) => void;
           onDelta: (delta: string, chunk: AssistantStreamChunk) => void;
+          onAssistantSegmentCompleted: (
+            content: string,
+            chunk: AssistantStreamChunk,
+          ) => void;
           onExecution: (update: StreamExecutionUpdate) => void;
           onAssistantRevision: (revision: AssistantRevision) => void;
           onToolExecution: (execution: ChatToolExecution) => void;
@@ -2503,9 +2537,16 @@ export function useCardbushChat(
       const sessionId = conversation.id;
       const controller = new AbortController();
       let finalSnapshot: ChatMessage[] | null = null;
-      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route) => {
+      const streamBuffer = createSegmentedAssistantStreamBuffers((delta, route, release) => {
         setMessagesByConversation((current) =>
-          appendAssistantDelta(current, sessionId, tempAssistant.id, delta, route),
+          appendAssistantDelta(
+            current,
+            sessionId,
+            tempAssistant.id,
+            delta,
+            route,
+            release,
+          ),
         );
       });
       const startIds = new Set(startedMessageIds ?? [tempAssistant.id]);
@@ -2561,9 +2602,11 @@ export function useCardbushChat(
           onDelta: (delta, chunk) => {
             streamBuffer.push(delta, chunk);
           },
+          onAssistantSegmentCompleted: (content, chunk) => {
+            void streamBuffer.completeSegment(content, chunk);
+          },
           onExecution: (update) => {
             if (isTurnGuidanceBoundary(update)) {
-              streamBuffer.flushToolBoundary();
               setMessagesByConversation((current) =>
                 applyAssistantSegmentBoundary(
                   current,
@@ -2599,7 +2642,6 @@ export function useCardbushChat(
             }
           },
           onToolExecution: (execution) => {
-            streamBuffer.flushToolBoundary();
             applyGoalExecution(sessionId, execution);
             setMessagesByConversation((current) =>
               appendToolExecution(current, sessionId, tempAssistant.id, execution),
@@ -2645,6 +2687,7 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            markSessionDone(sessionId);
             setPendingInteraction((current) =>
               current?.sessionId === sessionId ? null : current,
             );
@@ -2699,6 +2742,7 @@ export function useCardbushChat(
             });
           },
           onThinking: (event) => {
+            if (requestContext.reasoningTraceVisible !== true) return;
             window.dispatchEvent(new CustomEvent('cardbush:thinking', {
               detail: { ...event, sessionId },
             }));
@@ -2815,6 +2859,7 @@ export function useCardbushChat(
       loadTeamFlow,
       localize,
       markSessionAttention,
+      markSessionDone,
       markSessionRunning,
       mergeContextWindowUsage,
       mergeTeamFlowStreamEvent,
@@ -3742,6 +3787,7 @@ export function useCardbushChat(
     stopping,
     activeTurnId,
     runningByConversation,
+    processingConversationIds,
     attentionByConversation,
     clearSessionAttention,
     activeTeamFlow,
@@ -4039,159 +4085,95 @@ function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) 
   );
 }
 
-// Final assistant text stays outside React while the Runtime is active. Once an
-// authoritative terminal fact arrives, reveal the frozen snapshot quickly on
-// animation frames. This trades first-token latency for stable Markdown and a
-// deterministic final-round transition.
-const terminalRevealMinDurationMs = 700;
-const terminalRevealMaxDurationMs = 2800;
-const terminalRevealCharactersPerSecond = 560;
+// Assistant deltas stay outside React while their Runtime segment is open. A
+// canonical segment-completed fact releases loop text once; the terminal fact
+// releases any final-only fallback. Releasing character slices on animation
+// frames reparses an ever-growing Markdown tree and invalidates the whole
+// application layout at display rate. The message component owns the visual
+// entrance; this buffer owns factual boundaries, never animation timing.
 
-export function createAssistantStreamDeltaBuffer(append: (delta: string) => void) {
+type AssistantStreamBufferRelease = {
+  reason: 'segment_completed' | 'terminal' | 'boundary';
+  eventId?: string;
+  segmentId?: string;
+  segmentOrdinal?: number;
+};
+
+export function createAssistantStreamDeltaBuffer(
+  append: (delta: string, release?: AssistantStreamBufferRelease) => void,
+) {
   let pending = '';
   let emitted = '';
   let terminalRequested = false;
-  let animationHandle: number | undefined;
-  let animationUsesFrame = false;
-  let animationCharacters: string[] = [];
-  let animationIndex = 0;
-  const drainWaiters: Array<() => void> = [];
+  const completedSegmentKeys = new Set<string>();
 
-  const emit = (delta: string) => {
+  const emit = (delta: string, release?: AssistantStreamBufferRelease) => {
     if (!delta) {
       return;
     }
-    append(delta);
+    append(delta, release);
     emitted += delta;
   };
 
-  const bufferedText = () =>
-    emitted + animationCharacters.slice(animationIndex).join('') + pending;
+  const bufferedText = () => emitted + pending;
 
-  const resolveDrainWaiters = () => {
-    if (
-      pending ||
-      animationHandle !== undefined ||
-      animationIndex < animationCharacters.length ||
-      drainWaiters.length === 0
-    ) {
-      return;
-    }
-    const waiters = drainWaiters.splice(0);
-    for (const resolve of waiters) {
-      resolve();
-    }
-  };
-
-  const waitForDrain = () =>
-    new Promise<void>((resolve) => {
-      if (
-        !pending &&
-        animationHandle === undefined &&
-        animationIndex >= animationCharacters.length
-      ) {
-        resolve();
-        return;
-      }
-      drainWaiters.push(resolve);
-    });
-
-  const cancelAnimation = () => {
-    if (animationHandle === undefined) return;
-    if (animationUsesFrame && typeof window.cancelAnimationFrame === 'function') {
-      window.cancelAnimationFrame(animationHandle);
-    } else {
-      window.clearTimeout(animationHandle);
-    }
-    animationHandle = undefined;
-  };
-
-  const scheduleFrame = (callback: (now: number) => void) => {
-    if (typeof window.requestAnimationFrame === 'function') {
-      animationUsesFrame = true;
-      animationHandle = window.requestAnimationFrame(callback);
-    } else {
-      animationUsesFrame = false;
-      animationHandle = window.setTimeout(() => callback(Date.now()), 16);
-    }
-  };
-
-  const flushAllStreaming = () => {
-    cancelAnimation();
-    const remainder = animationCharacters.slice(animationIndex).join('') + pending;
-    animationCharacters = [];
-    animationIndex = 0;
+  const flushAllStreaming = (release?: AssistantStreamBufferRelease) => {
+    const remainder = pending;
     pending = '';
-    emit(remainder);
-    resolveDrainWaiters();
+    emit(remainder, release);
     return Promise.resolve();
   };
 
-  const startTerminalReveal = () => {
-    if (animationHandle !== undefined || !pending) {
-      resolveDrainWaiters();
-      return;
-    }
-    animationCharacters = Array.from(pending);
-    animationIndex = 0;
-    pending = '';
-    const duration = Math.max(
-      terminalRevealMinDurationMs,
-      Math.min(
-        terminalRevealMaxDurationMs,
-        (animationCharacters.length / terminalRevealCharactersPerSecond) * 1000,
-      ),
-    );
-    let startedAt: number | undefined;
-    const tick = (now: number) => {
-      animationHandle = undefined;
-      startedAt ??= now;
-      const progress = Math.min(1, Math.max(0, (now - startedAt) / duration));
-      const target = progress >= 1
-        ? animationCharacters.length
-        : Math.max(animationIndex + 1, Math.floor(animationCharacters.length * progress));
-      if (target > animationIndex) {
-        emit(animationCharacters.slice(animationIndex, target).join(''));
-        animationIndex = target;
-      }
-      if (animationIndex < animationCharacters.length) {
-        scheduleFrame(tick);
-        return;
-      }
-      animationCharacters = [];
-      animationIndex = 0;
-      if (terminalRequested && pending) {
-        startTerminalReveal();
-        return;
-      }
-      resolveDrainWaiters();
-    };
-    scheduleFrame(tick);
-  };
-
-  const completeFinalSnapshot = (finalText: string) => {
+  const reconcileSnapshot = (finalText: string) => {
     const snapshot = finalText ?? '';
     const buffered = bufferedText();
     if (snapshot.startsWith(buffered)) {
       pending += snapshot.slice(buffered.length);
     } else if (snapshot.startsWith(emitted)) {
-      cancelAnimation();
-      animationCharacters = [];
-      animationIndex = 0;
       pending = snapshot.slice(emitted.length);
     } else {
-      cancelAnimation();
-      animationCharacters = [];
-      animationIndex = 0;
       emitted = '';
       pending = snapshot;
     }
-    if (terminalRequested) startTerminalReveal();
-    return waitForDrain();
+  };
+
+  const reconcileSegmentSnapshot = (segmentText: string) => {
+    const snapshot = segmentText ?? '';
+    if (snapshot.startsWith(pending)) {
+      pending += snapshot.slice(pending.length);
+    } else {
+      // Segment-completed content is scoped to the open protocol segment, not
+      // necessarily to the whole assistant message. Preserve prior committed
+      // segments while replacing only this segment's uncommitted delta buffer.
+      pending = snapshot;
+    }
+  };
+
+  const completeFinalSnapshot = (finalText: string) => {
+    reconcileSnapshot(finalText);
+    return terminalRequested
+      ? flushAllStreaming({ reason: 'terminal' })
+      : Promise.resolve();
+  };
+
+  const completeSegmentSnapshot = (
+    content: string,
+    release: AssistantStreamBufferRelease,
+  ) => {
+    const completionKey = release.segmentId || release.eventId || (
+      release.segmentOrdinal != null ? `ordinal:${release.segmentOrdinal}` : ''
+    );
+    if (completionKey && completedSegmentKeys.has(completionKey)) {
+      return Promise.resolve();
+    }
+    reconcileSegmentSnapshot(content);
+    const flushed = flushAllStreaming(release);
+    if (completionKey) completedSegmentKeys.add(completionKey);
+    return flushed;
   };
 
   const flushToolBoundary = () => {
-    void flushAllStreaming();
+    void flushAllStreaming({ reason: 'boundary' });
   };
 
   return {
@@ -4200,7 +4182,6 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
         return;
       }
       pending += delta;
-      if (terminalRequested) startTerminalReveal();
     },
     flushAllStreaming() {
       return flushAllStreaming();
@@ -4208,42 +4189,51 @@ export function createAssistantStreamDeltaBuffer(append: (delta: string) => void
     completeFinalSnapshot(finalText: string) {
       return completeFinalSnapshot(finalText);
     },
+    completeSegmentSnapshot(
+      content: string,
+      release: AssistantStreamBufferRelease,
+    ) {
+      return completeSegmentSnapshot(content, release);
+    },
     releaseTerminal() {
       terminalRequested = true;
-      startTerminalReveal();
-      return waitForDrain();
+      return flushAllStreaming({ reason: 'terminal' });
     },
     flushToolBoundary() {
       flushToolBoundary();
     },
     reset(nextEmitted = '') {
-      cancelAnimation();
       terminalRequested = false;
-      animationCharacters = [];
-      animationIndex = 0;
       pending = '';
       emitted = nextEmitted;
-      resolveDrainWaiters();
+      completedSegmentKeys.clear();
     },
     dispose() {
-      cancelAnimation();
       terminalRequested = false;
-      animationCharacters = [];
-      animationIndex = 0;
       pending = '';
       emitted = '';
-      resolveDrainWaiters();
+      completedSegmentKeys.clear();
     },
   };
 }
 
 type AssistantStreamRoute = Pick<
   AssistantStreamChunk,
-  'messageId' | 'assistantSegmentIndex' | 'turnId' | 'createdAt'
+  | 'messageId'
+  | 'assistantSegmentIndex'
+  | 'segmentId'
+  | 'segmentOrdinal'
+  | 'turnId'
+  | 'createdAt'
+  | 'eventId'
 >;
 
 function createSegmentedAssistantStreamBuffers(
-  append: (delta: string, route: AssistantStreamRoute) => void,
+  append: (
+    delta: string,
+    route: AssistantStreamRoute,
+    release?: AssistantStreamBufferRelease,
+  ) => void,
 ) {
   const buffers = new Map<string, ReturnType<typeof createAssistantStreamDeltaBuffer>>();
 
@@ -4255,7 +4245,8 @@ function createSegmentedAssistantStreamBuffers(
     const key = routeKey(route);
     const existing = buffers.get(key);
     if (existing) return existing;
-    const created = createAssistantStreamDeltaBuffer((delta) => append(delta, route));
+    const created = createAssistantStreamDeltaBuffer((delta, release) =>
+      append(delta, route, release));
     buffers.set(key, created);
     return created;
   };
@@ -4272,6 +4263,14 @@ function createSegmentedAssistantStreamBuffers(
     },
     completeRoute(finalText: string, route: AssistantStreamRoute) {
       return bufferFor(route).completeFinalSnapshot(finalText);
+    },
+    completeSegment(content: string, route: AssistantStreamRoute) {
+      return bufferFor(route).completeSegmentSnapshot(content, {
+        reason: 'segment_completed',
+        eventId: route.eventId,
+        segmentId: route.segmentId,
+        segmentOrdinal: route.segmentOrdinal,
+      });
     },
     releaseTerminal() {
       return Promise.all(
@@ -4303,6 +4302,7 @@ export function appendAssistantDelta(
   assistantId: string,
   delta: string,
   route?: AssistantStreamRoute,
+  release?: AssistantStreamBufferRelease,
 ) {
   const messages = [...(current[sessionId] ?? [])];
   const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
@@ -4323,6 +4323,7 @@ export function appendAssistantDelta(
         ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
         ...(messageId ? { message_id: messageId } : {}),
         ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
+        ...assistantStreamReleaseMetadata(release, route),
       },
     });
     return { ...current, [sessionId]: messages };
@@ -4344,11 +4345,19 @@ export function appendAssistantDelta(
           content: delta,
           toolExecutions: undefined,
           loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
+          metadata: {
+            ...(routed.metadata ?? {}),
+            ...assistantStreamReleaseMetadata(release, route),
+          },
         };
       }
       return {
         ...routed,
         content: appendAssistantTextAfterToolBoundary(routed, delta),
+        metadata: {
+          ...(routed.metadata ?? {}),
+          ...assistantStreamReleaseMetadata(release, route),
+        },
       };
     }),
   };
@@ -4656,6 +4665,27 @@ function applyAssistantStreamRoute(
         ? { assistant_segment_index: route.assistantSegmentIndex }
         : {}),
     },
+  };
+}
+
+function assistantStreamReleaseMetadata(
+  release?: AssistantStreamBufferRelease,
+  route?: AssistantStreamRoute,
+): Record<string, unknown> {
+  if (!release) return {};
+  const revealKey = (
+    release.eventId ||
+    release.segmentId ||
+    `${route?.turnId ?? ''}:${route?.messageId ?? ''}:${release.reason}`
+  ).trim();
+  return {
+    assistant_stream_release: release.reason,
+    ...(release.reason === 'segment_completed' ? { segment_complete: true } : {}),
+    ...(release.segmentId ? { assistant_segment_id: release.segmentId } : {}),
+    ...(release.segmentOrdinal != null
+      ? { assistant_segment_index: release.segmentOrdinal }
+      : {}),
+    ...(revealKey ? { cardbush_atomic_reveal_key: revealKey } : {}),
   };
 }
 
@@ -5741,7 +5771,14 @@ function preserveLocalAssistantTimingMetadata(
   };
 }
 
+const normalizedChatMessageDisplayCache = new WeakMap<
+  ChatMessage[],
+  ChatMessage[]
+>();
+
 export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
+  const cached = normalizedChatMessageDisplayCache.get(messages);
+  if (cached) return cached;
   const timedMessages = hydrateAssistantTurnTiming(messages);
   const visibleMessages = timedMessages.filter(
     (message) =>
@@ -5749,13 +5786,16 @@ export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
   );
   const hasIntermediateSegments = hasIntermediateAssistantSegments(visibleMessages);
   if (isStableVisibleTranscript(visibleMessages) && !hasIntermediateSegments) {
+    normalizedChatMessageDisplayCache.set(messages, visibleMessages);
     return visibleMessages;
   }
-  return dedupeVisibleTranscriptMessages(
+  const normalized = dedupeVisibleTranscriptMessages(
     collapseIntermediateAssistantSegments(
       collapseLoopTranscriptMessages(visibleMessages),
     ),
   );
+  normalizedChatMessageDisplayCache.set(messages, normalized);
+  return normalized;
 }
 
 function mergePolledMessagesPreservingLocalState(
@@ -5809,11 +5849,16 @@ export function normalizeActiveTurnTranscriptForDisplay(
   const siblingMessages = siblingIndexes.map(({ message }) =>
     snapshotLoopHistoryMessage(message),
   );
+  const stableDisplayId = siblingIndexes[0]?.message.id ?? activeAssistant.id;
   const inheritedPlan = [...siblingMessages]
     .reverse()
     .find((message) => message.taskPlan)?.taskPlan;
   const mergedAssistant: ChatMessage = {
     ...activeAssistant,
+    // The latest Runtime segment owns the live facts, but the first visible
+    // segment owns the React row identity. Keeping that identity stable avoids
+    // remounting and reparsing the complete Turn transcript on every segment.
+    id: stableDisplayId,
     taskPlan: activeAssistant.taskPlan ?? inheritedPlan,
     loopHistory: mergeLoopHistoryMessages(
       activeAssistant.loopHistory ?? [],

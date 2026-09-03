@@ -105,6 +105,9 @@ assert.match(composerSource, /primary:\s*ordered\.slice\(primaryStart\)/);
 assert.match(composerSource, /secondary:\s*ordered\.slice\(0, primaryStart\)/);
 assert.match(composerSource, /className="model-reasoning-secondary-options"/);
 assert.match(composerSource, /aria-expanded=\{reasoningExpanded\}/);
+assert.match(composerSource, /const progressPercentage = Math\.min\(100, percentage\)/);
+assert.match(composerSource, /Math\.max\(0, usedTokens - maxTokens\)/);
+assert.match(composerSource, /'超出' : 'Over'/);
 for (const level of ['none', 'low', 'medium', 'high', 'xhigh', 'max']) {
   assert.match(composerSource, new RegExp(`${level}: \\{`));
 }

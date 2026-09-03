@@ -26,8 +26,9 @@ assert(
   'all pre-test entry points must be development-only',
 );
 assert(
-  app.includes("window.localStorage.getItem('cardbush_scroll_debug') !== 'true'"),
-  'scroll diagnostics must require an explicit production opt-in',
+  app.includes("window.sessionStorage.getItem('cardbush_scroll_debug') !== 'true'") &&
+    !app.includes("window.localStorage.getItem('cardbush_scroll_debug')"),
+  'scroll diagnostics must require an explicit process-scoped opt-in',
 );
 assert(
   app.includes("<BackendLoading language={language} />") &&

@@ -31,11 +31,14 @@ import {
   runtimeToolCancelReceiptSchema,
   runtimeProviderBindingConfigSchema,
   runtimeProviderBindingResultSchema,
+  runtimeSessionReadRequestSchema,
   taskPlanSchema,
   setRuntimePlanRequestSchema,
   subagentTaskSchema,
   teamSnapshotSchema,
   toolExecutionRecordSchema,
+  toolExecutionSummarySchema,
+  turnToolExecutionsRequestSchema,
   updateRuntimeGoalRequestSchema,
 } from "../dist/index.js";
 
@@ -91,6 +94,60 @@ test("Tool execution records preserve native results without semantic normalizat
       code: "unexpected_error",
       message: "contradiction",
     },
+  }));
+});
+
+test("conversation and Tool summary reads are explicit projections with full defaults", () => {
+  assert.deepEqual(runtimeSessionReadRequestSchema.parse({ sessionId: "session_1" }), {
+    sessionId: "session_1",
+    messageProjection: "full",
+  });
+  assert.equal(
+    runtimeSessionReadRequestSchema.parse({
+      sessionId: "session_1",
+      messageProjection: "conversation",
+    }).messageProjection,
+    "conversation",
+  );
+  assert.deepEqual(
+    turnToolExecutionsRequestSchema.parse({
+      sessionId: "session_1",
+      turnId: "turn_1",
+    }),
+    { sessionId: "session_1", turnId: "turn_1", detail: "full" },
+  );
+
+  const summary = toolExecutionSummarySchema.parse({
+    protocol: "bush.tool_execution_summary.v1",
+    requestId: "request_1",
+    sessionId: "session_1",
+    turnId: "turn_1",
+    round: 1,
+    ordinal: 0,
+    recordedAt: "2026-09-03T00:00:00.000Z",
+    toolCall: {
+      protocol: "bush.tool_call.v1",
+      id: "call_1",
+      name: "fixture",
+    },
+    outcome: "returned",
+    resultAvailable: true,
+    workspaceChanges: [{
+      change_id: "change_1",
+      path: "src/fixture.ts",
+      status: "modified",
+      additions: 2,
+      deletions: 1,
+      detailAvailable: true,
+    }],
+  });
+  assert.equal("argumentsText" in summary.toolCall, false);
+  assert.equal("result" in summary, false);
+  assert.equal("metadata" in summary.workspaceChanges[0], false);
+  assert.equal(summary.workspaceChanges[0].detailAvailable, true);
+  assert.throws(() => toolExecutionSummarySchema.parse({
+    ...summary,
+    protocol: "bush.tool.execution_record.v2",
   }));
 });
 

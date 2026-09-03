@@ -28,6 +28,8 @@ export const sessionTurnStatusSchema = z.enum([
 ]);
 
 export const sessionUsageSchema = z.object({
+  model: z.string().min(1).optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
   inputTokens: z.number().int().nonnegative().optional(),
   outputTokens: z.number().int().nonnegative().optional(),
   cachedInputTokens: z.number().int().nonnegative().optional(),
@@ -148,6 +150,19 @@ export function decodeContextSnapshot(input: unknown): ContextSnapshot {
 export const runtimeSessionIdentitySchema = z.object({
   sessionId: z.string().min(1),
 });
+
+/**
+ * `conversation` is a transport projection for transcript UIs. Runtime keeps
+ * the canonical append-only snapshot; the host may omit model-only Tool rows
+ * and private reasoning payloads from this read without mutating that source.
+ */
+export const runtimeSessionReadRequestSchema = runtimeSessionIdentitySchema.extend({
+  messageProjection: z.enum(["full", "conversation"]).default("full"),
+});
+
+export type RuntimeSessionReadRequest = z.infer<
+  typeof runtimeSessionReadRequestSchema
+>;
 
 export const createRuntimeSessionRequestSchema = z.object({
   sessionId: z.string().min(1),

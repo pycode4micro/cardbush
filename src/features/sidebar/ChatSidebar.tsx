@@ -27,6 +27,7 @@ import type * as React from 'react';
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -37,6 +38,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { basename, samePath } from '../../shared/localPaths';
+import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
   AppLanguage,
   AppSection,
@@ -173,7 +175,7 @@ function sidebarContextMenuPosition(clientX: number, clientY: number, itemCount:
   };
 }
 
-export function ChatSidebar({
+export const ChatSidebar = memo(function ChatSidebar({
   language,
   section,
   activeConversationId,
@@ -216,6 +218,13 @@ export function ChatSidebar({
   onOpenSettings: () => void;
   softVisible?: boolean;
 }) {
+  const sidebarRenderStartedAt = performance.now();
+  useLayoutEffect(() => {
+    recordUiPerformanceMetric('sidebar_commit_ms', {
+      sessionId: activeConversationId,
+      value: performance.now() - sidebarRenderStartedAt,
+    });
+  });
   const t = (id: AppSection) => sectionLabels[id][language];
   const [archivedConversationIds, setArchivedConversationIds] = useState<Set<string>>(
     () => new Set(),
@@ -884,7 +893,7 @@ export function ChatSidebar({
       )}
     </aside>
   );
-}
+});
 
 function NavRow({
   active,
@@ -1385,6 +1394,26 @@ function ConversationRow({
         </span>
       )}
       {!editingTitle && <button
+        className={`conversation-pin${pinned ? ' is-pinned' : ''}`}
+        type="button"
+        aria-label={pinned
+          ? language === 'zh' ? '取消置顶对话' : 'Unpin chat'
+          : language === 'zh' ? '置顶对话' : 'Pin chat'}
+        title={pinned
+          ? language === 'zh' ? '取消置顶' : 'Unpin'
+          : language === 'zh' ? '置顶' : 'Pin'}
+        aria-pressed={pinned}
+        onClick={(event) => {
+          event.stopPropagation();
+          onTogglePin();
+          event.currentTarget.blur();
+        }}
+        onKeyDown={(event) => event.stopPropagation()}
+        onContextMenu={(event) => event.stopPropagation()}
+      >
+        <Pin size={14} />
+      </button>}
+      {!editingTitle && <button
         className="conversation-more"
         data-sidebar-menu-trigger="true"
         type="button"
@@ -1451,6 +1480,7 @@ function ScrollingConversationTitle({ title }: { title: string }) {
   const viewportRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLSpanElement>(null);
   const lastLayoutLogRef = useRef('');
+  const [restOverflowWidth, setRestOverflowWidth] = useState(0);
   const [overflowWidth, setOverflowWidth] = useState(0);
 
   useLayoutEffect(() => {
@@ -1459,7 +1489,17 @@ function ScrollingConversationTitle({ title }: { title: string }) {
     if (!viewport || !content) return;
 
     const measure = () => {
-      const next = Math.max(0, Math.ceil(content.scrollWidth - viewport.clientWidth));
+      const viewportStyle = window.getComputedStyle(viewport);
+      const inlinePadding =
+        (Number.parseFloat(viewportStyle.paddingLeft) || 0) +
+        (Number.parseFloat(viewportStyle.paddingRight) || 0);
+      const viewportContentWidth = Math.max(0, viewport.clientWidth - inlinePadding);
+      const hoverActionsWidth =
+        Number.parseFloat(viewportStyle.getPropertyValue('--conversation-title-hover-actions')) || 0;
+      const hoverViewportContentWidth = Math.max(0, viewportContentWidth - hoverActionsWidth);
+      const restNext = Math.max(0, Math.ceil(content.scrollWidth - viewportContentWidth));
+      const next = Math.max(0, Math.ceil(content.scrollWidth - hoverViewportContentWidth));
+      setRestOverflowWidth((current) => current === restNext ? current : restNext);
       setOverflowWidth((current) => current === next ? current : next);
       const row = viewport.closest<HTMLElement>('.conversation-row');
       const menu = row?.querySelector<HTMLElement>('.conversation-more') ?? null;
@@ -1472,8 +1512,10 @@ function ScrollingConversationTitle({ title }: { title: string }) {
         );
         const fingerprint = [
           Math.round(rowBounds.width),
-          viewport.clientWidth,
+          Math.round(viewportContentWidth),
+          Math.round(hoverViewportContentWidth),
           content.scrollWidth,
+          restNext,
           next,
           menu ? Math.round(menu.getBoundingClientRect().width) : 0,
           overlapsMenu,
@@ -1483,8 +1525,10 @@ function ScrollingConversationTitle({ title }: { title: string }) {
           console.info('[cardbush:sidebar-title-layout]', {
             titleLength: title.length,
             rowWidth: Math.round(rowBounds.width),
-            titleViewportWidth: viewport.clientWidth,
+            titleViewportWidth: Math.round(viewportContentWidth),
+            titleHoverViewportWidth: Math.round(hoverViewportContentWidth),
             titleContentWidth: content.scrollWidth,
+            restOverflowWidth: restNext,
             overflowWidth: next,
             menuWidth: menuBounds ? Math.round(menuBounds.width) : 0,
             reservedRight: Math.round(rowBounds.right - titleBounds.right),
@@ -1500,17 +1544,20 @@ function ScrollingConversationTitle({ title }: { title: string }) {
     return () => observer.disconnect();
   }, [title]);
 
-  // Keep the marquee distance-aware, but quick enough that a hovered title is
-  // useful immediately. The duration represents one trip across the overflow.
-  const duration = Math.min(5.2, Math.max(1.4, overflowWidth / 64 + 0.65));
+  // Move once at a readable pace, including the trailing fade lane so the
+  // final glyphs stop in the fully visible area instead of under the mask.
+  const travelWidth = overflowWidth > 0 ? overflowWidth + 16 : 0;
+  const duration = Math.min(9, Math.max(2.6, travelWidth / 42 + 0.9));
   return (
     <span
       ref={viewportRef}
-      className={`conversation-title${overflowWidth > 0 ? ' is-overflowing' : ''}`}
+      className={`conversation-title${restOverflowWidth > 0 ? ' is-overflowing' : ''}${overflowWidth > 0 ? ' is-hover-scrollable' : ''}`}
       aria-label={title}
+      data-rest-overflow-width={restOverflowWidth}
       data-overflow-width={overflowWidth}
       style={{
         '--conversation-title-overflow': `${overflowWidth}px`,
+        '--conversation-title-travel': `${travelWidth}px`,
         '--conversation-title-duration': `${duration}s`,
       } as React.CSSProperties}
     >

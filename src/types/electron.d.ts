@@ -12,6 +12,7 @@ import type {
 declare global {
   interface Window {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
+    __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
       runtime: {
         command: (message: unknown) => Promise<unknown>;

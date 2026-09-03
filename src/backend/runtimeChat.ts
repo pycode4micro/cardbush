@@ -256,7 +256,7 @@ export async function streamRuntimeChat(request: ChatStreamRequest): Promise<voi
     }
     const contextMetrics = contextWindowMetrics(
       committed?.usage,
-      request.modelConfig?.maxContextTokens,
+      maxContextTokens,
     );
     request.onContextWindowUsage?.({
       sessionId: request.sessionId,
@@ -434,7 +434,14 @@ async function consumeRuntimeEvents(
         break;
       case 'assistant_segment_delta':
         onAssistantMessage(event.payload.messageId);
-        request.onDelta?.(event.payload.delta, streamChunk(event, event.payload.messageId));
+        request.onDelta?.(event.payload.delta, assistantStreamChunk(event));
+        break;
+      case 'assistant_segment_completed':
+        onAssistantMessage(event.payload.messageId);
+        request.onAssistantSegmentCompleted?.(
+          event.payload.content,
+          assistantStreamChunk(event),
+        );
         break;
       case 'guidance_applied':
         request.onExecution?.({
@@ -639,6 +646,19 @@ function streamChunk(
     sequence: event.sequence,
     requestId: event.requestId,
     eventId: event.eventId,
+  };
+}
+
+function assistantStreamChunk(
+  event: Extract<RuntimeEvent, {
+    kind: 'assistant_segment_delta' | 'assistant_segment_completed';
+  }>,
+): AssistantStreamChunk {
+  return {
+    ...streamChunk(event, event.payload.messageId),
+    assistantSegmentIndex: event.payload.ordinal,
+    segmentId: event.payload.segmentId,
+    segmentOrdinal: event.payload.ordinal,
   };
 }
 

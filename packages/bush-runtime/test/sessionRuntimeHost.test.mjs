@@ -26,13 +26,14 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
         observedRequests.push(structuredClone(request));
         response += 1;
         yield event(request.requestId, 0, "response_started");
-        yield event(request.requestId, 1, "text_delta", { delta: `answer-${response}` });
-        yield event(request.requestId, 2, "usage", {
+        yield event(request.requestId, 1, "reasoning_delta", { delta: `private-${response}` });
+        yield event(request.requestId, 2, "text_delta", { delta: `answer-${response}` });
+        yield event(request.requestId, 3, "usage", {
           inputTokens: response * 10,
           outputTokens: response,
           cachedInputTokens: response * 5,
         });
-        yield event(request.requestId, 3, "response_completed", { finishReason: "stop" });
+        yield event(request.requestId, 4, "response_completed", { finishReason: "stop" });
       },
     },
     sessionNow: () => NOW,
@@ -87,12 +88,40 @@ test("runs consecutive Session Turns from durable facts without duplicating the 
   assert.equal(snapshot.turns[0].cacheChainState.requestOrdinal, 1);
   assert.equal(snapshot.turns[1].cacheChainState.requestOrdinal, 2);
   assert.equal(snapshot.turns.flatMap((turn) => turn.messages).length, 4);
+  assert.equal(
+    snapshot.turns[0].messages.find((message) => message.message.role === "assistant")
+      .message.reasoningContent,
+    "private-1",
+  );
   assert.deepEqual(snapshot.turns[0].messages[0].metadata.attachments, [{
     id: "attachment-1",
     name: "brief.md",
     type: "document",
     path: "C:\\workspace\\brief.md",
   }]);
+  const conversationSnapshot = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1", messageProjection: "conversation" },
+  });
+  assert.equal(
+    conversationSnapshot.turns
+      .flatMap((turn) => turn.messages)
+      .some((message) => message.message.role === "tool"),
+    false,
+  );
+  assert.equal(
+    conversationSnapshot.turns[0].messages
+      .find((message) => message.message.role === "assistant")
+      .message.reasoningContent,
+    undefined,
+  );
+  assert.equal(
+    snapshot.turns[0].messages
+      .find((message) => message.message.role === "assistant")
+      .message.reasoningContent,
+    "private-1",
+    "conversation reads must not mutate the canonical append-only snapshot",
+  );
   assert.ok(host.capabilities().features.includes("append_only_session_context"));
   assert.ok(host.capabilities().features.includes("cross_turn_cache_chain"));
   assert.ok(host.capabilities().features.includes("stopped_turn_continuation"));
@@ -321,6 +350,14 @@ test("associates assistant thumbs with LEM records used by that Turn", async (co
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   });
+  assert.ok(snapshot.turns[0].messages.some((message) =>
+    message.message.role === "tool"));
+  const conversationSnapshot = await host.sendCommand({
+    kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: "session_1", messageProjection: "conversation" },
+  });
+  assert.equal(conversationSnapshot.turns[0].messages.some((message) =>
+    message.message.role === "tool"), false);
   const finalMessage = snapshot.turns[0].messages.find((message) =>
     message.message.role === "assistant" && message.message.content === "verified answer");
   assert.ok(finalMessage);
@@ -344,6 +381,17 @@ test("forces atomic context compaction and resumes the same active Turn", async 
   let call = 0;
   const host = new InMemoryRuntimeHost({
     provider: {
+      async countInputTokens(request) {
+        return {
+          inputTokens: request.messages.some((message) =>
+            message.name === "turn_context_summary")
+              ? 100
+            : request.messages.some((message) => message.name === "context_pressure")
+              ? 2_900
+              : 2_860,
+          source: "provider",
+        };
+      },
       async *stream(request) {
         observedRequests.push(structuredClone(request));
         call += 1;
@@ -404,7 +452,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     "request_compact_1",
     "turn_compact_1",
     "user_compact_1",
-    "x".repeat(20_000),
+    "x".repeat(20),
   ));
   const second = sessionRequest(
     "request_compact_2",
@@ -435,9 +483,11 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     payload: { sessionId: "session_1" },
   });
   assert.match(snapshot.turns[0].contextSummary, /large prior payload/);
-  assert.equal(snapshot.turns[0].messages[0].message.content.length, 20_000);
+  assert.equal(snapshot.turns[0].messages[0].message.content.length, 20);
   assert.equal(snapshot.turns[1].messages.length, 2);
   assert.equal(snapshot.turns[1].usage.inputTokens, 200);
+  assert.equal(snapshot.turns[1].usage.model, "model");
+  assert.equal(snapshot.turns[1].usage.contextWindowTokens, 4000);
   assert.equal(snapshot.turns[1].usage.lastRequestInputTokens, 110);
   assert.equal(snapshot.turns[1].usage.lastRequestCachedInputTokens, 80);
   assert.equal(
@@ -529,6 +579,71 @@ test("keeps checkpoint_context visible but rejects proactive compaction below 95
       message.message.toolCalls.some((toolCall) => toolCall.name === "checkpoint_context")),
     false,
   );
+});
+
+test("fails before dispatch when the Provider cannot count the final input projection", async () => {
+  let streamed = false;
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async countInputTokens() {
+        throw new Error("count endpoint unavailable");
+      },
+      async *stream() {
+        streamed = true;
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+  });
+  const request = sessionRequest(
+    "request_count_failure",
+    "turn_count_failure",
+    "user_count_failure",
+    "hello",
+  );
+  request.metadata = { contextWindowTokens: 4_000 };
+
+  const terminal = await host.runSessionTurn(request);
+
+  assert.equal(streamed, false);
+  assert.equal(terminal.payload.status, "failed");
+  assert.equal(terminal.payload.reason, "provider_input_token_count_failed");
+  assert.match(terminal.payload.details.message, /count endpoint unavailable/);
+});
+
+test("dispatches with a fallback estimate when exact Provider counting is unsupported", async () => {
+  let counted = 0;
+  let streamed = false;
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async countInputTokens() {
+        counted += 1;
+        return undefined;
+      },
+      async *stream(request) {
+        streamed = true;
+        yield event(request.requestId, 0, "response_started");
+        yield event(request.requestId, 1, "text_delta", { delta: "fallback continued" });
+        yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+      },
+    },
+    sessionNow: () => NOW,
+    eventLogOptions: deterministicEventLogOptions(),
+  });
+  const request = sessionRequest(
+    "request_count_unsupported",
+    "turn_count_unsupported",
+    "user_count_unsupported",
+    "hello",
+  );
+  request.metadata = { contextWindowTokens: 4_000 };
+
+  const terminal = await host.runSessionTurn(request);
+
+  assert.equal(counted, 1);
+  assert.equal(streamed, true);
+  assert.equal(terminal.payload.status, "completed");
+  assert.equal(terminal.payload.reason, "model_response_completed");
 });
 
 function sessionRequest(requestId, turnId, messageId, content) {

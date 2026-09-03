@@ -69,7 +69,7 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
               : 'The completed Plan should be archived above the steps without an extra first divider.'}
           </span>
         </div>
-        <MessageFileReferenceScope workspaceRoot="C:\\workspace\\cardbush-electron">
+        <MessageFileReferenceScope workspaceRoot="C:\\workspace\\cardbush">
           <div className="loop-history-pre-test-layout">
             <div className="message-list loop-history-pre-test-messages">
               {activeMessages.map((message) => (

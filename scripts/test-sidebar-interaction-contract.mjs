@@ -55,12 +55,12 @@ assert.match(
 assert.match(sidebarSource, /aria-label=\{actionLabel\}/);
 assert.match(
   stylesSource,
-  /\.row-new-chat,\s*\.row-more,\s*\.conversation-more\s*\{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?margin-block:\s*auto;/,
+  /\.row-new-chat,\s*\.row-more,\s*\.conversation-pin,\s*\.conversation-more\s*\{[\s\S]*?top:\s*0;[\s\S]*?bottom:\s*0;[\s\S]*?margin-block:\s*auto;/,
   'Sidebar row actions must be centered without a transform that the global active state can overwrite',
 );
 assert.doesNotMatch(
   stylesSource,
-  /\.row-new-chat,\s*\.row-more,\s*\.conversation-more\s*\{[^}]*translateY\(-50%\)/,
+  /\.row-new-chat,\s*\.row-more,\s*\.conversation-pin,\s*\.conversation-more\s*\{[^}]*translateY\(-50%\)/,
   'Sidebar row actions must not jump when the global button press scale is applied',
 );
 assert.match(
@@ -238,13 +238,44 @@ assert.match(
 assert.match(stylesSource, /\.project-row\s*\{[\s\S]*?gap:\s*var\(--sidebar-tree-gap\)/);
 assert.match(stylesSource, /\.conversation-row\.nested\s*\{[\s\S]*?padding-left:\s*var\(--sidebar-tree-child\)/);
 assert.match(sidebarSource, /function ScrollingConversationTitle\(/);
-assert.match(sidebarSource, /content\.scrollWidth - viewport\.clientWidth/);
+assert.match(sidebarSource, /viewport\.clientWidth - inlinePadding/);
+assert.match(sidebarSource, /getPropertyValue\('--conversation-title-hover-actions'\)/);
+assert.match(sidebarSource, /content\.scrollWidth - hoverViewportContentWidth/);
+assert.match(sidebarSource, /content\.scrollWidth - viewportContentWidth/);
 assert.match(sidebarSource, /\[cardbush:sidebar-title-layout\]/);
 assert.doesNotMatch(sidebarSource, /conversation-change-badge/);
 assert.doesNotMatch(sidebarSource, /overlapsDiff/);
 assert.doesNotMatch(sidebarSource, /className=\{`conversation-title[^\n]*[\s\S]{0,160}title=\{title\}/);
 assert.match(sidebarSource, /<ScrollingConversationTitle title=\{conversation\.title\}/);
 assert.match(stylesSource, /@keyframes conversation-title-marquee/);
+assert.match(
+  stylesSource,
+  /animation:\s*conversation-title-marquee[\s\S]*?linear 140ms forwards/,
+  'Overflowing titles must make one compositor-friendly linear trip and remain at the readable endpoint',
+);
+assert.doesNotMatch(
+  stylesSource,
+  /conversation-title-marquee[\s\S]{0,140}(?:infinite|alternate)/,
+  'Conversation title marquee must not loop or reverse after reaching the end',
+);
+assert.match(sidebarSource, /const travelWidth = overflowWidth > 0 \? overflowWidth \+ 16 : 0/);
+assert.match(sidebarSource, /travelWidth \/ 42 \+ 0\.9/);
+assert.match(sidebarSource, /--conversation-title-travel/);
+assert.match(
+  stylesSource,
+  /\.conversation-row:hover \.conversation-title\.is-hover-scrollable[\s\S]*?mask-image:\s*linear-gradient\([\s\S]*?transparent 0,[\s\S]*?#000 var\(--conversation-title-edge-fade\),[\s\S]*?#000 calc\(100% - var\(--conversation-title-hover-actions\) - var\(--conversation-title-trailing-fade\)\),[\s\S]*?transparent calc\(100% - var\(--conversation-title-hover-actions\)\)/,
+  'Hovered scrolling titles must fade into the transient action lane',
+);
+assert.match(
+  stylesSource,
+  /\.conversation-title\.is-hover-scrollable\s*\{[\s\S]*?margin-inline-start:\s*calc\(-1 \* var\(--conversation-title-leading-lane\)\)[\s\S]*?padding-inline-start:\s*var\(--conversation-title-leading-lane\)/,
+  'The leading fade must occupy a lane before the title instead of dimming its first glyphs',
+);
+assert.doesNotMatch(
+  stylesSource,
+  /\.conversation-title\.is-overflowing::(?:before|after)/,
+  'Title edges must not use rectangular backdrop overlays',
+);
 assert.match(
   stylesSource,
   /\.conversation-row > \.conversation-title\s*\{[\s\S]*?width:\s*0[\s\S]*?flex:\s*1 1 0/,
@@ -259,8 +290,33 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.conversation-row\.nested\s*\{[\s\S]*?padding-right:\s*36px/,
-  'Nested titles must reserve a fixed action column for the conversation menu',
+  /\.conversation-row\.nested\s*\{[\s\S]*?padding-right:\s*8px/,
+  'Nested titles must use the full idle row width instead of reserving hidden actions',
+);
+assert.match(stylesSource, /\.conversation-row\s*\{[\s\S]*?--conversation-title-hover-actions:\s*50px[\s\S]*?padding:\s*0 8px 0 var\(--sidebar-tree-base\)/);
+assert.match(stylesSource, /\.conversation-row\.running,[\s\S]*?--conversation-title-hover-actions:\s*22px;[\s\S]*?padding-right:\s*36px/);
+assert.match(sidebarSource, /className=\{`conversation-pin\$\{pinned \? ' is-pinned' : ''\}`\}/);
+assert.match(sidebarSource, /aria-pressed=\{pinned\}/);
+assert.match(stylesSource, /\.conversation-pin\s*\{[\s\S]*?right:\s*27px/);
+assert.match(sidebarSource, /export const ChatSidebar = memo\(function ChatSidebar\(/);
+assert.match(stylesSource, /\.conversation-title-text\s*\{[\s\S]*?backface-visibility:\s*hidden[\s\S]*?transform:\s*translate3d\(0, 0, 0\)/);
+assert.match(stylesSource, /\.conversation-title\.is-hover-scrollable\s*\{[\s\S]*?contain:\s*paint/);
+assert.match(appSource, /onSectionChange=\{handleSidebarSectionChange\}/);
+assert.match(appSource, /onConversationChange=\{handleSidebarConversationChange\}/);
+assert.match(appSource, /onCreateConversation=\{handleSidebarCreateConversation\}/);
+assert.match(appSource, /onAddProject=\{handleSidebarAddProject\}/);
+assert.match(appSource, /onProjectAction=\{handleSidebarProjectAction\}/);
+assert.match(appSource, /onOpenConversationChanges=\{handleSidebarOpenConversationChanges\}/);
+assert.match(appSource, /onOpenSettings=\{handleSidebarOpenSettings\}/);
+assert.match(
+  appSource,
+  /const createConversation = useCallback[\s\S]*?chat\.clearConversationSelection,[\s\S]*?chat\.prepareConversation,[\s\S]*?\]\s*,?\s*\);/,
+  'Creating a conversation must depend on stable chat methods, not the per-render chat object',
+);
+assert.match(
+  appSource,
+  /const changeOnlyTalkMode = useCallback[\s\S]*?\}, \[chat\.clearConversationSelection\]\);/,
+  'The sidebar mode handler must remain stable while chat messages stream',
 );
 assert.match(appSource, /cardbush_recent_project_dir/);
 assert.match(

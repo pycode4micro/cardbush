@@ -74,6 +74,21 @@ const cases = [
     input: '部署清单\n\n```text\n   \n```\n\n下一段',
     expected: '部署清单\n\n\n\n下一段',
   },
+  {
+    name: 'emphasized bare URL becomes an unambiguous native Markdown link',
+    input: '服务运行中:**http://127.0.0.1:8000**(F5 刷新)',
+    expected: '服务运行中:**[http://127.0.0.1:8000](http://127.0.0.1:8000)**(F5 刷新)',
+  },
+  {
+    name: 'emphasized URL inside inline code remains literal',
+    input: '示例：`**http://127.0.0.1:8000**`',
+    expected: '示例：`**http://127.0.0.1:8000**`',
+  },
+  {
+    name: 'emphasized URL inside fenced code remains literal',
+    input: '```md\n**https://example.com**\n```',
+    expected: '```md\n**https://example.com**\n```',
+  },
 ];
 
 for (const testCase of cases) {

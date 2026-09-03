@@ -10,7 +10,11 @@ import {
   type RuntimeProviderBindingConfig,
   type RuntimeProviderBindingResult,
 } from "@cardbush/bush-protocol";
-import type { ModelProvider, ModelStreamOptions } from "@cardbush/bush-runtime";
+import type {
+  ModelInputTokenCount,
+  ModelProvider,
+  ModelStreamOptions,
+} from "@cardbush/bush-runtime";
 
 import {
   OpenAIResponsesProvider,
@@ -93,14 +97,20 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
     };
   }
 
+  async countInputTokens(
+    request: ModelRequest,
+    options: ModelStreamOptions = {},
+  ): Promise<ModelInputTokenCount | undefined> {
+    const provider = this.#resolve(request);
+    return provider?.countInputTokens?.(request, options);
+  }
+
   async *stream(
     request: ModelRequest,
     options: ModelStreamOptions = {},
   ): AsyncIterable<ModelEvent> {
     const reference = request.providerBinding;
-    const provider = reference
-      ? this.#providers.get(bindingKey(reference.bindingId, reference.revision))
-      : this.#fallbackProvider;
+    const provider = this.#resolve(request);
     if (!provider) {
       yield providerFailure(
         request.requestId,
@@ -112,6 +122,13 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
       return;
     }
     yield* provider.stream(request, options);
+  }
+
+  #resolve(request: ModelRequest): ModelProvider | undefined {
+    const reference = request.providerBinding;
+    return reference
+      ? this.#providers.get(bindingKey(reference.bindingId, reference.revision))
+      : this.#fallbackProvider;
   }
 }
 

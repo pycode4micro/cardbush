@@ -71,6 +71,19 @@ assert.equal(
   undefined,
   'legacy cumulative input must never be mislabeled as context occupancy',
 );
+assert.deepEqual(
+  structuredClone(contextWindowMetrics({
+    lastRequestInputTokens: 352_729,
+    contextWindowTokens: 400_000,
+  }, 256_000)),
+  {
+    usedTokens: 352_729,
+    maxTokens: 400_000,
+    remainingTokens: 47_271,
+    usageRatio: 352_729 / 400_000,
+  },
+  'persisted request usage must stay bound to the model window used for that request',
+);
 assert.match(runtimeChat, /contextWindowMetrics\(\s*committed\?\.usage/);
 assert.match(api, /contextWindowMetrics\(latest\?\.usage\)/);
 assert.doesNotMatch(api, /usedTokens:\s*context\.estimatedTokens/);

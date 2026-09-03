@@ -18,6 +18,8 @@ export function ToolChangeBlock({
   language,
   toolName,
   onRevert,
+  detailsDeferred = false,
+  onRequestDetails,
 }: {
   report: ToolChangeReport;
   running: boolean;
@@ -25,18 +27,25 @@ export function ToolChangeBlock({
   language: AppLanguage;
   toolName: string;
   onRevert?: () => Promise<void>;
+  detailsDeferred?: boolean;
+  onRequestDetails?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
   const blockRef = useRef<HTMLDivElement>(null);
   const hasDetails = report.files.some((file) => file.lines.length > 0);
+  const canExpand = hasDetails || detailsDeferred;
   const primaryFile = report.files[0];
   const primaryPath = primaryFile?.path ?? '';
   const toggleExpanded = useCallback(() => {
     preserveScrollPositionForToggle(blockRef.current, () => {
-      setExpanded((value) => !value);
+      setExpanded((value) => {
+        const next = !value;
+        if (next && detailsDeferred) onRequestDetails?.();
+        return next;
+      });
     });
-  }, []);
+  }, [detailsDeferred, onRequestDetails]);
   const title = toolChangeTitle({
     running,
     hasDetails,
@@ -54,7 +63,7 @@ export function ToolChangeBlock({
         <button
           className="tool-change-header"
           type="button"
-          disabled={!hasDetails}
+          disabled={!canExpand}
           onClick={toggleExpanded}
         >
           <ToolLogo name={toolName} size={16} />
@@ -96,14 +105,21 @@ export function ToolChangeBlock({
       </div>
       {expanded && (
         <div className="tool-change-files">
-          {report.files.map((file, index) => (
-            <ToolFileChangeView
-              // eslint-disable-next-line react/no-array-index-key
-              key={`${file.path}-${index}`}
-              file={file}
-              language={language}
-            />
-          ))}
+          {detailsDeferred && !hasDetails ? (
+            <p className="tool-change-details-loading">
+              <LoaderCircle size={14} />
+              <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>
+            </p>
+          ) : (
+            report.files.map((file, index) => (
+              <ToolFileChangeView
+                // eslint-disable-next-line react/no-array-index-key
+                key={`${file.path}-${index}`}
+                file={file}
+                language={language}
+              />
+            ))
+          )}
         </div>
       )}
     </div>

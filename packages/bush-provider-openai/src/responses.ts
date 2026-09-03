@@ -10,6 +10,7 @@ import type {
   ResponseInputItem,
   ResponseStreamEvent,
 } from "openai/resources/responses/responses";
+import type { InputTokenCountParams } from "openai/resources/responses/input-tokens";
 
 import {
   BUSH_MODEL_EVENT_PROTOCOL,
@@ -17,7 +18,11 @@ import {
   type ModelMessage,
   type ModelRequest,
 } from "@cardbush/bush-protocol";
-import type { ModelProvider, ModelStreamOptions } from "@cardbush/bush-runtime";
+import type {
+  ModelInputTokenCount,
+  ModelProvider,
+  ModelStreamOptions,
+} from "@cardbush/bush-runtime";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -37,6 +42,15 @@ export interface OpenAIResponsesProviderConfig {
 export interface ResponseCreateProjectionOptions {
   disableProviderState?: boolean;
 }
+
+interface ResponsesProjection {
+  request: ModelRequest;
+  params: ResponseCreateParamsStreaming;
+  usesProviderState: boolean;
+}
+
+const INPUT_TOKEN_COUNT_CAPABILITY = "input_token_count";
+const UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES = new Set([404, 405, 501]);
 
 export interface ResponseNormalizationState {
   requestId: string;
@@ -260,6 +274,20 @@ export function toResponsesCreateParams(
   } as ResponseCreateParamsStreaming;
 }
 
+export function toResponsesInputTokenCountParams(
+  params: ResponseCreateParamsStreaming,
+): InputTokenCountParams {
+  return {
+    model: params.model,
+    input: params.input,
+    tools: params.tools,
+    reasoning: params.reasoning,
+    ...(params.previous_response_id
+      ? { previous_response_id: params.previous_response_id }
+      : {}),
+  };
+}
+
 function toResponseInput(messages: ModelMessage[]): ResponseInput {
   return messages.flatMap((message, index) => toResponseInputItems(message, index));
 }
@@ -466,6 +494,44 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.#capabilityScope = config.capabilityScope ?? openAIResponsesCapabilityScope(config);
   }
 
+  async countInputTokens(
+    request: ModelRequest,
+    options: ModelStreamOptions = {},
+  ): Promise<ModelInputTokenCount | undefined> {
+    if (this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
+      return undefined;
+    }
+    try {
+      const projection = await this.#project(request);
+      const result = await this.#client.responses.inputTokens.count(
+        toResponsesInputTokenCountParams(projection.params),
+        { signal: options.signal },
+      );
+      this.#observeCapability(
+        request.model,
+        INPUT_TOKEN_COUNT_CAPABILITY,
+        "supported",
+        "provider_count_succeeded",
+      );
+      return {
+        inputTokens: result.input_tokens,
+        source: "provider",
+      };
+    } catch (error) {
+      const status = providerHttpStatus(error);
+      if (status !== undefined && UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES.has(status)) {
+        this.#observeCapability(
+          request.model,
+          INPUT_TOKEN_COUNT_CAPABILITY,
+          "unsupported",
+          `http_${status}`,
+        );
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async *stream(
     request: ModelRequest,
     options: ModelStreamOptions = {},
@@ -476,23 +542,11 @@ export class OpenAIResponsesProvider implements ModelProvider {
       started: false,
     };
     try {
-      const resolvedRequest = await resolveLocalImageInputs(request);
-      const continuation = this.#readCapability(
-        resolvedRequest.model,
-        "response_continuation",
-      );
-      const hasPreviousResponse = Boolean(
-        resolvedRequest.providerState?.previousResponseId,
-      );
-      const useProviderState = Boolean(
-        resolvedRequest.providerState &&
-        (!hasPreviousResponse || continuation === "supported"),
-      );
-      const activeProviderState = useProviderState;
+      const projection = await this.#project(request);
+      const resolvedRequest = projection.request;
+      const activeProviderState = projection.usesProviderState;
       const stream = await this.#client.responses.create(
-        toResponsesCreateParams(resolvedRequest, {
-          disableProviderState: !useProviderState,
-        }),
+        projection.params,
         { signal: options.signal },
       );
       for await (const providerEvent of stream) {
@@ -545,6 +599,28 @@ export class OpenAIResponsesProvider implements ModelProvider {
     }
   }
 
+  async #project(request: ModelRequest): Promise<ResponsesProjection> {
+    const resolvedRequest = await resolveLocalImageInputs(request);
+    const continuation = this.#readCapability(
+      resolvedRequest.model,
+      "response_continuation",
+    );
+    const hasPreviousResponse = Boolean(
+      resolvedRequest.providerState?.previousResponseId,
+    );
+    const usesProviderState = Boolean(
+      resolvedRequest.providerState &&
+      (!hasPreviousResponse || continuation === "supported"),
+    );
+    return {
+      request: resolvedRequest,
+      params: toResponsesCreateParams(resolvedRequest, {
+        disableProviderState: !usesProviderState,
+      }),
+      usesProviderState,
+    };
+  }
+
   #readCapability(model: string, capability: string): ProviderCapabilityStatus {
     return this.#capabilityStore.read({
       scope: this.#capabilityScope,
@@ -570,4 +646,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
       reason,
     }));
   }
+}
+
+function providerHttpStatus(error: unknown): number | undefined {
+  if (error instanceof OpenAI.APIError && Number.isInteger(error.status)) {
+    return error.status;
+  }
+  if (!error || typeof error !== "object") return undefined;
+  const status = (error as { status?: unknown }).status;
+  return Number.isInteger(status) ? Number(status) : undefined;
 }

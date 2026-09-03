@@ -97,8 +97,13 @@ assert.match(
 );
 assert.match(
   styles,
-  /@keyframes assistant-stream-segment-enter[\s\S]*?opacity:\s*0\.78[\s\S]*?translateY\(2px\)/,
-  'A newly mounted assistant segment must enter with a low-contrast transition',
+  /\.assistant-atomic-reveal\.is-visible\s*\{[\s\S]*?transition:\s*opacity 90ms linear/,
+  'A completed assistant segment must use one short composited reveal after layout is reserved',
+);
+assert.doesNotMatch(
+  styles,
+  /@keyframes assistant-stream-segment-enter|\.assistant-atomic-reveal[^}]*transform:/,
+  'Assistant text must not animate geometry after its layout is reserved',
 );
 assert.match(
   appSource,

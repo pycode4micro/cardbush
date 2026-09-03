@@ -1,5 +1,5 @@
 {
-  "name": "cardbush-electron",
+  "name": "cardbush",
   "version": "1.0.0-dev",
   "description": "CardBush desktop AI workspace",
   "author": {
@@ -58,6 +58,8 @@
     "test:tool-media-artifacts": "node scripts/test-tool-media-artifacts-contract.mjs",
     "test:chat-scroll": "node scripts/test-chat-scroll-contract.mjs",
     "test:sidebar-interaction": "node scripts/test-sidebar-interaction-contract.mjs",
+    "test:ui-performance": "node scripts/test-ui-performance-contract.mjs",
+    "replay:ui-performance": "node scripts/replay-ui-performance.mjs",
     "test:conversation-workspace": "node scripts/test-conversation-workspace-contract.mjs",
     "test:conversation-scope": "node scripts/test-conversation-scope-contract.mjs",
     "test:goal-a2a": "node scripts/test-goal-a2a-contract.mjs",

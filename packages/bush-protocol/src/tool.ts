@@ -5,6 +5,8 @@ export const BUSH_ACTION_MANIFEST_PROTOCOL =
   "bush.tool.action_manifest.v1" as const;
 export const BUSH_TOOL_EXECUTION_RECORD_PROTOCOL =
   "bush.tool.execution_record.v2" as const;
+export const BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL =
+  "bush.tool_execution_summary.v1" as const;
 export const GET_RUNTIME_TOOL_EXECUTION_COMMAND =
   "runtime.get_tool_execution" as const;
 export const LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND =
@@ -131,6 +133,19 @@ export const workspaceChangeSchema = z.object({
 
 export type WorkspaceChange = z.infer<typeof workspaceChangeSchema>;
 
+/**
+ * Lossless identity and counters needed by transcript change summaries. Large
+ * evidence such as a unified diff remains on the canonical Workspace Change
+ * and is read through the full execution/review path when requested.
+ */
+export const workspaceChangeSummarySchema = workspaceChangeSchema
+  .omit({ metadata: true })
+  .extend({ detailAvailable: z.boolean() });
+
+export type WorkspaceChangeSummary = z.infer<
+  typeof workspaceChangeSummarySchema
+>;
+
 export const toolExecutionIdentitySchema = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
@@ -140,6 +155,10 @@ export const toolExecutionIdentitySchema = z.object({
 export const turnToolExecutionsIdentitySchema = z.object({
   sessionId: z.string().min(1),
   turnId: z.string().min(1),
+});
+
+export const turnToolExecutionsRequestSchema = turnToolExecutionsIdentitySchema.extend({
+  detail: z.enum(["full", "summary"]).default("full"),
 });
 
 export const runtimeToolErrorSchema = z.object({
@@ -196,5 +215,28 @@ export const toolExecutionRecordSchema = z.object({
     });
   }
 });
+
+/**
+ * Read projection used by transcript summaries. The append-only execution
+ * record remains native and lossless; large arguments/results are fetched by
+ * identity only when the user opens execution details.
+ */
+export const toolExecutionSummarySchema = z.object({
+  protocol: z.literal(BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL),
+  requestId: z.string().min(1),
+  sessionId: z.string().min(1),
+  turnId: z.string().min(1),
+  round: z.number().int().positive(),
+  ordinal: z.number().int().nonnegative(),
+  recordedAt: z.string().min(1),
+  toolCall: toolCallSchema.pick({ protocol: true, id: true, name: true }),
+  outcome: z.enum(["returned", "failed", "cancelled"]),
+  actionManifest: actionManifestSchema.optional(),
+  resultAvailable: z.boolean(),
+  workspaceChanges: z.array(workspaceChangeSummarySchema).default([]),
+  error: runtimeToolErrorSchema.optional(),
+});
+
+export type ToolExecutionSummary = z.infer<typeof toolExecutionSummarySchema>;
 
 export type ToolExecutionRecord = z.infer<typeof toolExecutionRecordSchema>;

@@ -568,8 +568,13 @@ assert.match(
 );
 assert.match(
   chatHookSource,
-  /onDone: \(terminal\) => \{\s*setPendingInteraction\(\(current\) =>\s*current\?\.sessionId === sessionId \? null : current,/,
+  /onDone: \(terminal\) => \{[\s\S]{0,120}?setPendingInteraction\(\(current\) =>\s*current\?\.sessionId === sessionId \? null : current,/,
   'A terminal Turn must remove its obsolete permission card.',
+);
+assert.equal(
+  (chatHookSource.match(/onDone: \(terminal\) => \{\s*markSessionDone\(/g) ?? []).length,
+  3,
+  'Every Runtime stream path must end the sidebar processing marker from the canonical done callback.',
 );
 const toolLogoSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolLogo.tsx'),

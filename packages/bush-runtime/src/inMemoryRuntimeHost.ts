@@ -45,10 +45,11 @@ import {
   pendingRuntimeInteractionsRequestSchema,
   runtimeCoordinationSessionSchema,
   runtimeSessionIdentitySchema,
+  runtimeSessionReadRequestSchema,
   runtimeSessionListRequestSchema,
   runtimeSessionTurnRequestSchema,
   toolExecutionIdentitySchema,
-  turnToolExecutionsIdentitySchema,
+  turnToolExecutionsRequestSchema,
   runtimeEventKindSchema,
   runtimeTurnIdentitySchema,
   runtimeToolCancellationIdentitySchema,
@@ -73,6 +74,7 @@ import {
   type RuntimePermissionAnswer,
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
+  type SessionSnapshot,
   type RuntimeInteraction,
   type ToolExecutionRecord,
   type WorkspaceChange,
@@ -238,6 +240,13 @@ interface PendingAgentGuidance {
   promise: Promise<JoinedSubagentResult["message"]>;
   settled: boolean;
   message?: JoinedSubagentResult["message"];
+}
+
+class ProviderInputTokenCountError extends Error {
+  constructor(readonly original: unknown) {
+    super(original instanceof Error ? original.message : String(original));
+    this.name = "ProviderInputTokenCountError";
+  }
 }
 
 type SettledAgentGuidance = JoinedSubagentResult;
@@ -524,8 +533,10 @@ export class InMemoryRuntimeHost {
         if (this.#shuttingDown) throw new Error("Runtime is shutting down.");
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
       case GET_RUNTIME_SESSION_COMMAND: {
-        const identity = runtimeSessionIdentitySchema.parse(command.payload);
-        return this.#sessions.snapshot(identity.sessionId) ?? null;
+        const input = runtimeSessionReadRequestSchema.parse(command.payload);
+        const snapshot = this.#sessions.snapshot(input.sessionId);
+        if (!snapshot || input.messageProjection === "full") return snapshot ?? null;
+        return conversationSessionSnapshot(snapshot);
       }
       case CREATE_RUNTIME_SESSION_COMMAND: {
         const input = createRuntimeSessionRequestSchema.parse(command.payload);
@@ -572,8 +583,10 @@ export class InMemoryRuntimeHost {
         ) ?? null;
       }
       case LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND: {
-        const identity = turnToolExecutionsIdentitySchema.parse(command.payload);
-        return this.#toolExecutions.listTurn(identity.sessionId, identity.turnId);
+        const input = turnToolExecutionsRequestSchema.parse(command.payload);
+        return input.detail === "summary"
+          ? this.#toolExecutions.listTurnSummaries(input.sessionId, input.turnId)
+          : this.#toolExecutions.listTurn(input.sessionId, input.turnId);
       }
       case GET_RUNTIME_TOOL_CATALOG_COMMAND:
         return this.#toolRegistry.definitions();
@@ -905,13 +918,22 @@ export class InMemoryRuntimeHost {
       ? structuredClone(input.sessionCommit.generatedMessages)
       : [];
     const usage: {
+      model?: string;
+      contextWindowTokens?: number;
       inputTokens?: number;
       outputTokens?: number;
       cachedInputTokens?: number;
       lastRequestInputTokens?: number;
       lastRequestOutputTokens?: number;
       lastRequestCachedInputTokens?: number;
-    } = input.sessionCommit ? { ...input.sessionCommit.usage } : {};
+    } = {
+      ...(input.sessionCommit ? input.sessionCommit.usage : {}),
+      model: request.model,
+      ...(Number.isInteger(Number(request.metadata.contextWindowTokens)) &&
+      Number(request.metadata.contextWindowTokens) > 0
+        ? { contextWindowTokens: Number(request.metadata.contextWindowTokens) }
+        : {}),
+    };
     const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
       if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
         this.#activeTurnControllers.get(turnKey)?.abort();
@@ -947,7 +969,12 @@ export class InMemoryRuntimeHost {
 
         let contextCompactionRequired = false;
         if (input.sessionCommit) {
-          let pressure = estimateContextPressure(request, messages);
+          let pressure = await this.#measureContextPressure(
+            request,
+            messages,
+            providerState,
+            input.signal,
+          );
           let state = this.#sessions.contextCompactionState(request.sessionId);
           if (
             pressure &&
@@ -982,7 +1009,12 @@ export class InMemoryRuntimeHost {
                   summaryLimit,
                 );
                 providerState = freshResponseChain();
-                pressure = estimateContextPressure(request, messages);
+                pressure = await this.#measureContextPressure(
+                  request,
+                  messages,
+                  providerState,
+                  input.signal,
+                );
                 if (!pressure || pressure.ratio < CONTEXT_COMPACTION_HARD_PRESSURE) break;
                 summaryLimit -= 1;
               } while (summaryLimit >= 0);
@@ -992,12 +1024,33 @@ export class InMemoryRuntimeHost {
                   reason: "current_turn_context_limit_exceeded",
                   details: {
                     estimatedPromptTokens: pressure.estimatedPromptTokens,
+                    measurement: pressure.measurement,
                     usableInputTokens: pressure.usableInputTokens,
                     preservedSummaryTurns: Math.max(0, summaryLimit),
                   },
                 });
               }
             }
+          }
+        }
+
+        if (contextCompactionRequired) {
+          const maintenancePressure = await this.#measureContextPressure(
+            request,
+            messages,
+            providerState,
+            input.signal,
+          );
+          if (maintenancePressure && maintenancePressure.ratio >= 1) {
+            return finalize({
+              status: "failed",
+              reason: "context_compaction_request_limit_exceeded",
+              details: {
+                inputTokens: maintenancePressure.estimatedPromptTokens,
+                measurement: maintenancePressure.measurement,
+                usableInputTokens: maintenancePressure.usableInputTokens,
+              },
+            });
           }
         }
 
@@ -1244,7 +1297,12 @@ export class InMemoryRuntimeHost {
               });
             }
             const state = this.#sessions.contextCompactionState(request.sessionId);
-            const pressure = estimateContextPressure(request, messages);
+            const pressure = await this.#measureContextPressure(
+              request,
+              messages,
+              providerState,
+              input.signal,
+            );
             const mayRetry = Boolean(
               pressure &&
               pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE &&
@@ -1485,6 +1543,13 @@ export class InMemoryRuntimeHost {
             : undefined,
         });
       }
+    } catch (error) {
+      if (!(error instanceof ProviderInputTokenCountError)) throw error;
+      return finalize({
+        status: "failed",
+        reason: "provider_input_token_count_failed",
+        details: { message: error.message },
+      });
     } finally {
       this.#guidanceQueues.delete(turnKey);
       this.#pendingAgentGuidance.delete(turnKey);
@@ -1494,6 +1559,35 @@ export class InMemoryRuntimeHost {
       this.#activeTurnControllers.delete(turnKey);
       input.onSettled?.();
     }
+  }
+
+  async #measureContextPressure(
+    request: ModelRequest,
+    messages: ModelMessage[],
+    providerState: ModelProviderState,
+    signal?: AbortSignal,
+  ) {
+    const contextWindowTokens = Number(request.metadata.contextWindowTokens);
+    if (!Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) {
+      return undefined;
+    }
+    let providerInputTokens: number | undefined;
+    try {
+      const measurement = await this.#provider.countInputTokens?.(
+        { ...request, messages, providerState },
+        { signal },
+      );
+      if (
+        measurement &&
+        (!Number.isInteger(measurement.inputTokens) || measurement.inputTokens < 0)
+      ) {
+        throw new Error("Provider input-token count must be a nonnegative integer.");
+      }
+      providerInputTokens = measurement?.inputTokens;
+    } catch (error) {
+      throw new ProviderInputTokenCountError(error);
+    }
+    return estimateContextPressure(request, messages, providerInputTokens);
   }
 
   #applyContextCheckpoint(input: {
@@ -2151,6 +2245,27 @@ function appendInterruptedAssistantMessage(
       toolCalls: [],
     },
   });
+}
+
+function conversationSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
+  return {
+    ...snapshot,
+    turns: snapshot.turns.map((turn) => ({
+      ...turn,
+      messages: turn.messages.flatMap((entry) => {
+        if (entry.message.role === "tool") return [];
+        if (
+          entry.message.role === "system" ||
+          entry.message.role === "developer"
+        ) {
+          return [];
+        }
+        if (entry.message.role !== "assistant") return [entry];
+        const { reasoningContent: _reasoningContent, ...message } = entry.message;
+        return [{ ...entry, message }];
+      }),
+    })),
+  };
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

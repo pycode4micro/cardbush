@@ -10,7 +10,11 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
-import { dispatchSubagent, type SubagentDispatchResult } from '../../backend/api';
+import {
+  dispatchSubagent,
+  fetchRuntimeTurnToolExecutionDetails,
+  type SubagentDispatchResult,
+} from '../../backend/api';
 import type { AppLanguage, ChatMessage, ChatToolExecution } from '../../types';
 import {
   cardlingSceneFromToolExecution,
@@ -73,13 +77,25 @@ export function ToolExecutionBlock({
   const [expanded, setExpanded] = useState(() =>
     defaultToolExecutionExpanded(active, storedDisclosure()),
   );
+  const [hydratedExecutions, setHydratedExecutions] = useState<
+    Map<string, ChatToolExecution>
+  >(() => new Map());
   const blockRef = useRef<HTMLDivElement>(null);
-  const running = executions.some((execution) => isToolRunningInContext(execution, active));
-  const failedCount = executions.filter((execution) =>
+  const renderedExecutions = useMemo(
+    () => executions.map((execution) => hydratedExecutions.get(execution.id) ?? execution),
+    [executions, hydratedExecutions],
+  );
+  const running = renderedExecutions.some((execution) =>
+    isToolRunningInContext(execution, active),
+  );
+  const failedCount = renderedExecutions.filter((execution) =>
     isToolFailedInContext(execution, active),
   ).length;
-  const tone = running ? 'neutral' : toolExecutionToneInContext(executions, active);
-  const changeReport = toolChangeReportFromExecutions(executions);
+  const tone = running ? 'neutral' : toolExecutionToneInContext(renderedExecutions, active);
+  const changeReport = useMemo(
+    () => toolChangeReportFromExecutions(renderedExecutions),
+    [renderedExecutions],
+  );
   const messageChangeReport: ConversationChangeReport | null = changeReport
     ? {
         ...changeReport,
@@ -92,6 +108,39 @@ export function ToolExecutionBlock({
   useEffect(() => {
     setExpanded(defaultToolExecutionExpanded(active, storedDisclosure()));
   }, [active, disclosureId]);
+
+  const deferredExecutionKey = executions
+    .filter(hasDeferredExecutionDetails)
+    .map((execution) => execution.id)
+    .join('\u0000');
+  const detailsDeferred = executions.some((execution) =>
+    hasDeferredExecutionDetails(execution) &&
+    !hydratedExecutions.has(execution.id));
+  const requestDeferredDetails = useCallback(() => {
+    setExpanded(true);
+  }, []);
+  useEffect(() => {
+    if (!expanded || !deferredExecutionKey) return undefined;
+    const sessionId = message.conversationId?.trim() ?? '';
+    const turnId = executions.find(hasDeferredExecutionDetails)
+      ?.turnId?.trim() || message.turnId?.trim() || '';
+    if (!sessionId || !turnId) return undefined;
+    let cancelled = false;
+    const visibleIds = new Set(executions.map((execution) => execution.id));
+    void fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId })
+      .then((details) => {
+        if (cancelled) return;
+        const next = new Map<string, ChatToolExecution>();
+        for (const detail of details) {
+          if (visibleIds.has(detail.id)) next.set(detail.id, detail);
+        }
+        if (next.size > 0) setHydratedExecutions(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [deferredExecutionKey, executions, expanded, message.conversationId, message.turnId]);
 
   const toggleExpanded = useCallback(() => {
     preserveScrollPositionForToggle(blockRef.current, () => {
@@ -113,6 +162,8 @@ export function ToolExecutionBlock({
         toolName={executions.find((execution) =>
           ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
         )?.name ?? executions[0]?.name ?? 'edit_file'}
+        detailsDeferred={detailsDeferred}
+        onRequestDetails={requestDeferredDetails}
         onRevert={() => onRevertChangeReport(messageChangeReport, message)}
       />
     );
@@ -122,20 +173,20 @@ export function ToolExecutionBlock({
     ? runningToolLabel(executions, language)
     : failedCount > 0
       ? language === 'zh'
-        ? `已运行 ${executions.length} 条命令，${failedCount} 条失败`
-        : `Ran ${executions.length} tools, ${failedCount} failed`
+        ? `已运行 ${renderedExecutions.length} 条命令，${failedCount} 条失败`
+        : `Ran ${renderedExecutions.length} tools, ${failedCount} failed`
       : language === 'zh'
-        ? `已运行 ${executions.length} 条命令`
-        : `Ran ${executions.length} tools`;
+        ? `已运行 ${renderedExecutions.length} 条命令`
+        : `Ran ${renderedExecutions.length} tools`;
   const historySummary = !active && !running
     ? language === 'zh'
       ? `历史执行记录 · ${runSummary}`
       : `Execution history · ${runSummary}`
     : runSummary;
   const summary = historySummary;
-  const logoExecution = executions.find((execution) =>
+  const logoExecution = renderedExecutions.find((execution) =>
     isToolRunningInContext(execution, active),
-  ) ?? executions[0];
+  ) ?? renderedExecutions[0];
 
   return (
     <div
@@ -153,7 +204,7 @@ export function ToolExecutionBlock({
       </button>
       {expanded && (
         <div className="tool-execution-details">
-          {executions.map((execution) => (
+          {renderedExecutions.map((execution) => (
             <ToolExecutionDetail
               key={execution.id}
               execution={execution}
@@ -288,6 +339,11 @@ function summarizeIoManifest(manifest: Record<string, unknown>) {
     return parts.join(' · ');
   }
   return summarizeRecord(manifest);
+}
+
+function hasDeferredExecutionDetails(execution: ChatToolExecution) {
+  return execution.metadata.nativeResultDeferred === true ||
+    execution.metadata.workspaceChangeDetailsDeferred === true;
 }
 
 type VerificationAssertionItem = {

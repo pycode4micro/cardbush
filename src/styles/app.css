@@ -1009,11 +1009,9 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row .conversation-title {
-  --conversation-title-edge-surface: color-mix(
-    in srgb,
-    var(--surface) 76%,
-    transparent
-  );
+  --conversation-title-leading-lane: 24px;
+  --conversation-title-edge-fade: 18px;
+  --conversation-title-trailing-fade: 16px;
   position: relative;
   display: block;
   overflow: hidden;
@@ -1024,35 +1022,31 @@ body.sidebar-resizing .sidebar-resizer {
   white-space: nowrap;
 }
 
-.conversation-title.is-overflowing::before,
-.conversation-title.is-overflowing::after {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  bottom: 0;
-  width: 16px;
-  content: '';
-  pointer-events: none;
-  -webkit-backdrop-filter: blur(5px) saturate(1.08);
-  backdrop-filter: blur(5px) saturate(1.08);
+.conversation-title.is-hover-scrollable {
+  /*
+   * Give the leading fade its own lane. The negative margin keeps the text at
+   * its original alignment while the padding moves the mask one visual cell
+   * ahead of it, so the first glyph is not dimmed before the marquee moves.
+   */
+  margin-inline-start: calc(-1 * var(--conversation-title-leading-lane));
+  padding-inline-start: var(--conversation-title-leading-lane);
+  contain: paint;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
 }
 
-.conversation-title.is-overflowing::before {
-  left: 0;
-  opacity: 0;
-  background: linear-gradient(
+.conversation-title.is-overflowing {
+  -webkit-mask-image: linear-gradient(
     90deg,
-    var(--conversation-title-edge-surface),
-    transparent
+    #000 0,
+    #000 calc(100% - var(--conversation-title-trailing-fade)),
+    transparent 100%
   );
-}
-
-.conversation-title.is-overflowing::after {
-  right: 0;
-  background: linear-gradient(
+  mask-image: linear-gradient(
     90deg,
-    transparent,
-    var(--conversation-title-edge-surface)
+    #000 0,
+    #000 calc(100% - var(--conversation-title-trailing-fade)),
+    transparent 100%
   );
 }
 
@@ -1064,72 +1058,53 @@ body.sidebar-resizing .sidebar-resizer {
   text-overflow: clip;
   white-space: nowrap;
   will-change: transform;
+  backface-visibility: hidden;
+  transform: translate3d(0, 0, 0);
 }
 
-.conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
-.conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
+.conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
+.conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+.conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
   animation: conversation-title-marquee var(--conversation-title-duration, 5s)
-    ease-in-out 90ms infinite alternate;
+    linear 140ms forwards;
 }
 
-.conversation-row:hover .conversation-title.is-overflowing::before,
-.conversation-row:focus-within .conversation-title.is-overflowing::before {
-  animation: conversation-title-leading-edge var(--conversation-title-duration, 5s)
-    ease-in-out 90ms infinite alternate;
-}
-
-.conversation-row:hover .conversation-title.is-overflowing::after,
-.conversation-row:focus-within .conversation-title.is-overflowing::after {
-  animation: conversation-title-trailing-edge var(--conversation-title-duration, 5s)
-    ease-in-out 90ms infinite alternate;
+.conversation-row:hover .conversation-title.is-hover-scrollable,
+.conversation-row:focus-within .conversation-title.is-hover-scrollable,
+.conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 var(--conversation-title-edge-fade),
+    #000 calc(100% - var(--conversation-title-hover-actions) - var(--conversation-title-trailing-fade)),
+    transparent calc(100% - var(--conversation-title-hover-actions)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    #000 var(--conversation-title-edge-fade),
+    #000 calc(100% - var(--conversation-title-hover-actions) - var(--conversation-title-trailing-fade)),
+    transparent calc(100% - var(--conversation-title-hover-actions)),
+    transparent 100%
+  );
 }
 
 @keyframes conversation-title-marquee {
   0%,
-  4% {
-    transform: translateX(0);
+  6% {
+    transform: translate3d(0, 0, 0);
   }
 
-  96%,
   100% {
-    transform: translateX(calc(-1 * var(--conversation-title-overflow, 0px)));
-  }
-}
-
-@keyframes conversation-title-leading-edge {
-  0%,
-  8% {
-    opacity: 0;
-  }
-
-  22%,
-  100% {
-    opacity: 1;
-  }
-}
-
-@keyframes conversation-title-trailing-edge {
-  0%,
-  78% {
-    opacity: 1;
-  }
-
-  92%,
-  100% {
-    opacity: 0;
+    transform: translate3d(calc(-1 * var(--conversation-title-travel, 0px)), 0, 0);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
-  .conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
-    animation: none;
-  }
-
-  .conversation-row:hover .conversation-title.is-overflowing::before,
-  .conversation-row:focus-within .conversation-title.is-overflowing::before,
-  .conversation-row:hover .conversation-title.is-overflowing::after,
-  .conversation-row:focus-within .conversation-title.is-overflowing::after {
+  .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }
 }
@@ -1146,6 +1121,7 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row {
+  --conversation-title-hover-actions: 50px;
   position: relative;
   box-sizing: border-box;
   width: 100%;
@@ -1153,7 +1129,7 @@ body.sidebar-resizing .sidebar-resizer {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 36px 0 var(--sidebar-tree-base);
+  padding: 0 8px 0 var(--sidebar-tree-base);
   color: var(--sidebar-text-mid, var(--text-mid));
   background: transparent;
   border-radius: 8px;
@@ -1162,6 +1138,12 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-row.nested {
   padding-left: var(--sidebar-tree-child);
+  padding-right: 8px;
+}
+
+.conversation-row.running,
+.conversation-row:has(.conversation-attention-indicator) {
+  --conversation-title-hover-actions: 22px;
   padding-right: 36px;
 }
 
@@ -1171,11 +1153,6 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row.active .conversation-title {
-  --conversation-title-edge-surface: color-mix(
-    in srgb,
-    var(--surface) 72%,
-    gray 12%
-  );
   color: var(--sidebar-text, var(--text));
   font-weight: 760;
 }
@@ -1370,6 +1347,7 @@ body.sidebar-resizing .sidebar-resizer {
 
 .row-new-chat,
 .row-more,
+.conversation-pin,
 .conversation-more {
   flex: 0 0 auto;
   color: var(--sidebar-text-soft, var(--text-soft));
@@ -1387,6 +1365,7 @@ body.sidebar-resizing .sidebar-resizer {
 
 .row-new-chat,
 .row-more,
+.conversation-pin,
 .conversation-more {
   position: absolute;
   top: 0;
@@ -1412,11 +1391,19 @@ body.sidebar-resizing .sidebar-resizer {
 .project-row:hover .row-more,
 .project-row:has(.row-more:focus-visible) .row-more,
 .project-row:has(.sidebar-menu) .row-more,
+.conversation-row:hover .conversation-pin,
+.conversation-row:has(.conversation-pin:focus-visible) .conversation-pin,
+.conversation-row:has(.sidebar-menu) .conversation-pin,
 .conversation-row:hover .conversation-more,
 .conversation-row:has(.conversation-more:focus-visible) .conversation-more,
 .conversation-row:has(.sidebar-menu) .conversation-more {
   opacity: 1;
   pointer-events: auto;
+}
+
+.conversation-pin {
+  right: 27px;
+  z-index: 2;
 }
 
 .conversation-more {
@@ -1426,6 +1413,8 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-more:hover,
+.conversation-pin:hover,
+.conversation-pin.is-pinned,
 .row-new-chat:hover,
 .row-more:hover {
   color: var(--sidebar-text, var(--text));
@@ -4309,6 +4298,8 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .message-list-item {
   overflow-anchor: none;
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 220px;
 }
 
 .message-list-item.user-message-entering .user-bubble {
@@ -5735,31 +5726,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   align-items: flex-start;
   min-height: 0;
   margin-bottom: 14px;
-  transition: min-height 280ms cubic-bezier(0.2, 0.72, 0.25, 1);
-}
-
-.message-row.assistant.streaming {
-  /* Reserve the next reading area before Markdown arrives. Incoming content
-     consumes this space instead of repeatedly extending the scroll surface. */
-  min-height: clamp(132px, 22vh, 240px);
-}
-
-.message-row.assistant.streaming .assistant-bubble > .markdown-content,
-.message-row.assistant.streaming .assistant-active-transcript-segment:last-child,
-.message-row.assistant.streaming .assistant-message-content > .markdown-content:last-child {
-  animation: assistant-stream-segment-enter 240ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
-}
-
-@keyframes assistant-stream-segment-enter {
-  from {
-    opacity: 0.78;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .user-bubble {
@@ -6987,6 +6953,22 @@ body.right-inspector-resizing .right-inspector-resizer {
   padding-top: 2px;
 }
 
+.assistant-atomic-reveal {
+  min-width: 0;
+}
+
+.assistant-atomic-reveal.measuring {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.assistant-atomic-reveal.is-visible {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 90ms linear;
+}
+
 .assistant-final-answer {
   min-width: 0;
 }
@@ -7793,6 +7775,25 @@ body.right-inspector-resizing .right-inspector-resizer {
   border: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
   border-radius: 8px;
   scrollbar-width: thin;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-atomic-reveal.is-visible {
+    transition: none;
+  }
+}
+
+.tool-change-details-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 14px 16px;
+  color: var(--text-soft);
+}
+
+.tool-change-details-loading svg {
+  animation: cardbush-spin 900ms linear infinite;
 }
 
 .tool-file-change + .tool-file-change {
@@ -12259,6 +12260,14 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: var(--accent);
   border-radius: inherit;
   transition: width 180ms ease;
+}
+
+.model-context-section.is-overflow .model-picker-inline-label strong {
+  color: var(--danger);
+}
+
+.model-context-section.is-overflow .model-context-progress > span {
+  background: var(--danger);
 }
 
 .model-reasoning-options {
@@ -20015,8 +20024,9 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .conversation-row:hover .conversation-title.is-overflowing .conversation-title-text,
-  .conversation-row:focus-within .conversation-title.is-overflowing .conversation-title-text {
+  .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }
 }

@@ -390,7 +390,7 @@ test("stores native tool output and Runtime-owned workspace changes separately",
         status: "modified",
         additions: 2,
         deletions: 1,
-        metadata: {},
+        metadata: { diff: "@@ -1 +1 @@\n-old\n+new" },
       });
       return {
         value: "fixture-result",
@@ -422,10 +422,45 @@ test("stores native tool output and Runtime-owned workspace changes separately",
     kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
     payload: { sessionId: "session_tools", turnId: "turn_tools" },
   });
+  const summaries = await host.sendCommand({
+    kind: LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
+    payload: {
+      sessionId: "session_tools",
+      turnId: "turn_tools",
+      detail: "summary",
+    },
+  });
 
   assert.equal(record.result.artifacts[0].path, "C:\\tmp\\fixture.png");
   assert.deepEqual(record.workspaceChanges.map((change) => change.change_id), ["change_fixture"]);
+  assert.match(record.workspaceChanges[0].metadata.diff, /\+new/);
   assert.equal(listed.length, 1);
+  assert.deepEqual(summaries, [{
+    protocol: "bush.tool_execution_summary.v1",
+    requestId: record.requestId,
+    sessionId: record.sessionId,
+    turnId: record.turnId,
+    round: record.round,
+    ordinal: record.ordinal,
+    recordedAt: record.recordedAt,
+    toolCall: {
+      protocol: record.toolCall.protocol,
+      id: record.toolCall.id,
+      name: record.toolCall.name,
+    },
+    outcome: "returned",
+    actionManifest: record.actionManifest,
+    resultAvailable: true,
+    workspaceChanges: [{
+      change_id: "change_fixture",
+      path: "src/fixture.ts",
+      status: "modified",
+      additions: 2,
+      deletions: 1,
+      detailAvailable: true,
+    }],
+    error: undefined,
+  }]);
 });
 
 test("archives only the model projection while retaining the complete native result", async () => {

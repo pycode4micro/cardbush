@@ -1,8 +1,10 @@
 import {
   BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
+  BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
   toolExecutionRecordSchema,
   type ToolCall,
   type ToolExecutionRecord,
+  type ToolExecutionSummary,
 } from "@cardbush/bush-protocol";
 
 import type {
@@ -77,6 +79,13 @@ export class ToolExecutionStore {
       .map((record) => structuredClone(record));
   }
 
+  listTurnSummaries(sessionId: string, turnId: string): ToolExecutionSummary[] {
+    return this.#load(sessionId)
+      .filter((record) => record.turnId === turnId)
+      .sort((left, right) => left.round - right.round || left.ordinal - right.ordinal)
+      .map((record) => structuredClone(toolExecutionSummary(record)));
+  }
+
   #load(sessionId: string): ToolExecutionRecord[] {
     const cached = this.#records.get(sessionId);
     if (cached) return cached;
@@ -94,6 +103,31 @@ export class ToolExecutionStore {
     this.#records.set(sessionId, loaded);
     return loaded;
   }
+}
+
+function toolExecutionSummary(record: ToolExecutionRecord): ToolExecutionSummary {
+  return {
+    protocol: BUSH_TOOL_EXECUTION_SUMMARY_PROTOCOL,
+    requestId: record.requestId,
+    sessionId: record.sessionId,
+    turnId: record.turnId,
+    round: record.round,
+    ordinal: record.ordinal,
+    recordedAt: record.recordedAt,
+    toolCall: {
+      protocol: record.toolCall.protocol,
+      id: record.toolCall.id,
+      name: record.toolCall.name,
+    },
+    outcome: record.outcome,
+    actionManifest: record.actionManifest,
+    resultAvailable: Object.prototype.hasOwnProperty.call(record, "result"),
+    workspaceChanges: record.workspaceChanges.map(({ metadata, ...change }) => ({
+      ...change,
+      detailAvailable: Object.keys(metadata).length > 0,
+    })),
+    error: record.error,
+  };
 }
 
 function validateRecord(record: ToolExecutionRecord): void {

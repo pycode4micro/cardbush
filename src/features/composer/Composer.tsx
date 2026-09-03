@@ -2311,19 +2311,27 @@ function ContextWindowMeter({
       : undefined
   );
   const ratio = usedTokens != null && maxTokens != null && maxTokens > 0
-    ? Math.min(1, Math.max(0, usedTokens / maxTokens))
+    ? Math.max(0, usedTokens / maxTokens)
     : 0;
   const percentage = Math.round(ratio * 100);
+  const progressPercentage = Math.min(100, percentage);
+  const overflowTokens = usedTokens != null && maxTokens != null
+    ? Math.max(0, usedTokens - maxTokens)
+    : 0;
   const valueLabel = usedTokens != null && maxTokens != null
-    ? `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}%`
+    ? overflowTokens > 0
+      ? `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}% · ${language === 'zh' ? '超出' : 'Over'} ${compactTokenCount(overflowTokens)}`
+      : `${compactTokenCount(usedTokens)} / ${compactTokenCount(maxTokens)} · ${percentage}%`
     : maxTokens != null
       ? `${language === 'zh' ? '等待统计' : 'Pending'} / ${compactTokenCount(maxTokens)}`
+      : usedTokens != null
+        ? `${compactTokenCount(usedTokens)} · ${language === 'zh' ? '上限未知' : 'Unknown limit'}`
       : language === 'zh'
         ? '等待后端统计'
         : 'Waiting for usage';
 
   return (
-    <div className="model-context-section">
+    <div className={`model-context-section ${overflowTokens > 0 ? 'is-overflow' : ''}`}>
       <div className="model-picker-inline-label">
         <span>{language === 'zh' ? '上下文占用' : 'Context usage'}</span>
         <strong>{valueLabel}</strong>
@@ -2334,9 +2342,9 @@ function ContextWindowMeter({
         aria-label={language === 'zh' ? '上下文窗口占用' : 'Context window usage'}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={usedTokens != null && maxTokens != null ? percentage : undefined}
+        aria-valuenow={usedTokens != null && maxTokens != null ? progressPercentage : undefined}
       >
-        <span style={{ width: `${percentage}%` }} />
+        <span style={{ width: `${progressPercentage}%` }} />
       </div>
     </div>
   );

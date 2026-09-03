@@ -22,6 +22,8 @@ export interface GeneratedMessageFact {
 }
 
 export interface SessionUsageFact {
+  model?: string;
+  contextWindowTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;

@@ -68,7 +68,23 @@ type ParsedToolFileChange = {
   fallbackDeletions: number;
 };
 
+const toolChangeReportCache = new WeakMap<
+  ChatToolExecution[],
+  ToolChangeReport | null
+>();
+
 export function toolChangeReportFromExecutions(
+  executions: ChatToolExecution[],
+): ToolChangeReport | null {
+  if (toolChangeReportCache.has(executions)) {
+    return toolChangeReportCache.get(executions) ?? null;
+  }
+  const report = buildToolChangeReport(executions);
+  toolChangeReportCache.set(executions, report);
+  return report;
+}
+
+function buildToolChangeReport(
   executions: ChatToolExecution[],
 ): ToolChangeReport | null {
   const relevant = executions.filter(looksLikeFileChangeExecution);

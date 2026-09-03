@@ -38,6 +38,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -959,6 +960,7 @@ function MessageBubbleView({
   const timeoutPresentation = assistantTimeoutPresentation(message, language);
   const failurePresentation = assistantFailurePresentation(message, language);
   const hookSummary = agentHookSummaryFromMessage(message);
+  const atomicRevealKey = assistantAtomicRevealKey(message);
   const hasAssistantBody = Boolean(
     text.trim() ||
       imagePaths.length > 0 ||
@@ -975,7 +977,7 @@ function MessageBubbleView({
   if (!showAssistantProgress && !hasAssistantBody) {
     return null;
   }
-  const assistantBody = (
+  const assistantBodyContent = (
     <>
       <AgentHookSummaryBadge message={message} language={language} />
       {!renderActiveTranscript && (
@@ -1037,22 +1039,29 @@ function MessageBubbleView({
       )}
     </>
   );
+  const assistantBody = renderActiveTranscript ? assistantBodyContent : (
+    <AssistantAtomicReveal key={atomicRevealKey || 'unbuffered'} revealKey={atomicRevealKey}>
+      {assistantBodyContent}
+    </AssistantAtomicReveal>
+  );
   const finalAnswerBody = (
-    <div className="assistant-final-answer">
-      <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
-      <MessageMediaStrip
-        videoPaths={detachedVideoPaths}
-        audioPaths={detachedAudioPaths}
-        language={language}
-        showPaths
-      />
-      {assistantContent && (
-        <MessageInlineMediaContent
-          content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
+    <AssistantAtomicReveal key={atomicRevealKey || 'unbuffered'} revealKey={atomicRevealKey}>
+      <div className="assistant-final-answer">
+        <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
+        <MessageMediaStrip
+          videoPaths={detachedVideoPaths}
+          audioPaths={detachedAudioPaths}
           language={language}
+          showPaths
         />
-      )}
-    </div>
+        {assistantContent && (
+          <MessageInlineMediaContent
+            content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
+            language={language}
+          />
+        )}
+      </div>
+    </AssistantAtomicReveal>
   );
   return (
     <>
@@ -1213,7 +1222,15 @@ function MessageBubbleView({
   );
 }
 
+const completedAssistantChangeReportCache = new WeakMap<
+  ChatMessage,
+  ReturnType<typeof toolChangeReportFromExecutions>
+>();
+
 function completedAssistantChangeReport(message: ChatMessage) {
+  if (completedAssistantChangeReportCache.has(message)) {
+    return completedAssistantChangeReportCache.get(message) ?? null;
+  }
   const executions = new Map<string, ChatToolExecution>();
   const collect = (candidate: ChatMessage) => {
     for (const nested of candidate.loopHistory ?? []) {
@@ -1225,7 +1242,9 @@ function completedAssistantChangeReport(message: ChatMessage) {
   };
   collect(message);
   const report = toolChangeReportFromExecutions(Array.from(executions.values()));
-  return report?.files.length ? report : null;
+  const visibleReport = report?.files.length ? report : null;
+  completedAssistantChangeReportCache.set(message, visibleReport);
+  return visibleReport;
 }
 
 function AssistantChangedFilesSummary({
@@ -1433,38 +1452,135 @@ function AssistantActiveTranscript({
       {visibleMessages.map((segment, index) => {
         const executions = segment.toolExecutions ?? [];
         const isLastSegment = index === visibleMessages.length - 1;
+        const revealKey = assistantAtomicRevealKey(segment);
         return (
           <section
-            // eslint-disable-next-line react/no-array-index-key
             key={segment.id}
             className="assistant-active-transcript-segment"
           >
-            {executions.length > 0 ? (
-              <AssistantMessageContent
-                content={segment.content}
-                executions={executions}
-                language={language}
-                message={segment}
-                active={active}
-                selectedModel={selectedModel}
-                showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
-                onRevertChangeReport={onRevertChangeReport}
-                onOpenScene={onOpenScene}
-              />
-            ) : segment.content ? (
-              <>
-                <MessageInlineMediaContent content={segment.content} language={language} />
-                {showThinkingPlaceholder && isLastSegment && (
-                  <AssistantThinkingProcessLine
-                    language={language}
-                    model={selectedModel}
-                  />
-                )}
-              </>
-            ) : null}
+            <AssistantAtomicReveal revealKey={revealKey}>
+              {executions.length > 0 ? (
+                <AssistantMessageContent
+                  content={segment.content}
+                  executions={executions}
+                  language={language}
+                  message={segment}
+                  active={active}
+                  selectedModel={selectedModel}
+                  showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
+                  onRevertChangeReport={onRevertChangeReport}
+                  onOpenScene={onOpenScene}
+                />
+              ) : segment.content ? (
+                <>
+                  <MessageInlineMediaContent content={segment.content} language={language} />
+                  {showThinkingPlaceholder && isLastSegment && (
+                    <AssistantThinkingProcessLine
+                      language={language}
+                      model={selectedModel}
+                    />
+                  )}
+                </>
+              ) : null}
+            </AssistantAtomicReveal>
           </section>
         );
       })}
+    </div>
+  );
+}
+
+const revealedAssistantSegmentLimit = 4_096;
+const revealedAssistantSegmentKeys = new Set<string>();
+const revealedAssistantSegmentOrder: string[] = [];
+
+function assistantAtomicRevealKey(message: ChatMessage) {
+  const value = message.metadata?.cardbush_atomic_reveal_key;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function rememberRevealedAssistantSegment(key: string) {
+  if (!key || revealedAssistantSegmentKeys.has(key)) return;
+  revealedAssistantSegmentKeys.add(key);
+  revealedAssistantSegmentOrder.push(key);
+  while (revealedAssistantSegmentOrder.length > revealedAssistantSegmentLimit) {
+    const expired = revealedAssistantSegmentOrder.shift();
+    if (expired) revealedAssistantSegmentKeys.delete(expired);
+  }
+}
+
+/**
+ * A completed Runtime segment enters React once, already containing its full
+ * Markdown tree. It is initially invisible but remains in normal document flow,
+ * so the browser reserves the exact final height before any text is painted.
+ * The reveal is an imperative class change and cannot invalidate React again.
+ */
+function AssistantAtomicReveal({
+  revealKey,
+  children,
+}: {
+  revealKey: string;
+  children: ReactNode;
+}) {
+  const normalizedKey = revealKey.trim();
+  const alreadyRevealed = !normalizedKey || revealedAssistantSegmentKeys.has(normalizedKey);
+  const elementRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    const element = elementRef.current;
+    if (!element) return undefined;
+    if (!normalizedKey || revealedAssistantSegmentKeys.has(normalizedKey)) {
+      element.classList.remove('measuring');
+      element.classList.add('is-visible');
+      element.removeAttribute('aria-hidden');
+      element.style.removeProperty('min-height');
+      return undefined;
+    }
+
+    let animationFrame = 0;
+    let measuredFrames = 0;
+    let stableFrames = 0;
+    let previousHeight = -1;
+    let cancelled = false;
+    const reveal = () => {
+      if (cancelled) return;
+      rememberRevealedAssistantSegment(normalizedKey);
+      element.classList.remove('measuring');
+      element.classList.add('is-visible');
+      element.removeAttribute('aria-hidden');
+      element.style.removeProperty('min-height');
+    };
+    const measure = () => {
+      if (cancelled) return;
+      const height = Math.ceil(element.getBoundingClientRect().height);
+      element.style.minHeight = `${height}px`;
+      measuredFrames += 1;
+      if (Math.abs(height - previousHeight) < 1) {
+        stableFrames += 1;
+      } else {
+        stableFrames = 0;
+        previousHeight = height;
+      }
+      if (stableFrames >= 2 || measuredFrames >= 6) {
+        reveal();
+        return;
+      }
+      animationFrame = window.requestAnimationFrame(measure);
+    };
+    animationFrame = window.requestAnimationFrame(measure);
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, [normalizedKey]);
+
+  return (
+    <div
+      ref={elementRef}
+      className={`assistant-atomic-reveal ${alreadyRevealed ? 'is-visible' : 'measuring'}`}
+      aria-hidden={alreadyRevealed ? undefined : true}
+    >
+      {children}
     </div>
   );
 }
@@ -3030,6 +3146,48 @@ export const MarkdownContent = memo(function MarkdownContent({
   );
 });
 
-export const MessageBubble = memo(MessageBubbleView);
+type MessageBubbleViewProps = Parameters<typeof MessageBubbleView>[0];
+
+function sameMessageBubbleProps(
+  previous: MessageBubbleViewProps,
+  next: MessageBubbleViewProps,
+) {
+  if (
+    previous.message !== next.message ||
+    previous.language !== next.language ||
+    previous.sending !== next.sending ||
+    previous.selectedModel !== next.selectedModel ||
+    previous.goalObjective !== next.goalObjective ||
+    previous.onRegenerate !== next.onRegenerate ||
+    previous.onEditUserMessage !== next.onEditUserMessage ||
+    previous.onGuideMessage !== next.onGuideMessage ||
+    previous.onRetryMessage !== next.onRetryMessage ||
+    previous.onRetryGuidance !== next.onRetryGuidance ||
+    previous.onRevertChangeReport !== next.onRevertChangeReport ||
+    previous.onOpenChangeReview !== next.onOpenChangeReview ||
+    previous.onOpenScene !== next.onOpenScene ||
+    previous.onAssistantFeedback !== next.onAssistantFeedback
+  ) {
+    return false;
+  }
+  if (
+    previous.activeTurnId === next.activeTurnId &&
+    previous.activeAssistantMessageId === next.activeAssistantMessageId
+  ) {
+    return true;
+  }
+  return !isActiveMessageBubble(previous) && !isActiveMessageBubble(next);
+}
+
+function isActiveMessageBubble(props: MessageBubbleViewProps) {
+  if (props.message.role !== 'assistant' || !props.sending) return false;
+  const assistantId = props.activeAssistantMessageId.trim();
+  if (!assistantId || assistantId !== props.message.id) return false;
+  const activeTurnId = props.activeTurnId.trim();
+  const messageTurnId = props.message.turnId?.trim() ?? '';
+  return !activeTurnId || !messageTurnId || activeTurnId === messageTurnId;
+}
+
+export const MessageBubble = memo(MessageBubbleView, sameMessageBubbleProps);
 
 

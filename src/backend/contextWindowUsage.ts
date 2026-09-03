@@ -1,4 +1,6 @@
 export interface PersistedTurnUsage {
+  model?: string;
+  contextWindowTokens?: number;
   inputTokens?: number;
   lastRequestInputTokens?: number;
 }
@@ -19,7 +21,7 @@ export function contextWindowMetrics(
   configuredMaxTokens?: number,
 ): ContextWindowMetrics {
   const usedTokens = nonnegativeInteger(usage?.lastRequestInputTokens);
-  const maxTokens = positiveInteger(configuredMaxTokens);
+  const maxTokens = positiveInteger(usage?.contextWindowTokens ?? configuredMaxTokens);
   return {
     ...(usedTokens !== undefined ? { usedTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
