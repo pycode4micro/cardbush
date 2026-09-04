@@ -72,6 +72,7 @@ declare global {
         language: 'zh' | 'en';
         theme: ThemeMode;
         accentColor: string;
+        themeVariables?: Record<string, string>;
         modelConfig: ManagedModelConfig;
         reasoningLevel?: ReasoningLevel;
         projectDir: string;
@@ -85,6 +86,7 @@ declare global {
         language: 'zh' | 'en';
         theme: ThemeMode;
         accentColor: string;
+        themeVariables?: Record<string, string>;
         modelConfig: ManagedModelConfig;
         reasoningLevel?: ReasoningLevel;
         projectDir: string;
@@ -157,8 +159,7 @@ declare global {
       } | null>;
       pickProjectDirectory: () => Promise<string | null>;
       pickFont: () => Promise<string | null>;
-      pickBackgroundImage: () => Promise<string | null>;
-      cacheBackgroundImage: (path: string) => Promise<string>;
+      pickAppearanceStyle: () => Promise<string | null>;
       listProjectEntries: (
         rootPath: string,
       ) => Promise<Array<{ name: string; path: string; kind: 'file' | 'folder' }>>;

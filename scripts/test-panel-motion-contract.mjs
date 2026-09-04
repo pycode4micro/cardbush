@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 const app = read('src', 'App.tsx');
@@ -14,6 +15,9 @@ const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 const rightInspectorResizer = read('src', 'components', 'RightInspectorResizer.tsx');
 const rightInspectorSizing = read('src', 'components', 'rightInspectorSizing.ts');
 const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx');
+const composer = read('src', 'features', 'composer', 'Composer.tsx');
+const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
+const queueOrdering = read('src', 'features', 'composer', 'queueOrdering.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
 const theme = read('src', 'styles', 'theme.css');
@@ -131,6 +135,33 @@ assert.match(app, /tab\.kind === 'review'[\s\S]*?<Clipboard/);
 assert.match(app, /tab\.kind === 'shadow'[\s\S]*?<ShadowWindow embedded context=\{tab\.context\}/);
 assert.match(app, /target: `about:blank\?cardbush-tab=\$\{crypto\.randomUUID\(\)\}`/);
 assert.match(app, /className="right-inspector-address editable"[\s\S]*?\.navigate\(inspectorAddressDraft\)/);
+assert.match(app, /const webviewDomReadyRef = useRef\(false\)/);
+assert.match(app, /webview\.addEventListener\('dom-ready', ready\)/);
+assert.match(
+  app,
+  /!webview\?\.isConnected \|\| !webviewDomReadyRef\.current/,
+  'Inspector native methods must remain gated until the webview guest is attached and ready',
+);
+assert.match(
+  app,
+  /try \{[\s\S]*?webview\.loadURL\(destination\)[\s\S]*?\} catch \{/,
+  'Inspector navigation must contain synchronous Electron webview lifecycle errors',
+);
+assert.match(
+  app,
+  /setZoomFactor\?\.\(1\)[\s\S]*?executeJavaScript\?\.\([\s\S]*?inspectorBrowserViewportMeasurementScript[\s\S]*?setZoomFactor\?\.\(inspectorBrowserFitZoom\(measurement\)\)/,
+  'Inspector browser pages must be measured at natural scale before fitting fixed-width content',
+);
+assert.match(
+  app,
+  /contentWidth <= viewportWidth \+ 2[\s\S]*?Math\.max\(0\.5, Math\.min\(1, viewportWidth \/ contentWidth\)\)/,
+  'Inspector browser fitting must preserve responsive pages and keep a readable minimum zoom',
+);
+assert.match(
+  app,
+  /new ResizeObserver\([\s\S]*?scheduleBrowserViewportFit\(120\)[\s\S]*?resizeObserver\.observe\(webview\)/,
+  'Inspector browser fitting must follow live panel and window resizing',
+);
 assert.match(app, /handleInspectorShortcut[\s\S]*?key === 't'[\s\S]*?key === 'p'[\s\S]*?key === 's'/);
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
@@ -285,6 +316,18 @@ assert.match(runtimeRail, /queuedMessages\.map\(\(item, index\) =>/);
 assert.match(runtimeRail, /guideQueuedMessage\(item\.id\)/);
 assert.match(runtimeRail, /onEditQueuedMessage\?\.\(item\)/);
 assert.match(runtimeRail, /onRemoveQueuedMessage\?\.\(item\.id\)/);
+assert.match(runtimeRail, /className="runtime-screen-queue-actions"/);
+assert.match(runtimeRail, /CornerDownLeft/);
+assert.match(composer, /CornerDownLeft/);
+assert.doesNotMatch(composer, /<Sparkles size=\{12\} \/>/);
+assert.match(runtimeRail, /className="runtime-queue-drag-handle"/);
+assert.match(runtimeRail, /setPointerCapture\(pointerId\)/);
+assert.match(runtimeRail, /setTimeout\(\(\) => \{[\s\S]*?360\)/);
+assert.match(runtimeRail, /data-queue-item-id=\{item\.id\}/);
+assert.match(runtimeRail, /onReorderQueuedMessage\?\.\(session\.queuedId, targetQueuedId\)/);
+assert.match(chatHook, /reorderScopedQueue\([\s\S]*?queuedMessagesRef\.current/);
+assert.match(app, /onReorderQueuedMessage=\{chat\.reorderQueuedMessage\}/);
+assert.match(app, /onReorderQueuedMessage=\{onReorderQueuedMessage\}/);
 assert.match(runtimeRail, /previousQueuedMessageCountRef/);
 assert.match(runtimeRail, /setPriorityKind\('queue'\)/);
 assert.match(runtimeRail, /setRollingToKind\(priorityKind\)/);
@@ -312,6 +355,46 @@ assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-pa
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
 assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+assert.match(css, /\.runtime-screen-queue-actions\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*8px/);
+assert.match(css, /\.composer-queue-actions\s*\{[\s\S]*?opacity:\s*1/);
+assert.doesNotMatch(
+  css,
+  /\.composer-runtime-rail\.context-exiting \.runtime-screen-queue-actions/,
+  'Collapsed queue actions must remain directly available.',
+);
+
+const queueOrderingJavaScript = ts.transpileModule(queueOrdering, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+  },
+}).outputText;
+const { reorderScopedQueue } = await import(
+  `data:text/javascript;base64,${Buffer.from(queueOrderingJavaScript).toString('base64')}`
+);
+const interleavedQueue = [
+  { id: 'a1', conversationId: 'a' },
+  { id: 'b1', conversationId: 'b' },
+  { id: 'a2', conversationId: 'a' },
+  { id: 'a3', conversationId: 'a' },
+];
+const idOf = (item) => item.id;
+const scopeOf = (item) => item.conversationId;
+assert.deepEqual(
+  reorderScopedQueue(interleavedQueue, 'a3', 'a1', idOf, scopeOf).map(idOf),
+  ['a3', 'b1', 'a1', 'a2'],
+  'Reordering must preserve unrelated conversations while moving within the active queue.',
+);
+assert.deepEqual(
+  reorderScopedQueue(interleavedQueue, 'a1', 'a3', idOf, scopeOf).map(idOf),
+  ['a2', 'b1', 'a3', 'a1'],
+  'Queue items must move both upward and downward.',
+);
+assert.equal(
+  reorderScopedQueue(interleavedQueue, 'a1', 'b1', idOf, scopeOf),
+  interleavedQueue,
+  'Dragging across conversations must be ignored.',
+);
 assert.match(messageBubble, /key=\{segment\.id\}/);
 assert.doesNotMatch(messageBubble, /key=\{`\$\{segment\.id\}-\$\{index\}`\}/);
 assert.match(

@@ -52,22 +52,23 @@ assert.match(composer, /正在停止/);
 assert.match(composer, /cancelReady && !stopping/);
 assert.doesNotMatch(bubble, /reason: reason \|\| 'user_stop'/);
 assert.doesNotMatch(bubble, /工具记录和文件变更仍保留/);
-assert.match(bubble, /const preserveStoppedExecutionRecord =/);
+assert.match(bubble, /const preserveTerminalExecutionRecord =/);
 assert.match(
   bubble,
-  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveStoppedExecutionRecord/,
+  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveTerminalExecutionRecord/,
 );
 assert.match(bubble, /message\.metadata\?\.cardbush_terminal_stopped === true/);
 assert.match(bubble, /const stoppedAssistantRound = isStoppedAssistantMessage\(message\)/);
+assert.match(bubble, /const failedAssistantRound = isFailedAssistantMessage\(message\)/);
 assert.match(
   bubble,
-  /const freezeStoppedTranscript = stoppedAssistantRound && loopHistory\.length > 0/,
-  'A stopped multi-segment Turn must keep the continuous transcript presentation it had when Stop settled.',
+  /const freezeTerminalTranscript =\s*\(stoppedAssistantRound \|\| failedAssistantRound\) && loopHistory\.length > 0/,
+  'A stopped or failed multi-segment Turn must keep the continuous transcript presentation it had when the terminal event settled.',
 );
 assert.match(
   bubble,
-  /isActiveAssistantTurn \|\| freezeStoppedTranscript\s*\? activeAssistantTranscriptMessages/,
-  'Stopped transcript segments must render inside one assistant bubble with one action row.',
+  /isActiveAssistantTurn \|\| freezeTerminalTranscript\s*\? activeAssistantTranscriptMessages/,
+  'Terminal transcript segments must render inside one assistant bubble with one action row.',
 );
 assert.match(
   bubble,
@@ -78,6 +79,16 @@ assert.match(
   bubble,
   /guidanceBoundaryRound \? \([\s\S]*?\) : stoppedAssistantRound \? \([\s\S]*?assistantBody/,
   'Stopped turns must render their preserved transcript directly instead of entering completed disclosure',
+);
+assert.match(
+  bubble,
+  /stoppedAssistantRound \? \([\s\S]*?\) : failedAssistantRound \? \([\s\S]*?assistantBody/,
+  'Failed turns must render their preserved transcript directly instead of treating an empty terminal row as a final answer.',
+);
+assert.match(
+  bubble,
+  /if \(status === 'failed'\) \{\s*return false;\s*\}/,
+  'A failed assistant message is a terminal process record, not an empty final-answer row.',
 );
 
 const hookTranspiled = ts.transpileModule(hook, {
@@ -324,6 +335,76 @@ assert.deepEqual(
     ['继续读取技能指南。', 'tool-read'],
   ],
   'Stopped process segments and their execution records must remain inside the single assistant unit.',
+);
+
+const failedMultiSegmentTranscript = normalizeChatMessagesForDisplay([
+  {
+    id: 'failed-user',
+    role: 'user',
+    content: '完成页面并确认效果',
+    turnId: 'turn-failed-multi-segment',
+    messageIndex: 0,
+  },
+  {
+    id: 'failed-assistant-1',
+    role: 'assistant',
+    content: '先更新页面文件。',
+    turnId: 'turn-failed-multi-segment',
+    messageIndex: 1,
+    status: 'failed',
+    toolExecutions: [{
+      id: 'tool-write',
+      state: 'completed',
+      summary: '更新页面',
+      output: '写入成功',
+      metadata: {},
+    }],
+  },
+  {
+    id: 'failed-assistant-2',
+    role: 'assistant',
+    content: '再检查页面效果。',
+    turnId: 'turn-failed-multi-segment',
+    messageIndex: 2,
+    status: 'failed',
+    toolExecutions: [{
+      id: 'tool-check',
+      state: 'completed',
+      summary: '检查页面',
+      output: '检查成功',
+      metadata: {},
+    }],
+  },
+  {
+    id: 'failed-assistant-terminal',
+    role: 'assistant',
+    content: '',
+    turnId: 'turn-failed-multi-segment',
+    messageIndex: 3,
+    status: 'failed',
+    metadata: {
+      cardbush_terminal_snapshot: true,
+      status: 'failed',
+      stop_details: { message: 'Connection error.' },
+    },
+  },
+]);
+assert.deepEqual(
+  Array.from(failedMultiSegmentTranscript, (message) => message.role),
+  ['user', 'assistant'],
+  'A failed multi-loop Turn must remain one assistant interaction unit.',
+);
+assert.equal(failedMultiSegmentTranscript[1].status, 'failed');
+assert.deepEqual(
+  Array.from(
+    failedMultiSegmentTranscript[1].loopHistory,
+    (message) => [message.content, message.toolExecutions?.[0]?.id ?? ''],
+  ),
+  [
+    ['先更新页面文件。', 'tool-write'],
+    ['再检查页面效果。', 'tool-check'],
+  ],
+  'A blank failed terminal row must retain every completed tool round in its renderer-only history projection.',
 );
 
 const aggregateExecutions = ['tool-loop-1', 'tool-loop-2', 'tool-loop-3'].map(

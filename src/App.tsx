@@ -150,14 +150,19 @@ import {
 import {
   basename,
   fileUrl,
-  isImagePath,
   samePath,
   stripWrappingQuotes,
 } from './shared/localPaths';
 import {
+  themeAccentColor,
   themeBackgroundColor,
   themeClassNames,
 } from './features/appearance/themeRuntime';
+import {
+  importedThemeBaseMode,
+  importedThemeStyleVariables,
+  normalizeImportedThemeStyle,
+} from './features/appearance/importedThemeStyle';
 import {
   changeReportsFromMessages,
   serializeToolChangeReport,
@@ -197,7 +202,6 @@ import type {
   CompanionSettings,
   CompanionSize,
   ConversationSummary,
-  LightThemeStyle,
   ManagedModelConfig,
   PermissionMode,
   SubagentPermissionRouting,
@@ -209,6 +213,7 @@ import type {
   RuntimeStartupStatus,
   PendingInteraction,
   InteractionReplyAnswer,
+  ImportedThemeStyle,
   ProjectItem,
   SettingsSection,
   SkillSummary,
@@ -332,7 +337,7 @@ const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
 const recentProjectStorageKey = 'cardbush_recent_project_dir';
 const onlyTalkModeStorageKey = 'cardbush_only_talk_mode';
-const defaultShadowAccentColor = '#a8d5b5';
+const importedThemeStyleStorageKey = 'cardbush_imported_theme_style';
 function scrollDebug(label: string, data: Record<string, unknown>) {
   try {
     // Detailed scroll traces are intentionally session-scoped. A persisted
@@ -379,9 +384,6 @@ const defaultAppSettings: AppSettingsState = {
   browser: {
     privacyMode: false,
   },
-  shadow: {
-    accentColor: defaultShadowAccentColor,
-  },
   thinking: {
     visible: false,
   },
@@ -392,7 +394,7 @@ const defaultAppSettings: AppSettingsState = {
     runtime: 'powershell',
   },
   managedModelConfigs: [],
-  backgroundImagePath: '',
+  importedThemeStyle: null,
   companionEnabled: true,
   companion: {
     size: 'normal',
@@ -428,8 +430,6 @@ function CardbushApp() {
   );
   const [themePreference, setThemePreferenceState] =
     useState<ThemePreference>(() => readInitialThemePreference());
-  const [lightThemeStyle, setLightThemeStyleState] =
-    useState<LightThemeStyle>(() => readInitialLightThemeStyle());
   const [systemDark, setSystemDark] = useState(() => systemPrefersDark());
   const [languageMode, setLanguageModeState] = useState<AppLanguageMode>(() =>
     readInitialLanguageMode(),
@@ -513,16 +513,24 @@ function CardbushApp() {
   const [backendDefaultModelName, setBackendDefaultModelName] = useState('');
   const lastSavedModelConfigSignatureRef = useRef('');
   const projectItemsRef = useRef(projectItems);
-  const theme = resolveTheme(themePreference, lightThemeStyle, systemDark);
+  const theme = resolveTheme(
+    themePreference,
+    systemDark,
+    appSettings.importedThemeStyle,
+  );
   const language = resolveAppLanguage(languageMode, systemLanguage);
-  const customBackgroundImagePath = appSettings.backgroundImagePath.trim();
-  const customBackgroundSource = customBackgroundImagePath
-    ? backgroundImageUrl(customBackgroundImagePath)
-    : '';
+  const importedThemeVariables = useMemo(
+    () => themePreference === 'custom'
+      ? importedThemeStyleVariables(appSettings.importedThemeStyle)
+      : {},
+    [appSettings.importedThemeStyle, themePreference],
+  );
+  const shadowAccentColor =
+    importedThemeVariables['--accent'] ?? themeAccentColor(theme);
 
   const applyThemeBackground = useCallback(() => {
-    applyDocumentBackdrop(theme, customBackgroundSource);
-  }, [customBackgroundSource, theme]);
+    applyDocumentBackdrop(theme);
+  }, [theme]);
 
   useEffect(() => {
     applyThemeBackground();
@@ -1186,7 +1194,8 @@ function CardbushApp() {
       title,
       language,
       theme,
-      accentColor: appSettings.shadow.accentColor,
+      accentColor: shadowAccentColor,
+      themeVariables: importedThemeVariables,
       modelConfig: selectedInspectorModelConfig,
       reasoningLevel: chat.reasoningLevel,
       projectDir: activeProjectDir ?? '',
@@ -1206,14 +1215,15 @@ function CardbushApp() {
     setInspectorAddMenuOpen(false);
   }, [
     activeProjectDir,
-    appSettings.shadow.accentColor,
     chat.activeConversation?.title,
     chat.activeConversationId,
     chat.activeTurnId,
     chat.reasoningLevel,
     inspectorShadowAvailable,
+    importedThemeVariables,
     language,
     selectedInspectorModelConfig,
+    shadowAccentColor,
     theme,
   ]);
   useEffect(() => {
@@ -1386,11 +1396,7 @@ function CardbushApp() {
   const setThemePreference = (value: ThemePreference) => {
     setThemePreferenceState(value);
     window.localStorage.setItem('cardbush_theme_mode', value);
-  };
-
-  const setLightThemeStyle = (value: LightThemeStyle) => {
-    setLightThemeStyleState(value);
-    window.localStorage.setItem('cardbush_light_theme_style', value);
+    window.localStorage.removeItem('cardbush_light_theme_style');
   };
 
   const setLanguageMode = (value: AppLanguageMode) => {
@@ -1533,54 +1539,23 @@ function CardbushApp() {
     ? ({ fontFamily: `"${appSettings.font.family}", var(--app-font-family)` } as CSSProperties)
     : undefined;
 
-  useEffect(() => {
-    if (runtimeStartup.phase !== 'ready') {
-      setBackendCapabilities(defaultBackendCapabilities);
-      return undefined;
-    }
-    let cancelled = false;
-    if (!customBackgroundImagePath || !window.cardbushDesktop?.cacheBackgroundImage) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    void window.cardbushDesktop
-      .cacheBackgroundImage(customBackgroundImagePath)
-      .then((cachedPath) => {
-        if (cancelled || !cachedPath || cachedPath === customBackgroundImagePath) {
-          return;
-        }
-        updateAppSettings((current) =>
-          current.backgroundImagePath.trim() === customBackgroundImagePath
-            ? { ...current, backgroundImagePath: cachedPath }
-            : current,
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [customBackgroundImagePath, updateAppSettings]);
-
   const mergedAppStyle = wallpaperAccent
     ? ({
         '--wallpaper-accent-rgb': `${wallpaperAccent.r} ${wallpaperAccent.g} ${wallpaperAccent.b}`,
         '--wallpaper-accent-hex': wallpaperAccent.hex,
         '--sidebar-width': `${sidebarPreviewWidth ?? sidebarWidth}px`,
         ...appFontStyle,
+        ...importedThemeVariables,
       } as CSSProperties)
     : ({
         '--sidebar-width': `${sidebarPreviewWidth ?? sidebarWidth}px`,
         ...appFontStyle,
+        ...importedThemeVariables,
       } as CSSProperties);
 
   const appStyle = mergedAppStyle;
 
   useEffect(() => {
-    if (customBackgroundImagePath) {
-      setWallpaperAccent(null);
-      return undefined;
-    }
     let cancelled = false;
     let refreshTimer = 0;
     async function refreshWallpaperAccent() {
@@ -1610,7 +1585,7 @@ function CardbushApp() {
       window.clearTimeout(refreshTimer);
       window.clearInterval(interval);
     };
-  }, [customBackgroundImagePath]);
+  }, []);
 
   const createConversation = useCallback(
     (projectDir?: string | null) => {
@@ -2419,7 +2394,7 @@ function CardbushApp() {
 
   return (
     <div
-      className={`app ${themeClassNames(theme)}${customBackgroundImagePath ? ' has-custom-background' : ''}`}
+      className={`app ${themeClassNames(theme)}`}
       lang={language}
       style={appStyle}
     >
@@ -2441,12 +2416,10 @@ function CardbushApp() {
             active={settingsVisible}
             onReady={markSettingsReady}
             themePreference={themePreference}
-            lightThemeStyle={lightThemeStyle}
             language={language}
             languageMode={languageMode}
             systemLanguage={systemLanguage}
             settings={appSettings}
-            backgroundImageSource={customBackgroundSource}
             selectedModel={chat.selectedModel}
             availableModels={availableModels}
             backendCapabilities={backendCapabilities}
@@ -2458,7 +2431,6 @@ function CardbushApp() {
             initialPluginTab={settingsPluginTab}
             onBack={() => setSettingsOpen(false)}
             onThemePreferenceChange={setThemePreference}
-            onLightThemeStyleChange={setLightThemeStyle}
             onLanguageModeChange={setLanguageMode}
             onSettingsChange={updateAppSettings}
             onUseModel={chat.setSelectedModel}
@@ -2575,10 +2547,12 @@ function CardbushApp() {
                 shadowAvailable={
                   section === 'chat' && backendCapabilities.shadowConversationActivation
                 }
-                shadowAccentColor={appSettings.shadow.accentColor}
+                shadowAccentColor={shadowAccentColor}
+                shadowThemeVariables={importedThemeVariables}
                 thinkingVisible={reasoningTraceVisible}
                 guidanceDeliveryMode={appSettings.guidance.deliveryMode}
                 loading={chat.loading || chat.messagesLoading}
+                historyLoading={!chat.loading && chat.messagesLoading}
                 sending={chat.sending}
                 stopping={chat.stopping}
                 activeTurnId={chat.activeTurnId}
@@ -2627,6 +2601,7 @@ function CardbushApp() {
                 onRetryGuidance={chat.retryTurnGuidance}
                 onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance}
                 onRemoveQueuedMessage={chat.removeQueuedMessage}
+                onReorderQueuedMessage={chat.reorderQueuedMessage}
                 onRevertChangeReport={(report, message) =>
                   revertChangeReport(
                     message.conversationId?.trim() || chat.activeConversationId,
@@ -3180,32 +3155,45 @@ function readInitialThemePreference(): ThemePreference {
   const stored = window.localStorage.getItem('cardbush_theme_mode');
   if (
     stored === 'system' ||
-    stored === 'light' ||
     stored === 'dark' ||
+    stored === 'parchment' ||
     stored === 'cyberpunk'
   ) {
     return stored;
+  }
+  if (stored === 'custom' && readImportedThemeStyle()) {
+    return 'custom';
+  }
+  if (stored === 'light') {
+    if (window.localStorage.getItem('cardbush_light_theme_style') === 'parchment') {
+      window.localStorage.setItem('cardbush_theme_mode', 'parchment');
+      window.localStorage.removeItem('cardbush_light_theme_style');
+      return 'parchment';
+    }
+    window.localStorage.removeItem('cardbush_light_theme_style');
+    return 'light';
   }
   const legacy = window.localStorage.getItem('cardbush.theme');
   if (legacy === 'dark') {
     return 'dark';
   }
-  if (legacy === 'parchment' || legacy === 'bright') {
+  if (legacy === 'parchment') {
+    return 'parchment';
+  }
+  if (legacy === 'bright') {
     return 'light';
   }
   return 'system';
 }
 
-function readInitialLightThemeStyle(): LightThemeStyle {
-  const stored = window.localStorage.getItem('cardbush_light_theme_style');
-  if (stored === 'parchment' || stored === 'bright') {
-    return stored;
+function readImportedThemeStyle(): ImportedThemeStyle | null {
+  const raw = window.localStorage.getItem(importedThemeStyleStorageKey);
+  if (!raw?.trim()) return null;
+  try {
+    return normalizeImportedThemeStyle(JSON.parse(raw));
+  } catch {
+    return null;
   }
-  const legacy = window.localStorage.getItem('cardbush.theme');
-  if (legacy === 'bright') {
-    return 'bright';
-  }
-  return 'parchment';
 }
 
 function readInitialLanguageMode(): AppLanguageMode {
@@ -3386,25 +3374,30 @@ function readSystemLanguage(): AppLanguage {
 
 function resolveTheme(
   preference: ThemePreference,
-  lightStyle: LightThemeStyle,
   prefersDark: boolean,
+  importedThemeStyle: ImportedThemeStyle | null,
 ): ThemeMode {
+  if (preference === 'custom' && importedThemeStyle) {
+    return importedThemeBaseMode(importedThemeStyle.base);
+  }
   if (preference === 'cyberpunk') {
     return 'cyberpunk';
+  }
+  if (preference === 'parchment') {
+    return 'parchment';
   }
   if (preference === 'dark') {
     return 'dark';
   }
   if (preference === 'light') {
-    return lightStyle;
+    return 'bright';
   }
-  return prefersDark ? 'dark' : lightStyle;
+  return prefersDark ? 'dark' : 'bright';
 }
 
-function applyDocumentBackdrop(theme: ThemeMode, backgroundSource: string) {
+function applyDocumentBackdrop(theme: ThemeMode) {
   const background = themeBackgroundColor(theme);
   const root = document.getElementById('root');
-  const hasCustomBackground = Boolean(backgroundSource.trim());
   const documentStyle = document.documentElement.style;
   if (document.documentElement.dataset.startTheme !== theme) {
     document.documentElement.dataset.startTheme = theme;
@@ -3418,22 +3411,6 @@ function applyDocumentBackdrop(theme: ThemeMode, backgroundSource: string) {
   if (document.body.style.backgroundColor !== background) {
     document.body.style.backgroundColor = background;
   }
-  if (hasCustomBackground) {
-    const imageValue = cssImageUrl(backgroundSource);
-    if (document.documentElement.dataset.startCustomBackground !== 'true') {
-      document.documentElement.dataset.startCustomBackground = 'true';
-    }
-    if (
-      documentStyle.getPropertyValue('--cardbush-custom-background-image') !==
-      imageValue
-    ) {
-      documentStyle.setProperty('--cardbush-custom-background-image', imageValue);
-    }
-    if (root?.style.background !== 'transparent') {
-      root?.style.setProperty('background', 'transparent');
-    }
-    return;
-  }
   if (document.documentElement.dataset.startCustomBackground) {
     delete document.documentElement.dataset.startCustomBackground;
   }
@@ -3443,6 +3420,8 @@ function applyDocumentBackdrop(theme: ThemeMode, backgroundSource: string) {
   if (root?.style.background !== background) {
     root?.style.setProperty('background', background);
   }
+  window.localStorage.removeItem('cardbush_background_image_path');
+  window.localStorage.removeItem('cardbush_shadow_accent_color');
 }
 
 function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) {
@@ -3467,11 +3446,6 @@ function readInitialAppSettings(): AppSettingsState {
       privacyMode:
         window.localStorage.getItem('cardbush_browser_privacy_mode') === 'true',
     },
-    shadow: {
-      accentColor:
-        window.localStorage.getItem('cardbush_shadow_accent_color') ??
-        defaultShadowAccentColor,
-    },
     thinking: {
       visible: window.localStorage.getItem('cardbush_thinking_visible') === 'true',
     },
@@ -3487,7 +3461,7 @@ function readInitialAppSettings(): AppSettingsState {
       ),
     },
     managedModelConfigs: readManagedModelConfigs(),
-    backgroundImagePath: window.localStorage.getItem('cardbush_background_image_path') ?? '',
+    importedThemeStyle: readImportedThemeStyle(),
     companionEnabled:
       window.localStorage.getItem('cardbush_cardling_enabled') !== 'false',
     companion: readCompanionSettings(),
@@ -3579,12 +3553,6 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
     browser: {
       privacyMode: settings.browser.privacyMode === true,
     },
-    shadow: {
-      accentColor: normalizeHexColor(
-        settings.shadow?.accentColor,
-        defaultShadowAccentColor,
-      ),
-    },
     thinking: {
       visible: settings.thinking?.visible === true,
     },
@@ -3598,7 +3566,7 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
     managedModelConfigs: normalizeManagedModelConfigs(
       settings.managedModelConfigs,
     ),
-    backgroundImagePath: settings.backgroundImagePath.trim(),
+    importedThemeStyle: normalizeImportedThemeStyle(settings.importedThemeStyle),
     companionEnabled: settings.companionEnabled !== false,
     companion: normalizeCompanionSettings(settings.companion),
     font: {
@@ -3615,11 +3583,6 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
       avatarImagePath: settings.user.avatarImagePath?.trim() ?? '',
     },
   };
-}
-
-function normalizeHexColor(value: string | undefined, fallback: string) {
-  const normalized = value?.trim().toLowerCase() ?? '';
-  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : fallback;
 }
 
 function proxyModeFromStorage(
@@ -3668,10 +3631,7 @@ function persistAppSettings(settings: AppSettingsState) {
     'cardbush_browser_privacy_mode',
     String(settings.browser.privacyMode),
   );
-  window.localStorage.setItem(
-    'cardbush_shadow_accent_color',
-    normalizeHexColor(settings.shadow.accentColor, defaultShadowAccentColor),
-  );
+  window.localStorage.removeItem('cardbush_shadow_accent_color');
   window.localStorage.setItem(
     'cardbush_thinking_visible',
     String(settings.thinking.visible),
@@ -3695,7 +3655,15 @@ function persistAppSettings(settings: AppSettingsState) {
     }))),
   );
   window.localStorage.removeItem('cardbush_runtime_default_model_id');
-  window.localStorage.setItem('cardbush_background_image_path', settings.backgroundImagePath);
+  window.localStorage.removeItem('cardbush_background_image_path');
+  if (settings.importedThemeStyle) {
+    window.localStorage.setItem(
+      importedThemeStyleStorageKey,
+      JSON.stringify(settings.importedThemeStyle),
+    );
+  } else {
+    window.localStorage.removeItem(importedThemeStyleStorageKey);
+  }
   window.localStorage.setItem(
     'cardbush_cardling_enabled',
     String(settings.companionEnabled),
@@ -3856,27 +3824,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function cssEscape(value: string) {
   return value.replace(/["\\]/g, '\\$&');
-}
-
-function cssImageUrl(value: string) {
-  return `url("${cssEscape(value)}")`;
-}
-
-function backgroundImageUrl(value: string) {
-  const cachedName = cachedBackgroundFileName(value);
-  if (cachedName && window.cardbushDesktop) {
-    return `cardbush-file://backgrounds/${encodeURIComponent(cachedName)}`;
-  }
-  return fileUrl(value);
-}
-
-function cachedBackgroundFileName(value: string) {
-  const normalized = stripWrappingQuotes(value.trim()).replaceAll('\\', '/');
-  if (!/\/backgrounds\//i.test(normalized)) {
-    return '';
-  }
-  const fileName = normalized.split('/').filter(Boolean).pop() ?? '';
-  return isImagePath(fileName) ? fileName : '';
 }
 
 function WindowFrame({
@@ -4125,9 +4072,11 @@ function ChatPanel({
   subagentObservabilityAvailable,
   shadowAvailable,
   shadowAccentColor,
+  shadowThemeVariables,
   thinkingVisible,
   guidanceDeliveryMode,
   loading,
+  historyLoading,
   sending,
   stopping,
   activeTurnId,
@@ -4170,6 +4119,7 @@ function ChatPanel({
   onRetryGuidance,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
+  onReorderQueuedMessage,
   onRevertChangeReport,
   onOpenChangeReview,
   onReplyInteraction,
@@ -4209,9 +4159,11 @@ function ChatPanel({
   subagentObservabilityAvailable: boolean;
   shadowAvailable: boolean;
   shadowAccentColor: string;
+  shadowThemeVariables: Record<`--${string}`, string>;
   thinkingVisible: boolean;
   guidanceDeliveryMode: AppSettingsState['guidance']['deliveryMode'];
   loading: boolean;
+  historyLoading: boolean;
   sending: boolean;
   stopping: boolean;
   activeTurnId: string;
@@ -4261,6 +4213,7 @@ function ChatPanel({
     mode?: 'append_context' | 'interrupt_and_continue',
   ) => Promise<void>;
   onRemoveQueuedMessage: (queuedId: string) => void;
+  onReorderQueuedMessage: (queuedId: string, targetQueuedId: string) => void;
   onRevertChangeReport: (
     report: ConversationChangeReport,
     message: ChatMessage,
@@ -4433,6 +4386,7 @@ function ChatPanel({
         language,
         theme,
         accentColor: shadowAccentColor,
+        themeVariables: shadowThemeVariables,
         modelConfig: selectedModelConfig,
         reasoningLevel,
         projectDir: activeProjectDir ?? '',
@@ -4452,6 +4406,7 @@ function ChatPanel({
     reasoningLevel,
     selectedModelConfig,
     shadowAccentColor,
+    shadowThemeVariables,
     shadowCanActivate,
     theme,
     title,
@@ -5545,6 +5500,7 @@ function ChatPanel({
       return undefined;
     }
     let lastMeasurement = '';
+    let measurementFrame: number | null = null;
     const updateHeight = () => {
       const dockRect = dock.getBoundingClientRect();
       const firstVisibleElement = dock.firstElementChild;
@@ -5599,8 +5555,15 @@ function ChatPanel({
       setComposerDockHeight(nextDockHeight);
       setQuickContextBottomInset(nextBottomInset);
     };
+    const scheduleHeightUpdate = () => {
+      if (measurementFrame != null) return;
+      measurementFrame = window.requestAnimationFrame(() => {
+        measurementFrame = null;
+        updateHeight();
+      });
+    };
     updateHeight();
-    const observer = new ResizeObserver(updateHeight);
+    const observer = new ResizeObserver(scheduleHeightUpdate);
     observer.observe(dock);
     if (chatBody) {
       observer.observe(chatBody);
@@ -5617,11 +5580,14 @@ function ChatPanel({
     if (composerSurface) {
       observer.observe(composerSurface);
     }
-    const mutationObserver = new MutationObserver(updateHeight);
+    const mutationObserver = new MutationObserver(scheduleHeightUpdate);
     mutationObserver.observe(dock, { childList: true });
     return () => {
       observer.disconnect();
       mutationObserver.disconnect();
+      if (measurementFrame != null) {
+        window.cancelAnimationFrame(measurementFrame);
+      }
       chatBody?.style.removeProperty('--composer-surface-top');
       chatBody?.style.removeProperty('--composer-content-top');
       chatBody?.style.removeProperty('--composer-surface-center-x');
@@ -6359,7 +6325,7 @@ function ChatPanel({
         )}
         <div className="chat-content-frame">
         {loading ? (
-          <BackendLoading language={language} />
+          <BackendLoading language={language} history={historyLoading} />
         ) : showWelcome ? (
           <WelcomeComposer
             key={activeConversationId || 'new-session'}
@@ -6461,7 +6427,6 @@ function ChatPanel({
                       goalObjective={activeGoal?.objective ?? ''}
                       onRegenerate={onRegenerate}
                       onEditUserMessage={onEditUserMessage}
-                      onGuideMessage={onGuideMessage}
                       onRetryMessage={onRetryMessage}
                       onRetryGuidance={onRetryGuidance}
                       onRevertChangeReport={onRevertChangeReport}
@@ -6553,6 +6518,7 @@ function ChatPanel({
                   onGuideQueuedMessage(queuedId, 'append_context')
                 }
                 onRemoveQueuedMessage={onRemoveQueuedMessage}
+                onReorderQueuedMessage={onReorderQueuedMessage}
               />
             )}
             <Composer
@@ -6631,7 +6597,13 @@ function ChatPanel({
   );
 }
 
-function BackendLoading({ language }: { language: AppLanguage }) {
+function BackendLoading({
+  language,
+  history = false,
+}: {
+  language: AppLanguage;
+  history?: boolean;
+}) {
   return (
     <div className="loading-view">
       <div className="loading-brand" aria-label="cardbush">
@@ -6645,7 +6617,11 @@ function BackendLoading({ language }: { language: AppLanguage }) {
         <span />
         <span />
       </div>
-      <p>{language === 'zh' ? '正在连接运行服务...' : 'Connecting to the runtime...'}</p>
+      <p>
+        {history
+          ? language === 'zh' ? '正在加载会话...' : 'Loading conversation...'
+          : language === 'zh' ? '正在连接运行服务...' : 'Connecting to the runtime...'}
+      </p>
     </div>
   );
 }
@@ -6754,7 +6730,7 @@ function ConversationConnectionNotice({
           : `Connection interrupted. Recovering${attempt}`;
   const detail = isFailed
     ? update.message || update.reason || ''
-    : retryDelay;
+    : retryDelay || update.message || update.reason || '';
 
   return (
     <div
@@ -7345,6 +7321,7 @@ type InspectorWebviewHandle = {
 type ElectronInspectorWebview = HTMLElement & {
   canGoBack?: () => boolean;
   canGoForward?: () => boolean;
+  executeJavaScript?: (code: string, userGesture?: boolean) => Promise<unknown>;
   getTitle?: () => string;
   getURL?: () => string;
   getWebContentsId?: () => number;
@@ -7352,7 +7329,41 @@ type ElectronInspectorWebview = HTMLElement & {
   goForward?: () => void;
   loadURL?: (url: string) => Promise<void>;
   reload?: () => void;
+  setZoomFactor?: (factor: number) => void;
 };
+
+type InspectorBrowserViewportMeasurement = {
+  viewportWidth: number;
+  contentWidth: number;
+};
+
+const inspectorBrowserViewportMeasurementScript = `(() => {
+  const root = document.documentElement;
+  const body = document.body;
+  const viewportWidth = Math.max(0, window.innerWidth || root?.clientWidth || 0);
+  const contentWidth = Math.max(
+    viewportWidth,
+    root?.scrollWidth || 0,
+    body?.scrollWidth || 0
+  );
+  return { viewportWidth, contentWidth };
+})()`;
+
+function inspectorBrowserFitZoom(measurement: unknown) {
+  if (!measurement || typeof measurement !== 'object') return 1;
+  const value = measurement as Partial<InspectorBrowserViewportMeasurement>;
+  const viewportWidth = Number(value.viewportWidth);
+  const contentWidth = Number(value.contentWidth);
+  if (
+    !Number.isFinite(viewportWidth) ||
+    !Number.isFinite(contentWidth) ||
+    viewportWidth <= 0 ||
+    contentWidth <= viewportWidth + 2
+  ) {
+    return 1;
+  }
+  return Math.max(0.5, Math.min(1, viewportWidth / contentWidth));
+}
 
 const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   identity: string;
@@ -7373,6 +7384,10 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   onOpenTarget,
 }, forwardedRef) {
   const webviewRef = useRef<ElectronInspectorWebview | null>(null);
+  const webviewDomReadyRef = useRef(false);
+  const browserFitRevisionRef = useRef(0);
+  const browserFitTimerRef = useRef(0);
+  const requestedUrlRef = useRef(source);
   const markdownPath = inspectorMarkdownPath(target);
   const markdownPreview = isMarkdownInspectorTarget(target);
   const sourcePreview = !markdownPreview && /^cardbush-file:\/\/text-preview(?:\/|\?|$)/i.test(source);
@@ -7381,26 +7396,106 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => {
+    requestedUrlRef.current = source;
+  }, [source]);
+
+  const applyBrowserViewportFit = useCallback(async (revision: number) => {
+    const webview = webviewRef.current;
+    if (
+      rendererPreview ||
+      !webview?.isConnected ||
+      !webviewDomReadyRef.current ||
+      webview.getBoundingClientRect().width <= 0
+    ) {
+      return;
+    }
+    try {
+      // Measure at the natural page scale so responsive pages remain at 100%,
+      // while fixed-width desktop pages are fitted into the inspector viewport.
+      webview.setZoomFactor?.(1);
+      const measurement = await webview.executeJavaScript?.(
+        inspectorBrowserViewportMeasurementScript,
+      );
+      if (
+        revision !== browserFitRevisionRef.current ||
+        webview !== webviewRef.current ||
+        !webview.isConnected ||
+        !webviewDomReadyRef.current
+      ) {
+        return;
+      }
+      webview.setZoomFactor?.(inspectorBrowserFitZoom(measurement));
+    } catch {
+      // A navigation can dispose the guest while an async measurement is in
+      // flight. The next dom-ready/resize observation will retry safely.
+    }
+  }, [rendererPreview]);
+
+  const scheduleBrowserViewportFit = useCallback((delay = 0) => {
+    const revision = browserFitRevisionRef.current + 1;
+    browserFitRevisionRef.current = revision;
+    if (browserFitTimerRef.current) {
+      window.clearTimeout(browserFitTimerRef.current);
+    }
+    browserFitTimerRef.current = window.setTimeout(() => {
+      browserFitTimerRef.current = 0;
+      void applyBrowserViewportFit(revision);
+    }, delay);
+  }, [applyBrowserViewportFit]);
+
   const publishNavigation = useCallback(() => {
     const webview = webviewRef.current;
-    if (!webview) return;
-    onNavigationStateChange(identity, {
-      url: webview.getURL?.() || source,
-      title: webview.getTitle?.().trim() || '',
-      canGoBack: webview.canGoBack?.() ?? false,
-      canGoForward: webview.canGoForward?.() ?? false,
+    const fallbackNavigation: InspectorNavigationState = {
+      url: requestedUrlRef.current || source,
+      title: '',
+      canGoBack: false,
+      canGoForward: false,
       loading: loadingRef.current,
-    });
+    };
+    if (!webview?.isConnected || !webviewDomReadyRef.current) {
+      onNavigationStateChange(identity, fallbackNavigation);
+      return;
+    }
+    try {
+      const url = webview.getURL?.() || fallbackNavigation.url;
+      requestedUrlRef.current = url;
+      onNavigationStateChange(identity, {
+        url,
+        title: webview.getTitle?.().trim() || '',
+        canGoBack: webview.canGoBack?.() ?? false,
+        canGoForward: webview.canGoForward?.() ?? false,
+        loading: loadingRef.current,
+      });
+    } catch {
+      // Electron throws when a <webview> is queried between React mounting and
+      // its native guest being ready. Keep the inspector state usable without
+      // allowing that lifecycle race to crash the whole renderer.
+      webviewDomReadyRef.current = false;
+      onNavigationStateChange(identity, fallbackNavigation);
+    }
   }, [identity, onNavigationStateChange, source]);
 
   useImperativeHandle(forwardedRef, () => ({
     goBack: () => {
       const webview = webviewRef.current;
-      if (webview?.canGoBack?.()) webview.goBack?.();
+      if (!webview?.isConnected || !webviewDomReadyRef.current) return;
+      try {
+        if (webview.canGoBack?.()) webview.goBack?.();
+      } catch {
+        webviewDomReadyRef.current = false;
+        publishNavigation();
+      }
     },
     goForward: () => {
       const webview = webviewRef.current;
-      if (webview?.canGoForward?.()) webview.goForward?.();
+      if (!webview?.isConnected || !webviewDomReadyRef.current) return;
+      try {
+        if (webview.canGoForward?.()) webview.goForward?.();
+      } catch {
+        webviewDomReadyRef.current = false;
+        publishNavigation();
+      }
     },
     reload: () => {
       loadingRef.current = true;
@@ -7415,7 +7510,16 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           loading: true,
         });
       } else {
-        webviewRef.current?.reload?.();
+        const webview = webviewRef.current;
+        if (!webview?.isConnected || !webviewDomReadyRef.current) {
+          publishNavigation();
+          return;
+        }
+        try {
+          webview.reload?.();
+        } catch {
+          webviewDomReadyRef.current = false;
+        }
         publishNavigation();
       }
     },
@@ -7423,16 +7527,29 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       const destination = normalizeInspectorBrowserAddress(address);
       const webview = webviewRef.current;
       if (!destination || !webview || rendererPreview) return;
+      requestedUrlRef.current = destination;
       loadingRef.current = true;
       setLoading(true);
-      if (webview.loadURL) {
-        void webview.loadURL(destination).catch(() => {
-          loadingRef.current = false;
-          setLoading(false);
-          publishNavigation();
-        });
-      } else {
+      if (!webview.isConnected || !webviewDomReadyRef.current) {
         webview.setAttribute('src', destination);
+        publishNavigation();
+        return;
+      }
+      try {
+        if (webview.loadURL) {
+          void webview.loadURL(destination).catch(() => {
+            loadingRef.current = false;
+            setLoading(false);
+            publishNavigation();
+          });
+        } else {
+          webview.setAttribute('src', destination);
+        }
+      } catch {
+        webviewDomReadyRef.current = false;
+        loadingRef.current = false;
+        setLoading(false);
+        publishNavigation();
       }
     },
   }), [identity, markdownPath, onNavigationStateChange, publishNavigation, rendererPreview, target]);
@@ -7453,7 +7570,22 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     if (rendererPreview) return undefined;
     const webview = webviewRef.current;
     if (!webview) return undefined;
+    const ready = () => {
+      webviewDomReadyRef.current = true;
+      publishNavigation();
+      scheduleBrowserViewportFit();
+    };
     const start = () => {
+      browserFitRevisionRef.current += 1;
+      if (browserFitTimerRef.current) {
+        window.clearTimeout(browserFitTimerRef.current);
+        browserFitTimerRef.current = 0;
+      }
+      try {
+        webview.setZoomFactor?.(1);
+      } catch {
+        webviewDomReadyRef.current = false;
+      }
       loadingRef.current = true;
       setLoading(true);
       publishNavigation();
@@ -7462,13 +7594,18 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
+      scheduleBrowserViewportFit(80);
     };
     const fail = () => {
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
     };
-    const navigate = () => publishNavigation();
+    const navigate = (event: Event) => {
+      const url = (event as Event & { url?: string }).url?.trim();
+      if (url) requestedUrlRef.current = url;
+      publishNavigation();
+    };
     const updateTitle = () => publishNavigation();
     const openWindow = (event: Event) => {
       const target = (event as Event & { url?: string }).url?.trim();
@@ -7488,7 +7625,14 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           isEditable?: boolean;
         };
       }).params;
-      const guestWebContentsId = webview.getWebContentsId?.();
+      if (!webview.isConnected || !webviewDomReadyRef.current) return;
+      let guestWebContentsId: number | undefined;
+      try {
+        guestWebContentsId = webview.getWebContentsId?.();
+      } catch {
+        webviewDomReadyRef.current = false;
+        return;
+      }
       if (!params || !guestWebContentsId) return;
       event.preventDefault();
       void window.cardbushDesktop?.showInspectorContextMenu?.({
@@ -7503,6 +7647,13 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         isEditable: params.isEditable,
       });
     };
+    const resizeObserver = new ResizeObserver((entries) => {
+      if ((entries[0]?.contentRect.width ?? 0) > 0) {
+        scheduleBrowserViewportFit(120);
+      }
+    });
+    resizeObserver.observe(webview);
+    webview.addEventListener('dom-ready', ready);
     webview.addEventListener('did-start-loading', start);
     webview.addEventListener('did-finish-load', finish);
     webview.addEventListener('did-fail-load', fail);
@@ -7512,6 +7663,13 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('new-window', openWindow);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
+      browserFitRevisionRef.current += 1;
+      if (browserFitTimerRef.current) {
+        window.clearTimeout(browserFitTimerRef.current);
+        browserFitTimerRef.current = 0;
+      }
+      resizeObserver.disconnect();
+      webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-start-loading', start);
       webview.removeEventListener('did-finish-load', finish);
       webview.removeEventListener('did-fail-load', fail);
@@ -7521,7 +7679,14 @@ const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('new-window', openWindow);
       webview.removeEventListener('context-menu', contextMenu);
     };
-  }, [onOpenTarget, publishNavigation, rendererPreview, source, target]);
+  }, [
+    onOpenTarget,
+    publishNavigation,
+    rendererPreview,
+    scheduleBrowserViewportFit,
+    source,
+    target,
+  ]);
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>

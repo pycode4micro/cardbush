@@ -686,11 +686,28 @@
   background: rgba(0, 231, 240, 0.025);
 }
 
-.app.theme-cyberpunk .runtime-queue-copy > span {
+.app.theme-cyberpunk .runtime-queue-drag-handle {
   color: #050607;
   background: var(--cyber-cyan);
   border-radius: 0;
   font-family: var(--mono-font-family);
+}
+
+.app.theme-cyberpunk .runtime-screen-queue-actions button {
+  border-radius: 0;
+  color: var(--cyber-cyan);
+  background: rgba(5, 6, 7, 0.72);
+}
+
+.app.theme-cyberpunk .runtime-screen-queue-actions .runtime-screen-queue-guide {
+  color: var(--cyber-yellow);
+}
+
+.app.theme-cyberpunk .runtime-screen-queue-actions button:hover:not(:disabled),
+.app.theme-cyberpunk .runtime-screen-queue-actions button:focus-visible {
+  color: #050607;
+  border-color: var(--cyber-cyan);
+  background: var(--cyber-cyan);
 }
 
 .app.theme-cyberpunk .runtime-queue-actions button {

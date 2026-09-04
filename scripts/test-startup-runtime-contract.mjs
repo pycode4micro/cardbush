@@ -39,6 +39,16 @@ assert.match(main, /runtime\.get_capabilities/);
 assert.match(main, /shutdownClean/);
 assert.match(controller, /startupTimeoutMs\?: number/);
 assert.match(controller, /runtime_host_startup_timeout/);
+assert.match(
+  controller,
+  /const frame = event\.senderFrame;[\s\S]*frame\.isDestroyed\(\)[\s\S]*frame\.detached/,
+  'Runtime streams must bind to the exact renderer frame that subscribed',
+);
+assert.match(
+  controller,
+  /subscription\.frame\.isDestroyed\(\)[\s\S]*subscription\.frame\.detached[\s\S]*try \{\s*subscription\.frame\.send\(RUNTIME_IPC_STREAM_FRAME_CHANNEL, message\);\s*\} catch \{/,
+  'Runtime frames must not be sent to a disposed or replacement renderer frame',
+);
 assert.match(preload, /runtimeStartupStatus:/);
 assert.match(preload, /onRuntimeStartupStatus:/);
 assert.match(composer, /Runtime 正在准备/);
@@ -52,9 +62,13 @@ assert.match(main, /CARDBUSH_RG_PATH: bundledRipgrep/);
 assert.match(main, /process\.resourcesPath/);
 assert.equal(packageJson.scripts['package:win'].startsWith('npm run runtime-tools:verify'), true);
 assert.equal(
-  packageJson.scripts['smoke:packaged'],
-  'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke && node scripts/run-packaged-smoke.mjs',
+  packageJson.scripts['smoke:packaged'].startsWith(
+    'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke && node scripts/run-packaged-smoke.mjs',
+  ),
+  true,
 );
+assert.match(packageJson.scripts['smoke:packaged'], /test-chrome-native-host\.mjs/);
+assert.match(packageJson.scripts['smoke:packaged'], /test-chrome-connector-contract\.mjs/);
 assert.equal(fs.existsSync(path.join(root, 'scripts', 'run-packaged-smoke.mjs')), true);
 for (const workspaceDependency of [
   '@cardbush/bush-protocol',

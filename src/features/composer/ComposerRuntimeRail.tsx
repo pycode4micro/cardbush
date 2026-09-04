@@ -4,16 +4,17 @@ import {
   Circle,
   Clock3,
   Code2,
+  CornerDownLeft,
   Edit3,
   ListChecks,
   LoaderCircle,
   PanelRightOpen,
-  Sparkles,
   Target,
   Trash2,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 import type { ExperimentalGoal } from '../../backend/api';
 import { useSoftPanelPresence } from '../../hooks/useSoftPanelPresence';
@@ -47,6 +48,17 @@ type RuntimeQueuedMessage = {
   createdAt: string;
 };
 
+type QueueDragSession = {
+  queuedId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  activated: boolean;
+  lastTargetId: string;
+  handle: HTMLButtonElement;
+  timerId: number;
+};
+
 export function ComposerRuntimeRail({
   language,
   running,
@@ -70,6 +82,7 @@ export function ComposerRuntimeRail({
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
+  onReorderQueuedMessage,
 }: {
   language: AppLanguage;
   running: boolean;
@@ -93,11 +106,15 @@ export function ComposerRuntimeRail({
   onEditQueuedMessage?: (item: RuntimeQueuedMessage) => void;
   onGuideQueuedMessage?: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage?: (queuedId: string) => void;
+  onReorderQueuedMessage?: (queuedId: string, targetQueuedId: string) => void;
 }) {
   const [processingOpen, setProcessingOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
+  const [pressedQueuedId, setPressedQueuedId] = useState('');
+  const [draggingQueuedId, setDraggingQueuedId] = useState('');
+  const queueDragSessionRef = useRef<QueueDragSession | null>(null);
   const hasProcessing = running || Boolean(goal);
   const activePanel = processingOpen
     ? 'processing'
@@ -321,6 +338,11 @@ export function ComposerRuntimeRail({
     return () => window.clearTimeout(timer);
   }, [reelAnimating, rollingToKind]);
 
+  useEffect(() => () => {
+    const session = queueDragSessionRef.current;
+    if (session) window.clearTimeout(session.timerId);
+  }, []);
+
   function toggleCurrentPanel(item: RuntimeRailItem) {
     if (item.kind === 'processing') {
       if (thinkingOpen) onCloseThinking();
@@ -357,6 +379,91 @@ export function ComposerRuntimeRail({
     } finally {
       setGuidingQueuedId('');
     }
+  }
+
+  function finishQueueDrag(pointerId?: number) {
+    const session = queueDragSessionRef.current;
+    if (!session || (pointerId != null && session.pointerId !== pointerId)) return;
+    window.clearTimeout(session.timerId);
+    if (session.handle.hasPointerCapture(session.pointerId)) {
+      session.handle.releasePointerCapture(session.pointerId);
+    }
+    queueDragSessionRef.current = null;
+    setPressedQueuedId('');
+    setDraggingQueuedId('');
+  }
+
+  function beginQueueDrag(
+    item: RuntimeQueuedMessage,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) {
+    if (
+      event.button !== 0 ||
+      !event.isPrimary ||
+      !onReorderQueuedMessage ||
+      queuedMessages.length < 2 ||
+      guidingQueuedId
+    ) {
+      return;
+    }
+    finishQueueDrag();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    handle.setPointerCapture(pointerId);
+    const session: QueueDragSession = {
+      queuedId: item.id,
+      pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      activated: false,
+      lastTargetId: '',
+      handle,
+      timerId: 0,
+    };
+    session.timerId = window.setTimeout(() => {
+      const current = queueDragSessionRef.current;
+      if (!current || current.pointerId !== pointerId || current.queuedId !== item.id) return;
+      current.activated = true;
+      setPressedQueuedId('');
+      setDraggingQueuedId(item.id);
+    }, 360);
+    queueDragSessionRef.current = session;
+    setPressedQueuedId(item.id);
+  }
+
+  function moveQueueDrag(event: ReactPointerEvent<HTMLButtonElement>) {
+    const session = queueDragSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(
+      event.clientX - session.startX,
+      event.clientY - session.startY,
+    );
+    if (!session.activated) {
+      if (distance > 8) finishQueueDrag(event.pointerId);
+      return;
+    }
+    event.preventDefault();
+    if (distance < 6) return;
+    const target = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>('[data-queue-item-id]');
+    const targetQueuedId = target?.dataset.queueItemId ?? '';
+    if (!targetQueuedId || targetQueuedId === session.queuedId) {
+      session.lastTargetId = '';
+      return;
+    }
+    if (targetQueuedId === session.lastTargetId) {
+      return;
+    }
+    session.lastTargetId = targetQueuedId;
+    onReorderQueuedMessage?.(session.queuedId, targetQueuedId);
+  }
+
+  function moveQueuedMessageWithKeyboard(index: number, direction: -1 | 1) {
+    const item = queuedMessages[index];
+    const target = queuedMessages[index + direction];
+    if (!item || !target) return;
+    onReorderQueuedMessage?.(item.id, target.id);
   }
 
   if (!currentRailItem) return null;
@@ -507,9 +614,34 @@ export function ComposerRuntimeRail({
             {queuedMessages.length > 0 ? (
               <div className="runtime-queue-list">
                 {queuedMessages.map((item, index) => (
-                  <article className="runtime-queue-item" key={item.id}>
+                  <article
+                    className={`runtime-queue-item${pressedQueuedId === item.id ? ' press-armed' : ''}${draggingQueuedId === item.id ? ' dragging' : ''}`}
+                    data-queue-item-id={item.id}
+                    key={item.id}
+                  >
                     <div className="runtime-queue-copy">
-                      <span>{index + 1}</span>
+                      <button
+                        className="runtime-queue-drag-handle"
+                        type="button"
+                        disabled={!onReorderQueuedMessage || queuedMessages.length < 2 || Boolean(guidingQueuedId)}
+                        aria-label={language === 'zh'
+                          ? `第 ${index + 1} 条，长按拖动排序`
+                          : `Queue item ${index + 1}. Press and hold to reorder`}
+                        aria-grabbed={draggingQueuedId === item.id}
+                        title={language === 'zh' ? '长按拖动排序' : 'Press and hold to reorder'}
+                        onPointerDown={(event) => beginQueueDrag(item, event)}
+                        onPointerMove={moveQueueDrag}
+                        onPointerUp={(event) => finishQueueDrag(event.pointerId)}
+                        onPointerCancel={(event) => finishQueueDrag(event.pointerId)}
+                        onLostPointerCapture={(event) => finishQueueDrag(event.pointerId)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+                          event.preventDefault();
+                          moveQueuedMessageWithKeyboard(index, event.key === 'ArrowUp' ? -1 : 1);
+                        }}
+                      >
+                        {index + 1}
+                      </button>
                       <p title={item.text}>{item.text}</p>
                     </div>
                     <div className="runtime-queue-actions">
@@ -519,7 +651,7 @@ export function ComposerRuntimeRail({
                         disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
                         onClick={() => void guideQueuedMessage(item.id)}
                       >
-                        {guidingQueuedId === item.id ? <LoaderCircle size={13} /> : <Sparkles size={13} />}
+                        {guidingQueuedId === item.id ? <LoaderCircle size={13} /> : <CornerDownLeft size={13} />}
                         <span>{language === 'zh' ? '引导' : 'Guide'}</span>
                       </button>
                       <button
@@ -612,7 +744,9 @@ export function ComposerRuntimeRail({
       <button
         className={`composer-runtime-screen ${currentRailItem.kind} ${
           currentRailItem.kind === activePanel ? 'open' : ''
-        } ${running ? 'running' : 'settled'} ${reelAnimating ? 'rolling' : ''}`}
+        } ${running ? 'running' : 'settled'} ${reelAnimating ? 'rolling' : ''}${
+          currentRailItem.kind === 'queue' && firstQueuedMessage ? ' has-queue-actions' : ''
+        }`}
         type="button"
         aria-expanded={currentRailItem.kind === activePanel}
         title={currentRailItem.title}
@@ -636,6 +770,44 @@ export function ComposerRuntimeRail({
           </span>
         </span>
       </button>
+      {currentRailItem.kind === 'queue' && firstQueuedMessage && !reelAnimating && (
+        <div
+          className="runtime-screen-queue-actions"
+          role="group"
+          aria-label={language === 'zh' ? '排队消息操作' : 'Queued message actions'}
+        >
+          <button
+            className="runtime-screen-queue-guide"
+            type="button"
+            disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
+            aria-label={language === 'zh' ? '将首条排队消息用于引导' : 'Use first queued message as guidance'}
+            title={language === 'zh' ? '引导' : 'Guide'}
+            onClick={() => void guideQueuedMessage(firstQueuedMessage.id)}
+          >
+            {guidingQueuedId === firstQueuedMessage.id
+              ? <LoaderCircle size={13} />
+              : <CornerDownLeft size={13} />}
+          </button>
+          <button
+            type="button"
+            disabled={!onEditQueuedMessage || Boolean(guidingQueuedId)}
+            aria-label={language === 'zh' ? '编辑首条排队消息' : 'Edit first queued message'}
+            title={language === 'zh' ? '编辑' : 'Edit'}
+            onClick={() => onEditQueuedMessage?.(firstQueuedMessage)}
+          >
+            <Edit3 size={13} />
+          </button>
+          <button
+            type="button"
+            disabled={!onRemoveQueuedMessage || Boolean(guidingQueuedId)}
+            aria-label={language === 'zh' ? '删除首条排队消息' : 'Delete first queued message'}
+            title={language === 'zh' ? '删除' : 'Delete'}
+            onClick={() => onRemoveQueuedMessage?.(firstQueuedMessage.id)}
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

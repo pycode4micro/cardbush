@@ -22,69 +22,45 @@
           parchment: '#e1d4ba',
           cyberpunk: '#050607',
         };
-        const cssString = (value) => String(value).replace(/["\\]/g, '\\$&');
-        const stripWrappingQuotes = (value) =>
-          String(value || '').replace(/^["']+|["']+$/g, '').trim();
-        const localResourceUrl = (value) => {
-          const normalized = stripWrappingQuotes(value);
-          if (!normalized) {
-            return '';
-          }
-          if (/^file:\/\//i.test(normalized)) {
-            try {
-              const parsed = new URL(normalized);
-              const hostPrefix = parsed.hostname ? `/${parsed.hostname}` : '';
-              return localResourceUrl(`${hostPrefix}${decodeURIComponent(parsed.pathname)}`);
-            } catch {
-              return normalized;
-            }
-          }
-          const pathValue = normalized.replaceAll('\\', '/').replace(/^\/+/, '');
-          const encodedPath = pathValue
-            .split('/')
-            .map((segment, index) =>
-              index === 0 && /^[a-z]:$/i.test(segment)
-                ? segment
-                : encodeURIComponent(segment),
-            )
-            .join('/');
-          const localScheme =
-            window.cardbushDesktop || navigator.userAgent.includes('Electron/')
-              ? 'cardbush-file'
-              : 'file';
-          return `${localScheme}:///${encodedPath}`;
-        };
-        const backgroundResourceUrl = (value) => {
-          const normalized = stripWrappingQuotes(value).replaceAll('\\', '/');
-          const isElectron =
-            window.cardbushDesktop || navigator.userAgent.includes('Electron/');
-          if (isElectron && /\/backgrounds\//i.test(normalized)) {
-            const fileName = normalized.split('/').filter(Boolean).pop() || '';
-            if (fileName) {
-              return `cardbush-file://backgrounds/${encodeURIComponent(fileName)}`;
-            }
-          }
-          return localResourceUrl(value);
-        };
         let theme = 'dark';
         try {
           const preference = localStorage.getItem('cardbush_theme_mode');
-          const lightStyle =
-            localStorage.getItem('cardbush_light_theme_style') ||
-            (localStorage.getItem('cardbush.theme') === 'bright' ? 'bright' : 'parchment');
           const legacy = localStorage.getItem('cardbush.theme');
+          let importedBase = '';
+          if (preference === 'custom') {
+            try {
+              const imported = JSON.parse(
+                localStorage.getItem('cardbush_imported_theme_style') || 'null',
+              );
+              importedBase = ['light', 'dark', 'parchment'].includes(imported?.base)
+                ? imported.base
+                : '';
+            } catch {
+              importedBase = '';
+            }
+          }
           if (preference === 'cyberpunk') {
             theme = 'cyberpunk';
-          } else if (preference === 'dark' || legacy === 'dark') {
+          } else if (preference === 'parchment') {
+            theme = 'parchment';
+          } else if (preference === 'custom' && importedBase) {
+            theme = importedBase === 'light' ? 'bright' : importedBase;
+          } else if (preference === 'dark') {
             theme = 'dark';
-          } else if (preference === 'light' || legacy === 'bright' || legacy === 'parchment') {
-            theme = lightStyle === 'bright' ? 'bright' : 'parchment';
+          } else if (preference === 'light') {
+            theme = localStorage.getItem('cardbush_light_theme_style') === 'parchment'
+              ? 'parchment'
+              : 'bright';
+          } else if (legacy === 'dark') {
+            theme = 'dark';
+          } else if (legacy === 'parchment') {
+            theme = 'parchment';
+          } else if (legacy === 'bright') {
+            theme = 'bright';
           } else {
             theme = matchMedia('(prefers-color-scheme: dark)').matches
               ? 'dark'
-              : lightStyle === 'bright'
-                ? 'bright'
-                : 'parchment';
+              : 'bright';
           }
         } catch {
           theme = 'dark';
@@ -93,19 +69,6 @@
         const background = colors[theme] || colors.dark;
         document.documentElement.style.setProperty('--cardbush-window-bg', background);
         document.documentElement.style.backgroundColor = background;
-        try {
-          const backgroundPath = localStorage.getItem('cardbush_background_image_path') || '';
-          const backgroundUrl = backgroundResourceUrl(backgroundPath);
-          if (backgroundUrl) {
-            document.documentElement.dataset.startCustomBackground = 'true';
-            document.documentElement.style.setProperty(
-              '--cardbush-custom-background-image',
-              `url("${cssString(backgroundUrl)}")`,
-            );
-          }
-        } catch {
-          delete document.documentElement.dataset.startCustomBackground;
-        }
       })();
     </script>
     <style>
@@ -135,36 +98,6 @@
       html[data-start-theme='cyberpunk'] body,
       html[data-start-theme='cyberpunk'] #root {
         --cardbush-window-bg: #050607;
-      }
-
-      html[data-start-custom-background='true'] #root {
-        position: relative;
-        z-index: 1;
-        background: transparent;
-      }
-
-      html[data-start-custom-background='true'] body::before,
-      html[data-start-custom-background='true'] body::after {
-        content: "";
-        position: fixed;
-        inset: 0;
-        pointer-events: none;
-      }
-
-      html[data-start-custom-background='true'] body::before {
-        z-index: 0;
-        background-image: var(--cardbush-custom-background-image);
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        transform: translateZ(0);
-      }
-
-      html[data-start-custom-background='true'] body::after {
-        z-index: 0;
-        background:
-          linear-gradient(90deg, rgba(26, 26, 26, 0.34), rgba(26, 26, 26, 0.16) 42%, rgba(26, 26, 26, 0.32)),
-          linear-gradient(180deg, rgba(26, 26, 26, 0.2), transparent 30%, rgba(26, 26, 26, 0.24));
       }
 
       #cardbush-startup-splash {
@@ -277,13 +210,6 @@
           height: 22px;
           opacity: 0.96;
         }
-      }
-
-      html[data-start-theme='bright'][data-start-custom-background='true'] body::after,
-      html[data-start-theme='parchment'][data-start-custom-background='true'] body::after {
-        background:
-          linear-gradient(90deg, rgba(245, 243, 239, 0.28), rgba(245, 243, 239, 0.12) 42%, rgba(245, 243, 239, 0.24)),
-          linear-gradient(180deg, rgba(245, 243, 239, 0.18), transparent 30%, rgba(245, 243, 239, 0.22));
       }
 
       html[data-cardling-window='true'],

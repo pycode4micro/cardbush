@@ -58,6 +58,11 @@ assert.match(
   'The bottom button must stay above the complete composer content, including runtime bars.',
 );
 assert.match(
+  appSource,
+  /const scheduleHeightUpdate = \(\) => \{[\s\S]*?requestAnimationFrame\([\s\S]*?updateHeight\(\)[\s\S]*?new ResizeObserver\(scheduleHeightUpdate\)/,
+  'Composer geometry writes must run after ResizeObserver delivery instead of re-entering Blink layout',
+);
+assert.match(
   styles,
   /\.scroll-bottom\s*\{[\s\S]*?left:\s*var\(--composer-surface-center-x, 50%\);[\s\S]*?top:\s*calc\([\s\S]*?var\(--composer-content-top, var\(--composer-surface-top, 100%\)\)/,
 );

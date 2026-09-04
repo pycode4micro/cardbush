@@ -156,7 +156,6 @@ function RuntimeFixturePreTest({ language }: { language: AppLanguage }) {
                 selectedModel="fixture-runtime"
                 onRegenerate={async () => undefined}
                 onEditUserMessage={async () => undefined}
-                onGuideMessage={async () => undefined}
                 onRetryGuidance={async () => undefined}
                 onRevertChangeReport={async () => undefined}
                 onOpenScene={() => undefined}
@@ -380,7 +379,6 @@ function ConnectedRuntimeLivePreTest({
                 selectedModel={modelConfig?.modelName ?? ''}
                 onRegenerate={async () => undefined}
                 onEditUserMessage={async () => undefined}
-                onGuideMessage={async () => undefined}
                 onRetryGuidance={async () => undefined}
                 onRevertChangeReport={async () => undefined}
                 onOpenScene={() => undefined}

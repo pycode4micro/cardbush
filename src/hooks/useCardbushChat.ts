@@ -97,6 +97,7 @@ import {
   conversationProjectDir,
   conversationWorkspaceRoot,
 } from '../features/conversationWorkspace';
+import { reorderScopedQueue } from '../features/composer/queueOrdering';
 import {
   conversationProjectId,
   conversationProjectPathAliases,
@@ -156,7 +157,9 @@ export function useCardbushChat(
   >({});
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messageHistoryLoadingIds, setMessageHistoryLoadingIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [runningByConversation, setRunningByConversation] = useState<
     Record<string, { activeTurnId: string; stopping: boolean }>
   >({});
@@ -241,6 +244,10 @@ export function useCardbushChat(
   >(async () => undefined);
   const [queuedMessages, setQueuedMessages] = useState<QueuedChatMessage[]>([]);
   const activeConversationIdForState = activeConversationId.trim();
+  const messagesLoading = Boolean(
+    activeConversationIdForState &&
+      messageHistoryLoadingIds.has(activeConversationIdForState),
+  );
   const activeQueuedMessages = queuedMessages.filter(
     (item) => queuedMessageConversationId(item) === activeConversationIdForState,
   );
@@ -258,6 +265,18 @@ export function useCardbushChat(
   const activeConnectionRecovery = activeConversationIdForState
     ? connectionRecoveryByConversation[activeConversationIdForState]
     : undefined;
+  const setMessageHistoryLoading = useCallback((sessionId: string, pending: boolean) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    setMessageHistoryLoadingIds((current) => {
+      const alreadyPending = current.has(normalized);
+      if (alreadyPending === pending) return current;
+      const next = new Set(current);
+      if (pending) next.add(normalized);
+      else next.delete(normalized);
+      return next;
+    });
+  }, []);
   const assistantTimingFingerprint = useMemo(
     () => assistantTurnTimingFingerprint(messagesByConversation),
     [messagesByConversation],
@@ -384,6 +403,17 @@ export function useCardbushChat(
     }));
   }, []);
 
+  const clearConnectionRecovery = useCallback((sessionId: string) => {
+    const normalized = sessionId.trim();
+    if (!normalized) return;
+    setConnectionRecoveryByConversation((current) => {
+      if (!current[normalized]) return current;
+      const next = { ...current };
+      delete next[normalized];
+      return next;
+    });
+  }, []);
+
   const enqueueMessage = useCallback((item: QueuedChatMessage) => {
     queuedMessagesRef.current = [...queuedMessagesRef.current, item];
     setQueuedMessages(queuedMessagesRef.current);
@@ -394,6 +424,21 @@ export function useCardbushChat(
       (item) => item.id !== queuedId,
     );
     setQueuedMessages(queuedMessagesRef.current);
+  }, []);
+
+  const reorderQueuedMessage = useCallback((queuedId: string, targetQueuedId: string) => {
+    const reordered = reorderScopedQueue(
+      queuedMessagesRef.current,
+      queuedId,
+      targetQueuedId,
+      (item) => item.id,
+      queuedMessageConversationId,
+    );
+    if (reordered === queuedMessagesRef.current) {
+      return;
+    }
+    queuedMessagesRef.current = reordered;
+    setQueuedMessages(reordered);
   }, []);
 
   const dequeueMessageForConversation = useCallback((conversationId: string) => {
@@ -630,17 +675,19 @@ export function useCardbushChat(
   }, [requestContext.contextWindowUsageAvailable]);
 
   useEffect(() => {
-    if (!activeConversationId || messagesByConversation[activeConversationId]) {
+    const sessionId = activeConversationId.trim();
+    if (!sessionId || messagesByConversation[sessionId]) {
+      if (sessionId) setMessageHistoryLoading(sessionId, false);
       return;
     }
     let cancelled = false;
     async function loadMessages() {
-      setMessagesLoading(true);
+      setMessageHistoryLoading(sessionId, true);
       try {
         const [result, workspaceChanges] = await Promise.all([
-          fetchSessionMessages(activeConversationId, { includeSuperseded: true }),
+          fetchSessionMessages(sessionId, { includeSuperseded: true }),
           requestContext.workspaceChangesAvailable === true
-            ? fetchSessionWorkspaceChanges(activeConversationId).catch(() => [])
+            ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
             : Promise.resolve([]),
         ]);
         if (!cancelled) {
@@ -650,8 +697,8 @@ export function useCardbushChat(
           );
           setMessagesByConversation((current) => ({
             ...current,
-            [activeConversationId]: mergeLoadedMessagesPreservingLocalState(
-              current[activeConversationId] ?? [],
+            [sessionId]: mergeLoadedMessagesPreservingLocalState(
+              current[sessionId] ?? [],
               loadedMessages,
             ),
           }));
@@ -660,13 +707,13 @@ export function useCardbushChat(
             firstUserTitleSource(loadedMessages, ''),
           );
           void refreshMeasuredContextWindowUsage(
-            activeConversationId,
+            sessionId,
             result.latestTurn,
           );
           if (result.conversation.projectDir || result.conversation.workspaceContext) {
             setConversations((current) =>
               current.map((item) =>
-                item.id === activeConversationId
+                item.id === sessionId
                   ? {
                       ...item,
                       projectDir: result.conversation.projectDir,
@@ -683,18 +730,17 @@ export function useCardbushChat(
           setError(errorMessage(caught));
           setMessagesByConversation((current) => ({
             ...current,
-            [activeConversationId]: [],
+            [sessionId]: [],
           }));
         }
       } finally {
-        if (!cancelled) {
-          setMessagesLoading(false);
-        }
+        setMessageHistoryLoading(sessionId, false);
       }
     }
     void loadMessages();
     return () => {
       cancelled = true;
+      setMessageHistoryLoading(sessionId, false);
     };
   }, [
     activeConversationId,
@@ -702,6 +748,7 @@ export function useCardbushChat(
     persistAutoConversationTitle,
     refreshMeasuredContextWindowUsage,
     requestContext.workspaceChangesAvailable,
+    setMessageHistoryLoading,
   ]);
 
   const activeConversation = useMemo(
@@ -1133,6 +1180,7 @@ export function useCardbushChat(
         });
       },
       onDone: (terminal) => {
+        clearConnectionRecovery(normalizedSessionId);
         markSessionDone(normalizedSessionId);
         setPendingInteraction((current) =>
           current?.sessionId === normalizedSessionId ? null : current,
@@ -1244,6 +1292,7 @@ export function useCardbushChat(
   }, [
     applyConnectionRecoveryUpdate,
     applyGoalExecution,
+    clearConnectionRecovery,
     clearSessionRunning,
     localize,
     markSessionAttention,
@@ -1261,7 +1310,7 @@ export function useCardbushChat(
       return;
     }
     if (!options?.silent) {
-      setMessagesLoading(true);
+      setMessageHistoryLoading(sessionId, true);
     }
     try {
       const [result, workspaceChanges] = await Promise.all([
@@ -1300,7 +1349,7 @@ export function useCardbushChat(
       throw caught;
     } finally {
       if (!options?.silent) {
-        setMessagesLoading(false);
+        setMessageHistoryLoading(sessionId, false);
       }
     }
   }, [
@@ -1311,6 +1360,7 @@ export function useCardbushChat(
     reloadConversations,
     persistAutoConversationTitle,
     requestContext.workspaceChangesAvailable,
+    setMessageHistoryLoading,
   ]);
 
   useEffect(() => {
@@ -1446,17 +1496,29 @@ export function useCardbushChat(
       ) {
         return;
       }
+      setMessageHistoryLoading(
+        normalized,
+        conversations.some((item) => item.id === normalized) &&
+          messagesByConversation[normalized] === undefined,
+      );
       setActiveConversationId(normalized);
       clearSessionAttention(normalized, 'completed');
     },
-    [clearSessionAttention, conversations],
+    [
+      clearSessionAttention,
+      conversations,
+      messagesByConversation,
+      setMessageHistoryLoading,
+    ],
   );
 
   const clearConversationSelection = useCallback(() => {
+    const current = activeConversationIdRef.current.trim();
+    if (current) setMessageHistoryLoading(current, false);
     setActiveConversationId('');
     setPendingInteraction(null);
     setError(null);
-  }, []);
+  }, [setMessageHistoryLoading]);
 
   const prepareConversation = useCallback((
     projectDir?: string,
@@ -1491,10 +1553,11 @@ export function useCardbushChat(
       ...current,
       [draft.id]: current[draft.id] ?? [],
     }));
+    setMessageHistoryLoading(draft.id, false);
     setActiveConversationId(draft.id);
     setError(null);
     return draft;
-  }, []);
+  }, [setMessageHistoryLoading]);
 
   const persistPreparedConversation = useCallback(async (
     conversation: ConversationSummary,
@@ -1574,6 +1637,7 @@ export function useCardbushChat(
       ...current,
       [optimistic.id]: current[optimistic.id] ?? [],
     }));
+    setMessageHistoryLoading(optimistic.id, false);
     setActiveConversationId(optimistic.id);
     setError(null);
 
@@ -1606,10 +1670,11 @@ export function useCardbushChat(
       .catch(() => undefined);
 
     return optimistic;
-  }, []);
+  }, [setMessageHistoryLoading]);
 
   const deleteConversation = useCallback((conversationId: string) => {
     clearSessionAttention(conversationId);
+    setMessageHistoryLoading(conversationId, false);
     setConversations((current) => {
       const next = current.filter((item) => item.id !== conversationId);
       setActiveConversationId((active) =>
@@ -1625,7 +1690,7 @@ export function useCardbushChat(
     void deleteConversationApi(conversationId).catch((caught) =>
       setError(errorMessage(caught)),
     );
-  }, [clearSessionAttention]);
+  }, [clearSessionAttention, setMessageHistoryLoading]);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {
     const normalizedId = conversationId.trim();
@@ -2197,6 +2262,7 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            clearConnectionRecovery(sessionId);
             markSessionDone(sessionId);
             setPendingInteraction((current) =>
               current?.sessionId === sessionId ? null : current,
@@ -2410,6 +2476,7 @@ export function useCardbushChat(
       activeConversation,
       applyGoalExecution,
       applyConnectionRecoveryUpdate,
+      clearConnectionRecovery,
       clearSessionRunning,
       dequeueMessageForConversation,
       enqueueMessage,
@@ -2700,6 +2767,7 @@ export function useCardbushChat(
             });
           },
           onDone: (terminal) => {
+            clearConnectionRecovery(sessionId);
             markSessionDone(sessionId);
             setPendingInteraction((current) =>
               current?.sessionId === sessionId ? null : current,
@@ -2869,6 +2937,7 @@ export function useCardbushChat(
       clearSessionRunning,
       applyConnectionRecoveryUpdate,
       applyGoalExecution,
+      clearConnectionRecovery,
       loadTeamFlow,
       localize,
       markSessionAttention,
@@ -3838,6 +3907,7 @@ export function useCardbushChat(
     retryTurnGuidance,
     sendQueuedMessageAsGuidance,
     removeQueuedMessage,
+    reorderQueuedMessage,
     replyToInteraction,
     cancelPendingInteraction,
     cancelSending,

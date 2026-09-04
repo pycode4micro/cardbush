@@ -168,6 +168,7 @@ type ShadowWindowPayload = {
   language: 'zh' | 'en';
   theme: AppThemeMode;
   accentColor: string;
+  themeVariables?: Record<string, string>;
   modelConfig: {
     id: string;
     provider: string;
@@ -620,6 +621,21 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
       requestedReasoningLevel === 'max'
     ? requestedReasoningLevel
     : 'high';
+  const themeVariableInput = input.themeVariables && typeof input.themeVariables === 'object'
+    ? input.themeVariables as Record<string, unknown>
+    : {};
+  const allowedThemeVariables = new Set([
+    '--bg', '--surface', '--surface-strong', '--surface-raised', '--border',
+    '--accent', '--accent-soft', '--text', '--text-mid', '--text-soft',
+    '--user-bubble', '--terminal-bg', '--danger',
+  ]);
+  const themeVariables = Object.fromEntries(
+    Object.entries(themeVariableInput).filter(([key, rawValue]) => {
+      const themeValue = typeof rawValue === 'string' ? rawValue.trim() : '';
+      return allowedThemeVariables.has(key) && themeValue.length > 0 &&
+        themeValue.length <= 96 && !/[;{}]|url\s*\(|var\s*\(|expression/i.test(themeValue);
+    }).map(([key, rawValue]) => [key, String(rawValue).trim()]),
+  );
   return {
     sessionId,
     sourceTurnId: String(input.sourceTurnId ?? '').trim(),
@@ -627,6 +643,7 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     language: input.language === 'en' ? 'en' : 'zh',
     theme,
     accentColor: String(input.accentColor ?? '').trim().slice(0, 32),
+    ...(Object.keys(themeVariables).length > 0 ? { themeVariables } : {}),
     modelConfig: {
       id: modelId,
       provider: String(model.provider ?? '').trim(),
@@ -2251,12 +2268,12 @@ ipcMain.handle('dialog:pick-font', async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
-ipcMain.handle('dialog:pick-background-image', async () => {
+ipcMain.handle('dialog:pick-appearance-style', async () => {
   const options: OpenDialogOptions = {
-    title: 'Choose background image',
+    title: 'Import CardBush theme configuration',
     properties: ['openFile'],
     filters: [
-      { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'ico'] },
+      { name: 'CardBush theme configuration', extensions: ['json'] },
       { name: 'All files', extensions: ['*'] },
     ],
   };
@@ -2264,10 +2281,6 @@ ipcMain.handle('dialog:pick-background-image', async () => {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
-});
-
-ipcMain.handle('dialog:cache-background-image', async (_, targetPath: string) => {
-  return cacheBackgroundImage(String(targetPath ?? ''));
 });
 
 ipcMain.handle('project:list-root', (_, rootPath: string) => {
@@ -3793,14 +3806,6 @@ function normalizeShellPath(value: string) {
 }
 
 function localPathFromProtocolUrl(value: string) {
-  const parsed = new URL(value);
-  if (parsed.hostname.toLowerCase() === 'backgrounds') {
-    return path.join(
-      app.getPath('userData'),
-      'backgrounds',
-      path.basename(decodeURIComponent(parsed.pathname)),
-    );
-  }
   return localFileSystemPathFromProtocolUrl(value);
 }
 
@@ -4012,57 +4017,6 @@ function contentTypeForBytes(bytes: Uint8Array) {
     return 'image/webp';
   }
   return 'application/octet-stream';
-}
-
-async function cacheBackgroundImage(sourcePath: string) {
-  const normalized = normalizeShellPath(sourcePath);
-  const mimeType = imageMimeTypeForPath(normalized);
-  if (!normalized || !mimeType) {
-    throw new Error('Unsupported background image path');
-  }
-  const stats = await fs.promises.stat(normalized);
-  if (!stats.isFile()) {
-    throw new Error('Background image path is not a file');
-  }
-  const cacheDir = path.join(app.getPath('userData'), 'backgrounds');
-  const relative = path.relative(cacheDir, normalized);
-  if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
-    return normalized;
-  }
-  await fs.promises.mkdir(cacheDir, { recursive: true });
-  const extension = path.extname(normalized).toLowerCase() || extensionForMimeType(mimeType);
-  const hash = createHash('sha256')
-    .update(await fs.promises.readFile(normalized))
-    .digest('hex')
-    .slice(0, 24);
-  const targetPath = path.join(cacheDir, `background-${hash}${extension}`);
-  if (fs.existsSync(targetPath)) {
-    return targetPath;
-  }
-  await fs.promises.copyFile(normalized, targetPath);
-  return targetPath;
-}
-
-function extensionForMimeType(mimeType: string) {
-  if (mimeType === 'image/jpeg') {
-    return '.jpg';
-  }
-  if (mimeType === 'image/png') {
-    return '.png';
-  }
-  if (mimeType === 'image/webp') {
-    return '.webp';
-  }
-  if (mimeType === 'image/gif') {
-    return '.gif';
-  }
-  if (mimeType === 'image/bmp') {
-    return '.bmp';
-  }
-  if (mimeType === 'image/x-icon') {
-    return '.ico';
-  }
-  return '.img';
 }
 
 function isWebProtocol(value: URL) {

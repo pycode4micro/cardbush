@@ -1,0 +1,20 @@
+{
+  "protocol": "cardbush.appearance_style.v1",
+  "name": "Ocean Night",
+  "base": "dark",
+  "colors": {
+    "background": "#0b1220",
+    "surface": "#111a2b",
+    "surfaceStrong": "#18243a",
+    "surfaceRaised": "#20304a",
+    "border": "#2d4264",
+    "accent": "#65d7ff",
+    "accentSoft": "rgba(101, 215, 255, 0.16)",
+    "text": "#edf7ff",
+    "textMuted": "#b2c5d6",
+    "textSoft": "#7890a6",
+    "userBubble": "#1a2a43",
+    "terminalBackground": "#07101d",
+    "danger": "#ff6b7a"
+  }
+}

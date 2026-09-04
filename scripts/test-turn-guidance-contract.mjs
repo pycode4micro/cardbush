@@ -174,7 +174,7 @@ assert.match(bubbleSource, /guidance-retry-button/);
 assert.match(bubbleSource, /isGuidanceBoundaryAssistantMessage\(message\)/);
 assert.match(bubbleSource, /guidanceBoundaryRound \? \([\s\S]*?assistantBody/);
 assert.match(bubbleSource, /onRetryGuidance\(message\)/);
-assert.match(bubbleSource, /等待本轮完成后/);
+assert.doesNotMatch(bubbleSource, /message-guidance-action|插入引导|Guide this turn|GuidanceDialog/);
 assert.doesNotMatch(bubbleSource, /让当前回合停在这里/);
 assert.doesNotMatch(
   bubbleSource,

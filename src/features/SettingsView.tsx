@@ -10,11 +10,10 @@ import {
   Cpu,
   Eye,
   EyeOff,
-  Image,
   LoaderCircle,
   Monitor,
-  Network,
   PackageOpen,
+  Palette,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -61,7 +60,10 @@ import packageMetadata from '../../package.json';
 import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
-import { SubagentsPanel } from './SubagentsPanel';
+import {
+  IMPORTED_THEME_STYLE_PROTOCOL,
+  parseImportedThemeStyle,
+} from './appearance/importedThemeStyle';
 import {
   ChromeConnectionSettings,
   PluginManagementPanel,
@@ -78,7 +80,6 @@ import type {
   CardbushAppsConfiguration,
   CardbushAppPlugin,
   ConversationSummary,
-  LightThemeStyle,
   ManagedModelConfig,
   McpServerConfig,
   McpServerValidationResult,
@@ -109,14 +110,13 @@ const defaultFontSettings = {
   displayName: '',
   filePath: '',
 };
-type VisibleSettingsSection = Exclude<SettingsSection, 'companion'>;
+type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'subagents'>;
 type SettingsIconComponent = React.ComponentType<{ size?: number; className?: string }>;
 
 const visibleSettingsSections: VisibleSettingsSection[] = [
   'profile',
   'runtime',
   'proxy',
-  'subagents',
   'mcp',
   'cache',
   'models',
@@ -128,7 +128,6 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
   profile: { zh: '个性化', en: 'Personalization' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
-  subagents: { zh: '子任务运行态', en: 'Task runtime' },
   mcp: { zh: '插件', en: 'Plugins' },
   cache: { zh: '缓存', en: 'Cache' },
   models: { zh: '模型管理', en: 'Models' },
@@ -137,10 +136,9 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
 };
 
 const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
-  profile: { zh: '查看累计使用量，并统一管理主题、语言、背景与字体。', en: 'Review cumulative usage and manage theme, language, background, and typography.' },
+  profile: { zh: '查看累计使用量，并统一管理主题、语言、字体与引导方式。', en: 'Review cumulative usage and manage themes, language, typography, and guidance.' },
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
-  subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
   mcp: { zh: '管理由 Skill、MCP 与应用组成的 CardBush 插件。', en: 'Manage CardBush plugins composed of Skills, MCP servers, and apps.' },
   cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
   models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
@@ -158,7 +156,7 @@ const settingsNavigationGroups: Array<{
   },
   {
     label: { zh: '智能与扩展', en: 'AI & extensions' },
-    sections: ['models', 'subagents', 'mcp'],
+    sections: ['models', 'mcp'],
   },
   {
     label: { zh: '连接', en: 'Connections' },
@@ -171,10 +169,9 @@ const settingsNavigationGroups: Array<{
 ];
 
 const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
-  profile: Settings,
+  profile: Palette,
   runtime: Terminal,
   proxy: Monitor,
-  subagents: Network,
   mcp: McpLogoIcon,
   cache: Archive,
   models: Cpu,
@@ -216,12 +213,10 @@ export function SettingsView({
   active,
   onReady,
   themePreference,
-  lightThemeStyle,
   language,
   languageMode,
   systemLanguage,
   settings,
-  backgroundImageSource,
   selectedModel,
   availableModels,
   backendCapabilities,
@@ -233,7 +228,6 @@ export function SettingsView({
   initialPluginTab,
   onBack,
   onThemePreferenceChange,
-  onLightThemeStyleChange,
   onLanguageModeChange,
   onSettingsChange,
   onUseModel,
@@ -247,12 +241,10 @@ export function SettingsView({
   active: boolean;
   onReady: () => void;
   themePreference: ThemePreference;
-  lightThemeStyle: LightThemeStyle;
   language: AppLanguage;
   languageMode: AppLanguageMode;
   systemLanguage: AppLanguage;
   settings: AppSettingsState;
-  backgroundImageSource: string;
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   backendCapabilities: BackendCapabilities;
@@ -264,7 +256,6 @@ export function SettingsView({
   initialPluginTab: 'plugins' | 'skills';
   onBack: () => void;
   onThemePreferenceChange: (value: ThemePreference) => void;
-  onLightThemeStyleChange: (value: LightThemeStyle) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onUseModel: (model: string) => void;
@@ -558,34 +549,42 @@ export function SettingsView({
     notify(language === 'zh' ? '字体已导入' : 'Font imported');
   }, [language, notify, updateSettings]);
 
-  const importBackgroundImage = useCallback(async () => {
-    const filePath = await window.cardbushDesktop?.pickBackgroundImage?.();
+  const importThemeStyle = useCallback(async () => {
+    const filePath = await window.cardbushDesktop?.pickAppearanceStyle?.();
     if (!filePath) {
       return;
     }
-    let backgroundPath = filePath;
-    if (window.cardbushDesktop?.cacheBackgroundImage) {
-      try {
-        backgroundPath = await window.cardbushDesktop.cacheBackgroundImage(filePath);
-      } catch {
-        notify(language === 'zh' ? '背景图片缓存失败' : 'Failed to cache background image');
-        return;
+    try {
+      const preview = await window.cardbushDesktop?.readTextPreview?.(filePath);
+      if (!preview || preview.truncated || preview.size > 128 * 1024) {
+        throw new Error('style_config_too_large');
       }
+      const importedThemeStyle = parseImportedThemeStyle(preview.content, filePath);
+      updateSettings((current) => ({
+        ...current,
+        importedThemeStyle,
+      }));
+      onThemePreferenceChange('custom');
+      notify(language === 'zh' ? '主题配置已导入' : 'Theme configuration imported');
+    } catch {
+      notify(
+        language === 'zh'
+          ? `无法导入主题配置，请检查 ${IMPORTED_THEME_STYLE_PROTOCOL} 格式`
+          : `Unable to import theme configuration. Check the ${IMPORTED_THEME_STYLE_PROTOCOL} format.`,
+      );
     }
-    updateSettings((current) => ({
-      ...current,
-      backgroundImagePath: backgroundPath,
-    }));
-    notify(language === 'zh' ? '背景图片已更新' : 'Background image updated');
-  }, [language, notify, updateSettings]);
+  }, [language, notify, onThemePreferenceChange, updateSettings]);
 
-  const resetBackgroundImage = useCallback(() => {
+  const resetImportedThemeStyle = useCallback(() => {
     updateSettings((current) => ({
       ...current,
-      backgroundImagePath: '',
+      importedThemeStyle: null,
     }));
-    notify(language === 'zh' ? '背景图片已清除' : 'Background image cleared');
-  }, [language, notify, updateSettings]);
+    if (themePreference === 'custom') {
+      onThemePreferenceChange('system');
+    }
+    notify(language === 'zh' ? '已移除导入主题' : 'Imported theme removed');
+  }, [language, notify, onThemePreferenceChange, themePreference, updateSettings]);
 
   const resetFont = useCallback(() => {
     updateSettings((current) => ({
@@ -599,22 +598,19 @@ export function SettingsView({
       return (
         <SettingsProfilePanel
           themePreference={themePreference}
-          lightThemeStyle={lightThemeStyle}
           language={language}
           languageMode={languageMode}
           systemLanguage={systemLanguage}
           settings={settings}
           reasoningStreamAvailable={backendCapabilities.reasoningStream}
-          backgroundImageSource={backgroundImageSource}
           conversations={conversations}
           onThemePreferenceChange={onThemePreferenceChange}
-          onLightThemeStyleChange={onLightThemeStyleChange}
           onLanguageModeChange={onLanguageModeChange}
           onSettingsChange={updateSettings}
           onImportFont={importFont}
           onResetFont={resetFont}
-          onImportBackgroundImage={importBackgroundImage}
-          onResetBackgroundImage={resetBackgroundImage}
+          onImportThemeStyle={importThemeStyle}
+          onResetImportedThemeStyle={resetImportedThemeStyle}
         />
       );
     }
@@ -715,49 +711,6 @@ export function SettingsView({
                 }
               />
             )}
-          </SettingsCard>
-          <SettingsCard
-            title={language === 'zh' ? '引导方式' : 'Guidance delivery'}
-            subtitle={
-              language === 'zh'
-                ? '设置任务运行中再次发送内容时，是等待下一轮还是立即交给当前轮次。'
-                : 'Choose whether messages sent during a running task wait for the next turn or enter the active turn immediately.'
-            }
-          >
-            <SettingsRadio
-              name="guidance-delivery-mode"
-              value="queue"
-              title={language === 'zh' ? '加入队列' : 'Add to queue'}
-              subtitle={
-                language === 'zh'
-                  ? '等待当前回复完成，再作为下一条消息自动发送。'
-                  : 'Wait for the current response, then send it automatically as the next message.'
-              }
-              checked={settings.guidance.deliveryMode === 'queue'}
-              onChange={() =>
-                updateSettings((current) => ({
-                  ...current,
-                  guidance: { deliveryMode: 'queue' },
-                }))
-              }
-            />
-            <SettingsRadio
-              name="guidance-delivery-mode"
-              value="immediate"
-              title={language === 'zh' ? '马上发送' : 'Send immediately'}
-              subtitle={
-                language === 'zh'
-                  ? '立即提交到当前运行轮次，在下一次可用的执行边界生效。'
-                  : 'Submit to the active turn now and apply it at the next available execution boundary.'
-              }
-              checked={settings.guidance.deliveryMode === 'immediate'}
-              onChange={() =>
-                updateSettings((current) => ({
-                  ...current,
-                  guidance: { deliveryMode: 'immediate' },
-                }))
-              }
-            />
           </SettingsCard>
         </div>
       );
@@ -897,15 +850,6 @@ export function SettingsView({
         />
       );
     }
-    if (section === 'subagents') {
-      return (
-        <SubagentsPanel
-          language={language}
-          embedded
-          capabilities={backendCapabilities}
-        />
-      );
-    }
     if (section === 'mcp') {
       return pluginMcpOpen ? (
         <div className="plugin-mcp-settings">
@@ -1020,51 +964,37 @@ export function SettingsView({
 
 function SettingsProfilePanel({
   themePreference,
-  lightThemeStyle,
   language,
   languageMode,
   systemLanguage,
   settings,
   reasoningStreamAvailable,
-  backgroundImageSource,
   conversations,
   onThemePreferenceChange,
-  onLightThemeStyleChange,
   onLanguageModeChange,
   onSettingsChange,
   onImportFont,
   onResetFont,
-  onImportBackgroundImage,
-  onResetBackgroundImage,
+  onImportThemeStyle,
+  onResetImportedThemeStyle,
 }: {
   themePreference: ThemePreference;
-  lightThemeStyle: LightThemeStyle;
   language: AppLanguage;
   languageMode: AppLanguageMode;
   systemLanguage: AppLanguage;
   settings: AppSettingsState;
   reasoningStreamAvailable: boolean;
-  backgroundImageSource: string;
   conversations: ConversationSummary[];
   onThemePreferenceChange: (value: ThemePreference) => void;
-  onLightThemeStyleChange: (value: LightThemeStyle) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onImportFont: () => void;
   onResetFont: () => void;
-  onImportBackgroundImage: () => void;
-  onResetBackgroundImage: () => void;
+  onImportThemeStyle: () => void;
+  onResetImportedThemeStyle: () => void;
 }) {
   const fontIsCustom = Boolean(settings.font.family && settings.font.filePath);
-  const backgroundImagePath = settings.backgroundImagePath.trim();
-  const backgroundIsCustom = Boolean(backgroundImagePath);
-  const backgroundPreviewStyle = backgroundIsCustom
-    ? ({
-        backgroundImage: cssImageUrl(
-          backgroundImageSource || backgroundImageUrl(backgroundImagePath),
-        ),
-      } as CSSProperties)
-    : undefined;
+  const importedThemeStyle = settings.importedThemeStyle;
 
   return (
     <div className="settings-stack personalization-settings-stack">
@@ -1073,12 +1003,12 @@ function SettingsProfilePanel({
         title={language === 'zh' ? '外观' : 'Appearance'}
         subtitle={
           language === 'zh'
-            ? '配置主题、语言、背景和全局字体。'
-            : 'Configure theme, language, background, and global font.'
+            ? '配置基础模式、特色主题、语言和全局字体。'
+            : 'Configure base modes, additional themes, language, and global font.'
         }
       >
       <SettingsGroupTitle>
-        {language === 'zh' ? '显示模式' : 'Display mode'}
+        {language === 'zh' ? '基础主题' : 'Base themes'}
       </SettingsGroupTitle>
       <SettingsRadio
         name="theme-mode"
@@ -1092,8 +1022,8 @@ function SettingsProfilePanel({
         title={language === 'zh' ? '浅色模式' : 'Light mode'}
         subtitle={
           language === 'zh'
-            ? '使用下面选择的浅色外观。'
-            : 'Uses the selected light appearance below.'
+            ? '使用简洁、明亮的系统风格界面。'
+            : 'Use a clean, bright system-style interface.'
         }
         value="light"
         checked={themePreference === 'light'}
@@ -1105,6 +1035,22 @@ function SettingsProfilePanel({
         value="dark"
         checked={themePreference === 'dark'}
         onChange={() => onThemePreferenceChange('dark')}
+      />
+      <SettingsDivider />
+      <SettingsGroupTitle>
+        {language === 'zh' ? '其他主题' : 'Additional themes'}
+      </SettingsGroupTitle>
+      <SettingsRadio
+        name="theme-mode"
+        title={language === 'zh' ? '羊皮纸' : 'Parchment'}
+        subtitle={
+          language === 'zh'
+            ? '温暖的纸感配色，作为独立主题使用。'
+            : 'A warm paper-inspired palette available as its own theme.'
+        }
+        value="parchment"
+        checked={themePreference === 'parchment'}
+        onChange={() => onThemePreferenceChange('parchment')}
       />
       <SettingsRadio
         className="cyberpunk-theme-option"
@@ -1119,67 +1065,57 @@ function SettingsProfilePanel({
         checked={themePreference === 'cyberpunk'}
         onChange={() => onThemePreferenceChange('cyberpunk')}
       />
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '背景图片' : 'Background image'}
-      </SettingsGroupTitle>
-      <div
-        className={`background-preview ${backgroundIsCustom ? 'has-image' : ''}`}
-        style={backgroundPreviewStyle}
-      >
+      {importedThemeStyle && (
+        <SettingsRadio
+          className="imported-theme-option"
+          name="theme-mode"
+          title={importedThemeStyle.name}
+          subtitle={
+            language === 'zh'
+              ? `导入配置 · 基于${importedThemeStyle.base === 'dark' ? '深色' : importedThemeStyle.base === 'light' ? '浅色' : '羊皮纸'}`
+              : `Imported configuration · ${importedThemeStyle.base} base`
+          }
+          value="custom"
+          checked={themePreference === 'custom'}
+          onChange={() => onThemePreferenceChange('custom')}
+        />
+      )}
+      <div className="imported-theme-config">
         <span>
-          <Image size={16} />
           <strong>
-            {backgroundIsCustom
-              ? basename(backgroundImagePath)
+            {importedThemeStyle
+              ? basename(importedThemeStyle.sourcePath) || importedThemeStyle.name
               : language === 'zh'
-                ? '未设置自定义背景'
-                : 'No custom background'}
+                ? '未导入主题配置'
+                : 'No imported theme configuration'}
           </strong>
+          <small>
+            {importedThemeStyle?.sourcePath || (
+              language === 'zh'
+                ? `${IMPORTED_THEME_STYLE_PROTOCOL} · 仅载入受控主题颜色`
+                : `${IMPORTED_THEME_STYLE_PROTOCOL} · controlled theme colors only`
+            )}
+          </small>
         </span>
-        {backgroundIsCustom && <small>{backgroundImagePath}</small>}
       </div>
       <div className="settings-actions">
         <button
           className="secondary-button"
           type="button"
-          onClick={onImportBackgroundImage}
+          onClick={onImportThemeStyle}
         >
           <Upload size={14} />
-          {language === 'zh' ? '选择背景图片' : 'Choose image'}
+          {language === 'zh' ? '导入主题配置' : 'Import theme config'}
         </button>
         <button
           className="secondary-button"
           type="button"
-          disabled={!backgroundIsCustom}
-          onClick={onResetBackgroundImage}
+          disabled={!importedThemeStyle}
+          onClick={onResetImportedThemeStyle}
         >
           <RotateCcw size={14} />
-          {language === 'zh' ? '清除背景' : 'Clear background'}
+          {language === 'zh' ? '移除导入主题' : 'Remove imported theme'}
         </button>
-      </div>
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? 'Shadow 消息' : 'Shadow messages'}
-      </SettingsGroupTitle>
-      <div className="shadow-color-setting">
-        <label>
-          <input
-            type="color"
-            value={settings.shadow.accentColor}
-            onChange={(event) => {
-              const accentColor = event.currentTarget.value;
-              onSettingsChange((current) => ({
-                ...current,
-                shadow: { ...current.shadow, accentColor },
-              }));
-            }}
-          />
-          <span>
-            <strong>{language === 'zh' ? '提示颜色' : 'Accent color'}</strong>
-            <small>{settings.shadow.accentColor}</small>
-          </span>
-        </label>
       </div>
       {reasoningStreamAvailable && (
         <>
@@ -1240,34 +1176,6 @@ function SettingsProfilePanel({
       />
       <SettingsDivider />
       <SettingsGroupTitle>
-        {language === 'zh' ? '浅色外观' : 'Light appearance'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="light-style"
-        title={language === 'zh' ? '羊皮纸' : 'Parchment'}
-            subtitle={
-              language === 'zh'
-                ? '使用温暖的纸感浅色外观。'
-                : 'Uses the warmer parchment light appearance.'
-            }
-        value="parchment"
-        checked={lightThemeStyle === 'parchment'}
-        onChange={() => onLightThemeStyleChange('parchment')}
-      />
-      <SettingsRadio
-        name="light-style"
-        title={language === 'zh' ? '明亮' : 'Bright'}
-        subtitle={
-          language === 'zh'
-            ? '更接近系统原生的白色界面。'
-            : 'A cleaner white desktop surface.'
-        }
-        value="bright"
-        checked={lightThemeStyle === 'bright'}
-        onChange={() => onLightThemeStyleChange('bright')}
-      />
-      <SettingsDivider />
-      <SettingsGroupTitle>
         {language === 'zh' ? '全局字体' : 'Global font'}
       </SettingsGroupTitle>
       <div className="font-preview">
@@ -1306,6 +1214,49 @@ function SettingsProfilePanel({
           {language === 'zh' ? '恢复默认字体' : 'Reset default font'}
         </button>
       </div>
+      </SettingsCard>
+      <SettingsCard
+        title={language === 'zh' ? '引导方式' : 'Guidance delivery'}
+        subtitle={
+          language === 'zh'
+            ? '设置任务运行中再次发送内容时，是等待下一轮还是立即交给当前轮次。'
+            : 'Choose whether messages sent during a running task wait for the next turn or enter the active turn immediately.'
+        }
+      >
+        <SettingsRadio
+          name="guidance-delivery-mode"
+          value="queue"
+          title={language === 'zh' ? '加入队列' : 'Add to queue'}
+          subtitle={
+            language === 'zh'
+              ? '等待当前回复完成，再作为下一条消息自动发送。'
+              : 'Wait for the current response, then send it automatically as the next message.'
+          }
+          checked={settings.guidance.deliveryMode === 'queue'}
+          onChange={() =>
+            onSettingsChange((current) => ({
+              ...current,
+              guidance: { deliveryMode: 'queue' },
+            }))
+          }
+        />
+        <SettingsRadio
+          name="guidance-delivery-mode"
+          value="immediate"
+          title={language === 'zh' ? '马上发送' : 'Send immediately'}
+          subtitle={
+            language === 'zh'
+              ? '立即提交到当前运行轮次，在下一次可用的执行边界生效。'
+              : 'Submit to the active turn now and apply it at the next available execution boundary.'
+          }
+          checked={settings.guidance.deliveryMode === 'immediate'}
+          onChange={() =>
+            onSettingsChange((current) => ({
+              ...current,
+              guidance: { deliveryMode: 'immediate' },
+            }))
+          }
+        />
       </SettingsCard>
     </div>
   );
@@ -4087,35 +4038,6 @@ function assertProductHost() {
 
 function diagnosticSummary(probe: DiagnosticProbe) {
   return `${probe.ok ? 'ok' : 'fail'}${probe.statusCode ? ` HTTP ${probe.statusCode}` : ''} ${probe.elapsedMs}ms ${probe.detail}`;
-}
-
-function cssImageUrl(value: string) {
-  return `url("${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
-}
-
-function backgroundImageUrl(value: string) {
-  if (!value) {
-    return '';
-  }
-  if (/^(data:|blob:|https?:|cardbush-file:)/i.test(value)) {
-    return value;
-  }
-  return fileUrl(value);
-}
-
-function fileUrl(value: string) {
-  if (!value) {
-    return '';
-  }
-  if (/^(data:|blob:|https?:|cardbush-file:)/i.test(value)) {
-    return value;
-  }
-  const normalized = value.replaceAll('\\', '/');
-  const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`;
-  return `cardbush-file://${prefixed
-    .split('/')
-    .map((part, index) => (index === 0 ? part : encodeURIComponent(part)))
-    .join('/')}`;
 }
 
 function normalizeProvider(value: string) {

@@ -45,11 +45,18 @@ assert.match(hook, /isNetworkTransportError\(caught\)/);
 assert.match(hook, /error\.fact\.kind === 'transport'/);
 assert.doesNotMatch(hook, /failed to fetch\|networkerror|econnreset|socket hang up/i);
 assert.match(hook, /onConnectionState: \(update\)/);
+assert.match(hook, /const clearConnectionRecovery = useCallback/);
+assert.equal(
+  (hook.match(/clearConnectionRecovery\((?:normalizedSessionId|sessionId)\);/g) ?? []).length,
+  3,
+  'Every terminal stream path must clear a stale provider retry notice.',
+);
 
 assert.match(app, /<ConversationConnectionNotice/);
 assert.match(app, /连接异常，正在恢复/);
 assert.match(app, /连接已建立，正在同步运行状态/);
 assert.match(app, /正在重试/);
+assert.match(app, /retryDelay \|\| update\.message \|\| update\.reason \|\| ''/);
 assert.doesNotMatch(app, />连接已恢复</);
 assert.match(styles, /\.conversation-connection-notice\s*\{/);
 assert.match(styles, /\.conversation-connection-notice\.working > svg/);

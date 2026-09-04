@@ -4,15 +4,20 @@ import path from 'node:path';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 const app = read('src', 'App.tsx');
+const types = read('src', 'types.ts');
 const settings = read('src', 'features', 'SettingsView.tsx');
 const css = read('src', 'styles', 'app.css');
+const importedTheme = read('src', 'features', 'appearance', 'importedThemeStyle.ts');
+const electronMain = read('electron', 'main.ts');
+const preload = read('electron', 'preload.ts');
+const electronTypes = read('src', 'types', 'electron.d.ts');
+const startup = read('index.html');
 const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 
 const expectedSections = [
   'profile',
   'runtime',
   'proxy',
-  'subagents',
   'mcp',
   'cache',
   'models',
@@ -36,6 +41,11 @@ assert.doesNotMatch(
   /['"]os['"]|CardBush OS|操作系统模式|OS mode/i,
   'Removed OS mode must not return to settings navigation',
 );
+assert.doesNotMatch(
+  settings,
+  /SubagentsPanel|子任务运行态|Task runtime/,
+  'The provisional Subagent runtime settings UI must remain hidden',
+);
 assert.match(settings, /const settingsDescriptions:/);
 assert.match(settings, /className="settings-navigation"/);
 assert.match(settings, /aria-current=\{section === id \? 'page' : undefined\}/);
@@ -49,6 +59,37 @@ assert.match(settings, /'马上发送' : 'Send immediately'/);
 assert.match(app, /cardbush_guidance_delivery_mode/);
 assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
 assert.match(settings, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
+assert.match(settings, /profile: Palette/);
+const profilePanel = settings.match(
+  /function SettingsProfilePanel[\s\S]*?function UsageStatisticsPanel/,
+)?.[0] ?? '';
+const runtimePanel = settings.match(
+  /if \(section === 'runtime'\)[\s\S]*?if \(section === 'proxy'\)/,
+)?.[0] ?? '';
+assert.match(profilePanel, /name="guidance-delivery-mode"/);
+assert.doesNotMatch(runtimePanel, /name="guidance-delivery-mode"/);
+assert.match(profilePanel, /'基础主题' : 'Base themes'/);
+assert.match(profilePanel, /'其他主题' : 'Additional themes'/);
+assert.match(profilePanel, /value="parchment"[\s\S]*?onThemePreferenceChange\('parchment'\)/);
+assert.match(types, /ThemePreference[\s\S]*?'parchment'[\s\S]*?'custom'/);
+assert.match(app, /preference === 'light'[\s\S]*?return 'bright'/);
+assert.match(app, /preference === 'parchment'[\s\S]*?return 'parchment'/);
+assert.doesNotMatch(profilePanel, /name="light-style"|浅色外观|Light appearance/);
+assert.doesNotMatch(
+  settings,
+  /背景图片|Background image|pickBackgroundImage|shadow-color-setting|Shadow 消息|Accent color/,
+);
+assert.match(settings, /pickAppearanceStyle/);
+assert.match(settings, /parseImportedThemeStyle/);
+assert.match(importedTheme, /cardbush\.appearance_style\.v1/);
+assert.match(importedTheme, /unknown_color/);
+assert.match(preload, /dialog:pick-appearance-style/);
+assert.match(electronMain, /dialog:pick-appearance-style/);
+assert.match(electronTypes, /pickAppearanceStyle/);
+assert.doesNotMatch(preload, /pickBackgroundImage|cacheBackgroundImage/);
+assert.doesNotMatch(electronMain, /dialog:pick-background-image|cacheBackgroundImage/);
+assert.doesNotMatch(app, /backgroundImagePath|has-custom-background|appSettings\.shadow/);
+assert.doesNotMatch(startup, /cardbush_background_image_path|data-start-custom-background/);
 assert.match(
   settings,
   /<UsageStatisticsPanel[\s\S]*?<SettingsCard[\s\S]*?title=\{language === 'zh' \? '外观' : 'Appearance'\}/,
@@ -137,10 +178,4 @@ assert.match(
   /readCurrentSidebarWidth\(event\.currentTarget\)[\s\S]*?previousElementSibling[\s\S]*?getBoundingClientRect\(\)\.width/,
   'Sidebar resizing must begin from rendered geometry instead of a stale CSS preview value.',
 );
-assert.match(
-  css,
-  /\.app\.has-custom-background > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?z-index:\s*100;/,
-  'Custom backgrounds must not demote the settings overlay back into document flow.',
-);
-
 console.log('settings layout contract tests passed');

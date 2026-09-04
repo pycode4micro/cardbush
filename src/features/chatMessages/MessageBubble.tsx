@@ -17,7 +17,6 @@ import {
   Presentation,
   RefreshCw,
   ShieldCheck,
-  Sparkles,
   Target,
   ThumbsDown,
   ThumbsUp,
@@ -27,7 +26,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  type FormEvent,
   type HTMLAttributes,
   type ReactNode,
   createContext,
@@ -105,8 +103,6 @@ import {
 import { formatCompactDuration } from './assistantTurnTiming';
 import { coalesceStoppedAssistantTranscript } from './assistantTranscriptPresentation';
 import { isContextCompactionPresentationExecution } from '../../backend/contextCompactionPresentation';
-
-export type GuidanceMode = 'append_context' | 'interrupt_and_continue';
 
 type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
 
@@ -536,7 +532,6 @@ function MessageBubbleView({
   goalObjective = '',
   onRegenerate,
   onEditUserMessage,
-  onGuideMessage,
   onRetryMessage = async () => undefined,
   onRetryGuidance,
   onRevertChangeReport,
@@ -553,11 +548,6 @@ function MessageBubbleView({
   goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
-  onGuideMessage: (
-    message: ChatMessage,
-    guidance: string,
-    mode: GuidanceMode,
-  ) => Promise<void>;
   onRetryMessage?: (message: ChatMessage) => Promise<void>;
   onRetryGuidance: (message: ChatMessage) => Promise<void>;
   onRevertChangeReport: (
@@ -644,7 +634,6 @@ function MessageBubbleView({
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(text);
   const [submittingEdit, setSubmittingEdit] = useState(false);
-  const [guidanceOpen, setGuidanceOpen] = useState(false);
   const [assistantFeedback, setAssistantFeedback] =
     useState<AssistantFeedbackRating | null>(() => readAssistantFeedback(message.id));
   const [feedbackPulse, setFeedbackPulse] =
@@ -659,8 +648,6 @@ function MessageBubbleView({
     sending &&
     activeAssistantId === message.id &&
     (!activeTurn || !activeMessageTurn || activeTurn === activeMessageTurn);
-  const canGuide =
-    isActiveAssistantTurn;
   const guidanceDelivery =
     message.role === 'user' ? guidanceDeliveryState(message) : null;
   const messageDelivery =
@@ -671,7 +658,6 @@ function MessageBubbleView({
   useEffect(() => {
     setEditing(false);
     setSubmittingEdit(false);
-    setGuidanceOpen(false);
     setAssistantFeedback(readAssistantFeedback(message.id));
     setFeedbackPulse(null);
     setEditText(splitMessageMedia(message.content).text);
@@ -921,23 +907,25 @@ function MessageBubbleView({
       ? (message.loopHistory ?? []).filter(hasVisibleLoopHistoryMessage)
       : [];
   const stoppedAssistantRound = isStoppedAssistantMessage(message);
-  const freezeStoppedTranscript = stoppedAssistantRound && loopHistory.length > 0;
+  const failedAssistantRound = isFailedAssistantMessage(message);
+  const freezeTerminalTranscript =
+    (stoppedAssistantRound || failedAssistantRound) && loopHistory.length > 0;
   const visibleLoopHistory =
-    isActiveAssistantTurn || freezeStoppedTranscript ? [] : loopHistory;
-  const activeTranscriptMessages = isActiveAssistantTurn || freezeStoppedTranscript
+    isActiveAssistantTurn || freezeTerminalTranscript ? [] : loopHistory;
+  const activeTranscriptMessages = isActiveAssistantTurn || freezeTerminalTranscript
     ? activeAssistantTranscriptMessages(
         loopHistory,
         message,
-        freezeStoppedTranscript,
+        freezeTerminalTranscript,
       )
     : [];
   const renderActiveTranscript =
     activeTranscriptMessages.length > 1 ||
-    (freezeStoppedTranscript && activeTranscriptMessages.length > 0);
+    (freezeTerminalTranscript && activeTranscriptMessages.length > 0);
   const guidanceBoundaryRound =
     !isActiveAssistantTurn && isGuidanceBoundaryAssistantMessage(message);
-  const preserveStoppedExecutionRecord =
-    isStoppedAssistantMessage(message) &&
+  const preserveTerminalExecutionRecord =
+    (stoppedAssistantRound || failedAssistantRound) &&
     !visibleLoopHistory.some(
       (historyMessage) => (historyMessage.toolExecutions?.length ?? 0) > 0,
     );
@@ -947,7 +935,7 @@ function MessageBubbleView({
           allToolExecutions,
           isActiveAssistantTurn ||
             guidanceBoundaryRound ||
-            preserveStoppedExecutionRecord,
+            preserveTerminalExecutionRecord,
         )
       : allToolExecutions;
   const assistantProgressExecutions = toolExecutions;
@@ -1022,6 +1010,7 @@ function MessageBubbleView({
           historyLabel={
             !isActiveAssistantTurn &&
             !stoppedAssistantRound &&
+            !failedAssistantRound &&
             !guidanceBoundaryRound
           }
           selectedModel={selectedModel}
@@ -1093,6 +1082,18 @@ function MessageBubbleView({
             assistantBody
           ) : stoppedAssistantRound ? (
             assistantBody
+          ) : failedAssistantRound ? (
+            <>
+              {showAssistantProgress && (
+                <AssistantRunHeader
+                  executions={assistantProgressExecutions}
+                  isActive={false}
+                  message={message}
+                  language={language}
+                />
+              )}
+              {assistantBody}
+            </>
           ) : finalAssistantRound ? (
             <>
               {showAssistantProgress && (
@@ -1200,16 +1201,6 @@ function MessageBubbleView({
                 <RefreshCw size={14} />
               </button>
             )}
-            {canGuide && (
-              <button
-                className="message-guidance-action"
-                type="button"
-                title={language === 'zh' ? '插入引导' : 'Guide this turn'}
-                onClick={() => setGuidanceOpen(true)}
-              >
-                <Sparkles size={14} />
-              </button>
-            )}
           {assistantCompletedAt != null && (
             <time
               className="assistant-completed-at"
@@ -1221,16 +1212,6 @@ function MessageBubbleView({
           )}
         </div>
       </div>
-      {guidanceOpen && (
-        <GuidanceDialog
-          language={language}
-          onCancel={() => setGuidanceOpen(false)}
-          onSubmit={async (guidance, mode) => {
-            await onGuideMessage(message, guidance, mode);
-            setGuidanceOpen(false);
-          }}
-        />
-      )}
     </>
   );
 }
@@ -1739,6 +1720,15 @@ function isStoppedAssistantMessage(message: ChatMessage) {
   );
 }
 
+function isFailedAssistantMessage(message: ChatMessage) {
+  if (message.role !== 'assistant') {
+    return false;
+  }
+  return String(message.status ?? message.metadata?.status ?? '')
+    .trim()
+    .toLowerCase() === 'failed';
+}
+
 function isGuidanceBoundaryAssistantMessage(message: ChatMessage) {
   if (message.role !== 'assistant') {
     return false;
@@ -1770,9 +1760,11 @@ function isFinalAssistantDisplayMessage(message: ChatMessage) {
   if (status === 'superseded' || transcriptKind === 'assistant_loop') {
     return false;
   }
+  if (status === 'failed') {
+    return false;
+  }
   return (
     status === 'completed' ||
-    status === 'failed' ||
     transcriptKind === 'assistant_final' ||
     (!status && !transcriptKind)
   );
@@ -2419,126 +2411,6 @@ function hookVerificationStatusLabel(
   return language === 'zh' ? '无强制验证' : 'no verification required';
 }
 
-function GuidanceDialog({
-  language,
-  onCancel,
-  onSubmit,
-}: {
-  language: AppLanguage;
-  onCancel: () => void;
-  onSubmit: (guidance: string, mode: GuidanceMode) => Promise<void>;
-}) {
-  const [guidance, setGuidance] = useState('');
-  const [mode, setMode] = useState<GuidanceMode>('append_context');
-  const [submitting, setSubmitting] = useState(false);
-  const modeOptions: Array<{
-    value: GuidanceMode;
-    title: string;
-    description: string;
-  }> = [
-    {
-      value: 'append_context',
-      title: language === 'zh' ? '补充给当前任务' : 'Add to current task',
-      description:
-        language === 'zh'
-          ? '当前模型轮次输出完成后，把这段补充作为上下文继续处理。'
-          : 'After the current model round finishes, continue with this as additional context.',
-    },
-    {
-      value: 'interrupt_and_continue',
-      title: language === 'zh' ? '本轮结束后调整方向' : 'Redirect after this round',
-      description:
-        language === 'zh'
-          ? '不会截断正在生成的内容；等待本轮完成后，按这段新引导继续下一轮。'
-          : 'Do not cut off the current output; wait for this round to finish, then continue the next round with this guidance.',
-    },
-  ];
-
-  async function submit(event?: FormEvent) {
-    event?.preventDefault();
-    const text = guidance.trim();
-    if (!text || submitting) {
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await onSubmit(text, mode);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div
-      className="modal-backdrop guidance-dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onCancel();
-        }
-      }}
-    >
-      <form className="guidance-dialog" onSubmit={(event) => void submit(event)}>
-        <header>
-          <Sparkles size={18} />
-          <strong>{language === 'zh' ? '插入引导' : 'Guide this turn'}</strong>
-          <button type="button" onClick={onCancel}>
-            <X size={16} />
-          </button>
-        </header>
-        <textarea
-          value={guidance}
-          autoFocus
-          onChange={(event) => setGuidance(event.currentTarget.value)}
-          placeholder={
-            language === 'zh'
-              ? '例如：先别写代码，先解释风险点'
-              : 'For example: pause coding and explain the risks first'
-          }
-          rows={4}
-        />
-        <div className="guidance-mode-field">
-          <span>{language === 'zh' ? '处理方式' : 'Mode'}</span>
-          <div
-            className="guidance-mode-options"
-            role="radiogroup"
-            aria-label={language === 'zh' ? '处理方式' : 'Guidance mode'}
-          >
-            {modeOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={mode === option.value ? 'active' : ''}
-                aria-pressed={mode === option.value}
-                disabled={submitting}
-                onClick={() => setMode(option.value)}
-              >
-                <span>
-                  <strong>{option.title}</strong>
-                  <small>{option.description}</small>
-                </span>
-                {mode === option.value && <Check size={15} />}
-              </button>
-            ))}
-          </div>
-        </div>
-        <footer>
-          <button type="button" onClick={onCancel} disabled={submitting}>
-            {language === 'zh' ? '取消' : 'Cancel'}
-          </button>
-          <button
-            className="primary-button"
-            type="submit"
-            disabled={submitting || !guidance.trim()}
-          >
-            {submitting ? <LoaderCircle size={14} /> : <ArrowUp size={14} />}
-            {language === 'zh' ? '发送' : 'Send'}
-          </button>
-        </footer>
-      </form>
-    </div>
-  );
-}
-
 function splitUserFileAttachments(content: string) {
   const paths: string[] = [];
   const lines = content.split(/\r?\n/);
@@ -3051,7 +2923,13 @@ function MessageImagePreviewButton({
           <span>{language === 'zh' ? '图片无法预览' : 'Preview unavailable'}</span>
         </span>
       ) : (
-        <img src={src} alt={name} onError={() => void recoverLocalImage()} />
+        <img
+          src={src}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          onError={() => void recoverLocalImage()}
+        />
       )}
     </button>
   );
@@ -3094,7 +2972,6 @@ function sameMessageBubbleProps(
     previous.goalObjective !== next.goalObjective ||
     previous.onRegenerate !== next.onRegenerate ||
     previous.onEditUserMessage !== next.onEditUserMessage ||
-    previous.onGuideMessage !== next.onGuideMessage ||
     previous.onRetryMessage !== next.onRetryMessage ||
     previous.onRetryGuidance !== next.onRetryGuidance ||
     previous.onRevertChangeReport !== next.onRevertChangeReport ||

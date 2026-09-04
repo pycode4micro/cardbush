@@ -16,8 +16,35 @@ export type SettingsSection =
   | 'diagnostics'
   | 'about';
 export type ThemeMode = 'parchment' | 'bright' | 'dark' | 'cyberpunk';
-export type ThemePreference = 'system' | 'light' | 'dark' | 'cyberpunk';
-export type LightThemeStyle = 'parchment' | 'bright';
+export type ThemePreference =
+  | 'system'
+  | 'light'
+  | 'dark'
+  | 'parchment'
+  | 'cyberpunk'
+  | 'custom';
+export type ImportedThemeBase = 'light' | 'dark' | 'parchment';
+export type ImportedThemeColorKey =
+  | 'background'
+  | 'surface'
+  | 'surfaceStrong'
+  | 'surfaceRaised'
+  | 'border'
+  | 'accent'
+  | 'accentSoft'
+  | 'text'
+  | 'textMuted'
+  | 'textSoft'
+  | 'userBubble'
+  | 'terminalBackground'
+  | 'danger';
+export interface ImportedThemeStyle {
+  protocol: 'cardbush.appearance_style.v1';
+  name: string;
+  base: ImportedThemeBase;
+  colors: Partial<Record<ImportedThemeColorKey, string>>;
+  sourcePath: string;
+}
 export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
 export type ReferencePlanMode = 'off' | 'auto';
@@ -218,10 +245,6 @@ interface BrowserSettings {
   privacyMode: boolean;
 }
 
-interface ShadowUiSettings {
-  accentColor: string;
-}
-
 interface ThinkingUiSettings {
   visible: boolean;
 }
@@ -296,12 +319,11 @@ export type CardlingDesktopAction =
 export interface AppSettingsState {
   proxy: ProxySettings;
   browser: BrowserSettings;
-  shadow: ShadowUiSettings;
   thinking: ThinkingUiSettings;
   guidance: GuidanceUiSettings;
   terminal: TerminalSettings;
   managedModelConfigs: ManagedModelConfig[];
-  backgroundImagePath: string;
+  importedThemeStyle: ImportedThemeStyle | null;
   companionEnabled: boolean;
   companion: CompanionSettings;
   font: AppFontSettings;

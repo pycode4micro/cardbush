@@ -11,6 +11,7 @@ import {
   ComposerRuntimeRail,
   type ThinkingNotice,
 } from '../composer';
+import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
 import type { ConversationChangeReport, ConversationChangeSummary } from '../tools';
 
@@ -128,6 +129,12 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
   const [shadowEntries, setShadowEntries] = useState<ShadowChatEntry[]>([]);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [shadowOpen, setShadowOpen] = useState(false);
+  const [queuedMessages, setQueuedMessages] = useState([
+    { id: 'pre-test-queue-1', text: '补充移动端状态条的窄屏验收。', createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'pre-test-queue-2', text: '核对第二条排队消息的顺序。', createdAt: '2026-01-01T00:00:01.000Z' },
+    { id: 'pre-test-queue-3', text: '完成后运行队列回归测试。', createdAt: '2026-01-01T00:00:02.000Z' },
+  ]);
+  const showProcessing = fixture === 'processing' || fixture === 'combined';
   const showThinking = fixture === 'thinking' || fixture === 'combined';
   const showChanges = fixture === 'changes' || fixture === 'combined';
   const showQueue = fixture === 'queue' || fixture === 'combined';
@@ -192,10 +199,10 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
             <>
               <ComposerRuntimeRail
                 language={language}
-                running
-                taskPlan={taskPlanFixture}
-                goal={goalFixture}
-                goalRounds={[
+                running={fixture !== 'queue'}
+                taskPlan={showProcessing ? taskPlanFixture : undefined}
+                goal={showProcessing ? goalFixture : null}
+                goalRounds={showProcessing ? [
                   {
                     goalId: goalFixture.goalId,
                     sessionId: goalFixture.sessionId,
@@ -203,27 +210,39 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                     status: 'active',
                     reason: '仍需验证第二轮工具返回后的文本是否保留。',
                   },
-                ]}
+                ] : []}
                 thinkingNotice={showThinking ? thinkingFixture : null}
                 thinkingOpen={thinkingOpen}
                 changeReports={showChanges ? changeReportsFixture : []}
                 changeSummary={showChanges ? changeSummaryFixture : null}
-                queuedMessageCount={showQueue ? 1 : 0}
-                queuedMessagePreview={showQueue ? '补充移动端状态条的窄屏验收。' : ''}
-                queuedMessages={showQueue ? [{
-                  id: 'pre-test-queue',
-                  text: '补充移动端状态条的窄屏验收。',
-                  createdAt: new Date().toISOString(),
-                }] : []}
+                queuedMessageCount={showQueue ? queuedMessages.length : 0}
+                queuedMessagePreview={showQueue ? queuedMessages[0]?.text ?? '' : ''}
+                queuedMessages={showQueue ? queuedMessages : []}
                 onToggleThinking={() => {
                   setShadowOpen(false);
                   setThinkingOpen((current) => !current);
                 }}
                 onCloseThinking={() => setThinkingOpen(false)}
                 onOpenChangeReview={() => undefined}
-                onEditQueuedMessage={(item) => setDraft(item.text)}
-                onGuideQueuedMessage={async () => undefined}
-                onRemoveQueuedMessage={() => setFixture('processing')}
+                onEditQueuedMessage={(item) => {
+                  setDraft(item.text);
+                  setQueuedMessages((current) => current.filter((queued) => queued.id !== item.id));
+                }}
+                onGuideQueuedMessage={async (queuedId) => {
+                  setQueuedMessages((current) => current.filter((queued) => queued.id !== queuedId));
+                }}
+                onRemoveQueuedMessage={(queuedId) => {
+                  setQueuedMessages((current) => current.filter((queued) => queued.id !== queuedId));
+                }}
+                onReorderQueuedMessage={(queuedId, targetQueuedId) => {
+                  setQueuedMessages((current) => reorderScopedQueue(
+                    current,
+                    queuedId,
+                    targetQueuedId,
+                    (item) => item.id,
+                    () => 'pre-test',
+                  ));
+                }}
               />
               {shadowOpen && (
                 <ShadowTemporaryChat

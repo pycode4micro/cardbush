@@ -4587,7 +4587,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .user-bubble {
-  max-width: 465px;
+  max-width: min(465px, 100%);
   min-width: 0;
   padding: 10px 14px;
   color: var(--text);
@@ -4659,9 +4659,15 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .markdown-content {
+  max-width: 100%;
   min-width: 0;
   font-size: 13.25px;
   line-height: 1.58;
+}
+
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
 }
 
 .markdown-content > :first-child {
@@ -5324,6 +5330,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .message-image-strip {
+  width: 100%;
   max-width: 100%;
   margin: 0 0 10px;
   padding-bottom: 1px;
@@ -7603,6 +7610,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .composer-runtime-screen {
+  position: relative;
   width: 100%;
   min-width: 0;
   min-height: 32px;
@@ -7629,6 +7637,49 @@ body.right-inspector-resizing .right-inspector-resizer {
     transform 180ms var(--ease-standard),
     background-color 160ms var(--ease-standard),
     border-color 160ms var(--ease-standard);
+}
+
+.composer-runtime-screen.has-queue-actions {
+  padding-right: 84px;
+}
+
+.runtime-screen-queue-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 5px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  pointer-events: auto;
+}
+
+.runtime-screen-queue-actions button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--surface-strong) 82%, transparent);
+}
+
+.runtime-screen-queue-actions button:hover:not(:disabled),
+.runtime-screen-queue-actions button:focus-visible {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface-strong));
+}
+
+.runtime-screen-queue-actions button:disabled {
+  opacity: 0.48;
+}
+
+.runtime-screen-queue-guide .lucide-loader-circle,
+.runtime-queue-guide .lucide-loader-circle {
+  animation: cardbush-spin 900ms linear infinite;
 }
 
 .composer-runtime-rail.expanded {
@@ -7671,6 +7722,11 @@ body.right-inspector-resizing .right-inspector-resizer {
   pointer-events: none;
   opacity: 0;
   transform: translateY(3px);
+}
+
+.composer-runtime-rail.context-visible .runtime-screen-queue-actions {
+  pointer-events: none;
+  opacity: 0;
 }
 
 .composer-runtime-screen:hover,
@@ -8141,7 +8197,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   gap: 8px;
 }
 
-.runtime-queue-copy > span {
+.runtime-queue-drag-handle {
   width: 18px;
   height: 18px;
   flex: 0 0 auto;
@@ -8152,6 +8208,39 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: color-mix(in srgb, var(--text) 7%, transparent);
   font-size: 9px;
   font-weight: 800;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    transform 120ms ease;
+}
+
+.runtime-queue-drag-handle:disabled {
+  cursor: default;
+}
+
+.runtime-queue-drag-handle:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent) 72%, var(--text));
+  outline-offset: 2px;
+}
+
+.runtime-queue-item.press-armed .runtime-queue-drag-handle {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  transform: scale(0.92);
+}
+
+.runtime-queue-item.dragging {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.runtime-queue-item.dragging .runtime-queue-drag-handle {
+  color: color-mix(in srgb, var(--accent) 76%, var(--text));
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  cursor: grabbing;
+  transform: scale(1.06);
 }
 
 .runtime-queue-copy > p {
@@ -10262,12 +10351,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: flex;
   align-items: center;
   gap: 1px;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.composer-queue-row:hover .composer-queue-actions,
-.composer-queue-row:focus-within .composer-queue-actions {
   opacity: 1;
 }
 
@@ -17459,117 +17542,37 @@ body.right-inspector-resizing .right-inspector-resizer {
   }
 }
 
-.background-preview {
-  min-height: 96px;
-  display: grid;
-  align-content: end;
-  gap: 6px;
-  padding: 12px;
-  overflow: hidden;
-  color: var(--text);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--text) 7%, transparent), transparent),
-    color-mix(in srgb, var(--text) 4%, transparent);
-  background-size: cover;
-  background-position: center;
-  border: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
-  border-radius: 10px;
-}
-
-.background-preview.has-image {
-  min-height: 132px;
-  box-shadow: inset 0 -72px 58px rgba(0, 0, 0, 0.45);
-}
-
-.background-preview span {
-  min-width: 0;
+.imported-theme-config {
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
+  border-radius: 9px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
 }
 
-.background-preview strong,
-.background-preview small {
+.imported-theme-config > span {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+
+.imported-theme-config strong,
+.imported-theme-config small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.background-preview strong {
-  color: inherit;
-  font-size: 13px;
-}
-
-.background-preview small {
-  color: color-mix(in srgb, currentColor 72%, transparent);
-  font-size: 11.5px;
-}
-
-.shadow-color-setting {
-  min-height: 48px;
-  padding: 7px 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
-}
-
-.shadow-color-setting.disabled {
-  opacity: 0.48;
-}
-
-.shadow-color-setting > label {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.shadow-color-setting input[type="color"] {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: transparent;
-  cursor: pointer;
-}
-
-.shadow-color-setting input[type="color"]::-webkit-color-swatch-wrapper {
-  padding: 0;
-}
-
-.shadow-color-setting input[type="color"]::-webkit-color-swatch {
-  border: 0;
-  border-radius: 50%;
-}
-
-.shadow-color-setting label span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.shadow-color-setting label strong {
+.imported-theme-config strong {
   color: var(--text);
   font-size: 12.5px;
 }
 
-.shadow-color-setting label small {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-}
-
-.shadow-color-setting .secondary-button {
-  min-height: 30px;
-  padding: 0 10px;
-  border-radius: 8px;
+.imported-theme-config small {
+  color: var(--text-soft);
   font-size: 11.5px;
 }
 

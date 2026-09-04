@@ -42,6 +42,11 @@ assert.match(messageBubble, /<video[\s\S]*?controls[\s\S]*?preload="metadata"/);
 assert.match(messageBubble, /<audio[\s\S]*?controls[\s\S]*?preload="metadata"/);
 assert.match(messageBubble, /readImageDataUrl\(pathValue\)/);
 assert.match(messageBubble, /message-image-preview-fallback/);
+assert.match(
+  messageBubble,
+  /<img[\s\S]*?src=\{src\}[\s\S]*?loading="lazy"[\s\S]*?decoding="async"/,
+  'historical image attachments must not synchronously decode every offscreen full-resolution image',
+);
 assert.match(imagePreviewDialog, /event\.ctrlKey[\s\S]*?event\.metaKey/);
 assert.match(imagePreviewDialog, /NumpadAdd/);
 assert.match(imagePreviewDialog, /NumpadSubtract/);
@@ -53,8 +58,29 @@ assert.match(imagePreviewDialog, /scrollLeft = drag\.scrollLeft -/);
 assert.match(imagePreviewDialog, /scrollTop = drag\.scrollTop -/);
 assert.match(imagePreviewDialog, /image-preview-zoom-controls/);
 assert.match(imagePreviewDialog, /zoomRef\.current === 1 \? 2 : 1/);
+assert.match(imagePreviewDialog, /import \{ createPortal \} from 'react-dom'/);
+assert.match(
+  imagePreviewDialog,
+  /return createPortal\([\s\S]*?image-preview-backdrop[\s\S]*?document\.body/,
+  'Image preview dialogs must escape message content containment and render at the application root',
+);
 assert.match(css, /\.message-video-player video\s*\{/);
 assert.match(css, /\.message-audio-player audio\s*\{/);
+assert.match(
+  css,
+  /\.user-bubble\s*\{[\s\S]*?max-width:\s*min\(465px, 100%\)/,
+  'User bubbles must never exceed the live conversation track width',
+);
+assert.match(
+  css,
+  /\.markdown-content img\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?height:\s*auto/,
+  'Markdown images must shrink with narrow message bubbles',
+);
+assert.match(
+  css,
+  /\.message-image-strip\s*\{[\s\S]*?width:\s*100%;[\s\S]*?max-width:\s*100%/,
+  'Message image strips must resolve their width from the current bubble instead of intrinsic media width',
+);
 assert.match(css, /\.image-preview-stage\.is-dragging\s*\{[\s\S]*?cursor:\s*grabbing/);
 assert.match(electronMain, /status:\s*206/);
 assert.match(electronMain, /'content-range':\s*`bytes/);

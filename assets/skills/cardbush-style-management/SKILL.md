@@ -18,9 +18,9 @@ Read [references/theme-contract.md](references/theme-contract.md) before adding 
 2. Define or adjust semantic tokens first. Prefer tokens over repeating literal colors across components.
 3. Scope every theme-specific override under `.theme-<theme-id>`; never make a new optional theme silently alter other themes.
 4. For a new theme, register every extension point listed in the theme contract. A CSS-only change is incomplete because startup and secondary windows can otherwise flash or fall back.
-5. Preserve interaction geometry, focus states, text contrast, custom backgrounds, reduced-motion behavior, and existing responsive layouts.
+5. Preserve interaction geometry, focus states, text contrast, imported palette overrides, reduced-motion behavior, and existing responsive layouts.
 6. Favor static gradients, borders, masks, and short state transitions. Do not add continuous decorative animations, large-area live blur, remote assets, or layout-triggering effects without measured evidence.
-7. Verify the main chat, settings, composer, menus, right inspector, review view, Shadow, Cardling, startup splash, and custom-wallpaper mode.
+7. Verify the main chat, settings, composer, menus, right inspector, review view, Shadow, Cardling, startup splash, and imported-palette mode.
 8. Run the theme contract test, relevant UI contract tests, typecheck, and build before declaring the work complete.
 
 ## Quality Bar

@@ -138,6 +138,9 @@ export function ShadowWindow({
       document.documentElement.style.backgroundColor = background;
       document.documentElement.style.setProperty('--cardbush-window-bg', background);
       document.documentElement.style.setProperty('--shadow-accent', payload.accentColor);
+      for (const [name, value] of Object.entries(payload.themeVariables ?? {})) {
+        document.documentElement.style.setProperty(name, value);
+      }
       document.body.style.backgroundColor = background;
       document.getElementById('root')?.style.setProperty('background', background);
       void desktop.isShadowWindowMaximized?.().then((value) => {
@@ -390,7 +393,10 @@ export function ShadowWindow({
     <main
       className={`app ${themeClassNames(context?.theme ?? 'dark')} shadow-window-shell shadow-mode-${mode}${embedded ? ' shadow-inspector-shell' : ''}`}
       style={context
-        ? { '--shadow-accent': context.accentColor } as CSSProperties
+        ? {
+            ...context.themeVariables,
+            '--shadow-accent': context.accentColor,
+          } as CSSProperties
         : undefined}
     >
       <header className={`shadow-window-titlebar${embedded ? ' shadow-inspector-titlebar' : ''}`}>
@@ -470,7 +476,6 @@ export function ShadowWindow({
                     selectedModel={context?.modelConfig.modelName ?? ''}
                     onRegenerate={ignoreAsync}
                     onEditUserMessage={ignoreAsync}
-                    onGuideMessage={ignoreAsync}
                     onRetryMessage={ignoreAsync}
                     onRetryGuidance={ignoreAsync}
                     onRevertChangeReport={ignoreAsync}

@@ -3,6 +3,7 @@ import {
   type IpcMain,
   type UtilityProcess,
   type WebContents,
+  type WebFrameMain,
 } from 'electron';
 
 import {
@@ -33,6 +34,11 @@ export interface RuntimeHostControllerOptions {
 interface PendingOperation {
   resolve: (message: RuntimeIpcOutboundMessage) => void;
   reject: (error: Error) => void;
+}
+
+interface RuntimeStreamSubscription {
+  owner: WebContents;
+  frame: WebFrameMain;
 }
 
 export class RuntimeUtilityProcessController {
@@ -268,7 +274,7 @@ export function registerRuntimeHostIpc(
   controller: RuntimeUtilityProcessController,
   isAllowedSender: (sender: WebContents) => boolean,
 ): () => void {
-  const subscriptions = new Map<string, WebContents>();
+  const subscriptions = new Map<string, RuntimeStreamSubscription>();
   const ensureAllowed = (sender: WebContents) => {
     if (!isAllowedSender(sender)) {
       throw new Error('Renderer is not allowed to access the Runtime Host.');
@@ -284,7 +290,14 @@ export function registerRuntimeHostIpc(
     if (message.type !== 'start_stream') {
       throw new Error('Invalid Runtime stream request.');
     }
-    subscriptions.set(message.subscriptionId, event.sender);
+    const frame = event.senderFrame;
+    if (!frame || frame.isDestroyed() || frame.detached) {
+      throw new Error('Renderer frame is unavailable for Runtime stream.');
+    }
+    subscriptions.set(message.subscriptionId, {
+      owner: event.sender,
+      frame,
+    });
     try {
       await controller.startStream(message);
     } catch (error) {
@@ -298,8 +311,8 @@ export function registerRuntimeHostIpc(
     if (message.type !== 'stop_stream') {
       throw new Error('Invalid Runtime stream stop request.');
     }
-    const owner = subscriptions.get(message.subscriptionId);
-    if (owner && owner.id !== event.sender.id) {
+    const subscription = subscriptions.get(message.subscriptionId);
+    if (subscription && subscription.owner.id !== event.sender.id) {
       throw new Error('Runtime stream belongs to a different renderer.');
     }
     subscriptions.delete(message.subscriptionId);
@@ -311,12 +324,26 @@ export function registerRuntimeHostIpc(
   });
   const removeFrameListener = controller.onStreamFrame((message) => {
     if (message.type !== 'stream_frame') return;
-    const target = subscriptions.get(message.subscriptionId);
-    if (!target || target.isDestroyed()) {
+    const subscription = subscriptions.get(message.subscriptionId);
+    if (
+      !subscription
+      || subscription.owner.isDestroyed()
+      || subscription.owner.isLoadingMainFrame()
+      || subscription.frame.isDestroyed()
+      || subscription.frame.detached
+    ) {
       subscriptions.delete(message.subscriptionId);
       return;
     }
-    target.send(RUNTIME_IPC_STREAM_FRAME_CHANNEL, message);
+    try {
+      subscription.frame.send(RUNTIME_IPC_STREAM_FRAME_CHANNEL, message);
+    } catch {
+      // Navigation or a renderer crash can dispose the exact subscribing frame
+      // while the owning WebContents remains alive. Never retarget its stream to
+      // a replacement frame created by a reload.
+      subscriptions.delete(message.subscriptionId);
+      return;
+    }
     if (message.frame.kind === 'end' || message.frame.kind === 'error') {
       subscriptions.delete(message.subscriptionId);
     }

@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 
 import type { AppLanguage } from '../../types';
 
@@ -167,7 +168,7 @@ export function ImagePreviewDialog({
     : undefined;
   const percentage = Math.round(zoom * 100);
 
-  return (
+  return createPortal(
     <div className="modal-backdrop image-preview-backdrop" onMouseDown={onClose}>
       <section
         className="image-preview-dialog"
@@ -250,6 +251,7 @@ export function ImagePreviewDialog({
           </div>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }

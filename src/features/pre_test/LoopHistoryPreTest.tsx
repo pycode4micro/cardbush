@@ -83,7 +83,6 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                   selectedModel="glm-5"
                   onRegenerate={async () => undefined}
                   onEditUserMessage={async () => undefined}
-                  onGuideMessage={async () => undefined}
                   onRetryGuidance={async () => undefined}
                   onRevertChangeReport={async () => undefined}
                   onOpenScene={() => undefined}
@@ -99,7 +98,6 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
                   activeAssistantMessageId=""
                   onRegenerate={async () => undefined}
                   onEditUserMessage={async () => undefined}
-                  onGuideMessage={async () => undefined}
                   onRetryGuidance={async () => undefined}
                   onRevertChangeReport={async () => undefined}
                   onOpenScene={() => undefined}

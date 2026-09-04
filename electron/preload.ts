@@ -77,6 +77,7 @@ type ShadowWindowPayload = {
   language: 'zh' | 'en';
   theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
   accentColor: string;
+  themeVariables?: Record<string, string>;
   modelConfig: Record<string, unknown>;
   reasoningLevel?: ReasoningEffort;
   projectDir: string;
@@ -223,10 +224,8 @@ const desktopApi = {
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,
-  pickBackgroundImage: () =>
-    ipcRenderer.invoke('dialog:pick-background-image') as Promise<string | null>,
-  cacheBackgroundImage: (path: string) =>
-    ipcRenderer.invoke('dialog:cache-background-image', path) as Promise<string>,
+  pickAppearanceStyle: () =>
+    ipcRenderer.invoke('dialog:pick-appearance-style') as Promise<string | null>,
   listProjectEntries: (rootPath: string) =>
     ipcRenderer.invoke('project:list-root', rootPath) as Promise<
       Array<{ name: string; path: string; kind: 'file' | 'folder' }>

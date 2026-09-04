@@ -142,7 +142,7 @@ assert.doesNotMatch(
 assert.match(hookSource, /const prepareConversation = useCallback/);
 assert.match(hookSource, /const persistPreparedConversation = useCallback/);
 const prepareBlock = hookSource.match(
-  /const prepareConversation = useCallback\([\s\S]*?\n  \}, \[\]\);/,
+  /const prepareConversation = useCallback\([\s\S]*?\n  \}, \[[^\]]*\]\);/,
 )?.[0] ?? '';
 assert.doesNotMatch(
   prepareBlock,
@@ -168,6 +168,24 @@ assert.match(
   hookSource,
   /const projectPathAliases = conversationProjectPathAliases\(conversation\)[\s\S]*?remapProjectPath\(pathValue, projectPathAliases\)/,
   'retrying a historical attachment must use its renamed project path',
+);
+assert.match(
+  hookSource,
+  /const \[messageHistoryLoadingIds, setMessageHistoryLoadingIds\][\s\S]*?messageHistoryLoadingIds\.has\(activeConversationIdForState\)/,
+  'history loading state must be scoped to the selected conversation',
+);
+const openConversationBlock = hookSource.match(
+  /const openConversation = useCallback\([\s\S]*?\n  \);/,
+)?.[0] ?? '';
+assert.match(
+  openConversationBlock,
+  /setMessageHistoryLoading\([\s\S]*?setActiveConversationId\(normalized\)/,
+  'selecting uncached history must enter loading state in the same event as the route change',
+);
+assert.match(
+  hookSource,
+  /const sessionId = activeConversationId\.trim\(\);[\s\S]*?fetchSessionMessages\(sessionId,[\s\S]*?setMessageHistoryLoading\(sessionId, false\)/,
+  'history fetch completion must only clear the loading marker for its own conversation',
 );
 
 const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
@@ -195,6 +213,11 @@ assert.match(
   appSource,
   /const recoveredProjectConversation = chat\.conversations[\s\S]*?samePath\(projectDir, selected\)[\s\S]*?const projectId = conversationProjectId\(recoveredProjectConversation\)[\s\S]*?id: projectId \|\| stableProjectId\(selected\)/,
   'removing and re-adding the same folder must recover its session-backed project identity',
+);
+assert.match(
+  appSource,
+  /historyLoading=\{!chat\.loading && chat\.messagesLoading\}/,
+  'project conversation navigation must distinguish history loading from runtime startup',
 );
 
 const messageBubbleSource = fs.readFileSync(

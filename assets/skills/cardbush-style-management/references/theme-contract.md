@@ -90,6 +90,6 @@ Review at minimum:
 7. Diff additions/deletions, code blocks, terminal output, and tool execution states.
 8. Embedded and separate Shadow conversations.
 9. Cardling closed/open/error states.
-10. Custom wallpaper behavior.
+10. Imported palette behavior, including fallback to its declared base theme.
 
 Capture visual evidence when possible, then fix clipping, weak hierarchy, excessive glow, inconsistent corners, and accidental regressions before delivery.

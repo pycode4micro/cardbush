@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   Circle,
   Clock3,
+  CornerDownLeft,
   Edit3,
   Eye,
   EyeOff,
@@ -31,7 +32,6 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  Sparkles,
   Square,
   Target,
   Trash2,
@@ -1070,7 +1070,7 @@ export function Composer({
                 {guidingQueuedId === firstQueuedMessage.id ? (
                   <LoaderCircle size={12} />
                 ) : (
-                  <Sparkles size={12} />
+                  <CornerDownLeft size={12} />
                 )}
                 <span>{language === 'zh' ? '引导' : 'Guide'}</span>
               </button>
