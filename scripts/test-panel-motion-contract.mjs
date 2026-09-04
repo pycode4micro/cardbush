@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 const app = read('src', 'App.tsx');
+const shadowWindow = read('src', 'ShadowWindow.tsx');
 const css = read('src', 'styles', 'app.css');
 const presence = read('src', 'hooks', 'useSoftPanelPresence.ts');
 const sidebar = read('src', 'features', 'sidebar', 'ChatSidebar.tsx');
@@ -118,6 +119,23 @@ assert.match(
   /<header className=\{`right-inspector-toolbar[\s\S]*?className="right-inspector-tabs"[\s\S]*?<\/header>/,
   'Browser and file tabs must live in the inspector title bar',
 );
+assert.match(app, /type InspectorTab = InspectorResourceTab \| InspectorReviewTab \| InspectorShadowTab/);
+assert.match(app, /className="right-inspector-add-tab"/);
+assert.match(app, /className="right-inspector-add-menu" role="menu"/);
+assert.match(
+  app,
+  /className="right-inspector-add-menu"[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab[\s\S]*?openNewBrowserInspectorTab/,
+  'The inspector new-tab menu must offer file, Shadow, and browser tabs in one place',
+);
+assert.match(app, /tab\.kind === 'review'[\s\S]*?<Clipboard/);
+assert.match(app, /tab\.kind === 'shadow'[\s\S]*?<ShadowWindow embedded context=\{tab\.context\}/);
+assert.match(app, /target: `about:blank\?cardbush-tab=\$\{crypto\.randomUUID\(\)\}`/);
+assert.match(app, /className="right-inspector-address editable"[\s\S]*?\.navigate\(inspectorAddressDraft\)/);
+assert.match(app, /handleInspectorShortcut[\s\S]*?key === 't'[\s\S]*?key === 'p'[\s\S]*?key === 's'/);
+assert.match(shadowWindow, /export function ShadowWindow\(\{/);
+assert.match(shadowWindow, /shadow-inspector-shell/);
+assert.match(css, /\.right-inspector-add-menu\s*\{/);
+assert.match(css, /\.shadow-window-shell\.shadow-inspector-shell\s*\{/);
 assert.match(css, /\.right-inspector-toolbar\.with-tabs\s*\{/);
 assert.match(css, /\.right-inspector-toolbar\s*>\s*button\s*\{/);
 assert.match(
@@ -210,11 +228,10 @@ assert.match(
 );
 assert.match(
   summary,
-  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"[\s\S]*?className="work-summary-section work-summary-a2a-section"/,
-  'Summary hierarchy must keep outputs first, tool activity second, history next, and A2A last',
+  /className="work-summary-section outputs"[\s\S]*?Tool activity[\s\S]*?data-testid="work-summary-history"/,
+  'Summary hierarchy must keep outputs first, tool activity second, and history next',
 );
 assert.doesNotMatch(summary, /ShadowCloneIcon|ShadowTemporaryChat|work-summary-modes/);
-assert.match(summary, /className="work-summary-a2a-toggle"[\s\S]*?aria-expanded=\{a2aExpanded\}/);
 assert.doesNotMatch(
   css,
   /work-summary-hidden\) \.composer-shadow-chat-host\s*\{\s*display:\s*none/,

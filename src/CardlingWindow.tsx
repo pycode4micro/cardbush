@@ -27,6 +27,7 @@ import type {
   CardlingDesktopState,
   CompanionStatus,
 } from './types';
+import { themeClassNames } from './features/appearance/themeRuntime';
 
 const defaultCardlingState: CardlingDesktopState = {
   enabled: true,
@@ -222,7 +223,7 @@ export function CardlingWindow() {
 
   return (
     <main
-      className={`cardling-desktop theme-${state.theme} ${open ? 'open' : ''} ${transitioning ? 'transitioning' : ''}`}
+      className={`cardling-desktop ${themeClassNames(state.theme)} ${open ? 'open' : ''} ${transitioning ? 'transitioning' : ''}`}
       data-status={state.status}
       data-motion={state.settings.motion}
       style={style}

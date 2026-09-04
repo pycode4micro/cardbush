@@ -10,11 +10,9 @@ import {
   Cpu,
   Eye,
   EyeOff,
-  Gamepad2,
   Image,
   LoaderCircle,
   Monitor,
-  MonitorCog,
   Network,
   PackageOpen,
   Plus,
@@ -64,7 +62,10 @@ import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
 import { SubagentsPanel } from './SubagentsPanel';
-import { PluginManagementPanel } from './plugins/PluginManagementPanel';
+import {
+  ChromeConnectionSettings,
+  PluginManagementPanel,
+} from './plugins/PluginManagementPanel';
 import {
   loadCumulativeUsageStatistics,
   type CumulativeUsageStatistics,
@@ -113,7 +114,6 @@ type SettingsIconComponent = React.ComponentType<{ size?: number; className?: st
 
 const visibleSettingsSections: VisibleSettingsSection[] = [
   'profile',
-  'os',
   'runtime',
   'proxy',
   'subagents',
@@ -126,7 +126,6 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
 
 const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
   profile: { zh: '个性化', en: 'Personalization' },
-  os: { zh: '桌面 OS', en: 'Desktop OS' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   subagents: { zh: '子任务运行态', en: 'Task runtime' },
@@ -139,7 +138,6 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
 
 const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
   profile: { zh: '查看累计使用量，并统一管理主题、语言、背景与字体。', en: 'Review cumulative usage and manage theme, language, background, and typography.' },
-  os: { zh: '配置桌面模式、开机启动和手柄操作。', en: 'Configure desktop mode, startup behavior, and controller input.' },
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
   subagents: { zh: '查看子任务能力、运行状态和依赖。', en: 'Inspect task-agent capabilities, runtime state, and dependencies.' },
@@ -156,7 +154,7 @@ const settingsNavigationGroups: Array<{
 }> = [
   {
     label: { zh: '常规', en: 'General' },
-    sections: ['profile', 'os', 'runtime'],
+    sections: ['profile', 'runtime'],
   },
   {
     label: { zh: '智能与扩展', en: 'AI & extensions' },
@@ -174,7 +172,6 @@ const settingsNavigationGroups: Array<{
 
 const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
   profile: Settings,
-  os: MonitorCog,
   runtime: Terminal,
   proxy: Monitor,
   subagents: Network,
@@ -239,7 +236,6 @@ export function SettingsView({
   onLightThemeStyleChange,
   onLanguageModeChange,
   onSettingsChange,
-  onEnterOsMode,
   onUseModel,
   onSidebarWidthChange,
   onConversationHistoryCleared,
@@ -271,7 +267,6 @@ export function SettingsView({
   onLightThemeStyleChange: (value: LightThemeStyle) => void;
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onEnterOsMode: () => void;
   onUseModel: (model: string) => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
@@ -767,118 +762,6 @@ export function SettingsView({
         </div>
       );
     }
-    if (section === 'os') {
-      const loginSettingsAvailable = Boolean(window.cardbushDesktop?.setOsLoginSettings);
-      return (
-        <SettingsCard
-          title={language === 'zh' ? '桌面 OS' : 'Desktop OS'}
-          subtitle={
-            language === 'zh'
-              ? '让 CardBush 随系统启动，并作为桌面 Agent 的默认对话入口。'
-              : 'Start CardBush with the system and use it as the desktop agent entry point.'
-          }
-        >
-          <SettingsSwitch
-            title={language === 'zh' ? '开机自动启动' : 'Launch at login'}
-            subtitle={
-              language === 'zh'
-                ? '登录 Windows 后自动启动 CardBush。'
-                : 'Start CardBush automatically after signing in.'
-            }
-            checked={settings.os.launchAtLogin}
-            disabled={!loginSettingsAvailable}
-            onChange={(checked) =>
-              updateSettings((current) => ({
-                ...current,
-                os: { ...current.os, launchAtLogin: checked },
-              }))
-            }
-          />
-          <SettingsSwitch
-            title={language === 'zh' ? '启动后进入 OS 模式' : 'Open in OS mode'}
-            subtitle={
-              language === 'zh'
-                ? '开机启动时直接进入极简桌面对话，不打开项目工作区。'
-                : 'Open the minimal desktop conversation instead of a project workspace.'
-            }
-            checked={settings.os.startInOsMode}
-            disabled={!settings.os.launchAtLogin || !loginSettingsAvailable}
-            onChange={(checked) =>
-              updateSettings((current) => ({
-                ...current,
-                os: { ...current.os, startInOsMode: checked },
-              }))
-            }
-          />
-          <SettingsDivider />
-          <SettingsGroupTitle>{language === 'zh' ? '任务栏位置' : 'Taskbar placement'}</SettingsGroupTitle>
-          <SettingsRadio
-            name="os-taskbar-placement"
-            value="bottom"
-            title={language === 'zh' ? '底部呼吸条' : 'Bottom breathing bar'}
-            subtitle={language === 'zh' ? '默认收起，靠近底部时展开最近启动的应用。' : 'Collapsed by default; reveals recent apps near the bottom edge.'}
-            checked={settings.os.taskbarPlacement === 'bottom'}
-            onChange={() => updateSettings((current) => ({
-              ...current,
-              os: { ...current.os, taskbarPlacement: 'bottom' },
-            }))}
-          />
-          <SettingsRadio
-            name="os-taskbar-placement"
-            value="top"
-            title={language === 'zh' ? '顶部状态栏' : 'Top status bar'}
-            subtitle={language === 'zh' ? '把最近启动的应用固定在 CardBush OS 顶栏。' : 'Keep recently launched apps in the CardBush OS status bar.'}
-            checked={settings.os.taskbarPlacement === 'top'}
-            onChange={() => updateSettings((current) => ({
-              ...current,
-              os: { ...current.os, taskbarPlacement: 'top' },
-            }))}
-          />
-          <SettingsDivider />
-          <SettingsGroupTitle>{language === 'zh' ? '手柄映射' : 'Controller mapping'}</SettingsGroupTitle>
-          <div className="os-gamepad-settings">
-            <div className="os-gamepad-settings-heading">
-              <Gamepad2 size={16} />
-              <span>{language === 'zh' ? '使用标准手柄按键，可在 OS 界面完成导航、输入和启动应用。' : 'Use standard gamepad buttons to navigate, type, and launch apps in OS mode.'}</span>
-            </div>
-            {([
-              ['confirmButton', language === 'zh' ? '确认' : 'Confirm'],
-              ['backButton', language === 'zh' ? '返回' : 'Back'],
-              ['keyboardButton', language === 'zh' ? '九键输入' : 'Nine-key input'],
-              ['appsButton', language === 'zh' ? '应用' : 'Applications'],
-              ['settingsButton', language === 'zh' ? '设置' : 'Settings'],
-            ] as const).map(([key, label]) => (
-              <GamepadMappingRow
-                key={key}
-                label={label}
-                value={settings.os.gamepad[key]}
-                onChange={(value) => updateSettings((current) => ({
-                  ...current,
-                  os: {
-                    ...current.os,
-                    gamepad: { ...current.os.gamepad, [key]: value },
-                  },
-                }))}
-              />
-            ))}
-          </div>
-          <div className="os-settings-note">
-            <MonitorCog size={16} />
-            <span>
-              {language === 'zh'
-                ? '应用启动、软件识别、窗口控制和界面操作由桌面端与内嵌 Runtime 共同提供。'
-                : 'App startup, discovery, window control, and UI actions are provided by the desktop host and embedded Runtime.'}
-            </span>
-          </div>
-          <div className="settings-actions">
-            <button className="primary-button" type="button" onClick={onEnterOsMode}>
-              <MonitorCog size={14} />
-              {language === 'zh' ? '立即进入' : 'Open now'}
-            </button>
-          </div>
-        </SettingsCard>
-      );
-    }
     if (section === 'proxy') {
       return (
         <SettingsCard
@@ -1222,6 +1105,19 @@ function SettingsProfilePanel({
         value="dark"
         checked={themePreference === 'dark'}
         onChange={() => onThemePreferenceChange('dark')}
+      />
+      <SettingsRadio
+        className="cyberpunk-theme-option"
+        name="theme-mode"
+        title={language === 'zh' ? '赛博朋克' : 'Cyberpunk'}
+        subtitle={
+          language === 'zh'
+            ? '霓虹黄与电光青、工业切角、静态网格；为流畅度避免持续特效。'
+            : 'Neon yellow and electric cyan, industrial cuts, and a static performance-first grid.'
+        }
+        value="cyberpunk"
+        checked={themePreference === 'cyberpunk'}
+        onChange={() => onThemePreferenceChange('cyberpunk')}
       />
       <SettingsDivider />
       <SettingsGroupTitle>
@@ -2049,8 +1945,8 @@ function CacheMaintenancePanel({
                 conversationClearSupported
                   ? undefined
                   : language === 'zh'
-                    ? '后端尚未提供此接口'
-                    : 'Backend API is not available yet'
+                    ? '当前 Runtime 尚未提供此接口'
+                    : 'This API is not available in the current Runtime'
               }
             >
               {busyTarget === 'conversation' ? (
@@ -2080,8 +1976,8 @@ function CacheMaintenancePanel({
                 logsClearSupported
                   ? undefined
                   : language === 'zh'
-                    ? '后端尚未提供此接口'
-                    : 'Backend API is not available yet'
+                    ? '当前 Runtime 尚未提供此接口'
+                    : 'This API is not available in the current Runtime'
               }
             >
               {busyTarget === 'logs' ? <LoaderCircle size={14} /> : <Trash2 size={14} />}
@@ -3154,8 +3050,8 @@ function McpServersPanel({
                   {validation.tools.length
                     ? validation.tools.join(', ')
                     : language === 'zh'
-                      ? '后端未返回错误。'
-                      : 'No backend messages returned.'}
+                      ? '服务未返回错误详情。'
+                      : 'No error details were returned.'}
                 </p>
               )}
             </div>
@@ -3375,54 +3271,17 @@ function CardbushAppsPanel({
                 </div>
               )}
               {expanded && plugin.id === 'chrome' && (
-                <div className="cardbush-app-config">
-                  <label className="cardbush-app-option cardbush-app-radio-option">
-                    <input
-                      type="radio"
-                      name="settings-chrome-connection-mode"
-                      checked={plugin.config.connectionMode === 'managed'}
-                      onChange={() => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, connectionMode: 'managed' },
-                      })}
-                    />
-                    <span>
-                      <strong>{language === 'zh' ? '独立受控浏览器' : 'Managed browser'}</strong>
-                      <small>{language === 'zh' ? '使用独立实例，不复用日常 Chrome 登录状态。' : 'Use a separate instance without your everyday Chrome session.'}</small>
-                    </span>
-                  </label>
-                  <label className="cardbush-app-option cardbush-app-radio-option">
-                    <input
-                      type="radio"
-                      name="settings-chrome-connection-mode"
-                      checked={plugin.config.connectionMode !== 'managed'}
-                      onChange={() => replacePlugin({
-                        ...plugin,
-                        config: { ...plugin.config, connectionMode: 'existing' },
-                      })}
-                    />
-                    <span>
-                      <strong>{language === 'zh' ? '优先复用当前 Chrome' : 'Prefer current Chrome'}</strong>
-                      <small>{language === 'zh' ? '远程调试可用时复用现有会话，否则自动使用独立受控浏览器。' : 'Reuse the current session when remote debugging is available, otherwise fall back to a managed browser.'}</small>
-                    </span>
-                  </label>
-                  {plugin.config.connectionMode !== 'managed' && (
-                    <p className="cardbush-app-config-note">
-                      {language === 'zh'
-                        ? '需要 Chrome 144 或更高版本，并在 chrome://inspect/#remote-debugging 开启远程调试。Agent 将能访问该浏览器中的页面和登录数据。'
-                        : 'Requires Chrome 144 or newer with remote debugging enabled at chrome://inspect/#remote-debugging. The Agent can access pages and signed-in data in that browser.'}
-                    </p>
-                  )}
-                  <div className="cardbush-app-config-actions">
-                    <button
-                      className="primary-button compact"
-                      type="button"
-                      disabled={Boolean(busyKey)}
-                      onClick={() => void persist(configuration, `config:${plugin.id}`, 'Chrome 连接方式已保存', 'Chrome connection saved')}
-                    >
-                      {language === 'zh' ? '保存配置' : 'Save settings'}
-                    </button>
-                  </div>
+                <div className="cardbush-app-config chrome-connector-settings-wrap">
+                  <ChromeConnectionSettings
+                    language={language}
+                    plugin={plugin}
+                    busy={Boolean(busyKey)}
+                    onReplace={replacePlugin}
+                    onPersist={(next, message) => void persist({
+                      ...configuration,
+                      plugins: configuration.plugins.map((item) => item.id === next.id ? next : item),
+                    }, `config:${plugin.id}`, message, message)}
+                  />
                 </div>
               )}
             </article>
@@ -3739,33 +3598,8 @@ function SettingsGroupTitle({ children }: { children: React.ReactNode }) {
   return <div className="settings-group-title">{children}</div>;
 }
 
-const gamepadButtonOptions = [
-  [0, 'A'], [1, 'B'], [2, 'X'], [3, 'Y'], [4, 'LB'], [5, 'RB'],
-  [8, 'View'], [9, 'Menu'], [10, 'L3'], [11, 'R3'],
-] as const;
-
-function GamepadMappingRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="os-gamepad-mapping-row">
-      <span>{label}</span>
-      <select value={value} onChange={(event) => onChange(Number(event.currentTarget.value))}>
-        {gamepadButtonOptions.map(([button, name]) => (
-          <option key={button} value={button}>{name}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function SettingsRadio({
+  className,
   name,
   title,
   subtitle,
@@ -3773,6 +3607,7 @@ function SettingsRadio({
   checked,
   onChange,
 }: {
+  className?: string;
   name: string;
   title: string;
   subtitle?: string;
@@ -3781,7 +3616,7 @@ function SettingsRadio({
   onChange: () => void;
 }) {
   return (
-    <label className="settings-radio">
+    <label className={`settings-radio${className ? ` ${className}` : ''}`}>
       <input name={name} type="radio" value={value} checked={checked} onChange={onChange} />
       <span>
         <strong>{title}</strong>

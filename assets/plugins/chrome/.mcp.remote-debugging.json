@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "./runtime/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js",
+        "--no-usage-statistics",
+        "--no-performance-crux",
+        "--auto-connect"
+      ],
+      "env": {
+        "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1",
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
+      }
+    }
+  }
+}

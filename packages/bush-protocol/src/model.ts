@@ -60,7 +60,6 @@ export type ModelMessage = z.infer<typeof modelMessageSchema>;
 export const requestCapabilitiesSchema = z.object({
   vision: z.boolean().default(false),
   interactiveRequests: z.boolean().default(false),
-  userChoice: z.boolean().default(false),
 });
 
 export const permissionModeSchema = z.enum([
@@ -128,7 +127,6 @@ export const modelRequestSchema = z.object({
   requestCapabilities: requestCapabilitiesSchema.default({
     vision: false,
     interactiveRequests: false,
-    userChoice: false,
   }),
   permissionMode: permissionModeSchema.default("task_free"),
   metadata: z.record(z.string(), z.unknown()).default({}),

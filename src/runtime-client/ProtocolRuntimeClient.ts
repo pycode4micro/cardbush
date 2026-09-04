@@ -3,8 +3,6 @@ import {
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
-  ANSWER_RUNTIME_INTERACTION_COMMAND,
-  GET_PENDING_RUNTIME_INTERACTIONS_COMMAND,
   GET_RUNTIME_CAPABILITIES_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
@@ -42,9 +40,6 @@ import {
   runtimeStopReceiptSchema,
   runtimeGuidanceRequestSchema,
   runtimeGuidanceReceiptSchema,
-  runtimeInteractionAnswerSchema,
-  runtimeInteractionSchema,
-  pendingRuntimeInteractionsRequestSchema,
   runtimeCoordinationSessionSchema,
   setRuntimePlanRequestSchema,
   updateRuntimeGoalRequestSchema,
@@ -75,8 +70,6 @@ import {
   type RuntimeStopReceipt,
   type RuntimeGuidanceRequest,
   type RuntimeGuidanceReceipt,
-  type RuntimeInteraction,
-  type RuntimeInteractionAnswer,
   type PlanState,
   type GoalState,
   type McpSnapshot,
@@ -253,30 +246,6 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
     return this.command(
       { kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload },
       (value) => runtimeGuidanceReceiptSchema.parse(value),
-      signal,
-    );
-  }
-
-  pendingInteractions(
-    input: { sessionId?: string; turnId?: string } = {},
-    signal?: AbortSignal,
-  ): Promise<RuntimeInteraction[]> {
-    const payload = pendingRuntimeInteractionsRequestSchema.parse(input);
-    return this.command(
-      { kind: GET_PENDING_RUNTIME_INTERACTIONS_COMMAND, payload },
-      (value) => runtimeInteractionSchema.array().parse(value),
-      signal,
-    );
-  }
-
-  answerInteraction(
-    input: RuntimeInteractionAnswer,
-    signal?: AbortSignal,
-  ): Promise<RuntimeInteractionAnswer> {
-    const payload = runtimeInteractionAnswerSchema.parse(input);
-    return this.command(
-      { kind: ANSWER_RUNTIME_INTERACTION_COMMAND, payload },
-      (value) => runtimeInteractionAnswerSchema.parse(value),
       signal,
     );
   }

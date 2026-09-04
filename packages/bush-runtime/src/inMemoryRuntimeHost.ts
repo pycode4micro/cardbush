@@ -1,13 +1,11 @@
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
-  ANSWER_RUNTIME_INTERACTION_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
   APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
   GET_RUNTIME_CAPABILITIES_COMMAND,
-  GET_PENDING_RUNTIME_INTERACTIONS_COMMAND,
   GET_RUNTIME_GOAL_COMMAND,
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
@@ -42,8 +40,6 @@ import {
   modelRequestSchema,
   runtimePermissionAnswerSchema,
   runtimeGuidanceRequestSchema,
-  runtimeInteractionAnswerSchema,
-  pendingRuntimeInteractionsRequestSchema,
   runtimeCoordinationSessionSchema,
   runtimeSessionIdentitySchema,
   runtimeSessionReadRequestSchema,
@@ -78,7 +74,6 @@ import {
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
   type TurnContextCheckpoint,
-  type RuntimeInteraction,
   type ToolExecutionRecord,
   type WorkspaceChange,
 } from "@cardbush/bush-protocol";
@@ -113,7 +108,6 @@ import { projectActiveTurnContext } from "./contextAssembler.js";
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
-import { RuntimeInteractionStore } from "./runtimeInteractionStore.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import { LogicMemoryStore } from "./logicMemory.js";
 import {
@@ -283,7 +277,6 @@ export class InMemoryRuntimeHost {
   readonly #activeTurns = new Set<string>();
   readonly #activeTurnControllers = new Map<string, AbortController>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
-  readonly #interactions: RuntimeInteractionStore;
   readonly #logicMemory: LogicMemoryStore;
   readonly #guidanceQueues = new Map<string, Array<{
     messageId: string;
@@ -310,13 +303,7 @@ export class InMemoryRuntimeHost {
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
-    this.#interactions = new RuntimeInteractionStore({
-      onRequested: (item) => this.#appendInteractionEvent(item, "interaction_requested"),
-      onAnswered: (item, answer) => this.#appendInteractionEvent(item, "interaction_answered", answer.answerId),
-      onCancelled: (item, reason) => this.#appendInteractionEvent(item, "interaction_cancelled", reason),
-      onExpired: (item) => this.#appendInteractionEvent(item, "interaction_expired", "timeout"),
-    });
-    registerInteractionTools(this.#toolRegistry, this.#interactions);
+    registerInteractionTools(this.#toolRegistry);
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
@@ -420,10 +407,6 @@ export class InMemoryRuntimeHost {
           "permission_answered",
           "permission_rejected",
           "permission_cancelled",
-          "interaction_requested",
-          "interaction_answered",
-          "interaction_cancelled",
-          "interaction_expired",
           "cache_chain_observed",
           "model_request_usage",
           "context_compaction_started",
@@ -442,8 +425,6 @@ export class InMemoryRuntimeHost {
         RUN_MODEL_TURN_COMMAND,
         ANSWER_RUNTIME_PERMISSION_COMMAND,
         ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
-        GET_PENDING_RUNTIME_INTERACTIONS_COMMAND,
-        ANSWER_RUNTIME_INTERACTION_COMMAND,
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
         GET_RUNTIME_SESSION_COMMAND,
@@ -484,7 +465,6 @@ export class InMemoryRuntimeHost {
         "tool_execution",
         "interactive_permissions",
         "targeted_tool_cancellation",
-        "generic_user_choice",
         "same_turn_guidance",
         "checkpoint_recovery",
         "cache_chain_observation",
@@ -680,14 +660,6 @@ export class InMemoryRuntimeHost {
           queueDepth: queue.length,
         };
       }
-      case GET_PENDING_RUNTIME_INTERACTIONS_COMMAND:
-        return this.#interactions.list(
-          pendingRuntimeInteractionsRequestSchema.parse(command.payload),
-        );
-      case ANSWER_RUNTIME_INTERACTION_COMMAND:
-        return this.#interactions.answer(
-          runtimeInteractionAnswerSchema.parse(command.payload),
-        );
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
@@ -2160,34 +2132,6 @@ export class InMemoryRuntimeHost {
     }
     if (matches.length === 1) return matches[0].answerPermission(answer);
     throw new Error(`Permission ${answer.permissionId} is not pending.`);
-  }
-
-  #appendInteractionEvent(
-    item: RuntimeInteraction,
-    kind: "interaction_requested" | "interaction_answered" | "interaction_cancelled" | "interaction_expired",
-    detail = "",
-  ): RuntimeEvent {
-    const identity = {
-      requestId: this.#eventLog.replay(item.sessionId, item.turnId)[0]?.requestId ?? `request_${item.turnId}`,
-      sessionId: item.sessionId,
-      turnId: item.turnId,
-    };
-    if (kind === "interaction_requested") {
-      return this.#eventLog.append(identity, { kind, payload: {
-        interactionId: item.interactionId, toolCallId: item.toolCallId,
-        title: item.title, description: item.description, reason: item.reason,
-        questions: item.questions, submitLabel: item.submitLabel,
-        cancelLabel: item.cancelLabel, expiresAt: item.expiresAt,
-      } });
-    }
-    if (kind === "interaction_answered") {
-      return this.#eventLog.append(identity, { kind, payload: {
-        interactionId: item.interactionId, toolCallId: item.toolCallId, answerId: detail,
-      } });
-    }
-    return this.#eventLog.append(identity, { kind, payload: {
-      interactionId: item.interactionId, toolCallId: item.toolCallId, reason: detail,
-    } });
   }
 
   #readArchivedToolResult(locator: string): unknown {

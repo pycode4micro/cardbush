@@ -3,11 +3,10 @@ import type {
   RuntimePermissionRequest,
 } from '@cardbush/bush-protocol';
 
-export type AppSection = 'chat' | 'os' | 'search' | 'skills' | 'subagents' | 'team';
+export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
   | 'profile'
   | 'companion'
-  | 'os'
   | 'runtime'
   | 'proxy'
   | 'subagents'
@@ -16,8 +15,8 @@ export type SettingsSection =
   | 'models'
   | 'diagnostics'
   | 'about';
-export type ThemeMode = 'parchment' | 'bright' | 'dark';
-export type ThemePreference = 'system' | 'light' | 'dark';
+export type ThemeMode = 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+export type ThemePreference = 'system' | 'light' | 'dark' | 'cyberpunk';
 export type LightThemeStyle = 'parchment' | 'bright';
 export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
@@ -51,20 +50,6 @@ interface ProxySettings {
 
 interface TerminalSettings {
   runtime: TerminalRuntime;
-}
-
-interface OsSettings {
-  launchAtLogin: boolean;
-  startInOsMode: boolean;
-  taskbarPlacement: 'top' | 'bottom';
-  backgroundContrast: number;
-  gamepad: {
-    confirmButton: number;
-    backButton: number;
-    keyboardButton: number;
-    appsButton: number;
-    settingsButton: number;
-  };
 }
 
 export interface BackendCapabilities {
@@ -116,8 +101,6 @@ export interface BackendCapabilities {
   browserPrivacyMode: boolean;
   browserApiCandidates: boolean;
   browserContextApiRequest: boolean;
-  osMode: boolean;
-  desktopAutomation: boolean;
   taskPlan: boolean;
   reasoningStream: boolean;
   reasoningLevelSelection: boolean;
@@ -317,7 +300,6 @@ export interface AppSettingsState {
   thinking: ThinkingUiSettings;
   guidance: GuidanceUiSettings;
   terminal: TerminalSettings;
-  os: OsSettings;
   managedModelConfigs: ManagedModelConfig[];
   backgroundImagePath: string;
   companionEnabled: boolean;
@@ -411,7 +393,7 @@ export interface CardbushAppPlugin {
     screenshotDirectory?: string;
     allowOpenApp?: boolean;
     allowWindowClose?: boolean;
-    connectionMode?: 'managed' | 'existing';
+    connectionMode?: 'connector' | 'remote_debugging';
     [key: string]: unknown;
   };
 }
@@ -680,11 +662,7 @@ export interface PendingInteraction {
   turnId?: string;
   title?: string;
   reason?: string;
-  message?: string;
   description?: string;
-  submitLabel?: string;
-  cancelLabel?: string;
-  replyMode?: string;
   toolName?: string;
   runtimePermission?: RuntimePermissionRequest;
   questions?: InteractionQuestion[];
@@ -701,17 +679,12 @@ export interface InteractionQuestion {
   id: string;
   label: string;
   question: string;
-  selectionMode: 'single' | 'multiple' | 'input';
-  needInput: boolean;
-  required: boolean;
   options: InteractionOption[];
 }
 
 export interface InteractionReplyAnswer {
   questionId: string;
   selectedOptionId?: string;
-  selectedOptionIds?: string[];
-  inputText?: string;
 }
 
 export interface SkillSummary {

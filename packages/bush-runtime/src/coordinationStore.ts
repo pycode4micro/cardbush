@@ -102,9 +102,7 @@ export class CoordinationStore {
     if (existing?.goalId === request.goalId) {
       const equivalent =
         existing.objective === request.objective &&
-        existing.tokenBudget === request.tokenBudget &&
-        JSON.stringify(existing.linkedA2ATaskIds) ===
-          JSON.stringify(request.linkedA2ATaskIds);
+        existing.tokenBudget === request.tokenBudget;
       if (equivalent) return existing;
       throw new Error(`Goal ${request.goalId} already exists with different facts.`);
     }
@@ -120,7 +118,6 @@ export class CoordinationStore {
         ? {}
         : { tokenBudget: request.tokenBudget }),
       consumedTokens: 0,
-      linkedA2ATaskIds: request.linkedA2ATaskIds,
       revision: 1,
       createdAt: now,
       updatedAt: now,
@@ -146,7 +143,6 @@ export class CoordinationStore {
       status: request.status,
       statusReason: request.statusReason,
       consumedTokens: request.consumedTokens,
-      linkedA2ATaskIds: request.linkedA2ATaskIds,
       revision: before.revision + 1,
       updatedAt: now,
       ...(request.status === "active"

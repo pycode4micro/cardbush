@@ -146,7 +146,7 @@ test("freezes the configured parent/child permission route into each child Turn"
     {
       policy: { permissionRouting: "parent", childPermissionMode: "user_free" },
       parentMode: "all_free",
-      expectedMode: "user_free",
+      expectedMode: "all_free",
       expectedScope: "child_session",
       expectedRouting: "parent",
     },
@@ -162,7 +162,7 @@ test("freezes the configured parent/child permission route into each child Turn"
       policy: { permissionRouting: "user", childPermissionMode: "task_free" },
       requestedRouting: "parent",
       parentMode: "all_free",
-      expectedMode: "task_free",
+      expectedMode: "all_free",
       expectedScope: "child_session",
       expectedRouting: "parent",
     },
@@ -306,7 +306,7 @@ test("tunnels a child permission request through the active parent Turn", async 
     model: "fixture",
     messages: [{ role: "user", content: "delegate" }],
     tools,
-    permissionMode: "all_free",
+    permissionMode: "task_free",
   });
   let requested;
   for (let attempt = 0; attempt < 100 && !requested; attempt += 1) {

@@ -23,10 +23,14 @@ export function localFileReference(
   workspaceRoot = '',
 ): LocalFileReference | null {
   const cleaned = cleanFileReferenceValue(value);
-  if (!cleaned || !looksLikeFilePath(cleaned)) {
+  const withoutLocation = cleaned.replace(trailingLocationPattern, '');
+  if (
+    !cleaned ||
+    posixPathConflictsWithWindowsWorkspace(withoutLocation, workspaceRoot) ||
+    !looksLikeFilePath(cleaned)
+  ) {
     return null;
   }
-  const withoutLocation = cleaned.replace(trailingLocationPattern, '');
   const resolvedPath = isAbsoluteLocalPath(withoutLocation)
     ? withoutLocation
     : resolveWorkspaceRelativePath(withoutLocation, workspaceRoot);
@@ -72,6 +76,10 @@ export function remarkLocalFileReferences(options: { workspaceRoot?: string } = 
   return (tree: MarkdownNode) => {
     visitMarkdownText(tree, workspaceRoot);
   };
+}
+
+function posixPathConflictsWithWindowsWorkspace(value: string, workspaceRoot: string) {
+  return value.startsWith('/') && /^[a-zA-Z]:[\\/]/.test(workspaceRoot.trim());
 }
 
 function visitMarkdownText(node: MarkdownNode, workspaceRoot: string) {

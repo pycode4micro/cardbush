@@ -14,21 +14,25 @@ type LocalReferenceMetadata = {
 
 const localReferenceMetadata = new Map<string, Promise<LocalReferenceMetadata | null>>();
 
+type LocalReferenceInspection = {
+  path: string;
+  metadata: LocalReferenceMetadata | null;
+};
+
 export function LocalFileReferenceLink({
   path,
   children,
+  unavailableLabel,
 }: {
   path: string;
   children?: ReactNode;
+  unavailableLabel?: ReactNode;
 }) {
-  const [metadata, setMetadata] = useState<LocalReferenceMetadata | null>(null);
-  const fallbackDirectoryLike = localReferenceLooksLikeDirectory(path);
-  const directoryLike = metadata?.kind === 'folder' || (
-    metadata == null && fallbackDirectoryLike
-  );
-  const applicationLike = metadata?.kind === 'application' || (
-    metadata == null && path.toLowerCase().endsWith('.lnk')
-  );
+  const [inspection, setInspection] = useState<LocalReferenceInspection | null>(null);
+  const inspectionComplete = inspection?.path === path;
+  const metadata = inspectionComplete ? inspection.metadata : null;
+  const directoryLike = metadata?.kind === 'folder';
+  const applicationLike = metadata?.kind === 'application';
   const pathLabel = basename(path);
   const childrenMatchPath = typeof children === 'string' && children.trim() === pathLabel;
   const label = applicationLike && metadata?.name && (!children || childrenMatchPath)
@@ -38,7 +42,10 @@ export function LocalFileReferenceLink({
   useEffect(() => {
     let active = true;
     const inspect = window.cardbushDesktop?.inspectLocalReference;
-    if (!inspect) return undefined;
+    if (!inspect) {
+      setInspection({ path, metadata: null });
+      return undefined;
+    }
     const key = path.toLowerCase();
     let pending = localReferenceMetadata.get(key);
     if (!pending) {
@@ -46,12 +53,20 @@ export function LocalFileReferenceLink({
       localReferenceMetadata.set(key, pending);
     }
     void pending.then((value) => {
-      if (active) setMetadata(value);
+      if (active) setInspection({ path, metadata: value });
     });
     return () => {
       active = false;
     };
   }, [path]);
+
+  if (!inspectionComplete || !metadata) {
+    return (
+      <span className="local-file-reference-unavailable" title={path}>
+        {unavailableLabel ?? children ?? pathLabel}
+      </span>
+    );
+  }
 
   function openInCardbush(event: MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
@@ -86,10 +101,4 @@ export function LocalFileReferenceLink({
       <span>{label}</span>
     </a>
   );
-}
-
-function localReferenceLooksLikeDirectory(path: string) {
-  const name = basename(path);
-  if (!name || path.endsWith('/') || path.endsWith('\\')) return true;
-  return !/\.[a-z0-9][a-z0-9._-]{0,15}$/i.test(name);
 }

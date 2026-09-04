@@ -4,7 +4,7 @@ import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolutio
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark';
+  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -47,13 +47,35 @@ type RuntimeStartupStatus = {
   error?: string;
 };
 
+type ChromeConnectorStatus = {
+  protocol: 'cardbush.chrome_connector.v1';
+  platformSupported: boolean;
+  packagedApplication: boolean;
+  bridgeRegistered: boolean;
+  nativeHostAvailable: boolean;
+  nativeHostPath: string;
+  bridgeRunning: boolean;
+  extensionConnected: boolean;
+  extensionVersion?: string;
+  extensionDirectory: string;
+  extensionId: string;
+  storeUrl?: string;
+  setupMessage?: string;
+  connectedAt?: string;
+  activeTabId?: number;
+  activeTabTitle?: string;
+  activeTabUrl?: string;
+  controlledTabCount: number;
+  lastError?: string;
+};
+
 type ShadowWindowPayload = {
   windowId: string;
   sessionId: string;
   sourceTurnId: string;
   title: string;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark';
+  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
   accentColor: string;
   modelConfig: Record<string, unknown>;
   reasoningLevel?: ReasoningEffort;
@@ -89,6 +111,23 @@ const desktopApi = {
     const listener = (_event: Electron.IpcRendererEvent, status: RuntimeStartupStatus) => callback(status);
     ipcRenderer.on('app:runtime-startup-status', listener);
     return () => ipcRenderer.removeListener('app:runtime-startup-status', listener);
+  },
+  chromeConnectorStatus: () =>
+    ipcRenderer.invoke('chrome-connector:status') as Promise<ChromeConnectorStatus>,
+  setupChromeConnector: () =>
+    ipcRenderer.invoke('chrome-connector:setup') as Promise<ChromeConnectorStatus>,
+  openChromeConnectorInstaller: () =>
+    ipcRenderer.invoke('chrome-connector:open-installer') as Promise<{
+      opened: boolean;
+      method: 'store' | 'unpacked';
+      target: string;
+    }>,
+  revealChromeConnectorExtension: () =>
+    ipcRenderer.invoke('chrome-connector:reveal-extension') as Promise<string>,
+  onChromeConnectorStatus: (callback: (status: ChromeConnectorStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, status: ChromeConnectorStatus) => callback(status);
+    ipcRenderer.on('chrome-connector:status', listener);
+    return () => ipcRenderer.removeListener('chrome-connector:status', listener);
   },
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
@@ -136,122 +175,22 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
-  wallpaperPath: () => ipcRenderer.invoke('appearance:wallpaper-path') as Promise<string>,
-  wallpaperDataUrl: () => ipcRenderer.invoke('appearance:wallpaper-data-url') as Promise<string>,
-  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') =>
+  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') =>
     ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
   productHostCommand: (command: unknown) =>
     ipcRenderer.invoke('cardbush-product-host:command', command) as Promise<unknown>,
-  a2aInspect: (agentUrl: string) =>
-    ipcRenderer.invoke('a2a:inspect', agentUrl) as Promise<unknown>,
-  a2aDispatch: (input: {
-    agentUrl: string;
-    text: string;
-    contextId?: string;
-    taskId?: string;
-  }) => ipcRenderer.invoke('a2a:dispatch', input) as Promise<unknown>,
   setProxy: (proxy: {
     mode: 'none' | 'system' | 'manual';
     httpProxy: string;
     httpsProxy: string;
     noProxy: string;
   }) => ipcRenderer.invoke('network:set-proxy', proxy) as Promise<void>,
-  osLoginSettings: () =>
-    ipcRenderer.invoke('os:login-settings') as Promise<{
-      enabled: boolean;
-      startInOsMode: boolean;
-      supported: boolean;
-    }>,
-  setOsLoginSettings: (value: { enabled: boolean; startInOsMode: boolean }) =>
-    ipcRenderer.invoke('os:set-login-settings', value) as Promise<{
-      enabled: boolean;
-      startInOsMode: boolean;
-      supported: boolean;
-    }>,
-  osStartupContext: () =>
-    ipcRenderer.invoke('os:startup-context') as Promise<{
-      launchedInOsMode: boolean;
-      supported: boolean;
-    }>,
-  setOsShellMode: (enabled: boolean) =>
-    ipcRenderer.invoke('os:set-shell-mode', enabled) as Promise<{
-      enabled: boolean;
-    }>,
-  osFilesystemLocations: () =>
-    ipcRenderer.invoke('os:filesystem-locations') as Promise<Array<{
+  filesystemLocations: () =>
+    ipcRenderer.invoke('filesystem:locations') as Promise<Array<{
       id: string;
       name: string;
       path: string;
     }>>,
-  osListDirectory: (targetPath?: string) =>
-    ipcRenderer.invoke('os:list-directory', targetPath) as Promise<{
-      path: string;
-      parentPath: string;
-      truncated: boolean;
-      items: Array<{
-        id: string;
-        name: string;
-        path: string;
-        kind: 'file' | 'directory';
-        extension: string;
-        size: number;
-        modifiedAt: string;
-        hidden: boolean;
-      }>;
-    }>,
-  osCreateDirectory: (parentPath: string, name: string) =>
-    ipcRenderer.invoke('os:create-directory', parentPath, name) as Promise<string>,
-  osRenamePath: (sourcePath: string, name: string) =>
-    ipcRenderer.invoke('os:rename-path', sourcePath, name) as Promise<string>,
-  osTrashPath: (targetPath: string) =>
-    ipcRenderer.invoke('os:trash-path', targetPath) as Promise<void>,
-  osListApplications: (forceRefresh?: boolean) => ipcRenderer.invoke('os:list-applications', forceRefresh) as Promise<Array<{
-    id: string;
-    name: string;
-    path: string;
-    source: 'start_menu';
-    icon: string;
-  }>>,
-  osRunningApplications: () => ipcRenderer.invoke('os:running-applications') as Promise<Array<{
-    id: string;
-    name: string;
-    path: string;
-    source: 'start_menu';
-    icon: string;
-  }>>,
-  osListWindows: () => ipcRenderer.invoke('os:list-windows') as Promise<Array<{
-    id: string;
-    processId: number;
-    handle: number;
-    title: string;
-    processName: string;
-    minimized: boolean;
-    maximized: boolean;
-    icon: string;
-  }>>,
-  osWindowAction: (windowId: string, action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close') =>
-    ipcRenderer.invoke('os:window-action', windowId, action) as Promise<{
-      ok: boolean;
-      windowId: string;
-      action: string;
-    }>,
-  osLaunchApplication: (appId: string) =>
-    ipcRenderer.invoke('os:launch-application', appId) as Promise<{
-      status: 'focused' | 'launched' | 'launched_and_focused';
-      applicationId: string;
-    }>,
-  osSearchAppCatalog: (query: string) =>
-    ipcRenderer.invoke('os:search-app-catalog', query) as Promise<Array<{
-      name: string;
-      id: string;
-      version: string;
-      source: string;
-    }>>,
-  osInstallCatalogApplication: (packageId: string) =>
-    ipcRenderer.invoke('os:install-catalog-application', packageId) as Promise<{
-      installed: boolean;
-      output: string;
-    }>,
   listProviderModels: (baseUrl: string, apiKey: string) =>
     ipcRenderer.invoke('models:list', baseUrl, apiKey) as Promise<{
       endpoint: string;

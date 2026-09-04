@@ -543,11 +543,10 @@ test("coordination commands carry explicit identities and revisions", () => {
     status: "active",
     statusReason: "",
     consumedTokens: 0,
-    linkedA2ATaskIds: [],
   });
 
   assert.equal(setPlan.scopeChangeReason, "");
-  assert.deepEqual(createGoal.linkedA2ATaskIds, []);
+  assert.equal(createGoal.objective, "finish");
   assert.equal(updateGoal.expectedRevision, 1);
   assert.throws(() => coordinationEventSchema.parse({
     protocol: "bush.coordination_event.v1",

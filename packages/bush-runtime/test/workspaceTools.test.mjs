@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, parse, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -15,8 +16,145 @@ import {
   ToolExecutionCoordinator,
   ToolRegistry,
   WorkspaceObservationStore,
+  protectedTerminalDeletion,
   registerWorkspaceTools,
 } from "../dist/index.js";
+
+test("permanently denies direct deletion of invariant protected directories", () => {
+  const home = resolve(homedir());
+  const filesystemRoot = resolve(parse(home).root);
+  const homeSibling = join(dirname(home), "cardbush-protected-home-sibling");
+  const projectRoot = join(tmpdir(), "cardbush-protected-project-root");
+  const shell = process.platform === "win32" ? "powershell" : "posix";
+  const deletion = (target) => process.platform === "win32"
+    ? `Remove-Item -LiteralPath '${target.replaceAll("'", "''")}' -Recurse -Force`
+    : `rm -rf -- '${target.replaceAll("'", "'\\''")}'`;
+  const inspect = (target) => protectedTerminalDeletion({
+    command: deletion(target),
+    cwd: projectRoot,
+    shell,
+    projectRoots: [projectRoot],
+  });
+
+  assert.equal(inspect(filesystemRoot)?.protection, "filesystem_root");
+  assert.equal(inspect(home)?.protection, "user_home");
+  assert.equal(inspect(homeSibling)?.protection, "user_home_sibling");
+  assert.equal(inspect(projectRoot)?.protection, "project_root");
+  assert.equal(inspect(join(projectRoot, "build")), null);
+  const variableDelete = process.platform === "win32"
+    ? "Remove-Item -LiteralPath $env:USERPROFILE -Recurse -Force"
+    : "rm -rf -- \"$HOME\"";
+  assert.equal(
+    protectedTerminalDeletion({
+      command: variableDelete,
+      cwd: projectRoot,
+      shell,
+      projectRoots: [projectRoot],
+    })?.protection,
+    "user_home",
+  );
+
+  if (process.platform === "win32") {
+    assert.equal(
+      protectedTerminalDeletion({
+        command: "Remove-Item -Path 'build' -Filter '*' -Recurse -Force",
+        cwd: projectRoot,
+        shell,
+        projectRoots: [projectRoot],
+      }),
+      null,
+      "A filter on a safe child must not be mistaken for a project-root target",
+    );
+  }
+
+  const changeThenDelete = process.platform === "win32"
+    ? "Set-Location ..; Remove-Item -LiteralPath . -Recurse -Force"
+    : "cd ..; rm -rf -- .";
+  assert.equal(
+    protectedTerminalDeletion({
+      command: changeThenDelete,
+      cwd: join(projectRoot, "child"),
+      shell,
+      projectRoots: [projectRoot],
+    })?.protection,
+    "project_root",
+  );
+
+  const chained = process.platform === "win32"
+    ? `Write-Output safe; ${deletion(home)}`
+    : `printf safe; ${deletion(home)}`;
+  assert.equal(
+    protectedTerminalDeletion({
+      command: chained,
+      cwd: projectRoot,
+      shell,
+      projectRoots: [projectRoot],
+    })?.protection,
+    "user_home",
+  );
+
+  const nested = process.platform === "win32"
+    ? `powershell -NoProfile -Command "${deletion(filesystemRoot)}"`
+    : `sh -c "${deletion(filesystemRoot)}"`;
+  assert.equal(
+    protectedTerminalDeletion({
+      command: nested,
+      cwd: projectRoot,
+      shell,
+      projectRoots: [projectRoot],
+    })?.protection,
+    "filesystem_root",
+  );
+
+  const grouped = process.platform === "win32"
+    ? `& { ${deletion(home)} }`
+    : `( ${deletion(home)} )`;
+  assert.equal(
+    protectedTerminalDeletion({
+      command: grouped,
+      cwd: projectRoot,
+      shell,
+      projectRoots: [projectRoot],
+    })?.protection,
+    "user_home",
+  );
+
+  const wildcardSelection = process.platform === "win32"
+    ? "Remove-Item -Path '*.log' -Force"
+    : "rm -f -- *.log";
+  assert.equal(
+    protectedTerminalDeletion({
+      command: wildcardSelection,
+      cwd: projectRoot,
+      shell,
+      projectRoots: [projectRoot],
+    }),
+    null,
+    "A wildcard child selection must not be promoted into deletion of its parent directory",
+  );
+});
+
+test("full control cannot override protected project deletion", async (t) => {
+  const projectRoot = temporaryRoot(t);
+  const setup = tools(projectRoot);
+  const shell = process.platform === "win32" ? "powershell" : "posix";
+  const command = process.platform === "win32"
+    ? `Remove-Item -LiteralPath '${projectRoot.replaceAll("'", "''")}' -Recurse -Force`
+    : `rm -rf -- '${projectRoot.replaceAll("'", "'\\''")}'`;
+
+  const outcome = await setup.execute("session", "terminal_exec", {
+    command,
+    cwd: projectRoot,
+    yield_time_ms: 100,
+    shell,
+  }, { permissionMode: "all_free", projectDir: projectRoot });
+
+  assert.equal(outcome.kind, "failed");
+  assert.equal(outcome.error.code, "protected_path_delete_denied");
+  assert.equal(outcome.error.kind, "permission");
+  assert.equal(setup.permissionRequestCount, 0);
+  assert.equal(existsSync(projectRoot), true);
+});
 
 test("requires an exact observed revision before edit and permits inherited fork evidence", async (t) => {
   const root = temporaryRoot(t);
@@ -372,6 +510,28 @@ test("writes to and explicitly stops persistent terminal sessions", async (t) =>
   assert.equal(afterStop.result.sessions.length, 0);
 });
 
+test("full control stops an owned terminal without publishing a permission request", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const metadata = { permissionMode: "all_free", projectDir: root };
+  const persistent = await setup.execute("session", "terminal_exec", {
+    command: "node -e \"setInterval(()=>{},1000)\"",
+    cwd: root,
+    yield_time_ms: 100,
+  }, metadata);
+  assert.equal(persistent.kind, "returned");
+  assert.equal(persistent.result.state, "running");
+
+  const permissionRequestsBeforeStop = setup.permissionRequestCount;
+  const stopped = await setup.execute("session", "terminal_stop", {
+    session_id: persistent.result.terminalSessionId,
+  }, metadata);
+
+  assert.equal(stopped.kind, "returned");
+  assert.equal(stopped.result.state, "stopped");
+  assert.equal(setup.permissionRequestCount, permissionRequestsBeforeStop);
+});
+
 test("keeps a spawned terminal session available when the waiting Tool is cancelled", async (t) => {
   const root = temporaryRoot(t);
   const setup = tools(root);
@@ -529,20 +689,27 @@ function tools(workspace) {
   const registry = new ToolRegistry();
   registerWorkspaceTools(registry, new WorkspaceObservationStore());
   let ordinal = 0;
+  let permissionRequestCount = 0;
   const coordinator = new ToolExecutionCoordinator({
     registry,
     permissions: {
-      request: async (input) => ({
-        protocol: "bush.runtime_permission_answer.v1",
-        permissionId: `permission_${Math.random()}`,
-        answerId: `answer_${Math.random()}`,
-        decision: "allow_once",
-        grantedCapabilityIds: input.capabilityIds,
-      }),
+      async request(input) {
+        permissionRequestCount += 1;
+        return {
+          protocol: "bush.runtime_permission_answer.v1",
+          permissionId: `permission_${Math.random()}`,
+          answerId: `answer_${Math.random()}`,
+          decision: "allow_once",
+          grantedCapabilityIds: input.capabilityIds,
+        };
+      },
     },
   });
   return {
     registry,
+    get permissionRequestCount() {
+      return permissionRequestCount;
+    },
     execute(sessionId, name, input, metadata = {}, signal) {
       return coordinator.execute(
         call(name, input),
@@ -568,6 +735,9 @@ function identity(sessionId) {
 }
 
 function turn(registry, workspaceDir, metadata) {
+  const permissionMode = metadata.permissionMode ?? "task_free";
+  const requestMetadata = { ...metadata };
+  delete requestMetadata.permissionMode;
   return {
     request: {
       protocol: "bush.model_request.v1",
@@ -577,7 +747,8 @@ function turn(registry, workspaceDir, metadata) {
       model: "model",
       messages: [],
       tools: registry.definitions(),
-      metadata: { workspaceDir, ...metadata },
+      permissionMode,
+      metadata: { workspaceDir, ...requestMetadata },
     },
     contextMessages: [],
   };

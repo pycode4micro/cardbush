@@ -6,6 +6,7 @@ import { CardlingWindow } from './CardlingWindow';
 import { ShadowWindow } from './ShadowWindow';
 import './styles/theme.css';
 import './styles/app.css';
+import './styles/themes/cyberpunk.css';
 
 function rendererFailureMessage(value: unknown) {
   return value instanceof Error ? `${value.name}: ${value.message}` : String(value);

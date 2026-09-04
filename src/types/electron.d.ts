@@ -9,6 +9,28 @@ import type {
   ThemeMode,
 } from '../types';
 
+interface ChromeConnectorStatus {
+  protocol: 'cardbush.chrome_connector.v1';
+  platformSupported: boolean;
+  packagedApplication: boolean;
+  bridgeRegistered: boolean;
+  nativeHostAvailable: boolean;
+  nativeHostPath: string;
+  bridgeRunning: boolean;
+  extensionConnected: boolean;
+  extensionVersion?: string;
+  extensionDirectory: string;
+  extensionId: string;
+  storeUrl?: string;
+  setupMessage?: string;
+  connectedAt?: string;
+  activeTabId?: number;
+  activeTabTitle?: string;
+  activeTabUrl?: string;
+  controlledTabCount: number;
+  lastError?: string;
+}
+
 declare global {
   interface Window {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
@@ -25,6 +47,17 @@ declare global {
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
       retryRuntimeStartup: () => Promise<RuntimeStartupStatus>;
+      chromeConnectorStatus: () => Promise<ChromeConnectorStatus>;
+      setupChromeConnector: () => Promise<ChromeConnectorStatus>;
+      openChromeConnectorInstaller: () => Promise<{
+        opened: boolean;
+        method: 'store' | 'unpacked';
+        target: string;
+      }>;
+      revealChromeConnectorExtension: () => Promise<string>;
+      onChromeConnectorStatus: (
+        callback: (status: ChromeConnectorStatus) => void,
+      ) => () => void;
       onRuntimeStartupStatus: (
         callback: (status: RuntimeStartupStatus) => void,
       ) => () => void;
@@ -84,17 +117,8 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
-      wallpaperPath: () => Promise<string>;
-      wallpaperDataUrl: () => Promise<string>;
-      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark') => Promise<void>;
+      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') => Promise<void>;
       productHostCommand: (command: unknown) => Promise<unknown>;
-      a2aInspect: (agentUrl: string) => Promise<unknown>;
-      a2aDispatch: (input: {
-        agentUrl: string;
-        text: string;
-        contextId?: string;
-        taskId?: string;
-      }) => Promise<unknown>;
       listSkills: () => Promise<unknown[]>;
       readSkill: (skillName: string) => Promise<unknown>;
       installLocalPlugin: () => Promise<{ id: string; manifestPath: string } | null>;
@@ -104,95 +128,11 @@ declare global {
         httpsProxy: string;
         noProxy: string;
       }) => Promise<void>;
-      osLoginSettings: () => Promise<{
-        enabled: boolean;
-        startInOsMode: boolean;
-        supported: boolean;
-      }>;
-      setOsLoginSettings: (value: {
-        enabled: boolean;
-        startInOsMode: boolean;
-      }) => Promise<{
-        enabled: boolean;
-        startInOsMode: boolean;
-        supported: boolean;
-      }>;
-      osStartupContext: () => Promise<{
-        launchedInOsMode: boolean;
-        supported: boolean;
-      }>;
-      setOsShellMode: (enabled: boolean) => Promise<{
-        enabled: boolean;
-      }>;
-      osFilesystemLocations: () => Promise<Array<{
+      filesystemLocations: () => Promise<Array<{
         id: string;
         name: string;
         path: string;
       }>>;
-      osListDirectory: (targetPath?: string) => Promise<{
-        path: string;
-        parentPath: string;
-        truncated: boolean;
-        items: Array<{
-          id: string;
-          name: string;
-          path: string;
-          kind: 'file' | 'directory';
-          extension: string;
-          size: number;
-          modifiedAt: string;
-          hidden: boolean;
-        }>;
-      }>;
-      osCreateDirectory: (parentPath: string, name: string) => Promise<string>;
-      osRenamePath: (sourcePath: string, name: string) => Promise<string>;
-      osTrashPath: (targetPath: string) => Promise<void>;
-      osListApplications: (forceRefresh?: boolean) => Promise<Array<{
-        id: string;
-        name: string;
-        path: string;
-        source: 'start_menu';
-        icon: string;
-      }>>;
-      osRunningApplications: () => Promise<Array<{
-        id: string;
-        name: string;
-        path: string;
-        source: 'start_menu';
-        icon: string;
-      }>>;
-      osListWindows: () => Promise<Array<{
-        id: string;
-        processId: number;
-        handle: number;
-        title: string;
-        processName: string;
-        minimized: boolean;
-        maximized: boolean;
-        icon: string;
-      }>>;
-      osWindowAction: (
-        windowId: string,
-        action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close',
-      ) => Promise<{
-        ok: boolean;
-        windowId: string;
-        action: string;
-      }>;
-      osLaunchApplication: (appId: string) => Promise<{
-        status: 'focused' | 'launched' | 'launched_and_focused';
-        applicationId: string;
-      }>;
-      osSearchAppCatalog: (query: string) => Promise<Array<{
-        name: string;
-        id: string;
-        version: string;
-        source: string;
-      }>>;
-      osInstallCatalogApplication: (packageId: string) => Promise<{
-        installed: boolean;
-        output: string;
-      }>;
       listProviderModels: (
         baseUrl: string,
         apiKey: string,

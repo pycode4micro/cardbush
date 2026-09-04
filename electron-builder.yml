@@ -7,9 +7,11 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  - '!dist-electron/productA2A.js'
   - packages/*/dist/**/*
   - packages/*/package.json
   - assets/**/*
+  - '!assets/plugins/chrome/extension/**/*'
   - '!assets/skills/**/*'
   - '!assets/runtime-tools/**/*'
   - package.json
@@ -17,6 +19,14 @@ files:
   - '!node_modules/.cache/**/*'
   - '!**/*.map'
 extraResources:
+  - from: dist-native/chrome-connector
+    to: chrome-native-host
+    filter:
+      - 'CardBushBrowserHost.exe'
+  - from: assets/plugins/chrome/extension
+    to: chrome-extension
+    filter:
+      - '**/*'
   - from: assets/runtime-tools
     to: runtime-tools
     filter:

@@ -9,7 +9,6 @@ import {
   Hourglass,
   Image,
   ListChecks,
-  ListTodo,
   Lightbulb,
   Minimize2,
   Search,
@@ -48,7 +47,6 @@ const toolLogos: Record<string, ToolLogoDefinition> = {
   update_task_plan: { icon: ListChecks, tone: 'planning' },
   update_goal: { icon: Target, tone: 'planning' },
   request_permission: { icon: ShieldCheck, tone: 'permission' },
-  request_user_choice: { icon: ListTodo, tone: 'permission' },
   runtime_context_compaction: { icon: Minimize2, tone: 'reasoning' },
 };
 

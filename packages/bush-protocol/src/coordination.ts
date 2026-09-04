@@ -50,7 +50,6 @@ export const goalStateSchema = z.object({
   statusReason: z.string(),
   tokenBudget: z.number().int().positive().optional(),
   consumedTokens: z.number().int().nonnegative(),
-  linkedA2ATaskIds: z.array(z.string().min(1)),
   revision: z.number().int().positive(),
   createdAt: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -64,7 +63,6 @@ export const createRuntimeGoalRequestSchema = z.object({
   sessionId: z.string().min(1),
   objective: z.string().min(1),
   tokenBudget: z.number().int().positive().optional(),
-  linkedA2ATaskIds: z.array(z.string().min(1)).default([]),
 });
 
 export const updateRuntimeGoalRequestSchema = z.object({
@@ -74,7 +72,6 @@ export const updateRuntimeGoalRequestSchema = z.object({
   status: goalStatusSchema,
   statusReason: z.string(),
   consumedTokens: z.number().int().nonnegative(),
-  linkedA2ATaskIds: z.array(z.string().min(1)),
 });
 
 const coordinationEventEnvelopeSchema = z.object({

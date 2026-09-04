@@ -18,6 +18,7 @@ import type {
   ToolRegistration,
   ToolRegistry,
 } from "./toolRegistry.js";
+import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
 
 interface PathInput { path: string }
 interface ReadFileInput extends PathInput { encoding: BufferEncoding }
@@ -344,6 +345,27 @@ export function registerWorkspaceTools(
     decodeInput: decodeTerminal,
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
+      const lexicalProjectRoots = protectedProjectRoots(context);
+      const canonicalProjectRoots = await Promise.all(lexicalProjectRoots.map((root) =>
+        resolveToolPath(context, root, true)
+      ));
+      const protectedDeletion = protectedTerminalDeletion({
+        command: context.input.command,
+        cwd,
+        shell: context.input.shell,
+        projectRoots: [...new Set([...lexicalProjectRoots, ...canonicalProjectRoots])],
+      });
+      if (protectedDeletion) {
+        return {
+          kind: "deny" as const,
+          code: "protected_path_delete_denied",
+          message: protectedDeletion.message,
+          details: {
+            protection: protectedDeletion.protection,
+            target: protectedDeletion.target,
+          },
+        };
+      }
       return pathAdmission(context, cwd, "execute");
     },
     execute: async (context: ToolHandlerContext<TerminalInput>) => {
@@ -487,8 +509,7 @@ async function pathAdmission(
       };
     }
 > {
-  const mode = permissionMode(context);
-  if (mode === "all_free") return { kind: "allow" } as const;
+  const mode = permissionBoundaryMode(context);
   const roots = await Promise.all(allowedRoots(context, mode).map(canonicalPath));
   if (roots.some((root) => isWithin(root, path))) return { kind: "allow" } as const;
   const capabilityId = capability(action, path);
@@ -504,9 +525,9 @@ async function pathAdmission(
   };
 }
 
-function permissionMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" | "all_free" {
+function permissionBoundaryMode(context: ToolAdmissionContext<unknown>): "task_free" | "user_free" {
   const candidate = context.turn?.request.permissionMode;
-  return candidate === "user_free" || candidate === "all_free" ? candidate : "task_free";
+  return candidate === "user_free" ? candidate : "task_free";
 }
 
 function allowedRoots(
@@ -576,6 +597,18 @@ function workspaceRoot(context: ToolAdmissionContext<unknown>): string | undefin
   const candidate = [metadata.workspaceDir, metadata.projectDir, metadata.sessionWorkspaceDir]
     .find((value) => typeof value === "string" && value.trim());
   return typeof candidate === "string" ? resolve(candidate) : undefined;
+}
+
+function protectedProjectRoots(context: ToolAdmissionContext<unknown>): string[] {
+  const metadata = context.turn?.request.metadata ?? {};
+  return [...new Set([
+    metadata.projectDir,
+    metadata.workspaceDir,
+    metadata.sessionWorkspaceDir,
+    ...rootStringArray(metadata.taskRoots),
+  ].filter((value): value is string =>
+    typeof value === "string" && value.trim().length > 0
+  ).map((value) => resolve(value)))];
 }
 
 function terminalWorkingDirectory(context: ToolAdmissionContext<TerminalInput>): string {

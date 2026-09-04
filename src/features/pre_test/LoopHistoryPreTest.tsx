@@ -47,8 +47,8 @@ export function LoopHistoryPreTest({ language }: { language: AppLanguage }) {
           <strong>{language === 'zh' ? 'Loop 历史合并 · Pre Test' : 'Loop history merge · Pre Test'}</strong>
           <small>
             {language === 'zh'
-              ? '本地测试数据：后端历史重载 + 流式临时消息 → 最终快照'
-              : 'Local fixture: backend history reload + streaming draft → final snapshot'}
+              ? '本地测试数据：Runtime 历史重载 + 流式临时消息 → 最终快照'
+              : 'Local fixture: Runtime history reload + streaming draft → final snapshot'}
           </small>
         </span>
         <output className={passed ? 'passed' : 'failed'} data-testid="loop-history-result">

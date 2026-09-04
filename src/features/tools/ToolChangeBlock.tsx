@@ -1,4 +1,4 @@
-import { ChevronDown, LoaderCircle, RotateCcw } from 'lucide-react';
+import { ChevronDown, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react';
 import { lazy, Suspense, useCallback, useRef, useState } from 'react';
 
 import type { AppLanguage } from '../../types';
@@ -19,7 +19,9 @@ export function ToolChangeBlock({
   toolName,
   onRevert,
   detailsDeferred = false,
+  detailsStatus,
   onRequestDetails,
+  onRetryDetails,
 }: {
   report: ToolChangeReport;
   running: boolean;
@@ -28,7 +30,9 @@ export function ToolChangeBlock({
   toolName: string;
   onRevert?: () => Promise<void>;
   detailsDeferred?: boolean;
+  detailsStatus?: 'loading' | 'loaded' | 'failed';
   onRequestDetails?: () => void;
+  onRetryDetails?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
@@ -105,7 +109,17 @@ export function ToolChangeBlock({
       </div>
       {expanded && (
         <div className="tool-change-files">
-          {detailsDeferred && !hasDetails ? (
+          {detailsDeferred && !hasDetails && detailsStatus === 'failed' ? (
+            <div className="tool-change-details-failed" role="alert">
+              <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
+              {onRetryDetails && (
+                <button type="button" onClick={onRetryDetails}>
+                  <RefreshCw size={13} />
+                  <span>{language === 'zh' ? '重试' : 'Retry'}</span>
+                </button>
+              )}
+            </div>
+          ) : detailsDeferred && !hasDetails && detailsStatus !== 'loaded' ? (
             <p className="tool-change-details-loading">
               <LoaderCircle size={14} />
               <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>

@@ -73,7 +73,6 @@ const goalFixture: ExperimentalGoal = {
   status: 'active',
   statusReason: '',
   consumedTokens: 4200,
-  linkedA2ATaskIds: [],
   revision: 2,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -102,9 +101,6 @@ const permissionFixture: PendingInteraction = {
     id: 'permission',
     label: '权限选择',
     question: '是否允许此次写入？',
-    selectionMode: 'single',
-    needInput: false,
-    required: true,
     options: [
       { id: 'allow_once', label: '仅这一次' },
       { id: 'allow_session', label: '本次会话' },
@@ -156,7 +152,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
       <header className="composer-runtime-pre-test-header">
         <span>
           <strong>{language === 'zh' ? '输入区运行状态 · Pre Test' : 'Composer runtime · Pre Test'}</strong>
-          <small>{language === 'zh' ? '本地占位数据，不连接后端' : 'Local fixtures, no backend required'}</small>
+          <small>{language === 'zh' ? '本地占位数据，不连接运行服务' : 'Local fixtures, no Runtime required'}</small>
         </span>
         <nav aria-label="Runtime fixture">
           {fixtureOptions.map((option) => (

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CardBush Browser Connector</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header><img class="mark" src="icons/cardbush-48.png" alt="" /><div><strong>CardBush</strong><small>Browser Connector</small></div></header>
+      <div id="connection" class="connection">正在连接 CardBush…</div>
+      <div id="scope" class="scope">等待 CardBush 会话…</div>
+      <section>
+        <strong id="tab-title">当前标签页</strong>
+        <small id="tab-origin"></small>
+      </section>
+      <div class="actions">
+        <button data-action="allow_once">复制到隔离组 · 仅本次</button>
+        <button data-action="allow_site">复制并始终允许此网站</button>
+        <button data-action="allow_all">复制并允许隔离组访问全部网站</button>
+      </div>
+      <footer>
+        <button class="quiet" data-action="revoke">撤销授权</button>
+        <button class="quiet" data-action="disconnect">停止控制</button>
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

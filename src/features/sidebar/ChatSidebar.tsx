@@ -1673,6 +1673,15 @@ export function ConversationChangeDialog({
   const [detailRequests, setDetailRequests] = useState<
     Map<string, 'loading' | 'loaded' | 'failed'>
   >(() => new Map());
+  const [detailRetryRevision, setDetailRetryRevision] = useState(0);
+  const detailViewMountedRef = useRef(true);
+  const detailRequestsInFlightRef = useRef(new Set<string>());
+  useEffect(() => {
+    detailViewMountedRef.current = true;
+    return () => {
+      detailViewMountedRef.current = false;
+    };
+  }, []);
   const resolvedReports = useMemo(
     () => reports.map((report) => {
       const hydrated = hydratedReports.get(reviewDetailKey(conversation.id, report.id));
@@ -1724,27 +1733,39 @@ export function ConversationChangeDialog({
   const selectedDetailStatus = selectedDetailKey
     ? detailRequests.get(selectedDetailKey)
     : undefined;
+  const selectedDetailTurnId = selectedItem?.report.turnId?.trim() ?? '';
+  const selectedDetailRequired = Boolean(
+    selectedItem &&
+    selectedDetailKey &&
+    selectedDetailTurnId &&
+    (selectedItem.report.executionIds?.length ?? 0) > 0 &&
+    selectedItem.file.lines.length === 0 &&
+    (
+      selectedItem.report.detailsDeferred === true ||
+      selectedItem.file.additions > 0 ||
+      selectedItem.file.deletions > 0
+    ),
+  );
+  const selectedDetailRequestKey = selectedDetailRequired
+    ? `${conversation.id}\u0000${selectedDetailTurnId}`
+    : '';
   useEffect(() => {
-    if (!selectedItem || !selectedDetailKey || selectedDetailStatus) return undefined;
-    const { report, file } = selectedItem;
-    const turnId = report.turnId?.trim() ?? '';
-    const executionIds = new Set(
-      (report.executionIds ?? []).map((value) => value.trim()).filter(Boolean),
-    );
-    const missingKnownDetails =
-      file.lines.length === 0 &&
-      (report.detailsDeferred === true || file.additions > 0 || file.deletions > 0);
-    if (!missingKnownDetails || !turnId || executionIds.size === 0) return undefined;
+    if (
+      !selectedDetailRequestKey ||
+      !selectedDetailKey ||
+      selectedDetailStatus ||
+      detailRequestsInFlightRef.current.has(selectedDetailRequestKey)
+    ) return;
 
     const turnReports = reports.filter(
       (candidate) =>
-        candidate.turnId?.trim() === turnId &&
+        candidate.turnId?.trim() === selectedDetailTurnId &&
         (candidate.executionIds?.length ?? 0) > 0,
     );
     const turnDetailKeys = turnReports.map((candidate) =>
       reviewDetailKey(conversation.id, candidate.id),
     );
-    let cancelled = false;
+    detailRequestsInFlightRef.current.add(selectedDetailRequestKey);
     setDetailRequests((current) => {
       const next = new Map(current);
       for (const key of turnDetailKeys) {
@@ -1754,10 +1775,10 @@ export function ConversationChangeDialog({
     });
     void fetchRuntimeTurnToolExecutionDetails({
       sessionId: conversation.id,
-      turnId,
+      turnId: selectedDetailTurnId,
     })
       .then((details) => {
-        if (cancelled) return;
+        if (!detailViewMountedRef.current) return;
         const hydratedByKey = turnReports.map((candidate) => ({
           key: reviewDetailKey(conversation.id, candidate.id),
           report: hydrateConversationChangeReport(candidate, details),
@@ -1778,14 +1799,38 @@ export function ConversationChangeDialog({
         });
       })
       .catch(() => {
-        if (!cancelled) {
-          setDetailRequests((current) => new Map(current).set(selectedDetailKey, 'failed'));
-        }
+        if (!detailViewMountedRef.current) return;
+        setDetailRequests((current) => {
+          const next = new Map(current);
+          for (const key of turnDetailKeys) next.set(key, 'failed');
+          return next;
+        });
+      })
+      .finally(() => {
+        detailRequestsInFlightRef.current.delete(selectedDetailRequestKey);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [conversation.id, reports, selectedDetailKey, selectedDetailStatus, selectedItem]);
+  }, [
+    conversation.id,
+    detailRetryRevision,
+    reports,
+    selectedDetailKey,
+    selectedDetailRequestKey,
+    selectedDetailStatus,
+    selectedDetailTurnId,
+  ]);
+  const retrySelectedDetails = useCallback(() => {
+    if (!selectedDetailTurnId) return;
+    setDetailRequests((current) => {
+      const next = new Map(current);
+      for (const report of reports) {
+        if (report.turnId?.trim() === selectedDetailTurnId) {
+          next.delete(reviewDetailKey(conversation.id, report.id));
+        }
+      }
+      return next;
+    });
+    setDetailRetryRevision((current) => current + 1);
+  }, [conversation.id, reports, selectedDetailTurnId]);
   useEffect(() => {
     if (reviewItems.length === 0) {
       setSelectedKey('');
@@ -1910,7 +1955,15 @@ export function ConversationChangeDialog({
                     </button>
                   )}
                 </header>
-                {selectedDetailStatus === 'loading' && selectedItem.file.lines.length === 0 ? (
+                {selectedDetailStatus === 'failed' && selectedItem.file.lines.length === 0 ? (
+                  <div className="tool-change-details-failed" role="alert">
+                    <span>{language === 'zh' ? '改动详情加载失败' : 'Unable to load change details'}</span>
+                    <button type="button" onClick={retrySelectedDetails}>
+                      <RefreshCw size={13} />
+                      <span>{language === 'zh' ? '重试' : 'Retry'}</span>
+                    </button>
+                  </div>
+                ) : selectedDetailStatus === 'loading' && selectedItem.file.lines.length === 0 ? (
                   <p className="tool-change-details-loading">
                     <LoaderCircle size={14} />
                     <span>{language === 'zh' ? '正在加载改动详情' : 'Loading change details'}</span>

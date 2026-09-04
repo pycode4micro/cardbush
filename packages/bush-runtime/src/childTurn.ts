@@ -97,9 +97,11 @@ export function buildChildTurnRequest(input: {
   const permissionRouting = requestedPermissionRouting === "user" || requestedPermissionRouting === "parent"
     ? requestedPermissionRouting
     : turnPolicy.permissionRouting ?? configuredPolicy.permissionRouting;
-  const permissionMode = permissionRouting === "user"
-    ? parentRequest.permissionMode
-    : turnPolicy.childPermissionMode ?? configuredPolicy.childPermissionMode;
+  const permissionMode = parentRequest.permissionMode === "all_free"
+    ? "all_free"
+    : permissionRouting === "user"
+      ? parentRequest.permissionMode
+      : turnPolicy.childPermissionMode ?? configuredPolicy.childPermissionMode;
   const permissionScopeSessionId = permissionRouting === "user"
     ? input.context.sessionId
     : input.ids.sessionId;
@@ -136,7 +138,6 @@ export function buildChildTurnRequest(input: {
     requestCapabilities: {
       vision: parentRequest.requestCapabilities?.vision ?? false,
       interactiveRequests: false,
-      userChoice: false,
     },
     permissionMode,
     metadata: {

@@ -34,6 +34,10 @@ for (const [name, expected] of [
   ['spreadsheets:Spreadsheets', 'spreadsheet'],
   ['presentations:Presentations', 'presentation'],
   ['pdf:pdf', 'pdf'],
+  ['finance-analysis', 'finance'],
+  ['internal-comms', 'communication'],
+  ['scheduled-delivery', 'delivery'],
+  ['transport-delivery', 'delivery'],
   ['imagegen', 'image'],
   ['visualize:visualize', 'image'],
   ['browser:control-in-app-browser', 'web'],
@@ -41,7 +45,9 @@ for (const [name, expected] of [
   ['codex-security', 'security'],
   ['plugin-management:plugin-management', 'integration'],
   ['skill-creator', 'tooling'],
+  ['skill-manager', 'tooling'],
   ['template-creator', 'design'],
+  ['cardbush-style-management', 'design'],
   ['database-query', 'data'],
   ['openai-docs', 'research'],
   ['subagent-workflow', 'workflow'],
@@ -50,6 +56,39 @@ for (const [name, expected] of [
 ]) {
   assert.equal(skillIconKind(skill(name)), expected, `${name} should use ${expected}`);
 }
+
+// Skill identity is authoritative. Negative examples and incidental file types in a
+// description must not steal the icon from the package that owns the capability.
+assert.equal(
+  skillIconKind(skill('xlsx', 'Spreadsheet output, not a document, presentation, or PDF.')),
+  'spreadsheet',
+);
+assert.equal(
+  skillIconKind(skill('docx', 'Word documents only. Do not use for PDFs or spreadsheets.')),
+  'document',
+);
+assert.equal(
+  skillIconKind(skill('pdf', 'Read PDF files and extract text, images, and tables.')),
+  'pdf',
+);
+assert.equal(
+  skillIconKind(skill('unclassified-capability', 'Do not create a PDF, spreadsheet, or presentation.')),
+  'generic',
+);
+assert.equal(
+  skillIconKind({
+    ...skill('renamed-capability', 'Not a presentation.'),
+    path: 'C:\\skills\\xlsx\\SKILL.md',
+  }),
+  'spreadsheet',
+);
+assert.equal(
+  skillIconKind({
+    ...skill('a11y-debugging'),
+    path: 'assets/plugins/chrome/runtime/chrome-devtools-mcp/skills/a11y-debugging/SKILL.md',
+  }),
+  'web',
+);
 
 const iconSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'skills', 'SkillIcon.tsx'),
@@ -71,9 +110,18 @@ const styles = fs.readFileSync(
 assert.match(iconSource, /const generatedLogos: Record<SkillIconKind, string>/);
 assert.match(iconSource, /skill\.logoPath \? fileUrl\(skill\.logoPath\) : generatedLogo/);
 assert.match(iconSource, /skill\.logoDarkPath \|\| skill\.logoPath/);
+assert.match(iconSource, /import documentLogo from '[^']*\/document\.svg'/);
+assert.match(iconSource, /import spreadsheetLogo from '[^']*\/spreadsheet\.svg'/);
+assert.match(iconSource, /import presentationLogo from '[^']*\/presentation\.svg'/);
+assert.match(iconSource, /import pdfLogo from '[^']*\/pdf\.svg'/);
+assert.match(iconSource, /document: documentLogo/);
+assert.match(iconSource, /spreadsheet: spreadsheetLogo/);
+assert.match(iconSource, /presentation: presentationLogo/);
+assert.match(iconSource, /pdf: pdfLogo/);
 for (const kind of [
   'document', 'spreadsheet', 'presentation', 'pdf', 'image', 'web', 'computer',
-  'security', 'integration', 'tooling', 'design', 'data', 'research', 'workflow',
+  'finance', 'communication', 'delivery', 'security', 'integration', 'tooling',
+  'design', 'data', 'research', 'workflow',
   'code', 'generic',
 ]) {
   assert.ok(fs.existsSync(path.join(process.cwd(), 'src', 'assets', 'skill-logos', `${kind}.svg`)), `${kind} Skill logo must exist`);
@@ -84,6 +132,9 @@ assert.match(panelSource, /<SkillIcon skill=\{detail\} compact \/>/);
 assert.match(styles, /\.skill-icon-spreadsheet\s*\{/);
 assert.match(styles, /\.skill-icon-presentation\s*\{/);
 assert.match(styles, /\.skill-icon-pdf\s*\{/);
+assert.match(styles, /\.skill-icon-finance\s*\{/);
+assert.match(styles, /\.skill-icon-communication\s*\{/);
+assert.match(styles, /\.skill-icon-delivery\s*\{/);
 assert.match(styles, /\.skill-icon img\s*\{/);
 
 console.log('skill icon contract tests passed');

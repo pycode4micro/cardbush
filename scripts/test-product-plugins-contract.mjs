@@ -57,7 +57,14 @@ assert.equal(chromePackage.name, 'chrome-devtools-mcp');
 assert.equal(chromePackage.version, '1.8.0');
 assert.equal(chromePackage.author, 'Google LLC');
 assert.equal(chromePackage.license, 'Apache-2.0');
-assert.ok(readFileSync(resolve('assets', 'plugins', 'chrome', '.mcp.json'), 'utf8').includes('chrome-devtools-mcp.js'));
+assert.ok(readFileSync(resolve('assets', 'plugins', 'chrome', '.mcp.json'), 'utf8').includes('cardbush-chrome-mcp'));
+assert.ok(readFileSync(resolve('assets', 'plugins', 'chrome', '.mcp.remote-debugging.json'), 'utf8').includes('chrome-devtools-mcp.js'));
+const chromeExtension = JSON.parse(readFileSync(resolve(
+  'assets', 'plugins', 'chrome', 'extension', 'manifest.json',
+), 'utf8'));
+assert.equal(chromeExtension.manifest_version, 3);
+assert.ok(chromeExtension.permissions.includes('debugger'));
+assert.ok(chromeExtension.permissions.includes('nativeMessaging'));
 const chromeVendorMetadata = JSON.parse(readFileSync(resolve(
   'assets', 'plugins', 'chrome', 'vendor', 'OFFICIAL_PACKAGE.json',
 ), 'utf8'));

@@ -69,7 +69,7 @@ export function PermissionRequestCard({
           </span>
           <span className="permission-target-copy">
             <small>{language === 'zh' ? '精确目标' : 'Exact target'}</small>
-            <code>{details.target || (language === 'zh' ? '后端未提供结构化目标' : 'Structured target unavailable')}</code>
+            <code>{details.target || (language === 'zh' ? '未提供结构化目标' : 'Structured target unavailable')}</code>
           </span>
           {details.accessKind && (
             <span className={`permission-access ${details.accessKind}`}>
@@ -130,8 +130,8 @@ export function PermissionRequestCard({
 
         <p className="permission-scope-note">
           {language === 'zh'
-            ? '一次授权仅供下一次匹配访问；会话授权也只在当前后端会话内有效。'
-            : 'Allow once is consumed by the next matching access. Session access lasts only for this backend session.'}
+            ? '一次授权仅供下一次匹配访问；会话授权仅在当前任务会话内有效。'
+            : 'Allow once is consumed by the next matching access. Session access lasts only for this task.'}
         </p>
       </div>
     </section>
@@ -215,11 +215,11 @@ function permissionOptionLabel(optionId: string, language: AppLanguage) {
 
 function permissionOptionDescription(optionId: string, language: AppLanguage) {
   if (language === 'zh') {
-    if (optionId === 'allow_session') return '当前后端会话内有效';
+    if (optionId === 'allow_session') return '当前任务会话内有效';
     if (optionId === 'deny') return '由模型自行选择其他方案';
     return '下一次匹配访问后失效';
   }
-  if (optionId === 'allow_session') return 'Valid only in this backend session';
+  if (optionId === 'allow_session') return 'Valid only in this task session';
   if (optionId === 'deny') return 'Let the model choose another approach';
   return 'Expires after the next matching access';
 }

@@ -34,7 +34,6 @@ import {
   openWorkSummaryInspector,
   SUBAGENT_DISPATCH_UI_EVENT,
 } from '../subagents/subagentObservabilityEvents';
-import { ExperimentalA2APanel } from './ExperimentalA2APanel';
 import {
   groupWorkSummaryHistoryByTurn,
   historyTurnLabel,
@@ -61,7 +60,6 @@ export function ConversationWorkSummary({
   subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
 }) {
-  const [a2aExpanded, setA2aExpanded] = useState(false);
   const [visibleHistoryTurnCount, setVisibleHistoryTurnCount] = useState(historyTurnPageSize);
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
   const subagentTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
@@ -111,7 +109,6 @@ export function ConversationWorkSummary({
   }, [changeReports]);
 
   useEffect(() => {
-    setA2aExpanded(false);
     setVisibleHistoryTurnCount(historyTurnPageSize);
     setVisibleSubagentTaskCount(subagentTaskPageSize);
   }, [sessionId]);
@@ -314,27 +311,6 @@ export function ConversationWorkSummary({
                 )}
               </div>
             )}
-
-            <div className="work-summary-section work-summary-a2a-section">
-              <button
-                className="work-summary-a2a-toggle"
-                type="button"
-                aria-expanded={a2aExpanded}
-                onClick={() => setA2aExpanded((current) => !current)}
-              >
-                <img className="a2a-official-icon" src="./a2a-icon.svg" alt="" aria-hidden="true" />
-                <span>
-                  <strong>{language === 'zh' ? 'A2A 协作' : 'A2A collaboration'}</strong>
-                  <small>{language === 'zh' ? '连接并派发远端 Agent 任务' : 'Connect and dispatch remote agent tasks'}</small>
-                </span>
-                <ChevronDown size={14} className={a2aExpanded ? 'expanded' : ''} />
-              </button>
-              {a2aExpanded && (
-                <div className="work-summary-a2a-body">
-                  <ExperimentalA2APanel language={language} />
-                </div>
-              )}
-            </div>
         </section>
       </div>
     </aside>

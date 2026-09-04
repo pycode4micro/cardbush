@@ -54,6 +54,7 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   assert.doesNotMatch(request.prefixMessages[1].content, /Local date/);
   assert.match(request.prefixMessages[1].content, /Desktop: C:\\Users\\fixture\\Desktop/);
   assert.deepEqual(request.metadata.mcpContext.filesystemRoots, ["C:\\workspace"]);
+  assert.equal(request.metadata.mcpContext.sessionTitle, "完成任务");
   assert.equal(request.inputMessages[0].message.content, "完成任务");
   assert.deepEqual(request.inputMessages[0].metadata.attachments, [{
     id: "attachment-1",

@@ -110,7 +110,7 @@ function AgentEditor({ language, team, member, profile, profiles }: {
           {profile.skills != null && <StringListField language={language} label="skills" value={profile.skills} onChange={(skills) => updateProfile({ skills })} />}
         </div>
       </div>
-      <footer className="team-agent-editor-footer"><span>Team <strong>{team.id}</strong></span><span>{zh ? '成员' : 'Member'} <strong>{member.id}</strong></span><span>{zh ? '保存前由后端严格校验' : 'Strict backend validation before save'}</span></footer>
+      <footer className="team-agent-editor-footer"><span>Team <strong>{team.id}</strong></span><span>{zh ? '成员' : 'Member'} <strong>{member.id}</strong></span><span>{zh ? '保存前由 Runtime 严格校验' : 'Strict Runtime validation before save'}</span></footer>
     </article>
   );
 }
@@ -139,5 +139,5 @@ function TeamManagement({ language }: { language: AppLanguage }) {
 
 function TeamCreatePage({ language }: { language: AppLanguage }) {
   const zh = language === 'zh';
-  return <div className="team-install-page"><header><Plus size={20} /><div><strong>{zh ? '新建 Team 配置' : 'Create a team configuration'}</strong><span>{zh ? '后端没有模板安装协议；这里创建严格 v1 Team/Profile 草稿，保存前会调用 validate。' : 'The backend has no template installation protocol. This creates strict v1 Team/Profile drafts and validates before saving.'}</span></div></header><button className="team-create-primary" type="button" onClick={() => teamWorkspaceActions.createTeam(language)}><Plus size={14} />{zh ? '新建 Team' : 'New team'}</button></div>;
+  return <div className="team-install-page"><header><Plus size={20} /><div><strong>{zh ? '新建 Team 配置' : 'Create a team configuration'}</strong><span>{zh ? '当前 Runtime 没有模板安装协议；这里创建严格 v1 Team/Profile 草稿，保存前会调用 validate。' : 'The current Runtime has no template installation protocol. This creates strict v1 Team/Profile drafts and validates before saving.'}</span></div></header><button className="team-create-primary" type="button" onClick={() => teamWorkspaceActions.createTeam(language)}><Plus size={14} />{zh ? '新建 Team' : 'New team'}</button></div>;
 }

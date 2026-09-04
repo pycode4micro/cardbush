@@ -267,7 +267,6 @@ function ConnectedRuntimeLivePreTest({
       requestCapabilities: {
         vision: false,
         interactiveRequests: true,
-        userChoice: false,
       },
       permissionMode: 'task_free',
       metadata: {},

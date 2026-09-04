@@ -7,29 +7,21 @@ import ts from 'typescript';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
 const api = read('src', 'backend', 'api.ts');
-const panel = read('src', 'features', 'chat', 'ExperimentalA2APanel.tsx');
 const goalState = read('src', 'shared', 'goalState.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
 const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
-const desktopTypes = read('src', 'types', 'electron.d.ts');
 
 assert.doesNotMatch(api, /\/v1\/experimental|\/v1\/turns/);
 assert.match(api, /runtime\.client\.getGoal\(normalized\)/);
 assert.match(api, /runtime\.client\.updateGoal\(\{/);
-assert.match(api, /window\.cardbushDesktop\?\.a2aInspect/);
-assert.match(api, /window\.cardbushDesktop\?\.a2aDispatch/);
+assert.match(api, /export async function fetchGoalRuntimeStatus/);
 assert.match(api, /streamRuntimeTurnEvents\(request\)/);
 assert.match(runtimeChat, /runtime\.client\.events\(\{/);
 assert.match(runtimeChat, /afterSequence: request\.afterSequence/);
 assert.match(runtimeChat, /lastEventId: request\.lastEventId/);
-assert.match(desktopTypes, /a2aInspect:/);
-assert.match(desktopTypes, /a2aDispatch:/);
 
-assert.doesNotMatch(panel, /BUSH_EXPERIMENTAL_GOAL_A2A_ENABLED/);
-assert.match(panel, /A2A 出站客户端仅在 CardBush 桌面版中提供/);
-assert.match(panel, /fetchExperimentalGoalA2AStatus/);
 assert.match(hook, /fetchExperimentalGoals\(normalized\)/);
-assert.match(hook, /fetchExperimentalGoalA2AStatus\(\)/);
+assert.match(hook, /fetchGoalRuntimeStatus\(\)/);
 assert.match(hook, /applyGoalExecution\(sessionId, execution\)/);
 assert.match(hook, /streamTurnEvents\(\{/);
 assert.match(hook, /fetchPendingInteraction\(sessionId\)/);
@@ -55,7 +47,6 @@ const goal = {
   status: 'active',
   statusReason: '',
   consumedTokens: 12,
-  linkedA2ATaskIds: [],
   revision: 2,
   createdAt: '2026-08-14T00:00:00Z',
   updatedAt: '2026-08-14T00:00:00Z',
@@ -89,4 +80,4 @@ assert.equal(isGoalSelfCheckMessage({
   id: 'real-user', role: 'user', content: 'continue', metadata: {},
 }), false);
 
-console.log('typed Goal and A2A contract tests passed');
+console.log('typed Goal contract tests passed');

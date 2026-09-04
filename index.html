@@ -20,6 +20,7 @@
           dark: '#1a1a1a',
           bright: '#f5f3ef',
           parchment: '#e1d4ba',
+          cyberpunk: '#050607',
         };
         const cssString = (value) => String(value).replace(/["\\]/g, '\\$&');
         const stripWrappingQuotes = (value) =>
@@ -72,7 +73,9 @@
             localStorage.getItem('cardbush_light_theme_style') ||
             (localStorage.getItem('cardbush.theme') === 'bright' ? 'bright' : 'parchment');
           const legacy = localStorage.getItem('cardbush.theme');
-          if (preference === 'dark' || legacy === 'dark') {
+          if (preference === 'cyberpunk') {
+            theme = 'cyberpunk';
+          } else if (preference === 'dark' || legacy === 'dark') {
             theme = 'dark';
           } else if (preference === 'light' || legacy === 'bright' || legacy === 'parchment') {
             theme = lightStyle === 'bright' ? 'bright' : 'parchment';
@@ -126,6 +129,12 @@
       html[data-start-theme='parchment'] body,
       html[data-start-theme='parchment'] #root {
         --cardbush-window-bg: #e1d4ba;
+      }
+
+      html[data-start-theme='cyberpunk'],
+      html[data-start-theme='cyberpunk'] body,
+      html[data-start-theme='cyberpunk'] #root {
+        --cardbush-window-bg: #050607;
       }
 
       html[data-start-custom-background='true'] #root {
@@ -224,6 +233,37 @@
 
       .cardbush-startup-rhythm span:nth-child(5) {
         animation-delay: 360ms;
+      }
+
+      html[data-start-theme='cyberpunk'] #cardbush-startup-splash {
+        color: #f4f3dc;
+        background:
+          radial-gradient(circle at 50% 43%, rgba(0, 231, 240, 0.12), transparent 30%),
+          linear-gradient(rgba(247, 240, 0, 0.055) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(247, 240, 0, 0.055) 1px, transparent 1px),
+          #050607;
+        background-size: auto, 36px 36px, 36px 36px, auto;
+      }
+
+      html[data-start-theme='cyberpunk'] .cardbush-startup-inner {
+        padding: 28px 46px 24px;
+        border: 1px solid rgba(247, 240, 0, 0.72);
+        clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+      }
+
+      html[data-start-theme='cyberpunk'] .cardbush-startup-logo {
+        filter: drop-shadow(8px 0 0 rgba(0, 231, 240, 0.18));
+      }
+
+      html[data-start-theme='cyberpunk'] .cardbush-startup-wordmark {
+        color: #f7f000;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      html[data-start-theme='cyberpunk'] .cardbush-startup-rhythm span {
+        background: #00e7f0;
+        border-radius: 0;
       }
 
       @keyframes cardbush-startup-rhythm {

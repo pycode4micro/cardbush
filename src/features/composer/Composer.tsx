@@ -311,7 +311,6 @@ function readFileAsDataUrl(file: File) {
 export function Composer({
   compact,
   autoFocus = false,
-  osMode = false,
   language,
   draft,
   onDraftChange,
@@ -363,7 +362,6 @@ export function Composer({
 }: {
   compact?: boolean;
   autoFocus?: boolean;
-  osMode?: boolean;
   language: AppLanguage;
   draft: string;
   onDraftChange: (value: string) => void;
@@ -1244,7 +1242,6 @@ export function Composer({
         )}
         <textarea
           ref={textareaRef}
-          data-os-primary-input={osMode ? 'true' : undefined}
           autoFocus={autoFocus}
           value={composerInputValue}
           onChange={(event) => {
@@ -1320,10 +1317,6 @@ export function Composer({
               ? language === 'zh'
                 ? `回复 ${shadowAgentName || 'Shadow Agent'}…`
                 : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
-              : osMode
-              ? language === 'zh'
-                ? '告诉 CardBush 你想让电脑完成什么…'
-                : 'Tell CardBush what your computer should do...'
               : language === 'zh'
               ? compact
                 ? '问 cardbush 任何事。输入 / 选择快捷功能'
@@ -1336,7 +1329,7 @@ export function Composer({
         />
         <div className="composer-footer">
           <div className="composer-tools">
-            {!osMode && <ToolChip
+            <ToolChip
               icon={<Plus size={15} />}
               label={language === 'zh' ? '添加' : 'Add'}
               active={
@@ -1347,8 +1340,8 @@ export function Composer({
               }
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
-            />}
-            {!osMode && shadowAvailable && onToggleShadow && (
+            />
+            {shadowAvailable && onToggleShadow && (
               <ToolChip
                 icon={<ShadowCloneIcon size={15} />}
                 label={shadowActive
@@ -1358,7 +1351,7 @@ export function Composer({
                 onClick={onToggleShadow}
               />
             )}
-            {!osMode && selectedTeam && (
+            {selectedTeam && (
               <button
                 className={`tool-chip composer-team-chip ${activeMenu === 'teams' ? 'active' : ''}`}
                 type="button"
@@ -1822,15 +1815,15 @@ function ComposerPopover({
                           ? '显式允许模型接收图片视觉输入。'
                           : 'Explicitly allow images as native vision input.'
                         : language === 'zh'
-                          ? '当前后端未声明视觉输入工具。'
-                          : 'The backend has not exposed the vision input tool.'}
+                          ? '当前运行环境未提供视觉输入工具。'
+                          : 'Vision input is unavailable in the current runtime.'}
                     </small>
                   </span>
                 </button>
                 <p>
                   {language === 'zh'
-                    ? '默认关闭。开启后，请求会携带 standard_image_input_enabled=true；关闭时图片仍可作为普通文件路径交给后端处理。'
-                    : 'Off by default. When enabled, requests send standard_image_input_enabled=true; when off, images are still passed as regular file paths.'}
+                    ? '默认关闭。开启后，请求会携带 standard_image_input_enabled=true；关闭时图片仍可作为普通文件路径交给 Agent 处理。'
+                    : 'Off by default. When enabled, requests send standard_image_input_enabled=true; when off, images are passed to the agent as regular file paths.'}
                 </p>
               </div>
             )}
@@ -2327,7 +2320,7 @@ function ContextWindowMeter({
       : usedTokens != null
         ? `${compactTokenCount(usedTokens)} · ${language === 'zh' ? '上限未知' : 'Unknown limit'}`
       : language === 'zh'
-        ? '等待后端统计'
+        ? '等待用量统计'
         : 'Waiting for usage';
 
   return (
@@ -2410,8 +2403,8 @@ function permissionModeOptions(language: AppLanguage) {
       label: language === 'zh' ? '完全控制' : 'Full control',
       description:
         language === 'zh'
-          ? '请求完全本机控制，后端应强制审计和确认。'
-          : 'Request full local control. Backend should enforce audit and confirmation.',
+          ? '除不可覆盖的危险目录保护外，其他工具权限默认通过。'
+          : 'Allow tool permissions by default except for non-overridable protected-directory safeguards.',
     },
   ];
   return options;

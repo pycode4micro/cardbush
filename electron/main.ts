@@ -44,7 +44,6 @@ import {
   loadEnabledProductPluginSkillRootEntries,
   type PluginRoot,
 } from './productPlugins';
-import { ProductA2AClient, productA2AAllowedOrigins } from './productA2A';
 import {
   DesktopControlOverlay,
   type DesktopControlTurn,
@@ -54,6 +53,14 @@ import {
   decodeSessionAttentionActivation,
   encodeSessionAttentionActivation,
 } from './sessionAttentionRouting';
+import {
+  ChromeConnectorBroker,
+  type ChromeConnectorStatus,
+} from './chromeConnectorBroker';
+import {
+  chromeConnectorRegistrationStatus,
+  registerChromeConnectorNativeHost,
+} from './chromeConnectorRegistration';
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
@@ -114,10 +121,6 @@ const projectFileSearchMaxVisited = 1800;
 const projectFileSearchMaxResults = 60;
 const localImagePreviewMaxBytes = 32 * 1024 * 1024;
 const logScopePattern = /^[a-z0-9_-]{1,48}$/i;
-const productA2AClient = new ProductA2AClient({
-  fetchImpl: net.fetch as typeof fetch,
-  allowedOrigins: productA2AAllowedOrigins(process.env.CARDBUSH_A2A_ALLOWED_ORIGINS),
-});
 protocol.registerSchemesAsPrivileged([
   {
     scheme: localFileProtocol,
@@ -146,13 +149,16 @@ let runtimeHostController: RuntimeHostController | null = null;
 let unregisterRuntimeHostIpc: (() => void) | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
 let desktopControlOverlay: DesktopControlOverlay | null = null;
+let chromeConnectorBroker: ChromeConnectorBroker | null = null;
+let unregisterChromeConnectorStatus: (() => void) | null = null;
+let cachedChromeConnectorRegistrationStatus:
+  ReturnType<typeof chromeConnectorRegistrationStatus> | null = null;
 let productHostController: {
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
 } | null = null;
 let cardlingWindow: BrowserWindow | null = null;
-const externalBrowserWindows = new Set<BrowserWindow>();
 type ShadowWindowMode = 'readonly' | 'fork';
 type ShadowWindowPayload = {
   windowId: string;
@@ -192,9 +198,6 @@ let hostShutdownComplete = false;
 let hostShutdownPromise: Promise<void> | null = null;
 let quitFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 let startupRevealFallback: ReturnType<typeof setTimeout> | null = null;
-let osTaskbarWatchdog: ReturnType<typeof spawn> | null = null;
-let osApplicationsCache: Awaited<ReturnType<typeof listOsApplications>> | null = null;
-let osApplicationsPending: Promise<Awaited<ReturnType<typeof listOsApplications>>> | null = null;
 let legacyProductSkillMigration: Promise<void> | null = null;
 const legacyProductSkillNamesOwnedByCardbush = [
   'browser-assistant',
@@ -255,48 +258,10 @@ const terminalSessions = new Map<
 
 type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
 
-type OsLoginSettings = {
-  enabled: boolean;
-  startInOsMode: boolean;
-};
-
-function osLoginItemArgs(startInOsMode: boolean) {
-  const modeArgs = startInOsMode ? ['--os-mode'] : [];
-  return cardbushRuntimeIsPackaged ? modeArgs : [app.getAppPath(), ...modeArgs];
-}
-
-function readOsLoginSettings(): OsLoginSettings & { supported: boolean } {
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    return { enabled: false, startInOsMode: false, supported: false };
-  }
-  const startInOsMode = process.argv.includes('--os-mode');
-  const enabled = app.getLoginItemSettings({
-    path: process.execPath,
-  }).openAtLogin;
-  return { enabled, startInOsMode, supported: true };
-}
-
-function writeOsLoginSettings(value: OsLoginSettings) {
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    return { enabled: false, startInOsMode: false, supported: false };
-  }
-  app.setLoginItemSettings({
-    openAtLogin: value.enabled === true,
-    openAsHidden: false,
-    path: process.execPath,
-    args: osLoginItemArgs(value.startInOsMode === true),
-  });
-  return {
-    enabled: value.enabled === true,
-    startInOsMode: value.startInOsMode === true,
-    supported: true,
-  };
-}
-
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark';
+  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -326,6 +291,7 @@ const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
   dark: '#1a1a1a',
   bright: '#f5f3ef',
   parchment: '#e1d4ba',
+  cyberpunk: '#050607',
 };
 
 let lastMainWindowTheme: AppThemeMode = 'dark';
@@ -643,7 +609,10 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     const number = Number(candidate);
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
   };
-  const theme = input.theme === 'bright' || input.theme === 'parchment' ? input.theme : 'dark';
+  const theme = input.theme === 'bright' || input.theme === 'parchment' ||
+      input.theme === 'cyberpunk'
+    ? input.theme
+    : 'dark';
   const requestedReasoningLevel = String(input.reasoningLevel ?? '').trim().toLowerCase();
   const reasoningLevel: ReasoningEffort = requestedReasoningLevel === 'none' ||
       requestedReasoningLevel === 'low' || requestedReasoningLevel === 'medium' ||
@@ -803,7 +772,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
   target.webContents.setWindowOpenHandler(({ url }) => {
-    if (sendLocalPreviewToInspector(target, url)) {
+    if (sendUiPreviewToInspector(target, url)) {
       return { action: 'deny' };
     }
     void openUiPreview(url);
@@ -813,7 +782,7 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     if (isAllowedAppNavigation(targetUrl)) {
       return;
     }
-    if (sendLocalPreviewToInspector(target, targetUrl)) {
+    if (sendUiPreviewToInspector(target, targetUrl)) {
       event.preventDefault();
       return;
     }
@@ -898,14 +867,18 @@ function installMainRendererResilience(target: BrowserWindow) {
   );
 }
 
-function sendLocalPreviewToInspector(target: BrowserWindow, value: string) {
+function sendUiPreviewToInspector(target: BrowserWindow, value: string) {
   const previewTarget = resolveUiPreviewTarget(value);
-  if (!previewTarget?.localPath) {
+  if (!previewTarget || target.isDestroyed() || target.webContents.isDestroyed()) {
     return false;
   }
+  const inspectorTarget = previewTarget.localPath || previewTarget.url;
+  const parsed = safeUrl(previewTarget.url);
   target.webContents.send('shell:open-inspector', {
-    target: previewTarget.localPath,
-    title: path.basename(previewTarget.localPath),
+    target: inspectorTarget,
+    title: previewTarget.localPath
+      ? path.basename(previewTarget.localPath)
+      : parsed?.hostname || inspectorTarget,
   });
   return true;
 }
@@ -916,160 +889,11 @@ async function openUiPreview(targetUrl: string) {
     await openTargetExternally(targetUrl);
     return;
   }
-  const officeReadOnlyPreview = Boolean(
-    previewTarget.localPath && isOfficePreviewPath(previewTarget.localPath),
-  );
-  const browserIcon = loadCardbushIcon(128);
-  const browser = new BrowserWindow({
-    width: 1180,
-    height: 760,
-    minWidth: 760,
-    minHeight: 520,
-    title: officeReadOnlyPreview ? 'CardBush Office 只读预览' : 'CardBush UI 预览',
-    icon: browserIcon,
-    parent: mainWindow ?? undefined,
-    show: false,
-    autoHideMenuBar: officeReadOnlyPreview,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
-  applyCardbushWindowIcon(browser, browserIcon);
-  externalBrowserWindows.add(browser);
-  browser.setMenu(
-    Menu.buildFromTemplate([
-      {
-        label: 'UI 预览',
-        submenu: [
-          {
-            label: '返回应用',
-            accelerator: 'Ctrl+Shift+B',
-            click: () => {
-              showMainWindow();
-              browser.close();
-            },
-          },
-          {
-            label: '关闭预览',
-            accelerator: 'Ctrl+W',
-            click: () => browser.close(),
-          },
-          ...(!officeReadOnlyPreview ? [
-            { type: 'separator' as const },
-            {
-              label: previewTarget.localPath ? '在系统中打开' : '在系统浏览器打开',
-              click: () => {
-                const currentUrl = browser.webContents.getURL() || previewTarget.url;
-                const currentTarget = resolveUiPreviewTarget(currentUrl) ?? previewTarget;
-                void openTargetExternally(currentTarget.externalTarget, currentTarget);
-              },
-            },
-          ] : []),
-          {
-            label: '复制地址',
-            accelerator: 'Ctrl+Shift+C',
-            click: () => clipboard.writeText(browser.webContents.getURL() || previewTarget.url),
-          },
-        ],
-      },
-      {
-        label: '视图',
-        submenu: [
-          {
-            label: '后退',
-            accelerator: 'Alt+Left',
-            click: () => {
-              if (browser.webContents.canGoBack()) {
-                browser.webContents.goBack();
-              } else {
-                showMainWindow();
-                browser.close();
-              }
-            },
-          },
-          {
-            label: '前进',
-            accelerator: 'Alt+Right',
-            click: () => {
-              if (browser.webContents.canGoForward()) {
-                browser.webContents.goForward();
-              }
-            },
-          },
-          {
-            label: '刷新',
-            accelerator: 'Ctrl+R',
-            click: () => browser.webContents.reload(),
-          },
-          {
-            label: '强制刷新',
-            accelerator: 'Ctrl+Shift+R',
-            click: () => browser.webContents.reloadIgnoringCache(),
-          },
-          { type: 'separator' },
-          {
-            label: '放大',
-            accelerator: 'Ctrl+=',
-            click: () => setPreviewZoom(browser, 0.1),
-          },
-          {
-            label: '缩小',
-            accelerator: 'Ctrl+-',
-            click: () => setPreviewZoom(browser, -0.1),
-          },
-          {
-            label: '重置缩放',
-            accelerator: 'Ctrl+0',
-            click: () => browser.webContents.setZoomFactor(1),
-          },
-          { type: 'separator' },
-          {
-            label: '打开开发者工具',
-            accelerator: 'Ctrl+Shift+I',
-            click: () => browser.webContents.openDevTools({ mode: 'detach' }),
-          },
-        ],
-      },
-    ]),
-  );
-  browser.once('ready-to-show', () => {
-    browser.show();
-    browser.focus();
-  });
-  browser.on('closed', () => {
-    externalBrowserWindows.delete(browser);
-  });
-  browser.webContents.setWindowOpenHandler(({ url }) => {
-    const next = resolveUiPreviewTarget(url);
-    if (next != null) {
-      void browser.loadURL(next.url);
-    } else {
-      void openTargetExternally(url);
-    }
-    return { action: 'deny' };
-  });
-  browser.webContents.on('will-navigate', (event, nextUrl) => {
-    if (resolveUiPreviewTarget(nextUrl) != null) {
-      return;
-    }
-    event.preventDefault();
-    void openTargetExternally(nextUrl);
-  });
-  await browser.loadURL(previewTarget.url).catch(async () => {
-    browser.close();
-    await openTargetExternally(targetUrl, previewTarget);
-  });
-}
-
-function setPreviewZoom(browser: BrowserWindow, delta: number) {
-  if (browser.isDestroyed()) {
+  if (mainWindow && sendUiPreviewToInspector(mainWindow, targetUrl)) {
+    showMainWindow();
     return;
   }
-  const current = browser.webContents.getZoomFactor();
-  const next = Math.min(3, Math.max(0.25, Math.round((current + delta) * 10) / 10));
-  browser.webContents.setZoomFactor(next);
+  await openTargetExternally(previewTarget.externalTarget, previewTarget);
 }
 
 function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
@@ -1344,7 +1168,8 @@ function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopSt
     theme:
       payload.theme === 'bright' ||
       payload.theme === 'parchment' ||
-      payload.theme === 'dark'
+      payload.theme === 'dark' ||
+      payload.theme === 'cyberpunk'
         ? payload.theme
         : 'dark',
     settings: {
@@ -2145,76 +1970,8 @@ ipcMain.handle('app:renderer-ready', (event) => {
   }, 250);
 });
 
-ipcMain.handle('os:login-settings', () => readOsLoginSettings());
-
-ipcMain.handle('os:set-login-settings', (_, value: OsLoginSettings) =>
-  writeOsLoginSettings({
-    enabled: value?.enabled === true,
-    startInOsMode: value?.startInOsMode === true,
-  }),
-);
-
-ipcMain.handle('os:startup-context', () => ({
-  launchedInOsMode: process.argv.includes('--os-mode'),
-  supported: process.platform === 'win32' || process.platform === 'darwin',
-}));
-
-ipcMain.handle('os:set-shell-mode', (event, enabled: boolean) => {
-  const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (sourceWindow == null || sourceWindow.isDestroyed()) {
-    return { enabled: false };
-  }
-  const nextEnabled = enabled === true;
-  sourceWindow.setMenuBarVisibility(false);
-  if (nextEnabled) {
-    // On Windows, forcing an already maximized frameless window into Electron's
-    // fullscreen mode can restore its previous bounds first. Keep the native
-    // maximized state in that case; the OS renderer already fills the window.
-    if (!sourceWindow.isMaximized() && !sourceWindow.isFullScreen()) {
-      sourceWindow.setFullScreen(true);
-    }
-    hideWindowsTaskbarWithWatchdog();
-    sourceWindow.show();
-    sourceWindow.focus();
-  } else {
-    if (sourceWindow.isFullScreen()) {
-      sourceWindow.setFullScreen(false);
-    }
-    restoreWindowsTaskbar();
-  }
-  return { enabled: nextEnabled };
-});
-
 ipcMain.handle('appearance:wallpaper-accent', () => {
   return readWallpaperAccent();
-});
-
-ipcMain.handle('appearance:wallpaper-path', () => {
-  try {
-    return currentWallpaperPath();
-  } catch {
-    return '';
-  }
-});
-
-ipcMain.handle('appearance:wallpaper-data-url', async () => {
-  try {
-    const wallpaperPath = currentWallpaperPath();
-    if (!wallpaperPath) {
-      return '';
-    }
-    const bytes = await fs.promises.readFile(wallpaperPath);
-    const detectedType = contentTypeForBytes(bytes);
-    const contentType = detectedType === 'application/octet-stream'
-      ? contentTypeForPath(wallpaperPath)
-      : detectedType;
-    if (!contentType.startsWith('image/')) {
-      return '';
-    }
-    return `data:${contentType};base64,${bytes.toString('base64')}`;
-  } catch {
-    return '';
-  }
 });
 
 ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
@@ -2223,132 +1980,60 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
     return;
   }
   const normalizedTheme: AppThemeMode =
-    theme === 'bright' || theme === 'parchment' || theme === 'dark'
+    theme === 'bright' || theme === 'parchment' || theme === 'dark' ||
+      theme === 'cyberpunk'
       ? theme
       : 'dark';
   applyMainWindowVisualMaterial(sourceWindow, normalizedTheme);
   traceMainWindowComposition(sourceWindow, 'theme-change', [0, 80]);
 });
 
-ipcMain.handle('os:filesystem-locations', (event) => {
+ipcMain.handle('filesystem:locations', (event) => {
   assertMainWindowSender(event.sender.id);
-  return osFilesystemLocations();
+  return filesystemLocations();
 });
 
-ipcMain.handle('os:list-directory', async (event, targetPath?: string) => {
+ipcMain.handle('chrome-connector:status', (event) => {
   assertMainWindowSender(event.sender.id);
-  return listOsDirectory(targetPath);
+  return currentChromeConnectorStatus();
 });
 
-ipcMain.handle('os:create-directory', async (event, parentPath: string, name: string) => {
+ipcMain.handle('chrome-connector:setup', (event) => {
   assertMainWindowSender(event.sender.id);
-  const parent = normalizeShellPath(parentPath);
-  const safeName = path.basename(String(name ?? '').trim());
-  if (!parent || !safeName || safeName === '.' || safeName === '..') {
-    throw new Error('Invalid folder name.');
+  registerChromeConnectorNativeHost({
+    userDataPath: app.getPath('userData'),
+    nativeHostPath: chromeConnectorNativeHostPath(),
+  });
+  cachedChromeConnectorRegistrationStatus = null;
+  return currentChromeConnectorStatus();
+});
+
+ipcMain.handle('chrome-connector:open-installer', async (event) => {
+  assertMainWindowSender(event.sender.id);
+  const status = currentChromeConnectorStatus();
+  if (status.storeUrl) {
+    await shell.openExternal(status.storeUrl);
+    return { opened: true, method: 'store', target: status.storeUrl };
   }
-  const target = path.join(parent, safeName);
-  await fs.promises.mkdir(target);
-  return target;
+  const manifestPath = path.join(status.extensionDirectory, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('The bundled CardBush Browser Connector extension is missing.');
+  }
+  clipboard.writeText(status.extensionDirectory);
+  shell.showItemInFolder(manifestPath);
+  return { opened: true, method: 'unpacked', target: status.extensionDirectory };
 });
 
-ipcMain.handle('os:rename-path', async (event, sourcePath: string, name: string) => {
+ipcMain.handle('chrome-connector:reveal-extension', (event) => {
   assertMainWindowSender(event.sender.id);
-  const source = normalizeShellPath(sourcePath);
-  const safeName = path.basename(String(name ?? '').trim());
-  if (!source || !safeName || safeName === '.' || safeName === '..') {
-    throw new Error('Invalid path or name.');
+  const status = currentChromeConnectorStatus();
+  const manifestPath = path.join(status.extensionDirectory, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('The bundled CardBush Browser Connector extension is missing.');
   }
-  const target = path.join(path.dirname(source), safeName);
-  await fs.promises.rename(source, target);
-  return target;
-});
-
-ipcMain.handle('os:trash-path', async (event, targetPath: string) => {
-  assertMainWindowSender(event.sender.id);
-  const target = normalizeShellPath(targetPath);
-  if (!target || path.parse(target).root === target) {
-    throw new Error('This path cannot be moved to the recycle bin.');
-  }
-  await shell.trashItem(target);
-});
-
-ipcMain.handle('os:list-applications', async (event, forceRefresh = false) => {
-  assertMainWindowSender(event.sender.id);
-  return listOsApplicationsCached(forceRefresh === true);
-});
-
-ipcMain.handle('os:running-applications', async (event) => {
-  assertMainWindowSender(event.sender.id);
-  return listRunningOsApplications();
-});
-
-ipcMain.handle('os:list-windows', async (event) => {
-  assertMainWindowSender(event.sender.id);
-  return listOsWindows();
-});
-
-ipcMain.handle('os:window-action', async (
-  event,
-  windowId: string,
-  action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close',
-) => {
-  assertMainWindowSender(event.sender.id);
-  return controlOsWindow(windowId, action);
-});
-
-ipcMain.handle('os:launch-application', async (event, appId: string) => {
-  assertMainWindowSender(event.sender.id);
-  const target = normalizeShellPath(appId);
-  if (!target || !isStartMenuApplication(target)) {
-    throw new Error('Invalid application identifier.');
-  }
-  const record = resolvedStartMenuApplication(target);
-  if (!record) {
-    throw new Error('Application shortcut is no longer available.');
-  }
-  if (await focusExistingWindowsApplication(record.target)) {
-    return { status: 'focused', applicationId: record.id };
-  }
-  const error = await shell.openPath(target);
-  if (error) {
-    throw new Error(error);
-  }
-  let focused = false;
-  for (let attempt = 0; attempt < 10 && !focused; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 280));
-    focused = await focusExistingWindowsApplication(record.target);
-  }
-  return {
-    status: focused ? 'launched_and_focused' : 'launched',
-    applicationId: record.id,
-  };
-});
-
-ipcMain.handle('os:search-app-catalog', async (event, query: string) => {
-  assertMainWindowSender(event.sender.id);
-  const needle = String(query ?? '').trim().slice(0, 80);
-  if (needle.length < 2) {
-    return [];
-  }
-  const result = await runWinget([
-    'search', '--query', needle, '--source', 'winget',
-    '--accept-source-agreements', '--disable-interactivity',
-  ], 45_000);
-  return parseWingetSearch(result.stdout).slice(0, 24);
-});
-
-ipcMain.handle('os:install-catalog-application', async (event, packageId: string) => {
-  assertMainWindowSender(event.sender.id);
-  const id = String(packageId ?? '').trim();
-  if (!/^[a-z0-9][a-z0-9._+-]{1,160}$/i.test(id)) {
-    throw new Error('Invalid package identifier.');
-  }
-  const result = await runWinget([
-    'install', '--id', id, '--exact', '--source', 'winget',
-    '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity',
-  ], 10 * 60_000);
-  return { installed: true, output: result.stdout.slice(-4000) };
+  clipboard.writeText(status.extensionDirectory);
+  shell.showItemInFolder(manifestPath);
+  return status.extensionDirectory;
 });
 
 ipcMain.handle('cardbush-product-host:command', async (event, command: unknown) => {
@@ -2515,21 +2200,6 @@ ipcMain.handle('files:inspect-local-reference', async (event, targetPath: string
     kind,
     ...(iconImage.isEmpty() ? {} : { icon: iconImage.toDataURL() }),
   };
-});
-
-ipcMain.handle('a2a:inspect', (event, agentUrl: string) => {
-  assertMainWindowSender(event.sender.id);
-  return productA2AClient.inspect(agentUrl);
-});
-
-ipcMain.handle('a2a:dispatch', (event, input: {
-  agentUrl: string;
-  text: string;
-  contextId?: string;
-  taskId?: string;
-}) => {
-  assertMainWindowSender(event.sender.id);
-  return productA2AClient.dispatch(input);
 });
 
 ipcMain.handle('skills:list', async () => {
@@ -2969,7 +2639,7 @@ ipcMain.handle('shell:open-external', (event, targetUrl: string) => {
   if (sourceWindow !== mainWindow) {
     return;
   }
-  return openUiPreview(targetUrl);
+  return openTargetExternally(targetUrl);
 });
 
 ipcMain.handle('shell:open-ui-preview', (event, target: string) => {
@@ -3069,6 +2739,23 @@ async function runPackagedApplicationSmoke(): Promise<void> {
         'dist',
         'index.js',
       )),
+      chromeConnectorMcp: fs.existsSync(path.join(
+        app.getAppPath(),
+        'packages',
+        'cardbush-chrome-mcp',
+        'dist',
+        'index.js',
+      )),
+      chromeConnectorExtension: fs.existsSync(path.join(
+        process.resourcesPath,
+        'chrome-extension',
+        'manifest.json',
+      )),
+      chromeNativeHost: fs.existsSync(path.join(
+        process.resourcesPath,
+        'chrome-native-host',
+        'CardBushBrowserHost.exe',
+      )),
       chromeMcp: fs.existsSync(path.join(
         app.getAppPath(),
         'assets',
@@ -3166,6 +2853,11 @@ app.whenReady().then(async () => {
     });
   }
   registerLocalFileProtocol();
+  try {
+    await startChromeConnectorBroker();
+  } catch (error) {
+    console.error('[chrome-connector] bridge failed to start', error);
+  }
   if (packagedSmokeMode) {
     await runPackagedApplicationSmoke();
     return;
@@ -3185,7 +2877,6 @@ app.whenReady().then(async () => {
   }).catch(() => undefined);
   void ensureLegacyProductSkillsMigrated();
   void startRuntimeServices();
-  void listOsApplicationsCached().catch(() => undefined);
   setImmediate(() => {
     const shortcutUpdated = ensureWindowsTaskbarShortcut();
     if (process.platform !== 'win32') return;
@@ -3296,6 +2987,8 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
   unregisterDesktopControlMonitor?.();
   const subscriptionTurns = new Map<string, { sessionId: string; turnId: string }>();
   const activeControls = new Map<string, DesktopControlTurn>();
+  const activeChromeTools = new Set<string>();
+  const activeChromeTurns = new Set<string>();
   const pendingPermissions = new Map<string, Set<string>>();
   const cancelRequested = new Set<string>();
   const cancelControl = (control: DesktopControlTurn, source: 'permission_race') => {
@@ -3315,6 +3008,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
   const clearTurn = (sessionId: string, turnId: string) => {
     const key = runtimeTurnKey(sessionId, turnId);
     pendingPermissions.delete(key);
+    activeChromeTurns.delete(key);
     for (const [toolKey, control] of activeControls) {
       if (control.sessionId !== sessionId || control.turnId !== turnId) continue;
       activeControls.delete(toolKey);
@@ -3341,6 +3035,16 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
           ensureDesktopControlOverlay().show(control);
         }
       } else if (
+        event.kind === 'tool_running' &&
+        isChromeRuntimeTool(event.payload.toolName)
+      ) {
+        activeChromeTurns.add(turnKey);
+        activeChromeTools.add(JSON.stringify([
+          event.sessionId,
+          event.turnId,
+          event.payload.toolCallId,
+        ]));
+      } else if (
         (event.kind === 'tool_returned' ||
           event.kind === 'tool_failed' ||
           event.kind === 'tool_cancelled') &&
@@ -3352,6 +3056,17 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         activeControls.delete(toolKey);
         cancelRequested.delete(toolKey);
         if (control) desktopControlOverlay?.hide(control);
+      } else if (
+        (event.kind === 'tool_returned' ||
+          event.kind === 'tool_failed' ||
+          event.kind === 'tool_cancelled') &&
+        isChromeRuntimeTool(event.payload.toolName)
+      ) {
+        activeChromeTools.delete(JSON.stringify([
+          event.sessionId,
+          event.turnId,
+          event.payload.toolCallId,
+        ]));
       } else if (event.kind === 'permission_requested') {
         const permissions = pendingPermissions.get(turnKey) ?? new Set<string>();
         permissions.add(event.payload.permissionId);
@@ -3371,13 +3086,25 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         permissions?.delete(event.payload.permissionId);
         if (permissions?.size === 0) pendingPermissions.delete(turnKey);
       } else if (event.kind === 'turn_terminal') {
+        for (const key of [...activeChromeTools]) {
+          const [sessionId, turnId] = JSON.parse(key) as string[];
+          if (sessionId === event.sessionId && turnId === event.turnId) activeChromeTools.delete(key);
+        }
         clearTurn(event.sessionId, event.turnId);
+        if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
+          chromeConnectorBroker?.releaseAll('turn_terminal');
+        }
       }
       return;
     }
     const turn = subscriptionTurns.get(message.subscriptionId);
     subscriptionTurns.delete(message.subscriptionId);
-    if (turn) clearTurn(turn.sessionId, turn.turnId);
+    if (turn) {
+      clearTurn(turn.sessionId, turn.turnId);
+      if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
+        chromeConnectorBroker?.releaseAll('stream_closed');
+      }
+    }
   });
 }
 
@@ -3481,7 +3208,20 @@ async function initializeRuntimeHostWithinDeadline() {
           'dist',
           'index.js',
         ),
-        CARDBUSH_CHROME_MCP_ENTRY: path.join(
+        CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: path.join(
+          app.getAppPath(),
+          'packages',
+          'cardbush-chrome-mcp',
+          'dist',
+          'index.js',
+        ),
+        CARDBUSH_CHROME_CONNECTOR_CONFIG:
+          chromeConnectorBroker?.configPath ?? path.join(
+            app.getPath('userData'),
+            'browser-connector',
+            'bridge.json',
+          ),
+        CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY: path.join(
           app.getAppPath(),
           'assets',
           'plugins',
@@ -3650,6 +3390,66 @@ function productPluginRoots(): PluginRoot[] {
 
 function productAppsConfigPath(): string {
   return path.join(app.getPath('userData'), 'product-host', 'config', 'apps.json');
+}
+
+function isChromeRuntimeTool(toolName: string): boolean {
+  return toolName.startsWith('mcp__chrome_devtools__');
+}
+
+async function startChromeConnectorBroker(): Promise<void> {
+  if (chromeConnectorBroker) return;
+  const broker = new ChromeConnectorBroker(app.getPath('userData'));
+  chromeConnectorBroker = broker;
+  unregisterChromeConnectorStatus = broker.onStatus((status) => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
+      mainWindow.webContents.send('chrome-connector:status', {
+        ...currentChromeConnectorRegistrationStatus(),
+        ...status,
+      });
+    }
+  });
+  try {
+    await broker.start();
+  } catch (error) {
+    unregisterChromeConnectorStatus?.();
+    unregisterChromeConnectorStatus = null;
+    chromeConnectorBroker = null;
+    throw error;
+  }
+}
+
+function currentChromeConnectorRegistrationStatus() {
+  if (cachedChromeConnectorRegistrationStatus) {
+    return cachedChromeConnectorRegistrationStatus;
+  }
+  cachedChromeConnectorRegistrationStatus = chromeConnectorRegistrationStatus({
+    userDataPath: app.getPath('userData'),
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    nativeHostPath: chromeConnectorNativeHostPath(),
+    packaged: cardbushRuntimeIsPackaged,
+  });
+  return cachedChromeConnectorRegistrationStatus;
+}
+
+function chromeConnectorNativeHostPath(): string {
+  return cardbushRuntimeIsPackaged
+    ? path.join(process.resourcesPath, 'chrome-native-host', 'CardBushBrowserHost.exe')
+    : path.join(app.getAppPath(), 'dist-native', 'chrome-connector', 'CardBushBrowserHost.exe');
+}
+
+function currentChromeConnectorStatus():
+  ReturnType<typeof currentChromeConnectorRegistrationStatus> & ChromeConnectorStatus {
+  const brokerStatus = chromeConnectorBroker?.status() ?? {
+    protocol: 'cardbush.chrome_connector.v1' as const,
+    bridgeRunning: false,
+    extensionConnected: false,
+    controlledTabCount: 0,
+  };
+  return {
+    ...currentChromeConnectorRegistrationStatus(),
+    ...brokerStatus,
+  };
 }
 
 async function activeProductSkillRoots(): Promise<ProductSkillRoot[]> {
@@ -3879,13 +3679,16 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+  unregisterChromeConnectorStatus?.();
+  unregisterChromeConnectorStatus = null;
+  chromeConnectorBroker?.stop();
+  chromeConnectorBroker = null;
   disposeDesktopControlMonitor();
   unregisterRuntimeHostIpc?.();
   unregisterRuntimeHostIpc = null;
   runtimeHostController?.stop();
   runtimeHostController = null;
   productHostController = null;
-  restoreWindowsTaskbar();
   if (quitFallbackTimer != null) {
     clearTimeout(quitFallbackTimer);
     quitFallbackTimer = null;
@@ -4397,7 +4200,7 @@ function currentWallpaperPath() {
 
 function assertMainWindowSender(senderId: number) {
   if (mainWindow == null || mainWindow.isDestroyed() || mainWindow.webContents.id !== senderId) {
-    throw new Error('OS integration is only available to the main CardBush window.');
+    throw new Error('Desktop integration is only available to the main CardBush window.');
   }
 }
 
@@ -4411,7 +4214,7 @@ function assertRuntimeRendererSender(senderId: number) {
   throw new Error('Runtime integration is unavailable to this window.');
 }
 
-function osFilesystemLocations() {
+function filesystemLocations() {
   const candidates = [
     ['home', 'Home', app.getPath('home')],
     ['desktop', 'Desktop', app.getPath('desktop')],
@@ -4425,610 +4228,8 @@ function osFilesystemLocations() {
     .map(([id, name, targetPath]) => ({ id, name, path: targetPath }));
 }
 
-async function listOsDirectory(targetPath?: string) {
-  const normalized = normalizeShellPath(targetPath || app.getPath('home'));
-  const stats = await fs.promises.stat(normalized);
-  if (!stats.isDirectory()) {
-    throw new Error('The selected path is not a directory.');
-  }
-  const entries = await fs.promises.readdir(normalized, { withFileTypes: true });
-  const visible = entries
-    .filter((entry) => entry.name !== '.' && entry.name !== '..')
-    .slice(0, 600);
-  const items = await Promise.all(
-    visible.map(async (entry) => {
-      const itemPath = path.join(normalized, entry.name);
-      const itemStats = await fs.promises.stat(itemPath).catch(() => null);
-      return {
-        id: itemPath,
-        name: entry.name,
-        path: itemPath,
-        kind: entry.isDirectory() ? 'directory' : 'file',
-        extension: entry.isDirectory() ? '' : path.extname(entry.name).toLowerCase(),
-        size: itemStats?.isFile() ? itemStats.size : 0,
-        modifiedAt: itemStats?.mtime?.toISOString() ?? '',
-        hidden: entry.name.startsWith('.'),
-      };
-    }),
-  );
-  items.sort((left, right) => {
-    if (left.kind !== right.kind) {
-      return left.kind === 'directory' ? -1 : 1;
-    }
-    return left.name.localeCompare(right.name, undefined, { numeric: true });
-  });
-  return {
-    path: normalized,
-    parentPath: path.dirname(normalized) === normalized ? '' : path.dirname(normalized),
-    truncated: entries.length > visible.length,
-    items,
-  };
-}
 
-function startMenuRoots() {
-  return [process.env.APPDATA, process.env.ProgramData]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .map((value) => path.resolve(value, 'Microsoft', 'Windows', 'Start Menu', 'Programs'))
-    .filter((value, index, all) => fs.existsSync(value) && all.indexOf(value) === index);
-}
 
-function isStartMenuApplication(targetPath: string) {
-  const target = path.resolve(targetPath).toLowerCase();
-  const extension = path.extname(target).toLowerCase();
-  return (
-    extension === '.lnk' &&
-    startMenuRoots().some((root) => target.startsWith(`${root.toLowerCase()}${path.sep}`))
-  );
-}
-
-const ignoredStartMenuEntryPattern = new RegExp(
-  [
-    'uninstall',
-    'unins(?:tall)?',
-    'install(?:er)?',
-    'update(?:r)?',
-    'upgrade',
-    'repair',
-    'help',
-    'documentation',
-    'manuals?',
-    'module docs?',
-    'readme',
-    'release notes?',
-    'changelog',
-    'licen[cs]e',
-    'website',
-    'faq',
-    'administrative tools',
-    'debuggable package manager',
-    'error reporter',
-    'language preferences',
-    'node\.js command prompt',
-    'send to',
-    'vim tutor',
-    '卸载',
-    '安装',
-    '升级',
-    '更新',
-    '修复',
-    '帮助',
-    '文档',
-    '手册',
-    '发送至',
-    '语言首选项',
-    '配置工具',
-  ].join('|'),
-  'i',
-);
-
-const launchableStartMenuTargetExtensions = new Set(['.exe', '.com', '.bat', '.cmd', '.msc']);
-const ignoredStartMenuGroups = new Set([
-  'accessibility',
-  'accessories',
-  'administrative tools',
-  'system tools',
-  'windows kits',
-  'windows powershell',
-]);
-
-function startMenuGroupForShortcut(shortcutPath: string) {
-  const resolvedShortcut = path.resolve(shortcutPath);
-  for (const root of startMenuRoots()) {
-    const relative = path.relative(root, resolvedShortcut);
-    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-      const segments = relative.split(path.sep);
-      return segments.length > 1 ? segments[0].trim().toLowerCase() : '';
-    }
-  }
-  return '';
-}
-
-function resolvedStartMenuApplication(shortcutPath: string) {
-  try {
-    const details = shell.readShortcutLink(shortcutPath);
-    const target = expandWindowsEnv(details.target?.trim() ?? '');
-    const declaredIcon = expandWindowsEnv(details.icon?.trim() ?? '');
-    const name = path.basename(shortcutPath, path.extname(shortcutPath)).trim();
-    const targetExtension = path.extname(target).toLowerCase();
-    const targetName = path.basename(target);
-    const group = startMenuGroupForShortcut(shortcutPath);
-    if (
-      !name ||
-      !target ||
-      ignoredStartMenuGroups.has(group) ||
-      !launchableStartMenuTargetExtensions.has(targetExtension) ||
-      !fs.existsSync(target) ||
-      ignoredStartMenuEntryPattern.test(name) ||
-      ignoredStartMenuEntryPattern.test(targetName)
-    ) {
-      return null;
-    }
-    return {
-      id: shortcutPath,
-      name,
-      path: shortcutPath,
-      target,
-      iconPath: declaredIcon && fs.existsSync(declaredIcon) ? declaredIcon : target,
-      args: details.args?.trim() ?? '',
-      source: 'start_menu' as const,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function listOsApplications() {
-  const shortcuts: string[] = [];
-  const stack = startMenuRoots();
-  while (stack.length > 0 && shortcuts.length < 260) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-    const entries = await fs.promises.readdir(current, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const itemPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(itemPath);
-      } else if (isStartMenuApplication(itemPath)) {
-        shortcuts.push(itemPath);
-      }
-    }
-  }
-  const recordsByTarget = new Map<string, NonNullable<ReturnType<typeof resolvedStartMenuApplication>>>();
-  for (const shortcutPath of shortcuts) {
-    const record = resolvedStartMenuApplication(shortcutPath);
-    if (!record) {
-      continue;
-    }
-    const key = path.resolve(record.target).toLowerCase();
-    const current = recordsByTarget.get(key);
-    if (!current || (current.args && !record.args) || record.name.length < current.name.length) {
-      recordsByTarget.set(key, record);
-    }
-  }
-  const records = [...recordsByTarget.values()]
-    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
-    .slice(0, 120);
-  const applications = await Promise.all(
-    records.map(async (record) => {
-      const iconImage = await app
-        .getFileIcon(record.iconPath, { size: 'large' })
-        .catch(() => nativeImage.createEmpty());
-      const icon = iconImage.isEmpty() ? '' : iconImage.toDataURL();
-      const iconSignature = iconImage.isEmpty()
-        ? ''
-        : createHash('sha1')
-            .update(iconImage.resize({ width: 16, height: 16, quality: 'good' }).toBitmap())
-            .digest('hex');
-      const { target: _target, iconPath: _iconPath, args: _args, ...publicRecord } = record;
-      return { ...publicRecord, icon, iconSignature };
-    }),
-  );
-  const iconCounts = new Map<string, number>();
-  for (const item of applications) {
-    if (item.iconSignature) {
-      iconCounts.set(item.iconSignature, (iconCounts.get(item.iconSignature) ?? 0) + 1);
-    }
-  }
-  return applications.map(({ iconSignature, ...item }) => ({
-    ...item,
-    icon: item.icon && (iconCounts.get(iconSignature) ?? 0) < 3 ? item.icon : '',
-  }));
-}
-
-function listOsApplicationsCached(forceRefresh = false) {
-  if (!forceRefresh && osApplicationsCache) {
-    return Promise.resolve(osApplicationsCache);
-  }
-  if (!forceRefresh && osApplicationsPending) {
-    return osApplicationsPending;
-  }
-  const pending = listOsApplications()
-    .then((applications) => {
-      osApplicationsCache = applications;
-      return applications;
-    })
-    .finally(() => {
-      if (osApplicationsPending === pending) {
-        osApplicationsPending = null;
-      }
-    });
-  osApplicationsPending = pending;
-  return pending;
-}
-
-async function listRunningOsApplications() {
-  if (process.platform !== 'win32') {
-    return [];
-  }
-  const applications = await listOsApplicationsCached();
-  const executablePaths = await runningWindowsExecutablePaths();
-  return applications.filter((application) => {
-    const record = resolvedStartMenuApplication(application.id);
-    return record ? executablePaths.has(path.resolve(record.target).toLowerCase()) : false;
-  });
-}
-
-function runningWindowsExecutablePaths() {
-  const source = `$ErrorActionPreference = 'SilentlyContinue'\n` +
-    `Get-Process | ForEach-Object { try { if ($_.Path) { $_.Path } } catch {} } | ` +
-    `Sort-Object -Unique`;
-  return new Promise<Set<string>>((resolve) => {
-    const child = spawnWindowsShellScript(source);
-    let stdout = '';
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve(new Set(
-      stdout
-        .replace(/\r/g, '')
-        .split('\n')
-        .map((value) => value.trim())
-        .filter(Boolean)
-        .map((value) => path.resolve(value).toLowerCase()),
-      ));
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish();
-    }, 3500);
-    child.stdout.on('data', (chunk) => {
-      stdout = `${stdout}${String(chunk)}`.slice(-200_000);
-    });
-    child.once('error', () => {
-      clearTimeout(timer);
-      if (!settled) {
-        settled = true;
-        resolve(new Set<string>());
-      }
-    });
-    child.once('close', () => {
-      clearTimeout(timer);
-      finish();
-    });
-  });
-}
-
-function runWinget(args: string[], timeoutMs: number) {
-  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn('winget.exe', args, {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('The application catalog request timed out.'));
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
-      stdout = `${stdout}${String(chunk)}`.slice(-200_000);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = `${stderr}${String(chunk)}`.slice(-20_000);
-    });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(stderr.trim() || stdout.trim() || `winget exited with code ${code}`));
-      }
-    });
-  });
-}
-
-const windowsShellBridgeSource = String.raw`
-using System;
-using System.Runtime.InteropServices;
-public static class CardBushWindowsShell {
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int Size; public RECT Monitor; public RECT Work; public uint Flags; }
-  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr FindWindow(string className, string windowName);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool ShowWindow(IntPtr handle, int command);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetForegroundWindow(IntPtr handle);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool BringWindowToTop(IntPtr handle);
-  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsIconic(IntPtr handle);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool IsZoomed(IntPtr handle);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetWindowRect(IntPtr handle, out RECT rect);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
-  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
-  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
-  public static bool FitOsWorkspace(IntPtr handle) {
-    IntPtr monitor = MonitorFromWindow(handle, 2);
-    MONITORINFO info = new MONITORINFO(); info.Size = Marshal.SizeOf(typeof(MONITORINFO));
-    if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return false;
-    const int topInset = 48;
-    const int bottomInset = 8;
-    return SetWindowPos(handle, IntPtr.Zero, info.Monitor.Left, info.Monitor.Top + topInset,
-      info.Monitor.Right - info.Monitor.Left,
-      info.Monitor.Bottom - info.Monitor.Top - topInset - bottomInset,
-      0x0064);
-  }
-}`;
-
-function encodedPowerShell(source: string) {
-  return Buffer.from(source, 'utf16le').toString('base64');
-}
-
-function spawnWindowsShellScript(source: string, env?: NodeJS.ProcessEnv) {
-  const utf8Source =
-    `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n` +
-    `$OutputEncoding = [Console]::OutputEncoding\n` +
-    source;
-  return spawn('powershell.exe', [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-EncodedCommand', encodedPowerShell(utf8Source),
-  ], {
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...env },
-  });
-}
-
-function runWindowsShellScript(source: string, timeoutMs = 4500) {
-  return new Promise<string>((resolve, reject) => {
-    const child = spawnWindowsShellScript(source);
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(stdout.trim());
-    };
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(new Error('Windows desktop request timed out.'));
-    }, timeoutMs);
-    child.stdout.on('data', (chunk) => {
-      stdout = `${stdout}${String(chunk)}`.slice(-300_000);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr = `${stderr}${String(chunk)}`.slice(-30_000);
-    });
-    child.once('error', (error) => finish(error));
-    child.once('close', (code) => {
-      if (code === 0) finish();
-      else finish(new Error(stderr.trim() || `Windows desktop request exited with code ${code}`));
-    });
-  });
-}
-
-async function listOsWindows() {
-  if (process.platform !== 'win32') return [];
-  const source = `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n` +
-    `$selfPid = ${process.pid}\n` +
-    `$ignored = @('ApplicationFrameHost','TextInputHost','ShellExperienceHost','StartMenuExperienceHost','SearchHost','LockApp')\n` +
-    `$items = Get-Process -ErrorAction SilentlyContinue | Where-Object { ` +
-    `$_.Id -ne $selfPid -and $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and ` +
-    `$ignored -notcontains $_.ProcessName -and $_.MainWindowTitle -ne 'Program Manager' ` +
-    `} | ForEach-Object { ` +
-    `$handle = $_.MainWindowHandle; $processPath = ''; ` +
-    `try { $processPath = $_.Path } catch {}; ` +
-    `[PSCustomObject]@{ ` +
-    `id = ($_.Id.ToString() + ':' + $handle.ToString()); ` +
-    `process_id = $_.Id; handle = $handle.ToInt64(); title = $_.MainWindowTitle; ` +
-    `process_name = $_.ProcessName; path = $processPath; ` +
-    `minimized = [CardBushWindowsShell]::IsIconic($handle); ` +
-    `maximized = [CardBushWindowsShell]::IsZoomed($handle) } ` +
-    `}\n$items | ConvertTo-Json -Compress`;
-  const output = await runWindowsShellScript(source);
-  if (!output) return [];
-  const decoded: unknown = JSON.parse(output);
-  const records = (Array.isArray(decoded) ? decoded : [decoded]) as Array<Record<string, unknown>>;
-  return Promise.all(records.slice(0, 40).map(async (record) => {
-    const executablePath = typeof record.path === 'string' ? record.path : '';
-    const iconImage = executablePath
-      ? await app.getFileIcon(executablePath, { size: 'large' }).catch(() => nativeImage.createEmpty())
-      : nativeImage.createEmpty();
-    return {
-      id: String(record.id ?? ''),
-      processId: Number(record.process_id ?? 0),
-      handle: Number(record.handle ?? 0),
-      title: String(record.title ?? ''),
-      processName: String(record.process_name ?? ''),
-      minimized: record.minimized === true,
-      maximized: record.maximized === true,
-      icon: iconImage.isEmpty() ? '' : iconImage.toDataURL(),
-    };
-  }));
-}
-
-async function controlOsWindow(
-  windowId: string,
-  action: 'focus' | 'minimize' | 'maximize' | 'restore' | 'close' | 'move' | 'resize',
-  bounds: { x?: number; y?: number; width?: number; height?: number } = {},
-) {
-  if (process.platform !== 'win32') throw new Error('Window control is unavailable.');
-  if (!/^[1-9]\d{0,9}:[1-9]\d{0,19}$/.test(windowId)) {
-    throw new Error('Invalid window identifier.');
-  }
-  const [processId, handle] = windowId.split(':');
-  const allowedActions = new Set(['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize']);
-  if (!allowedActions.has(action)) throw new Error('Unsupported window action.');
-  const x = boundedInteger(bounds.x, -100_000, 100_000, 'x');
-  const y = boundedInteger(bounds.y, -100_000, 100_000, 'y');
-  const width = boundedInteger(bounds.width, 1, 100_000, 'width');
-  const height = boundedInteger(bounds.height, 1, 100_000, 'height');
-  if (action === 'move' && (x == null || y == null)) {
-    throw new Error('Window move requires x and y.');
-  }
-  if (action === 'resize' && (width == null || height == null)) {
-    throw new Error('Window resize requires width and height.');
-  }
-  const source = `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n` +
-    `$process = Get-Process -Id ${processId} -ErrorAction Stop\n` +
-    `$handle = [IntPtr]${handle}\n` +
-    `if ($process.MainWindowHandle -ne $handle) { throw 'Window target is stale.' }\n` +
-    (action === 'move' || action === 'resize'
-      ? `$rect = New-Object CardBushWindowsShell+RECT\n` +
-        `if (-not [CardBushWindowsShell]::GetWindowRect($handle, [ref]$rect)) { throw 'Window bounds are unavailable.' }\n` +
-        `[void][CardBushWindowsShell]::SetWindowPos($handle, [IntPtr]::Zero, ` +
-        `${action === 'move' ? x : '$rect.Left'}, ${action === 'move' ? y : '$rect.Top'}, ` +
-        `${action === 'resize' ? width : '($rect.Right - $rect.Left)'}, ` +
-        `${action === 'resize' ? height : '($rect.Bottom - $rect.Top)'}, 0x0014)\n`
-      : action === 'close'
-      ? `[void][CardBushWindowsShell]::PostMessage($handle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)\n`
-      : action === 'minimize'
-        ? `[void][CardBushWindowsShell]::ShowWindow($handle, 6)\n`
-      : action === 'maximize'
-          ? `[void][CardBushWindowsShell]::ShowWindow($handle, 9)\n` +
-            `[void][CardBushWindowsShell]::FitOsWorkspace($handle)\n`
-          : action === 'restore'
-            ? `[void][CardBushWindowsShell]::ShowWindow($handle, 9)\n`
-            : `[void][CardBushWindowsShell]::ShowWindow($handle, 9)\n` +
-              `[void][CardBushWindowsShell]::FitOsWorkspace($handle)\n` +
-            `[void][CardBushWindowsShell]::BringWindowToTop($handle)\n` +
-            `$activated = [CardBushWindowsShell]::SetForegroundWindow($handle)\n` +
-            `if (-not $activated) { try { $activated = (New-Object -ComObject WScript.Shell).AppActivate($process.Id) } catch {} }\n` +
-            `Start-Sleep -Milliseconds 120\n` +
-            `[void][CardBushWindowsShell]::FitOsWorkspace($handle)\n`);
-  await runWindowsShellScript(source);
-  return { ok: true, windowId, action };
-}
-
-function boundedInteger(
-  value: unknown,
-  minimum: number,
-  maximum: number,
-  label: string,
-  required = false,
-): number | undefined {
-  if (value == null && !required) return undefined;
-  const result = Number(value);
-  if (!Number.isInteger(result) || result < minimum || result > maximum) {
-    throw new Error(`${label} must be an integer between ${minimum} and ${maximum}.`);
-  }
-  return result;
-}
-
-function taskbarVisibilityBody(show: boolean) {
-  return `$command = ${show ? '5' : '0'}\n` +
-    `@('Shell_TrayWnd','Shell_SecondaryTrayWnd') | ForEach-Object { ` +
-    `$handle = [CardBushWindowsShell]::FindWindow($_, $null); ` +
-    `if ($handle -ne [IntPtr]::Zero) { [void][CardBushWindowsShell]::ShowWindow($handle, $command) } }`;
-}
-
-function taskbarVisibilityScript(show: boolean) {
-  return `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n${taskbarVisibilityBody(show)}`;
-}
-
-function hideWindowsTaskbarWithWatchdog() {
-  if (process.platform !== 'win32') {
-    return;
-  }
-  if (osTaskbarWatchdog && osTaskbarWatchdog.exitCode == null) {
-    const child = spawnWindowsShellScript(taskbarVisibilityScript(false));
-    child.unref();
-    return;
-  }
-  const source = `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n` +
-    `${taskbarVisibilityBody(false)}\n` +
-    `try { Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue } finally {\n` +
-    `${taskbarVisibilityBody(true)}\n}`;
-  osTaskbarWatchdog = spawnWindowsShellScript(source);
-  osTaskbarWatchdog.once('exit', () => {
-    osTaskbarWatchdog = null;
-  });
-  osTaskbarWatchdog.unref();
-}
-
-function restoreWindowsTaskbar() {
-  if (process.platform !== 'win32') {
-    return;
-  }
-  const child = spawnWindowsShellScript(taskbarVisibilityScript(true));
-  child.unref();
-}
-
-function focusExistingWindowsApplication(executablePath: string) {
-  if (process.platform !== 'win32' || !executablePath) {
-    return Promise.resolve(false);
-  }
-  const source = `Add-Type -TypeDefinition @'\n${windowsShellBridgeSource}\n'@\n` +
-    `$target = $env:CARDBUSH_TARGET_EXE\n` +
-    `$process = Get-Process -ErrorAction SilentlyContinue | Where-Object { ` +
-    `$_.MainWindowHandle -ne 0 -and $_.Path -and $_.Path.Equals($target, [StringComparison]::OrdinalIgnoreCase) ` +
-    `} | Sort-Object StartTime | Select-Object -First 1\n` +
-    `if ($process) { $handle = $process.MainWindowHandle; ` +
-    `[void][CardBushWindowsShell]::ShowWindow($handle, 9); ` +
-    `[void][CardBushWindowsShell]::FitOsWorkspace($handle); ` +
-    `[void][CardBushWindowsShell]::BringWindowToTop($handle); ` +
-    `$activated = [CardBushWindowsShell]::SetForegroundWindow($handle); ` +
-    `if (-not $activated) { try { $activated = (New-Object -ComObject WScript.Shell).AppActivate($process.Id) } catch {} }; ` +
-    `Start-Sleep -Milliseconds 120; ` +
-    `[void][CardBushWindowsShell]::FitOsWorkspace($handle); ` +
-    `if ($activated -or [CardBushWindowsShell]::GetForegroundWindow() -eq $handle) { Write-Output 'focused' } }`;
-  return new Promise<boolean>((resolve) => {
-    const child = spawnWindowsShellScript(source, { CARDBUSH_TARGET_EXE: executablePath });
-    let stdout = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve(false);
-    }, 3500);
-    child.stdout.on('data', (chunk) => {
-      stdout += String(chunk);
-    });
-    child.once('error', () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.once('close', () => {
-      clearTimeout(timer);
-      resolve(stdout.includes('focused'));
-    });
-  });
-}
-
-function parseWingetSearch(output: string) {
-  const lines = output.replace(/\r/g, '').split('\n');
-  const separatorIndex = lines.findIndex((line) => /^\s*-{3,}/.test(line));
-  if (separatorIndex < 1) {
-    return [];
-  }
-  return lines.slice(separatorIndex + 1)
-    .filter((line) => line.trim())
-    .map((line) => line.trim().split(/\s{2,}/))
-    .filter((columns) => columns.length >= 3)
-    .map((columns) => ({
-      name: columns[0],
-      id: columns[1],
-      version: columns[2],
-      source: 'winget',
-    }))
-    .filter((item) => item.name && /^[a-z0-9][a-z0-9._+-]{1,160}$/i.test(item.id));
-}
 
 function readRegistryValue(key: string, name: string) {
   if (process.platform !== 'win32') {

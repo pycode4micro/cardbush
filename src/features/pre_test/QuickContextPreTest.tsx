@@ -49,7 +49,7 @@ export function QuickContextPreTest({ language }: { language: AppLanguage }) {
     <div className="chat-panel quick-context-pre-test">
       <header className="quick-context-pre-test-header">
         <strong>{language === 'zh' ? '快速上下文 · Pre Test' : 'Quick Context · Pre Test'}</strong>
-        <small>{language === 'zh' ? '本地占位数据，不连接后端' : 'Local fixtures, no backend required'}</small>
+        <small>{language === 'zh' ? '本地占位数据，不连接运行服务' : 'Local fixtures, no Runtime required'}</small>
       </header>
       <div className="chat-body" style={style}>
         <QuickContextRail language={language} messages={preTestMessages} draft={draft} />

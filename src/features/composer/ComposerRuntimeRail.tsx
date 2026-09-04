@@ -142,8 +142,8 @@ export function ComposerRuntimeRail({
             : language === 'zh' ? '计划' : 'Plan',
         summary: stopping
           ? language === 'zh'
-            ? '正在等待后端确认并保存本轮执行轨迹'
-            : 'Waiting for the backend to confirm and preserve this turn'
+            ? '正在确认停止并保存本轮执行轨迹'
+            : 'Confirming the stop and preserving this turn'
           : processingSummary ||
             (language === 'zh' ? '正在准备下一步' : 'Preparing the next step'),
         title: processingSummary,
@@ -395,7 +395,7 @@ export function ComposerRuntimeRail({
                   <strong>{language === 'zh' ? '目标' : 'Goal'}</strong>
                   <span>
                     {goal.status === 'active' && goalWaiting
-                      ? language === 'zh' ? '等待后端继续' : 'Waiting for backend'
+                      ? language === 'zh' ? '等待任务继续' : 'Waiting for the task'
                       : goalStatusLabel(goal.status, language)}
                   </span>
                   {goal.status === 'active' && onCancelGoal && (
@@ -514,6 +514,7 @@ export function ComposerRuntimeRail({
                     </div>
                     <div className="runtime-queue-actions">
                       <button
+                        className="runtime-queue-guide"
                         type="button"
                         disabled={!onGuideQueuedMessage || Boolean(guidingQueuedId)}
                         onClick={() => void guideQueuedMessage(item.id)}
@@ -742,7 +743,7 @@ function runtimeProcessingSummary({
     parts.push(`${language === 'zh' ? '目标' : 'Goal'}：${goal.objective}`);
     parts.push(
       goal.status === 'active' && goalWaiting
-        ? language === 'zh' ? '等待后端继续' : 'Waiting for backend'
+        ? language === 'zh' ? '等待任务继续' : 'Waiting for the task'
         : goalStatusLabel(goal.status, language),
     );
   }

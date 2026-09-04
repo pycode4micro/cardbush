@@ -544,7 +544,7 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /runtime\.client\.listTurnToolExecutions\(\{/);
+assert.match(apiSource, /runtime\.client\.listTurnToolExecutions\(\s*\{/);
 assert.match(
   apiSource,
   /runtime\.client\.listTurnContextCompactions\(\{[\s\S]*?contextCompactionPresentationExecutions\(compactionEvents\)/,
@@ -932,7 +932,7 @@ assert.match(
 assert.match(
   chatHookSource,
   /setPendingInteraction\(\(current\) => keepFirstPendingInteraction\(/,
-  'Runtime interaction events must preserve the first visible permission.',
+  'Runtime permission events must preserve the first visible permission.',
 );
 assert.match(
   chatHookSource,
@@ -1314,6 +1314,31 @@ assert.match(
   sidebarReviewSource,
   /fetchRuntimeTurnToolExecutionDetails\([\s\S]*?hydrateConversationChangeReport\(candidate, details\)/,
   'Review must lazily hydrate a compact historical change even while another Turn is active.',
+);
+assert.match(
+  sidebarReviewSource,
+  /detailRetryRevision,[\s\S]*?selectedDetailRequestKey,[\s\S]*?selectedDetailStatus,[\s\S]*?selectedDetailTurnId,[\s\S]*?\]\);/,
+  'Review detail loading must track its immutable Runtime request identity and current terminal state.',
+);
+assert.match(
+  sidebarReviewSource,
+  /detailRequestsInFlightRef\.current\.has\(selectedDetailRequestKey\)[\s\S]*?detailRequestsInFlightRef\.current\.delete\(selectedDetailRequestKey\)/,
+  'StrictMode effect replay must share one in-flight review detail request.',
+);
+assert.doesNotMatch(
+  sidebarReviewSource,
+  /let cancelled = false;/,
+  'A render-state change must not invalidate an already dispatched detail request.',
+);
+assert.match(
+  sidebarReviewSource,
+  /\.catch\(\(\) => \{[\s\S]*?for \(const key of turnDetailKeys\) next\.set\(key, 'failed'\)/,
+  'Every report covered by a failed turn-detail request must leave loading state.',
+);
+assert.match(
+  sidebarReviewSource,
+  /selectedDetailStatus === 'failed'[\s\S]*?onClick=\{retrySelectedDetails\}/,
+  'Review detail failures must remain visible and retryable.',
 );
 assert.match(
   sidebarReviewSource,

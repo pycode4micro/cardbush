@@ -130,11 +130,18 @@ an operation is inside the workspace. External access requests one capability
 bound to the exact action and canonical resource, and an allow answer must grant
 exactly that requested capability set.
 
-Runtime does not parse, classify, or rewrite terminal commands. `terminal_exec`
+`all_free` is enforced once by the Tool execution coordinator, including nested
+Tools and child Agent Turns. Tool-owned `deny` decisions remain final; every
+ordinary `ask` is granted without publishing a permission interaction to the UI.
+
+Runtime does not infer task semantics or rewrite terminal commands. It applies one
+deterministic hard-safety exception: direct shell deletion of a filesystem root,
+the user home, a sibling of the user home, or a project/workspace root is denied
+before execution and cannot be approved. `terminal_exec`
 returns completed output and exit status when the command finishes inside its
 declared yield window; otherwise it returns `state=running` with a stable
 terminal session handle. `terminal_poll`, `terminal_write`, `terminal_list`, and
-permission-gated `terminal_stop` manage that handle without blocking the Agent
+`terminal_stop` manage that handle without blocking the Agent
 Loop. Cancelling a wait does not implicitly stop the spawned terminal session.
 Consequently this workspace permission protocol controls declared paths and the
 terminal working directory; it is not an operating-system sandbox and does not

@@ -162,8 +162,11 @@ export class ToolExecutionCoordinator {
         );
       }
       if (admission.kind === "ask") {
+        const fullControl = turn?.request.permissionMode === "all_free";
         const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
-        if (this.#capabilities?.hasAll(capabilitySessionId, admission.request.capabilityIds)) {
+        if (fullControl) {
+          capabilityIds = [...admission.request.capabilityIds];
+        } else if (this.#capabilities?.hasAll(capabilitySessionId, admission.request.capabilityIds)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
           let answer: RuntimePermissionAnswer;

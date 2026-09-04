@@ -1,5 +1,21 @@
-import { GitFork, Lock, Minus, Square, X, ArrowUp, Octagon } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  GitFork,
+  Lock,
+  Minus,
+  Octagon,
+  Square,
+  X,
+} from 'lucide-react';
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   closeShadowConversation,
@@ -13,18 +29,26 @@ import {
 import {
   MessageBubble,
   MessageFileReferenceScope,
+  projectRenderableChatMessages,
 } from './features/chatMessages';
+import { normalizeChatMessagesForDisplay } from './hooks/useCardbushChat';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
+import {
+  themeBackgroundColor,
+  themeClassNames,
+} from './features/appearance/themeRuntime';
 import type { ChatMessage, ThemeMode } from './types';
 
 type ShadowMode = 'readonly' | 'fork';
-type ShadowContext = Awaited<ReturnType<NonNullable<Window['cardbushDesktop']>['shadowWindowContext']>>;
+export type ShadowConversationContext = Awaited<
+  ReturnType<NonNullable<Window['cardbushDesktop']>['shadowWindowContext']>
+>;
 
-function themeBackground(theme: ThemeMode) {
-  if (theme === 'bright') return '#f5f3ef';
-  if (theme === 'parchment') return '#e1d4ba';
-  return '#1a1a1a';
-}
+type ShadowWindowProps = {
+  context?: ShadowConversationContext;
+  embedded?: boolean;
+  onClose?: () => void;
+};
 
 function historyThroughTurn(messages: ChatMessage[], sourceTurnId: string) {
   if (!sourceTurnId) return messages;
@@ -36,15 +60,29 @@ function historyThroughTurn(messages: ChatMessage[], sourceTurnId: string) {
 }
 
 const ignoreAsync = async () => undefined;
+const shadowScrollBottomTolerance = 42;
 
-export function ShadowWindow() {
-  const [context, setContext] = useState<ShadowContext | null>(null);
+function shadowTranscriptIsAtBottom(target: HTMLElement) {
+  return target.scrollHeight - target.clientHeight - target.scrollTop <=
+    shadowScrollBottomTolerance;
+}
+
+export function ShadowWindow({
+  context: providedContext,
+  embedded = false,
+  onClose,
+}: ShadowWindowProps = {}) {
+  const [context, setContext] = useState<ShadowConversationContext | null>(
+    providedContext ?? null,
+  );
   const [mode, setMode] = useState<ShadowMode>('readonly');
   const [conversation, setConversation] = useState<ShadowConversationRecord | null>(null);
   const [sourceMessages, setSourceMessages] = useState<ChatMessage[]>([]);
   const [shadowMessages, setShadowMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [activeAssistantMessageId, setActiveAssistantMessageId] = useState('');
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [modeSwitching, setModeSwitching] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState('');
@@ -57,6 +95,7 @@ export function ShadowWindow() {
   const modeSwitchingRef = useRef(false);
   const initializationGenerationRef = useRef(0);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const autoFollowTranscriptRef = useRef(true);
 
   const closeRuntimeConversation = useCallback(async () => {
     const current = conversationRef.current;
@@ -72,10 +111,16 @@ export function ShadowWindow() {
     abortRef.current?.abort();
     abortRef.current = null;
     await closeRuntimeConversation();
-    await window.cardbushDesktop?.closeShadowWindow?.();
-  }, [closeRuntimeConversation]);
+    if (embedded) onClose?.();
+    else await window.cardbushDesktop?.closeShadowWindow?.();
+  }, [closeRuntimeConversation, embedded, onClose]);
 
   useEffect(() => {
+    if (providedContext) {
+      setContext(providedContext);
+      setMode(providedContext.initialMode);
+      return undefined;
+    }
     const desktop = window.cardbushDesktop;
     let active = true;
     if (!desktop?.shadowWindowContext) {
@@ -87,7 +132,7 @@ export function ShadowWindow() {
       if (!active) return;
       setContext(payload);
       setMode(payload.initialMode);
-      const background = themeBackground(payload.theme);
+      const background = themeBackgroundColor(payload.theme);
       document.documentElement.dataset.startTheme = payload.theme;
       document.documentElement.lang = payload.language === 'zh' ? 'zh-CN' : 'en';
       document.documentElement.style.backgroundColor = background;
@@ -114,14 +159,17 @@ export function ShadowWindow() {
       offClose?.();
       window.removeEventListener('resize', onResize);
     };
-  }, [requestClose]);
+  }, [providedContext, requestClose]);
 
-  const initializeConversation = useCallback(async (payload: ShadowContext) => {
+  const initializeConversation = useCallback(async (payload: ShadowConversationContext) => {
     const generation = ++initializationGenerationRef.current;
     abortRef.current?.abort();
     abortRef.current = null;
     busyRef.current = false;
     setBusy(false);
+    setActiveAssistantMessageId('');
+    autoFollowTranscriptRef.current = true;
+    setShowScrollBottom(false);
     setInitializing(true);
     setError('');
     try {
@@ -156,11 +204,69 @@ export function ShadowWindow() {
     if (context) void initializeConversation(context);
   }, [context, initializeConversation]);
 
-  useEffect(() => {
+  useEffect(() => () => {
+    initializationGenerationRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    busyRef.current = false;
+    const current = conversationRef.current;
+    conversationRef.current = null;
+    if (current) void closeShadowConversation(current.id).catch(() => undefined);
+  }, []);
+
+  const syncTranscriptScrollState = useCallback((target: HTMLDivElement) => {
+    const atBottom = shadowTranscriptIsAtBottom(target);
+    autoFollowTranscriptRef.current = atBottom;
+    setShowScrollBottom(
+      !atBottom && target.scrollHeight > target.clientHeight + 1,
+    );
+  }, []);
+
+  const scrollTranscriptToBottom = useCallback(() => {
     const target = transcriptRef.current;
     if (!target) return;
+    autoFollowTranscriptRef.current = true;
+    setShowScrollBottom(false);
     target.scrollTop = target.scrollHeight;
-  }, [busy, shadowMessages]);
+    window.requestAnimationFrame(() => {
+      if (transcriptRef.current === target) {
+        target.scrollTop = target.scrollHeight;
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const target = transcriptRef.current;
+    if (!target) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (autoFollowTranscriptRef.current) {
+        target.scrollTop = target.scrollHeight;
+      }
+      setShowScrollBottom(
+        !shadowTranscriptIsAtBottom(target) &&
+          target.scrollHeight > target.clientHeight + 1,
+      );
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [busy, shadowMessages, sourceMessages]);
+
+  useEffect(() => {
+    const target = transcriptRef.current;
+    const content = target?.querySelector('.shadow-window-transcript-content');
+    if (!target || !(content instanceof HTMLElement)) return undefined;
+    const observer = new ResizeObserver(() => {
+      if (autoFollowTranscriptRef.current) {
+        target.scrollTop = target.scrollHeight;
+      }
+      setShowScrollBottom(
+        !shadowTranscriptIsAtBottom(target) &&
+          target.scrollHeight > target.clientHeight + 1,
+      );
+    });
+    observer.observe(target);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   const switchMode = useCallback(async (nextMode: ShadowMode) => {
     const current = conversationRef.current;
@@ -218,6 +324,9 @@ export function ShadowWindow() {
     ]);
     setDraft('');
     setError('');
+    setActiveAssistantMessageId(assistantId);
+    autoFollowTranscriptRef.current = true;
+    setShowScrollBottom(false);
     busyRef.current = true;
     setBusy(true);
     const controller = new AbortController();
@@ -256,6 +365,7 @@ export function ShadowWindow() {
       if (abortRef.current === controller) abortRef.current = null;
       busyRef.current = false;
       setBusy(false);
+      setActiveAssistantMessageId((current) => current === assistantId ? '' : current);
     }
   }, [context, draft, initializing]);
 
@@ -263,12 +373,28 @@ export function ShadowWindow() {
     abortRef.current?.abort();
   };
   const language = context?.language ?? 'zh';
-  const allMessages = [...sourceMessages, ...shadowMessages];
+  const renderedSourceMessages = useMemo(
+    () => projectRenderableChatMessages(normalizeChatMessagesForDisplay(sourceMessages)),
+    [sourceMessages],
+  );
+  const renderedShadowMessages = useMemo(
+    () => projectRenderableChatMessages(normalizeChatMessagesForDisplay(shadowMessages)),
+    [shadowMessages],
+  );
+  const allMessages = useMemo(
+    () => [...renderedSourceMessages, ...renderedShadowMessages],
+    [renderedShadowMessages, renderedSourceMessages],
+  );
 
   return (
-    <main className={`app theme-${context?.theme ?? 'dark'} shadow-window-shell shadow-mode-${mode}`}>
-      <header className="shadow-window-titlebar">
-        <div className="shadow-window-title window-drag">
+    <main
+      className={`app ${themeClassNames(context?.theme ?? 'dark')} shadow-window-shell shadow-mode-${mode}${embedded ? ' shadow-inspector-shell' : ''}`}
+      style={context
+        ? { '--shadow-accent': context.accentColor } as CSSProperties
+        : undefined}
+    >
+      <header className={`shadow-window-titlebar${embedded ? ' shadow-inspector-titlebar' : ''}`}>
+        <div className={`shadow-window-title${embedded ? '' : ' window-drag'}`}>
           <ShadowCloneIcon size={15} />
           <strong>{context ? `Shadow · ${context.title}` : 'Shadow'}</strong>
         </div>
@@ -295,17 +421,19 @@ export function ShadowWindow() {
             Fork
           </button>
         </div>
-        <div className="shadow-window-caption-actions">
-          <button type="button" onClick={() => window.cardbushDesktop?.minimizeShadowWindow?.()} aria-label="Minimize">
-            <Minus size={15} />
-          </button>
-          <button type="button" onClick={() => void window.cardbushDesktop?.toggleMaximizeShadowWindow?.()} aria-label="Maximize">
-            <Square size={maximized ? 12 : 13} />
-          </button>
-          <button type="button" className="close" onClick={() => void requestClose()} aria-label="Close">
-            <X size={15} />
-          </button>
-        </div>
+        {!embedded && (
+          <div className="shadow-window-caption-actions">
+            <button type="button" onClick={() => window.cardbushDesktop?.minimizeShadowWindow?.()} aria-label="Minimize">
+              <Minus size={15} />
+            </button>
+            <button type="button" onClick={() => void window.cardbushDesktop?.toggleMaximizeShadowWindow?.()} aria-label="Maximize">
+              <Square size={maximized ? 12 : 13} />
+            </button>
+            <button type="button" className="close" onClick={() => void requestClose()} aria-label="Close">
+              <X size={15} />
+            </button>
+          </div>
+        )}
       </header>
 
       <section className="shadow-window-context-bar">
@@ -314,42 +442,61 @@ export function ShadowWindow() {
           : (language === 'zh' ? '冻结历史 · 子 Agent 修改边界 · 无 Subagent 能力' : 'Frozen history · child mutation boundary · no Subagent')}</span>
       </section>
 
-      <div className="shadow-window-transcript" ref={transcriptRef} aria-busy={busy || initializing}>
-        {allMessages.map((message, index) => (
-          <div
-            className={`shadow-window-message${index < sourceMessages.length ? ' source' : ' shadow'}`}
-            key={`${message.conversationId ?? 'source'}:${message.id}`}
-          >
-            {index === sourceMessages.length && sourceMessages.length > 0 && (
-              <div className="shadow-window-history-divider">
-                <span>{language === 'zh' ? 'Shadow 对话' : 'Shadow conversation'}</span>
-              </div>
-            )}
-            <MessageFileReferenceScope workspaceRoot={conversation?.workspaceDir || context?.projectDir}>
-              <MessageBubble
-                message={message}
-                language={language}
-                sending={busy}
-                activeTurnId=""
-                activeAssistantMessageId=""
-                selectedModel={context?.modelConfig.modelName ?? ''}
-                onRegenerate={ignoreAsync}
-                onEditUserMessage={ignoreAsync}
-                onGuideMessage={ignoreAsync}
-                onRetryMessage={ignoreAsync}
-                onRetryGuidance={ignoreAsync}
-                onRevertChangeReport={ignoreAsync}
-                onOpenScene={() => undefined}
-                onAssistantFeedback={recordAssistantLogicFeedback}
-              />
-            </MessageFileReferenceScope>
-          </div>
-        ))}
-        {initializing && <div className="shadow-window-loading">{language === 'zh' ? '正在冻结会话历史…' : 'Freezing conversation history…'}</div>}
-        {error && <div className="shadow-window-error">{error}</div>}
+      <div className="shadow-window-transcript-frame">
+        <div
+          className="shadow-window-transcript message-list"
+          ref={transcriptRef}
+          aria-busy={busy || initializing}
+          onScroll={(event) => syncTranscriptScrollState(event.currentTarget)}
+        >
+          <MessageFileReferenceScope workspaceRoot={conversation?.workspaceDir || context?.projectDir}>
+            <div className="shadow-window-transcript-content message-list-content">
+              {allMessages.map((message, index) => (
+                <div
+                  className={`shadow-window-message message-list-item${index === 0 ? ' first' : ''}${index < renderedSourceMessages.length ? ' source' : ' shadow'}`}
+                  key={`${message.conversationId ?? 'source'}:${message.id}`}
+                >
+                  {index === renderedSourceMessages.length && renderedSourceMessages.length > 0 && (
+                    <div className="shadow-window-history-divider">
+                      <span>{language === 'zh' ? 'Shadow 对话' : 'Shadow conversation'}</span>
+                    </div>
+                  )}
+                  <MessageBubble
+                    message={message}
+                    language={language}
+                    sending={busy}
+                    activeTurnId=""
+                    activeAssistantMessageId={activeAssistantMessageId}
+                    selectedModel={context?.modelConfig.modelName ?? ''}
+                    onRegenerate={ignoreAsync}
+                    onEditUserMessage={ignoreAsync}
+                    onGuideMessage={ignoreAsync}
+                    onRetryMessage={ignoreAsync}
+                    onRetryGuidance={ignoreAsync}
+                    onRevertChangeReport={ignoreAsync}
+                    onOpenScene={() => undefined}
+                    onAssistantFeedback={recordAssistantLogicFeedback}
+                  />
+                </div>
+              ))}
+              {initializing && <div className="shadow-window-loading">{language === 'zh' ? '正在冻结会话历史…' : 'Freezing conversation history…'}</div>}
+              {error && <div className="shadow-window-error">{error}</div>}
+            </div>
+          </MessageFileReferenceScope>
+        </div>
+        <button
+          className={`scroll-bottom shadow-window-scroll-bottom${showScrollBottom ? '' : ' hidden'}`}
+          type="button"
+          aria-label={language === 'zh' ? '回到底部' : 'Scroll to bottom'}
+          aria-hidden={!showScrollBottom}
+          tabIndex={showScrollBottom ? 0 : -1}
+          onClick={scrollTranscriptToBottom}
+        >
+          <ArrowDown size={16} strokeWidth={1.8} />
+        </button>
       </div>
 
-      <footer className="shadow-window-composer">
+      <footer className="shadow-window-composer composer-surface">
         <textarea
           value={draft}
           disabled={!conversation || initializing || closing}
@@ -365,14 +512,14 @@ export function ShadowWindow() {
             }
           }}
         />
-        <div className="shadow-window-composer-footer">
+        <div className="shadow-window-composer-footer composer-footer">
           <span>{context?.modelConfig.modelName ?? ''}</span>
           {busy ? (
-            <button type="button" className="shadow-window-send stop" onClick={stop} aria-label="Stop">
+            <button type="button" className="shadow-window-send send-button stop" onClick={stop} aria-label="Stop">
               <Octagon size={15} fill="currentColor" />
             </button>
           ) : (
-            <button type="button" className="shadow-window-send" disabled={!draft.trim() || !conversation || initializing || modeSwitching} onClick={() => void send()} aria-label="Send">
+            <button type="button" className="shadow-window-send send-button" disabled={!draft.trim() || !conversation || initializing || modeSwitching} onClick={() => void send()} aria-label="Send">
               <ArrowUp size={17} />
             </button>
           )}

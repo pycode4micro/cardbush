@@ -107,6 +107,39 @@ color palette. Avoid ornamental gradients, excessive fills, heavy borders, decor
 charts, or many competing accent colors. Existing templates and explicit user branding
 always take precedence over these directions.
 
+### Table Presentation Standard
+
+Every user-facing table must look intentionally designed, not like a raw DataFrame export:
+
+- Establish a visible hierarchy for workbook title/context, section labels, table headers,
+  body rows, subtotals, grand totals, editable inputs, calculated outputs, and checks. Do
+  not give all cells the same visual weight.
+- Prefer whitespace, alignment, and light horizontal separators over boxing every cell.
+  On polished summary/model sheets, hide default gridlines when the layout supplies enough
+  structure; retain gridlines on raw-data sheets when they improve navigation.
+- Give headers clear but restrained contrast, consistent height, and one- or two-line
+  wrapping. Avoid tall headers, saturated full-sheet fills, and merged cells inside data
+  regions where sorting or filtering is expected.
+- Left-align labels and narrative fields; right-align numeric values; keep dates, periods,
+  and status fields consistent. Put units in headers and use one number format per measure
+  across comparable rows or columns.
+- Size columns from their content with sensible caps, wrap long text deliberately, and set
+  row heights so no label or value is clipped. Freeze the identifying columns and header
+  rows needed to keep large tables understandable while scrolling.
+- Use banding only when it materially improves scanning of long tables. Reserve accent
+  fills for decisions, inputs, exceptions, or key outputs; use semantic warning/success
+  colors sparingly and never rely on color alone.
+- Style subtotals and totals with spacing, weight, or a stronger top rule before adding a
+  heavy fill. Keep blank separator rows intentional and avoid large unused formatted areas.
+- Use Excel tables, filters, conditional formatting, and heatmaps only when they add real
+  interaction or comparison value. Keep their style consistent with the rest of the sheet.
+- Align summary cards, charts, and their source tables to a shared grid. Limit chart colors,
+  remove visual clutter, label the decision-relevant values, and keep legends unambiguous.
+- Before delivery, visually inspect every user-facing sheet at a normal zoom (and export or
+  preview representative sheets when possible). Repair clipping, awkward wrapping, uneven
+  spacing, accidental style spill, weak contrast, and inconsistent formats before calling
+  the workbook complete.
+
 ### Zero Formula Errors
 - Every Excel model MUST be delivered with ZERO formula errors (#REF!, #DIV/0!, #VALUE!, #N/A, #NAME?)
 

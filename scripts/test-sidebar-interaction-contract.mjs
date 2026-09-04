@@ -135,9 +135,10 @@ assert.match(
 assert.doesNotMatch(appSource, /工具管理|Tool management/);
 assert.match(
   appSource,
-  /label="Beta"[\s\S]*?label="OS"[\s\S]*?label="Team"/,
-  'Experimental OS and Team surfaces must live under the Beta menu',
+  /label="Beta"[\s\S]*?label="Team"/,
+  'The experimental Team surface must live under the Beta menu',
 );
+assert.doesNotMatch(appSource, /label="OS"|onOpenOs|enterOsMode/);
 const windowFrameMenuBlock = appSource.match(
   /function WindowFrameMenu\([\s\S]*?function WindowFrameMenuItem/,
 )?.[0] ?? '';

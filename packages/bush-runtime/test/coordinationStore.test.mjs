@@ -76,7 +76,6 @@ test("persists explicit Goal facts without interpreting their reason text", () =
     goalId: "goal_1",
     sessionId: "session_1",
     objective: "finish the requested work",
-    linkedA2ATaskIds: [],
   });
   const updated = store.updateGoal({
     goalId: "goal_1",
@@ -85,7 +84,6 @@ test("persists explicit Goal facts without interpreting their reason text", () =
     status: "blocked",
     statusReason: "arbitrary model-declared reason; Runtime does not classify it",
     consumedTokens: 12,
-    linkedA2ATaskIds: ["a2a_1"],
   });
   assert.equal(updated.status, "blocked");
   assert.equal(updated.completedAt, NOW);
@@ -98,10 +96,43 @@ test("persists explicit Goal facts without interpreting their reason text", () =
       status: "active",
       statusReason: "",
       consumedTokens: 12,
-      linkedA2ATaskIds: [],
     }),
     /revision conflict/,
   );
+});
+
+test("loads legacy Goal records while discarding retired external-task metadata", () => {
+  const legacyEvent = {
+    protocol: "bush.coordination_event.v1",
+    eventId: "event_legacy",
+    sequence: 1,
+    sessionId: "session_legacy",
+    createdAt: NOW,
+    kind: "goal_set",
+    payload: {
+      protocol: "bush.goal.v1",
+      goalId: "goal_legacy",
+      sessionId: "session_legacy",
+      objective: "finish",
+      status: "active",
+      statusReason: "",
+      consumedTokens: 0,
+      linkedA2ATaskIds: ["legacy_task"],
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+  };
+  const store = new CoordinationStore({
+    persistence: {
+      load: () => [legacyEvent],
+      append: () => {},
+    },
+  });
+
+  const goal = store.getGoal("session_legacy");
+  assert.equal(goal?.goalId, "goal_legacy");
+  assert.equal("linkedA2ATaskIds" in goal, false);
 });
 
 test("recovers Coordination facts and only truncates an incomplete final record", (t) => {
@@ -111,7 +142,6 @@ test("recovers Coordination facts and only truncates an incomplete final record"
     goalId: "goal_1",
     sessionId: "session_1",
     objective: "objective",
-    linkedA2ATaskIds: [],
   });
   persistence.close();
   appendFileSync(journalPath(root), '{"protocol":"broken');
@@ -132,7 +162,6 @@ test("fails closed when a complete Coordination record is mutated", (t) => {
     goalId: "goal_1",
     sessionId: "session_1",
     objective: "objective",
-    linkedA2ATaskIds: [],
   });
   persistence.close();
   const path = journalPath(root);

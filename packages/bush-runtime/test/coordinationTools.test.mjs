@@ -17,7 +17,6 @@ test("model-facing Plan and Goal tools return their native coordination records"
     goalId: "goal_runtime",
     sessionId: "session_1",
     objective: "finish",
-    linkedA2ATaskIds: [],
   });
   const registry = new ToolRegistry();
   registerCoordinationTools(registry, store, { createPlanId: () => "plan_runtime" });

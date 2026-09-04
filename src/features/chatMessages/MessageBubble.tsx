@@ -327,7 +327,10 @@ const LazyMarkdownContent = lazy(async () => {
             : '';
           if (localPath) {
             return (
-              <LocalFileReferenceLink path={remapProjectPath(localPath, pathAliases)}>
+              <LocalFileReferenceLink
+                path={remapProjectPath(localPath, pathAliases)}
+                unavailableLabel={children}
+              >
                 {children}
               </LocalFileReferenceLink>
             );
@@ -372,7 +375,10 @@ const LazyMarkdownContent = lazy(async () => {
             : null;
           if (reference) {
             return (
-              <LocalFileReferenceLink path={remapProjectPath(reference.path, pathAliases)}>
+              <LocalFileReferenceLink
+                path={remapProjectPath(reference.path, pathAliases)}
+                unavailableLabel={text}
+              >
                 {reference.label}
               </LocalFileReferenceLink>
             );
@@ -1196,6 +1202,7 @@ function MessageBubbleView({
             )}
             {canGuide && (
               <button
+                className="message-guidance-action"
                 type="button"
                 title={language === 'zh' ? '插入引导' : 'Guide this turn'}
                 onClick={() => setGuidanceOpen(true)}

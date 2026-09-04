@@ -54,7 +54,7 @@ import {
   type PluginRoot,
 } from './productPlugins.js';
 import { dirname, isAbsolute, join } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -239,8 +239,9 @@ async function executeRuntimeCommand(
 
 function withBundledAppsServer(input: unknown): unknown {
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
-  const chromeEntry = process.env.CARDBUSH_CHROME_MCP_ENTRY?.trim();
-  if (!appsEntry && !chromeEntry) return input;
+  const chromeConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
+  const chromeRemoteDebuggingEntry = process.env.CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY?.trim();
+  if (!appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry) return input;
   const snapshot = object(input, 'MCP snapshot must be an object.');
   const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
   const reservedIds = new Set(['cardbush_apps', 'chrome_devtools']);
@@ -280,29 +281,43 @@ function withBundledAppsServer(input: unknown): unknown {
       toolPolicies: {},
     });
   }
+  const chromeEntry = appsConfig.chromeConnectionMode === 'remote_debugging'
+    ? chromeRemoteDebuggingEntry
+    : chromeConnectorEntry;
   if (chromeEntry && appsConfig.enabledPluginIds.has('chrome')) {
-    const chromeConnection = resolveChromeConnection(appsConfig.chromeConnectionMode);
+    const remoteDebugging = appsConfig.chromeConnectionMode === 'remote_debugging';
     bundled.push({
       id: 'chrome_devtools',
       transport: {
         kind: 'stdio',
         command: process.execPath,
-        args: [
-          chromeEntry,
-          '--no-usage-statistics',
-          '--no-performance-crux',
-          ...(chromeConnection.effectiveMode === 'existing' ? ['--auto-connect'] : []),
-        ],
+        args: remoteDebugging
+          ? [
+              chromeEntry,
+              '--no-usage-statistics',
+              '--no-performance-crux',
+              // Advanced compatibility mode only. It never launches a
+              // separate profile and only attaches to an opted-in Chrome.
+              '--auto-connect',
+            ]
+          : [chromeEntry],
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
-          CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: '1',
-          CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1',
+          ...(remoteDebugging ? {
+            CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: '1',
+            CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: '1',
+          } : {
+            CARDBUSH_CHROME_CONNECTOR_CONFIG:
+              process.env.CARDBUSH_CHROME_CONNECTOR_CONFIG?.trim() ?? '',
+          }),
         }),
       },
       versionMode: 'auto',
       restartBackoffMs: 500,
       defaultToolPolicy: {
-        permission: 'ask',
+        // The connector extension enforces per-tab/per-site consent. Avoid a
+        // duplicate CardBush permission prompt for every browser command.
+        permission: remoteDebugging ? 'ask' : 'allow',
         parallelSafe: false,
         visibleToChild: true,
       },
@@ -310,9 +325,9 @@ function withBundledAppsServer(input: unknown): unknown {
     });
     console.error(JSON.stringify({
       type: 'runtime_chrome_connection',
-      requestedMode: chromeConnection.requestedMode,
-      effectiveMode: chromeConnection.effectiveMode,
-      reason: chromeConnection.reason,
+      requestedMode: appsConfig.chromeConnectionMode,
+      effectiveMode: appsConfig.chromeConnectionMode,
+      reason: remoteDebugging ? 'advanced_remote_debugging' : 'extension_native_messaging',
     }));
   }
   return {
@@ -326,14 +341,14 @@ function readBundledAppsConfig(path: string | undefined): {
   serviceEnabled: boolean;
   revision: number;
   enabledPluginIds: Set<string>;
-  chromeConnectionMode: 'managed' | 'existing';
+  chromeConnectionMode: 'connector' | 'remote_debugging';
 } {
   if (!path) {
     return {
       serviceEnabled: true,
       revision: 1,
       enabledPluginIds: new Set(),
-      chromeConnectionMode: 'existing',
+      chromeConnectionMode: 'connector',
     };
   }
   if (!isAbsolute(path)) throw new Error('CARDBUSH_APPS_CONFIG_PATH must be absolute.');
@@ -347,23 +362,23 @@ function readBundledAppsConfig(path: string | undefined): {
       throw new Error('Apps config revision must be a positive integer below 1000000.');
     }
     const plugins = Array.isArray(value.plugins) ? value.plugins : [];
-    let chromeConnectionMode: 'managed' | 'existing' = 'existing';
     const enabledPluginIds = new Set(plugins.flatMap((candidate) => {
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
       const plugin = candidate as Record<string, unknown>;
       const id = String(plugin.id ?? '').trim().replaceAll('_', '-');
-      if (id === 'chrome') {
-        const config = plugin.config == null
-          ? {}
-          : object(plugin.config, 'Chrome plugin config must be an object.');
-        const mode = String(config.connectionMode ?? 'existing').trim();
-        if (mode !== 'managed' && mode !== 'existing') {
-          throw new Error('Chrome connectionMode must be managed or existing.');
-        }
-        chromeConnectionMode = mode;
-      }
       return id && plugin.installed === true && plugin.enabled === true ? [id] : [];
     }));
+    const chromePlugin = plugins.find((candidate) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+      return String((candidate as Record<string, unknown>).id ?? '').replaceAll('_', '-') === 'chrome';
+    }) as Record<string, unknown> | undefined;
+    const chromeConfig = chromePlugin?.config && typeof chromePlugin.config === 'object' &&
+      !Array.isArray(chromePlugin.config)
+      ? chromePlugin.config as Record<string, unknown>
+      : {};
+    const chromeConnectionMode = chromeConfig.connectionMode === 'remote_debugging'
+      ? 'remote_debugging' as const
+      : 'connector' as const;
     return {
       serviceEnabled: value.serviceEnabled,
       revision,
@@ -376,7 +391,7 @@ function readBundledAppsConfig(path: string | undefined): {
         serviceEnabled: true,
         revision: 1,
         enabledPluginIds: new Set(),
-        chromeConnectionMode: 'existing',
+        chromeConnectionMode: 'connector',
       };
     }
     throw error;
@@ -537,41 +552,6 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
   });
 }
 
-function resolveChromeConnection(
-  requestedMode: 'managed' | 'existing',
-): {
-  requestedMode: 'managed' | 'existing';
-  effectiveMode: 'managed' | 'existing';
-  reason: string;
-} {
-  if (requestedMode === 'managed') {
-    return { requestedMode, effectiveMode: 'managed', reason: 'managed_requested' };
-  }
-  const activePortPath = chromeDevToolsActivePortPath();
-  if (activePortPath && existsSync(activePortPath)) {
-    return { requestedMode, effectiveMode: 'existing', reason: 'devtools_active_port_available' };
-  }
-  return {
-    requestedMode,
-    effectiveMode: 'managed',
-    reason: 'existing_chrome_remote_debugging_unavailable',
-  };
-}
-
-function chromeDevToolsActivePortPath(): string | undefined {
-  if (process.platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA?.trim();
-    return localAppData
-      ? join(localAppData, 'Google', 'Chrome', 'User Data', 'DevToolsActivePort')
-      : undefined;
-  }
-  const home = process.env.HOME?.trim();
-  if (!home) return undefined;
-  if (process.platform === 'darwin') {
-    return join(home, 'Library', 'Application Support', 'Google', 'Chrome', 'DevToolsActivePort');
-  }
-  return join(home, '.config', 'google-chrome', 'DevToolsActivePort');
-}
 host = new InMemoryRuntimeHost({
   provider: providers,
   toolRegistry,

@@ -90,6 +90,18 @@ export function ToolExecutionBlock({
   const [hydratedExecutions, setHydratedExecutions] = useState<
     Map<string, ChatToolExecution>
   >(() => new Map());
+  const [detailRequests, setDetailRequests] = useState<
+    Map<string, 'loading' | 'loaded' | 'failed'>
+  >(() => new Map());
+  const [detailRetryRevision, setDetailRetryRevision] = useState(0);
+  const detailViewMountedRef = useRef(true);
+  const detailRequestsInFlightRef = useRef(new Set<string>());
+  useEffect(() => {
+    detailViewMountedRef.current = true;
+    return () => {
+      detailViewMountedRef.current = false;
+    };
+  }, []);
   const blockRef = useRef<HTMLDivElement>(null);
   const renderedExecutions = useMemo(
     () => executions.map((execution) => hydratedExecutions.get(execution.id) ?? execution),
@@ -123,6 +135,17 @@ export function ToolExecutionBlock({
     .filter(hasDeferredExecutionDetails)
     .map((execution) => execution.id)
     .join('\u0000');
+  const deferredDetailSessionId = message.conversationId?.trim() ?? '';
+  const deferredDetailTurnId = executions.find(hasDeferredExecutionDetails)
+    ?.turnId?.trim() || message.turnId?.trim() || '';
+  const deferredDetailRequestKey = deferredExecutionKey &&
+    deferredDetailSessionId &&
+    deferredDetailTurnId
+    ? `${deferredDetailSessionId}\u0000${deferredDetailTurnId}\u0000${deferredExecutionKey}`
+    : '';
+  const deferredDetailStatus = deferredDetailRequestKey
+    ? detailRequests.get(deferredDetailRequestKey)
+    : undefined;
   const detailsDeferred = executions.some((execution) =>
     hasDeferredExecutionDetails(execution) &&
     !hydratedExecutions.has(execution.id));
@@ -130,27 +153,61 @@ export function ToolExecutionBlock({
     setExpanded(true);
   }, []);
   useEffect(() => {
-    if (!expanded || !deferredExecutionKey) return undefined;
-    const sessionId = message.conversationId?.trim() ?? '';
-    const turnId = executions.find(hasDeferredExecutionDetails)
-      ?.turnId?.trim() || message.turnId?.trim() || '';
-    if (!sessionId || !turnId) return undefined;
-    let cancelled = false;
-    const visibleIds = new Set(executions.map((execution) => execution.id));
-    void fetchRuntimeTurnToolExecutionDetails({ sessionId, turnId })
+    if (
+      !expanded ||
+      !deferredDetailRequestKey ||
+      deferredDetailStatus ||
+      detailRequestsInFlightRef.current.has(deferredDetailRequestKey)
+    ) return;
+    const visibleIds = new Set(deferredExecutionKey.split('\u0000').filter(Boolean));
+    detailRequestsInFlightRef.current.add(deferredDetailRequestKey);
+    setDetailRequests((current) =>
+      new Map(current).set(deferredDetailRequestKey, 'loading'));
+    void fetchRuntimeTurnToolExecutionDetails({
+      sessionId: deferredDetailSessionId,
+      turnId: deferredDetailTurnId,
+    })
       .then((details) => {
-        if (cancelled) return;
+        if (!detailViewMountedRef.current) return;
         const next = new Map<string, ChatToolExecution>();
         for (const detail of details) {
           if (visibleIds.has(detail.id)) next.set(detail.id, detail);
         }
-        if (next.size > 0) setHydratedExecutions(next);
+        if (next.size > 0) {
+          setHydratedExecutions((current) => new Map([
+            ...current,
+            ...next,
+          ]));
+        }
+        setDetailRequests((current) =>
+          new Map(current).set(deferredDetailRequestKey, 'loaded'));
       })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [deferredExecutionKey, executions, expanded, message.conversationId, message.turnId]);
+      .catch(() => {
+        if (!detailViewMountedRef.current) return;
+        setDetailRequests((current) =>
+          new Map(current).set(deferredDetailRequestKey, 'failed'));
+      })
+      .finally(() => {
+        detailRequestsInFlightRef.current.delete(deferredDetailRequestKey);
+      });
+  }, [
+    deferredDetailRequestKey,
+    deferredDetailSessionId,
+    deferredDetailStatus,
+    deferredDetailTurnId,
+    deferredExecutionKey,
+    detailRetryRevision,
+    expanded,
+  ]);
+  const retryDeferredDetails = useCallback(() => {
+    if (!deferredDetailRequestKey) return;
+    setDetailRequests((current) => {
+      const next = new Map(current);
+      next.delete(deferredDetailRequestKey);
+      return next;
+    });
+    setDetailRetryRevision((current) => current + 1);
+  }, [deferredDetailRequestKey]);
 
   const toggleExpanded = useCallback(() => {
     preserveScrollPositionForToggle(blockRef.current, () => {
@@ -189,7 +246,9 @@ export function ToolExecutionBlock({
           ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
         )?.name ?? executions[0]?.name ?? 'edit_file'}
         detailsDeferred={detailsDeferred}
+        detailsStatus={deferredDetailStatus}
         onRequestDetails={requestDeferredDetails}
+        onRetryDetails={retryDeferredDetails}
         onRevert={active
           ? undefined
           : () => onRevertChangeReport(messageChangeReport, message)}

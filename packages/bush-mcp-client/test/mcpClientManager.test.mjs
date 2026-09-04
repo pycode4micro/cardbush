@@ -14,20 +14,21 @@ import { McpClientManager } from "../dist/index.js";
 
 test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   const registry = new ToolRegistry();
-  const fake = fakeClient(successfulToolResult);
+  const fake = fakeClient(successfulToolResult, { pluginId: "chrome" });
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
     createTransport: () => ({}),
   });
 
-  const applied = await manager.apply(snapshot({ permission: "allow" }));
+  const runtimeName = "mcp__chrome_devtools__echo_tool";
+  const applied = await manager.apply(snapshot({ permission: "allow" }, "chrome_devtools"));
   assert.equal(applied.servers[0].negotiatedProtocolVersion, "2026-07-28");
   assert.deepEqual(applied.servers[0].tools, [{
     remoteName: "echo.tool",
-    runtimeName: "mcp__server__echo_tool",
+    runtimeName,
   }]);
-  assert.ok(registry.resolve("mcp__server__echo_tool"));
+  assert.ok(registry.resolve(runtimeName));
 
   const coordinator = new ToolExecutionCoordinator({
     registry,
@@ -37,7 +38,7 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
     {
       protocol: "bush.tool_call.v1",
       id: "call_1",
-      name: "mcp__server__echo_tool",
+      name: runtimeName,
       argumentsText: JSON.stringify({ value: "ping" }),
     },
     {
@@ -56,11 +57,12 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
         turnId: "turn",
         model: "fixture",
         messages: [],
-        tools: [registry.resolve("mcp__server__echo_tool").definition],
+        tools: [registry.resolve(runtimeName).definition],
         metadata: {
           mcpContext: {
             filesystemRoots: ["C:\\workspace"],
             transportChannel: "external",
+            sessionTitle: "Browser isolation test",
           },
         },
       },
@@ -73,6 +75,10 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   assert.deepEqual(fake.calls[0].arguments, { value: "ping" });
   assert.deepEqual(fake.calls[0]._meta.filesystem_roots, ["C:\\workspace"]);
   assert.equal(fake.calls[0]._meta.transport_channel, "external");
+  assert.equal(fake.calls[0]._meta.cardbush_session_id, "session");
+  assert.equal(fake.calls[0]._meta.cardbush_turn_id, "turn");
+  assert.equal(fake.calls[0]._meta.cardbush_request_id, "request");
+  assert.equal(fake.calls[0]._meta.cardbush_session_title, "Browser isolation test");
   assert.equal(fake.calls[0]._meta.runtime_tool_result_protocol, undefined);
   assert.equal(fake.calls[0]._meta.receipt_id, undefined);
   assert.equal(fake.calls[0]._meta.action_manifest, undefined);
@@ -569,13 +575,33 @@ test("does not import server-declared private Action Manifest semantics", async 
 
 });
 
-function snapshot(policy) {
+test("does not disclose CardBush session identity to ordinary MCP tools", async () => {
+  const registry = new ToolRegistry();
+  const fake = fakeClient(successfulToolResult);
+  const manager = new McpClientManager({
+    registry,
+    createClient: () => fake,
+    createTransport: () => ({}),
+  });
+  await manager.apply(snapshot({ permission: "allow" }));
+  const coordinator = new ToolExecutionCoordinator({
+    registry,
+    permissions: { request: async () => { throw new Error("permission was not expected"); } },
+  });
+  await executeEcho(coordinator, "privacy", undefined, undefined);
+  assert.equal(fake.calls[0]._meta.cardbush_session_id, undefined);
+  assert.equal(fake.calls[0]._meta.cardbush_turn_id, undefined);
+  assert.equal(fake.calls[0]._meta.cardbush_request_id, undefined);
+  assert.equal(fake.calls[0]._meta.cardbush_session_title, undefined);
+});
+
+function snapshot(policy, serverId = "server") {
   return {
     protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
     snapshotId: "snapshot",
     revision: 1,
     servers: [{
-      id: "server",
+      id: serverId,
       transport: {
         kind: "streamable_http",
         url: "http://127.0.0.1:3000/mcp",
@@ -618,6 +644,7 @@ function fakeClient(result, options = {}) {
               "cardbush/action_manifest": {
                 owner: "fixture_mcp",
               },
+              ...(options.pluginId ? { "cardbush/plugin_id": options.pluginId } : {}),
             },
           }),
         }],

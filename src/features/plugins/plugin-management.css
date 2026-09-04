@@ -521,6 +521,18 @@
 .plugin-setting-note { margin: 10px 0 0; padding: 10px 12px; background: color-mix(in srgb, var(--warning, #c49a56) 10%, transparent); border-radius: 9px; }
 .plugin-detail-section > .plugin-install-button { margin-top: 8px; }
 
+.chrome-connector-card { display: grid; gap: 12px; margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--text) 3%, transparent); }
+.chrome-connector-heading { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+.chrome-connector-heading > div { display: grid; gap: 4px; min-width: 0; }
+.chrome-connector-heading strong { color: var(--text); font-size: 13px; }
+.chrome-connector-heading small { overflow: hidden; color: var(--text-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chrome-connector-indicator { width: 9px; height: 9px; border-radius: 50%; background: var(--danger, #e05d5d); box-shadow: 0 0 8px color-mix(in srgb, var(--danger, #e05d5d) 65%, transparent); }
+.chrome-connector-indicator.waiting { background: var(--warning, #c49a56); box-shadow: 0 0 8px color-mix(in srgb, var(--warning, #c49a56) 65%, transparent); }
+.chrome-connector-indicator.online { background: #2ed7a2; box-shadow: 0 0 9px rgba(46, 215, 162, .58); }
+.chrome-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.chrome-connector-actions .plugin-install-button { display: inline-flex; align-items: center; gap: 6px; }
+.chrome-connector-actions .plugin-install-button.secondary { color: var(--text-mid); background: color-mix(in srgb, var(--text) 5%, transparent); }
+
 .plugin-manage-tabs { margin-bottom: 26px; }
 .plugin-manage-tabs button {
   padding: 8px 12px;

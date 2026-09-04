@@ -180,12 +180,12 @@ assert.match(
 );
 assert.match(
   styles,
-  /\.chat-panel:not\(\.os-chat-panel\) \.composer-dock\s*\{\s*right:\s*var\(--message-list-scrollbar-inset, 0px\);/,
+  /\.chat-panel \.composer-dock\s*\{\s*right:\s*var\(--message-list-scrollbar-inset, 0px\);/,
   'The composer content track must align with the real message viewport on every platform',
 );
 assert.doesNotMatch(
   styles,
-  /\.chat-panel\.window-restored:not\(\.os-chat-panel\) \.message-list\s*\{[^}]*height:/,
+  /\.chat-panel\.window-restored \.message-list\s*\{[^}]*height:/,
   'A restored window must not create a separate blank viewport above the composer',
 );
 assert.match(

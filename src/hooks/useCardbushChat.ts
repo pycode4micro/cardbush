@@ -7,7 +7,7 @@ import {
   deleteConversationApi,
   editMessage,
   fetchConversations,
-  fetchExperimentalGoalA2AStatus,
+  fetchGoalRuntimeStatus,
   fetchExperimentalGoals,
   fetchMessages,
   fetchPendingInteraction,
@@ -128,7 +128,6 @@ export function useCardbushChat(
     teamModeEnabled?: boolean;
     selectedTeamId?: string;
     selectedTeamName?: string;
-    osModeEnabled?: boolean;
     terminalRuntime?: TerminalRuntime;
     reasoningTraceVisible?: boolean;
     interactiveRequestsAvailable?: boolean;
@@ -741,7 +740,7 @@ export function useCardbushChat(
 
   useEffect(() => {
     let cancelled = false;
-    void fetchExperimentalGoalA2AStatus()
+    void fetchGoalRuntimeStatus()
       .then((status) => {
         if (!cancelled) {
           setGoalAvailable(status.enabled === true);
@@ -2079,7 +2078,6 @@ export function useCardbushChat(
           browserPrivacyMode: requestContext.browserPrivacyMode === true,
           teamModeEnabled: requestContext.teamModeEnabled === true,
           teamId: turnTeamId,
-          osModeEnabled: requestContext.osModeEnabled === true,
           terminalRuntime: requestContext.terminalRuntime,
           disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
           images: attachments.images,
@@ -2435,7 +2433,6 @@ export function useCardbushChat(
       requestContext.defaultProjectDir,
       requestContext.defaultProjectId,
       requestContext.interactiveRequestsAvailable,
-      requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
@@ -3014,7 +3011,6 @@ export function useCardbushChat(
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
             teamId: controlTeamId,
-            osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
             images: replayAttachments.images,
@@ -3037,7 +3033,6 @@ export function useCardbushChat(
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
       requestContext.interactiveRequestsAvailable,
-      requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
@@ -3194,7 +3189,6 @@ export function useCardbushChat(
             browserPrivacyMode: requestContext.browserPrivacyMode === true,
             teamModeEnabled: requestContext.teamModeEnabled === true,
             teamId: controlTeamId,
-            osModeEnabled: requestContext.osModeEnabled === true,
             terminalRuntime: requestContext.terminalRuntime,
             disabledTools: normalizeDisabledToolNames(requestContext.disabledToolNames),
             images: editedStreamAttachments.images,
@@ -3217,7 +3211,6 @@ export function useCardbushChat(
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
       requestContext.interactiveRequestsAvailable,
-      requestContext.osModeEnabled,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
@@ -3549,25 +3542,17 @@ export function useCardbushChat(
   );
 
   const replyToInteraction = useCallback(
-    async (reply: string | InteractionReplyAnswer[]) => {
+    async (reply: InteractionReplyAnswer[]) => {
       const interaction = pendingInteraction;
       if (!interaction) {
         return;
       }
       const sessionId = interaction.sessionId?.trim() || activeConversationId.trim();
       try {
-        if (typeof reply === 'string') {
-          const text = reply.trim();
-          if (!text) {
-            return;
-          }
-          await replyInteraction({ interactionId: interaction.id, rawText: text });
-        } else {
-          if (reply.length === 0) {
-            return;
-          }
-          await replyInteraction({ interactionId: interaction.id, answers: reply });
+        if (reply.length === 0) {
+          return;
         }
+        await replyInteraction({ interactionId: interaction.id, answers: reply });
         const nextInteraction = await fetchPendingInteraction(sessionId).catch(() => null);
         if (activeConversationIdRef.current.trim() === sessionId) {
           setPendingInteraction((current) =>
@@ -3767,8 +3752,8 @@ export function useCardbushChat(
       stoppingRequestsRef.current.delete(sessionId);
       markSessionStopping(sessionId, false);
       setError(localize(
-        '停止请求未被后端受理，当前任务仍在运行。',
-        'The backend did not accept the stop request; the turn is still running.',
+        '停止请求未成功，当前任务仍在运行。',
+        'The stop request was not accepted; the turn is still running.',
       ));
     } catch (caught) {
       stoppingRequestsRef.current.delete(sessionId);

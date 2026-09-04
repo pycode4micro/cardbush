@@ -38,12 +38,13 @@ as disabled or installable Built-ins.
   `runtime_restart_interrupted` before allowing later work.
 - Guidance is queued inside the active Turn and consumed as a user-role message on
   the next provider round. It does not create a hidden replacement Turn.
-- Request capabilities default off and keep vision, interactive requests and
-  ordinary user choice distinct. `request_permission` and
-  `request_user_choice` have separate pending/reply lifecycles.
+- Request capabilities default off and keep vision and interactive permission
+  requests distinct. `request_permission` owns the pending/reply lifecycle.
 - Permission modes are `task_free`, `user_free` and `all_free`; grants bind exact
   actions, resources and capability IDs. UI modes do not silently enable
-  `all_free`.
+  `all_free`. Once explicitly selected, `all_free` applies to the full nested and
+  child execution tree: ordinary asks are resolved inside Runtime while hard
+  admission denials remain final.
 - Open Plan nodes trigger bounded structural continuation. Empty responses and
   reasoning-budget exhaustion have separate bounded terminal failures.
 - Large Tool results remain complete in the durable Tool execution archive and
@@ -57,7 +58,7 @@ as disabled or installable Built-ins.
   the background without blocking independent parent rounds, and feeds completed
   results back only at safe round boundaries. Parent completion is guarded by a
   mandatory join-and-reconcile barrier. Child-visible Tools and Team Profile
-  constraints can only shrink parent capabilities.
+  disabled-Tool constraints can only shrink the parent's Tool surface.
 - Teams require exactly one fallback member and support Profile disabled Tools,
   Skills, trusted Hooks/Guards and prompt instructions. There is no conference,
   peer chat, hidden DAG, automatic routing or Runtime retry policy.
@@ -92,7 +93,6 @@ read_archived_tool_result
 subagent
 team_delegate
 request_permission
-request_user_choice
 ```
 
 Built-ins are code-owned and cannot be installed, removed, enabled, disabled or

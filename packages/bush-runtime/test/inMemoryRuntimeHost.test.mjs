@@ -126,7 +126,6 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
       goalId: "goal_1",
       sessionId: "session_coordination",
       objective: "finish",
-      linkedA2ATaskIds: [],
     },
   });
   const updated = await host.sendCommand({
@@ -138,7 +137,6 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
       status: "complete",
       statusReason: "declared by the caller",
       consumedTokens: 1,
-      linkedA2ATaskIds: [],
     },
   });
   assert.equal(updated.status, "complete");

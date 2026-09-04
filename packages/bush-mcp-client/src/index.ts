@@ -230,11 +230,8 @@ export class McpClientManager {
       executionChannel: `mcp:${connection.config.id}`,
       visibleToChild: tool.policy.visibleToChild,
       decodeInput: jsonObject,
-      authorize: (context) => {
-        if (
-          tool.policy.permission === "allow" ||
-          context.turn?.request.permissionMode === "all_free"
-        ) {
+      authorize: () => {
+        if (tool.policy.permission === "allow") {
           return { kind: "allow" as const };
         }
         const capabilityId = `capability:mcp:${createHash("sha256")
@@ -272,7 +269,7 @@ export class McpClientManager {
             {
               name: tool.remote.name,
               arguments: context.input,
-              _meta: mcpRequestMetadata(context),
+              _meta: mcpRequestMetadata(context, connection.config.id, tool.remote),
             },
             {
               signal: context.signal,
@@ -447,6 +444,8 @@ export class McpClientManager {
 
 function mcpRequestMetadata(
   context: ToolHandlerContext<unknown>,
+  serverId: string,
+  tool: McpTool,
 ): Record<string, unknown> {
   const rawContext = context.turn?.request.metadata.mcpContext;
   const declared = rawContext != null && typeof rawContext === "object" && !Array.isArray(rawContext)
@@ -460,9 +459,20 @@ function mcpRequestMetadata(
   const transportChannel = typeof declared.transportChannel === "string"
     ? declared.transportChannel.trim()
     : "";
+  const sessionTitle = typeof declared.sessionTitle === "string"
+    ? declared.sessionTitle.trim().slice(0, 80)
+    : "";
+  const chromeScoped = serverId === "chrome_devtools" &&
+    tool._meta?.["cardbush/plugin_id"] === "chrome";
   return {
     filesystem_roots: filesystemRoots,
     ...(transportChannel ? { transport_channel: transportChannel } : {}),
+    ...(chromeScoped ? {
+      cardbush_session_id: context.sessionId,
+      cardbush_turn_id: context.turnId,
+      cardbush_request_id: context.requestId,
+      ...(sessionTitle ? { cardbush_session_title: sessionTitle } : {}),
+    } : {}),
   };
 }
 

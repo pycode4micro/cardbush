@@ -26,7 +26,6 @@ interface GoalToolInput {
   status: "active" | "complete" | "blocked" | "cancelled";
   statusReason: string;
   consumedTokens?: number;
-  linkedA2ATaskIds?: string[];
 }
 
 export function registerCoordinationTools(
@@ -107,7 +106,6 @@ export function registerCoordinationTools(
             status: { enum: ["active", "complete", "blocked", "cancelled"] },
             statusReason: { type: "string" },
             consumedTokens: { type: "integer", minimum: 0 },
-            linkedA2ATaskIds: { type: "array", items: { type: "string" } },
           },
         },
       },
@@ -124,7 +122,6 @@ export function registerCoordinationTools(
           status: context.input.status,
           statusReason: context.input.statusReason,
           consumedTokens: context.input.consumedTokens ?? before.consumedTokens,
-          linkedA2ATaskIds: context.input.linkedA2ATaskIds ?? before.linkedA2ATaskIds,
         });
         return state;
       },
@@ -180,15 +177,10 @@ function decodeGoalInput(input: unknown): GoalToolInput {
   ) {
     throw new Error("consumedTokens must be a non-negative integer.");
   }
-  const linked = object.linkedA2ATaskIds;
-  if (linked !== undefined && (!Array.isArray(linked) || linked.some((item) => !optionalString(item)))) {
-    throw new Error("linkedA2ATaskIds must contain non-empty strings.");
-  }
   return {
     status: status as GoalToolInput["status"],
     statusReason: stringValue(object.statusReason, "statusReason"),
     ...(consumedTokens === undefined ? {} : { consumedTokens: Number(consumedTokens) }),
-    ...(linked === undefined ? {} : { linkedA2ATaskIds: linked.map(String) }),
   };
 }
 

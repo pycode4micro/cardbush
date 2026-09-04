@@ -43,7 +43,7 @@ export interface ComputerUsePluginConfig {
 }
 
 export interface ChromePluginConfig {
-  connectionMode: "managed" | "existing";
+  connectionMode: "connector" | "remote_debugging";
 }
 
 export interface CardbushAppPluginConfig extends CardbushPluginCatalogEntry {
@@ -226,7 +226,7 @@ function defaultConfig(id: string): Record<string, unknown> {
     };
   }
   if (id === "chrome") {
-    return { connectionMode: "existing" } satisfies ChromePluginConfig;
+    return { connectionMode: "connector" } satisfies ChromePluginConfig;
   }
   return {};
 }
@@ -245,11 +245,24 @@ function decodeConfig(id: string, input: unknown): Record<string, unknown> {
     };
   }
   if (id === "chrome") {
-    const connectionMode = optionalString(config.connectionMode) ?? "existing";
-    if (connectionMode !== "managed" && connectionMode !== "existing") {
-      throw new Error("chrome.connectionMode must be managed or existing.");
+    const connectionMode = optionalString(config.connectionMode);
+    if (
+      connectionMode &&
+      connectionMode !== "managed" &&
+      connectionMode !== "existing" &&
+      connectionMode !== "connector" &&
+      connectionMode !== "remote_debugging"
+    ) {
+      throw new Error("chrome.connectionMode must be connector or remote_debugging.");
     }
-    return { connectionMode } satisfies ChromePluginConfig;
+    // Older releases called both paths `managed` or `existing`. Migrate them
+    // to the extension connector, which preserves the user's current profile
+    // without relying on DevToolsActivePort.
+    return {
+      connectionMode: connectionMode === "remote_debugging"
+        ? "remote_debugging"
+        : "connector",
+    } satisfies ChromePluginConfig;
   }
   return structuredClone(config);
 }

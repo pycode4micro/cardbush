@@ -27,7 +27,6 @@ Default configuration:
     "await_subagents",
     "team_delegate",
     "request_permission",
-    "request_user_choice",
     "update_goal",
     "schedule_task"
   ]
@@ -45,6 +44,11 @@ its children continue with their immutable snapshot.
 - `parent` (GUI label **Model approval**) keeps the parent's user-selected mode,
   while children use `childPermissionMode` and a separate child Session scope.
   Child permission events are still tunnelled through the active parent Turn.
+
+`all_free` is an execution-tree invariant: when the root Turn uses full control,
+children also use `all_free` regardless of routing. Ordinary permission asks are
+resolved inside Runtime and never tunnel to the GUI; hard admission denials remain
+non-overridable.
 
 The Composer route is a per-Turn product choice and takes precedence over the
 file's `permissionRouting`. `childPermissionMode` accepts `task_free`,

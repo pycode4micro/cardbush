@@ -1,6 +1,4 @@
 import type {
-  RuntimeInteraction,
-  RuntimeInteractionAnswer,
   RuntimePermissionAnswer,
   RuntimePermissionRequest,
   RuntimeStopReceipt,
@@ -15,10 +13,6 @@ interface RuntimePermissionEntry {
 }
 
 const permissions = new Map<string, RuntimePermissionEntry>();
-const genericInteractions = new Map<string, {
-  interaction: PendingInteraction;
-  answer: (answer: RuntimeInteractionAnswer) => Promise<unknown>;
-}>();
 const activeTurns = new Map<string, {
   sessionId: string;
   stop: () => Promise<RuntimeStopReceipt>;
@@ -46,18 +40,12 @@ export function registerRuntimePermission(input: {
     turnId: input.turnId,
     title: fromSubagent ? 'Subagent permission' : 'Permission',
     reason: input.request.reason,
-    submitLabel: 'Continue',
-    cancelLabel: 'Deny',
-    replyMode: 'single',
     toolName: 'request_permission',
     runtimePermission: structuredClone(input.request),
     questions: [{
       id: 'permission',
       label: 'Permission',
       question: 'Allow this exact access request?',
-      selectionMode: 'single',
-      needInput: false,
-      required: true,
       options: [
         { id: 'allow_once', label: 'Allow once' },
         { id: 'allow_session', label: 'Allow for this session' },
@@ -88,65 +76,11 @@ export function pendingRuntimeInteraction(sessionId: string): PendingInteraction
   const entry = [...permissions.values()].find(
     ({ interaction }) => interaction.sessionId === sessionId,
   );
-  if (entry) return structuredClone(entry.interaction);
-  const generic = [...genericInteractions.values()].find(
-    ({ interaction }) => interaction.sessionId === sessionId,
-  );
-  return generic ? structuredClone(generic.interaction) : null;
+  return entry ? structuredClone(entry.interaction) : null;
 }
 
 export function hasRuntimeInteraction(interactionId: string): boolean {
-  return permissions.has(interactionId) || genericInteractions.has(interactionId);
-}
-
-export function hasRuntimeGenericInteraction(interactionId: string): boolean {
-  return genericInteractions.has(interactionId);
-}
-
-export function registerRuntimeGenericInteraction(
-  input: RuntimeInteraction,
-  answer: (answer: RuntimeInteractionAnswer) => Promise<unknown>,
-): PendingInteraction {
-  const interaction: PendingInteraction = {
-    id: input.interactionId,
-    type: 'user_choice',
-    sessionId: input.sessionId,
-    turnId: input.turnId,
-    title: input.title,
-    reason: input.reason,
-    message: input.reason,
-    description: input.description,
-    submitLabel: input.submitLabel,
-    cancelLabel: input.cancelLabel,
-    replyMode: 'structured',
-    toolName: 'request_user_choice',
-    questions: input.questions,
-    raw: input,
-  };
-  genericInteractions.set(input.interactionId, { interaction, answer });
-  return structuredClone(interaction);
-}
-
-export async function answerRuntimeGenericInteraction(
-  interactionId: string,
-  input: Omit<RuntimeInteractionAnswer, 'protocol' | 'interactionId' | 'answerId'>,
-): Promise<void> {
-  const entry = genericInteractions.get(interactionId);
-  if (!entry) throw interactionNotPendingError(
-    'interaction_not_pending',
-    `Runtime interaction ${interactionId} is not pending.`,
-  );
-  await entry.answer({
-    protocol: 'bush.runtime_interaction.v1',
-    interactionId,
-    answerId: `runtime_answer_${crypto.randomUUID()}`,
-    ...input,
-  });
-  genericInteractions.delete(interactionId);
-}
-
-export function removeRuntimeGenericInteraction(interactionId: string): void {
-  genericInteractions.delete(interactionId);
+  return permissions.has(interactionId);
 }
 
 export async function answerRuntimeInteraction(
@@ -183,9 +117,6 @@ export function removeRuntimePermission(permissionId: string): void {
 export function removeRuntimePermissionsForTurn(turnId: string): void {
   for (const [permissionId, entry] of permissions) {
     if (entry.interaction.turnId === turnId) permissions.delete(permissionId);
-  }
-  for (const [interactionId, entry] of genericInteractions) {
-    if (entry.interaction.turnId === turnId) genericInteractions.delete(interactionId);
   }
 }
 

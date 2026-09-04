@@ -108,6 +108,18 @@ assert.equal(
   'Absolute paths outside the workspace must not be rewritten to the workspace drive',
 );
 assert.equal(localFileReference('/work/reports/report.xlsx')?.path, '/work/reports/report.xlsx');
+for (const route of ['/docs', '/mcp', '/uploads']) {
+  assert.equal(
+    localFileReference(route, 'D:\\proj\\cardbush'),
+    null,
+    `${route} must remain a web route in a Windows workspace`,
+  );
+}
+assert.equal(
+  localFileReference('/work/reports/report.xlsx', '/work/project')?.path,
+  '/work/reports/report.xlsx',
+  'POSIX paths must remain local references in a POSIX workspace',
+);
 assert.equal(
   localFileReference('src/App.tsx', 'D:\\proj\\cardbush')?.path,
   'D:\\proj\\cardbush\\src\\App.tsx',
@@ -217,6 +229,8 @@ assert.match(
 assert.match(localReferenceLinkSource, /inspectLocalReference/);
 assert.match(localReferenceLinkSource, /applicationLike[\s\S]*?openPath\?\.\(path\)/);
 assert.match(localReferenceLinkSource, /<FileTypeIcon path=\{path\} \/>/);
+assert.match(localReferenceLinkSource, /if \(!inspectionComplete \|\| !metadata\)/);
+assert.doesNotMatch(localReferenceLinkSource, /fallbackDirectoryLike/);
 
 const fileTypeIconSource = fs.readFileSync(
   path.join(

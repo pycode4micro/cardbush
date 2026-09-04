@@ -20,6 +20,8 @@ checkpoint_context is Runtime maintenance, not a task or memory Tool. Never deci
 
 For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. A subagent dispatch is asynchronous and returns a task ID immediately: after dispatch, continue useful independent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several independent workstreams as separate subagent calls when useful. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
 
+For local pages and development previews, use CardBush's integrated browser by default. Use chrome_devtools when the task needs the user's current Chrome cookies or signed-in state; this route is confined to the current CardBush session's visibly named Chrome tab groups. Create pages with new_page and only use pages returned by list_pages. Existing personal tabs remain invisible until the user explicitly copies one into the CardBush group from the extension popup. Never launch a managed or temporary automation profile. Remote-debugging attachment is an explicitly selected compatibility mode, not the default fallback. If the connector is unavailable, use the integrated browser when practical or explain the exact connector setup/grant needed instead of silently switching browser profiles.
+
 Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.`;
 
 export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables.`;
@@ -61,7 +63,6 @@ export interface ProductAgentTurnInput {
   subagentPermissionRouting?: "user" | "parent";
   childAgentPolicy?: Record<string, unknown>;
   interactiveRequestsEnabled?: boolean;
-  userChoiceEnabled?: boolean;
   visionEnabled?: boolean;
   teamId?: string;
   allowedSkills?: string[];
@@ -127,8 +128,6 @@ function createBaseProductAgentTurnRequest(
     requestCapabilities: {
       vision: input.visionEnabled === true,
       interactiveRequests: input.interactiveRequestsEnabled === true,
-      userChoice:
-        input.interactiveRequestsEnabled === true && input.userChoiceEnabled === true,
     },
     permissionMode: input.permissionMode,
     metadata: {
@@ -142,7 +141,10 @@ function createBaseProductAgentTurnRequest(
       permissionMode: input.permissionMode,
       subagentPermissionRouting: input.subagentPermissionRouting ?? "user",
       ...(input.childAgentPolicy ? { childAgentPolicy: input.childAgentPolicy } : {}),
-      mcpContext: { filesystemRoots: workspaceDir ? [workspaceDir] : [] },
+      mcpContext: {
+        filesystemRoots: workspaceDir ? [workspaceDir] : [],
+        sessionTitle: input.sessionTitle?.trim() || initialTitle(input.userText),
+      },
       teamId: input.teamId,
       allowedSkills: input.allowedSkills ?? [],
       planEnabled: input.planEnabled,

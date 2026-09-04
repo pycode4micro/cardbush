@@ -641,7 +641,6 @@ function goalState(input, status, revision) {
     status,
     statusReason: '',
     consumedTokens: 0,
-    linkedA2ATaskIds: [],
     revision,
     createdAt: '2026-08-29T00:00:00.000Z',
     updatedAt: '2026-08-29T00:00:00.000Z',

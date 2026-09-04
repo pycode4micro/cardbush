@@ -10,9 +10,20 @@ const composer = read('src/features/composer/Composer.tsx');
 const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');
 const api = read('src/backend/api.ts');
 const styles = read('src/styles/app.css');
+const protocolModel = read('packages/bush-protocol/src/model.ts');
+const runtimeHost = read('packages/bush-runtime/src/inMemoryRuntimeHost.ts');
+const runtimeInteractionTools = read('packages/bush-runtime/src/interactionTools.ts');
+const productAgent = read('packages/bush-product-agent/src/index.ts');
+const runtimeChat = read('src/backend/runtimeChat.ts');
+const toolLogo = read('src/features/tools/ToolLogo.tsx');
 const packageJson = JSON.parse(read('package.json'));
 const readme = read('README.md');
 const readmeZh = read('README.zh-CN.md');
+const retiredChoiceMarkers = [
+  ['request', 'user', 'choice'].join('_'),
+  ['generic', 'user', 'choice'].join('_'),
+  ['user', 'Choice'].join(''),
+];
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -32,7 +43,7 @@ assert(
 );
 assert(
   app.includes("<BackendLoading language={language} />") &&
-    app.includes("Connecting to backend service..."),
+    app.includes("Connecting to the runtime..."),
   'runtime loading state must support both UI languages',
 );
 assert(
@@ -111,6 +122,20 @@ assert(
 assert(
   !api.includes('/v1/') && !api.includes('BushServer') && !api.includes('VITE_BACKEND_BASE_URL'),
   'production API must not contain the retired local HTTP service boundary',
+);
+assert(
+  [
+    protocolModel,
+    runtimeHost,
+    runtimeInteractionTools,
+    productAgent,
+    runtimeChat,
+    toolLogo,
+    api,
+  ].every((source) => retiredChoiceMarkers.every((marker) => !source.includes(marker))) &&
+    !existsSync(resolve(root, 'packages/bush-protocol/src/interaction.ts')) &&
+    !existsSync(resolve(root, 'packages/bush-runtime/src/runtimeInteractionStore.ts')),
+  'retired generic user-choice Tool and protocol must not return',
 );
 assert(
   api.includes('function localizedClientMessage') &&

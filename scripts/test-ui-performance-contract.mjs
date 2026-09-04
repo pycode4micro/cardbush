@@ -190,13 +190,38 @@ assert.match(
 );
 assert.match(
   toolExecutionBlockSource,
-  /if \(!expanded \|\| !deferredExecutionKey\) return undefined;[\s\S]*?fetchRuntimeTurnToolExecutionDetails/,
+  /if \([\s\S]*?!expanded[\s\S]*?!deferredDetailRequestKey[\s\S]*?deferredDetailStatus[\s\S]*?detailRequestsInFlightRef\.current\.has\(deferredDetailRequestKey\)[\s\S]*?fetchRuntimeTurnToolExecutionDetails/,
   'native Tool results must load only after the user opens the execution disclosure',
+);
+assert.match(
+  toolExecutionBlockSource,
+  /deferredDetailRequestKey,[\s\S]*?deferredDetailSessionId,[\s\S]*?deferredDetailStatus,[\s\S]*?deferredDetailTurnId,[\s\S]*?deferredExecutionKey,[\s\S]*?detailRetryRevision,[\s\S]*?expanded,[\s\S]*?\]\);/,
+  'detail hydration must depend on stable request identity instead of the live execution array',
+);
+assert.doesNotMatch(
+  toolExecutionBlockSource,
+  /\}, \[deferredExecutionKey, executions, expanded/,
+  'a parent render must not cancel an in-flight detail request by replacing the execution array',
 );
 assert.match(
   toolChangeBlockSource,
   /const canExpand = hasDetails \|\| detailsDeferred;[\s\S]*?onRequestDetails\?\.\(\)/,
   'a deferred Workspace Change must remain expandable and request its full diff on demand',
+);
+assert.match(
+  toolChangeBlockSource,
+  /detailsStatus === 'failed'[\s\S]*?onRetryDetails/,
+  'a failed deferred detail request must expose a retry action instead of spinning forever',
+);
+assert.match(
+  apiSource,
+  /runtimeTurnToolExecutionDetailTimeoutMs = 10_000;[\s\S]*?Promise\.race\(\[request, timeout\]\)/,
+  'deferred detail transport must have a bounded wait',
+);
+assert.match(
+  apiSource,
+  /runtimeTurnToolExecutionDetailCache\.delete\(input\.key\)/,
+  'settled or timed-out detail requests must not poison retries through the promise cache',
 );
 assert.match(
   runtimeHostSource,

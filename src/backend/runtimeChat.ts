@@ -26,8 +26,6 @@ import type {
 import {
   registerActiveRuntimeTurn,
   registerRuntimePermission,
-  registerRuntimeGenericInteraction,
-  removeRuntimeGenericInteraction,
   removeRuntimePermission,
   removeRuntimePermissionsForTurn,
 } from '../runtime-client/RuntimeInteractionBridge';
@@ -69,7 +67,7 @@ export async function streamRuntimeChat(
     const [resolvedModel, subagentConfig, filesystemLocations] = await Promise.all([
       resolveProductModel(rootModelId),
       readProductSubagentConfig(),
-      readOsFilesystemLocations(),
+      readFilesystemLocations(),
     ]);
     const childModel = subagentConfig.model.mode === 'fixed'
       ? subagentConfig.model.modelId === rootModelId
@@ -105,12 +103,10 @@ export async function streamRuntimeChat(
     const permissionMode = request.permissionMode ?? 'task_free';
     const interactiveRequests = request.interactiveRequestsEnabled === true;
     const vision = request.standardImageInputEnabled === true;
-    const userChoice = interactiveRequests;
     const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
     const tools = catalog.filter((entry) =>
       (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
       (entry.definition.name !== 'request_permission' || (interactiveRequests && permissionMode !== 'all_free')) &&
-      (entry.definition.name !== 'request_user_choice' || (interactiveRequests && userChoice)) &&
       (entry.definition.name !== 'inject_image_input' || vision) &&
       (entry.definition.name !== 'update_goal' || goalAvailable) &&
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
@@ -147,7 +143,6 @@ export async function streamRuntimeChat(
       subagentPermissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
       childAgentPolicy,
       interactiveRequestsEnabled: request.interactiveRequestsEnabled,
-      userChoiceEnabled: userChoice,
       visionEnabled: vision,
       teamId: request.teamId,
       allowedSkills: request.allowedSkills,
@@ -155,6 +150,7 @@ export async function streamRuntimeChat(
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
       reasoningEffort: reasoningEffort(request.reasoningLevel),
+      sessionTitle: optionalString(existingSession?.metadata?.title) || undefined,
     };
     const submittedAt = Date.parse(request.submittedAt ?? '');
     const initialCreatedAt = Number.isFinite(submittedAt)
@@ -180,7 +176,6 @@ export async function streamRuntimeChat(
         goalId: `goal_${crypto.randomUUID()}`,
         sessionId: request.sessionId,
         objective: goalCommand.objective,
-        linkedA2ATaskIds: [],
       }, controller.signal);
     }
     let currentRequest = runtimeRequest;
@@ -281,12 +276,12 @@ export async function streamRuntimeChat(
   }
 }
 
-async function readOsFilesystemLocations(): Promise<Array<{
+async function readFilesystemLocations(): Promise<Array<{
   id: string;
   name: string;
   path: string;
 }>> {
-  const read = window.cardbushDesktop?.osFilesystemLocations;
+  const read = window.cardbushDesktop?.filesystemLocations;
   if (!read) return [];
   try {
     return await read();
@@ -581,30 +576,6 @@ async function consumeRuntimeEvents(
       case 'permission_cancelled':
       case 'permission_expired':
         removeRuntimePermission(event.payload.permissionId);
-        break;
-      case 'interaction_requested': {
-        const interaction = registerRuntimeGenericInteraction({
-          protocol: 'bush.runtime_interaction.v1',
-          interactionId: event.payload.interactionId,
-          sessionId: event.sessionId,
-          turnId: event.turnId,
-          toolCallId: event.payload.toolCallId,
-          title: event.payload.title,
-          description: event.payload.description,
-          reason: event.payload.reason,
-          questions: event.payload.questions,
-          submitLabel: event.payload.submitLabel,
-          cancelLabel: event.payload.cancelLabel,
-          createdAt: event.createdAt,
-          expiresAt: event.payload.expiresAt,
-        }, (answer) => runtime.client.answerInteraction(answer));
-        request.onInteractiveRequest?.(interaction);
-        break;
-      }
-      case 'interaction_answered':
-      case 'interaction_cancelled':
-      case 'interaction_expired':
-        removeRuntimeGenericInteraction(event.payload.interactionId);
         break;
       case 'provider_retry':
         request.onConnectionState?.({

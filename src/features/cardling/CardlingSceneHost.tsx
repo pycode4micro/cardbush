@@ -579,8 +579,8 @@ export function CardlingSceneHost({
           )?.(target.target);
           setNotice(
             language === 'zh'
-              ? '链接已在 CardBush UI 预览窗口中打开。'
-              : 'The link was opened in the CardBush UI preview window.',
+              ? '链接已在 CardBush 右侧浏览器标签页中打开。'
+              : 'The link was opened in a CardBush browser tab on the right.',
           );
           return;
         }
@@ -776,8 +776,8 @@ export function CardlingSceneHost({
         if (type === 'node_reorder') {
           setNotice(
             language === 'zh'
-              ? '节点顺序已同步给后端。'
-              : 'Node order synced to the backend.',
+              ? '节点顺序已同步。'
+              : 'Node order synced.',
           );
         }
         if (type === 'scene_toast') {
@@ -799,8 +799,8 @@ export function CardlingSceneHost({
           .then(() =>
             setNotice(
               language === 'zh'
-                ? '表单事件已发送给后端'
-                : 'Form event sent to backend',
+                ? '表单事件已发送'
+                : 'Form event sent',
             ),
           )
           .catch((caught) => setError(sceneEventError(caught, language)));
@@ -1095,11 +1095,11 @@ export function CardlingSceneHost({
         setNotice(
           event === 'confirm'
             ? language === 'zh'
-              ? '确认已发送给后端'
-              : 'Confirmation sent to backend'
+              ? '确认已发送'
+              : 'Confirmation sent'
             : language === 'zh'
-              ? '取消已发送给后端'
-              : 'Cancellation sent to backend',
+              ? '取消已发送'
+              : 'Cancellation sent',
         );
       } catch (caught) {
         setError(sceneEventError(caught, language));
@@ -1303,10 +1303,10 @@ export function CardlingSceneHost({
                       <LoaderCircle size={11} />
                       {language === 'zh'
                         ? eventStatus === 'sending'
-                          ? '我正在把反馈交给后端和 LLM。'
+                          ? '我正在提交反馈，随后交由模型处理。'
                           : '我正在跟进任务，反馈会先收进清单。'
                         : eventStatus === 'sending'
-                          ? 'I am sending the feedback to the backend and LLM.'
+                          ? 'I am submitting the feedback for model processing.'
                           : 'I am following the task. Feedback is collected first.'}
                     </small>
                   )}
@@ -1419,8 +1419,8 @@ export function CardlingSceneHost({
                 <small>
                   {sceneHealth.issues[0]?.message ||
                     (language === 'zh'
-                      ? '已把健康检查结果回传后端。'
-                      : 'Health check was sent to the backend.')}
+                      ? '已回传健康检查结果。'
+                      : 'Health check result sent.')}
                   {sceneHealth.issues.length > 1
                     ? language === 'zh'
                       ? `，另有 ${sceneHealth.issues.length - 1} 项`
@@ -1512,8 +1512,8 @@ export function CardlingSceneHost({
                 <small>
                   {eventStatus === 'sending'
                     ? language === 'zh'
-                      ? '正在把反馈交给后端，随后会触发 LLM 处理。'
-                      : 'Sending feedback to the backend, then the LLM will process it.'
+                      ? '正在提交反馈，随后会触发模型处理。'
+                      : 'Submitting feedback, then model processing will start.'
                     : eventStatus === 'recorded'
                       ? language === 'zh'
                         ? '反馈已提交。若没有运行中任务，前端已发起一轮 LLM 请求。'
@@ -1565,7 +1565,7 @@ export function CardlingSceneHost({
                 onClick={() => void submitImmediateComment()}
                 title={
                   language === 'zh'
-                    ? '绕过清单，立即把当前这条反馈发给后端'
+                    ? '绕过清单，立即提交当前这条反馈'
                     : 'Bypass the list and send this note immediately'
                 }
               >

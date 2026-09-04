@@ -309,7 +309,7 @@ absolute path. The original source project was not modified by either run.
 
 The CardBush production path no longer connects to the Python service for Agent
 execution, Session history, Shadow conversations, workspace changes, context
-usage, Goal/A2A, Plan, Subagent, Team, permissions or provider
+usage, Goal, Plan, Subagent, Team, permissions or provider
 recovery. React uses one typed Runtime Client; Electron owns the Utility Process
 Runtime Host and typed Product Host commands. The removed HTTP/SSE payload
 parsers and backend settings are not retained as a compatibility layer.
@@ -323,7 +323,7 @@ arbitrary nested JSON. Bot/channel ownership is outside CardBush and may integra
 only as an independent MCP server.
 
 The complete product release gate passes after the cutover, including protocol,
-Runtime, provider, MCP, Electron IPC, Product Host, Goal/A2A, Shadow,
+Runtime, provider, MCP, Electron IPC, Product Host, Goal, Shadow,
 Subagent, Team, permission, recovery, typecheck, production build and packaged
 release-cleanup checks.
 

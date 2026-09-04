@@ -545,6 +545,7 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
         <ChromeConnectionSettings
           language={language}
           plugin={plugin}
+          busy={busy}
           onReplace={onReplace}
           onPersist={onPersist}
         />
@@ -554,43 +555,108 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
   );
 }
 
-function ChromeConnectionSettings({ language, plugin, onReplace, onPersist }: {
+type ChromeConnectorStatus = NonNullable<Window['cardbushDesktop']> extends infer Desktop
+  ? Desktop extends { chromeConnectorStatus: () => Promise<infer Status> } ? Status : never
+  : never;
+
+export function ChromeConnectionSettings({ language, plugin, busy, onReplace, onPersist }: {
   language: AppLanguage;
   plugin: CardbushAppPlugin;
+  busy: boolean;
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
-  const connectionMode = plugin.config.connectionMode === 'managed' ? 'managed' : 'existing';
-  const setConnectionMode = (mode: 'managed' | 'existing') => {
-    onReplace({ ...plugin, config: { ...plugin.config, connectionMode: mode } });
+  const [status, setStatus] = useState<ChromeConnectorStatus | null>(null);
+  const [working, setWorking] = useState('');
+  const [error, setError] = useState('');
+  const connector = window.cardbushDesktop;
+  const mode = plugin.config.connectionMode === 'remote_debugging'
+    ? 'remote_debugging'
+    : 'connector';
+
+  const refresh = useCallback(async () => {
+    if (!connector?.chromeConnectorStatus) return;
+    try {
+      setStatus(await connector.chromeConnectorStatus());
+      setError('');
+    } catch (caught) {
+      setError(errorMessage(caught));
+    }
+  }, [connector]);
+
+  useEffect(() => {
+    void refresh();
+    return connector?.onChromeConnectorStatus?.((next) => setStatus(next));
+  }, [connector, refresh]);
+
+  const selectMode = (connectionMode: 'connector' | 'remote_debugging') => {
+    const next = { ...plugin, config: { ...plugin.config, connectionMode } };
+    onReplace(next);
+    onPersist(next, language === 'zh' ? 'Chrome 连接方式已保存' : 'Chrome connection mode saved');
   };
+
+  const run = async (key: string, action: () => Promise<unknown>) => {
+    setWorking(key);
+    setError('');
+    try {
+      await action();
+      await refresh();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      setWorking('');
+    }
+  };
+
   return (
     <section className="plugin-detail-section">
       <h3>{language === 'zh' ? '浏览器连接' : 'Browser connection'}</h3>
       <label className="plugin-radio-setting">
-        <input type="radio" name="chrome-connection-mode" checked={connectionMode === 'managed'} onChange={() => setConnectionMode('managed')} />
-        <span>
-          <strong>{language === 'zh' ? '独立受控浏览器' : 'Managed browser'}</strong>
-          <small>{language === 'zh' ? '由 Chrome 插件启动独立实例，不使用日常浏览器的登录状态。' : 'Launch a separate instance without using your everyday browser session.'}</small>
-        </span>
+        <input type="radio" name="chrome-connection-mode" checked={mode === 'connector'} disabled={busy} onChange={() => selectMode('connector')} />
+        <span><strong>{language === 'zh' ? 'Browser Connector（推荐）' : 'Browser Connector (recommended)'}</strong><small>{language === 'zh' ? '通过 Chrome 扩展和本地桥复用当前标签页、Cookie 与登录状态。' : 'Reuse current tabs, cookies, and signed-in state through the Chrome extension and local bridge.'}</small></span>
       </label>
       <label className="plugin-radio-setting">
-        <input type="radio" name="chrome-connection-mode" checked={connectionMode === 'existing'} onChange={() => setConnectionMode('existing')} />
-        <span>
-          <strong>{language === 'zh' ? '优先复用当前 Chrome' : 'Prefer current Chrome'}</strong>
-          <small>{language === 'zh' ? '远程调试可用时复用标签页与登录状态；不可用时自动使用独立受控浏览器，避免任务中断。' : 'Reuse tabs and signed-in state when remote debugging is available, otherwise fall back to a managed browser so the task can continue.'}</small>
-        </span>
+        <input type="radio" name="chrome-connection-mode" checked={mode === 'remote_debugging'} disabled={busy} onChange={() => selectMode('remote_debugging')} />
+        <span><strong>{language === 'zh' ? '远程调试兼容模式' : 'Remote debugging compatibility mode'}</strong><small>{language === 'zh' ? '仅供开发者使用；连接已主动开启远程调试的 Chrome，不创建临时资料。' : 'For advanced development only; connects to an opted-in remote-debugging Chrome without creating a temporary profile.'}</small></span>
       </label>
-      {connectionMode === 'existing' && (
+      {mode === 'connector' ? (
+        <div className="chrome-connector-card">
+          <div className="chrome-connector-heading">
+            <span className={`chrome-connector-indicator ${status?.extensionConnected ? 'online' : status?.bridgeRunning ? 'waiting' : ''}`} />
+            <div>
+              <strong>{status?.extensionConnected
+                ? (language === 'zh' ? 'Chrome 已连接' : 'Chrome connected')
+                : status?.bridgeRunning
+                  ? (language === 'zh' ? '本地桥已就绪，等待扩展' : 'Local bridge ready; waiting for extension')
+                  : (language === 'zh' ? '连接器未就绪' : 'Connector not ready')}</strong>
+              <small>{status?.extensionConnected
+                ? `${status.activeTabTitle || (language === 'zh' ? '当前标签页' : 'Current tab')} · ${status.controlledTabCount} ${language === 'zh' ? '个受控标签页' : 'controlled tabs'}`
+                : (language === 'zh' ? '安装扩展后，在扩展弹窗中授权本次、当前网站或全部网站。' : 'After installing, grant this tab, this site, or all sites in the extension popup.')}</small>
+            </div>
+          </div>
+          <div className="chrome-connector-actions">
+            <button className="plugin-install-button" type="button" disabled={working !== '' || status?.bridgeRegistered === true || status?.nativeHostAvailable === false} title={status?.setupMessage} onClick={() => void run('bridge', async () => connector?.setupChromeConnector())}>
+              {working === 'bridge' ? <LoaderCircle className="spin" size={14} /> : null}
+              {status?.bridgeRegistered ? (language === 'zh' ? '本地桥已配置' : 'Local bridge configured') : (language === 'zh' ? '1. 配置本地桥' : '1. Configure local bridge')}
+            </button>
+            <button className="plugin-install-button" type="button" disabled={working !== '' || !connector?.openChromeConnectorInstaller} onClick={() => void run('extension', async () => connector?.openChromeConnectorInstaller())}>
+              {working === 'extension' ? <LoaderCircle className="spin" size={14} /> : null}
+              {status?.storeUrl ? (language === 'zh' ? '2. 从商店安装扩展' : '2. Install from Chrome Web Store') : (language === 'zh' ? '2. 打开扩展目录' : '2. Open extension folder')}
+            </button>
+            <button className="plugin-install-button secondary" type="button" disabled={working !== ''} onClick={() => void refresh()}><RefreshCw size={14} />{language === 'zh' ? '刷新状态' : 'Refresh'}</button>
+          </div>
+          {!status?.storeUrl && <p className="plugin-setting-note">{language === 'zh' ? '开发版本：扩展目录已随 CardBush 提供。按钮会复制目录路径并打开文件夹，请在 chrome://extensions 的“加载已解压的扩展程序”中选择它。正式发布可配置 Chrome Web Store 地址。' : 'Development build: the extension ships with CardBush. The button copies and reveals its directory; select it with “Load unpacked” at chrome://extensions. Production builds can configure a Chrome Web Store URL.'}</p>}
+          {status?.setupMessage && <p className="plugin-setting-note">{status.setupMessage}</p>}
+          {status?.lastError && <p className="plugin-hub-error">{status.lastError}</p>}
+          {error && <p className="plugin-hub-error">{error}</p>}
+        </div>
+      ) : (
         <p className="plugin-setting-note">
           {language === 'zh'
-            ? '需要 Chrome 144 或更高版本，并在 chrome://inspect/#remote-debugging 开启远程调试。Agent 将能访问该浏览器中的页面和登录数据。'
-            : 'Requires Chrome 144 or newer with remote debugging enabled at chrome://inspect/#remote-debugging. The Agent can access pages and signed-in data in that browser.'}
+            ? '在 Chrome 144+ 的 chrome://inspect/#remote-debugging 中主动开启远程调试。此兼容路径仍依赖 DevToolsActivePort，仅在扩展连接器不可用时使用。'
+            : 'Explicitly enable remote debugging at chrome://inspect/#remote-debugging in Chrome 144+. This compatibility path still relies on DevToolsActivePort and is only for cases where the extension connector cannot be used.'}
         </p>
       )}
-      <button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? 'Chrome 连接方式已保存' : 'Chrome connection saved')}>
-        {language === 'zh' ? '保存配置' : 'Save settings'}
-      </button>
     </section>
   );
 }

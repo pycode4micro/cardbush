@@ -10,7 +10,6 @@ const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 
 const expectedSections = [
   'profile',
-  'os',
   'runtime',
   'proxy',
   'subagents',
@@ -31,6 +30,11 @@ assert.deepEqual(
   [...groupedSections].sort(),
   expectedSections,
   'Every visible settings section must appear exactly once in grouped navigation',
+);
+assert.doesNotMatch(
+  navigationBlock,
+  /['"]os['"]|CardBush OS|操作系统模式|OS mode/i,
+  'Removed OS mode must not return to settings navigation',
 );
 assert.match(settings, /const settingsDescriptions:/);
 assert.match(settings, /className="settings-navigation"/);

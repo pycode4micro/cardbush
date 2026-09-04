@@ -107,8 +107,8 @@ export function SubagentsPanel({
 
       <p className="feature-hint">
         {language === 'zh'
-          ? '子任务由后端运行时按需创建和调度。前端只观察任务、准入限制和能力，不维护固定 Agent。'
-          : 'Subtasks are created and scheduled on demand by the backend runtime. This read-only view observes tasks, admission limits, and capabilities without maintaining fixed agents.'}
+          ? '子任务由 Runtime 按需创建和调度。此页面只展示任务、准入限制和能力，不维护固定 Agent。'
+          : 'Subtasks are created and scheduled on demand by the Runtime. This read-only view shows tasks, admission limits, and capabilities without maintaining fixed agents.'}
       </p>
       {error && <p className="feature-error">{error}</p>}
 
@@ -126,8 +126,8 @@ export function SubagentsPanel({
                 ? '已关闭'
                 : 'Disabled'
               : language === 'zh'
-                ? '后端托管'
-                : 'Backend managed'}
+                ? 'Runtime 托管'
+                : 'Runtime managed'}
           </em>
         </header>
         <div className="subagent-supervisor-grid">
@@ -140,8 +140,8 @@ export function SubagentsPanel({
             value={
               frontendMutationsAllowed
                 ? language === 'zh'
-                  ? '后端允许'
-                  : 'Backend enabled'
+                  ? 'Runtime 允许'
+                  : 'Runtime enabled'
                 : language === 'zh'
                   ? '只读'
                   : 'Read-only'
@@ -195,8 +195,8 @@ export function SubagentsPanel({
                 ? '通过 MCP 接入'
                 : 'Use MCP servers'
               : language === 'zh'
-                ? '由后端声明'
-                : 'Declared by backend'
+                ? '由 Runtime 声明'
+                : 'Declared by Runtime'
           }
         />
       </div>
@@ -278,7 +278,7 @@ function RuntimeTaskRow({
         {prompt && <p>{prompt}</p>}
         <small>
           {[profile, id].filter(Boolean).join(' · ') ||
-            (language === 'zh' ? '后端运行时任务' : 'Backend runtime task')}
+            (language === 'zh' ? 'Runtime 任务' : 'Runtime task')}
         </small>
       </div>
       <em>{runtimeStatusLabel(status, language)}</em>
@@ -306,7 +306,7 @@ function RuntimeCapabilitySummary({
         {chips.map((item) => <b key={item}>{item}</b>)}
         {chips.length === 0 && (
           <em>
-            {language === 'zh' ? '由后端在任务创建时解析' : 'Resolved by the backend when a task is created'}
+            {language === 'zh' ? '由 Runtime 在任务创建时解析' : 'Resolved by the Runtime when a task is created'}
           </em>
         )}
       </div>

@@ -90,9 +90,6 @@ import {
 } from './productTeams';
 import {
   answerRuntimeInteraction,
-  answerRuntimeGenericInteraction,
-  hasRuntimeGenericInteraction,
-  registerRuntimeGenericInteraction,
   hasRuntimeInteraction,
   pendingRuntimeInteraction,
   stopActiveRuntimeTurn,
@@ -123,12 +120,10 @@ export interface BackendModelConfigsResult {
   raw: unknown;
 }
 
-export interface ExperimentalGoalA2AStatus {
+export interface GoalRuntimeStatus {
   enabled: boolean;
   mode: string;
   goalProtocol: string;
-  a2aProtocolVersion: string;
-  mergedIntoCore: boolean;
 }
 
 export type ExperimentalGoalStatus =
@@ -143,35 +138,10 @@ export interface ExperimentalGoal {
   statusReason: string;
   tokenBudget?: number;
   consumedTokens: number;
-  linkedA2ATaskIds: string[];
   revision: number;
   createdAt: string;
   updatedAt: string;
   completedAt?: string;
-}
-
-export interface A2AAgentCard {
-  name: string;
-  description: string;
-  protocolVersions: string[];
-  streaming: boolean;
-  skills: Array<{
-    id: string;
-    name: string;
-    description: string;
-    tags: string[];
-  }>;
-  raw: Record<string, unknown>;
-}
-
-export interface A2ATask {
-  id: string;
-  contextId: string;
-  state: string;
-  statusMessage: string;
-  artifactText: string;
-  revision: number;
-  raw: Record<string, unknown>;
 }
 
 export interface ChatStreamRequest {
@@ -194,7 +164,6 @@ export interface ChatStreamRequest {
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
   teamId?: string;
-  osModeEnabled?: boolean;
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
@@ -278,7 +247,6 @@ export interface ControlStreamRequest {
   browserPrivacyMode?: boolean;
   teamModeEnabled?: boolean;
   teamId?: string;
-  osModeEnabled?: boolean;
   terminalRuntime?: TerminalRuntime;
   images?: Array<{ path: string }>;
   files?: string[];
@@ -480,8 +448,6 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   browserPrivacyMode: false,
   browserApiCandidates: false,
   browserContextApiRequest: false,
-  osMode: false,
-  desktopAutomation: false,
   taskPlan: false,
   reasoningStream: false,
   reasoningLevelSelection: false,
@@ -605,7 +571,7 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       chatStream: features.has('turn_stream'),
       sessions: features.has('append_only_session_context'),
       interactions:
-        features.has('interactive_permissions') || features.has('generic_user_choice'),
+        features.has('interactive_permissions'),
       interactiveRequests: features.has('interactive_permissions'),
       permissionRequests: features.has('interactive_permissions'),
       turnStop: true,
@@ -638,8 +604,6 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       sessionContextSearch: true,
       sessionActivityOrdering: true,
       capabilityDiscovery: commands.has('runtime.get_tool_catalog_details'),
-      osMode: true,
-      desktopAutomation: features.has('bundled_cardbush_apps_mcp'),
       taskPlan: features.has('explicit_plan_facts'),
       reasoningStream: features.has('reasoning_segments'),
       reasoningLevelSelection: true,
@@ -892,13 +856,11 @@ export async function fetchTeamConfigurationCapabilities(signal?: AbortSignal) {
   } satisfies TeamConfigurationCapabilities;
 }
 
-export async function fetchExperimentalGoalA2AStatus(): Promise<ExperimentalGoalA2AStatus> {
+export async function fetchGoalRuntimeStatus(): Promise<GoalRuntimeStatus> {
   return {
     enabled: true,
     mode: 'electron_runtime',
     goalProtocol: 'bush.goal.v1',
-    a2aProtocolVersion: '1.0',
-    mergedIntoCore: false,
   };
 }
 
@@ -946,104 +908,11 @@ export async function updateExperimentalGoal(request: {
         status: request.status,
         statusReason: request.statusReason ?? '',
         consumedTokens: current.consumedTokens,
-        linkedA2ATaskIds: current.linkedA2ATaskIds,
       }),
     );
   } finally {
     runtime.dispose();
   }
-}
-
-export async function inspectExperimentalA2AAgent(
-  agentUrl: string,
-): Promise<A2AAgentCard> {
-  const inspect = window.cardbushDesktop?.a2aInspect;
-  if (!inspect) throw new Error('CardBush A2A Host is unavailable.');
-  return a2aAgentCardFromPayload(await inspect(agentUrl));
-}
-
-export async function dispatchExperimentalA2ATask(request: {
-  agentUrl: string;
-  text: string;
-  goalId?: string;
-  contextId?: string;
-}): Promise<A2ATask> {
-  const dispatch = window.cardbushDesktop?.a2aDispatch;
-  if (dispatch) {
-    let linkedGoal: RuntimeGoalState | null = null;
-    let linkedRuntime: ReturnType<typeof createDesktopRuntimeSession> | null =
-      null;
-    if (request.goalId) {
-      if (!window.cardbushDesktop?.runtime) {
-        throw new Error(
-          localizedClientMessage(
-            '当前环境无法关联 Goal。',
-            'The current environment cannot link an A2A task to a Goal.',
-          ),
-        );
-      }
-      linkedRuntime = createDesktopRuntimeSession();
-      const sessions = await linkedRuntime.client.listSessions();
-      for (const session of sessions) {
-        const candidate = await linkedRuntime.client.getGoal(session.sessionId);
-        if (candidate?.goalId === request.goalId) {
-          linkedGoal = candidate;
-          break;
-        }
-      }
-      if (!linkedGoal || linkedGoal.status !== 'active') {
-        linkedRuntime.dispose();
-        throw new Error(
-          localizedClientMessage(
-            '关联的 Goal 不存在或已结束。',
-            'The linked Goal is missing or no longer active.',
-          ),
-        );
-      }
-    }
-    try {
-      const payload = recordFromUnknown(
-        await dispatch({
-          agentUrl: request.agentUrl,
-          text: request.text,
-          ...(request.contextId ? { contextId: request.contextId } : {}),
-        }),
-      );
-      const task = a2aTaskFromPayload(payload.task ?? payload);
-      if (!linkedGoal || !linkedRuntime || !task.id) return task;
-      try {
-        await linkedRuntime.client.updateGoal({
-          goalId: linkedGoal.goalId,
-          sessionId: linkedGoal.sessionId,
-          expectedRevision: linkedGoal.revision,
-          status: linkedGoal.status,
-          statusReason: linkedGoal.statusReason,
-          consumedTokens: linkedGoal.consumedTokens,
-          linkedA2ATaskIds: [
-            ...new Set([...linkedGoal.linkedA2ATaskIds, task.id]),
-          ],
-        });
-        return {
-          ...task,
-          raw: { ...task.raw, goalLink: { status: 'linked' } },
-        };
-      } catch (error) {
-        return {
-          ...task,
-          raw: {
-            ...task.raw,
-            goalLink: {
-              status: 'failed',
-              message: error instanceof Error ? error.message : String(error),
-            },
-          },
-        };
-      }
-    } finally {
-      linkedRuntime?.dispose();
-    }
-  }
-  throw new Error('CardBush A2A Host is unavailable.');
 }
 
 export async function fetchModelConfigs(): Promise<BackendModelConfigsResult> {
@@ -1062,7 +931,6 @@ function runtimeExperimentalGoal(goal: RuntimeGoalState): ExperimentalGoal {
     statusReason: goal.statusReason,
     tokenBudget: goal.tokenBudget,
     consumedTokens: goal.consumedTokens,
-    linkedA2ATaskIds: goal.linkedA2ATaskIds,
     revision: goal.revision,
     createdAt: goal.createdAt,
     updatedAt: goal.updatedAt,
@@ -1319,53 +1187,6 @@ function modelConfigsFromPayload(payload: unknown): BackendModelConfigsResult {
     defaultModelId: String(root.default_model_id ?? root.defaultModelId ?? ''),
     models,
     raw: payload,
-  };
-}
-
-function a2aAgentCardFromPayload(payload: unknown): A2AAgentCard {
-  const item = recordFromUnknown(payload);
-  const capabilities = recordFromUnknown(item.capabilities);
-  return {
-    name: String(item.name ?? ''),
-    description: String(item.description ?? ''),
-    protocolVersions: stringList(
-      item.protocolVersions ?? item.protocol_versions,
-    ),
-    streaming: capabilities.streaming === true,
-    skills: arrayFrom(item.skills).map((raw) => {
-      const skill = recordFromUnknown(raw);
-      return {
-        id: String(skill.id ?? ''),
-        name: String(skill.name ?? skill.id ?? ''),
-        description: String(skill.description ?? ''),
-        tags: stringList(skill.tags),
-      };
-    }),
-    raw: item,
-  };
-}
-
-function a2aTaskFromPayload(payload: unknown): A2ATask {
-  const item = recordFromUnknown(payload);
-  const status = recordFromUnknown(item.status);
-  const statusMessage = recordFromUnknown(status.message);
-  const artifacts = arrayFrom(item.artifacts);
-  const artifactText = artifacts
-    .flatMap((artifact) => arrayFrom(recordFromUnknown(artifact).parts))
-    .map((part) => String(recordFromUnknown(part).text ?? ''))
-    .filter(Boolean)
-    .join('\n');
-  return {
-    id: String(item.id ?? ''),
-    contextId: String(item.contextId ?? item.context_id ?? ''),
-    state: String(status.state ?? ''),
-    statusMessage: arrayFrom(statusMessage.parts)
-      .map((part) => String(recordFromUnknown(part).text ?? ''))
-      .filter(Boolean)
-      .join('\n'),
-    artifactText,
-    revision: numericValue(item.revision),
-    raw: item,
   };
 }
 
@@ -1784,33 +1605,91 @@ const runtimeTurnToolExecutionDetailCache = new Map<
   Promise<ChatToolExecution[]>
 >();
 
+const runtimeTurnToolExecutionDetailTimeoutMs = 10_000;
+
 export function fetchRuntimeTurnToolExecutionDetails(input: {
   sessionId: string;
   turnId: string;
-}): Promise<ChatToolExecution[]> {
+}, signal?: AbortSignal): Promise<ChatToolExecution[]> {
   const sessionId = input.sessionId.trim();
   const turnId = input.turnId.trim();
   if (!sessionId || !turnId) return Promise.resolve([]);
   const key = `${sessionId}\u0000${turnId}`;
   const cached = runtimeTurnToolExecutionDetailCache.get(key);
-  if (cached) return cached;
-  const pending = (async () => {
-    const runtime = createDesktopRuntimeSession();
-    try {
-      const records = await runtime.client.listTurnToolExecutions({ sessionId, turnId });
-      return records.map(runtimeHistoryToolExecution);
-    } finally {
+  const pending = cached ?? createRuntimeTurnToolExecutionDetailRequest({
+    key,
+    sessionId,
+    turnId,
+  });
+  return waitForRuntimeTurnToolExecutionDetails(pending, signal);
+}
+
+async function createRuntimeTurnToolExecutionDetailRequest(input: {
+  key: string;
+  sessionId: string;
+  turnId: string;
+}) {
+  const controller = new AbortController();
+  const runtime = createDesktopRuntimeSession();
+  let timeoutId: number | undefined;
+  const request = runtime.client.listTurnToolExecutions(
+    { sessionId: input.sessionId, turnId: input.turnId },
+    controller.signal,
+  );
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = window.setTimeout(() => {
+      const error = new DOMException(
+        `Runtime Tool detail request exceeded ${runtimeTurnToolExecutionDetailTimeoutMs}ms.`,
+        'TimeoutError',
+      );
+      controller.abort(error);
+      reject(error);
+    }, runtimeTurnToolExecutionDetailTimeoutMs);
+  });
+  let pending: Promise<ChatToolExecution[]>;
+  pending = Promise.race([request, timeout])
+    .then((records) => records.map(runtimeHistoryToolExecution))
+    .finally(() => {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      controller.abort();
       runtime.dispose();
-    }
-  })();
-  runtimeTurnToolExecutionDetailCache.set(key, pending);
-  const release = () => {
-    if (runtimeTurnToolExecutionDetailCache.get(key) === pending) {
-      runtimeTurnToolExecutionDetailCache.delete(key);
-    }
-  };
-  void pending.then(release, release);
+      if (runtimeTurnToolExecutionDetailCache.get(input.key) === pending) {
+        runtimeTurnToolExecutionDetailCache.delete(input.key);
+      }
+    });
+  runtimeTurnToolExecutionDetailCache.set(input.key, pending);
   return pending;
+}
+
+function waitForRuntimeTurnToolExecutionDetails(
+  request: Promise<ChatToolExecution[]>,
+  signal?: AbortSignal,
+): Promise<ChatToolExecution[]> {
+  if (!signal) return request;
+  if (signal.aborted) return Promise.reject(runtimeDetailAbortError(signal));
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener('abort', abort);
+      reject(runtimeDetailAbortError(signal));
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    void request.then(
+      (details) => {
+        signal.removeEventListener('abort', abort);
+        resolve(details);
+      },
+      (error) => {
+        signal.removeEventListener('abort', abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function runtimeDetailAbortError(signal: AbortSignal) {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('Runtime Tool detail request was aborted.', 'AbortError');
 }
 
 export async function createConversation({
@@ -2748,31 +2627,15 @@ export async function fetchPendingInteraction(
   if (!normalized) {
     return null;
   }
-  const runtimeInteraction = pendingRuntimeInteraction(normalized);
-  if (runtimeInteraction) return runtimeInteraction;
-  const runtime = createDesktopRuntimeSession();
-  try {
-    const pending = (await runtime.client.pendingInteractions({ sessionId: normalized }))[0];
-    if (pending) {
-      return registerRuntimeGenericInteraction(
-        pending,
-        (answer) => runtime.client.answerInteraction(answer),
-      );
-    }
-  } catch {
-    // Runtime may be unavailable while the app is still starting.
-  }
-  return null;
+  return pendingRuntimeInteraction(normalized);
 }
 
 export async function replyInteraction({
   interactionId,
-  rawText,
   answers,
 }: {
   interactionId: string;
-  rawText?: string;
-  answers?: InteractionReplyAnswer[];
+  answers: InteractionReplyAnswer[];
 }) {
   const normalized = interactionId.trim();
   if (!normalized) {
@@ -2781,48 +2644,26 @@ export async function replyInteraction({
     );
   }
   const normalizedAnswers = answers
-    ?.map((answer) => ({
+    .map((answer) => ({
       question_id: answer.questionId,
       ...(answer.selectedOptionId
         ? { selected_option_id: answer.selectedOptionId }
-        : {}),
-      ...(answer.selectedOptionIds && answer.selectedOptionIds.length > 0
-        ? { selected_option_ids: answer.selectedOptionIds }
-        : {}),
-      ...(answer.inputText?.trim()
-        ? { input_text: answer.inputText.trim() }
         : {}),
     }))
     .filter(
       (answer) =>
         answer.question_id &&
-        (answer.selected_option_id ||
-          (answer.selected_option_ids?.length ?? 0) > 0 ||
-          answer.input_text),
+        answer.selected_option_id,
     );
-  const trimmedRawText = rawText?.trim() ?? '';
-  if ((normalizedAnswers?.length ?? 0) === 0 && !trimmedRawText) {
+  if (normalizedAnswers.length === 0) {
     throw new Error(
       localizedClientMessage('交互回答为空', 'Interaction reply is empty'),
     );
   }
   if (hasRuntimeInteraction(normalized)) {
-    if (hasRuntimeGenericInteraction(normalized)) {
-      await answerRuntimeGenericInteraction(normalized, {
-        decision: 'submit',
-        answers: (normalizedAnswers ?? []).map((answer) => ({
-          questionId: answer.question_id,
-          ...(answer.selected_option_id ? { selectedOptionId: answer.selected_option_id } : {}),
-          ...(answer.selected_option_ids ? { selectedOptionIds: answer.selected_option_ids } : {}),
-          ...(answer.input_text ? { inputText: answer.input_text } : {}),
-        })),
-        ...(trimmedRawText ? { rawText: trimmedRawText } : {}),
-      });
-      return;
-    }
     const candidate = String(
-      normalizedAnswers?.find((answer) => answer.question_id === 'permission')
-        ?.selected_option_id ?? trimmedRawText,
+      normalizedAnswers.find((answer) => answer.question_id === 'permission')
+        ?.selected_option_id ?? '',
     ).trim();
     if (!['allow_once', 'allow_session', 'deny'].includes(candidate)) {
       throw new Error(
@@ -2852,10 +2693,6 @@ export async function cancelInteraction(interactionId: string) {
     return;
   }
   if (hasRuntimeInteraction(normalized)) {
-    if (hasRuntimeGenericInteraction(normalized)) {
-      await answerRuntimeGenericInteraction(normalized, { decision: 'cancel', answers: [] });
-      return;
-    }
     await answerRuntimeInteraction(normalized, 'cancel');
     return;
   }

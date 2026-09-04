@@ -41,7 +41,7 @@ test("persists service, plugin lifecycle, and plugin-specific configuration", as
   }
 });
 
-test("defaults Chrome to the existing browser and preserves explicit managed mode", async () => {
+test("defaults Chrome to the extension connector and keeps remote debugging explicit", async () => {
   const root = await mkdtemp(join(tmpdir(), "cardbush-chrome-config-"));
   try {
     const path = join(root, "apps.json");
@@ -68,7 +68,7 @@ test("defaults Chrome to the existing browser and preserves explicit managed mod
       loadCatalog: async () => [chrome],
     });
     const initial = await store.read();
-    assert.deepEqual(initial.plugins[0].config, { connectionMode: "existing" });
+    assert.deepEqual(initial.plugins[0].config, { connectionMode: "connector" });
     const migrated = await store.write({
       serviceEnabled: true,
       plugins: [{
@@ -78,7 +78,7 @@ test("defaults Chrome to the existing browser and preserves explicit managed mod
         config: {},
       }],
     });
-    assert.deepEqual(migrated.plugins[0].config, { connectionMode: "existing" });
+    assert.deepEqual(migrated.plugins[0].config, { connectionMode: "connector" });
     const saved = await store.write({
       serviceEnabled: true,
       plugins: [{
@@ -88,7 +88,17 @@ test("defaults Chrome to the existing browser and preserves explicit managed mod
         config: { connectionMode: "managed" },
       }],
     });
-    assert.deepEqual(saved.plugins[0].config, { connectionMode: "managed" });
+    assert.deepEqual(saved.plugins[0].config, { connectionMode: "connector" });
+    const remoteDebugging = await store.write({
+      serviceEnabled: true,
+      plugins: [{
+        id: "chrome",
+        installed: true,
+        enabled: true,
+        config: { connectionMode: "remote_debugging" },
+      }],
+    });
+    assert.deepEqual(remoteDebugging.plugins[0].config, { connectionMode: "remote_debugging" });
     await assert.rejects(
       () => store.write({
         serviceEnabled: true,
@@ -99,7 +109,7 @@ test("defaults Chrome to the existing browser and preserves explicit managed mod
           config: { connectionMode: "shared-silently" },
         }],
       }),
-      /chrome\.connectionMode must be managed or existing/,
+      /chrome\.connectionMode must be connector or remote_debugging/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

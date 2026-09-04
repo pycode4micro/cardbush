@@ -810,6 +810,76 @@ test("cancelling while permission is pending closes both permission and Turn fac
   assert.ok(events.find((event) => event.kind === "tool_cancelled"));
 });
 
+test("full control bypasses permission asks while preserving capability facts", async () => {
+  let executionCapabilities;
+  const registry = registryWithExecution({
+    authorize() {
+      return {
+        kind: "ask",
+        request: {
+          reason: "Use the protected fixture.",
+          actions: ["execute"],
+          targets: [{ kind: "opaque", value: "fixture" }],
+          capabilityIds: ["capability_fixture"],
+        },
+      };
+    },
+    execute(context) {
+      executionCapabilities = context.capabilityIds;
+      return result(context.toolCall.id, context.actionManifest);
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("done")]),
+    registry,
+  );
+
+  const terminal = await host.runModelTurn({
+    ...request(),
+    permissionMode: "all_free",
+  });
+  const events = host.events("session_tools", "turn_tools");
+
+  assert.equal(terminal.payload.status, "completed");
+  assert.deepEqual(executionCapabilities, ["capability_fixture"]);
+  assert.equal(events.some((event) => event.kind === "permission_requested"), false);
+  assert.ok(events.some((event) => event.kind === "tool_running"));
+});
+
+test("full control never overrides a hard admission denial", async () => {
+  let executions = 0;
+  const registry = registryWithExecution({
+    authorize() {
+      return {
+        kind: "deny",
+        code: "permanent_safety_denial",
+        message: "This operation is permanently denied.",
+      };
+    },
+    execute() {
+      executions += 1;
+      return {};
+    },
+  });
+  const host = createHost(
+    providerWithRounds([toolRound(), answerRound("done")]),
+    registry,
+  );
+
+  await host.runModelTurn({
+    ...request(),
+    permissionMode: "all_free",
+  });
+  const events = host.events("session_tools", "turn_tools");
+
+  assert.equal(executions, 0);
+  assert.equal(events.some((event) => event.kind === "permission_requested"), false);
+  assert.equal(
+    events.find((event) => event.kind === "tool_failed")?.payload.error.code,
+    "permanent_safety_denial",
+  );
+});
+
 test("Stop settles an uncooperative Tool without waiting for its Promise", async () => {
   const registry = registryWithExecution({
     async execute() {

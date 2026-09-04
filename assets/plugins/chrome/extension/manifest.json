@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "CardBush Browser Connector",
+  "version": "1.0.0",
+  "minimum_chrome_version": "102",
+  "description": "Isolate each CardBush session in a named Chrome tab group and control only tabs you explicitly add.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs2dAnhWpkeyM0XXpQBP36Ykuc319RbQ3eoPqgMu6PtFvEs7n1Gn5A/Wxjb582rHR1lxTU3qN1cegvsUDhGFrPuv7E0I1b5ujVYLDRh4Hi3OFviSKl/Ve/yPybOdthh9VJo+95NroG2wp86/DkbRGW0MqfG35mYjRN35OyO3ROVpO+ezQEnSVetvbOWWm9AE6W2Jeio6hnz5gRAhQ13OIqrS601DJGdQisH3e5uI1vCbFx35rBpm9OJ8aSDJsGNZHJ+MM7jc30FacFiIGFLSp1i4F5MqxwqP2SUylwdYllQsIdY1DWSc7cqNvA/wQAInNZ5Y4oj8QPc58reuBa7J51QIDAQAB",
+  "icons": {
+    "16": "icons/cardbush-16.png",
+    "32": "icons/cardbush-32.png",
+    "48": "icons/cardbush-48.png",
+    "128": "icons/cardbush-128.png"
+  },
+  "permissions": [
+    "alarms",
+    "debugger",
+    "nativeMessaging",
+    "storage",
+    "tabGroups",
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "CardBush Browser Connector",
+    "default_icon": {
+      "16": "icons/cardbush-16.png",
+      "32": "icons/cardbush-32.png",
+      "48": "icons/cardbush-48.png",
+      "128": "icons/cardbush-128.png"
+    },
+    "default_popup": "popup.html"
+  }
+}

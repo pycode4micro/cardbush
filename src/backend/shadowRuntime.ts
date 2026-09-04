@@ -269,7 +269,6 @@ export async function streamRuntimeShadowConversationMessage(
       requestCapabilities: {
         vision: false,
         interactiveRequests: false,
-        userChoice: false,
       },
       metadata: {
         ...base.metadata,

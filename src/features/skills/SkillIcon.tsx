@@ -2,9 +2,12 @@ import { useEffect, useState } from 'react';
 
 import codeLogo from '../../assets/skill-logos/code.svg';
 import computerLogo from '../../assets/skill-logos/computer.svg';
+import communicationLogo from '../../assets/skill-logos/communication.svg';
 import dataLogo from '../../assets/skill-logos/data.svg';
+import deliveryLogo from '../../assets/skill-logos/delivery.svg';
 import designLogo from '../../assets/skill-logos/design.svg';
 import documentLogo from '../../assets/skill-logos/document.svg';
+import financeLogo from '../../assets/skill-logos/finance.svg';
 import genericLogo from '../../assets/skill-logos/generic.svg';
 import imageLogo from '../../assets/skill-logos/image.svg';
 import integrationLogo from '../../assets/skill-logos/integration.svg';
@@ -25,6 +28,9 @@ const generatedLogos: Record<SkillIconKind, string> = {
   spreadsheet: spreadsheetLogo,
   presentation: presentationLogo,
   pdf: pdfLogo,
+  finance: financeLogo,
+  communication: communicationLogo,
+  delivery: deliveryLogo,
   image: imageLogo,
   web: webLogo,
   computer: computerLogo,

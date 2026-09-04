@@ -15,7 +15,6 @@ export interface GoalContinuationRunInput {
   initialTurn: RuntimeSessionTurnRequest;
   continuationPrompt: string;
   tokenBudget?: number;
-  linkedA2ATaskIds?: string[];
 }
 
 export interface GoalContinuationTurnResult {
@@ -67,7 +66,6 @@ export class GoalContinuationRunner {
       sessionId: input.initialTurn.sessionId,
       objective: input.objective,
       ...(input.tokenBudget === undefined ? {} : { tokenBudget: input.tokenBudget }),
-      linkedA2ATaskIds: input.linkedA2ATaskIds ?? [],
     }, options.signal);
     const turns: GoalContinuationTurnResult[] = [];
     let request = input.initialTurn;
