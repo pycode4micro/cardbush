@@ -45,10 +45,6 @@ import {
   type PluginRoot,
 } from './productPlugins';
 import {
-  DesktopControlOverlay,
-  type DesktopControlTurn,
-} from './desktopControlOverlay';
-import {
   SessionAttentionOpenQueue,
   decodeSessionAttentionActivation,
   encodeSessionAttentionActivation,
@@ -148,7 +144,7 @@ type RuntimeHostController = {
 let runtimeHostController: RuntimeHostController | null = null;
 let unregisterRuntimeHostIpc: (() => void) | null = null;
 let unregisterDesktopControlMonitor: (() => void) | null = null;
-let desktopControlOverlay: DesktopControlOverlay | null = null;
+type DesktopControlTurn = { sessionId: string; turnId: string; toolCallId: string };
 let chromeConnectorBroker: ChromeConnectorBroker | null = null;
 let unregisterChromeConnectorStatus: (() => void) | null = null;
 let cachedChromeConnectorRegistrationStatus:
@@ -2939,19 +2935,6 @@ function isComputerUseRuntimeTool(toolName: string): boolean {
   return normalized === 'computer_use' || /(?:__|[./:])computer_use$/.test(normalized);
 }
 
-function ensureDesktopControlOverlay(): DesktopControlOverlay {
-  if (desktopControlOverlay) return desktopControlOverlay;
-  desktopControlOverlay = new DesktopControlOverlay({
-    onCancel: async (turn) => {
-      await cancelDesktopControlTool(turn, 'escape');
-    },
-    onDiagnostic: (event, details = {}) => {
-      appendDebugLog('desktop-control', { stage: event, ...details });
-    },
-  });
-  return desktopControlOverlay;
-}
-
 async function cancelDesktopControlTool(
   turn: DesktopControlTurn,
   source: 'escape' | 'permission_race',
@@ -3008,7 +2991,6 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
     const key = runtimeToolKey(control);
     if (cancelRequested.has(key)) return;
     cancelRequested.add(key);
-    desktopControlOverlay?.hide(control);
     void cancelDesktopControlTool(control, source).catch((error: unknown) => {
       appendDebugLog('desktop-control', {
         stage: 'tool-cancel-failed',
@@ -3026,7 +3008,6 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
       if (control.sessionId !== sessionId || control.turnId !== turnId) continue;
       activeControls.delete(toolKey);
       cancelRequested.delete(toolKey);
-      desktopControlOverlay?.hide(control);
     }
   };
   unregisterDesktopControlMonitor = controller.onStreamFrame((message) => {
@@ -3044,8 +3025,6 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         activeControls.set(runtimeToolKey(control), control);
         if ((pendingPermissions.get(turnKey)?.size ?? 0) > 0) {
           cancelControl(control, 'permission_race');
-        } else {
-          ensureDesktopControlOverlay().show(control);
         }
       } else if (
         event.kind === 'tool_running' &&
@@ -3065,10 +3044,8 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
       ) {
         const controlIdentity = { ...turn, toolCallId: event.payload.toolCallId };
         const toolKey = runtimeToolKey(controlIdentity);
-        const control = activeControls.get(toolKey);
         activeControls.delete(toolKey);
         cancelRequested.delete(toolKey);
-        if (control) desktopControlOverlay?.hide(control);
       } else if (
         (event.kind === 'tool_returned' ||
           event.kind === 'tool_failed' ||
@@ -3105,7 +3082,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
         }
         clearTurn(event.sessionId, event.turnId);
         if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
-          chromeConnectorBroker?.releaseAll('turn_terminal');
+          chromeConnectorBroker?.suspendAll('turn_terminal');
         }
       }
       return;
@@ -3115,7 +3092,7 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
     if (turn) {
       clearTurn(turn.sessionId, turn.turnId);
       if (activeChromeTools.size === 0 && activeChromeTurns.size === 0) {
-        chromeConnectorBroker?.releaseAll('stream_closed');
+        chromeConnectorBroker?.suspendAll('stream_closed');
       }
     }
   });
@@ -3124,8 +3101,6 @@ function registerDesktopControlMonitor(controller: RuntimeHostController): void 
 function disposeDesktopControlMonitor(): void {
   unregisterDesktopControlMonitor?.();
   unregisterDesktopControlMonitor = null;
-  desktopControlOverlay?.dispose();
-  desktopControlOverlay = null;
 }
 
 async function startRuntimeServices(force = false): Promise<void> {
@@ -3678,7 +3653,6 @@ async function officePreviewRendererAssetResponse(
 
 app.on('before-quit', (event) => {
   isQuitting = true;
-  desktopControlOverlay?.hide();
   if (hostShutdownComplete) {
     return;
   }

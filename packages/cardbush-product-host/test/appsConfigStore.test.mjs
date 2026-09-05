@@ -33,6 +33,8 @@ test("persists service, plugin lifecycle, and plugin-specific configuration", as
     });
     assert.equal(saved.revision, 2);
     assert.equal(saved.plugins[0].config.screenshotDirectory, root);
+    assert.equal(saved.plugins[0].config.yieldToUser, true);
+    assert.equal(saved.plugins[0].config.restorePointer, true);
     assert.deepEqual(await store.read(), saved);
     assert.equal(saved.plugins[0].id, "computer-use");
     assert.equal((await readFile(path, "utf8")).includes("computer-use"), true);

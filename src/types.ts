@@ -126,8 +126,6 @@ export interface BackendCapabilities {
   agentVisualScenes: boolean;
   browserCookiePersistence: boolean;
   browserPrivacyMode: boolean;
-  browserApiCandidates: boolean;
-  browserContextApiRequest: boolean;
   taskPlan: boolean;
   reasoningStream: boolean;
   reasoningLevelSelection: boolean;
@@ -415,6 +413,8 @@ export interface CardbushAppPlugin {
     screenshotDirectory?: string;
     allowOpenApp?: boolean;
     allowWindowClose?: boolean;
+    yieldToUser?: boolean;
+    restorePointer?: boolean;
     connectionMode?: 'connector' | 'remote_debugging';
     [key: string]: unknown;
   };

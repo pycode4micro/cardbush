@@ -10,7 +10,7 @@
   "interface": {
     "displayName": "Computer Use",
     "shortDescription": "Windows 桌面控制（兜底工具）",
-    "longDescription": "仅在专用工具、文件工具、应用连接器或浏览器工具无法完成任务时使用。它会通过明确的权限请求观察桌面、操作窗口并控制本机应用，可能占用用户的鼠标和键盘。",
+    "longDescription": "仅在专用工具、文件工具、应用连接器或浏览器工具无法完成任务时使用。窗口观测会生成一次性状态令牌，并优先通过 UI Automation 语义操作控件；物理键鼠仅作为兜底。检测到用户操作时主动让行，鼠标动作后安全复位，并对陈旧状态与重复动作循环自动熔断。",
     "developerName": "CardBush",
     "category": "Productivity",
     "capabilities": ["Interactive", "Read", "Write"],

@@ -5,6 +5,8 @@ export interface ComputerUsePluginConfig {
   screenshotDirectory: string;
   allowOpenApp: boolean;
   allowWindowClose: boolean;
+  yieldToUser: boolean;
+  restorePointer: boolean;
 }
 
 export interface CardbushAppsRuntimeConfig {
@@ -26,6 +28,8 @@ export function defaultAppsRuntimeConfig(): CardbushAppsRuntimeConfig {
         screenshotDirectory: '',
         allowOpenApp: true,
         allowWindowClose: true,
+        yieldToUser: true,
+        restorePointer: true,
       },
     },
   };
@@ -65,6 +69,8 @@ export function readAppsRuntimeConfig(
         screenshotDirectory,
         allowOpenApp: bool(config.allowOpenApp, 'computer-use.allowOpenApp'),
         allowWindowClose: bool(config.allowWindowClose, 'computer-use.allowWindowClose'),
+        yieldToUser: optionalBool(config.yieldToUser, true),
+        restorePointer: optionalBool(config.restorePointer, true),
       },
     },
   };
@@ -82,6 +88,10 @@ function string(value: unknown): string {
 function bool(value: unknown, field: string): boolean {
   if (typeof value !== 'boolean') throw new Error(`${field} must be a boolean.`);
   return value;
+}
+
+function optionalBool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 function isMissing(error: unknown): boolean {

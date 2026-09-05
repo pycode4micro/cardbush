@@ -10,6 +10,7 @@ import {
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
+  type SessionSupersession,
   type TurnContextCheckpoint,
 } from "@cardbush/bush-protocol";
 import { isDeepStrictEqual } from "node:util";
@@ -19,7 +20,7 @@ import {
   projectActiveTurnContext,
   type AssembleContextInput,
 } from "./contextAssembler.js";
-import { SessionStore, validateConversation } from "./sessionStore.js";
+import { SessionStore, projectSessionSupersession, validateConversation } from "./sessionStore.js";
 
 export interface GeneratedMessageFact {
   messageId: string;
@@ -61,6 +62,7 @@ export class RuntimeSessionCoordinator {
   readonly #store: SessionStore;
   readonly #now: () => string;
   readonly #activeSessions = new Map<string, string>();
+  readonly #activeSupersessions = new Map<string, SessionSupersession>();
 
   constructor(options: { store?: SessionStore; now?: () => string } = {}) {
     this.#store = options.store ?? new SessionStore();
@@ -107,7 +109,7 @@ export class RuntimeSessionCoordinator {
     unsummarizedTurnIds: string[];
     totalTurns: number;
   } {
-    const session = this.#store.ensureSession(sessionId);
+    const session = this.#contextSession(sessionId);
     const superseded = new Set(session.supersededMessageIds);
     return {
       revision: session.revision,
@@ -150,9 +152,10 @@ export class RuntimeSessionCoordinator {
     prefix: ModelMessage[];
     current: ModelMessage[];
     maxSummaryTurns?: number;
+    supersession?: SessionSupersession;
   }): ContextSnapshot {
     return assembleContext({
-      session: this.#store.ensureSession(input.sessionId),
+      session: this.#contextSession(input.sessionId, input.supersession),
       prefix: input.prefix,
       current: input.current,
       maxSummaryTurns: input.maxSummaryTurns,
@@ -191,8 +194,15 @@ export class RuntimeSessionCoordinator {
     if (session.turns.some((turn) => turn.turnId === request.turnId)) {
       throw new Error(`Turn ${request.turnId} already exists in Session history.`);
     }
+    if (request.supersession && request.supersession.expectedRevision !== session.revision) {
+      throw new Error("Session changed before the replacement Turn was admitted. Refresh and retry the edit.");
+    }
+    const supersession = request.supersession ? {
+      messageIds: request.supersession.messageIds,
+      reason: request.supersession.reason,
+    } : undefined;
     const context = assembleContext({
-      session,
+      session: projectSessionSupersession(session, supersession),
       prefix: request.prefixMessages,
       current: request.inputMessages.map((item) => item.message),
     });
@@ -218,15 +228,18 @@ export class RuntimeSessionCoordinator {
         })),
         generatedMessages: [],
         usage: {},
+        ...(supersession ? { supersession } : {}),
       },
     };
     this.#activeSessions.set(request.sessionId, request.turnId);
+    if (supersession) this.#activeSupersessions.set(request.sessionId, supersession);
     return prepared;
   }
 
   abandon(sessionId: string, turnId: string): void {
     if (this.#activeSessions.get(sessionId) === turnId) {
       this.#activeSessions.delete(sessionId);
+      this.#activeSupersessions.delete(sessionId);
     }
   }
 
@@ -240,6 +253,9 @@ export class RuntimeSessionCoordinator {
       throw new Error(`Session ${request.sessionId} already has active Turn ${activeTurnId}.`);
     }
     this.#activeSessions.set(request.sessionId, request.turnId);
+    if (checkpoint.supersession) {
+      this.#activeSupersessions.set(request.sessionId, checkpoint.supersession);
+    }
     return (
       payload,
       generatedMessages,
@@ -275,6 +291,7 @@ export class RuntimeSessionCoordinator {
           messages: [...inputMessages, ...generated],
           usage,
           cacheChainState,
+          ...(checkpoint.supersession ? { supersession: checkpoint.supersession } : {}),
           ...(activeContextCheckpoint
             ? { contextCheckpoint: activeContextCheckpoint }
             : {}),
@@ -283,6 +300,13 @@ export class RuntimeSessionCoordinator {
         this.abandon(request.sessionId, request.turnId);
       }
     };
+  }
+
+  #contextSession(
+    sessionId: string,
+    supersession = this.#activeSupersessions.get(sessionId),
+  ): SessionSnapshot {
+    return projectSessionSupersession(this.#store.ensureSession(sessionId), supersession);
   }
 }
 

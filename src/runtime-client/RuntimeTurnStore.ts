@@ -133,6 +133,11 @@ export class RuntimeTurnStore {
     this.#runController = undefined;
   }
 
+  fail(error: unknown) {
+    this.cancel();
+    this.#publish({ ...this.#state, streamState: 'error', error: errorMessage(error) });
+  }
+
   #publish(next: RuntimeTurnStoreState) {
     this.#state = next;
     this.#listeners.forEach((listener) => listener());

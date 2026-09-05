@@ -10,6 +10,9 @@ small { color: #829493; }
 .connection { padding: 9px 10px; margin-bottom: 12px; color: #d9f700; border-left: 3px solid #d9f700; background: #10191b; }
 .connection.offline { color: #ff637d; border-color: #ff637d; }
 .scope { margin: -3px 0 5px; overflow: hidden; color: #12ddd0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.scope-picker { display: grid; gap: 5px; margin: 8px 0 3px; color: #829493; font-size: 11px; }
+.scope-picker[hidden] { display: none; }
+.scope-picker select { width: 100%; min-height: 32px; padding: 0 8px; border: 1px solid #1c4b4c; color: #dceceb; background: #10191b; }
 section { display: grid; gap: 4px; padding: 10px 0; overflow: hidden; }
 section strong, section small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .actions { display: grid; gap: 7px; }

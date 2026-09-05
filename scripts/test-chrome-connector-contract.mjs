@@ -30,10 +30,12 @@ assert.match(background, /site_permission_required/);
 assert.match(background, /unmanaged_tab/);
 assert.match(background, /CONTROL_IDLE_TIMEOUT_MS/);
 assert.match(background, /debugger\.detachAll/);
+assert.match(background, /debugger\.suspendAll/);
 assert.match(background, /debugger\.detachScope/);
 assert.match(background, /chrome\.tabs\.group/);
 assert.match(background, /chrome\.tabGroups\.update/);
-assert.match(background, /onceAllowedTabs\.clear\(\)/);
+assert.match(background, /SESSION_GRANTS_STORAGE_KEY/);
+assert.match(background, /PENDING_AUTHORIZATIONS_STORAGE_KEY/);
 assert.match(background, /chrome\.alarms\.create\(RECONNECT_ALARM/);
 assert.doesNotMatch(background, /DevToolsActivePort|--remote-debugging-port|launch\(/);
 
@@ -48,6 +50,7 @@ assert.match(runtimeWorker, /permission: remoteDebugging \? 'ask' : 'allow'/);
 const electronMain = await readFile(path.resolve('electron', 'main.ts'), 'utf8');
 assert.match(electronMain, /activeChromeTurns\.add\(turnKey\)/);
 assert.match(electronMain, /activeChromeTools\.size === 0 && activeChromeTurns\.size === 0/);
+assert.match(electronMain, /chromeConnectorBroker\?\.suspendAll\('turn_terminal'\)/);
 
 const root = await mkdtemp(path.join(tmpdir(), 'cardbush-chrome-connector-'));
 const broker = new ChromeConnectorBroker(root);
@@ -190,11 +193,18 @@ try {
   assert.equal(releaseOutcome.kind, 'returned');
   assert.match(releaseOutcome.result.content[0].text, /this CardBush session/i);
 
-  broker.releaseAll('contract_test');
+  broker.suspendAll('contract_test');
+  const suspension = await messages.next();
+  assert.deepEqual(
+    { type: suspension.value.type, method: suspension.value.method, reason: suspension.value.reason },
+    { type: 'control', method: 'debugger.suspendAll', reason: 'contract_test' },
+  );
+
+  broker.releaseAll('contract_release');
   const release = await messages.next();
   assert.deepEqual(
     { type: release.value.type, method: release.value.method, reason: release.value.reason },
-    { type: 'control', method: 'debugger.detachAll', reason: 'contract_test' },
+    { type: 'control', method: 'debugger.detachAll', reason: 'contract_release' },
   );
 } finally {
   await manager?.close();

@@ -166,6 +166,24 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   assert.equal(groupA.color, 'cyan');
   assert.match(groupA.title, /^CardBush · Login check · sion-a$/);
 
+  nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
+  await eventually(() => groupA.collapsed);
+  const continuedA = await nativeRequest(nativeMessages, posted, 'tabs.navigate', {
+    ...SCOPE_A,
+    tabId: tabA.id,
+    action: 'url',
+    url: 'https://a.example/continued',
+  });
+  assert.equal(continuedA.result.url, 'https://a.example/continued');
+  const crossOriginA = await nativeRequest(nativeMessages, posted, 'tabs.navigate', {
+    ...SCOPE_A,
+    tabId: tabA.id,
+    action: 'url',
+    url: 'https://different.example/',
+  });
+  assert.equal(crossOriginA.error.code, 'site_permission_required');
+  assert.equal(tabA.url, 'https://a.example/continued');
+
   const createdB = await nativeRequest(nativeMessages, posted, 'tabs.create', {
     ...SCOPE_B,
     url: 'https://b.example/',
@@ -206,9 +224,26 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   const expiredA = await debug(nativeMessages, posted, SCOPE_A, tabA.id);
   assert.equal(expiredA.error.code, 'site_permission_required');
 
+  nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
+  await eventually(() => attached.size === 0 && groupA.collapsed && groupB.collapsed);
+  setActiveTab(tabs, tabA, (value) => { activeTabId = value; });
+  const pendingAfterTurn = await popupRequest(runtimeMessages, 'status');
+  assert.equal(pendingAfterTurn.activeScope.id, SCOPE_A.scopeId);
+  assert.equal(pendingAfterTurn.pendingAuthorization, true);
+  assert.ok(pendingAfterTurn.scopeCandidates.some((candidate) => candidate.id === SCOPE_B.scopeId));
+  const reauthorizedA = await popupRequest(runtimeMessages, 'allow_once');
+  assert.equal(reauthorizedA.ok, true);
+  assert.equal((await debug(nativeMessages, posted, SCOPE_A, tabA.id)).result.accepted, true);
+
   await nativeRequest(nativeMessages, posted, 'tabs.list', SCOPE_A);
   setActiveTab(tabs, requiredTab(tabs, 22), (value) => { activeTabId = value; });
-  const copied = await popupRequest(runtimeMessages, 'allow_once');
+  const ambiguousScope = await popupRequest(runtimeMessages, 'status');
+  assert.equal(ambiguousScope.activeScope, null);
+  assert.equal(ambiguousScope.scopeCandidates.length, 2);
+  const copied = await popupRequest(runtimeMessages, {
+    action: 'allow_once',
+    scopeId: SCOPE_A.scopeId,
+  });
   assert.equal(copied.ok, true);
   assert.equal(copied.access, 'once');
   assert.equal(requiredTab(tabs, 22).groupId, -1);
@@ -224,11 +259,25 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   );
   assert.ok(!listAfterCopy.result.some((candidate) => candidate.id === 22));
 
-  nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' });
+  nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
   await eventually(() => attached.size === 0 && groupA.collapsed && groupB.collapsed);
   assert.equal(groupA.collapsed, true);
   assert.equal(groupB.collapsed, true);
   assert.ok(Array.isArray(sessionStored.cardbushManagedScopes));
+  assert.ok(Array.isArray(sessionStored.cardbushSessionGrants));
+  const suspendedState = await popupRequest(runtimeMessages, {
+    action: 'status',
+    scopeId: SCOPE_A.scopeId,
+  });
+  assert.equal(suspendedState.activeScope.id, SCOPE_A.scopeId);
+  assert.equal(suspendedState.access, 'once');
+  assert.equal((await debug(nativeMessages, posted, SCOPE_A, copiedTab.id)).result.accepted, true);
+
+  nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' });
+  await eventually(() => attached.size === 0 && sessionStored.cardbushSessionGrants.length === 0);
+  const releasedState = await popupRequest(runtimeMessages, 'status');
+  assert.equal(releasedState.activeScope, null);
+  assert.equal(releasedState.scopeCandidates.length, 0);
 
   const stopped = await popupRequest(runtimeMessages, 'disconnect');
   assert.equal(stopped.nativeConnected, true);
@@ -239,6 +288,105 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   await eventually(() => alarms.length > 0);
   assert.equal(alarms.at(-1).name, 'cardbush-native-reconnect');
   assert.equal(alarms.at(-1).options.delayInMinutes, 0.5);
+});
+
+test('MV3 worker restores a live scope lease and session tab grant', async () => {
+  const workerPath = path.resolve(
+    import.meta.dirname,
+    '../../../assets/plugins/chrome/extension/background.js',
+  );
+  const source = await readFile(workerPath, 'utf8');
+  const nativeMessages = event();
+  const runtimeMessages = event();
+  const posted = [];
+  const attached = new Set();
+  const groups = new Map([[100, {
+    id: 100,
+    windowId: 2,
+    title: 'CardBush · Login check · sion-a',
+    color: 'cyan',
+    collapsed: true,
+  }]]);
+  const tabs = [tab(22, 2, true, 'Restored tab', 'https://focused.example/path')];
+  tabs[0].groupId = 100;
+  const now = Date.now();
+  const stored = {};
+  const sessionStored = {
+    cardbushManagedScopes: [{
+      id: SCOPE_A.scopeId,
+      title: SCOPE_A.scopeTitle,
+      groups: [[2, 100]],
+    }],
+    cardbushActiveScope: SCOPE_A.scopeId,
+    cardbushSessionGrants: [{
+      tabId: 22,
+      scopeId: SCOPE_A.scopeId,
+      origins: ['https://focused.example'],
+      source: 'copied',
+    }],
+    cardbushScopeLeases: [{
+      id: SCOPE_A.scopeId,
+      title: SCOPE_A.scopeTitle,
+      lastRequestedAt: now,
+      expiresAt: now + 60_000,
+    }],
+    cardbushPendingAuthorizations: [],
+  };
+  const nativePort = {
+    onMessage: nativeMessages,
+    onDisconnect: event(),
+    postMessage: (message) => posted.push(structuredClone(message)),
+  };
+  const chrome = {
+    runtime: {
+      lastError: undefined,
+      connectNative: () => nativePort,
+      getManifest: () => ({ version: 'restart-test' }),
+      onInstalled: event(),
+      onStartup: event(),
+      onMessage: runtimeMessages,
+    },
+    alarms: { onAlarm: event(), clear: async () => true, create: () => undefined },
+    tabs: {
+      onRemoved: event(),
+      query: async () => tabs,
+      get: async (tabId) => requiredTab(tabs, tabId),
+    },
+    tabGroups: {
+      onRemoved: event(),
+      get: async (groupId) => requiredGroup(groups, groupId),
+      update: async (groupId, update) => Object.assign(requiredGroup(groups, groupId), update),
+    },
+    debugger: {
+      onDetach: event(),
+      attach: async ({ tabId }) => { attached.add(tabId); },
+      detach: async ({ tabId }) => { attached.delete(tabId); },
+      sendCommand: async () => ({ restored: true }),
+    },
+    storage: {
+      local: storageArea(stored),
+      session: storageArea(sessionStored),
+    },
+  };
+
+  vm.runInNewContext(source, {
+    chrome,
+    URL,
+    setTimeout,
+    clearTimeout,
+    structuredClone,
+    console,
+  }, { filename: workerPath });
+  await flush();
+
+  const restoredState = await popupRequest(runtimeMessages, 'status');
+  assert.equal(restoredState.activeScope.id, SCOPE_A.scopeId);
+  assert.equal(restoredState.access, 'once');
+  const restoredDebug = await debug(nativeMessages, posted, SCOPE_A, 22);
+  assert.equal(restoredDebug.result.restored, true);
+  assert.deepEqual([...attached], [22]);
+  nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' });
+  await eventually(() => attached.size === 0);
 });
 
 function tab(id, windowId, active, title, url) {
@@ -299,7 +447,8 @@ async function nativeRequest(eventTarget, posted, method, params) {
 
 async function popupRequest(eventTarget, action) {
   return await new Promise((resolve) => {
-    const results = eventTarget.emit({ action }, {}, resolve);
+    const message = typeof action === 'string' ? { action } : action;
+    const results = eventTarget.emit(message, {}, resolve);
     assert.equal(results.length, 1);
     assert.equal(results[0], true);
   });

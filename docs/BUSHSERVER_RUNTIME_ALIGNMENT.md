@@ -10,8 +10,6 @@ it is not a production process, HTTP dependency, or fallback execution path.
 
 - `ocr_image` is not shipped. Vision input is explicit and gated through
   `inject_image_input` plus provider-native image messages.
-- `browser_ops` is not shipped. Computer Use is an external Tool supplied by the
-  bundled, independently managed `cardbush_apps` MCP server.
 - `mcp_manager` and `search_mcp_tools` are not model Tools. The Product Host owns
   MCP configuration and applies one immutable complete snapshot before a Turn.
 

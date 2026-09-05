@@ -30,6 +30,7 @@ import {
 } from './GoalContinuationRunner';
 import type { RuntimeTerminalView } from './RuntimeTurnProjection';
 import { RuntimeTurnStore } from './RuntimeTurnStore';
+import { settleRuntimeTurn } from './settleRuntimeTurn';
 
 type RuntimeTerminalEvent = Extract<RuntimeEvent, { kind: 'turn_terminal' }>;
 
@@ -144,14 +145,22 @@ export class ElectronRuntimeSession {
       sessionId,
       turnId,
     });
-    const commandResult = command(controller.signal);
+    const commandResult = Promise.resolve().then(() => command(controller.signal));
 
     try {
-      const [stream, command] = await Promise.allSettled([
-        streamResult,
-        commandResult,
-      ]);
-      if (stream.status === 'rejected') throw stream.reason;
+      let commandTerminal: RuntimeTerminalEvent | undefined;
+      let commandError: unknown;
+      try {
+        [, commandTerminal] = await settleRuntimeTurn(
+          streamResult, commandResult, () => this.store.cancel(),
+        );
+      } catch (error) {
+        if (!this.store.getSnapshot().view.terminal) {
+          this.store.fail(error);
+          throw error;
+        }
+        commandError = error;
+      }
 
       const terminal = this.store.getSnapshot().view.terminal;
       if (!terminal) {
@@ -160,9 +169,8 @@ export class ElectronRuntimeSession {
 
       return {
         terminal,
-        commandTerminal:
-          command.status === 'fulfilled' ? command.value : undefined,
-        commandError: command.status === 'rejected' ? command.reason : undefined,
+        commandTerminal,
+        commandError,
       };
     } finally {
       if (this.#operationController === controller) {

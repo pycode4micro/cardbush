@@ -13,6 +13,14 @@ Development installation:
 4. To use an existing personal tab, open the extension popup and explicitly
    copy it into the active CardBush group. The original tab remains untouched.
 
+Turn completion suspends the Chrome debugger and collapses managed groups, but
+does not discard the session's tab grants. A pending authorization remains
+available in the popup for five minutes so it can be completed after the model
+turn has ended. When several CardBush sessions are awaiting access, the popup
+requires an explicit target-session selection. Temporary grants are kept in
+`chrome.storage.session`, while per-site and all-site grants remain explicitly
+revocable persistent settings.
+
 Production releases should publish the extension through the Chrome Web Store.
 After the first store upload, copy the store public key into `manifest.json`
 and verify that its derived id matches `chromeConnectorExtensionId`; if the

@@ -8,6 +8,7 @@ import {
 import {
   ToolExecutionCoordinator,
   ToolRegistry,
+  InMemoryRuntimeCapabilityStore,
 } from "@cardbush/bush-runtime";
 
 import { McpClientManager } from "../dist/index.js";
@@ -131,6 +132,37 @@ test("binds default MCP permission to one exact server Tool resource", async () 
     value: "mcp://server/tools/echo.tool",
   }]);
   assert.equal(requested.capabilityIds.length, 1);
+});
+
+test("bound MCP grants preserve once/session scope and exact native results", async () => {
+  for (const decision of ["allow_once", "allow_session"]) {
+    const registry = new ToolRegistry();
+    const native = { content: [{ type: "text", text: "native failure" }], isError: true };
+    const fake = fakeClient(native);
+    const manager = new McpClientManager({ registry,
+      createClient: () => fake, createTransport: () => ({}) });
+    await manager.apply(snapshot());
+    let prompts = 0;
+    const coordinator = new ToolExecutionCoordinator({
+      registry, capabilities: new InMemoryRuntimeCapabilityStore(),
+      permissions: { request: async (input) => {
+        prompts++;
+        return { protocol: "bush.runtime_permission_answer.v1", permissionId: "p", answerId: "a",
+          decision, grantedCapabilityIds: input.capabilityIds };
+      } },
+    });
+    try {
+      for (const id of ["first", "second"]) {
+        const result = await executeEcho(coordinator, id);
+        assert.equal(result.kind, "returned");
+        assert.deepEqual(result.result, native);
+      }
+      assert.equal(prompts, decision === "allow_once" ? 2 : 1);
+      assert.deepEqual(fake.calls.map((call) => call.arguments), [{}, {}]);
+    } finally {
+      await manager.close();
+    }
+  }
 });
 
 test("lets an all_free Turn execute a default-ask MCP Tool without another prompt", async () => {

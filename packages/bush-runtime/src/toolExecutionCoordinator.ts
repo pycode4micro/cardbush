@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
   type ActionManifest,
@@ -8,7 +10,7 @@ import {
   type WorkspaceChange,
 } from "@cardbush/bush-protocol";
 
-import type { PermissionResolver, ToolRegistry } from "./toolRegistry.js";
+import type { PermissionResolver, ToolPermissionRequest, ToolRegistry } from "./toolRegistry.js";
 import type { ToolHandlerContext } from "./toolRegistry.js";
 import { BUSH_TOOL_CALL_PROTOCOL } from "@cardbush/bush-protocol";
 import { settleAtAbort } from "./abortSettlement.js";
@@ -164,9 +166,10 @@ export class ToolExecutionCoordinator {
       if (admission.kind === "ask") {
         const fullControl = turn?.request.permissionMode === "all_free";
         const capabilitySessionId = this.#capabilitySessionId ?? identity.sessionId;
+        const grantKeys = permissionGrantKeys(admission.request);
         if (fullControl) {
           capabilityIds = [...admission.request.capabilityIds];
-        } else if (this.#capabilities?.hasAll(capabilitySessionId, admission.request.capabilityIds)) {
+        } else if (this.#capabilities?.hasAll(capabilitySessionId, grantKeys)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
           let answer: RuntimePermissionAnswer;
@@ -207,7 +210,7 @@ export class ToolExecutionCoordinator {
           }
           capabilityIds = [...answer.grantedCapabilityIds];
           if (answer.decision === "allow_session") {
-            this.#capabilities?.grant(capabilitySessionId, capabilityIds);
+            this.#capabilities?.grant(capabilitySessionId, grantKeys);
           }
         }
       } else {
@@ -292,6 +295,19 @@ export class ToolExecutionCoordinator {
       actionManifest,
     };
   }
+}
+
+// Capability IDs are tool-owned labels, not proof of the resource the user
+// approved. Only the internal grant cache uses these bound keys; native Tool
+// inputs, permission events, and handler capability IDs stay unchanged.
+function permissionGrantKeys(request: ToolPermissionRequest): string[] {
+  const actions = [...new Set(request.actions.map((action) => action.trim()))].sort();
+  const targets = [...new Set(request.targets.map((target) =>
+    JSON.stringify([target.kind, target.value.trim()]),
+  ))].sort();
+  return request.capabilityIds.map((id) => `permission:${createHash("sha256")
+    .update(JSON.stringify([id.trim(), actions, targets]))
+    .digest("hex")}`);
 }
 
 function manifestId(identity: ToolExecutionIdentity, toolCallId: string): string {

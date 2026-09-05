@@ -168,7 +168,6 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
   ]) assert.ok(names.includes(required), required);
   for (const excluded of [
     "ocr_image",
-    "browser_ops",
     "declare_turn_outcome",
     "skills_manager",
     "interior_cad_inspect",

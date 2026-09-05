@@ -30,6 +30,7 @@ import {
   removeRuntimePermissionsForTurn,
 } from '../runtime-client/RuntimeInteractionBridge';
 import { createDesktopRuntimeSession } from '../runtime-client/ElectronRuntimeSession';
+import { settleRuntimeTurn } from '../runtime-client/settleRuntimeTurn';
 import type {
   ChatStreamEventHandlers,
   ChatStreamRequest,
@@ -45,7 +46,7 @@ import { contextCompactionPresentationExecution } from './contextCompactionPrese
 
 export async function streamRuntimeChat(
   request: ChatStreamRequest,
-  options: { turnId?: string } = {},
+  options: { turnId?: string; supersession?: RuntimeSessionTurnRequest['supersession'] } = {},
 ): Promise<void> {
   if (!window.cardbushDesktop?.runtime) {
     throw new Error('Electron Runtime bridge is unavailable.');
@@ -171,6 +172,7 @@ export async function streamRuntimeChat(
       images: request.images?.map((image) => image.path),
       attachments: request.attachments,
     });
+    if (options.supersession) runtimeRequest.supersession = options.supersession;
     if (goalCommand) {
       await runtime.client.createGoal({
         goalId: `goal_${crypto.randomUUID()}`,
@@ -190,6 +192,8 @@ export async function streamRuntimeChat(
           turnId: currentRequest.turnId,
         }),
       );
+      const streamController = new AbortController();
+      const detachStreamAbort = forwardAbort(controller.signal, streamController);
       try {
         const stream = consumeRuntimeEvents(
           runtime,
@@ -201,16 +205,22 @@ export async function streamRuntimeChat(
             lastAssistantMessageId = event.payload.finalMessageId ?? lastAssistantMessageId;
           },
           (messageId) => { lastAssistantMessageId = messageId; },
-          controller.signal,
+          streamController.signal,
         );
         const command = runtime.client.runSessionTurn(currentRequest, controller.signal);
-        const [streamResult, commandResult] = await Promise.allSettled([stream, command]);
+        try {
+          const [, commandTerminal] = await settleRuntimeTurn(
+            stream, command, () => streamController.abort(),
+          );
+          terminal ??= commandTerminal;
+        } catch (error) {
+          if (!terminal) throw error;
+        }
         await Promise.allSettled([...pendingToolLoads]);
-        if (streamResult.status === 'rejected') throw streamResult.reason;
-        if (commandResult.status === 'rejected' && !terminal) throw commandResult.reason;
-        terminal ??= commandResult.status === 'fulfilled' ? commandResult.value : undefined;
         if (!terminal) throw new Error('Runtime Turn ended without a terminal fact.');
       } finally {
+        detachStreamAbort();
+        streamController.abort();
         removeRuntimePermissionsForTurn(currentRequest.turnId);
         unregisterTurn();
       }

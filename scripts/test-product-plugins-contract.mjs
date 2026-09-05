@@ -16,9 +16,7 @@ const bundledRoot = resolve('assets', 'plugins');
 const catalog = await loadProductPluginCatalog([{ path: bundledRoot, source: 'bundled' }]);
 assert.deepEqual(catalog.map((plugin) => plugin.id), [
   'computer-use',
-  'cardbush-bot',
   'chrome',
-  'browser-ops',
 ]);
 for (const plugin of catalog) {
   assert.match(plugin.manifestPath, /\.codex-plugin[\\/]plugin\.json$/);
@@ -32,7 +30,6 @@ assert.deepEqual(
   computerUsePlugin?.components.filter((item) => item.kind === 'skill').map((item) => item.id),
   ['windows-control'],
 );
-assert.deepEqual(catalog.find((plugin) => plugin.id === 'cardbush-bot')?.components.map((item) => item.kind), ['app']);
 const chromePlugin = catalog.find((plugin) => plugin.id === 'chrome');
 assert.deepEqual(
   chromePlugin?.components.map((item) => item.kind),

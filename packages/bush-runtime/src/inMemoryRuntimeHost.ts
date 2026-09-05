@@ -1956,6 +1956,7 @@ export class InMemoryRuntimeHost {
   ): ModelMessage[] {
     return this.#sessions.rebuildActiveContext({
       sessionId,
+      supersession: checkpoint.supersession,
       prefix: checkpoint.prefixMessages,
       current: projectActiveTurnContext({
         turnId: activeTurnId,

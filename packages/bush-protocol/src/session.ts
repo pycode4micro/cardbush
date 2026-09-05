@@ -58,6 +58,13 @@ export const turnContextCheckpointSchema = z.object({
 
 export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
 
+export const sessionSupersessionSchema = z.object({
+  messageIds: z.array(z.string().min(1)).min(1),
+  reason: z.string().min(1),
+});
+
+export type SessionSupersession = z.infer<typeof sessionSupersessionSchema>;
+
 export const committedTurnSchema = z.object({
   turnId: z.string().min(1),
   turnSequence: z.number().int().positive(),
@@ -70,6 +77,8 @@ export const committedTurnSchema = z.object({
   cacheChainState: cacheChainStateSchema.optional(),
   contextSummary: z.string().min(1).optional(),
   contextCheckpoint: turnContextCheckpointSchema.optional(),
+  // The replacement and its supersession share one durable journal record.
+  supersession: sessionSupersessionSchema.optional(),
 });
 
 export type CommittedTurn = z.infer<typeof committedTurnSchema>;
@@ -216,6 +225,7 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   generatedMessages: z.array(runtimeSessionCheckpointMessageSchema).default([]),
   usage: sessionUsageSchema.default({}),
   activeContextCheckpoint: turnContextCheckpointSchema.optional(),
+  supersession: sessionSupersessionSchema.optional(),
 });
 
 export type RuntimeSessionCommitCheckpoint = z.infer<
@@ -229,6 +239,9 @@ export const runtimeSessionTurnRequestSchema = modelRequestSchema
     prefixMessages: z.array(modelMessageSchema).default([]),
     inputMessages: z.array(runtimeSessionInputMessageSchema).min(1),
     sessionMetadata: z.record(z.string(), z.unknown()).default({}),
+    supersession: sessionSupersessionSchema.extend({
+      expectedRevision: z.number().int().positive(),
+    }).optional(),
   });
 
 export type RuntimeSessionTurnRequest = z.infer<

@@ -40,6 +40,8 @@ export interface ComputerUsePluginConfig {
   screenshotDirectory: string;
   allowOpenApp: boolean;
   allowWindowClose: boolean;
+  yieldToUser: boolean;
+  restorePointer: boolean;
 }
 
 export interface ChromePluginConfig {
@@ -67,7 +69,7 @@ const computerUseCatalogEntry: CardbushPluginCatalogEntry = {
   id: "computer-use",
   name: "Computer Use",
   description: "Observe and control Windows desktop applications.",
-  longDescription: "Computer Use observes and controls the local desktop through explicit, permission-aware actions. Input actions may occupy the user's mouse and keyboard.",
+  longDescription: "A last-resort, cooperative desktop controller that yields to user activity, restores the pointer after mouse actions, and stops repeated-action loops.",
   version: "1.0.0",
   developerName: "CardBush",
   category: "Productivity",
@@ -223,6 +225,8 @@ function defaultConfig(id: string): Record<string, unknown> {
       screenshotDirectory: "",
       allowOpenApp: true,
       allowWindowClose: true,
+      yieldToUser: true,
+      restorePointer: true,
     };
   }
   if (id === "chrome") {
@@ -242,6 +246,8 @@ function decodeConfig(id: string, input: unknown): Record<string, unknown> {
       screenshotDirectory,
       allowOpenApp: boolean(config.allowOpenApp, "computer-use.allowOpenApp"),
       allowWindowClose: boolean(config.allowWindowClose, "computer-use.allowWindowClose"),
+      yieldToUser: optionalBoolean(config.yieldToUser, true),
+      restorePointer: optionalBoolean(config.restorePointer, true),
     };
   }
   if (id === "chrome") {
@@ -290,6 +296,10 @@ function optionalString(input: unknown): string | undefined {
 function boolean(input: unknown, field: string): boolean {
   if (typeof input !== "boolean") throw new Error(`${field} must be a boolean.`);
   return input;
+}
+
+function optionalBoolean(input: unknown, fallback: boolean): boolean {
+  return typeof input === "boolean" ? input : fallback;
 }
 
 function positiveInteger(input: unknown, field: string): number {

@@ -39,6 +39,12 @@ Runtime-owned stopped terminal can arrive, and never converts IPC failures into
 model or network prose. React should subscribe to its `RuntimeTurnStore`; it
 must not call preload IPC methods directly.
 
+The Turn command and event subscription settle together. Command rejection gives
+in-flight terminal frames a bounded 250 ms drain, then closes the subscription
+and exposes the original error if no terminal arrived. Stream failure also
+releases the local wait without requiring a pending command to finish. Neither
+path fabricates a terminal fact or automatically retries Tool execution.
+
 Tool and permission events are projected by stable call/permission identity.
 Terminal Tool events carry invocation state only; the exact native return,
 Runtime error, and Runtime-owned Workspace Changes are loaded from the execution

@@ -9,8 +9,12 @@ languages, frameworks, or combinations of lifecycle states.
 `SessionStore` is an append-only fact journal. A Turn is committed atomically
 with stable Turn/message identity, ordered indexes, terminal status, reason and
 provider usage. Reusing the same Turn ID is accepted only when every committed
-fact is identical. Replacing history requires an explicit
-`messages_superseded` event with referenced message IDs and a reason.
+fact is identical. Replacing history requires explicit referenced message IDs
+and a reason. Standalone replacements use `messages_superseded`; edit/rerun
+requests carry a revision-checked `supersession` that is projected only for the
+active Turn and committed atomically inside its `turn_committed` record. Failed
+preparation leaves the original effective history intact. The Session checkpoint
+retains this replacement intent for recovery without replaying old work.
 
 `RuntimeSessionCoordinator` prepares a model request from:
 
@@ -128,7 +132,10 @@ that Agent context; a Subagent may inherit unchanged observations from its paren
 fork. Canonical paths and linked directories are resolved before deciding whether
 an operation is inside the workspace. External access requests one capability
 bound to the exact action and canonical resource, and an allow answer must grant
-exactly that requested capability set.
+exactly that requested capability set. Cached Session grants bind each capability
+ID to the approved actions and target kinds/values. Reusing a tool-owned ID for
+another target cannot reuse that grant; native capability IDs and Tool returns
+are not rewritten.
 
 `all_free` is enforced once by the Tool execution coordinator, including nested
 Tools and child Agent Turns. Tool-owned `deny` decisions remain final; every

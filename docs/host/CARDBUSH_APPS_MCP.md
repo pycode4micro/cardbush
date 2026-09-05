@@ -37,7 +37,23 @@ The Product Host persists `product-host/config/apps.json` and exposes typed
 - enabling or disabling the complete `cardbush_apps` MCP service;
 - installing, uninstalling, enabling and disabling individual bundled plugins;
 - plugin-owned configuration fields. `computer_use` currently supports a capture
-  directory and policy switches for opening applications and closing windows.
+  directory, policy switches for opening applications and closing windows, and
+  cooperative controls that yield to user input and restore the pointer after
+  mouse actions.
+
+Computer Use remains a last-resort route for visible native UI. Desktop access is
+serialized across sessions, input actions are bounded by fresh observations, and
+unchanged repeated actions are stopped before they become an unattended loop.
+The cooperative mode does not claim OS-level isolation: a separate Windows
+session or VM cannot control applications already open on the user's desktop.
+
+An unscoped `observe` call is discovery-only and does not capture the full
+desktop. A second `observe` call targeting one exact HWND captures that window, returns bounded UI Automation elements and
+issues a one-use `state_id`. Every existing-window action must present the same
+HWND and state ID. The state expires after 30 seconds, is consumed before acting,
+and becomes stale whenever another Turn changes the shared desktop. Semantic element actions (`click` by
+index, `invoke`, and `set_value`) are preferred because they do not normally move
+the pointer; window-relative SendInput remains a guarded fallback.
 
 Uninstall is a local catalog state change: the bundled package remains available
 for reinstall, while its Tool is not registered with MCP. Disabling the service

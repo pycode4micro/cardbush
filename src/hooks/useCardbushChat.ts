@@ -1672,24 +1672,22 @@ export function useCardbushChat(
     return optimistic;
   }, [setMessageHistoryLoading]);
 
-  const deleteConversation = useCallback((conversationId: string) => {
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    try {
+      await deleteConversationApi(conversationId);
+    } catch (caught) {
+      setError(errorMessage(caught));
+      return;
+    }
     clearSessionAttention(conversationId);
     setMessageHistoryLoading(conversationId, false);
-    setConversations((current) => {
-      const next = current.filter((item) => item.id !== conversationId);
-      setActiveConversationId((active) =>
-        active === conversationId ? '' : active,
-      );
-      return next;
-    });
+    setConversations((current) => current.filter((item) => item.id !== conversationId));
+    setActiveConversationId((active) => active === conversationId ? '' : active);
     setMessagesByConversation((current) => {
       const next = { ...current };
       delete next[conversationId];
       return next;
     });
-    void deleteConversationApi(conversationId).catch((caught) =>
-      setError(errorMessage(caught)),
-    );
   }, [clearSessionAttention, setMessageHistoryLoading]);
 
   const renameConversation = useCallback(async (conversationId: string, title: string) => {

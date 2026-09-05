@@ -11,22 +11,10 @@
       "category": "Productivity"
     },
     {
-      "name": "cardbush-bot",
-      "source": { "source": "local", "path": "./cardbush-bot" },
-      "policy": { "installation": "INSTALLED_BY_DEFAULT", "authentication": "ON_USE" },
-      "category": "Communication"
-    },
-    {
       "name": "chrome",
       "source": { "source": "local", "path": "./chrome" },
       "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
       "category": "Productivity"
-    },
-    {
-      "name": "browser-ops",
-      "source": { "source": "local", "path": "./browser-ops" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
-      "category": "Developer Tools"
     }
   ]
 }

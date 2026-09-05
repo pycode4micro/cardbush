@@ -3190,6 +3190,28 @@ function CardbushAppsPanel({
                   <label className="cardbush-app-option">
                     <input
                       type="checkbox"
+                      checked={plugin.config.yieldToUser !== false}
+                      onChange={(event) => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, yieldToUser: event.currentTarget.checked },
+                      })}
+                    />
+                    <span>{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</span>
+                  </label>
+                  <label className="cardbush-app-option">
+                    <input
+                      type="checkbox"
+                      checked={plugin.config.restorePointer !== false}
+                      onChange={(event) => replacePlugin({
+                        ...plugin,
+                        config: { ...plugin.config, restorePointer: event.currentTarget.checked },
+                      })}
+                    />
+                    <span>{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</span>
+                  </label>
+                  <label className="cardbush-app-option">
+                    <input
+                      type="checkbox"
                       checked={plugin.config.allowOpenApp !== false}
                       onChange={(event) => replacePlugin({
                         ...plugin,

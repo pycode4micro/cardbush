@@ -9,6 +9,7 @@ import {
   type CommittedTurn,
   type SessionEvent,
   type SessionSnapshot,
+  type SessionSupersession,
 } from "@cardbush/bush-protocol";
 
 export interface SessionEventPersistence {
@@ -125,10 +126,11 @@ export class SessionStore {
         throw new Error(`Message ${message.messageId} already exists in Session ${normalized}.`);
       }
     }
+    const effective = projectSessionSupersession(before, turn.supersession);
     validateConversation([
       ...before.turns
         .flatMap((item) => item.messages)
-        .filter((message) => !before.supersededMessageIds.includes(message.messageId))
+        .filter((message) => !effective.supersededMessageIds.includes(message.messageId))
         .map((message) => message.message),
       ...turn.messages.map((message) => message.message),
     ]);
@@ -266,6 +268,9 @@ export function projectSession(
     if (event.kind === "turn_committed") {
       const turn = event.payload;
       validateCommittedTurn(turn);
+      if (turn.supersession) {
+        addSupersededMessages(messageIds, superseded, turn.supersession.messageIds);
+      }
       if (turn.turnSequence !== turns.length + 1) {
         throw new Error("Committed Turn sequence is not contiguous.");
       }
@@ -280,15 +285,7 @@ export function projectSession(
       turns.push(turn);
     }
     if (event.kind === "messages_superseded") {
-      for (const messageId of event.payload.messageIds) {
-        if (!messageIds.has(messageId)) {
-          throw new Error(`Cannot supersede unknown message ${messageId}.`);
-        }
-        if (superseded.has(messageId)) {
-          throw new Error(`Message ${messageId} was superseded more than once.`);
-        }
-        superseded.add(messageId);
-      }
+      addSupersededMessages(messageIds, superseded, event.payload.messageIds);
     }
     if (event.kind === "turn_context_summarized") {
       if (event.payload.expectedRevision !== index) {
@@ -325,6 +322,27 @@ export function projectSession(
     supersededMessageIds: [...superseded],
     ...(metadata ? { metadata } : {}),
   });
+}
+
+export function projectSessionSupersession(
+  session: SessionSnapshot,
+  supersession?: SessionSupersession,
+): SessionSnapshot {
+  if (!supersession) return session;
+  const known = new Set(session.turns.flatMap((turn) =>
+    turn.messages.map((message) => message.messageId),
+  ));
+  const superseded = new Set(session.supersededMessageIds);
+  addSupersededMessages(known, superseded, supersession.messageIds);
+  return { ...session, supersededMessageIds: [...superseded] };
+}
+
+function addSupersededMessages(known: Set<string>, superseded: Set<string>, ids: string[]): void {
+  for (const id of ids) {
+    if (!known.has(id)) throw new Error(`Cannot supersede unknown message ${id}.`);
+    if (superseded.has(id)) throw new Error(`Message ${id} was superseded more than once.`);
+    superseded.add(id);
+  }
 }
 
 export function validateCommittedTurn(turn: CommittedTurn): void {

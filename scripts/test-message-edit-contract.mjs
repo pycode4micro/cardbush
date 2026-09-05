@@ -55,7 +55,8 @@ const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),
   'utf8',
 );
-assert.match(apiSource, /runtime\.client\.supersedeSessionMessages\(\s*\{/);
+assert.doesNotMatch(apiSource, /runtime\.client\.supersedeSessionMessages\(/,
+  'Edit preparation must not mutate the effective history');
 assert.match(
   apiSource,
   /messageIds:\s*messages\s*\.slice\(supersedeFrom\)\s*\.map/,
@@ -68,13 +69,13 @@ assert.match(
 );
 assert.match(
   apiSource,
-  /reason: 'user_edit_regenerate',[\s\S]{0,100}?replacementTurnId/,
-  'The durable supersession event must point at the exact replacement Turn',
+  /supersession = \{\s*expectedRevision: snapshot\.revision/,
+  'Replacement admission must reject an edit based on stale history',
 );
 assert.match(
   apiSource,
-  /streamRuntimeChat\([\s\S]{0,120}?userInput: content[\s\S]{0,120}?turnId: replacementTurnId/,
-  'The rerun must use the replacement Turn identity persisted by the supersession event',
+  /streamRuntimeChat\([\s\S]{0,120}?userInput: content[\s\S]{0,120}?turnId: replacementTurnId, supersession/,
+  'The rerun must carry its supersession in the replacement Turn request',
 );
 assert.match(
   apiSource,

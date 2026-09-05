@@ -54,6 +54,7 @@ import type {
   ToolExecutionRecord as RuntimeToolExecutionRecord,
   ToolExecutionSummary as RuntimeToolExecutionSummary,
   RuntimeContextCompactionEvent,
+  RuntimeSessionTurnRequest,
 } from '@cardbush/bush-protocol';
 import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 import { AGENT_PROFILE_PROTOCOL } from '../types';
@@ -446,8 +447,6 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   agentVisualScenes: false,
   browserCookiePersistence: false,
   browserPrivacyMode: false,
-  browserApiCandidates: false,
-  browserContextApiRequest: false,
   taskPlan: false,
   reasoningStream: false,
   reasoningLevelSelection: false,
@@ -2783,6 +2782,7 @@ export async function editMessage(request: EditMessageRequest) {
     );
   }
   const replacementTurnId = `turn_${crypto.randomUUID()}`;
+  let supersession: RuntimeSessionTurnRequest['supersession'];
   const runtime = createDesktopRuntimeSession();
   try {
     const snapshot = await runtime.client.getSession(sessionId, request.signal);
@@ -2809,23 +2809,19 @@ export async function editMessage(request: EditMessageRequest) {
       isInternalRuntimeMessage(messages[index - 1]!)
         ? index - 1
         : index;
-    await runtime.client.supersedeSessionMessages(
-      {
-        sessionId,
-        messageIds: messages
-          .slice(supersedeFrom)
-          .map((message) => message.messageId),
-        reason: 'user_edit_regenerate',
-        replacementTurnId,
-      },
-      request.signal,
-    );
+    supersession = {
+      expectedRevision: snapshot.revision,
+      messageIds: messages
+        .slice(supersedeFrom)
+        .map((message) => message.messageId),
+      reason: 'user_edit_regenerate',
+    };
   } finally {
     runtime.dispose();
   }
   return streamRuntimeChat(
     { ...request, userInput: content },
-    { turnId: replacementTurnId },
+    { turnId: replacementTurnId, supersession },
   );
 }
 

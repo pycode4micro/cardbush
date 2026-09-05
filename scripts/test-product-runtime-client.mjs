@@ -276,6 +276,40 @@ try {
   assert.ok(cancelledResult.commandError);
   assert.equal(cancellableSession.store.getSnapshot().streamState, 'settled');
 
+  const rejectedBridge = createLiveRuntimeBridge({ rejectBeforeAdmission: true });
+  const rejectedSession = new runtimeClientModule.ElectronRuntimeSession(rejectedBridge);
+  const rejectionTimeout = setTimeout(() => rejectedSession.dispose(), 2000);
+  try {
+    await assert.rejects(rejectedSession.run(modelRequest('rejected')), /admission rejected/);
+    await until(() => rejectedBridge.subscriptionCount() === 0);
+    assert.equal(rejectedSession.store.getSnapshot().view.terminal, undefined);
+    assert.equal(rejectedSession.store.getSnapshot().streamState, 'error');
+    // Failure releases the local gate, so a retry returns the real error too.
+    await assert.rejects(rejectedSession.run(modelRequest('retry')), /admission rejected/);
+  } finally {
+    clearTimeout(rejectionTimeout);
+    rejectedSession.dispose();
+  }
+
+  const delayedBridge = createLiveRuntimeBridge({ rejectWithDelayedTerminal: true });
+  const delayedSession = new runtimeClientModule.ElectronRuntimeSession(delayedBridge);
+  const delayedResult = await delayedSession.run(modelRequest('delayed'));
+  assert.equal(delayedResult.terminal.status, 'failed');
+  assert.ok(delayedResult.commandError);
+  assert.equal(delayedBridge.subscriptionCount(), 0);
+  delayedSession.dispose();
+
+  const brokenStreamBridge = createLiveRuntimeBridge({ failStream: true });
+  const brokenStreamSession = new runtimeClientModule.ElectronRuntimeSession(brokenStreamBridge);
+  const failureTimeout = setTimeout(() => brokenStreamSession.dispose(), 2000);
+  try {
+    await assert.rejects(brokenStreamSession.run(modelRequest('broken')), /stream transport failed/);
+    await until(() => brokenStreamBridge.subscriptionCount() === 0);
+  } finally {
+    clearTimeout(failureTimeout);
+    brokenStreamSession.dispose();
+  }
+
   console.log('Product Runtime Client contract passed.');
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
@@ -314,6 +348,7 @@ function createLiveRuntimeBridge(options = {}) {
   });
 
   return {
+    subscriptionCount: () => subscriptions.size,
     async command(message) {
       if (message.command.kind === 'runtime.get_capabilities') {
         return response(message.operationId, {
@@ -353,6 +388,8 @@ function createLiveRuntimeBridge(options = {}) {
       }
 
       const request = message.command.payload;
+      if (options.rejectBeforeAdmission) throw new Error('admission rejected');
+      if (options.failStream) return new Promise(() => {});
       const subscriptionId = subscriptions.get(request.turnId);
       assert.ok(subscriptionId, 'product must subscribe before dispatching a Turn');
       emitFrame(subscriptionId, {
@@ -375,12 +412,20 @@ function createLiveRuntimeBridge(options = {}) {
         reason: 'runtime_provider_not_configured',
         details: {},
       });
+      if (options.rejectWithDelayedTerminal) {
+        setTimeout(() => {
+          emitFrame(subscriptionId, { kind: 'event', event: terminal });
+          emitFrame(subscriptionId, { kind: 'end' });
+        }, 30);
+        throw new Error('command reply unavailable after terminal');
+      }
       emitFrame(subscriptionId, { kind: 'event', event: terminal });
       emitFrame(subscriptionId, { kind: 'end' });
       return response(message.operationId, terminal);
     },
     async startStream(message) {
       subscriptions.set(message.request.turnId, message.subscriptionId);
+      if (options.failStream) throw new Error('stream transport failed');
     },
     async stopStream(message) {
       for (const [turnId, subscriptionId] of subscriptions) {

@@ -145,11 +145,20 @@ export class ChromeConnectorBroker {
     return () => this.#listeners.delete(listener);
   }
 
-  releaseAll(reason = 'turn_terminal'): void {
+  releaseAll(reason = 'explicit_release'): void {
     if (!this.#extension) return;
     writeLine(this.#extension.socket, {
       type: 'control',
       method: 'debugger.detachAll',
+      reason,
+    });
+  }
+
+  suspendAll(reason = 'turn_terminal'): void {
+    if (!this.#extension) return;
+    writeLine(this.#extension.socket, {
+      type: 'control',
+      method: 'debugger.suspendAll',
       reason,
     });
   }
