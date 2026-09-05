@@ -170,6 +170,8 @@
 }
 
 .app.theme-cyberpunk .conversation-row.active .conversation-title,
+.app.theme-cyberpunk .conversation-row.active .conversation-pin,
+.app.theme-cyberpunk .conversation-row.active .conversation-more,
 .app.theme-cyberpunk .conversation-row.active small,
 .app.theme-cyberpunk .nav-row.active .nav-row-icon,
 .app.theme-cyberpunk .settings-nav.active svg {

@@ -414,6 +414,9 @@ async function consumeRuntimeEvents(
 ) {
   const liveToolExecutions = new Map<string, ChatToolExecution>();
   const liveContextCompactions = new Map<string, ChatToolExecution>();
+  // The first provider activity also clears a notice retained before cursor reattachment.
+  // Cache observations and replay resets alone do not prove that a request recovered.
+  let awaitingProviderRecovery = true;
   for await (const event of runtime.client.events({
     sessionId: runtimeRequest.sessionId,
     turnId: runtimeRequest.turnId,
@@ -425,6 +428,19 @@ async function consumeRuntimeEvents(
       eventId: event.eventId,
       sequence: event.sequence,
     });
+    if (awaitingProviderRecovery && [
+      'reasoning_segment_started', 'reasoning_segment_delta',
+      'assistant_segment_started', 'assistant_segment_delta', 'tool_queued',
+    ].includes(event.kind)) {
+      awaitingProviderRecovery = false;
+      request.onConnectionState?.({
+        state: 'recovered',
+        source: 'provider',
+        sessionId: event.sessionId,
+        turnId: event.turnId,
+        createdAt: event.createdAt,
+      });
+    }
     switch (event.kind) {
       case 'turn_accepted':
         request.onStart?.({
@@ -588,6 +604,7 @@ async function consumeRuntimeEvents(
         removeRuntimePermission(event.payload.permissionId);
         break;
       case 'provider_retry':
+        awaitingProviderRecovery = true;
         request.onConnectionState?.({
           state: 'retrying',
           source: 'provider',

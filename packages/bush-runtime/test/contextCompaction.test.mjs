@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
+import {
+  bindContextCheckpointInput,
+  ContextCheckpointInputError,
+  contextCheckpointFailure,
+  contextPressureNotice,
+  registerContextCompactionTool,
+} from "../dist/contextCompaction.js";
+import { ToolRegistry } from "../dist/toolRegistry.js";
 
 import {
   contextToolIngressTokenBudget,
@@ -124,3 +133,113 @@ function pressure(overrides = {}) {
     ...overrides,
   };
 }
+
+const authorization = () => ({
+  revision: 3, totalTurns: 2, unsummarizedTurnIds: ["prior_a", "prior_b"],
+  activeTurn: { turnId: "current_turn", throughMessageId: "msg_tool_current_71_0_long_runtime_boundary" },
+});
+const draft = () => ({ summaries: ["Prior A facts.", "Prior B facts."], active_summary: "Tool completed. Verify next; do not repeat it." });
+const legacyDraft = () => ({
+  session_revision: 3,
+  summaries: [{ turn_id: "prior_a", summary: "Prior A facts." }, { turn_id: "prior_b", summary: "Prior B facts." }],
+  active_turn: { turn_id: "current_turn", through_message_id: "msg_tool_current_71_0_long_runtime_boundary", summary: "Tool completed." },
+});
+
+test("binds summary text to runtime-owned revision, Turn order and active boundary", () => {
+  const state = authorization(), input = draft();
+  const before = structuredClone({ state, input });
+  const bound = bindContextCheckpointInput(input, state);
+  assert.deepEqual(bound, {
+    sessionRevision: 3,
+    summaries: [{ turnId: "prior_a", summary: input.summaries[0] }, { turnId: "prior_b", summary: input.summaries[1] }],
+    activeTurn: { ...state.activeTurn, summary: input.active_summary },
+  });
+  assert.deepEqual({ state, input }, before, "binding cannot mutate source facts or its authorization");
+  bound.activeTurn.summary = "changed result";
+  assert.deepEqual(state, before.state);
+});
+
+test("supports preceding-only and active-only summaries without fabricated segments", () => {
+  const preceding = { ...authorization(), activeTurn: undefined };
+  assert.equal(bindContextCheckpointInput({ summaries: draft().summaries, active_summary: "" }, preceding).activeTurn, undefined);
+  const active = { ...authorization(), unsummarizedTurnIds: [] };
+  const bound = bindContextCheckpointInput({ summaries: [], active_summary: "Keep the cumulative verified state." }, active);
+  assert.deepEqual(bound.summaries, []);
+  assert.equal(bound.activeTurn.throughMessageId, active.activeTurn.throughMessageId);
+  assert.throws(() => bindContextCheckpointInput(draft(), preceding), { field: "active_summary" });
+});
+
+test("rejects missing, wrong-type, oversized and miscounted summaries with exact field diagnostics", () => {
+  const cases = [
+    [null, "input"], [[], "input"],
+    [{ ...draft(), summaries: [] }, "summaries"],
+    [{ ...draft(), summaries: ["one"] }, "summaries"],
+    [{ ...draft(), summaries: [...draft().summaries, "extra"] }, "summaries"],
+    [{ ...draft(), summaries: ["valid", { summary: "not a string" }] }, "summaries[1]"],
+    [{ ...draft(), summaries: ["valid", " "] }, "summaries[1]"],
+    [{ ...draft(), active_summary: undefined }, "active_summary"],
+    [{ ...draft(), active_summary: null }, "active_summary"],
+    [{ ...draft(), active_summary: [] }, "active_summary"],
+    [{ ...draft(), active_summary: { summary: "do not stringify objects" } }, "active_summary"],
+    [{ ...draft(), active_summary: "x".repeat(6001) }, "active_summary"],
+    [{ ...draft(), session_revision: 99 }, "input"],
+    [{ ...draft(), active_turn: legacyDraft().active_turn }, "input"],
+  ];
+  for (const [input, field] of cases) {
+    assert.throws(() => bindContextCheckpointInput(input, authorization()), error =>
+      error instanceof ContextCheckpointInputError && error.field === field && error.message.includes(field));
+  }
+});
+
+test("old saved catalogs remain compatible but stale identity claims are never overwritten", () => {
+  assert.equal(bindContextCheckpointInput(legacyDraft(), authorization()).sessionRevision, 3);
+  const cases = [
+    [{ ...legacyDraft(), session_revision: 2 }, "session_revision"],
+    [{ ...legacyDraft(), summaries: legacyDraft().summaries.toReversed() }, "summaries[0].turn_id"],
+    [{ ...legacyDraft(), active_turn: null }, "active_turn"],
+    [{ ...legacyDraft(), active_turn: undefined }, "active_turn"],
+    [{ ...legacyDraft(), active_turn: { ...legacyDraft().active_turn, turn_id: "other_turn" } }, "active_turn.turn_id"],
+    [{ ...legacyDraft(), active_turn: { ...legacyDraft().active_turn, through_message_id: "stale" } }, "active_turn.through_message_id"],
+    [{ ...legacyDraft(), active_turn: { ...legacyDraft().active_turn, summary: { text: "wrong shape" } } }, "active_turn.summary"],
+  ];
+  for (const [input, field] of cases) {
+    assert.throws(() => bindContextCheckpointInput(input, authorization()), { field });
+  }
+});
+
+test("checkpoint catalog stays static while notices bind different runtime states", () => {
+  const registry = new ToolRegistry();
+  registerContextCompactionTool(registry, () => { throw new Error("catalog inspection cannot execute"); });
+  const before = registry.definitions();
+  const schema = before[0].inputSchema;
+  assert.deepEqual(Object.keys(schema.properties), ["summaries", "active_summary"]);
+  assert.equal(schema.properties.summaries.items.type, "string");
+  assert.equal(schema.properties.active_summary.type, "string");
+  const notice = contextPressureNotice(authorization(), pressure());
+  assert.match(notice.content, /exactly 2 plain summary strings/);
+  assert.match(notice.content, /Runtime binds them/);
+  assert.match(contextPressureNotice({ revision: 4, unsummarizedTurnIds: [], totalTurns: 2 }, pressure()).content, /active_summary to an empty string/);
+  const legacy = contextPressureNotice(authorization(), pressure(), true);
+  assert.match(legacy.content, /provide active_turn/);
+  assert.doesNotMatch(legacy.content, /active_summary/);
+  assert.deepEqual(registry.definitions(), before, "no dynamic IDs or schema changes in the cache prefix");
+});
+
+test("diagnostics persist field/type/count and a fingerprint, never duplicate raw summary text", () => {
+  const input = { ...draft(), active_summary: { sensitive: "PRIVATE_SUMMARY_CONTENT" } };
+  const args = JSON.stringify(input);
+  let failure;
+  try { bindContextCheckpointInput(input, authorization()); }
+  catch (error) { failure = contextCheckpointFailure(error, args); }
+  assert.equal(failure.diagnostics.field, "active_summary");
+  assert.equal(failure.diagnostics.received, "object");
+  assert.equal(failure.diagnostics.argumentsChars, args.length);
+  assert.equal(failure.diagnostics.argumentsSha256, createHash("sha256").update(args).digest("hex"));
+  assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_SUMMARY_CONTENT|Prior A facts/);
+  const malformed = '{"active_summary":"PRIVATE_SUMMARY_CONTENT';
+  try { JSON.parse(malformed); } catch (error) {
+    const invalid = contextCheckpointFailure(error, malformed);
+    assert.equal(invalid.diagnostics.code, "checkpoint_json_invalid");
+    assert.doesNotMatch(JSON.stringify(invalid), /PRIVATE_SUMMARY_CONTENT/);
+  }
+});

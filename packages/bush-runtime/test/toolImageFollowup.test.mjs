@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ModelImageStore } from "../dist/index.js";
+import { imageFixture } from "./helpers/modelImages.mjs";
 
 import {
   InMemoryRuntimeEventLog,
@@ -7,13 +9,15 @@ import {
   ToolRegistry,
 } from "../dist/index.js";
 
-test("projects only explicitly opted-in image artifacts into the next model step", async () => {
+test("projects only explicitly opted-in image artifacts into the next model step", async (context) => {
+  const { root, source } = await imageFixture(context);
   const registry = new ToolRegistry();
-  registry.register(registration());
+  registry.register(registration(source));
   const loop = new RuntimeToolLoop({
     eventLog: new InMemoryRuntimeEventLog(),
     identity: { requestId: "request", sessionId: "session", turnId: "turn" },
     registry,
+    modelImages: new ModelImageStore(root),
   });
   const result = await loop.execute([{
     id: "call_capture",
@@ -30,7 +34,7 @@ test("projects only explicitly opted-in image artifacts into the next model step
     name: "tool_image_observation",
     visibility: "internal",
     content: JSON.stringify({ source: "tool_output", attachedImages: 1 }),
-    images: [{ url: "C:\\captures\\screen.png" }],
+    images: [{ url: await new ModelImageStore(root).snapshot(source) }],
   });
 });
 
@@ -101,7 +105,7 @@ test("keeps injected image locators out of the model-facing Tool receipt", async
   assert.equal(result.messages[1].images[0].url, imageUrl);
 });
 
-function registration() {
+function registration(source = "https://example.test/screen.png") {
   return {
     definition: {
       name: "capture",
@@ -118,11 +122,11 @@ function registration() {
     },
     decodeInput: (input) => input,
     execute: () => ({
-      path: "C:\\captures\\screen.png",
+      path: source,
       artifacts: [{
         artifact_id: "artifact_capture",
         type: "image",
-        path: "C:\\captures\\screen.png",
+        path: source,
         media_type: "image/png",
         display: "inline",
         metadata: { model_input: true },

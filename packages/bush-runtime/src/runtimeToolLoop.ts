@@ -19,6 +19,7 @@ import {
 } from "./toolExecutionCoordinator.js";
 import type { ToolRegistry } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
+import { ModelImageInputError, ModelImageStore } from "./modelImageStore.js";
 
 export interface RuntimeToolLoopOptions {
   eventLog: InMemoryRuntimeEventLog;
@@ -26,6 +27,7 @@ export interface RuntimeToolLoopOptions {
   registry: ToolRegistry;
   createPermissionId?: () => string;
   executionStore?: ToolExecutionStore;
+  modelImages?: ModelImageStore;
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
   permissionEventIdentity?: RuntimeEventIdentity;
@@ -54,6 +56,7 @@ export class RuntimeToolLoop {
   readonly #coordinator: ToolExecutionCoordinator;
   readonly #executionStore?: ToolExecutionStore;
   readonly #registry: ToolRegistry;
+  readonly #modelImages: ModelImageStore;
   readonly #permissionEventIdentity: RuntimeEventIdentity;
   readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
   readonly #activeToolControllers = new Map<
@@ -65,6 +68,7 @@ export class RuntimeToolLoop {
     this.#eventLog = options.eventLog;
     this.#identity = options.identity;
     this.#registry = options.registry;
+    this.#modelImages = options.modelImages ?? new ModelImageStore();
     this.#permissionEventIdentity = options.permissionEventIdentity ?? options.identity;
     this.#permissionSource = options.permissionSource;
     this.#permissions = new RuntimePermissionBroker({
@@ -163,6 +167,7 @@ export class RuntimeToolLoop {
       });
     });
     const toolMessages: ModelMessage[] = [];
+    const imageObservations: ToolImageObservation[][] = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const controller = new AbortController();
@@ -190,6 +195,11 @@ export class RuntimeToolLoop {
             ? { request: input.request, contextMessages: input.contextMessages }
             : undefined,
         );
+        // Snapshot before the next sequential Tool can remove or overwrite the source.
+        // Keep the native Tool outcome untouched: image delivery is a separate observation.
+        imageObservations[ordinal] = outcome.kind === "returned"
+          ? await snapshotToolImages(outcome.result, toolCall.id, this.#modelImages, controller.signal)
+          : [];
         this.#executionStore?.record(toolCall, executionIdentity, outcome);
         this.#appendToolOutcome(toolCall, executionIdentity, outcome);
         return outcome;
@@ -260,7 +270,7 @@ export class RuntimeToolLoop {
         content: serializeNativeToolResult(projectedResult),
       });
     }
-    const imageFollowup = toolImageFollowup(nativeResults, maxModelImages);
+    const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages);
     return {
       messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : [])],
     };
@@ -452,6 +462,8 @@ function modelFacingNativeToolResult(result: unknown, toolName: string): unknown
   if (toolName !== "inject_image_input" || !result || typeof result !== "object" || Array.isArray(result)) {
     return result;
   }
+  // In particular, do not replace a failed injection's recoverable runtimeError with an empty receipt.
+  if ((result as Record<string, unknown>).queued !== true) return result;
   const attachedImages = nativeImageArtifacts(result).filter(isModelInputImageArtifact).length;
   return {
     queued: (result as Record<string, unknown>).queued === true,
@@ -459,24 +471,46 @@ function modelFacingNativeToolResult(result: unknown, toolName: string): unknown
   };
 }
 
-function toolImageFollowup(results: unknown[], maxImages = 4): ModelMessage | undefined {
-  const images = results.flatMap(nativeImageArtifacts)
-    .filter(isModelInputImageArtifact)
-    .slice(0, Math.max(0, maxImages))
-    .map((artifact): { url: string; detail?: "auto" | "low" | "high" } => {
+type ToolImageObservation = {
+  image: { url: string; detail?: "low" | "high" };
+} | {
+  error: { toolCallId: string; code: string; message: string };
+};
+
+async function snapshotToolImages(
+  result: unknown,
+  toolCallId: string,
+  store: ModelImageStore,
+  signal: AbortSignal,
+): Promise<ToolImageObservation[]> {
+  const observations: ToolImageObservation[] = [];
+  for (const artifact of nativeImageArtifacts(result).filter(isModelInputImageArtifact).slice(0, 4)) {
+    try {
+      const url = await store.snapshot(artifact.modelInputUrl ?? artifact.path ?? artifact.uri!, signal);
       const detail = artifact.detail;
-      return {
-        url: artifact.path ?? artifact.uri!,
-        ...(detail === "low" || detail === "high" ? { detail } : {}),
-      };
-    });
-  if (!images.length) return undefined;
+      observations.push({ image: { url, ...(detail === "low" || detail === "high" ? { detail } : {}) } });
+    } catch (error) {
+      observations.push({ error: {
+        toolCallId,
+        code: error instanceof ModelImageInputError ? error.code : "image_input_unavailable",
+        message: error instanceof Error ? error.message : "Tool image could not be attached. Inject a complete image file again.",
+      } });
+    }
+  }
+  return observations;
+}
+
+function toolImageFollowup(observations: ToolImageObservation[], maxImages = 4): ModelMessage | undefined {
+  const selected = observations.slice(0, Math.max(0, maxImages));
+  const images = selected.flatMap((item) => "image" in item ? [item.image] : []);
+  const errors = selected.flatMap((item) => "error" in item ? [item.error] : []);
+  if (!images.length && !errors.length) return undefined;
   return {
     role: "user",
     name: "tool_image_observation",
     visibility: "internal",
-    content: JSON.stringify({ source: "tool_output", attachedImages: images.length }),
-    images,
+    content: JSON.stringify({ source: "tool_output", attachedImages: images.length, ...(errors.length ? { imageInputErrors: errors } : {}) }),
+    ...(images.length ? { images } : {}),
   };
 }
 
@@ -496,6 +530,7 @@ function nativeImageArtifacts(result: unknown): Array<{
   path?: string;
   uri?: string;
   modelInput?: boolean;
+  modelInputUrl?: string;
   detail?: unknown;
 }> {
   if (!result || typeof result !== "object" || Array.isArray(result)) return [];
@@ -515,6 +550,7 @@ function nativeImageArtifacts(result: unknown): Array<{
       ...(typeof artifact.path === "string" ? { path: artifact.path } : {}),
       ...(typeof artifact.uri === "string" ? { uri: artifact.uri } : {}),
       modelInput: metadata.model_input === true,
+      ...(typeof metadata.model_input_url === "string" ? { modelInputUrl: metadata.model_input_url } : {}),
       detail: metadata.detail,
     }];
   });

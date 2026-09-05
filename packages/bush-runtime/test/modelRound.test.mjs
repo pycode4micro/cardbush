@@ -77,6 +77,7 @@ test("rejects missing terminal events and sequence regressions mechanically", as
   );
   assert.equal(missing.status, "failed");
   assert.equal(missing.error.code, "provider_terminal_event_missing");
+  assert.equal(missing.error.retryable, true);
 
   const regression = await executeModelRound(
     new FakeProvider([
@@ -87,6 +88,7 @@ test("rejects missing terminal events and sequence regressions mechanically", as
   );
   assert.equal(regression.status, "failed");
   assert.equal(regression.error.code, "provider_event_sequence_regression");
+  assert.equal(regression.error.retryable, false);
 });
 
 test("does not expose provider events emitted after completion", async () => {
@@ -104,6 +106,7 @@ test("does not expose provider events emitted after completion", async () => {
 
   assert.equal(result.status, "failed");
   assert.equal(result.error.code, "provider_event_after_completion");
+  assert.equal(result.error.retryable, false);
   assert.deepEqual(observed, [
     "response_started",
     "text_delta",

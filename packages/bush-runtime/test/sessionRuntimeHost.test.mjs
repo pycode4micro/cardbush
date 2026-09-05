@@ -459,11 +459,8 @@ test("forces atomic context compaction and resumes the same active Turn", async 
           request.messages.some((message) => message.name === "context_pressure")
         ) {
           const argumentsText = JSON.stringify({
-            session_revision: 2,
-            summaries: [{
-              turn_id: "turn_compact_1",
-              summary: "The user supplied a large prior payload; the Turn completed without external side effects.",
-            }],
+            summaries: ["The user supplied a large prior payload; the Turn completed without external side effects."],
+            active_summary: "",
           });
           yield event(request.requestId, 1, "tool_call_delta", {
             index: 0,
@@ -650,13 +647,8 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
             toolCallId: "call_active_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
               summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: throughMessageId,
-                summary: "The user requested an active-loop continuation. The first observation completed successfully with no external side effect; next execute the second observation and then report completion.",
-              },
+              active_summary: "The user requested an active-loop continuation. The first observation completed successfully with no external side effect; next execute the second observation and then report completion.",
             }),
           });
           yield event(request.requestId, 2, "usage", { inputTokens: 2_900 });
@@ -998,15 +990,10 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
             toolCallId: `call_repeated_checkpoint_${checkpointRound}`,
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
               summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: throughMessageId,
-                summary: checkpointRound === 1
-                  ? "Checkpoint one: the first observation completed; next run the second observation."
-                  : "Checkpoint two is cumulative: both the first and second observations completed; next return the final answer.",
-              },
+              active_summary: checkpointRound === 1
+                ? "Checkpoint one: the first observation completed; next run the second observation."
+                : "Checkpoint two is cumulative: both the first and second observations completed; next return the final answer.",
             }),
           });
           yield event(request.requestId, 2, "response_completed", {
@@ -1368,20 +1355,10 @@ test("calibrates unsupported Provider token counts before an append-only Loop ca
             toolCallId: "call_calibrated_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 2,
-              summaries: [{
-                turn_id: "turn_calibration_1",
-                summary: "A large preceding Turn established the working context without external side effects.",
-              }],
-              ...(activeTurnId && throughMessageId
-                ? {
-                    active_turn: {
-                      turn_id: activeTurnId,
-                      through_message_id: throughMessageId,
-                      summary: "The active Turn inspected the ordinary fixture and must now finish the requested work without repeating that observation.",
-                    },
-                  }
-                : {}),
+              summaries: ["A large preceding Turn established the working context without external side effects."],
+              active_summary: activeTurnId && throughMessageId
+                ? "The active Turn inspected the ordinary fixture and must now finish the requested work without repeating that observation."
+                : "",
             }),
           });
           yield event(request.requestId, 2, "usage", { inputTokens: 89_000 });
@@ -1660,6 +1637,89 @@ test("dispatches with a fallback estimate when exact Provider counting is unsupp
   assert.equal(terminal.payload.status, "completed");
   assert.equal(terminal.payload.reason, "model_response_completed");
 });
+
+for (const recover of [true, false]) {
+  test(`summary-only checkpoint ${recover ? "corrects malformed output and resumes" : "fails safely after bounded corrections"} without replaying Tools`, async t => {
+    const root = await mkdtemp(join(tmpdir(), "cardbush-checkpoint-binding-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    let executed = 0, maintenance = 0;
+    const observed = [], argumentsByAttempt = [];
+    const registry = new ToolRegistry().register({
+      definition: ordinaryToolDefinition(),
+      manifest: { effect_kind: "observation", operation: "fixture.once", risk: "low", owner: "fixture_runtime", dispatch_scope: "turn", mutating: false },
+      decodeInput: input => input,
+      execute: () => { executed += 1; return { fact: "A completed observation must remain in history." }; },
+    });
+    const host = new InMemoryRuntimeHost({
+      dataRoot: root, toolRegistry: registry,
+      provider: {
+        async countInputTokens(request) {
+          if (request.messages.some(m => m.name === "context_checkpoint_resume")) return { inputTokens: 100, source: "provider" };
+          if (request.messages.some(m => m.name === "context_pressure")) return { inputTokens: 2900, source: "provider" };
+          return { inputTokens: request.messages.some(m => m.role === "tool") ? 2860 : 100, source: "provider" };
+        },
+        async *stream(request) {
+          observed.push(structuredClone(request));
+          yield event(request.requestId, 0, "response_started");
+          if (request.messages.some(m => m.name === "context_pressure")) {
+            maintenance += 1;
+            const args = maintenance === 1
+              ? { summaries: [], active_summary: { private: "SUMMARY_TEXT_MUST_NOT_LEAK" } }
+              : maintenance === 2 ? { summaries: ["unexpected preceding Turn"], active_summary: "Current verified facts." }
+              : { summaries: [], active_summary: recover ? "The observation completed. Return the final answer; do not rerun it." : null };
+            argumentsByAttempt.push(JSON.stringify(args));
+            yield event(request.requestId, 1, "tool_call_delta", {
+              index: 0, toolCallId: `checkpoint_${maintenance}`, nameDelta: "checkpoint_context", argumentsDelta: JSON.stringify(args),
+            });
+            yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          } else if (request.messages.some(m => m.name === "context_checkpoint_resume")) {
+            assert.match(request.messages.find(m => m.name === "context_checkpoint_resume").role, /developer/);
+            assert.equal(request.messages.some(m => m.role === "tool"), false);
+            yield event(request.requestId, 1, "text_delta", { delta: "Finished without repeating the observation." });
+            yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
+          } else {
+            yield event(request.requestId, 1, "tool_call_delta", {
+              index: 0, toolCallId: "before_checkpoint_once", nameDelta: "ordinary_tool", argumentsDelta: "{}",
+            });
+            yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
+          }
+        },
+      },
+    });
+    const request = sessionRequest("request_binding", "turn_binding", "user_binding", "Observe once and finish.");
+    request.tools = [ordinaryToolDefinition()];
+    request.maxOutputTokens = 1000;
+    request.metadata = { contextWindowTokens: 4000 };
+    const terminal = await host.runSessionTurn(request);
+    assert.equal(terminal.payload.status, recover ? "completed" : "failed");
+    assert.equal(executed, 1);
+    assert.equal(maintenance, 3);
+    const events = host.events("session_1", "turn_binding");
+    const retries = events.filter(e => e.kind === "context_compaction_retrying");
+    assert.deepEqual(retries.map(e => e.payload.diagnostics.field), ["active_summary", "summaries"]);
+    assert.deepEqual(retries.map(e => e.payload.attempt), [2, 3]);
+    assert.equal(retries[0].payload.diagnostics.argumentsChars, argumentsByAttempt[0].length);
+    assert.equal(retries[0].payload.diagnostics.argumentsSha256.length, 64);
+    assert.doesNotMatch(JSON.stringify(retries), /SUMMARY_TEXT_MUST_NOT_LEAK/);
+    assert.doesNotMatch(JSON.stringify(observed.slice(2).map(r => r.messages)), /SUMMARY_TEXT_MUST_NOT_LEAK/);
+    for (const item of observed) assert.deepEqual(item.tools, observed[0].tools);
+    for (const index of [2, 3]) {
+      assert.deepEqual(observed[index].messages.slice(0, observed[index - 1].messages.length), observed[index - 1].messages, "corrections append without changing the cache prefix");
+    }
+    const session = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: "session_1" } });
+    assert.equal(session.turns.length, 1);
+    assert.equal(session.turns[0].messages.filter(e => e.message.role === "tool" && e.message.toolCallId === "before_checkpoint_once").length, 1);
+    if (recover) {
+      assert.match(session.turns[0].contextCheckpoint.summary, /observation completed/);
+      assert.equal(events.filter(e => e.kind === "context_compaction_completed").length, 1);
+    } else {
+      assert.equal(session.turns[0].contextCheckpoint, undefined);
+      assert.equal(terminal.payload.details.checkpointDiagnostics.field, "active_summary");
+      assert.equal(events.find(e => e.kind === "context_compaction_failed").payload.diagnostics.field, "active_summary");
+      assert.equal(events.some(e => e.kind === "context_compaction_completed"), false);
+    }
+  });
+}
 
 function sessionRequest(requestId, turnId, messageId, content) {
   return {

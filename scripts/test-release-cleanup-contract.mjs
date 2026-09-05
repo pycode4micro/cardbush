@@ -1,10 +1,11 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = (path) => readFileSync(resolve(root, path), 'utf8');
-const app = read('src/App.tsx');
+const app = readAppViewSources();
 const chat = read('src/hooks/useCardbushChat.ts');
 const composer = read('src/features/composer/Composer.tsx');
 const messageBubble = read('src/features/chatMessages/MessageBubble.tsx');

@@ -4,7 +4,8 @@ import {
   type SessionSnapshot,
 } from "@cardbush/bush-protocol";
 
-import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import { createHash } from "node:crypto";
+import type { ToolRegistry } from "./toolRegistry.js";
 
 export const CHECKPOINT_CONTEXT_TOOL = "checkpoint_context" as const;
 export const CONTEXT_COMPACTION_HARD_PRESSURE = 0.95;
@@ -212,10 +213,10 @@ export function registerContextCompactionTool(
   apply: (input: {
     sessionId: string;
     activeTurnId: string;
-    checkpoint: ContextCheckpointInput;
-  }) => SessionSnapshot,
+    checkpoint: unknown;
+  }) => { session: SessionSnapshot; checkpoint: ContextCheckpointInput },
 ): void {
-  registry.register<ContextCheckpointInput>({
+  registry.register({
     definition: {
       name: CHECKPOINT_CONTEXT_TOOL,
       description: [
@@ -223,35 +224,23 @@ export function registerContextCompactionTool(
         "Never call this Tool proactively or decide that compaction is needed yourself.",
         "Call it alone only when an explicit user-role context_pressure message requires compaction.",
         "The Runtime may request preceding Turn summaries, one cumulative active-Turn checkpoint, or both.",
+        "Return only summary text: summaries is an ordered array of strings; active_summary is one string (empty when not requested). Runtime binds all revision numbers, Turn IDs and message boundaries.",
         "Preserve why the work happened, inspected scope, conclusions, changes, verification, important artifacts or identifiers, external side effects, unresolved work, and the exact next action; omit ordinary Tool-call order and logs.",
       ].join(" "),
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["session_revision", "summaries"],
+        required: ["summaries", "active_summary"],
         properties: {
-          session_revision: { type: "integer", minimum: 1 },
           summaries: {
             type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["turn_id", "summary"],
-              properties: {
-                turn_id: { type: "string", minLength: 1 },
-                summary: { type: "string", minLength: 1, maxLength: 6000 },
-              },
-            },
+            description: "One nonempty summary string per requested preceding Turn, in notice order. Empty array when none.",
+            items: { type: "string", minLength: 1, maxLength: 6000 },
           },
-          active_turn: {
-            type: "object",
-            additionalProperties: false,
-            required: ["turn_id", "through_message_id", "summary"],
-            properties: {
-              turn_id: { type: "string", minLength: 1 },
-              through_message_id: { type: "string", minLength: 1 },
-              summary: { type: "string", minLength: 1, maxLength: 6000 },
-            },
+          active_summary: {
+            type: "string",
+            maxLength: 6000,
+            description: "Cumulative facts and next action for the requested current-Turn portion. Empty string when not requested.",
           },
         },
       },
@@ -266,47 +255,71 @@ export function registerContextCompactionTool(
     },
     parallelSafe: false,
     visibleToChild: true,
-    decodeInput: decodeContextCheckpointInput,
+    // Authorization is session-scoped and must be checked before binding the text.
+    decodeInput: (value) => value,
     execute: (context) => {
-      const session = apply({
+      const { session, checkpoint } = apply({
         sessionId: context.sessionId,
         activeTurnId: context.turnId,
         checkpoint: context.input,
       });
-      return checkpointResult(context, session);
+      return checkpointResult(checkpoint, session);
     },
   });
 }
 
-export function decodeContextCheckpointInput(value: unknown): ContextCheckpointInput {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("checkpoint_context input must be an object.");
+export class ContextCheckpointInputError extends Error {
+  readonly received: string;
+  constructor(readonly field: string, readonly expected: string, value: unknown) {
+    const received = checkpointValueShape(value);
+    super(`checkpoint_context ${field}: expected ${expected}; received ${received}.`);
+    this.name = "ContextCheckpointInputError";
+    this.received = received;
   }
-  const candidate = value as Record<string, unknown>;
+}
+
+function checkpointValueShape(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `array (${value.length} items)`;
+  if (typeof value === "string") return `string (${value.length} characters)`;
+  if (typeof value === "number") return `number (${value})`;
+  return typeof value;
+}
+
+function checkpointObject(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ContextCheckpointInputError(field, "an object", value);
+  }
+  return value as Record<string, unknown>;
+}
+
+function checkpointSummary(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 6000) {
+    throw new ContextCheckpointInputError(field, "a nonempty summary string of at most 6000 characters", value);
+  }
+  return value.trim();
+}
+
+/** Decode old saved tool catalogs without silently overriding their identity claims. */
+export function decodeContextCheckpointInput(value: unknown): ContextCheckpointInput {
+  const candidate = checkpointObject(value, "input");
   const sessionRevision = Number(candidate.session_revision);
   if (!Number.isInteger(sessionRevision) || sessionRevision < 1) {
-    throw new Error("session_revision must be a positive integer.");
+    throw new ContextCheckpointInputError("session_revision", "a positive integer", candidate.session_revision);
   }
   if (!Array.isArray(candidate.summaries)) {
-    throw new Error("summaries must be an array.");
+    throw new ContextCheckpointInputError("summaries", "an array", candidate.summaries);
   }
   const summaries = candidate.summaries.map((value, index) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      throw new Error(`summaries[${index}] must be an object.`);
-    }
-    const entry = value as Record<string, unknown>;
-    const turnId = String(entry.turn_id ?? "").trim();
-    const summary = String(entry.summary ?? "").trim();
-    if (!turnId) throw new Error(`summaries[${index}].turn_id is required.`);
-    if (!summary) throw new Error(`summaries[${index}].summary is required.`);
-    if (summary.length > 6000) {
-      throw new Error(`summaries[${index}].summary exceeds 6000 characters.`);
-    }
-    return { turnId, summary };
+    const entry = checkpointObject(value, `summaries[${index}]`);
+    return {
+      turnId: checkpointIdentity(entry.turn_id, `summaries[${index}].turn_id`),
+      summary: checkpointSummary(entry.summary, `summaries[${index}].summary`),
+    };
   });
   const activeTurn = decodeActiveTurnCheckpoint(candidate.active_turn);
   if (summaries.length === 0 && !activeTurn) {
-    throw new Error("checkpoint_context must contain requested preceding summaries or active_turn.");
+    throw new ContextCheckpointInputError("input", "requested preceding summaries or active_turn", value);
   }
   return {
     sessionRevision,
@@ -317,20 +330,91 @@ export function decodeContextCheckpointInput(value: unknown): ContextCheckpointI
 
 function decodeActiveTurnCheckpoint(value: unknown): ActiveTurnCheckpointInput | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("active_turn must be an object.");
+  const candidate = checkpointObject(value, "active_turn");
+  return {
+    turnId: checkpointIdentity(candidate.turn_id, "active_turn.turn_id"),
+    throughMessageId: checkpointIdentity(candidate.through_message_id, "active_turn.through_message_id"),
+    summary: checkpointSummary(candidate.summary, "active_turn.summary"),
+  };
+}
+
+function checkpointIdentity(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new ContextCheckpointInputError(field, "a nonempty identity string", value);
   }
-  const candidate = value as Record<string, unknown>;
-  const turnId = String(candidate.turn_id ?? "").trim();
-  const throughMessageId = String(candidate.through_message_id ?? "").trim();
-  const summary = String(candidate.summary ?? "").trim();
-  if (!turnId) throw new Error("active_turn.turn_id is required.");
-  if (!throughMessageId) throw new Error("active_turn.through_message_id is required.");
-  if (!summary) throw new Error("active_turn.summary is required.");
-  if (summary.length > 6000) {
-    throw new Error("active_turn.summary exceeds 6000 characters.");
+  return value.trim();
+}
+
+/** Only the runtime authorization supplies persisted identities in the new format. */
+export function bindContextCheckpointInput(
+  value: unknown,
+  authorized: ContextCompactionState,
+): ContextCheckpointInput {
+  const candidate = checkpointObject(value, "input");
+  if ("session_revision" in candidate && !("active_summary" in candidate)) {
+    const legacy = decodeContextCheckpointInput(candidate);
+    if (legacy.sessionRevision !== authorized.revision) {
+      throw new ContextCheckpointInputError("session_revision", `authorized revision ${authorized.revision}`, candidate.session_revision);
+    }
+    if (legacy.summaries.length !== authorized.unsummarizedTurnIds.length) {
+      throw new ContextCheckpointInputError("summaries", `exactly ${authorized.unsummarizedTurnIds.length} requested summaries`, candidate.summaries);
+    }
+    legacy.summaries.forEach((entry, index) => {
+      if (entry.turnId !== authorized.unsummarizedTurnIds[index]) {
+        throw new ContextCheckpointInputError(`summaries[${index}].turn_id`, "the authorized Turn at this index", entry.turnId);
+      }
+    });
+    if (Boolean(legacy.activeTurn) !== Boolean(authorized.activeTurn)) {
+      throw new ContextCheckpointInputError("active_turn", authorized.activeTurn ? "the authorized active-Turn object" : "no active-Turn segment", candidate.active_turn);
+    }
+    if (legacy.activeTurn && authorized.activeTurn) {
+      if (legacy.activeTurn.turnId !== authorized.activeTurn.turnId) {
+        throw new ContextCheckpointInputError("active_turn.turn_id", "the authorized active Turn ID", legacy.activeTurn.turnId);
+      }
+      if (legacy.activeTurn.throughMessageId !== authorized.activeTurn.throughMessageId) {
+        throw new ContextCheckpointInputError("active_turn.through_message_id", "the authorized active message boundary", legacy.activeTurn.throughMessageId);
+      }
+    }
+    return legacy;
   }
-  return { turnId, throughMessageId, summary };
+  for (const key of Object.keys(candidate)) {
+    if (key !== "summaries" && key !== "active_summary") {
+      throw new ContextCheckpointInputError("input", "only summaries and active_summary (no identity fields)", candidate);
+    }
+  }
+  if (!Array.isArray(candidate.summaries) || candidate.summaries.length !== authorized.unsummarizedTurnIds.length) {
+    throw new ContextCheckpointInputError("summaries", `exactly ${authorized.unsummarizedTurnIds.length} summary strings in notice order`, candidate.summaries);
+  }
+  const summaries = candidate.summaries.map((summary, index) => ({
+    turnId: authorized.unsummarizedTurnIds[index]!,
+    summary: checkpointSummary(summary, `summaries[${index}]`),
+  }));
+  const activeTurn = authorized.activeTurn ? {
+    ...authorized.activeTurn,
+    summary: checkpointSummary(candidate.active_summary, "active_summary"),
+  } : undefined;
+  if (!activeTurn && candidate.active_summary !== undefined && candidate.active_summary !== "") {
+    throw new ContextCheckpointInputError("active_summary", "an empty string because no active segment is authorized", candidate.active_summary);
+  }
+  return { sessionRevision: authorized.revision, summaries, ...(activeTurn ? { activeTurn } : {}) };
+}
+
+export function contextCheckpointFailure(error: unknown, argumentsText: string) {
+  const message = error instanceof ContextCheckpointInputError ? error.message
+    : error instanceof SyntaxError ? "checkpoint_context input: expected valid JSON."
+    : error instanceof Error ? error.message.slice(0, 512) : "Context checkpoint could not be applied.";
+  return {
+    message,
+    diagnostics: {
+      code: error instanceof ContextCheckpointInputError ? "checkpoint_input_invalid"
+        : error instanceof SyntaxError ? "checkpoint_json_invalid" : "checkpoint_apply_failed",
+      ...(error instanceof ContextCheckpointInputError ? {
+        field: error.field, expected: error.expected, received: error.received,
+      } : {}),
+      argumentsChars: argumentsText.length,
+      argumentsSha256: createHash("sha256").update(argumentsText).digest("hex"),
+    },
+  };
 }
 
 export function estimateContextPressure(
@@ -388,10 +472,12 @@ export function estimateContextPressure(
 export function contextPressureNotice(
   state: ContextCompactionState,
   pressure: ContextPressure,
+  legacyInput = false,
 ): ModelMessage {
   const precedingInstructions = state.unsummarizedTurnIds.length > 0
     ? [
-        "Summarize every listed preceding Turn exactly once and in this order:",
+        legacyInput ? "Summarize every listed preceding Turn exactly once and in this order:"
+          : `Return exactly ${state.unsummarizedTurnIds.length} plain summary strings in summaries, one per listed preceding Turn in this order (no ID objects):`,
         ...state.unsummarizedTurnIds.map((turnId) => `- ${turnId}`),
       ]
     : [
@@ -399,13 +485,15 @@ export function contextPressureNotice(
       ];
   const activeInstructions = state.activeTurn
     ? [
-        "Also provide active_turn for the completed portion of the current Turn:",
+        legacyInput ? "Also provide active_turn for the completed portion of the current Turn:"
+          : "Return active_summary as one cumulative plain text string for the completed portion of the current Turn. Runtime owns these identifiers; do not copy them into Tool arguments:",
         `- turn_id: ${state.activeTurn.turnId}`,
         `- through_message_id: ${state.activeTurn.throughMessageId}`,
         "Its summary must be cumulative: merge any earlier active_turn_checkpoint already present with all work completed through this boundary. Preserve the original user goal, current scope, facts learned, files or resources changed, external side effects, verification results, important errors or identifiers, unresolved work, and the exact next action needed to continue without repeating completed work.",
       ]
     : [
-        "No active-Turn segment is authorized. Omit active_turn.",
+        legacyInput ? "No active-Turn segment is authorized. Omit active_turn."
+          : 'No active-Turn segment is authorized. Set active_summary to an empty string ("").',
       ];
   return {
     role: "user",
@@ -418,6 +506,9 @@ export function contextPressureNotice(
         : "The local Runtime has reached the last safe round boundary before one configured model response could exhaust the checkpoint reserve. Call checkpoint_context now and call it alone. This user-role instruction is the only authorization to use that Tool.",
       ...precedingInstructions,
       ...activeInstructions,
+      ...(legacyInput ? [] : [
+        'The Tool input has exactly two fields: {"summaries":["summary text in the order above"],"active_summary":"current Turn summary, or empty when not requested"}. Use summaries: [] when there are no preceding Turns. Do not include session_revision, turn_id, through_message_id or active_turn; Runtime binds them to this authorized boundary.',
+      ]),
       "Each natural-language summary must preserve: user intent; inspected scope; conclusions; files or resources changed; external side effects; test/build/publish results; important errors, paths, URLs, hashes or task IDs; and unresolved work.",
       "If a Tool result is represented by an archived compact receipt and its preview is insufficient to establish a fact, preserve its exact locator and make reading that locator an unresolved next action; never guess the omitted content.",
       "Omit ordinary Tool-call order, repeated reads/searches, raw logs, call IDs, and intermediate conclusions superseded later.",
@@ -515,18 +606,18 @@ function serializedMessageChars(message: ModelMessage): number {
 }
 
 function checkpointResult(
-  context: ToolHandlerContext<ContextCheckpointInput>,
+  checkpoint: ContextCheckpointInput,
   session: SessionSnapshot,
 ): Record<string, unknown> {
   return {
     session_id: session.sessionId,
     session_revision: session.revision,
-    summarized_turns: context.input.summaries.map((item) => item.turnId),
-    ...(context.input.activeTurn
+    summarized_turns: checkpoint.summaries.map((item) => item.turnId),
+    ...(checkpoint.activeTurn
       ? {
           active_turn: {
-            turn_id: context.input.activeTurn.turnId,
-            through_message_id: context.input.activeTurn.throughMessageId,
+            turn_id: checkpoint.activeTurn.turnId,
+            through_message_id: checkpoint.activeTurn.throughMessageId,
           },
         }
       : {}),

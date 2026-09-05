@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -188,7 +189,7 @@ assert.match(
   'history fetch completion must only clear the loading marker for its own conversation',
 );
 
-const appSource = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
+const appSource = readAppViewSources();
 assert.match(
   appSource,
   /const activeMatchesMode = onlyTalkMode[\s\S]*?Boolean\(chat\.activeConversation && !isOnlyTalkConversation\(chat\.activeConversation\)\)/,

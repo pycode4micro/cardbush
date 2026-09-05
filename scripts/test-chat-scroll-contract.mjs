@@ -1,8 +1,9 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const appSource = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf8');
+const appSource = readAppViewSources();
 const styles = fs.readFileSync(path.join(process.cwd(), 'src', 'styles', 'app.css'), 'utf8');
 const quickContextSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chat', 'QuickContextRail.tsx'),
@@ -224,6 +225,31 @@ assert.match(
   'Turn details must provide a real jump back to the source message',
 );
 assert.match(quickContextSource, /跳转到该轮/);
+const contextRailStyles = styles.slice(
+  styles.indexOf('.quick-context-rail {'),
+  styles.indexOf('.quick-context-pre-test-header {'),
+);
+assert.match(
+  contextRailStyles,
+  /\.quick-context-popovers\s*\{[\s\S]*?--quick-context-bottom-inset/,
+  'Context previews must share the measured composer boundary',
+);
+assert.doesNotMatch(
+  contextRailStyles,
+  /100vw|58vh/,
+  'Preview sizes must use the conversation region, not the entire window across an inspector',
+);
+assert.match(
+  contextRailStyles,
+  /max-height:\s*min\(460px, 100%\)/,
+  'A short conversation must bound the preview height',
+);
+assert.match(
+  contextRailStyles,
+  /\.quick-context-turn\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto/,
+  'Preview content must shrink and scroll without clipping its header or footer',
+);
+assert.match(quickContextSource, /--quick-context-preview-top/);
 assert.match(
   quickContextSource,
   /fetchSessionTurnMessages\(\{[\s\S]*?sessionId,[\s\S]*?messageId: match\.serverMessageId/,

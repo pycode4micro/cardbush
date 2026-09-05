@@ -92,14 +92,17 @@ import {
   CHECKPOINT_CONTEXT_TOOL,
   CONTEXT_COMPACTION_HARD_PRESSURE,
   CONTEXT_SUMMARY_FALLBACK_TURNS,
+  ContextCheckpointInputError,
+  bindContextCheckpointInput,
+  contextCheckpointFailure,
   contextToolIngressTokenBudget,
   contextPressureNotice,
-  decodeContextCheckpointInput,
   estimateContextPressure,
   projectContextCompactionMaintenanceMessages,
   registerContextCompactionTool,
   requiresContextCompactionBeforeRound,
   resolveContextOutputTokens,
+  type ContextCheckpointInput,
   type ContextCompactionState,
   type ContextPressure,
 } from "./contextCompaction.js";
@@ -110,6 +113,7 @@ import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import { LogicMemoryStore } from "./logicMemory.js";
+import { ModelImageStore } from "./modelImageStore.js";
 import {
   registerSubagentTool,
   type JoinedSubagentResult,
@@ -148,15 +152,17 @@ import {
 
 export interface RuntimeRetryContext {
   nextAttempt: number;
-  maxAttempts: number;
+  maxAttempts: number | null;
   code: string;
+  retryAfterMs?: number;
 }
 
 export interface InMemoryRuntimeHostOptions {
   provider: ModelProvider;
   hostId?: string;
   runtimeVersion?: string;
-  maxAttempts?: number;
+  /** null keeps retryable provider requests alive until Stop; omitted defaults to one attempt. */
+  maxAttempts?: number | null;
   retryDelayMs?: (context: RuntimeRetryContext) => number;
   wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   eventLog?: InMemoryRuntimeEventLog;
@@ -258,7 +264,7 @@ export class InMemoryRuntimeHost {
   readonly #provider: ModelProvider;
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #capabilities: RuntimeCapabilities;
-  readonly #maxAttempts: number;
+  readonly #maxAttempts: number | null;
   readonly #retryDelayMs: (context: RuntimeRetryContext) => number;
   readonly #wait: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #projectorOptions: RuntimeEventProjectorOptions;
@@ -278,6 +284,7 @@ export class InMemoryRuntimeHost {
   readonly #activeTurnControllers = new Map<string, AbortController>();
   readonly #toolLoops = new Set<RuntimeToolLoop>();
   readonly #logicMemory: LogicMemoryStore;
+  readonly #modelImages: ModelImageStore;
   readonly #guidanceQueues = new Map<string, Array<{
     messageId: string;
     content: string;
@@ -293,12 +300,13 @@ export class InMemoryRuntimeHost {
       options.eventLog ?? new InMemoryRuntimeEventLog(options.eventLogOptions);
     if (
       options.maxAttempts !== undefined &&
+      options.maxAttempts !== null &&
       (!Number.isInteger(options.maxAttempts) || options.maxAttempts < 1)
     ) {
-      throw new Error("maxAttempts must be a positive integer.");
+      throw new Error("maxAttempts must be a positive integer or null.");
     }
-    this.#maxAttempts = options.maxAttempts ?? 1;
-    this.#retryDelayMs = options.retryDelayMs ?? (() => 0);
+    this.#maxAttempts = options.maxAttempts === undefined ? 1 : options.maxAttempts;
+    this.#retryDelayMs = options.retryDelayMs ?? defaultRuntimeRetryDelayMs;
     this.#wait = options.wait ?? wait;
     this.#projectorOptions = options.projectorOptions ?? {};
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
@@ -308,10 +316,12 @@ export class InMemoryRuntimeHost {
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
     this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
+    this.#modelImages = new ModelImageStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
       readToolResult: (locator) => this.#readArchivedToolResult(locator),
       logicMemory: this.#logicMemory,
+      modelImages: this.#modelImages,
     });
     this.#createPermissionId = options.createPermissionId;
     this.#recovery = new RuntimeRecoveryCoordinator({
@@ -899,6 +909,7 @@ export class InMemoryRuntimeHost {
       registry: this.#toolRegistry,
       createPermissionId: this.#createPermissionId,
       executionStore: this.#toolExecutions,
+      modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
       ...childPermissionRuntimeOptions(request, identity),
     });
@@ -909,6 +920,11 @@ export class InMemoryRuntimeHost {
     let emptyStopRetries = 0;
     let contextCompactionFailures = 0;
     let contextPressureNoticeKey: string | undefined;
+    // Resumed checkpoints retain their saved tool catalog and cache prefix.
+    const checkpointRequiredFields = request.tools.find((tool) =>
+      tool.name === CHECKPOINT_CONTEXT_TOOL)?.inputSchema.required;
+    const legacyCheckpointInput = Array.isArray(checkpointRequiredFields) &&
+      checkpointRequiredFields.includes("session_revision");
     let providerState: ModelProviderState = freshResponseChain();
     const cacheChain = new CacheChainTracker(input.cacheChainState);
     const generatedMessages: GeneratedMessageFact[] = input.sessionCommit
@@ -1005,7 +1021,11 @@ export class InMemoryRuntimeHost {
         },
       });
     };
-    const retryContextCompaction = (reason: string, message: string) => {
+    const retryContextCompaction = (
+      reason: string,
+      message: string,
+      diagnostics?: Record<string, unknown>,
+    ) => {
       if (!activeContextCompaction) return;
       activeContextCompaction = {
         ...activeContextCompaction,
@@ -1018,11 +1038,12 @@ export class InMemoryRuntimeHost {
           ...activeContextCompaction,
           reason,
           message,
+          ...(diagnostics ? { diagnostics } : {}),
         },
       });
     };
     const completeContextCompaction = (
-      checkpoint: ReturnType<typeof decodeContextCheckpointInput>,
+      checkpoint: ContextCheckpointInput,
     ) => {
       if (!activeContextCompaction) return;
       this.#eventLog.append(identity, {
@@ -1060,6 +1081,7 @@ export class InMemoryRuntimeHost {
             message: typeof payload.details.message === "string"
               ? payload.details.message
               : "Context compaction did not complete.",
+            diagnostics: payload.details.checkpointDiagnostics as Record<string, unknown> | undefined,
           },
         });
       }
@@ -1130,7 +1152,7 @@ export class InMemoryRuntimeHost {
             if (contextPressureNoticeKey !== noticeKey) {
               messages = [
                 ...messages,
-                contextPressureNotice(state, pressure),
+                contextPressureNotice(state, pressure, legacyCheckpointInput),
               ];
               contextPressureNoticeKey = noticeKey;
             }
@@ -1258,7 +1280,8 @@ export class InMemoryRuntimeHost {
             >
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
-        for (let attempt = 1; attempt <= this.#maxAttempts; attempt += 1) {
+        for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
+          if (input.signal?.aborted) return stop();
           const roundRequest = {
             ...request,
             messages: dispatchMessages,
@@ -1401,7 +1424,7 @@ export class InMemoryRuntimeHost {
             completedProjector = projector;
             break;
           }
-          if (result.error.retryable && attempt < this.#maxAttempts) {
+          if (result.error.retryable && (this.#maxAttempts === null || attempt < this.#maxAttempts)) {
             const supersededEventIds = this.#eventLog
               .replay(request.sessionId, request.turnId, {
                 afterSequence: attemptStartSequence,
@@ -1423,6 +1446,7 @@ export class InMemoryRuntimeHost {
                 nextAttempt,
                 maxAttempts: this.#maxAttempts,
                 code: result.error.code,
+                retryAfterMs: result.error.retryAfterMs,
               }),
             );
             this.#eventLog.append(identity, {
@@ -1433,6 +1457,9 @@ export class InMemoryRuntimeHost {
                 nextRetryMs,
                 code: result.error.code,
                 message: result.error.message,
+                status: result.error.status,
+                providerRequestId: result.error.providerRequestId,
+                diagnostics: result.error.diagnostics,
               },
             });
             await this.#wait(nextRetryMs, input.signal);
@@ -1450,6 +1477,9 @@ export class InMemoryRuntimeHost {
               retryable: result.error.retryable,
               attempts: attempt,
               round,
+              status: result.error.status,
+              providerRequestId: result.error.providerRequestId,
+              diagnostics: result.error.diagnostics,
             },
           });
         }
@@ -1508,13 +1538,10 @@ export class InMemoryRuntimeHost {
             continue;
           }
           try {
-            const checkpoint = decodeContextCheckpointInput(
-              JSON.parse(checkpointCalls[0]!.argumentsText),
-            );
-            this.#applyContextCheckpoint({
+            const { checkpoint } = this.#applyContextCheckpoint({
               sessionId: request.sessionId,
               activeTurnId: request.turnId,
-              checkpoint,
+              checkpoint: JSON.parse(checkpointCalls[0]!.argumentsText),
             });
             if (checkpoint.activeTurn) {
               activeContextCheckpoint = {
@@ -1557,14 +1584,17 @@ export class InMemoryRuntimeHost {
             });
             continue;
           } catch (error) {
+            const failure = contextCheckpointFailure(error, checkpointCalls[0]!.argumentsText);
             contextCompactionFailures += 1;
-            if (contextCompactionFailures >= 3) {
+            // Persistence/application failures are not malformed model output.
+            if (contextCompactionFailures >= 3 || failure.diagnostics.code === "checkpoint_apply_failed") {
               return finalize({
                 status: "failed",
                 reason: "context_compaction_failed",
                 finalMessageId: completedProjector.finalMessageId,
                 details: {
-                  message: error instanceof Error ? error.message : String(error),
+                  message: failure.message,
+                  checkpointDiagnostics: failure.diagnostics,
                 },
               });
             }
@@ -1592,7 +1622,8 @@ export class InMemoryRuntimeHost {
               contextPressureNoticeKey = undefined;
               retryContextCompaction(
                 "checkpoint_rejected",
-                error instanceof Error ? error.message : String(error),
+                failure.message,
+                failure.diagnostics,
               );
             } else {
               this.#contextCompactionAuthorizations.delete(turnKey);
@@ -1603,7 +1634,8 @@ export class InMemoryRuntimeHost {
                     ...activeContextCompaction,
                     round,
                     reason: "checkpoint_rejected",
-                    message: error instanceof Error ? error.message : String(error),
+                    message: failure.message,
+                    diagnostics: failure.diagnostics,
                   },
                 });
                 activeContextCompaction = undefined;
@@ -1614,7 +1646,7 @@ export class InMemoryRuntimeHost {
               name: "context_compaction_correction",
               visibility: "internal",
               content: mayRetry
-                ? `The context checkpoint was rejected: ${error instanceof Error ? error.message : String(error)} Re-read the next context_pressure notice and call checkpoint_context again with the exact revision, Turn order, and active message boundary.`
+                ? `The context checkpoint was rejected: ${failure.message} Re-read the next context_pressure notice and return the requested summary fields in its order.${legacyCheckpointInput ? " Match the saved Tool schema and the exact authorized identifiers." : " Return only summaries (an array of strings) and active_summary (a string); Runtime supplies the revision and boundaries."}`
                 : `The checkpoint_context call was rejected because Runtime has not issued an authorizing user-role context_pressure instruction at the mandatory threshold. Continue the task normally and do not call checkpoint_context proactively.`,
             }];
             providerState = freshResponseChain();
@@ -1914,36 +1946,21 @@ export class InMemoryRuntimeHost {
   #applyContextCheckpoint(input: {
     sessionId: string;
     activeTurnId: string;
-    checkpoint: ReturnType<typeof decodeContextCheckpointInput>;
+    checkpoint: unknown;
   }) {
     const key = JSON.stringify([input.sessionId, input.activeTurnId]);
     const authorized = this.#contextCompactionAuthorizations.get(key);
     if (!authorized) {
-      throw new Error("Runtime has not authorized context compaction for this Turn.");
+      throw new ContextCheckpointInputError("authorization", "a Runtime-authorized context_pressure boundary", undefined);
     }
-    const authorizedActiveTurn = authorized.activeTurn ?? null;
-    const receivedActiveTurn = input.checkpoint.activeTurn
-      ? {
-          turnId: input.checkpoint.activeTurn.turnId,
-          throughMessageId: input.checkpoint.activeTurn.throughMessageId,
-        }
-      : null;
-    if (
-      input.checkpoint.sessionRevision !== authorized.revision ||
-      JSON.stringify(input.checkpoint.summaries.map((item) => item.turnId)) !==
-        JSON.stringify(authorized.unsummarizedTurnIds) ||
-      JSON.stringify(receivedActiveTurn) !== JSON.stringify(authorizedActiveTurn)
-    ) {
-      throw new Error(
-        "Context checkpoint does not match the authorized Session revision, Turn order, or active message boundary.",
-      );
-    }
-    return this.#sessions.summarizeContext({
+    const checkpoint = bindContextCheckpointInput(input.checkpoint, authorized);
+    const session = this.#sessions.summarizeContext({
       sessionId: input.sessionId,
       activeTurnId: input.activeTurnId,
-      expectedRevision: input.checkpoint.sessionRevision,
-      summaries: input.checkpoint.summaries,
+      expectedRevision: checkpoint.sessionRevision,
+      summaries: checkpoint.summaries,
     });
+    return { session, checkpoint };
   }
 
   #rebuildCompactedMessages(
@@ -2675,6 +2692,13 @@ function conversationSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot
       }),
     })),
   };
+}
+
+export function defaultRuntimeRetryDelayMs(context: RuntimeRetryContext): number {
+  // 1, 2, 4, 8, 16, then 30 seconds. Retry the same request; never replay tools.
+  const backoff = Math.min(30_000, 1000 * 2 ** Math.min(5, Math.max(0, context.nextAttempt - 2)));
+  const retryAfter = Number.isFinite(context.retryAfterMs) ? Math.max(0, context.retryAfterMs!) : 0;
+  return Math.round(Math.max(backoff, Math.min(retryAfter, 300_000)));
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {

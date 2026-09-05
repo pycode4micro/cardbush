@@ -588,10 +588,10 @@ host = new InMemoryRuntimeHost({
   ],
   hostId: `electron-utility-${process.pid}`,
   runtimeVersion: '0.1.0',
-  maxAttempts: positiveInteger(
-    process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS,
-    5,
-  ),
+  // Keep transient provider failures alive by default; an explicit positive cap is optional.
+  maxAttempts: process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS?.trim()
+    ? positiveInteger(process.env.CARDBUSH_RUNTIME_PROVIDER_MAX_ATTEMPTS, 5)
+    : null,
   onRecoveryError: (error) => {
     process.stderr.write(
       `${JSON.stringify({ code: 'runtime_checkpoint_cleanup_failed', message: error.message })}\n`,

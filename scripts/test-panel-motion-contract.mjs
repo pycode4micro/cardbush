@@ -1,10 +1,11 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 
 const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), 'utf8');
-const app = read('src', 'App.tsx');
+const app = readAppViewSources();
 const shadowWindow = read('src', 'ShadowWindow.tsx');
 const css = read('src', 'styles', 'app.css');
 const presence = read('src', 'hooks', 'useSoftPanelPresence.ts');

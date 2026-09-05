@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import ts from 'typescript';
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const api = read('src', 'backend', 'api.ts');
-const app = read('src', 'App.tsx');
+const app = readAppViewSources();
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
 const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
 const contextWindowUsage = read('src', 'backend', 'contextWindowUsage.ts');

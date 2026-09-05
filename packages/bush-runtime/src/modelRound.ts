@@ -47,6 +47,7 @@ function localFailure(
   sequence: number,
   code: string,
   message: string,
+  retryable = false,
 ): Extract<ModelEvent, { kind: "response_failed" }> {
   return {
     protocol: BUSH_MODEL_EVENT_PROTOCOL,
@@ -56,7 +57,7 @@ function localFailure(
     kind: "response_failed",
     code,
     message,
-    retryable: true,
+    retryable,
   };
 }
 
@@ -148,6 +149,7 @@ export async function executeModelRound(
       lastSequence + 1,
       "incomplete_tool_call",
       error instanceof Error ? error.message : String(error),
+      true,
     );
   }
 
@@ -157,6 +159,7 @@ export async function executeModelRound(
       lastSequence + 1,
       "provider_terminal_event_missing",
       "Provider stream ended without a completed or failed terminal event.",
+      true,
     );
   }
   if (failure) {

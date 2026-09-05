@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
 import { toolErrorKindSchema } from "./tool.js";
+import { modelFailureDiagnosticsSchema } from "./model.js";
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -317,6 +318,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: contextCompactionIdentitySchema.extend({
       reason: z.string().min(1),
       message: z.string(),
+      diagnostics: z.record(z.string(), z.unknown()).optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({
@@ -332,6 +334,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: contextCompactionIdentitySchema.extend({
       reason: z.string().min(1),
       message: z.string(),
+      diagnostics: z.record(z.string(), z.unknown()).optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({
@@ -344,10 +347,13 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("provider_retry"),
     payload: z.object({
       attempt: z.number().int().positive(),
-      maxAttempts: z.number().int().positive(),
+      maxAttempts: z.number().int().positive().nullable(),
       nextRetryMs: z.number().int().nonnegative(),
       code: z.string().min(1),
       message: z.string(),
+      status: z.number().int().optional(),
+      providerRequestId: z.string().optional(),
+      diagnostics: modelFailureDiagnosticsSchema.optional(),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({

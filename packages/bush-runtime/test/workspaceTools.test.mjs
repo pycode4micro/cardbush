@@ -299,6 +299,10 @@ test("searches with the Node fallback when ripgrep is unavailable in a packaged 
   const root = temporaryRoot(t);
   writeFileSync(join(root, "first.txt"), "alpha\nneedle here\n");
   writeFileSync(join(root, "ignored.log"), "needle ignored\n");
+  writeFileSync(join(root, "utf16le.txt"), "\ufeff首行\r\nneedle 中文😀\r\n", "utf16le");
+  writeFileSync(join(root, "utf16be.txt"), Buffer.from("\ufeff首行\rneedle 中文😀\r", "utf16le").swap16());
+  writeFileSync(join(root, "utf8bom.txt"), "\ufeffneedle UTF-8\n");
+  writeFileSync(join(root, "binary.txt"), Buffer.from("needle\0binary"));
   const setup = tools(root);
   const previousPath = process.env.PATH;
   const previousBundled = process.env.CARDBUSH_RG_PATH;
@@ -313,6 +317,10 @@ test("searches with the Node fallback when ripgrep is unavailable in a packaged 
     assert.equal(outcome.kind, "returned");
     assert.equal(outcome.result.matched, true);
     assert.match(outcome.result.output, /first\.txt:2:1:needle here/);
+    assert.match(outcome.result.output, /utf16le\.txt:2:1:needle 中文😀/);
+    assert.match(outcome.result.output, /utf16be\.txt:2:1:needle 中文😀/);
+    assert.match(outcome.result.output, /utf8bom\.txt:1:1:needle UTF-8/);
+    assert.doesNotMatch(outcome.result.output, /binary\.txt/);
     assert.doesNotMatch(outcome.result.output, /ignored\.log/);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;

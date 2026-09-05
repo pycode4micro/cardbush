@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowUpRight, Check, ChevronRight, Copy, Search, X } from 'lucide-react';
 import {
+  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -460,111 +461,113 @@ export function QuickContextRail({
           })}
         </span>
       </div>
-      {hoveredTurn && panelView === 'closed' && (
-        <div
-          className="quick-context-turn-preview"
-          role="tooltip"
-          style={{ top: hoveredTurnPreview?.top }}
-        >
-          <small>{language === 'zh' ? '用户请求' : 'User request'}</small>
-          <p>{hoveredTurn.content}</p>
-        </div>
-      )}
-      {panelView !== 'closed' && (
-        <section className={`quick-context-panel ${panelView}`}>
-          <header>
-            {panelView === 'detail' ? (
+      <div className="quick-context-popovers">
+        {hoveredTurn && panelView === 'closed' && (
+          <div
+            className="quick-context-turn-preview"
+            role="tooltip"
+            style={{ '--quick-context-preview-top': `${hoveredTurnPreview?.top ?? 0}px` } as CSSProperties}
+          >
+            <small>{language === 'zh' ? '用户请求' : 'User request'}</small>
+            <p>{hoveredTurn.content}</p>
+          </div>
+        )}
+        {panelView !== 'closed' && (
+          <section className={`quick-context-panel ${panelView}`}>
+            <header>
+              {panelView === 'detail' ? (
+                <button
+                  type="button"
+                  className="quick-context-back"
+                  onClick={() => setPanelView('list')}
+                  aria-label={language === 'zh' ? '返回请求列表' : 'Back to request list'}
+                >
+                  <ArrowLeft size={14} />
+                </button>
+              ) : <Search size={14} />}
+              <strong>
+                {panelView === 'detail'
+                  ? language === 'zh' ? '本轮对话' : 'Conversation turn'
+                  : language === 'zh' ? '相关请求' : 'Related requests'}
+              </strong>
+              <span className="quick-context-panel-meta">
+                {panelView === 'list' && (searching
+                  ? language === 'zh' ? '检索中' : 'Searching'
+                  : `${matches.length}`)}
+              </span>
               <button
                 type="button"
-                className="quick-context-back"
-                onClick={() => setPanelView('list')}
-                aria-label={language === 'zh' ? '返回请求列表' : 'Back to request list'}
+                className="quick-context-close"
+                onClick={closePanel}
+                aria-label={language === 'zh' ? '关闭' : 'Close'}
               >
-                <ArrowLeft size={14} />
+                <X size={14} />
               </button>
-            ) : <Search size={14} />}
-            <strong>
-              {panelView === 'detail'
-                ? language === 'zh' ? '本轮对话' : 'Conversation turn'
-                : language === 'zh' ? '相关请求' : 'Related requests'}
-            </strong>
-            <span className="quick-context-panel-meta">
-              {panelView === 'list' && (searching
-                ? language === 'zh' ? '检索中' : 'Searching'
-                : `${matches.length}`)}
-            </span>
-            <button
-              type="button"
-              className="quick-context-close"
-              onClick={closePanel}
-              aria-label={language === 'zh' ? '关闭' : 'Close'}
-            >
-              <X size={14} />
-            </button>
-          </header>
+            </header>
 
-          {panelView === 'list' ? (
-            <div className="quick-context-request-list">
-              <small className="quick-context-query-source">
-                {querySource === 'draft'
-                  ? language === 'zh' ? '按当前输入匹配' : 'Matched to current draft'
-                  : language === 'zh' ? '按上一条提问匹配' : 'Matched to latest prompt'}
-              </small>
-              {searching && matches.length === 0 && <span className="quick-context-list-loading" />}
-              {!searching && matches.length === 0 && (
-                <p className="quick-context-empty">
-                  {language === 'zh' ? '暂未找到相关历史请求' : 'No related request found'}
-                </p>
-              )}
-              {matches.map((match) => (
-                <button
-                  key={match.message.id}
-                  type="button"
-                  className="quick-context-request"
-                  onClick={() => selectMatch(match)}
-                >
-                  <span>{compactText(match.message.content, 92)}</span>
-                  <ChevronRight size={14} />
-                </button>
-              ))}
-            </div>
-          ) : (
-            <>
-              <div className="quick-context-turn">
-                {detailLoading && <span className="quick-context-list-loading" />}
-                {previewMessages.map((message) => (
-                  <article className={`quick-context-message ${message.role}`} key={message.id}>
-                    <div>
-                      <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
-                      <MarkdownContent content={message.content} language={language} />
-                    </div>
-                  </article>
+            {panelView === 'list' ? (
+              <div className="quick-context-request-list">
+                <small className="quick-context-query-source">
+                  {querySource === 'draft'
+                    ? language === 'zh' ? '按当前输入匹配' : 'Matched to current draft'
+                    : language === 'zh' ? '按上一条提问匹配' : 'Matched to latest prompt'}
+                </small>
+                {searching && matches.length === 0 && <span className="quick-context-list-loading" />}
+                {!searching && matches.length === 0 && (
+                  <p className="quick-context-empty">
+                    {language === 'zh' ? '暂未找到相关历史请求' : 'No related request found'}
+                  </p>
+                )}
+                {matches.map((match) => (
+                  <button
+                    key={match.message.id}
+                    type="button"
+                    className="quick-context-request"
+                    onClick={() => selectMatch(match)}
+                  >
+                    <span>{compactText(match.message.content, 92)}</span>
+                    <ChevronRight size={14} />
+                  </button>
                 ))}
               </div>
-              <footer>
-                <button
-                  type="button"
-                  disabled={!selectedSourceMessage}
-                  onClick={jumpToSelectedTurn}
-                >
-                  <ArrowUpRight size={14} />
-                  {language === 'zh' ? '跳转到该轮' : 'Jump to turn'}
-                </button>
-                <button
-                  type="button"
-                  disabled={!assistantReply}
-                  onClick={() => void copyAssistantReply()}
-                >
-                  {copied ? <Check size={14} /> : <Copy size={14} />}
-                  {copied
-                    ? language === 'zh' ? '已复制' : 'Copied'
-                    : language === 'zh' ? '复制 AI 回复' : 'Copy AI reply'}
-                </button>
-              </footer>
-            </>
-          )}
-        </section>
-      )}
+            ) : (
+              <>
+                <div className="quick-context-turn">
+                  {detailLoading && <span className="quick-context-list-loading" />}
+                  {previewMessages.map((message) => (
+                    <article className={`quick-context-message ${message.role}`} key={message.id}>
+                      <div>
+                        <small>{message.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'CardBush'}</small>
+                        <MarkdownContent content={message.content} language={language} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <footer>
+                  <button
+                    type="button"
+                    disabled={!selectedSourceMessage}
+                    onClick={jumpToSelectedTurn}
+                  >
+                    <ArrowUpRight size={14} />
+                    {language === 'zh' ? '跳转到该轮' : 'Jump to turn'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!assistantReply}
+                    onClick={() => void copyAssistantReply()}
+                  >
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                    {copied
+                      ? language === 'zh' ? '已复制' : 'Copied'
+                      : language === 'zh' ? '复制 AI 回复' : 'Copy AI reply'}
+                  </button>
+                </footer>
+              </>
+            )}
+          </section>
+        )}
+      </div>
     </aside>
   );
 }

@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -91,7 +92,7 @@ assert.deepEqual(
   'model-only protocol rows must not allocate empty React message items',
 );
 
-const appSource = fs.readFileSync(path.join(process.cwd(), 'src', 'App.tsx'), 'utf8');
+const appSource = readAppViewSources();
 const hookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',

@@ -303,6 +303,7 @@ declare global {
         size: number;
         modifiedAt: number;
         truncated: boolean;
+        encoding?: string;
       }>;
       showInspectorContextMenu: (payload: {
         guestWebContentsId: number;

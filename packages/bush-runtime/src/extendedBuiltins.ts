@@ -1,22 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { LogicMemoryStore } from "./logicMemory.js";
+import { ModelImageStore } from "./modelImageStore.js";
 
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
   readToolResult?: (locator: string) => unknown;
   logicMemory?: LogicMemoryStore;
+  modelImages?: ModelImageStore;
 }
 
 export function registerExtendedBuiltins(registry: ToolRegistry, options: ExtendedBuiltinOptions = {}): void {
   const dataRoot = resolve(options.dataRoot || join(process.cwd(), ".cardbush-runtime"));
   registerLogic(registry, options.logicMemory ?? new LogicMemoryStore(join(dataRoot, "lem", "logic.json")));
   registerArchivedToolResult(registry, options.readToolResult);
-  registerImageInput(registry);
+  registerImageInput(registry, options.modelImages ?? new ModelImageStore(dataRoot));
   registerSchedule(registry, dataRoot);
   registerParallel(registry);
 }
@@ -184,7 +186,7 @@ function registerArchivedToolResult(
   });
 }
 
-function registerImageInput(registry: ToolRegistry) {
+function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
   registry.register<Record<string, unknown>>({
     definition: { name: "inject_image_input", description: "Queue a validated local image path, http(s) URL, or data image as standard image input for the next model round.", inputSchema: objectSchema(["url"], { url: { type: "string" }, label: { type: "string" }, caption: { type: "string" }, detail: { enum: ["auto", "low", "high"] } }) },
     manifest: manifest("image.inject", false, "session"), parallelSafe: false,
@@ -196,8 +198,8 @@ function registerImageInput(registry: ToolRegistry) {
     execute: async (context) => {
       const url = requiredText(context.input.url, "url");
       if (!isAbsolute(url) && !/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) throw new Error("url must be an absolute path, http(s) URL, or data image.");
-      if (isAbsolute(url)) await stat(url);
-      return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, detail: text(context.input.detail) || "auto" } }]);
+      const modelInputUrl = await images.snapshot(url, context.signal);
+      return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, ...(isAbsolute(url) ? { model_input_url: modelInputUrl } : {}), detail: text(context.input.detail) || "auto" } }]);
     },
   });
 }

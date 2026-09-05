@@ -9,9 +9,12 @@ const root = process.cwd();
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 
 const provider = read('packages', 'bush-provider-openai', 'src', 'responses.ts');
+const providerFailure = read('packages', 'bush-provider-openai', 'src', 'providerFailure.ts');
 assert.doesNotMatch(provider, /providerStateCompatibilityError|retryableProviderCode/);
 assert.match(provider, /continuation === "supported"/);
-assert.match(provider, /code: "provider_client_error"[\s\S]*?retryable: false/);
+assert.match(provider, /yield providerFailureEvent\(/);
+assert.match(providerFailure, /code: "provider_client_error"[\s\S]*?retryable: false/);
+assert.doesNotMatch(providerFailure, /\.message\.(?:match|includes|test)|retryableProviderCode/);
 
 const ipc = read('packages', 'bush-protocol', 'src', 'runtimeIpc.ts');
 assert.match(ipc, /kind: runtimeErrorKindSchema/);

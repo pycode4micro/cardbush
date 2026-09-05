@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,10 +34,7 @@ const messageBubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
-const appSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'App.tsx'),
-  'utf8',
-);
+const appSource = readAppViewSources();
 const slashBlock = source.match(
   /const slashCommands[\s\S]*?const commandItems/,
 )?.[0] ?? '';

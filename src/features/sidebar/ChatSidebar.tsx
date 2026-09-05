@@ -1549,7 +1549,7 @@ function ScrollingConversationTitle({ title }: { title: string }) {
 
   // Move once at a readable pace, including the trailing fade lane so the
   // final glyphs stop in the fully visible area instead of under the mask.
-  const travelWidth = overflowWidth > 0 ? overflowWidth + 16 : 0;
+  const travelWidth = overflowWidth > 0 ? overflowWidth + 6 : 0;
   const duration = Math.min(9, Math.max(2.6, travelWidth / 42 + 0.9));
   return (
     <span

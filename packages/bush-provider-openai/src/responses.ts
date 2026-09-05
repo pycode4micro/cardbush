@@ -1,7 +1,5 @@
 import OpenAI from "openai";
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import type {
   FunctionTool,
   Response,
@@ -23,6 +21,8 @@ import type {
   ModelProvider,
   ModelStreamOptions,
 } from "@cardbush/bush-runtime";
+import { readLocalModelImage } from "@cardbush/bush-runtime";
+import { providerFailureEvent } from "./providerFailure.js";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -390,91 +390,8 @@ async function resolvedImageUrl(source: string): Promise<string> {
   if (/^https?:\/\//i.test(value) || /^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
     return value;
   }
-  if (!isAbsolute(value)) throw new Error("Model image path must be absolute.");
-  const info = await stat(value);
-  if (!info.isFile()) throw new Error(`Model image is not a file: ${value}`);
-  const maxBytes = 9_000_000;
-  if (info.size > maxBytes) throw new Error(`Model image exceeds ${maxBytes} bytes: ${value}`);
-  const content = await readFile(value);
-  return `data:${imageMime(content)};base64,${content.toString("base64")}`;
-}
-
-function imageMime(content: Buffer): string {
-  if (
-    content.length >= 32 &&
-    content.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
-    content.subarray(-12, -8).readUInt32BE(0) === 0 &&
-    content.subarray(-8, -4).toString("ascii") === "IEND"
-  ) return "image/png";
-  if (
-    content.length >= 4 &&
-    content[0] === 0xff && content[1] === 0xd8 &&
-    content.at(-2) === 0xff && content.at(-1) === 0xd9
-  ) return "image/jpeg";
-  if (
-    content.length >= 14 &&
-    ["GIF87a", "GIF89a"].includes(content.subarray(0, 6).toString("ascii")) &&
-    content.at(-1) === 0x3b
-  ) return "image/gif";
-  if (
-    content.length >= 12 &&
-    content.subarray(0, 4).toString("ascii") === "RIFF" &&
-    content.subarray(8, 12).toString("ascii") === "WEBP"
-  ) return "image/webp";
-  if (
-    content.length >= 26 &&
-    content.subarray(0, 2).toString("ascii") === "BM" &&
-    content.readUInt32LE(2) <= content.length
-  ) return "image/bmp";
-  throw new Error("Model image content is not a supported raster image.");
-}
-
-function retryableStatus(status: number | undefined): boolean {
-  return status === undefined || status === 408 || status === 409 || status === 429 || status >= 500;
-}
-
-function providerFailureEvent(
-  requestId: string,
-  sequence: number,
-  error: unknown,
-  aborted: boolean,
-): ModelEvent {
-  if (aborted) {
-    return {
-      protocol: BUSH_MODEL_EVENT_PROTOCOL,
-      requestId,
-      sequence,
-      createdAt: new Date().toISOString(),
-      kind: "response_failed",
-      code: "request_aborted",
-      message: "The model request was aborted.",
-      retryable: false,
-    };
-  }
-  if (error instanceof OpenAI.APIError) {
-    return {
-      protocol: BUSH_MODEL_EVENT_PROTOCOL,
-      requestId,
-      sequence,
-      createdAt: new Date().toISOString(),
-      kind: "response_failed",
-      code: typeof error.code === "string" && error.code ? error.code : error.name,
-      message: error.message,
-      retryable: retryableStatus(error.status),
-      status: error.status,
-      providerRequestId: error.requestID ?? undefined,
-    };
-  }
-  return {
-    protocol: BUSH_MODEL_EVENT_PROTOCOL,
-    requestId,
-    sequence,
-    createdAt: new Date().toISOString(),
-    kind: "response_failed",
-    code: "provider_client_error",
-    message: error instanceof Error ? error.message : String(error),
-    retryable: false,
-  };
+  const { content, mime } = await readLocalModelImage(value);
+  return `data:${mime};base64,${content.toString("base64")}`;
 }
 
 export class OpenAIResponsesProvider implements ModelProvider {

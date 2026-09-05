@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -625,10 +626,7 @@ const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
   'utf8',
 );
-const appSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'App.tsx'),
-  'utf8',
-);
+const appSource = readAppViewSources();
 assert.match(
   appSource,
   /changeReportsFromMessages\(\s*normalizeChatMessagesForDisplay\(messages\)\s*,?\s*\)/m,

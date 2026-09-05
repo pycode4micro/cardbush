@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -155,10 +156,7 @@ assert.match(
   'the GUI stream adapter must expose the Runtime segment-completed fact',
 );
 
-const appSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'App.tsx'),
-  'utf8',
-);
+const appSource = readAppViewSources();
 assert.match(appSource, /guidanceDeliveryMode === 'immediate'/);
 assert.match(
   appSource,

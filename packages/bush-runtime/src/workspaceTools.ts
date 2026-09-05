@@ -1383,8 +1383,16 @@ async function searchFileContentWithNode(
       if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) continue;
       throw error;
     }
-    if (bytes.subarray(0, 8_192).includes(0)) continue;
-    const lines = bytes.toString("utf8").split(/\r?\n/);
+    // Match ripgrep's Unicode BOM behavior: UTF-16 padding is not binary content.
+    const utf16 = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : undefined;
+    if (!utf16 && bytes.subarray(0, 8_192).includes(0)) continue;
+    let text: string;
+    try {
+      text = utf16 ? new TextDecoder(utf16, { fatal: true }).decode(bytes) : bytes.toString("utf8").replace(/^\ufeff/, "");
+    } catch { continue; }
+    if (text.includes("\0")) continue;
+    const lines = text.split(/\r\n|\r|\n/);
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]!;
       let column = -1;

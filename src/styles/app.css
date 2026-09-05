@@ -956,7 +956,7 @@ body.sidebar-resizing .sidebar-resizer {
 .conversation-row .conversation-title {
   --conversation-title-leading-lane: 24px;
   --conversation-title-edge-fade: 18px;
-  --conversation-title-trailing-fade: 16px;
+  --conversation-title-trailing-fade: 6px;
   position: relative;
   display: block;
   overflow: hidden;
@@ -1008,14 +1008,14 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-.conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
 .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
   animation: conversation-title-marquee var(--conversation-title-duration, 5s)
     linear 140ms forwards;
 }
 
 .conversation-row:hover .conversation-title.is-hover-scrollable,
-.conversation-row:focus-within .conversation-title.is-hover-scrollable,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable,
 .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable {
   -webkit-mask-image: linear-gradient(
     90deg,
@@ -1048,7 +1048,7 @@ body.sidebar-resizing .sidebar-resizer {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-  .conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
   .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }
@@ -1066,7 +1066,8 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row {
-  --conversation-title-hover-actions: 50px;
+  /* 49px action footprint + 3px clearance, minus the 8px idle inset. */
+  --conversation-title-hover-actions: 44px;
   position: relative;
   box-sizing: border-box;
   width: 100%;
@@ -1088,7 +1089,8 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-row.running,
 .conversation-row:has(.conversation-attention-indicator) {
-  --conversation-title-hover-actions: 22px;
+  /* Status rows already reserve 36px of the same 52px action lane. */
+  --conversation-title-hover-actions: 16px;
   padding-right: 36px;
 }
 
@@ -1108,7 +1110,8 @@ body.sidebar-resizing .sidebar-resizer {
 
 .conversation-row > .conversation-title {
   width: 0;
-  max-width: 100%;
+  /* Flex includes the leading fade's negative margin. A 100% max-width
+     would clip another 24px from the right before the action mask begins. */
   flex: 1 1 0;
   min-width: 0;
 }
@@ -1232,6 +1235,7 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row:hover .conversation-running-indicator,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-running-indicator,
 .conversation-row:has(.sidebar-menu) .conversation-running-indicator {
   opacity: 0;
 }
@@ -1264,6 +1268,7 @@ body.sidebar-resizing .sidebar-resizer {
 }
 
 .conversation-row:hover .conversation-attention-indicator,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-attention-indicator,
 .conversation-row:has(.sidebar-menu) .conversation-attention-indicator {
   opacity: 0;
 }
@@ -1337,10 +1342,10 @@ body.sidebar-resizing .sidebar-resizer {
 .project-row:has(.row-more:focus-visible) .row-more,
 .project-row:has(.sidebar-menu) .row-more,
 .conversation-row:hover .conversation-pin,
-.conversation-row:has(.conversation-pin:focus-visible) .conversation-pin,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-pin,
 .conversation-row:has(.sidebar-menu) .conversation-pin,
 .conversation-row:hover .conversation-more,
-.conversation-row:has(.conversation-more:focus-visible) .conversation-more,
+.conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-more,
 .conversation-row:has(.sidebar-menu) .conversation-more {
   opacity: 1;
   pointer-events: auto;
@@ -2553,6 +2558,15 @@ body.right-inspector-resizing .right-inspector-resizer {
   tab-size: 2;
 }
 
+.source-plain-text {
+  margin: 0;
+  padding: 12px 16px 28px;
+  white-space: pre;
+  tab-size: 2;
+  font: 12px/1.55 var(--mono-font-family);
+  color: var(--diff-syntax-text);
+}
+
 .source-code-line {
   min-width: 100%;
   min-height: 20px;
@@ -3385,11 +3399,12 @@ body.right-inspector-resizing .right-inspector-resizer {
 .quick-context-rail {
   position: absolute;
   left: 10px;
+  right: 10px;
   top: 24px;
   bottom: 24px;
   z-index: 7;
-  width: 44px;
-  min-height: 120px;
+  min-width: 0;
+  min-height: 0;
   pointer-events: none;
 }
 
@@ -3487,15 +3502,27 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: color-mix(in srgb, var(--text) 88%, transparent);
 }
 
+.quick-context-popovers {
+  position: absolute;
+  inset: 0 0 max(0px, calc(var(--quick-context-bottom-inset, var(--composer-dock-height, 0px)) - 12px));
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
 .quick-context-panel {
   position: absolute;
   left: 48px;
   top: 50%;
-  width: min(300px, calc(100vw - 390px));
-  max-height: min(58vh, 460px);
+  width: min(300px, max(0px, calc(100% - 48px)));
+  max-height: min(460px, 100%);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: 9px;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
   color: var(--text);
   background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
   backdrop-filter: blur(18px) saturate(112%);
@@ -3509,9 +3536,10 @@ body.right-inspector-resizing .right-inspector-resizer {
 .quick-context-turn-preview {
   position: absolute;
   left: 48px;
+  top: clamp(min(62px, 50%), var(--quick-context-preview-top, 50%), max(50%, calc(100% - 62px)));
   z-index: 3;
-  width: min(390px, calc(100vw - 390px));
-  max-height: 124px;
+  width: min(390px, max(0px, calc(100% - 48px)));
+  max-height: min(124px, 100%);
   padding: 11px 13px;
   overflow: hidden;
   color: var(--text);
@@ -3538,6 +3566,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: -webkit-box;
   margin: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--text-mid);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
@@ -3555,10 +3584,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .quick-context-panel.detail {
-  width: min(510px, calc(100vw - 390px));
+  width: min(510px, max(0px, calc(100% - 48px)));
 }
 
 .quick-context-panel > header {
+  flex: 0 0 auto;
   height: 36px;
   padding: 0 8px 0 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
@@ -3573,6 +3603,9 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .quick-context-panel > header strong {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
 }
@@ -3609,9 +3642,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .quick-context-request-list {
-  max-height: calc(min(58vh, 460px) - 36px);
+  flex: 0 1 auto;
+  min-height: 0;
   padding: 6px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
@@ -3652,6 +3687,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .quick-context-request span {
   overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: 11.5px;
   line-height: 1.45;
 }
@@ -3679,9 +3715,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .quick-context-turn {
-  max-height: calc(min(58vh, 460px) - 78px);
+  flex: 0 1 auto;
+  min-height: 0;
   padding: 7px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 
@@ -3717,10 +3755,12 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .quick-context-panel > footer {
+  flex: 0 0 auto;
   min-height: 42px;
   padding: 6px 8px;
   border-top: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
 }
@@ -3755,18 +3795,6 @@ body.right-inspector-resizing .right-inspector-resizer {
 @keyframes quick-context-preview-in {
   from { opacity: 0; transform: translate(-5px, -50%); }
   to { opacity: 1; transform: translate(0, -50%); }
-}
-
-@media (max-width: 980px) {
-  .quick-context-rail {
-    left: 10px;
-    width: 44px;
-  }
-
-  .quick-context-panel,
-  .quick-context-panel.detail {
-    width: min(460px, calc(100vw - 90px));
-  }
 }
 
 .quick-context-pre-test-header {
@@ -18847,7 +18875,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-row:hover .conversation-title.is-hover-scrollable .conversation-title-text,
-  .conversation-row:focus-within .conversation-title.is-hover-scrollable .conversation-title-text,
+  .conversation-row:has(.conversation-pin:focus-visible, .conversation-more:focus-visible) .conversation-title.is-hover-scrollable .conversation-title-text,
   .conversation-row:has(.sidebar-menu) .conversation-title.is-hover-scrollable .conversation-title-text {
     animation: none;
   }

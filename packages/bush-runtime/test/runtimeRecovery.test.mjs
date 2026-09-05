@@ -283,13 +283,8 @@ test("recovers a compacted active Session Turn without replaying its completed T
             toolCallId: "call_recovery_checkpoint",
             nameDelta: "checkpoint_context",
             argumentsDelta: JSON.stringify({
-              session_revision: 1,
               summaries: [],
-              active_turn: {
-                turn_id: activeTurnId,
-                through_message_id: throughMessageId,
-                summary: "The fixture Tool completed successfully; continue by returning the final answer without rerunning it.",
-              },
+              active_summary: "The fixture Tool completed successfully; continue by returning the final answer without rerunning it.",
             }),
           });
           yield recoveryEvent(modelRequest.requestId, 2, "response_completed", {

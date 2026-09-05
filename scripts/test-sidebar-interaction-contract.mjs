@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,10 +7,7 @@ const sidebarSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'sidebar', 'ChatSidebar.tsx'),
   'utf8',
 );
-const appSource = fs.readFileSync(
-  path.join(process.cwd(), 'src', 'App.tsx'),
-  'utf8',
-);
+const appSource = readAppViewSources();
 const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
@@ -267,7 +265,15 @@ assert.doesNotMatch(
   /conversation-title-marquee[\s\S]{0,140}(?:infinite|alternate)/,
   'Conversation title marquee must not loop or reverse after reaching the end',
 );
-assert.match(sidebarSource, /const travelWidth = overflowWidth > 0 \? overflowWidth \+ 16 : 0/);
+assert.match(sidebarSource, /const travelWidth = overflowWidth > 0 \? overflowWidth \+ 6 : 0/);
+assert.match(stylesSource, /--conversation-title-trailing-fade:\s*6px/);
+assert.doesNotMatch(stylesSource, /\.conversation-row:focus-within \.conversation-title/,
+  'Mouse selection must not retain the title action mask after the pointer leaves');
+assert.doesNotMatch(
+  stylesSource.match(/\.conversation-row > \.conversation-title\s*\{([^}]*)\}/)?.[1] ?? '',
+  /max-width:\s*100%/,
+  'The leading fade lane must not be subtracted a second time by a percentage width cap',
+);
 assert.match(sidebarSource, /travelWidth \/ 42 \+ 0\.9/);
 assert.match(sidebarSource, /--conversation-title-travel/);
 assert.match(
@@ -302,8 +308,8 @@ assert.match(
   /\.conversation-row\.nested\s*\{[\s\S]*?padding-right:\s*8px/,
   'Nested titles must use the full idle row width instead of reserving hidden actions',
 );
-assert.match(stylesSource, /\.conversation-row\s*\{[\s\S]*?--conversation-title-hover-actions:\s*50px[\s\S]*?padding:\s*0 8px 0 var\(--sidebar-tree-base\)/);
-assert.match(stylesSource, /\.conversation-row\.running,[\s\S]*?--conversation-title-hover-actions:\s*22px;[\s\S]*?padding-right:\s*36px/);
+assert.match(stylesSource, /\.conversation-row\s*\{[\s\S]*?--conversation-title-hover-actions:\s*44px[\s\S]*?padding:\s*0 8px 0 var\(--sidebar-tree-base\)/);
+assert.match(stylesSource, /\.conversation-row\.running,[\s\S]*?--conversation-title-hover-actions:\s*16px;[\s\S]*?padding-right:\s*36px/);
 assert.match(sidebarSource, /className=\{`conversation-pin\$\{pinned \? ' is-pinned' : ''\}`\}/);
 assert.match(sidebarSource, /aria-pressed=\{pinned\}/);
 assert.match(stylesSource, /\.conversation-pin\s*\{[\s\S]*?right:\s*27px/);

@@ -279,7 +279,7 @@ export interface RuntimeConnectionUpdate {
   sessionId: string;
   turnId?: string;
   attempt?: number;
-  maxAttempts?: number;
+  maxAttempts?: number | null;
   nextRetryMs?: number;
   reason?: string;
   message?: string;

@@ -1,3 +1,4 @@
+import { readAppViewSources } from './helpers/app-view-sources.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
 const shadow = read('src', 'backend', 'shadowRuntime.ts');
 const api = read('src', 'backend', 'api.ts');
 const shadowWindow = read('src', 'ShadowWindow.tsx');
-const app = read('src', 'App.tsx');
+const app = readAppViewSources();
 const css = read('src', 'styles', 'app.css');
 const main = read('electron', 'main.ts');
 const preload = read('electron', 'preload.ts');

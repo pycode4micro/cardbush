@@ -33,6 +33,8 @@ import { inspectProjectRoots } from './projectRoots';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
+import { readFilePrefix, readHandleBytes } from './fileRead';
+import { readTextPreview, renderTextFilePreview } from './textPreview';
 import {
   listProductSkills,
   migrateLegacyProductSkills,
@@ -2668,24 +2670,7 @@ ipcMain.handle('shell:read-text-preview', async (event, targetPath: string) => {
   if (!normalizedPath) {
     throw new Error('Invalid preview path.');
   }
-  const stats = await fs.promises.stat(normalizedPath);
-  if (!stats.isFile()) {
-    throw new Error('Preview target is not a file.');
-  }
-  const maxPreviewBytes = 2 * 1024 * 1024;
-  const byteCount = Math.min(stats.size, maxPreviewBytes);
-  const bytes = await readFilePrefix(normalizedPath, byteCount);
-  const zeroBytes = bytes.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
-  if (bytes.length > 0 && zeroBytes / bytes.length > 0.01) {
-    throw new Error('Preview target is not a text file.');
-  }
-  return {
-    path: normalizedPath,
-    content: bytes.toString('utf8'),
-    size: stats.size,
-    modifiedAt: stats.mtimeMs,
-    truncated: stats.size > maxPreviewBytes,
-  };
+  return readTextPreview(normalizedPath);
 });
 
 async function runPackagedApplicationSmoke(): Promise<void> {
@@ -3494,7 +3479,7 @@ function registerLocalFileProtocol() {
         return new Response(bytes ? new Uint8Array(bytes) : null, {
           headers: {
             'content-type': contentTypeForPath(officePath),
-            'content-length': String(stats.size),
+            'content-length': String(bytes?.length ?? stats.size),
             'cache-control': 'no-store',
             'x-content-type-options': 'nosniff',
           },
@@ -3561,19 +3546,28 @@ function registerLocalFileProtocol() {
       const range = byteRangeFromHeader(request.headers.get('range'), stats.size);
       if (range) {
         const length = range.end - range.start + 1;
-        const bytes = Buffer.allocUnsafe(length);
+        let bytes: Buffer;
+        let resourceSize: number;
         const handle = await fs.promises.open(normalizedPath, 'r');
         try {
-          await handle.read(bytes, 0, length, range.start);
+          resourceSize = (await handle.stat()).size;
+          const readableLength = Math.max(0, Math.min(length, resourceSize - range.start));
+          bytes = await readHandleBytes(handle, readableLength, range.start);
+          if (bytes.length < readableLength) {
+            resourceSize = bytes.length > 0 ? range.start + bytes.length : (await handle.stat()).size;
+          }
         } finally {
           await handle.close();
+        }
+        if (bytes.length === 0) {
+          return new Response(null, { status: 416, headers: { 'content-range': `bytes */${resourceSize}` } });
         }
         return new Response(request.method === 'HEAD' ? null : new Uint8Array(bytes), {
           status: 206,
           headers: {
             'content-type': responseType,
-            'content-length': String(length),
-            'content-range': `bytes ${range.start}-${range.end}/${stats.size}`,
+            'content-length': String(bytes.length),
+            'content-range': `bytes ${range.start}-${range.start + bytes.length - 1}/${resourceSize}`,
             'accept-ranges': 'bytes',
             'cache-control': 'public, max-age=31536000, immutable',
           },
@@ -3585,7 +3579,7 @@ function registerLocalFileProtocol() {
       return new Response(bytes ? new Uint8Array(bytes) : null, {
         headers: {
           'content-type': responseType,
-          'content-length': String(stats.size),
+          'content-length': String(bytes?.length ?? stats.size),
           'accept-ranges': 'bytes',
           'cache-control': 'public, max-age=31536000, immutable',
         },
@@ -3894,17 +3888,6 @@ function contentTypeForPath(filePath: string) {
   return 'application/octet-stream';
 }
 
-async function readFilePrefix(filePath: string, length: number) {
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const bytes = Buffer.alloc(length);
-    const result = await handle.read(bytes, 0, length, 0);
-    return bytes.subarray(0, result.bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
-
 function byteRangeFromHeader(value: string | null, size: number) {
   if (!value || !Number.isFinite(size) || size <= 0) return null;
   const match = /^bytes=(\d*)-(\d*)$/i.exec(value.trim());
@@ -3920,54 +3903,6 @@ function byteRangeFromHeader(value: string | null, size: number) {
   }
   if (start < 0 || start >= size || end < start) return null;
   return { start, end };
-}
-
-async function renderTextFilePreview(filePath: string, previewError = '') {
-  const maxPreviewBytes = 2 * 1024 * 1024;
-  const handle = await fs.promises.open(filePath, 'r');
-  try {
-    const stats = await handle.stat();
-    const byteCount = Math.min(stats.size, maxPreviewBytes);
-    const bytes = Buffer.alloc(byteCount);
-    await handle.read(bytes, 0, byteCount, 0);
-    const zeroBytes = bytes.reduce((count, value) => count + (value === 0 ? 1 : 0), 0);
-    const likelyBinary = bytes.length > 0 && zeroBytes / bytes.length > 0.01;
-    const text = likelyBinary
-      ? Array.from(bytes.subarray(0, Math.min(bytes.length, 4096)))
-          .map((value, index) => `${index % 16 === 0 ? `\n${index.toString(16).padStart(8, '0')}  ` : ''}${value.toString(16).padStart(2, '0')} `)
-          .join('')
-          .trim()
-      : bytes.toString('utf8');
-    const notice = previewError
-      ? `专用预览加载失败，已切换为文本兜底：${previewError}`
-      : likelyBinary
-        ? '检测到二进制内容，以下显示前 4 KiB 十六进制数据。'
-        : stats.size > maxPreviewBytes
-          ? '文件较大，仅显示前 2 MiB。'
-          : '文本兜底预览';
-    return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="color-scheme" content="dark light">
-<title>${escapePreviewHtml(path.basename(filePath))}</title>
-<style>
-:root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; background:#1c1b19; color:#dedbd4; }
-body { margin:0; min-height:100vh; background:#1c1b19; }
-header { position:sticky; top:0; padding:10px 14px; background:#2b2b2b; border-bottom:1px solid rgba(255,255,255,.08); z-index:1; }
-header strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:600 12px system-ui,sans-serif; }
-header small { display:block; margin-top:4px; color:#99958d; font:11px system-ui,sans-serif; }
-pre { margin:0; padding:14px; overflow:auto; color:#d7d3cb; font-size:12px; line-height:1.55; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
-</style></head><body><header><strong>${escapePreviewHtml(filePath)}</strong><small>${escapePreviewHtml(notice)}</small></header><pre>${escapePreviewHtml(text)}</pre></body></html>`;
-  } finally {
-    await handle.close();
-  }
-}
-
-function escapePreviewHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 function contentTypeForBytes(bytes: Uint8Array) {

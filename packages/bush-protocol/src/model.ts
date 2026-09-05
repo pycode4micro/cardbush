@@ -141,6 +141,13 @@ const eventBaseSchema = z.object({
   createdAt: z.string().min(1),
 });
 
+// Safe transport facts only: never persist headers, URLs, raw causes or request bodies.
+export const modelFailureDiagnosticsSchema = z.object({
+  errorName: z.string().max(80),
+  causeNames: z.array(z.string().max(80)).max(8),
+  causeCodes: z.array(z.string().max(80)).max(8),
+});
+
 export const modelEventSchema = z.discriminatedUnion("kind", [
   eventBaseSchema.extend({
     kind: z.literal("response_started"),
@@ -178,6 +185,8 @@ export const modelEventSchema = z.discriminatedUnion("kind", [
     retryable: z.boolean(),
     status: z.number().int().optional(),
     providerRequestId: z.string().optional(),
+    retryAfterMs: z.number().int().nonnegative().optional(),
+    diagnostics: modelFailureDiagnosticsSchema.optional(),
   }),
 ]);
 
