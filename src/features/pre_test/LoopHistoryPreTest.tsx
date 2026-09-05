@@ -4,7 +4,7 @@ import {
   mergeFinalStreamMessages,
   normalizeActiveTurnTranscriptForDisplay,
   normalizeChatMessagesForDisplay,
-} from '../../hooks/useCardbushChat';
+} from '../chatMessages/transcript/messageProjection';
 import type {
   AppLanguage,
   ChatMessage,

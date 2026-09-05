@@ -5,6 +5,9 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+// Closing the preload fixture must not end Electron before the restart and
+// durable-history assertions below it have actually run.
+app.on('window-all-closed', () => {});
 
 void run().catch((error) => {
   console.error(error);
@@ -370,6 +373,32 @@ async function run() {
         preloadCapabilityResponse.result.eventProtocol,
         'bush.runtime_event.v1',
       );
+      const releasedSubscriptions = [];
+      const originalStopStream = controller.stopStream.bind(controller);
+      controller.stopStream = async (message) => {
+        releasedSubscriptions.push(message.subscriptionId);
+        return originalStopStream(message);
+      };
+      // Subscribe to a quiet, not-yet-started Turn: cleanup must work without
+      // waiting for another stream frame to reveal that the renderer is gone.
+      await testWindow.webContents.executeJavaScript(`
+        window.cardbushDesktop.runtime.startStream({protocol:'bush.runtime_ipc.v1',
+          type:'start_stream',subscriptionId:'reload-old',
+          request:{sessionId:'quiet-reload-session',turnId:'quiet-turn'}})
+      `);
+      await testWindow.loadURL('data:text/html,<html><body>runtime-after-reload</body></html>');
+      await new Promise(resolve=>setTimeout(resolve,50));
+      assert.ok(releasedSubscriptions.includes('reload-old'), 'real navigation releases a quiet old subscription');
+      await testWindow.webContents.executeJavaScript(`
+        window.cardbushDesktop.runtime.startStream({protocol:'bush.runtime_ipc.v1',
+          type:'start_stream',subscriptionId:'reload-new',
+          request:{sessionId:'quiet-reload-session',turnId:'quiet-turn'}})
+      `);
+      assert.equal(releasedSubscriptions.includes('reload-new'),false,'the new document stays subscribed');
+      testWindow.destroy();
+      await new Promise(resolve=>setTimeout(resolve,50));
+      assert.ok(releasedSubscriptions.includes('reload-new'),'destroy releases the final quiet subscription');
+      controller.stopStream = originalStopStream;
     } finally {
       unregisterIpc();
       testWindow?.destroy();

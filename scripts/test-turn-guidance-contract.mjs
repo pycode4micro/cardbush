@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const protocolPath = path.join(process.cwd(), 'src', 'backend', 'streamProtocol.ts');
 const source = fs.readFileSync(protocolPath, 'utf8');
@@ -109,13 +110,16 @@ assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_guidance_closed'/
 assert.match(hookSource, /runtimeErrorCode\(caught\) === 'turn_not_active'/);
 assert.doesNotMatch(hookSource, /isBushServerHttpError/);
 assert.match(hookSource, /createSegmentedAssistantStreamBuffers\(/);
+const streamBufferSource = fs.readFileSync(
+  path.join(process.cwd(), 'src/features/chatMessages/transcript/assistantStreamBuffer.ts'), 'utf8',
+);
 assert.match(
-  hookSource,
+  streamBufferSource,
   /assistantRevealMinimumChunkCharacters = 10;[\s\S]*?assistantRevealMaximumCommits = 72;[\s\S]*?assistantRevealIntervalMs = 32;/,
   'released assistant text must use a deliberate 10-character, bounded accelerated projection',
 );
 assert.match(
-  hookSource,
+  streamBufferSource,
   /Math\.ceil\(characters\.length \/ assistantRevealMaximumCommits\)/,
   'long replies must raise the chunk size instead of creating an unbounded number of Markdown commits',
 );
@@ -194,39 +198,7 @@ assert.match(summarySource, /data-testid="work-summary-history"/);
 assert.match(summarySource, /openWorkSummaryInspector/);
 assert.match(workSummaryInspectorSource, /<AssistantLoopHistoryBlock/);
 
-const hookTranspiled = ts.transpileModule(hookSource, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-});
-const hookModule = { exports: {} };
-vm.runInNewContext(hookTranspiled.outputText, {
-  module: hookModule,
-  exports: hookModule.exports,
-  require: (specifier) => {
-    if (specifier.endsWith('/assistantTurnTiming')) {
-      return {
-        assistantTurnTimingFingerprint: () => '',
-        hydrateAssistantTurnTiming: (messages) => messages,
-        persistAssistantTurnTiming: () => undefined,
-      };
-    }
-    return specifier.endsWith('/goalState')
-      ? {
-        applyGoalToolUpdate: () => null,
-        goalToolUpdateFromExecution: () => null,
-        isGoalSelfCheckMessage: (message) =>
-          message?.role === 'user' &&
-          message?.metadata?.runtime_user_label === 'goal_self_check',
-      }
-      : {};
-  },
-  Date,
-  Map,
-  Set,
-  window: { setTimeout, clearTimeout },
-});
+const transcript = await loadChatTranscript();
 const {
   appendAssistantDelta,
   appendAssistantTextAfterToolBoundary,
@@ -241,7 +213,7 @@ const {
   normalizeChatMessagesForDisplay,
   optimisticGuidanceMessage,
   reconcileOptimisticGuidance,
-} = hookModule.exports;
+} = transcript;
 
 const persistedGuidanceProjection = projectRuntimeTurnMessages({
   turnId: 'persisted-guidance-turn',

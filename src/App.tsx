@@ -30,6 +30,7 @@ import {
   Component,
   type CSSProperties,
   type ErrorInfo,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type UIEvent,
@@ -62,12 +63,16 @@ import {
   type ExperimentalGoal,
 } from './backend/api';
 import {
-  normalizeChatMessagesForDisplay,
-  normalizeActiveTurnTranscriptForDisplay,
   useCardbushChat,
   type QueuedChatMessage,
 } from './hooks/useCardbushChat';
+import {
+  normalizeChatMessagesForDisplay,
+  normalizeActiveTurnTranscriptForDisplay,
+} from './features/chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
+import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
+import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
 import { inspectorMaximum } from './components/rightInspectorSizing';
@@ -331,6 +336,12 @@ type InspectorShadowTab = {
 };
 
 type InspectorTab = InspectorResourceTab | InspectorReviewTab | InspectorShadowTab;
+
+type InspectorTabContextMenuState = {
+  tabId: string;
+  x: number;
+  y: number;
+};
 
 const defaultSidebarWidth = 272;
 const minSidebarWidth = 220;
@@ -827,6 +838,10 @@ function CardbushApp() {
     (!onlyTalkMode && !chat.activeConversation
       ? fallbackProjectDir || undefined
       : undefined);
+  const activeProjectPathAliases = useMemo(
+    () => conversationProjectPathAliases(chat.activeConversation),
+    [chat.activeConversation],
+  );
 
   const rememberRecentProject = useCallback((projectDir: string) => {
     const normalized = projectDir.trim();
@@ -857,7 +872,12 @@ function CardbushApp() {
   const [inspectorTabs, setInspectorTabs] = useState<InspectorTab[]>([]);
   const [activeInspectorTabId, setActiveInspectorTabId] = useState('');
   const [inspectorAddMenuOpen, setInspectorAddMenuOpen] = useState(false);
+  const [inspectorTabsMenuOpen, setInspectorTabsMenuOpen] = useState(false);
+  const [inspectorTabContextMenu, setInspectorTabContextMenu] =
+    useState<InspectorTabContextMenuState | null>(null);
   const inspectorAddMenuRef = useRef<HTMLDivElement | null>(null);
+  const inspectorTabsMenuRef = useRef<HTMLDivElement | null>(null);
+  const inspectorTabContextMenuRef = useRef<HTMLDivElement | null>(null);
   const inspectorWebviewRefs = useRef(new Map<string, InspectorWebviewHandle>());
   const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
     Record<string, InspectorNavigationState>
@@ -867,6 +887,12 @@ function CardbushApp() {
   const activeInspectorTab = inspectorTabs.find(
     (tab) => tab.id === activeInspectorTabId,
   ) ?? null;
+  const inspectorTabContextTarget = inspectorTabContextMenu
+    ? inspectorTabs.find((tab) => tab.id === inspectorTabContextMenu.tabId) ?? null
+    : null;
+  const inspectorTabContextTargetIndex = inspectorTabContextTarget
+    ? inspectorTabs.findIndex((tab) => tab.id === inspectorTabContextTarget.id)
+    : -1;
   const inspectorTarget = activeInspectorTab?.kind === 'resource'
     ? activeInspectorTab.detail
     : null;
@@ -1045,6 +1071,8 @@ function CardbushApp() {
     setWorkSummaryInspector(null);
     setChangeReviewNotice('');
     setInspectorAddMenuOpen(false);
+    setInspectorTabsMenuOpen(false);
+    setInspectorTabContextMenu(null);
   }, []);
   const [retainedInspectorContent, setRetainedInspectorContent] = useState<{
     tab: InspectorTab | null;
@@ -1092,30 +1120,77 @@ function CardbushApp() {
       : [displayedInspectorTab]
     : [];
   const activeInspectorTabIdentity = displayedInspectorTab?.id ?? '';
+  const {
+    ref: inspectorTabsRef,
+    state: inspectorTabScrollState,
+    scroll: scrollInspectorTabs,
+  } = useInspectorTabStrip(activeInspectorTabIdentity, displayedInspectorTabs.length);
   const activateInspectorTab = (tab: InspectorTab) => {
     setActiveInspectorTabId(tab.id);
     setWorkSummaryInspector(null);
     setInspectorAddMenuOpen(false);
+    setInspectorTabsMenuOpen(false);
+    setInspectorTabContextMenu(null);
   };
-  const closeInspectorTab = (closingIdentity: string) => {
-    const closingIndex = inspectorTabs.findIndex((tab) => tab.id === closingIdentity);
-    if (closingIndex < 0) return;
-    const closingTab = inspectorTabs[closingIndex];
-    const remaining = inspectorTabs.filter((tab) => tab.id !== closingIdentity);
+  const closeInspectorTabs = (closingIdentities: Set<string>) => {
+    const closingTabs = inspectorTabs.filter((tab) => closingIdentities.has(tab.id));
+    if (closingTabs.length === 0) return;
+    const activeClosingIndex = inspectorTabs.findIndex(
+      (tab) => tab.id === activeInspectorTabIdentity,
+    );
+    const remaining = inspectorTabs.filter((tab) => !closingIdentities.has(tab.id));
     setInspectorTabs(remaining);
-    inspectorWebviewRefs.current.delete(closingIdentity);
+    for (const closingTab of closingTabs) {
+      inspectorWebviewRefs.current.delete(closingTab.id);
+    }
     setInspectorNavigationByTarget((current) => {
-      if (!(closingIdentity in current)) return current;
       const next = { ...current };
-      delete next[closingIdentity];
-      return next;
+      let changed = false;
+      for (const closingTab of closingTabs) {
+        if (!(closingTab.id in next)) continue;
+        delete next[closingTab.id];
+        changed = true;
+      }
+      return changed ? next : current;
     });
-    if (activeInspectorTabIdentity === closingIdentity) {
+    if (closingIdentities.has(activeInspectorTabIdentity)) {
       setActiveInspectorTabId(
-        remaining[Math.min(closingIndex, remaining.length - 1)]?.id ?? '',
+        remaining[Math.min(Math.max(activeClosingIndex, 0), remaining.length - 1)]?.id ?? '',
       );
     }
-    if (closingTab?.kind === 'review') setChangeReviewNotice('');
+    if (closingTabs.some((tab) => tab.kind === 'review')) setChangeReviewNotice('');
+    setInspectorAddMenuOpen(false);
+    setInspectorTabsMenuOpen(false);
+    setInspectorTabContextMenu(null);
+  };
+  const closeInspectorTab = (closingIdentity: string) => {
+    closeInspectorTabs(new Set([closingIdentity]));
+  };
+  const closeOtherInspectorTabs = (identity: string) => {
+    closeInspectorTabs(new Set(inspectorTabs
+      .filter((tab) => tab.id !== identity)
+      .map((tab) => tab.id)));
+    setActiveInspectorTabId(identity);
+  };
+  const closeInspectorTabsToRight = (identity: string) => {
+    const index = inspectorTabs.findIndex((tab) => tab.id === identity);
+    if (index < 0) return;
+    closeInspectorTabs(new Set(inspectorTabs.slice(index + 1).map((tab) => tab.id)));
+  };
+  const openInspectorTabContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    tabId: string,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const width = 188;
+    const height = 164;
+    setInspectorTabContextMenu({
+      tabId,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    });
+    setInspectorTabsMenuOpen(false);
     setInspectorAddMenuOpen(false);
   };
   const updateInspectorNavigation = useCallback((
@@ -1244,6 +1319,28 @@ function CardbushApp() {
       window.removeEventListener('keydown', closeOnEscape);
     };
   }, [inspectorAddMenuOpen]);
+  useEffect(() => {
+    if (!inspectorTabsMenuOpen && !inspectorTabContextMenu) return undefined;
+    const closeTabMenusFromPointer = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (inspectorTabsMenuRef.current?.contains(target)) return;
+      if (inspectorTabContextMenuRef.current?.contains(target)) return;
+      setInspectorTabsMenuOpen(false);
+      setInspectorTabContextMenu(null);
+    };
+    const closeTabMenusFromKeyboard = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setInspectorTabsMenuOpen(false);
+      setInspectorTabContextMenu(null);
+    };
+    window.addEventListener('pointerdown', closeTabMenusFromPointer);
+    window.addEventListener('keydown', closeTabMenusFromKeyboard);
+    return () => {
+      window.removeEventListener('pointerdown', closeTabMenusFromPointer);
+      window.removeEventListener('keydown', closeTabMenusFromKeyboard);
+    };
+  }, [inspectorTabContextMenu, inspectorTabsMenuOpen]);
   useEffect(() => {
     if (!inspectorOpen || settingsOpen) return undefined;
     const handleInspectorShortcut = (event: KeyboardEvent) => {
@@ -2133,6 +2230,20 @@ function CardbushApp() {
       refreshProjectGitStatus,
     ],
   );
+  const revertActiveConversationChangeReport = useCallback((
+    report: ConversationChangeReport,
+    message: ChatMessage,
+  ) => revertChangeReport(
+    message.conversationId?.trim() || chat.activeConversationId,
+    report,
+  ), [chat.activeConversationId, revertChangeReport]);
+  const openActiveConversationChangeReview = useCallback((filePath?: string) => {
+    if (!chat.activeConversationId) return;
+    openChangeReviewInspector(
+      chat.activeConversationId,
+      typeof filePath === 'string' ? filePath.trim() : '',
+    );
+  }, [chat.activeConversationId, openChangeReviewInspector]);
 
   const revertConversationReports = useCallback(
     async (conversationId: string, reports: ConversationChangeReport[]) => {
@@ -2511,7 +2622,7 @@ function CardbushApp() {
                 onRevealSidebar={() => setSidebarCollapsed(false)}
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={activeProjectDir}
-                projectPathAliases={conversationProjectPathAliases(chat.activeConversation)}
+                projectPathAliases={activeProjectPathAliases}
                 selectedProjectDir={
                   onlyTalkMode ? '' : activeConversationProjectDir
                 }
@@ -2602,19 +2713,8 @@ function CardbushApp() {
                 onGuideQueuedMessage={chat.sendQueuedMessageAsGuidance}
                 onRemoveQueuedMessage={chat.removeQueuedMessage}
                 onReorderQueuedMessage={chat.reorderQueuedMessage}
-                onRevertChangeReport={(report, message) =>
-                  revertChangeReport(
-                    message.conversationId?.trim() || chat.activeConversationId,
-                    report,
-                  )
-                }
-                onOpenChangeReview={(filePath) => {
-                  if (!chat.activeConversationId) return;
-                  openChangeReviewInspector(
-                    chat.activeConversationId,
-                    typeof filePath === 'string' ? filePath : '',
-                  );
-                }}
+                onRevertChangeReport={revertActiveConversationChangeReport}
+                onOpenChangeReview={openActiveConversationChangeReview}
                 onReplyInteraction={chat.replyToInteraction}
                 onCancelInteraction={chat.cancelPendingInteraction}
                 onCancelGoal={chat.cancelActiveGoal}
@@ -2665,58 +2765,168 @@ function CardbushApp() {
               }`}>
                 {displayedInspectorTab && displayedInspectorTabs.length > 0 ? (
                   <>
-                    <div
-                      className="right-inspector-tabs"
-                      role="tablist"
-                      aria-label={language === 'zh' ? '已打开的标签页' : 'Open inspector tabs'}
-                    >
-                      {displayedInspectorTabs.map((tab) => {
-                        const active = tab.id === activeInspectorTabIdentity;
-                        const navigation = tab.kind === 'resource'
-                          ? inspectorNavigationByTarget[tab.id]
-                          : undefined;
-                        const label = tab.kind === 'resource'
-                          ? navigation?.title || inspectorTabLabel(tab.detail)
-                          : tab.title;
-                        const targetTitle = tab.kind === 'resource'
-                          ? tab.detail.target
-                          : tab.kind === 'review'
-                            ? `${label} · ${tab.conversationId}`
-                            : tab.context.title;
-                        return (
-                          <div
-                            className={`right-inspector-tab${active ? ' active' : ''}`}
-                            key={tab.id}
-                          >
-                            <button
-                              type="button"
-                              className="right-inspector-tab-select"
-                              role="tab"
-                              aria-selected={active}
-                              title={targetTitle}
-                              onClick={() => activateInspectorTab(tab)}
+                    <div className="right-inspector-tab-strip">
+                      {inspectorTabScrollState.overflow && (
+                        <button
+                          type="button"
+                          className="right-inspector-tab-scroll"
+                          disabled={!inspectorTabScrollState.canScrollLeft}
+                          title={language === 'zh' ? '向前查看标签页' : 'Scroll tabs backward'}
+                          aria-label={language === 'zh' ? '向前查看标签页' : 'Scroll tabs backward'}
+                          onClick={() => scrollInspectorTabs(-1)}
+                        >
+                          <ArrowLeft size={13} aria-hidden="true" />
+                        </button>
+                      )}
+                      <div
+                        className="right-inspector-tabs"
+                        ref={inspectorTabsRef}
+                        role="tablist"
+                        aria-label={language === 'zh' ? '已打开的标签页' : 'Open inspector tabs'}
+                      >
+                        {displayedInspectorTabs.map((tab) => {
+                          const active = tab.id === activeInspectorTabIdentity;
+                          const navigation = tab.kind === 'resource'
+                            ? inspectorNavigationByTarget[tab.id]
+                            : undefined;
+                          const label = tab.kind === 'resource'
+                            ? navigation?.title || inspectorTabLabel(tab.detail)
+                            : tab.title;
+                          const targetTitle = tab.kind === 'resource'
+                            ? tab.detail.target
+                            : tab.kind === 'review'
+                              ? `${label} · ${tab.conversationId}`
+                              : tab.context.title;
+                          return (
+                            <div
+                              className={`right-inspector-tab${active ? ' active' : ''}`}
+                              key={tab.id}
+                              data-inspector-tab-id={tab.id}
+                              onContextMenu={(event) => openInspectorTabContextMenu(event, tab.id)}
+                              onAuxClick={(event) => {
+                                if (event.button === 1) closeInspectorTab(tab.id);
+                              }}
                             >
-                              {tab.kind === 'resource'
-                                ? isInspectorBrowserTarget(tab.detail.target)
-                                  ? <Globe2 size={13} aria-hidden="true" />
-                                  : <FileText size={13} aria-hidden="true" />
-                                : tab.kind === 'review'
-                                  ? <Clipboard size={13} aria-hidden="true" />
-                                  : <ShadowCloneIcon size={13} />}
-                              <span>{label}</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="right-inspector-tab-close"
-                              title={language === 'zh' ? '关闭标签页' : 'Close tab'}
-                              aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
-                              onClick={() => closeInspectorTab(tab.id)}
-                            >
-                              <X size={12} aria-hidden="true" />
-                            </button>
+                              <button
+                                type="button"
+                                className="right-inspector-tab-select"
+                                role="tab"
+                                aria-selected={active}
+                                title={targetTitle}
+                                onClick={() => activateInspectorTab(tab)}
+                              >
+                                {tab.kind === 'resource'
+                                  ? isInspectorBrowserTarget(tab.detail.target)
+                                    ? <Globe2 size={13} aria-hidden="true" />
+                                    : <FileText size={13} aria-hidden="true" />
+                                  : tab.kind === 'review'
+                                    ? <Clipboard size={13} aria-hidden="true" />
+                                    : <ShadowCloneIcon size={13} />}
+                                <span>{label}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="right-inspector-tab-close"
+                                title={language === 'zh' ? '关闭标签页' : 'Close tab'}
+                                aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                                onClick={() => closeInspectorTab(tab.id)}
+                              >
+                                <X size={12} aria-hidden="true" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {inspectorTabScrollState.overflow && (
+                        <button
+                          type="button"
+                          className="right-inspector-tab-scroll"
+                          disabled={!inspectorTabScrollState.canScrollRight}
+                          title={language === 'zh' ? '向后查看标签页' : 'Scroll tabs forward'}
+                          aria-label={language === 'zh' ? '向后查看标签页' : 'Scroll tabs forward'}
+                          onClick={() => scrollInspectorTabs(1)}
+                        >
+                          <ArrowRight size={13} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="right-inspector-tab-manager" ref={inspectorTabsMenuRef}>
+                      <button
+                        type="button"
+                        className={inspectorTabsMenuOpen ? 'active' : ''}
+                        aria-label={language === 'zh' ? '管理全部标签页' : 'Manage all tabs'}
+                        aria-haspopup="menu"
+                        aria-expanded={inspectorTabsMenuOpen}
+                        title={language === 'zh'
+                          ? `管理全部标签页（${displayedInspectorTabs.length}）`
+                          : `Manage all tabs (${displayedInspectorTabs.length})`}
+                        onClick={() => {
+                          setInspectorTabsMenuOpen((open) => !open);
+                          setInspectorAddMenuOpen(false);
+                          setInspectorTabContextMenu(null);
+                        }}
+                      >
+                        <Menu size={15} aria-hidden="true" />
+                        <span>{displayedInspectorTabs.length}</span>
+                      </button>
+                      {inspectorTabsMenuOpen && (
+                        <div className="right-inspector-tab-menu" role="menu">
+                          <div className="right-inspector-tab-menu-heading">
+                            <strong>{language === 'zh' ? '全部标签页' : 'All tabs'}</strong>
+                            <span>{displayedInspectorTabs.length}</span>
                           </div>
-                        );
-                      })}
+                          <div className="right-inspector-tab-menu-list">
+                            {displayedInspectorTabs.map((tab) => {
+                              const active = tab.id === activeInspectorTabIdentity;
+                              const navigation = tab.kind === 'resource'
+                                ? inspectorNavigationByTarget[tab.id]
+                                : undefined;
+                              const label = tab.kind === 'resource'
+                                ? navigation?.title || inspectorTabLabel(tab.detail)
+                                : tab.title;
+                              return (
+                                <div
+                                  className={`right-inspector-tab-menu-item${active ? ' active' : ''}`}
+                                  key={tab.id}
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    title={label}
+                                    onClick={() => activateInspectorTab(tab)}
+                                  >
+                                    {tab.kind === 'resource'
+                                      ? isInspectorBrowserTarget(tab.detail.target)
+                                        ? <Globe2 size={13} aria-hidden="true" />
+                                        : <FileText size={13} aria-hidden="true" />
+                                      : tab.kind === 'review'
+                                        ? <Clipboard size={13} aria-hidden="true" />
+                                        : <ShadowCloneIcon size={13} />}
+                                    <span>{label}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title={language === 'zh' ? '关闭标签页' : 'Close tab'}
+                                    aria-label={`${language === 'zh' ? '关闭' : 'Close'} ${label}`}
+                                    onClick={() => closeInspectorTab(tab.id)}
+                                  >
+                                    <X size={12} aria-hidden="true" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            className="right-inspector-tab-menu-close-all"
+                            role="menuitem"
+                            onClick={() => closeInspectorTabs(new Set(inspectorTabs.map((tab) => tab.id)))}
+                          >
+                            <X size={13} aria-hidden="true" />
+                            {language === 'zh' ? '关闭全部标签页' : 'Close all tabs'}
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="right-inspector-add-tab" ref={inspectorAddMenuRef}>
                       <button
@@ -2726,7 +2936,11 @@ function CardbushApp() {
                         aria-haspopup="menu"
                         aria-expanded={inspectorAddMenuOpen}
                         title={language === 'zh' ? '新建标签页' : 'New tab'}
-                        onClick={() => setInspectorAddMenuOpen((open) => !open)}
+                        onClick={() => {
+                          setInspectorAddMenuOpen((open) => !open);
+                          setInspectorTabsMenuOpen(false);
+                          setInspectorTabContextMenu(null);
+                        }}
                       >
                         <Plus size={17} aria-hidden="true" />
                       </button>
@@ -2809,6 +3023,46 @@ function CardbushApp() {
                   <PanelRightClose size={16} />
                 </button>
               </header>
+              {inspectorOpen && !settingsVisible && inspectorTabContextMenu && inspectorTabContextTarget && createPortal(
+                <div
+                  className="right-inspector-tab-context-menu"
+                  ref={inspectorTabContextMenuRef}
+                  role="menu"
+                  style={{ left: inspectorTabContextMenu.x, top: inspectorTabContextMenu.y }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => closeInspectorTab(inspectorTabContextTarget.id)}
+                  >
+                    {language === 'zh' ? '关闭标签页' : 'Close tab'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={inspectorTabs.length <= 1}
+                    onClick={() => closeOtherInspectorTabs(inspectorTabContextTarget.id)}
+                  >
+                    {language === 'zh' ? '关闭其他标签页' : 'Close other tabs'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={inspectorTabContextTargetIndex >= inspectorTabs.length - 1}
+                    onClick={() => closeInspectorTabsToRight(inspectorTabContextTarget.id)}
+                  >
+                    {language === 'zh' ? '关闭右侧标签页' : 'Close tabs to the right'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => closeInspectorTabs(new Set(inspectorTabs.map((tab) => tab.id)))}
+                  >
+                    {language === 'zh' ? '关闭全部标签页' : 'Close all tabs'}
+                  </button>
+                </div>,
+                document.querySelector('.app') ?? document.body,
+              )}
               {displayedInspectorTarget && (
                 <div className="right-inspector-navigation">
                   <button

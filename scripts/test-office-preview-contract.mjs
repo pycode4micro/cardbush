@@ -29,9 +29,10 @@ assert.doesNotMatch(preview, /data-ribbon-(?:tab|panel)/);
 assert.doesNotMatch(preview, /class="office-(?:ribbon|commandbar)"/);
 assert.doesNotMatch(preview, /contenteditable/i);
 assert.doesNotMatch(preview, /fs\.promises\.(?:writeFile|rename|unlink|rm)/);
-assert.match(main, /officeReadOnlyPreview/);
-assert.match(main, /autoHideMenuBar: officeReadOnlyPreview/);
-assert.match(main, /!officeReadOnlyPreview[\s\S]*?在系统中打开/);
+// Preview windows were consolidated into the shared inspector. Assert routing
+// and read-only rendering, not the removed standalone window's menu options.
+assert.match(main, /sendUiPreviewToInspector\(mainWindow, targetUrl\)/);
+assert.match(main, /target\.webContents\.send\('shell:open-inspector'/);
 assert.match(main, /protocolHost === 'office-source'/);
 assert.match(main, /isHighFidelityOfficePreviewPath/);
 assert.match(main, /officePreviewRendererEntryResponse/);

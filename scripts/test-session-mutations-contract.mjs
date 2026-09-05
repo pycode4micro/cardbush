@@ -53,10 +53,13 @@ for (const rejected of [true, false]) {
   let error;
   let settle;
   let clearedAttention = 0;
+  const invalidatedReads = [];
   const receipt = new Promise((resolve, reject) => { settle = () => rejected
     ? reject(new Error('An active Session cannot be deleted.')) : resolve(true); });
   const ctx = evaluate(`${deletion}\nglobalThis.run = deleteConversation;`, {
     useCallback: (callback) => callback,
+    historyReadsRef: { current: { invalidate: id => invalidatedReads.push(['history', id]) } },
+    contextUsageReadsRef: { current: { invalidate: id => invalidatedReads.push(['usage', id]) } },
     clearSessionAttention: () => { clearedAttention++; }, setMessageHistoryLoading() {},
     setConversations: (update) => { conversations = update(conversations); },
     setMessagesByConversation: (update) => { messages = update(messages); },
@@ -74,6 +77,8 @@ for (const rejected of [true, false]) {
   assert.equal(conversations.length, rejected ? 2 : 1);
   assert.equal(clearedAttention, rejected ? 0 : 1);
   assert.equal('s' in messages, rejected);
+  assert.deepEqual(invalidatedReads, rejected ? [] : [['history','s'],['usage','s']],
+    'Only a confirmed deletion invalidates pending reads for that exact session');
   if (rejected) assert.match(error, /active Session/);
 }
 console.log('Session mutation failure regression tests passed');

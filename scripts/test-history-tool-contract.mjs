@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const modulePath = path.join(
   process.cwd(),
@@ -647,11 +648,20 @@ const chatHookSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'hooks', 'useCardbushChat.ts'),
   'utf8',
 );
-assert.match(
-  chatHookSource,
-  /function mergeWorkspaceChangeExecutions[\s\S]*?attachHistoryToolExecutions\(messages, workspaceChanges\)/,
-  'Historical Workspace Change details must upgrade the original Tool-call segment.',
-);
+const transcript = await loadChatTranscript();
+const compactChange = { id: 'edit-1', summary: 'edited file', contentOffset: 3 };
+const fullChange = {
+  ...compactChange, assistantMessageId: 'segment-1',
+  output: 'full diff', sequence: 1, metadata: {},
+};
+const upgradedChange = transcript.mergeWorkspaceChangeExecutions([
+  { id: 'segment-1', role: 'assistant', content: 'edit', toolExecutions: [compactChange] },
+  { id: 'segment-2', role: 'assistant', content: 'done' },
+], [fullChange]);
+assert.equal(upgradedChange[0].toolExecutions.length, 1);
+assert.equal(upgradedChange[0].toolExecutions[0].output, 'full diff',
+  'Historical Workspace Change details must upgrade the original Tool-call segment.');
+assert.equal(upgradedChange[1].toolExecutions, undefined);
 const stylesSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'styles', 'app.css'),
   'utf8',
@@ -724,16 +734,15 @@ assert.match(
   /includeSuperseded:\s*true/,
   'History loads must include intermediate assistant process segments',
 );
-assert.match(
-  chatHookSource,
-  /function shouldArchiveAssistantSegment[\s\S]*?message\.id === final\.id[\s\S]*?turnTranscriptKey\(message\) !== turnTranscriptKey\(final\)[\s\S]*?return true;/,
-  'Every non-final assistant message in the same turn must be archived as processed history even without segment metadata',
-);
-assert.doesNotMatch(
-  chatHookSource,
-  /function shouldArchiveAssistantSegment[\s\S]{0,900}segment != null && finalSegment != null/,
-  'Missing assistant segment metadata must not leak process messages into the final answer area',
-);
+const legacyCollapsed = transcript.collapseIntermediateAssistantSegments([
+  { id: 'old-segment', role: 'assistant', content: 'work', turnId: 'legacy-turn', status: 'streaming' },
+  { id: 'final-segment', role: 'assistant', content: 'done', turnId: 'legacy-turn', status: 'completed' },
+]);
+assert.equal(legacyCollapsed.length, 1,
+  'Missing assistant segment metadata must not leak process messages into the final answer area');
+assert.equal(legacyCollapsed[0].id, 'final-segment');
+assert.equal(legacyCollapsed[0].loopHistory[0].id, 'old-segment',
+  'Every non-final assistant message in the same turn must be archived as processed history even without segment metadata');
 assert.match(
   stylesSource,
   /\.app \.assistant-completed-summary:active\s*\{\s*transform:\s*none;/,
@@ -945,7 +954,7 @@ assert.match(
   'A terminal Turn must remove its obsolete permission card.',
 );
 assert.equal(
-  (chatHookSource.match(/onDone: \(terminal\) => \{\s*markSessionDone\(/g) ?? []).length,
+  (chatHookSource.match(/onDone: \(terminal\) => \{\s*clearConnectionRecovery\([^)]*\);\s*markSessionDone\(/g) ?? []).length,
   3,
   'Every Runtime stream path must end the sidebar processing marker from the canonical done callback.',
 );
@@ -982,7 +991,7 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /activeTranscriptMessages\.length > 1 \|\|[\s\S]*?freezeStoppedTranscript && activeTranscriptMessages\.length > 0/,
+  /activeTranscriptMessages\.length > 1 \|\|[\s\S]*?freezeTerminalTranscript && activeTranscriptMessages\.length > 0/,
   'A stopped transcript that compacts to one group must still render that merged group.',
 );
 assert.match(
@@ -1022,7 +1031,7 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveStoppedExecutionRecord/,
+  /isActiveAssistantTurn \|\|[\s\S]*?guidanceBoundaryRound \|\|[\s\S]*?preserveTerminalExecutionRecord/,
   'Visible guidance segments must retain their inline tool execution order',
 );
 assert.match(
@@ -1032,13 +1041,8 @@ assert.match(
 );
 assert.match(bubbleSource, /status === 'completed'/);
 assert.doesNotMatch(bubbleSource, /status === 'complete'/);
-assert.match(chatHookSource, /function isAssistantFinalTranscript[\s\S]*?status === 'completed'/);
-const finalTranscriptStart = chatHookSource.indexOf('function isAssistantFinalTranscript');
-const finalTranscriptEnd = chatHookSource.indexOf('\nfunction ', finalTranscriptStart + 1);
-assert.doesNotMatch(
-  chatHookSource.slice(finalTranscriptStart, finalTranscriptEnd),
-  /status === 'complete'/,
-);
+assert.equal(transcript.isAssistantFinalTranscript({ role: 'assistant', status: 'completed' }), true);
+assert.equal(transcript.isAssistantFinalTranscript({ role: 'assistant', status: 'complete' }), false);
 assert.doesNotMatch(
   bubbleSource,
   /finalProcessBody/,

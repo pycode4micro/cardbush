@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import vm from 'node:vm';
-
-import ts from 'typescript';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -12,6 +10,8 @@ const api = read('src', 'backend', 'api.ts');
 const runtimeChat = read('src', 'backend', 'runtimeChat.ts');
 const runtimeBridge = read('src', 'runtime-client', 'RuntimeInteractionBridge.ts');
 const hook = read('src', 'hooks', 'useCardbushChat.ts');
+const liveMessages = read('src/features/chatMessages/transcript/liveMessageUpdates.ts');
+const messageProjection = read('src/features/chatMessages/transcript/messageProjection.ts');
 const app = read('src', 'App.tsx');
 const composer = read('src', 'features', 'composer', 'Composer.tsx');
 const bubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
@@ -38,9 +38,9 @@ assert.doesNotMatch(
   'Stop acceptance must not abort the SSE stream or clear the active turn',
 );
 assert.match(hook, /applyTurnTerminalSnapshot/);
-assert.match(hook, /cardbush_terminal_stopped/);
-assert.match(hook, /retainedTerminalAssistants/);
-assert.match(hook, /createdAt: source\.createdAt \?\? message\.createdAt/);
+assert.match(liveMessages, /cardbush_terminal_stopped/);
+assert.match(messageProjection, /retainedTerminalAssistants/);
+assert.match(messageProjection, /createdAt: source\.createdAt \?\? message\.createdAt/);
 assert.match(hook, /terminalTurnIdsRef\.current\.has\(terminalTurnId\)/);
 assert.match(hook, /const reconcileTerminalTurn = useCallback/);
 assert.match(hook, /reconcileTerminalTurn\(sessionId, turnId, 20, 750\)/);
@@ -91,54 +91,13 @@ assert.match(
   'A failed assistant message is a terminal process record, not an empty final-answer row.',
 );
 
-const hookTranspiled = ts.transpileModule(hook, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-});
-const hookModule = { exports: {} };
-vm.runInNewContext(hookTranspiled.outputText, {
-  module: hookModule,
-  exports: hookModule.exports,
-  require: (specifier) => {
-    if (specifier.endsWith('/assistantTurnTiming')) {
-      return {
-        assistantTurnTimingFingerprint: () => '',
-        hydrateAssistantTurnTiming: (messages) => messages,
-        persistAssistantTurnTiming: () => undefined,
-      };
-    }
-    if (specifier.endsWith('/goalState')) {
-      return {
-        applyGoalToolUpdate: () => null,
-        goalToolUpdateFromExecution: () => null,
-        isGoalSelfCheckMessage: () => false,
-      };
-    }
-    if (specifier.endsWith('/toolArtifacts')) {
-      return {
-        mergeToolArtifacts: (current = [], incoming = []) => [
-          ...current,
-          ...incoming.filter(
-            (artifact) => !current.some((item) => item.id === artifact.id),
-          ),
-        ],
-      };
-    }
-    return {};
-  },
-  Date,
-  Map,
-  Set,
-  window: { setTimeout, clearTimeout },
-});
+const transcript = await loadChatTranscript();
 const {
   applyTurnTerminalSnapshot,
   mergeFinalStreamMessages,
   mergeLoadedMessagesPreservingLocalState,
   normalizeChatMessagesForDisplay,
-} = hookModule.exports;
+} = transcript;
 
 const failedTerminalTranscript = applyTurnTerminalSnapshot(
   {

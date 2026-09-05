@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 
 import ts from 'typescript';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const bubbleSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'chatMessages', 'MessageBubble.tsx'),
@@ -30,11 +31,13 @@ assert.doesNotMatch(
   /未定位到原消息，已作为新提问发送|original message was not found, so this was sent as a new request/i,
   'Update and rerun must fail closed instead of silently creating another Turn',
 );
-assert.match(
-  hookSource,
-  /\/\^message_\[\\w-\]\+\$\//,
+const { persistedChatMessageId } = await loadChatTranscript();
+assert.equal(
+  persistedChatMessageId({ id: 'message_123-abc', role: 'user', content: 'edit me' }),
+  'message_123-abc',
   'Runtime user message_<uuid> identities must be recognized as durable edit targets',
 );
+assert.equal(persistedChatMessageId({ id: 'optimistic-user', role: 'user', content: '' }), '');
 assert.match(
   hookSource,
   /editMessage\(\{\s*sessionId:\s*conversationId,\s*messageId,\s*content:\s*outbound\.userInput,/,

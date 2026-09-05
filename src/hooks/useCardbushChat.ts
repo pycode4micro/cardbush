@@ -65,12 +65,9 @@ import type {
   TurnTerminalSnapshot,
 } from '../types';
 import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
-import { mergeToolArtifacts } from '../backend/toolArtifacts';
-import { attachHistoryToolExecutions } from '../backend/historyToolAssociation';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   assistantTurnTimingFingerprint,
-  hydrateAssistantTurnTiming,
   persistAssistantTurnTiming,
 } from '../features/chatMessages/assistantTurnTiming';
 import {
@@ -88,10 +85,10 @@ import {
   stripWrappingQuotes,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
+import { SessionReadFence, canApplySessionSnapshot } from '../shared/sessionReadFence';
 import {
   applyGoalToolUpdate,
   goalToolUpdateFromExecution,
-  isGoalSelfCheckMessage,
 } from '../shared/goalState';
 import {
   conversationProjectDir,
@@ -105,6 +102,70 @@ import {
   remapProjectPath,
   type ConversationScope,
 } from '../features/conversationScope';
+
+import {
+  mergeLoadedMessagesPreservingLocalState,
+  mergeFinalStreamMessages,
+  mergeMessages,
+  mergePolledMessagesPreservingLocalState,
+} from '../features/chatMessages/transcript/messageProjection';
+import {
+  mergeWorkspaceChangeExecutions,
+} from '../features/chatMessages/transcript/toolExecutionMerge';
+import {
+  ensureBackgroundTurnAssistant,
+  appendAssistantDelta,
+  applyAssistantSegmentBoundary,
+  applyAssistantRevision,
+  appendToolExecution,
+  applyTaskPlanUpdate,
+  markLocalAssistantTurnCompleted,
+  markOptimisticChatRequestAccepted,
+  assignTurnToLocalMessages,
+  applyTurnTerminalSnapshot,
+  markOptimisticChatRequestFailed,
+  markLocalMessageTurnStarted,
+  applyAssistantStreamRoute,
+  optimisticGuidanceMessage,
+  reconcileOptimisticGuidance,
+  removeOptimisticGuidance,
+  markOptimisticGuidanceFailed,
+  markOptimisticGuidancePending,
+} from '../features/chatMessages/transcript/liveMessageUpdates';
+import {
+  createSegmentedAssistantStreamBuffers,
+} from '../features/chatMessages/transcript/assistantStreamBuffer';
+import {
+  hasCompletedAssistantForTurn,
+  findUserMessageForAssistantRegenerate,
+  persistedChatMessageId,
+  messageIdentityMatches,
+  uniqueMessageIds,
+  findPersistedEditableUserMessage,
+} from '../features/chatMessages/transcript/messageFacts';
+
+// Keep existing helper imports working; new consumers should use the transcript modules.
+export {
+  markOptimisticChatRequestAccepted,
+  markOptimisticChatRequestFailed,
+  appendAssistantDelta,
+  appendAssistantTextAfterToolBoundary,
+  applyAssistantSegmentBoundary,
+  optimisticGuidanceMessage,
+  reconcileOptimisticGuidance,
+  applyAssistantRevision,
+  applyTurnTerminalSnapshot,
+  appendToolExecution,
+} from '../features/chatMessages/transcript/liveMessageUpdates';
+export {
+  createAssistantStreamDeltaBuffer,
+} from '../features/chatMessages/transcript/assistantStreamBuffer';
+export {
+  mergeFinalStreamMessages,
+  mergeLoadedMessagesPreservingLocalState,
+  normalizeChatMessagesForDisplay,
+  normalizeActiveTurnTranscriptForDisplay,
+} from '../features/chatMessages/transcript/messageProjection';
 
 export type QueuedChatMessage = {
   id: string;
@@ -223,7 +284,16 @@ export function useCardbushChat(
   const activeTurnIdsRef = useRef<Record<string, string>>({});
   const terminalTurnIdsRef = useRef<Set<string>>(new Set());
   const stoppingRequestsRef = useRef<Set<string>>(new Set());
-  const contextWindowUsageRequestsRef = useRef<Map<string, Promise<void>>>(new Map());
+  const contextWindowUsageRequestsRef = useRef<Map<string, {
+    promise: Promise<void>;
+    ticket: ReturnType<SessionReadFence['begin']>;
+  }>>(new Map());
+  const contextUsageReadsRef = useRef(new SessionReadFence());
+  const historyReadsRef = useRef(new SessionReadFence());
+  const messagesByConversationRef = useRef(messagesByConversation);
+  messagesByConversationRef.current = messagesByConversation;
+  const liveTranscriptSessionsRef = useRef(new Set<string>());
+  const historyLoadingRequestsRef = useRef(new Map<string, Set<symbol>>());
   const activeConversationIdRef = useRef(activeConversationId);
   const conversationsRef = useRef(conversations);
   const preparedConversationsRef = useRef(preparedConversationsByScope);
@@ -277,6 +347,42 @@ export function useCardbushChat(
       return next;
     });
   }, []);
+  const beginHistoryRead = useCallback((sessionId: string) => ({
+    ticket: historyReadsRef.current.begin(sessionId),
+    baseline: messagesByConversationRef.current[sessionId],
+  }), []);
+  const beginHistoryLoading = useCallback((sessionId: string) => {
+    const identity = Symbol(sessionId);
+    const pending = historyLoadingRequestsRef.current.get(sessionId) ?? new Set<symbol>();
+    pending.add(identity);
+    historyLoadingRequestsRef.current.set(sessionId, pending);
+    setMessageHistoryLoading(sessionId, true);
+    return () => {
+      if (!pending.delete(identity) || pending.size > 0) return;
+      historyLoadingRequestsRef.current.delete(sessionId);
+      setMessageHistoryLoading(sessionId, false);
+    };
+  }, [setMessageHistoryLoading]);
+  const isHistoryReadCurrent = useCallback((
+    read: ReturnType<typeof beginHistoryRead>,
+    current = messagesByConversationRef.current,
+    allowLive = false,
+  ) => (allowLive || !liveTranscriptSessionsRef.current.has(read.ticket.sessionId))
+    && canApplySessionSnapshot(
+      historyReadsRef.current, read.ticket, read.baseline, current[read.ticket.sessionId],
+    ), []);
+  const applyHistoryRead = useCallback((
+    read: ReturnType<typeof beginHistoryRead>,
+    loaded: ChatMessage[],
+    merge = mergeLoadedMessagesPreservingLocalState,
+    allowLive = false,
+  ) => {
+    setMessagesByConversation((current) => {
+      if (!isHistoryReadCurrent(read, current, allowLive)) return current;
+      const sessionId = read.ticket.sessionId;
+      return { ...current, [sessionId]: merge(current[sessionId] ?? [], loaded) };
+    });
+  }, [isHistoryReadCurrent]);
   const assistantTimingFingerprint = useMemo(
     () => assistantTurnTimingFingerprint(messagesByConversation),
     [messagesByConversation],
@@ -642,7 +748,11 @@ export function useCardbushChat(
       return Promise.resolve();
     }
     if (!turnId) {
+      // An empty old history response cannot clear an active request's meter.
+      if (liveTranscriptSessionsRef.current.has(normalizedSessionId)) return Promise.resolve();
+      const ticket = contextUsageReadsRef.current.begin(normalizedSessionId);
       setContextWindowUsageByConversation((current) => {
+        if (!contextUsageReadsRef.current.isCurrent(ticket)) return current;
         if (!(normalizedSessionId in current)) return current;
         const next = { ...current };
         delete next[normalizedSessionId];
@@ -653,36 +763,42 @@ export function useCardbushChat(
 
     const requestKey = `${normalizedSessionId}:${turnId}`;
     const pending = contextWindowUsageRequestsRef.current.get(requestKey);
-    if (pending) return pending;
+    if (pending && contextUsageReadsRef.current.isCurrent(pending.ticket)) return pending.promise;
+    // History has no facts for an uncommitted active Turn. Its final stream
+    // receipt remains authoritative until that Turn has settled.
+    if (liveTranscriptSessionsRef.current.has(normalizedSessionId)) return Promise.resolve();
+    const ticket = contextUsageReadsRef.current.begin(normalizedSessionId);
 
     const request = fetchSessionContextWindowUsage(normalizedSessionId)
       .then((usage) => {
         const targetSessionId = (usage.sessionId || normalizedSessionId).trim();
-        if (!targetSessionId) return;
-        setContextWindowUsageByConversation((current) => ({
-          ...current,
-          [targetSessionId]: { ...usage, sessionId: targetSessionId },
-        }));
+        if (targetSessionId !== normalizedSessionId) return;
+        setContextWindowUsageByConversation((current) =>
+          contextUsageReadsRef.current.isCurrent(ticket) ? {
+            ...current,
+            [targetSessionId]: { ...usage, sessionId: targetSessionId },
+          } : current,
+        );
       })
       .catch(() => undefined)
       .finally(() => {
-        if (contextWindowUsageRequestsRef.current.get(requestKey) === request) {
+        if (contextWindowUsageRequestsRef.current.get(requestKey)?.promise === request) {
           contextWindowUsageRequestsRef.current.delete(requestKey);
         }
       });
-    contextWindowUsageRequestsRef.current.set(requestKey, request);
+    contextWindowUsageRequestsRef.current.set(requestKey, { promise: request, ticket });
     return request;
   }, [requestContext.contextWindowUsageAvailable]);
 
   useEffect(() => {
     const sessionId = activeConversationId.trim();
     if (!sessionId || messagesByConversation[sessionId]) {
-      if (sessionId) setMessageHistoryLoading(sessionId, false);
       return;
     }
     let cancelled = false;
+    const finishLoading = beginHistoryLoading(sessionId);
     async function loadMessages() {
-      setMessageHistoryLoading(sessionId, true);
+      const historyRead = beginHistoryRead(sessionId);
       try {
         const [result, workspaceChanges] = await Promise.all([
           fetchSessionMessages(sessionId, { includeSuperseded: true }),
@@ -690,18 +806,12 @@ export function useCardbushChat(
             ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
             : Promise.resolve([]),
         ]);
-        if (!cancelled) {
+        if (!cancelled && isHistoryReadCurrent(historyRead)) {
           const loadedMessages = mergeWorkspaceChangeExecutions(
             result.messages,
             workspaceChanges,
           );
-          setMessagesByConversation((current) => ({
-            ...current,
-            [sessionId]: mergeLoadedMessagesPreservingLocalState(
-              current[sessionId] ?? [],
-              loadedMessages,
-            ),
-          }));
+          applyHistoryRead(historyRead, loadedMessages);
           persistAutoConversationTitle(
             result.conversation,
             firstUserTitleSource(loadedMessages, ''),
@@ -726,21 +836,18 @@ export function useCardbushChat(
           setError(null);
         }
       } catch (caught) {
-        if (!cancelled) {
+        if (!cancelled && isHistoryReadCurrent(historyRead)) {
           setError(errorMessage(caught));
-          setMessagesByConversation((current) => ({
-            ...current,
-            [sessionId]: [],
-          }));
+          applyHistoryRead(historyRead, []);
         }
       } finally {
-        setMessageHistoryLoading(sessionId, false);
+        finishLoading();
       }
     }
     void loadMessages();
     return () => {
       cancelled = true;
-      setMessageHistoryLoading(sessionId, false);
+      finishLoading();
     };
   }, [
     activeConversationId,
@@ -749,6 +856,10 @@ export function useCardbushChat(
     refreshMeasuredContextWindowUsage,
     requestContext.workspaceChangesAvailable,
     setMessageHistoryLoading,
+    beginHistoryRead,
+    isHistoryReadCurrent,
+    applyHistoryRead,
+    beginHistoryLoading,
   ]);
 
   const activeConversation = useMemo(
@@ -852,6 +963,7 @@ export function useCardbushChat(
       if (!normalized) {
         return;
       }
+      contextUsageReadsRef.current.invalidate(normalized);
       setContextWindowUsageByConversation((current) => ({
         ...current,
         [normalized]: { ...usage, sessionId: normalized },
@@ -866,6 +978,9 @@ export function useCardbushChat(
       return;
     }
     clearSessionAttention(normalized);
+    contextUsageReadsRef.current.invalidate(normalized);
+    historyReadsRef.current.invalidate(normalized);
+    liveTranscriptSessionsRef.current.add(normalized);
     sendingSessionsRef.current.add(normalized);
     if (turnId.trim()) {
       activeTurnIdsRef.current[normalized] = turnId.trim();
@@ -888,6 +1003,12 @@ export function useCardbushChat(
   const markSessionDone = useCallback((sessionId: string) => {
     const normalized = sessionId.trim();
     if (!normalized) return;
+    if (liveTranscriptSessionsRef.current.delete(normalized)) {
+      // A read begun before the commit must not become eligible just because
+      // the live flag has now cleared. A new terminal read can still proceed.
+      historyReadsRef.current.invalidate(normalized);
+      contextUsageReadsRef.current.invalidate(normalized);
+    }
     setProcessingConversationIds((current) => {
       if (!current.has(normalized)) return current;
       const next = new Set(current);
@@ -1247,17 +1368,13 @@ export function useCardbushChat(
       .finally(async () => {
         await streamBuffer.flushAllStreaming();
         streamBuffer.dispose();
+        const historyRead = beginHistoryRead(normalizedSessionId);
         const loaded = await fetchSessionMessages(normalizedSessionId, {
           includeSuperseded: true,
         }).catch(() => null);
-        if (loaded) {
-          setMessagesByConversation((state) => ({
-            ...state,
-            [normalizedSessionId]: mergeLoadedMessagesPreservingLocalState(
-              state[normalizedSessionId] ?? [],
-              loaded.messages,
-            ),
-          }));
+        const allowLive = loaded?.latestTurn?.turnId === normalizedTurnId;
+        if (loaded && isHistoryReadCurrent(historyRead, undefined, allowLive)) {
+          applyHistoryRead(historyRead, loaded.messages, undefined, allowLive);
           setGoalLatestTurnByConversation((state) => ({
             ...state,
             [normalizedSessionId]: loaded.latestTurn,
@@ -1301,6 +1418,9 @@ export function useCardbushChat(
     mergeContextWindowUsage,
     mergeTeamFlowStreamEvent,
     refreshGoal,
+    beginHistoryRead,
+    isHistoryReadCurrent,
+    applyHistoryRead,
   ]);
 
   const refreshActiveSession = useCallback(async (options?: { silent?: boolean }) => {
@@ -1309,9 +1429,8 @@ export function useCardbushChat(
       await reloadConversations();
       return;
     }
-    if (!options?.silent) {
-      setMessageHistoryLoading(sessionId, true);
-    }
+    const historyRead = beginHistoryRead(sessionId);
+    const finishLoading = options?.silent ? () => undefined : beginHistoryLoading(sessionId);
     try {
       const [result, workspaceChanges] = await Promise.all([
         fetchSessionMessages(sessionId, { includeSuperseded: true }),
@@ -1319,17 +1438,12 @@ export function useCardbushChat(
           ? fetchSessionWorkspaceChanges(sessionId).catch(() => [])
           : Promise.resolve([]),
       ]);
+      if (!isHistoryReadCurrent(historyRead)) return;
       const loadedMessages = mergeWorkspaceChangeExecutions(
         result.messages,
         workspaceChanges,
       );
-      setMessagesByConversation((current) => ({
-        ...current,
-        [sessionId]: mergeLoadedMessagesPreservingLocalState(
-          current[sessionId] ?? [],
-          loadedMessages,
-        ),
-      }));
+      applyHistoryRead(historyRead, loadedMessages);
       persistAutoConversationTitle(
         result.conversation,
         firstUserTitleSource(loadedMessages, ''),
@@ -1342,15 +1456,14 @@ export function useCardbushChat(
         setError(null);
       }
     } catch (caught) {
+      if (!isHistoryReadCurrent(historyRead)) return;
       await reloadConversations().catch(() => undefined);
       if (!options?.silent) {
         setError(errorMessage(caught));
       }
       throw caught;
     } finally {
-      if (!options?.silent) {
-        setMessageHistoryLoading(sessionId, false);
-      }
+      finishLoading();
     }
   }, [
     activeConversationId,
@@ -1361,6 +1474,10 @@ export function useCardbushChat(
     persistAutoConversationTitle,
     requestContext.workspaceChangesAvailable,
     setMessageHistoryLoading,
+    beginHistoryRead,
+    isHistoryReadCurrent,
+    applyHistoryRead,
+    beginHistoryLoading,
   ]);
 
   useEffect(() => {
@@ -1406,6 +1523,7 @@ export function useCardbushChat(
     };
 
     const poll = async () => {
+      const historyRead = beginHistoryRead(sessionId);
       try {
         const [sessionRequest, goalsRequest, interactionRequest] =
           await Promise.allSettled([
@@ -1415,15 +1533,9 @@ export function useCardbushChat(
           ]);
         if (cancelled) return;
 
-        if (sessionRequest.status === 'fulfilled') {
+        if (sessionRequest.status === 'fulfilled' && isHistoryReadCurrent(historyRead)) {
           const sessionResult = sessionRequest.value;
-          setMessagesByConversation((current) => ({
-            ...current,
-            [sessionId]: mergePolledMessagesPreservingLocalState(
-              current[sessionId] ?? [],
-              sessionResult.messages,
-            ),
-          }));
+          applyHistoryRead(historyRead, sessionResult.messages, mergePolledMessagesPreservingLocalState);
           setGoalLatestTurnByConversation((current) => ({
             ...current,
             [sessionId]: sessionResult.latestTurn,
@@ -1475,6 +1587,9 @@ export function useCardbushChat(
     goalAvailable,
     markSessionRunning,
     subscribeGoalTurn,
+    beginHistoryRead,
+    isHistoryReadCurrent,
+    applyHistoryRead,
   ]);
 
   useEffect(() => {
@@ -1679,6 +1794,8 @@ export function useCardbushChat(
       setError(errorMessage(caught));
       return;
     }
+    historyReadsRef.current.invalidate(conversationId.trim());
+    contextUsageReadsRef.current.invalidate(conversationId.trim());
     clearSessionAttention(conversationId);
     setMessageHistoryLoading(conversationId, false);
     setConversations((current) => current.filter((item) => item.id !== conversationId));
@@ -1952,16 +2069,20 @@ export function useCardbushChat(
         return false;
       }
       try {
+        const historyRead = beginHistoryRead(sessionId);
         const sessionResult = await fetchSessionMessages(sessionId, {
           includeSuperseded: true,
         });
-        setMessagesByConversation((current) => ({
-          ...current,
-          [sessionId]: mergeLoadedMessagesPreservingLocalState(
-            current[sessionId] ?? [],
-            sessionResult.messages,
-          ),
-        }));
+        if (signal.aborted) return false;
+        // A committed terminal for this exact Turn may reconcile a disconnected
+        // live projection. An older Turn may not replace that projection.
+        const allowLive = Boolean(turnId && sessionResult.latestTurn?.turnId === turnId);
+        if (!isHistoryReadCurrent(historyRead, undefined, allowLive)) {
+          failedAttempts += 1;
+          if (failedAttempts >= 5) break;
+          continue;
+        }
+        applyHistoryRead(historyRead, sessionResult.messages, undefined, allowLive);
         setGoalLatestTurnByConversation((current) => ({
           ...current,
           [sessionId]: sessionResult.latestTurn,
@@ -1995,7 +2116,7 @@ export function useCardbushChat(
       }));
     }
     return false;
-  }, [reloadConversations]);
+  }, [reloadConversations, beginHistoryRead, isHistoryReadCurrent, applyHistoryRead]);
 
   const sendMessage = useCallback(
     async (text: string, queuedConversation?: ConversationSummary, queuedTeamId?: string, queuedTeamName?: string) => {
@@ -2338,17 +2459,12 @@ export function useCardbushChat(
           await finalSnapshotPromise;
         }
         await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
+        const historyRead = beginHistoryRead(sessionId);
         const loadedMessages = await fetchMessages(sessionId, {
           includeSuperseded: true,
         }).catch(() => null);
         if (loadedMessages && loadedMessages.length > 0) {
-          setMessagesByConversation((current) => ({
-            ...current,
-            [sessionId]: mergeLoadedMessagesPreservingLocalState(
-              current[sessionId] ?? [],
-              loadedMessages,
-            ),
-          }));
+          applyHistoryRead(historyRead, loadedMessages);
         }
         const refreshedGoal = await refreshGoal(sessionId);
         if (refreshedGoal?.status !== 'active') {
@@ -2422,17 +2538,13 @@ export function useCardbushChat(
             }
             return;
           }
+          const historyRead = beginHistoryRead(sessionId);
           const loadedMessages = await fetchMessages(sessionId, {
             includeSuperseded: true,
           }).catch(() => null);
           if (loadedMessages && loadedMessages.length > 0) {
-            setMessagesByConversation((current) => ({
-              ...current,
-              [sessionId]: mergeLoadedMessagesPreservingLocalState(
-                current[sessionId] ?? [],
-                loadedMessages,
-              ),
-            }));
+            applyHistoryRead(historyRead, loadedMessages, undefined,
+              hasCompletedAssistantForTurn(loadedMessages, turnId));
             void reloadConversations().catch(() => undefined);
           }
           if (loadedMessages && hasCompletedAssistantForTurn(loadedMessages, turnId)) {
@@ -2473,6 +2585,8 @@ export function useCardbushChat(
     [
       activeConversation,
       applyGoalExecution,
+      beginHistoryRead,
+      applyHistoryRead,
       applyConnectionRecoveryUpdate,
       clearConnectionRecovery,
       clearSessionRunning,
@@ -2845,17 +2959,12 @@ export function useCardbushChat(
         }
 
         await loadTeamFlow(sessionId, { silent: true }).catch(() => null);
+        const historyRead = beginHistoryRead(sessionId);
         const loadedMessages = await fetchMessages(sessionId, {
           includeSuperseded: true,
         }).catch(() => finalSnapshot);
         if (loadedMessages && loadedMessages.length > 0) {
-          setMessagesByConversation((current) => ({
-            ...current,
-            [sessionId]: mergeLoadedMessagesPreservingLocalState(
-              current[sessionId] ?? [],
-              loadedMessages,
-            ),
-          }));
+          applyHistoryRead(historyRead, loadedMessages);
         }
         const refreshedGoal = await refreshGoal(sessionId);
         if (refreshedGoal?.status !== 'active') {
@@ -2934,6 +3043,8 @@ export function useCardbushChat(
     [
       clearSessionRunning,
       applyConnectionRecoveryUpdate,
+      beginHistoryRead,
+      applyHistoryRead,
       applyGoalExecution,
       clearConnectionRecovery,
       loadTeamFlow,
@@ -2974,6 +3085,7 @@ export function useCardbushChat(
       let messageId = persistedChatMessageId(sourceUserMessage);
       let refreshFailed = false;
       if (!messageId) {
+        const historyRead = beginHistoryRead(conversationId);
         const loadedMessages = await fetchMessages(conversationId, {
           includeSuperseded: true,
         }).catch((caught) => {
@@ -2984,14 +3096,9 @@ export function useCardbushChat(
           ));
           return [] as ChatMessage[];
         });
+        if (!isHistoryReadCurrent(historyRead)) return;
         if (loadedMessages.length > 0) {
-          setMessagesByConversation((current) => ({
-            ...current,
-            [conversationId]: mergeLoadedMessagesPreservingLocalState(
-              current[conversationId] ?? [],
-              loadedMessages,
-            ),
-          }));
+          applyHistoryRead(historyRead, loadedMessages);
           sourceUserMessage = findUserMessageForAssistantRegenerate(
             message,
             loadedMessages,
@@ -3092,6 +3199,9 @@ export function useCardbushChat(
       activeConversation,
       activeConversationId,
       activeMessages,
+      beginHistoryRead,
+      isHistoryReadCurrent,
+      applyHistoryRead,
       conversations,
       isSessionSending,
       managedModelConfigs,
@@ -3148,6 +3258,7 @@ export function useCardbushChat(
       let messageId = persistedChatMessageId(editSourceMessage);
       let refreshFailed = false;
       if (!messageId) {
+        const historyRead = beginHistoryRead(conversationId);
         const loadedMessages = await fetchMessages(conversationId, {
           includeSuperseded: true,
         }).catch((caught) => {
@@ -3158,14 +3269,9 @@ export function useCardbushChat(
           ));
           return [] as ChatMessage[];
         });
+        if (!isHistoryReadCurrent(historyRead)) return;
         if (loadedMessages.length > 0) {
-          setMessagesByConversation((current) => ({
-            ...current,
-            [conversationId]: mergeLoadedMessagesPreservingLocalState(
-              current[conversationId] ?? [],
-              loadedMessages,
-            ),
-          }));
+          applyHistoryRead(historyRead, loadedMessages);
           editSourceMessage = findPersistedEditableUserMessage(
             message,
             loadedMessages,
@@ -3270,6 +3376,9 @@ export function useCardbushChat(
       activeConversation,
       activeConversationId,
       activeMessages,
+      beginHistoryRead,
+      isHistoryReadCurrent,
+      applyHistoryRead,
       conversations,
       isSessionSending,
       managedModelConfigs,
@@ -3914,53 +4023,6 @@ export function useCardbushChat(
   };
 }
 
-export function markOptimisticChatRequestAccepted(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  userMessageId: string,
-) {
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) =>
-      message.id === userMessageId
-        ? {
-            ...message,
-            status: 'sent',
-            metadata: {
-              ...(message.metadata ?? {}),
-              message_delivery: 'accepted',
-            },
-          }
-        : message,
-    ),
-  };
-}
-
-export function markOptimisticChatRequestFailed(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  userMessageId: string,
-  assistantMessageId: string,
-) {
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? [])
-      .filter((message) => message.id !== assistantMessageId)
-      .map((message) =>
-        message.id === userMessageId
-          ? {
-              ...message,
-              status: 'failed',
-              metadata: {
-                ...(message.metadata ?? {}),
-                message_delivery: 'failed',
-              },
-            }
-          : message,
-      ),
-  };
-}
-
 function readInitialSelectedModel(availableModels: ManagedModelConfig[]) {
   const stored = window.localStorage.getItem('cardbush.selected_model')?.trim();
   const selected = stored ? modelConfigFor(availableModels, stored) : undefined;
@@ -4138,1053 +4200,6 @@ function conversationProjectRequestDir(conversation: ConversationSummary) {
   return conversationProjectDir(conversation);
 }
 
-function hasCompletedAssistantForTurn(messages: ChatMessage[], turnId?: string) {
-  const normalizedTurnId = turnId?.trim() ?? '';
-  if (!normalizedTurnId) {
-    return false;
-  }
-  return messages.some(
-    (message) =>
-      message.role === 'assistant' &&
-      message.content.trim() &&
-      chatMessageTurnId(message) === normalizedTurnId &&
-      isAssistantFinalTranscript(message) &&
-      !isSupersededLoopAssistant(message),
-  );
-}
-
-// Assistant deltas stay outside React while their Runtime segment is open. A
-// canonical segment-completed fact releases loop text; the terminal fact
-// releases any final-only fallback. A release is deliberately projected in a
-// small, bounded number of accelerated chunks. This gives the reader a visible
-// hand-off without returning to unbounded token-by-token Markdown reparsing.
-
-const assistantRevealMinimumChunkCharacters = 10;
-const assistantRevealMaximumCommits = 72;
-const assistantRevealIntervalMs = 32;
-
-type AssistantStreamBufferRelease = {
-  reason: 'segment_completed' | 'terminal' | 'boundary';
-  eventId?: string;
-  segmentId?: string;
-  segmentOrdinal?: number;
-};
-
-type AssistantStreamDeltaBufferOptions = {
-  revealIntervalMs?: number;
-  shouldAnimate?: () => boolean;
-};
-
-type AssistantRevealBatch = {
-  characters: string[];
-  index: number;
-  chunkSize: number;
-  release: AssistantStreamBufferRelease;
-};
-
-export function createAssistantStreamDeltaBuffer(
-  append: (delta: string, release?: AssistantStreamBufferRelease) => void,
-  options: AssistantStreamDeltaBufferOptions = {},
-) {
-  let pending = '';
-  let emitted = '';
-  let terminalRequested = false;
-  let revealTimer: number | undefined;
-  let lateTerminalTimer: number | undefined;
-  let activeBatch: AssistantRevealBatch | undefined;
-  const queuedBatches: AssistantRevealBatch[] = [];
-  const drainWaiters: Array<() => void> = [];
-  const completedSegmentKeys = new Set<string>();
-  const revealInterval = Math.max(
-    0,
-    Math.round(options.revealIntervalMs ?? assistantRevealIntervalMs),
-  );
-
-  const emit = (delta: string, release?: AssistantStreamBufferRelease) => {
-    if (!delta) {
-      return;
-    }
-    append(delta, release);
-    emitted += delta;
-  };
-
-  const unrevealedText = () => [
-    activeBatch?.characters.slice(activeBatch.index).join('') ?? '',
-    ...queuedBatches.map((batch) => batch.characters.slice(batch.index).join('')),
-    pending,
-  ].join('');
-
-  const bufferedText = () => emitted + unrevealedText();
-
-  const shouldAnimateReveal = () => {
-    if (options.shouldAnimate && !options.shouldAnimate()) {
-      return false;
-    }
-    if (
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ) {
-      return false;
-    }
-    return typeof document === 'undefined' || document.visibilityState !== 'hidden';
-  };
-
-  const isDrained = () =>
-    !pending &&
-    !activeBatch &&
-    queuedBatches.length === 0 &&
-    revealTimer === undefined &&
-    lateTerminalTimer === undefined;
-
-  const resolveDrainWaiters = () => {
-    if (!isDrained() || drainWaiters.length === 0) return;
-    const waiters = drainWaiters.splice(0);
-    for (const resolve of waiters) resolve();
-  };
-
-  const waitForDrain = () => new Promise<void>((resolve) => {
-    if (isDrained()) {
-      resolve();
-      return;
-    }
-    drainWaiters.push(resolve);
-  });
-
-  const cancelRevealTimer = () => {
-    if (revealTimer !== undefined) {
-      window.clearTimeout(revealTimer);
-      revealTimer = undefined;
-    }
-    if (lateTerminalTimer !== undefined) {
-      window.clearTimeout(lateTerminalTimer);
-      lateTerminalTimer = undefined;
-    }
-  };
-
-  const preferredRevealEnd = (batch: AssistantRevealBatch) => {
-    const minimumEnd = Math.min(
-      batch.characters.length,
-      batch.index + batch.chunkSize,
-    );
-    if (minimumEnd >= batch.characters.length) return minimumEnd;
-    const maximumEnd = Math.min(batch.characters.length, minimumEnd + 6);
-    for (let index = minimumEnd; index < maximumEnd; index += 1) {
-      if (/\s|[，。！？；：、,.!?;:)}\]]/.test(batch.characters[index])) {
-        return index + 1;
-      }
-    }
-    return minimumEnd;
-  };
-
-  const queuePending = (release: AssistantStreamBufferRelease) => {
-    if (!pending) return;
-    const characters = Array.from(pending);
-    pending = '';
-    queuedBatches.push({
-      characters,
-      index: 0,
-      chunkSize: Math.max(
-        assistantRevealMinimumChunkCharacters,
-        Math.ceil(characters.length / assistantRevealMaximumCommits),
-      ),
-      release,
-    });
-  };
-
-  const startNextReveal = () => {
-    if (activeBatch || revealTimer !== undefined) return;
-    activeBatch = queuedBatches.shift();
-    if (!activeBatch) {
-      if (terminalRequested && pending) {
-        queuePending({ reason: 'terminal' });
-        activeBatch = queuedBatches.shift();
-      }
-      if (!activeBatch) {
-        resolveDrainWaiters();
-        return;
-      }
-    }
-
-    const revealNextChunk = () => {
-      revealTimer = undefined;
-      const batch = activeBatch;
-      if (!batch) {
-        startNextReveal();
-        return;
-      }
-      if (!shouldAnimateReveal()) {
-        emit(
-          batch.characters.slice(batch.index).join(''),
-          batch.release,
-        );
-        activeBatch = undefined;
-        startNextReveal();
-        return;
-      }
-      const nextIndex = preferredRevealEnd(batch);
-      const finished = nextIndex >= batch.characters.length;
-      emit(
-        batch.characters.slice(batch.index, nextIndex).join(''),
-        finished ? batch.release : undefined,
-      );
-      batch.index = nextIndex;
-      if (finished) {
-        activeBatch = undefined;
-        startNextReveal();
-        return;
-      }
-      revealTimer = window.setTimeout(revealNextChunk, revealInterval);
-    };
-
-    revealNextChunk();
-  };
-
-  const flushAllImmediately = (release?: AssistantStreamBufferRelease) => {
-    cancelRevealTimer();
-    const queuedRelease =
-      queuedBatches.at(-1)?.release ?? activeBatch?.release;
-    const remainder = unrevealedText();
-    activeBatch = undefined;
-    queuedBatches.length = 0;
-    pending = '';
-    emit(remainder, release ?? queuedRelease);
-    resolveDrainWaiters();
-    return Promise.resolve();
-  };
-
-  const flushAllStreaming = (release?: AssistantStreamBufferRelease) => {
-    if (terminalRequested && shouldAnimateReveal() && !isDrained()) {
-      startNextReveal();
-      return waitForDrain();
-    }
-    return flushAllImmediately(release);
-  };
-
-  const reconcileSnapshot = (finalText: string) => {
-    const snapshot = finalText ?? '';
-    const buffered = bufferedText();
-    if (snapshot.startsWith(buffered)) {
-      pending += snapshot.slice(buffered.length);
-    } else if (snapshot.startsWith(emitted)) {
-      cancelRevealTimer();
-      activeBatch = undefined;
-      queuedBatches.length = 0;
-      pending = snapshot.slice(emitted.length);
-    } else {
-      cancelRevealTimer();
-      activeBatch = undefined;
-      queuedBatches.length = 0;
-      emitted = '';
-      pending = snapshot;
-    }
-  };
-
-  const reconcileSegmentSnapshot = (segmentText: string) => {
-    const snapshot = segmentText ?? '';
-    const buffered = bufferedText();
-    if (snapshot.startsWith(buffered)) {
-      pending += snapshot.slice(buffered.length);
-    } else if (buffered.startsWith(snapshot)) {
-      return;
-    } else if (snapshot.startsWith(pending)) {
-      pending += snapshot.slice(pending.length);
-    } else {
-      // Segment-completed content is scoped to the open protocol segment, not
-      // necessarily to the whole assistant message. Preserve prior committed
-      // segments while replacing only this segment's uncommitted delta buffer.
-      pending = snapshot;
-    }
-  };
-
-  const completeFinalSnapshot = (finalText: string) => {
-    reconcileSnapshot(finalText);
-    if (terminalRequested) {
-      if (lateTerminalTimer !== undefined) {
-        window.clearTimeout(lateTerminalTimer);
-        lateTerminalTimer = undefined;
-      }
-      queuePending({ reason: 'terminal' });
-      startNextReveal();
-    }
-    return waitForDrain();
-  };
-
-  const completeSegmentSnapshot = (
-    content: string,
-    release: AssistantStreamBufferRelease,
-  ) => {
-    const completionKey = release.segmentId || release.eventId || (
-      release.segmentOrdinal != null ? `ordinal:${release.segmentOrdinal}` : ''
-    );
-    if (completionKey && completedSegmentKeys.has(completionKey)) {
-      return Promise.resolve();
-    }
-    reconcileSegmentSnapshot(content);
-    queuePending(release);
-    if (completionKey) completedSegmentKeys.add(completionKey);
-    startNextReveal();
-    return waitForDrain();
-  };
-
-  const releaseToolBoundary = () => {
-    queuePending({ reason: 'boundary' });
-    startNextReveal();
-    return waitForDrain();
-  };
-
-  const flushToolBoundary = () => {
-    void flushAllStreaming({ reason: 'boundary' });
-  };
-
-  return {
-    push(delta: string) {
-      if (!delta) {
-        return;
-      }
-      pending += delta;
-      if (
-        terminalRequested &&
-        !activeBatch &&
-        queuedBatches.length === 0 &&
-        lateTerminalTimer === undefined
-      ) {
-        // A terminal event may race slightly ahead of its final delta/snapshot.
-        // Coalesce that burst once instead of turning every late token into a
-        // separate React commit.
-        lateTerminalTimer = window.setTimeout(() => {
-          lateTerminalTimer = undefined;
-          queuePending({ reason: 'terminal' });
-          startNextReveal();
-        }, revealInterval);
-      }
-    },
-    flushAllStreaming() {
-      return flushAllStreaming();
-    },
-    completeFinalSnapshot(finalText: string) {
-      return completeFinalSnapshot(finalText);
-    },
-    completeSegmentSnapshot(
-      content: string,
-      release: AssistantStreamBufferRelease,
-    ) {
-      return completeSegmentSnapshot(content, release);
-    },
-    releaseToolBoundary() {
-      return releaseToolBoundary();
-    },
-    releaseTerminal() {
-      terminalRequested = true;
-      if (lateTerminalTimer !== undefined) {
-        window.clearTimeout(lateTerminalTimer);
-        lateTerminalTimer = undefined;
-      }
-      queuePending({ reason: 'terminal' });
-      startNextReveal();
-      return waitForDrain();
-    },
-    flushToolBoundary() {
-      flushToolBoundary();
-    },
-    reset(nextEmitted = '') {
-      cancelRevealTimer();
-      terminalRequested = false;
-      activeBatch = undefined;
-      queuedBatches.length = 0;
-      pending = '';
-      emitted = nextEmitted;
-      completedSegmentKeys.clear();
-      resolveDrainWaiters();
-    },
-    dispose() {
-      cancelRevealTimer();
-      terminalRequested = false;
-      activeBatch = undefined;
-      queuedBatches.length = 0;
-      pending = '';
-      emitted = '';
-      completedSegmentKeys.clear();
-      const waiters = drainWaiters.splice(0);
-      for (const resolve of waiters) resolve();
-    },
-  };
-}
-
-type AssistantStreamRoute = Pick<
-  AssistantStreamChunk,
-  | 'messageId'
-  | 'assistantSegmentIndex'
-  | 'segmentId'
-  | 'segmentOrdinal'
-  | 'turnId'
-  | 'createdAt'
-  | 'eventId'
->;
-
-function createSegmentedAssistantStreamBuffers(
-  append: (
-    delta: string,
-    route: AssistantStreamRoute,
-    release?: AssistantStreamBufferRelease,
-  ) => void,
-  options: AssistantStreamDeltaBufferOptions = {},
-) {
-  const buffers = new Map<string, ReturnType<typeof createAssistantStreamDeltaBuffer>>();
-
-  const routeKey = (route: AssistantStreamRoute) =>
-    route.messageId.trim() ||
-    `${route.turnId.trim()}:segment:${route.assistantSegmentIndex ?? 1}`;
-
-  const bufferFor = (route: AssistantStreamRoute) => {
-    const key = routeKey(route);
-    const existing = buffers.get(key);
-    if (existing) return existing;
-    const created = createAssistantStreamDeltaBuffer(
-      (delta, release) => append(delta, route, release),
-      options,
-    );
-    buffers.set(key, created);
-    return created;
-  };
-
-  return {
-    push(delta: string, route: AssistantStreamRoute) {
-      bufferFor(route).push(delta);
-    },
-    reset(route: AssistantStreamRoute, nextEmitted = '') {
-      bufferFor(route).reset(nextEmitted);
-    },
-    flushRoute(route: AssistantStreamRoute) {
-      return bufferFor(route).flushAllStreaming();
-    },
-    completeRoute(finalText: string, route: AssistantStreamRoute) {
-      return bufferFor(route).completeFinalSnapshot(finalText);
-    },
-    completeSegment(content: string, route: AssistantStreamRoute) {
-      return bufferFor(route).completeSegmentSnapshot(content, {
-        reason: 'segment_completed',
-        eventId: route.eventId,
-        segmentId: route.segmentId,
-        segmentOrdinal: route.segmentOrdinal,
-      });
-    },
-    releaseToolBoundary() {
-      return Promise.all(
-        [...buffers.values()].map((buffer) => buffer.releaseToolBoundary()),
-      ).then(() => undefined);
-    },
-    releaseTerminal() {
-      return Promise.all(
-        [...buffers.values()].map((buffer) => buffer.releaseTerminal()),
-      ).then(() => undefined);
-    },
-    flushAllStreaming() {
-      return Promise.all(
-        [...buffers.values()].map((buffer) => buffer.flushAllStreaming()),
-      ).then(() => undefined);
-    },
-    flushToolBoundary(exceptRoute?: AssistantStreamRoute) {
-      const exceptKey = exceptRoute ? routeKey(exceptRoute) : '';
-      for (const [key, buffer] of buffers) {
-        if (exceptKey && key === exceptKey) continue;
-        buffer.flushToolBoundary();
-      }
-    },
-    dispose() {
-      for (const buffer of buffers.values()) buffer.dispose();
-      buffers.clear();
-    },
-  };
-}
-
-export function appendAssistantDelta(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  delta: string,
-  route?: AssistantStreamRoute,
-  release?: AssistantStreamBufferRelease,
-) {
-  const messages = [...(current[sessionId] ?? [])];
-  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
-  if (targetIndex < 0) {
-    const messageId = route?.messageId.trim() ?? '';
-    const segmentIndex = route?.assistantSegmentIndex ?? 1;
-    const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
-    messages.push({
-      id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex}`,
-      messageId: messageId || undefined,
-      assistantMessageId: messageId || undefined,
-      role: 'assistant',
-      content: delta,
-      conversationId: sessionId,
-      turnId: route?.turnId || undefined,
-      createdAt: route?.createdAt || new Date().toISOString(),
-      metadata: {
-        ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
-        ...(messageId ? { message_id: messageId } : {}),
-        ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
-        ...assistantStreamReleaseMetadata(release),
-      },
-    });
-    return { ...current, [sessionId]: messages };
-  }
-  return {
-    ...current,
-    [sessionId]: messages.map((message, index) => {
-      if (index !== targetIndex) {
-        return message;
-      }
-      const routed = applyAssistantStreamRoute(message, route);
-      if (!route?.messageId && shouldStartNextLocalAssistantSegment(routed, delta)) {
-        const loopHistory = mergeLoopHistoryMessages(
-          routed.loopHistory ?? [],
-          [localLoopHistorySnapshot(routed)],
-        );
-        return {
-          ...routed,
-          content: delta,
-          toolExecutions: undefined,
-          loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
-          metadata: {
-            ...(routed.metadata ?? {}),
-            ...assistantStreamReleaseMetadata(release),
-          },
-        };
-      }
-      return {
-        ...routed,
-        content: appendAssistantTextAfterToolBoundary(routed, delta),
-        metadata: {
-          ...(routed.metadata ?? {}),
-          ...assistantStreamReleaseMetadata(release),
-        },
-      };
-    }),
-  };
-}
-
-export function appendAssistantTextAfterToolBoundary(
-  message: ChatMessage,
-  delta: string,
-) {
-  const content = message.content;
-  if (!content.trim() || !delta.trim() || /\r?\n\s*$/.test(content) || /^\s/.test(delta)) {
-    return `${content}${delta}`;
-  }
-  const latestToolOffset = Math.max(
-    -1,
-    ...(message.toolExecutions ?? []).map((execution) => execution.contentOffset),
-  );
-  return latestToolOffset >= content.length
-    ? `${content}\n\n${delta}`
-    : `${content}${delta}`;
-}
-
-export function applyAssistantSegmentBoundary(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  fallbackAssistantId: string,
-  update: StreamExecutionUpdate,
-) {
-  const messages = [...(current[sessionId] ?? [])];
-  if (update.guidanceMessageId) {
-    const guidanceMessageId = update.guidanceMessageId.trim();
-    for (let index = 0; index < messages.length; index += 1) {
-      const message = messages[index];
-      if (
-        message.role === 'user' &&
-        (message.id === guidanceMessageId ||
-          message.clientMessageId === guidanceMessageId ||
-          String(message.metadata?.client_message_id ?? '') === guidanceMessageId)
-      ) {
-        messages[index] = {
-          ...message,
-          status: 'sent',
-          metadata: {
-            ...(message.metadata ?? {}),
-            guidance_delivery: 'sent',
-          },
-        };
-      }
-    }
-  }
-  const nextSegmentIndex =
-    update.nextAssistantSegmentIndex ?? update.assistantSegmentIndex;
-  const previousSegmentIndex =
-    update.previousAssistantSegmentIndex ??
-    (nextSegmentIndex != null && nextSegmentIndex > 1
-      ? nextSegmentIndex - 1
-      : undefined);
-  const previousIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
-    messageId: update.previousAssistantMessageId ?? '',
-    assistantSegmentIndex: previousSegmentIndex,
-    turnId: update.turnId,
-  });
-  if (previousIndex >= 0 && messages[previousIndex].role === 'assistant') {
-    const previous = messages[previousIndex];
-    messages[previousIndex] = {
-      ...previous,
-      status: 'completed',
-      metadata: {
-        ...(previous.metadata ?? {}),
-        status: 'completed',
-        segment_complete: true,
-        segment_boundary: 'turn_guidance',
-        ...(nextSegmentIndex != null
-          ? { next_assistant_segment_index: nextSegmentIndex }
-          : {}),
-      },
-    };
-  }
-
-  const nextMessageId = update.messageId.trim();
-  if (nextSegmentIndex == null || nextSegmentIndex <= 1) {
-    return { ...current, [sessionId]: messages };
-  }
-  const nextIndex = assistantStreamTargetIndex(messages, fallbackAssistantId, {
-    messageId: nextMessageId,
-    assistantSegmentIndex: nextSegmentIndex,
-    turnId: update.turnId,
-  });
-  if (nextIndex < 0) {
-    const turnStartedAt = chatTurnStartedAt(messages, update.turnId);
-    messages.push({
-      id:
-        nextMessageId ||
-        `assistant-${update.turnId || sessionId}-segment-${nextSegmentIndex}`,
-      messageId: nextMessageId || undefined,
-      assistantMessageId: nextMessageId || undefined,
-      role: 'assistant',
-      content: '',
-      conversationId: sessionId,
-      turnId: update.turnId || undefined,
-      createdAt: update.createdAt || new Date().toISOString(),
-      status: 'streaming',
-      metadata: {
-        assistant_segment_index: nextSegmentIndex,
-        ...(nextMessageId ? { message_id: nextMessageId } : {}),
-        ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
-      },
-    });
-  }
-  return { ...current, [sessionId]: messages };
-}
-
-export function optimisticGuidanceMessage({
-  clientMessageId,
-  conversationId,
-  turnId,
-  content,
-  mode,
-}: {
-  clientMessageId: string;
-  conversationId: string;
-  turnId: string;
-  content: string;
-  mode: 'append_context' | 'interrupt_and_continue';
-}): ChatMessage {
-  return {
-    id: clientMessageId,
-    clientMessageId,
-    role: 'user',
-    content,
-    conversationId,
-    turnId,
-    createdAt: new Date().toISOString(),
-    status: 'pending',
-    metadata: {
-      turn_guidance: true,
-      client_message_id: clientMessageId,
-      guidance_mode: mode,
-      guidance_delivery: 'pending',
-    },
-  };
-}
-
-export function reconcileOptimisticGuidance(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  localClientMessageId: string,
-  acceptedClientMessageId: string,
-) {
-  const clientMessageId = acceptedClientMessageId.trim() || localClientMessageId;
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) =>
-      message.id === localClientMessageId || message.clientMessageId === localClientMessageId
-        ? {
-            ...message,
-            clientMessageId,
-            status: 'queued',
-            metadata: {
-              ...(message.metadata ?? {}),
-              client_message_id: clientMessageId,
-              guidance_delivery: 'queued',
-            },
-          }
-        : message,
-    ),
-  };
-}
-
-function markOptimisticGuidanceFailed(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  clientMessageId: string,
-) {
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) =>
-      message.id === clientMessageId || message.clientMessageId === clientMessageId
-        ? {
-            ...message,
-            status: 'failed',
-            metadata: {
-              ...(message.metadata ?? {}),
-              guidance_delivery: 'failed',
-            },
-          }
-        : message,
-    ),
-  };
-}
-
-function markOptimisticGuidancePending(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  clientMessageId: string,
-) {
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? []).map((message) =>
-      message.id === clientMessageId || message.clientMessageId === clientMessageId
-        ? {
-            ...message,
-            status: 'pending',
-            metadata: {
-              ...(message.metadata ?? {}),
-              guidance_delivery: 'pending',
-            },
-          }
-        : message,
-    ),
-  };
-}
-
-function removeOptimisticGuidance(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  clientMessageId: string,
-) {
-  return {
-    ...current,
-    [sessionId]: (current[sessionId] ?? []).filter(
-      (message) =>
-        message.id !== clientMessageId && message.clientMessageId !== clientMessageId,
-    ),
-  };
-}
-
-function ensureBackgroundTurnAssistant(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  turnId: string,
-  createdAt?: string,
-) {
-  const messages = current[sessionId] ?? [];
-  if (messages.some((message) => message.id === assistantId)) {
-    return current;
-  }
-  return {
-    ...current,
-    [sessionId]: [
-      ...messages,
-      {
-        id: assistantId,
-        role: 'assistant' as const,
-        content: '',
-        conversationId: sessionId,
-        turnId,
-        createdAt: createdAt || new Date().toISOString(),
-        metadata: {
-          background_turn: true,
-          goal_auto_continuation: true,
-        },
-      },
-    ],
-  };
-}
-
-function assistantStreamTargetIndex(
-  messages: ChatMessage[],
-  fallbackAssistantId: string,
-  route?: AssistantStreamRoute,
-) {
-  const messageId = route?.messageId.trim() ?? '';
-  if (messageId) {
-    const exact = messages.findIndex((message) =>
-      message.role === 'assistant' && (
-        message.id === messageId ||
-        message.messageId === messageId ||
-        message.assistantMessageId === messageId ||
-        String(message.metadata?.message_id ?? '') === messageId
-      ),
-    );
-    if (exact >= 0) return exact;
-  }
-  const segmentIndex = route?.assistantSegmentIndex;
-  if (segmentIndex != null) {
-    const exactSegment = messages.findIndex((message) =>
-      message.role === 'assistant' &&
-      chatMessageTurnId(message) === route?.turnId &&
-      Number(message.metadata?.assistant_segment_index) === segmentIndex,
-    );
-    if (exactSegment >= 0) return exactSegment;
-    if (segmentIndex > 1) return -1;
-  }
-  return messages.findIndex((message) => message.id === fallbackAssistantId);
-}
-
-function applyAssistantStreamRoute(
-  message: ChatMessage,
-  route?: AssistantStreamRoute,
-): ChatMessage {
-  if (!route) return message;
-  const messageId = route.messageId.trim();
-  return {
-    ...message,
-    messageId: messageId || message.messageId,
-    assistantMessageId: messageId || message.assistantMessageId,
-    turnId: route.turnId || message.turnId,
-    createdAt: message.createdAt ?? route.createdAt,
-    metadata: {
-      ...(message.metadata ?? {}),
-      ...(messageId ? { message_id: messageId } : {}),
-      ...(route.assistantSegmentIndex != null
-        ? { assistant_segment_index: route.assistantSegmentIndex }
-        : {}),
-    },
-  };
-}
-
-function assistantStreamReleaseMetadata(
-  release?: AssistantStreamBufferRelease,
-): Record<string, unknown> {
-  if (!release) return {};
-  return {
-    assistant_stream_release: release.reason,
-    ...(release.reason === 'segment_completed' ? { segment_complete: true } : {}),
-    ...(release.segmentId ? { assistant_segment_id: release.segmentId } : {}),
-    ...(release.segmentOrdinal != null
-      ? { assistant_segment_index: release.segmentOrdinal }
-      : {}),
-  };
-}
-
-function shouldStartNextLocalAssistantSegment(message: ChatMessage, delta: string) {
-  return (
-    message.role === 'assistant' &&
-    delta.trim().length > 0 &&
-    (message.toolExecutions?.length ?? 0) > 0 &&
-    hasVisibleLoopHistory(message)
-  );
-}
-
-function localLoopHistorySnapshot(message: ChatMessage): ChatMessage {
-  const nextLoopIndex = nextLocalLoopIndex(message);
-  return {
-    ...snapshotLoopHistoryMessage(message),
-    id: `${message.id}:local-loop:${nextLoopIndex}`,
-    createdAt: new Date().toISOString(),
-    status: 'superseded',
-    loopIndex: message.loopIndex ?? nextLoopIndex,
-    metadata: {
-      ...(message.metadata ?? {}),
-      status: 'superseded',
-      transcript_kind: 'assistant_loop',
-      ui_transcript_only: true,
-    },
-  };
-}
-
-function nextLocalLoopIndex(message: ChatMessage) {
-  const existing = message.loopHistory ?? [];
-  const loopIndexes = existing
-    .map((item) => item.loopIndex)
-    .filter((value): value is number => Number.isFinite(value));
-  const maxLoopIndex = loopIndexes.length > 0 ? Math.max(...loopIndexes) : 0;
-  return maxLoopIndex + 1;
-}
-
-export function applyAssistantRevision(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  revision: AssistantRevision,
-) {
-  const messages = current[sessionId] ?? [];
-  const revisionTurnId = revision.turnId?.trim() ?? '';
-  const isClear = revision.action === 'clear' || revision.action === 'replace';
-  if (!isClear) {
-    return current;
-  }
-  const nextContent = revision.content ?? '';
-  if (revision.reason === 'tool_preamble' && !nextContent.trim()) {
-    return current;
-  }
-  const route: AssistantStreamRoute = {
-    messageId: revision.messageId ?? '',
-    assistantSegmentIndex: revision.assistantSegmentIndex,
-    turnId: revisionTurnId,
-  };
-  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
-  if (
-    targetIndex < 0 &&
-    nextContent &&
-    (route.messageId || (route.assistantSegmentIndex ?? 1) > 1)
-  ) {
-    return applyAssistantRevision(
-      appendAssistantDelta(current, sessionId, assistantId, nextContent, route),
-      sessionId,
-      assistantId,
-      revision,
-    );
-  }
-  return {
-    ...current,
-    [sessionId]: messages.map((message, index) => {
-      if (index !== targetIndex) {
-        return message;
-      }
-      const routed = applyAssistantStreamRoute(message, route);
-      const shouldPreserveCurrent =
-        routed.role === 'assistant' &&
-        !isSupersededLoopAssistant(routed) &&
-        hasVisibleLoopHistory(routed) &&
-        (normalizeLoopContent(routed.content) !== normalizeLoopContent(nextContent) ||
-          revision.reason === 'tool_preamble' ||
-          revision.reason === 'assistant_final');
-      const loopHistory = shouldPreserveCurrent
-        ? mergeLoopHistoryMessages(
-            routed.loopHistory ?? [],
-            [localLoopHistorySnapshot(routed)],
-          )
-        : routed.loopHistory;
-      return {
-        ...routed,
-        content: nextContent,
-        loopIndex: revision.loopIndex ?? routed.loopIndex,
-        toolExecutions: shouldPreserveCurrent ? undefined : routed.toolExecutions,
-        loopHistory:
-          loopHistory && loopHistory.length > 0 ? loopHistory : undefined,
-        metadata: {
-          ...(routed.metadata ?? {}),
-          assistant_channel: 'assistant',
-          transcript_kind:
-            revision.reason === 'assistant_final'
-              ? 'assistant_final'
-              : revision.reason === 'tool_preamble'
-                ? 'assistant_segment'
-                : routed.metadata?.transcript_kind,
-        },
-      };
-    }),
-  };
-}
-
-function assignTurnToLocalMessages(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  turnId: string,
-  messageIds: string[],
-  route?: AssistantStreamRoute,
-) {
-  const ids = new Set(messageIds);
-  const messages = current[sessionId] ?? [];
-  const startedAt = chatTurnStartedAt(
-    messages.filter((message) => ids.has(message.id)),
-    undefined,
-  ) ?? new Date().toISOString();
-  return {
-    ...current,
-    [sessionId]: messages.map((message) =>
-      ids.has(message.id)
-        ? markLocalMessageTurnStarted(
-            applyAssistantStreamRoute(
-              { ...message, turnId, conversationId: sessionId },
-              message.role === 'assistant' ? route : undefined,
-            ),
-            startedAt,
-          )
-        : message,
-    ),
-  };
-}
-
-function markLocalMessageTurnStarted(message: ChatMessage, startedAt: string) {
-  if (message.role !== 'assistant') {
-    return message;
-  }
-  return {
-    ...message,
-    metadata: {
-      ...(message.metadata ?? {}),
-      cardbush_turn_started_at:
-        message.metadata?.cardbush_turn_started_at ??
-        message.createdAt ??
-        startedAt,
-    },
-  };
-}
-
-function markLocalAssistantTurnCompleted(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  completedAt: string,
-  route?: AssistantStreamRoute,
-  finalText = '',
-) {
-  const messages = current[sessionId] ?? [];
-  const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
-  if (targetIndex < 0 && finalText) {
-    return markLocalAssistantTurnCompleted(
-      appendAssistantDelta(current, sessionId, assistantId, finalText, route),
-      sessionId,
-      assistantId,
-      completedAt,
-      route,
-    );
-  }
-  return {
-    ...current,
-    [sessionId]: messages.map((message, index) => {
-      if (index !== targetIndex || message.role !== 'assistant') {
-        return message;
-      }
-      const routed = applyAssistantStreamRoute(message, route);
-      const startedAt = chatTurnStartedAt(
-        messages,
-        chatMessageTurnId(routed),
-        routed.createdAt,
-      );
-      return {
-        ...routed,
-        content: routed.content || finalText,
-        metadata: {
-          ...(routed.metadata ?? {}),
-          cardbush_turn_started_at:
-            startedAt ?? routed.metadata?.cardbush_turn_started_at ?? routed.createdAt,
-          cardbush_turn_completed_at:
-            routed.metadata?.cardbush_turn_completed_at ?? completedAt,
-        },
-      };
-    }),
-  };
-}
-
 function withTerminalTurnId(
   terminal: TurnTerminalSnapshot,
   fallbackTurnId?: string,
@@ -5210,1915 +4225,9 @@ function terminalSnapshotFromLatestTurn(
   };
 }
 
-export function applyTurnTerminalSnapshot(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  fallbackAssistantId: string,
-  terminal: TurnTerminalSnapshot,
-) {
-  const turnId = terminal.turnId.trim();
-  const completedAt = terminal.completedAt ?? new Date().toISOString();
-  const messages = current[sessionId] ?? [];
-  const terminalStatus = terminal.stopped
-    ? 'stopped'
-    : terminal.status === 'failed'
-      ? 'failed'
-      : 'completed';
-  const turnStartedAt = chatTurnStartedAt(messages, turnId);
-  const turnDurationMs = timestampDurationMs(turnStartedAt, completedAt);
-  const terminalMetadata = (message?: ChatMessage) => ({
-    ...(message?.metadata ?? {}),
-    status: terminal.status,
-    stopped: terminal.stopped,
-    stop_reason: terminal.stopReason,
-    stop_scenario: terminal.stopScenario,
-    ...(terminal.stopDetails ? { stop_details: terminal.stopDetails } : {}),
-    ...(terminal.terminalEventSequence != null
-      ? { terminal_event_sequence: terminal.terminalEventSequence }
-      : {}),
-    cardbush_terminal_snapshot: true,
-    cardbush_terminal_stopped: terminal.stopped,
-    cardbush_turn_started_at:
-      turnStartedAt ??
-      message?.metadata?.cardbush_turn_started_at ??
-      message?.createdAt ??
-      completedAt,
-    cardbush_turn_completed_at: completedAt,
-    ...(turnDurationMs != null ? { cardbush_turn_duration_ms: turnDurationMs } : {}),
-  });
-  let matchedAssistant = false;
-  const nextMessages = messages.map((message) => {
-    const belongsToTurn = turnId && chatMessageTurnId(message) === turnId;
-    if (
-      message.role !== 'assistant' ||
-      (!belongsToTurn && message.id !== fallbackAssistantId)
-    ) {
-      return message;
-    }
-    matchedAssistant = true;
-    return {
-      ...message,
-      status: terminalStatus,
-      metadata: terminalMetadata(message),
-    };
-  });
-  if (!matchedAssistant && terminalStatus === 'failed') {
-    nextMessages.push({
-      id: fallbackAssistantId || `assistant-terminal-${turnId || completedAt}`,
-      role: 'assistant',
-      content: '',
-      conversationId: sessionId,
-      turnId: turnId || undefined,
-      createdAt: completedAt,
-      status: 'failed',
-      metadata: terminalMetadata(),
-    });
-  }
-  return {
-    ...current,
-    [sessionId]: nextMessages,
-  };
-}
-
 function isTurnGuidanceBoundary(update: StreamExecutionUpdate) {
   return update.reason === 'turn_guidance_pending' ||
     update.reason === 'turn_guidance_applied';
-}
-
-export function appendToolExecution(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  execution: ChatToolExecution,
-) {
-  const messages = [...(current[sessionId] ?? [])];
-  const executionRoute = assistantRouteFromToolExecution(execution);
-  if (
-    executionRoute.assistantSegmentIndex != null &&
-    executionRoute.assistantSegmentIndex > 1 &&
-    assistantStreamTargetIndex(messages, assistantId, executionRoute) < 0
-  ) {
-    const messageId = executionRoute.messageId.trim();
-    messages.push({
-      id:
-        messageId ||
-        `assistant-${executionRoute.turnId || sessionId}-segment-${executionRoute.assistantSegmentIndex}`,
-      messageId: messageId || undefined,
-      assistantMessageId: messageId || undefined,
-      role: 'assistant',
-      content: '',
-      conversationId: sessionId,
-      turnId: executionRoute.turnId || undefined,
-      createdAt: execution.createdAt,
-      status: 'streaming',
-      metadata: {
-        assistant_segment_index: executionRoute.assistantSegmentIndex,
-        ...(messageId ? { message_id: messageId } : {}),
-      },
-    });
-  }
-  const targetMessageId = toolExecutionTargetMessageId(messages, assistantId, execution);
-  return {
-    ...current,
-    [sessionId]: messages.map((message) => {
-      if (message.id !== targetMessageId) {
-        return message;
-      }
-      const existing = message.toolExecutions ?? [];
-      const index = existing.findIndex((item) => item.id === execution.id);
-      if (index < 0 && loopHistoryHasToolExecution(message, execution.id)) {
-        return updateLoopHistoryToolExecution(message, execution);
-      }
-      const contentOffset =
-        index >= 0
-          ? existing[index].contentOffset
-          : execution.contentOffsetExplicit
-            ? execution.contentOffset
-            : message.content.length;
-      const nextExecution = {
-        ...execution,
-        contentOffset,
-        contentOffsetExplicit: true,
-      };
-      const nextExecutions =
-        index >= 0
-          ? existing.map((item, itemIndex) =>
-              itemIndex === index ? mergeToolExecutionUpdate(item, nextExecution) : item,
-            )
-          : [...existing, nextExecution];
-      return {
-        ...message,
-        toolExecutions: nextExecutions,
-      };
-    }),
-  };
-}
-
-function mergeToolExecutionUpdate(
-  current: ChatToolExecution,
-  incoming: ChatToolExecution,
-): ChatToolExecution {
-  const currentSettled = toolExecutionStateRank(current.state) >= 2;
-  const incomingRunning = toolExecutionStateRank(incoming.state) < 2;
-  const artifacts = mergeToolArtifacts(current.artifacts, incoming.artifacts);
-  const merged = {
-    ...current,
-    ...incoming,
-    ...(artifacts.length > 0 ? { artifacts } : {}),
-  };
-  if (!currentSettled || !incomingRunning) {
-    return merged;
-  }
-  return {
-    ...merged,
-    state: current.state,
-    success: current.success,
-    durationMs: Math.max(current.durationMs, incoming.durationMs),
-  };
-}
-
-function toolExecutionStateRank(value: ChatToolExecution['state']) {
-  if (value === 'completed') return 3;
-  if (value === 'failed' || value === 'cancelled') return 2;
-  return 1;
-}
-
-function applyTaskPlanUpdate(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  assistantId: string,
-  update: TaskPlanStreamUpdate,
-) {
-  if (update.plan.sessionId !== sessionId) {
-    return current;
-  }
-  const messages = current[sessionId] ?? [];
-  let applied = false;
-  const targetIndex = assistantStreamTargetIndex(messages, assistantId, {
-    messageId: update.messageId ?? '',
-    assistantSegmentIndex: update.assistantSegmentIndex,
-    turnId: update.turnId,
-  });
-  const nextMessages = messages.map((message, index) => {
-    if (index !== targetIndex || message.role !== 'assistant') {
-      return message;
-    }
-    const currentTurnId = message.turnId?.trim() ?? '';
-    if (currentTurnId && currentTurnId !== update.turnId) {
-      return message;
-    }
-    applied = true;
-    return {
-      ...message,
-      turnId: currentTurnId || update.turnId,
-      taskPlan: update.plan,
-    };
-  });
-  return applied ? { ...current, [sessionId]: nextMessages } : current;
-}
-
-function loopHistoryHasToolExecution(message: ChatMessage, executionId: string) {
-  return Boolean(
-    message.loopHistory?.some((loopMessage) =>
-      loopMessage.toolExecutions?.some((item) => item.id === executionId),
-    ),
-  );
-}
-
-function updateLoopHistoryToolExecution(
-  message: ChatMessage,
-  execution: ChatToolExecution,
-) {
-  return {
-    ...message,
-    loopHistory: message.loopHistory?.map((loopMessage) => {
-      const existing = loopMessage.toolExecutions ?? [];
-      const index = existing.findIndex((item) => item.id === execution.id);
-      if (index < 0) {
-        return loopMessage;
-      }
-      const nextExecutions = existing.map((item, itemIndex) =>
-        itemIndex === index
-          ? mergeToolExecutionUpdate(item, {
-              ...execution,
-              contentOffset: item.contentOffset,
-            })
-          : item,
-      );
-      return {
-        ...loopMessage,
-        toolExecutions: nextExecutions,
-      };
-    }),
-  };
-}
-
-function toolExecutionTargetMessageId(
-  messages: ChatMessage[],
-  fallbackAssistantId: string,
-  execution: ChatToolExecution,
-) {
-  const assistantMessageId = execution.assistantMessageId?.trim() ?? '';
-  if (assistantMessageId) {
-    const matched = messages.find(
-      (message) =>
-        message.id === assistantMessageId ||
-        message.messageId === assistantMessageId ||
-        message.assistantMessageId === assistantMessageId,
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  const route = assistantRouteFromToolExecution(execution);
-  if (route.assistantSegmentIndex != null) {
-    const matched = messages.find((message) =>
-      message.role === 'assistant' &&
-      chatMessageTurnId(message) === route.turnId &&
-      Number(message.metadata?.assistant_segment_index) === route.assistantSegmentIndex,
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  if (execution.loopIndex != null) {
-    const matched = messages.find((message) =>
-      message.role === 'assistant' &&
-      numericOrderValue(message.loopIndex) === numericOrderValue(execution.loopIndex),
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  return fallbackAssistantId;
-}
-
-function assistantRouteFromToolExecution(
-  execution: ChatToolExecution,
-): AssistantStreamRoute {
-  return {
-    messageId:
-      execution.assistantMessageId?.trim() || execution.messageId?.trim() || '',
-    assistantSegmentIndex:
-      execution.assistantSegmentIndex ??
-      optionalFiniteNumber(execution.metadata.assistant_segment_index),
-    turnId:
-      execution.turnId?.trim() || String(execution.metadata.turn_id ?? '').trim(),
-    createdAt: execution.createdAt,
-  };
-}
-
-function optionalFiniteNumber(value: unknown) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : undefined;
-}
-
-function mergeMessages(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  incoming: ChatMessage[],
-) {
-  const byId = new Map((current[sessionId] ?? []).map((item) => [item.id, item]));
-  for (const message of incoming) {
-    const clientMessageId = chatMessageClientMessageId(message);
-    const clientEntry = clientMessageId
-      ? [...byId.entries()].find(([, item]) =>
-          chatMessageClientMessageId(item) === clientMessageId,
-        )
-      : undefined;
-    const existing = byId.get(message.id) ?? clientEntry?.[1];
-    if (clientEntry && clientEntry[0] !== message.id) {
-      byId.delete(clientEntry[0]);
-    }
-    const nextToolExecutions =
-      (message.toolExecutions?.length ?? 0) > 0
-        ? message.toolExecutions
-        : existing?.toolExecutions;
-    const preservedVersions =
-      existing && shouldPreserveExistingAsLoopHistory(existing, message)
-        ? [existing]
-        : [];
-    const nextLoopHistory = mergeLoopHistoryMessages(
-      existing?.loopHistory ?? [],
-      [...preservedVersions, ...(message.loopHistory ?? [])],
-    );
-    byId.set(message.id, {
-      ...message,
-      attachments: message.attachments ?? existing?.attachments,
-      taskPlan: message.taskPlan ?? existing?.taskPlan,
-      toolExecutions: nextToolExecutions,
-      loopHistory: nextLoopHistory.length > 0 ? nextLoopHistory : undefined,
-    });
-  }
-  return {
-    ...current,
-    [sessionId]: collapseLoopTranscriptMessages(Array.from(byId.values())),
-  };
-}
-
-export function mergeFinalStreamMessages(
-  current: Record<string, ChatMessage[]>,
-  sessionId: string,
-  incoming: ChatMessage[],
-  options: {
-    turnId?: string;
-    temporaryMessageIds?: string[];
-    toolSourceMessageId?: string;
-  } = {},
-) {
-  if (incoming.length === 0) {
-    return current;
-  }
-  const existing = current[sessionId] ?? [];
-  const existingById = new Map(existing.map((item) => [item.id, item]));
-  const temporaryIds = new Set(options.temporaryMessageIds ?? []);
-  const incomingIds = new Set(incoming.map((item) => item.id));
-  const incomingTurnIds = new Set(
-    incoming
-      .map((item) => item.turnId?.trim() ?? '')
-      .filter(Boolean),
-  );
-  const targetTurnId = options.turnId?.trim() ?? '';
-  const toolSource = options.toolSourceMessageId
-    ? existingById.get(options.toolSourceMessageId)
-    : undefined;
-  const localToolExecutions = toolSource?.toolExecutions ?? [];
-  const completedAt = new Date().toISOString();
-
-  const mergedIncoming = attachLocalToolExecutionsToTranscriptMessages(incoming.map((message) => {
-    const exactExistingMessage = existingById.get(message.id);
-    const hasSegmentedAssistantSnapshot =
-      message.role === 'assistant' &&
-      countMessagesInSameRoleTurn(incoming, message) > 1;
-    const existingMessage =
-      exactExistingMessage ??
-      findStreamReplacementSource(existing, message, {
-        targetTurnId,
-        temporaryIds,
-      });
-    const existingToolExecutions =
-      existingMessage && !temporaryIds.has(existingMessage.id)
-        ? existingMessage.toolExecutions
-        : undefined;
-    return {
-      ...message,
-      createdAt: existingMessage?.createdAt ?? message.createdAt,
-      attachments: message.attachments ?? existingMessage?.attachments,
-      metadata: mergeFinalAssistantTimingMetadata(
-        message,
-        existingMessage,
-        completedAt,
-        chatTurnStartedAt(
-          existing,
-          chatMessageTurnId(message) || targetTurnId,
-          existingMessage?.createdAt,
-        ),
-      ),
-      toolExecutions:
-        (message.toolExecutions?.length ?? 0) > 0
-          ? message.toolExecutions
-          : existingToolExecutions,
-      taskPlan: message.taskPlan ?? existingMessage?.taskPlan,
-      loopHistory:
-        (message.loopHistory?.length ?? 0) > 0
-          ? message.loopHistory
-          // A temporary streaming assistant is the aggregate display target for
-          // the whole active Turn. Reusing its loopHistory as the fallback for
-          // every persisted assistant segment duplicates the complete execution
-          // transcript once per segment when Stop reconciles the final snapshot.
-          // Once the backend supplied multiple authoritative segments, even a
-          // matching final message id can still refer to that aggregate local
-          // display target. Do not reattach its history to the final segment.
-          : hasSegmentedAssistantSnapshot
-            ? undefined
-            : exactExistingMessage?.loopHistory,
-    };
-  }), localToolExecutions);
-
-  if (
-    localToolExecutions.length > 0 &&
-    !mergedIncoming.some((message) => (message.toolExecutions?.length ?? 0) > 0) &&
-    mergedIncoming.filter((message) => message.role === 'assistant').length === 1
-  ) {
-    const targetIndex = findLastIndex(
-      mergedIncoming,
-      (message) => message.role === 'assistant',
-    );
-    if (targetIndex >= 0) {
-      const target = mergedIncoming[targetIndex];
-      mergedIncoming[targetIndex] = {
-        ...target,
-        toolExecutions: mergeToolExecutionLists(
-          target.toolExecutions ?? [],
-          localToolExecutions,
-        ),
-      };
-    }
-  }
-
-  const normalizedIncoming = collapseLoopTranscriptMessages(mergedIncoming);
-  const segmentedIncoming = normalizedIncoming.some(
-    (message) =>
-      message.role === 'assistant' &&
-      Number.isFinite(Number(message.metadata?.assistant_segment_index)),
-  );
-  const shouldReplace = (message: ChatMessage) => {
-    const messageTurnId = message.turnId?.trim() ?? '';
-    if (message.role === 'user') {
-      const matchingIncomingUser = normalizedIncoming.find((candidate) => {
-        if (candidate.role !== 'user') {
-          return false;
-        }
-        if (candidate.id === message.id) {
-          return true;
-        }
-        const candidateTurnId = candidate.turnId?.trim() ?? '';
-        if (messageTurnId && candidateTurnId === messageTurnId) {
-          return true;
-        }
-        return (
-          normalizeEditableUserContent(candidate.content) ===
-          normalizeEditableUserContent(message.content)
-        );
-      });
-      if (
-        incomingIds.has(message.id) ||
-        temporaryIds.has(message.id) ||
-        (!segmentedIncoming && targetTurnId && messageTurnId === targetTurnId) ||
-        Boolean(!segmentedIncoming && messageTurnId && incomingTurnIds.has(messageTurnId))
-      ) {
-        return Boolean(
-          matchingIncomingUser ??
-            findPersistedEditableUserMessage(message, normalizedIncoming),
-        );
-      }
-      return false;
-    }
-    if (
-      isRetainedTerminalAssistant(message) &&
-      !hasAssistantInSameTurn(normalizedIncoming, message)
-    ) {
-      return false;
-    }
-    if (incomingIds.has(message.id) || temporaryIds.has(message.id)) {
-      return true;
-    }
-    if (!segmentedIncoming && targetTurnId && messageTurnId === targetTurnId) {
-      return true;
-    }
-    return Boolean(!segmentedIncoming && messageTurnId && incomingTurnIds.has(messageTurnId));
-  };
-
-  const replacedMessages = existing.filter(shouldReplace);
-  const loopHistory = collectLoopHistoryFromReplaced(
-    replacedMessages,
-    normalizedIncoming,
-    temporaryIds,
-  );
-  if (loopHistory.length > 0) {
-    attachLoopHistoryToFinalAssistant(normalizedIncoming, loopHistory);
-  }
-
-  const replaceIndex = existing.findIndex(shouldReplace);
-  const kept = existing.filter((message) => !shouldReplace(message));
-  const insertAt = replaceIndex < 0
-    ? kept.length
-    : existing.slice(0, replaceIndex).filter((message) => !shouldReplace(message)).length;
-  const nextMessages = [...kept];
-  nextMessages.splice(insertAt, 0, ...normalizedIncoming);
-  return {
-    ...current,
-    [sessionId]: collapseLoopTranscriptMessages(nextMessages),
-  };
-}
-
-function mergeFinalAssistantTimingMetadata(
-  message: ChatMessage,
-  existingMessage: ChatMessage | undefined,
-  completedAt: string,
-  turnStartedAt?: string,
-) {
-  if (message.role !== 'assistant' || isSupersededLoopAssistant(message)) {
-    return message.metadata;
-  }
-  return {
-    ...(message.metadata ?? {}),
-    cardbush_turn_started_at:
-      turnStartedAt ??
-      message.metadata?.cardbush_turn_started_at ??
-      existingMessage?.metadata?.cardbush_turn_started_at ??
-      existingMessage?.createdAt ??
-      message.createdAt,
-    cardbush_turn_completed_at:
-      message.metadata?.cardbush_turn_completed_at ??
-      existingMessage?.metadata?.cardbush_turn_completed_at ??
-      completedAt,
-  };
-}
-
-function attachLocalToolExecutionsToTranscriptMessages(
-  messages: ChatMessage[],
-  localToolExecutions: ChatToolExecution[],
-) {
-  if (localToolExecutions.length === 0) {
-    return messages;
-  }
-  return messages.map((message) => {
-    if (message.role !== 'assistant') {
-      return message;
-    }
-    const matchedExecutions = localToolExecutions.filter((execution) =>
-      toolExecutionBelongsToMessage(message, execution),
-    );
-    if (matchedExecutions.length === 0) {
-      return message;
-    }
-    return {
-      ...message,
-      toolExecutions: mergeToolExecutionLists(
-        message.toolExecutions ?? [],
-        matchedExecutions,
-      ),
-    };
-  });
-}
-
-function toolExecutionBelongsToMessage(
-  message: ChatMessage,
-  execution: ChatToolExecution,
-) {
-  const assistantMessageId = execution.assistantMessageId?.trim() ?? '';
-  if (assistantMessageId) {
-    return (
-      message.id === assistantMessageId ||
-      (message.messageId?.trim() ?? '') === assistantMessageId ||
-      (message.assistantMessageId?.trim() ?? '') === assistantMessageId
-    );
-  }
-  const executionSegmentIndex =
-    execution.assistantSegmentIndex ??
-    optionalFiniteNumber(execution.metadata.assistant_segment_index);
-  const executionTurnId =
-    execution.turnId?.trim() || String(execution.metadata.turn_id ?? '').trim();
-  if (executionSegmentIndex != null && executionTurnId) {
-    return (
-      chatMessageTurnId(message) === executionTurnId &&
-      Number(message.metadata?.assistant_segment_index) === executionSegmentIndex
-    );
-  }
-  const executionLoopIndex = numericOrderValue(execution.loopIndex);
-  const messageLoopIndex = numericOrderValue(message.loopIndex);
-  return (
-    executionLoopIndex != null &&
-    messageLoopIndex != null &&
-    executionLoopIndex === messageLoopIndex
-  );
-}
-
-function mergeToolExecutionLists(
-  primary: ChatToolExecution[],
-  fallback: ChatToolExecution[],
-) {
-  const byId = new Map<string, ChatToolExecution>();
-  for (const execution of fallback) {
-    byId.set(execution.id, execution);
-  }
-  for (const execution of primary) {
-    const current = byId.get(execution.id);
-    byId.set(
-      execution.id,
-      current ? mergeToolExecutionUpdate(current, execution) : execution,
-    );
-  }
-  return Array.from(byId.values()).sort(compareToolExecutionTranscriptOrder);
-}
-
-function compareToolExecutionTranscriptOrder(
-  left: ChatToolExecution,
-  right: ChatToolExecution,
-) {
-  return (
-    compareOptionalOrder(numericOrderValue(left.sequence), numericOrderValue(right.sequence)) ||
-    compareOptionalOrder(numericOrderValue(left.loopIndex), numericOrderValue(right.loopIndex)) ||
-    compareOptionalOrder(dateOrderValue(left.createdAt), dateOrderValue(right.createdAt))
-  );
-}
-
-export function mergeLoadedMessagesPreservingLocalState(
-  existing: ChatMessage[],
-  loaded: ChatMessage[],
-) {
-  if (existing.length === 0) {
-    return collapseLoopTranscriptMessages(loaded);
-  }
-  if (loaded.length === 0) {
-    return collapseLoopTranscriptMessages(existing);
-  }
-  const merged = loaded.map((message) => {
-    const source = findLocalMessageStateSource(existing, message);
-    if (!source) {
-      return message;
-    }
-    const localTranscriptInheritance = localTranscriptCollectionInheritance(
-      source,
-      message,
-      loaded,
-    );
-    const sourceToolExecutions = source.toolExecutions ?? [];
-    const inheritedToolExecutions =
-      countMessagesInSameRoleTurn(loaded, message) > 1
-        ? sourceToolExecutions.filter((execution) =>
-            toolExecutionBelongsToMessage(message, execution),
-          )
-        : localTranscriptInheritance.toolExecutions
-          ? sourceToolExecutions
-          : [];
-    return {
-      ...message,
-      // A terminal refresh may persist the user/assistant rows at slightly
-      // different wall-clock times than the optimistic transcript. Keep the
-      // established local timestamp so Stop cannot move the user bubble below
-      // the assistant execution it originally preceded.
-      createdAt: source.createdAt ?? message.createdAt,
-      metadata: preserveLocalAssistantTimingMetadata(message, source),
-      attachments: message.attachments ?? source.attachments,
-      taskPlan: message.taskPlan ?? source.taskPlan,
-      toolExecutions: mergeToolExecutionLists(
-        message.toolExecutions ?? [],
-        inheritedToolExecutions,
-      ),
-      loopHistory:
-        (message.loopHistory?.length ?? 0) > 0
-          ? message.loopHistory
-          : localTranscriptInheritance.loopHistory
-            ? source.loopHistory
-            : undefined,
-    };
-  });
-  const retainedTerminalAssistants = existing.filter((message) =>
-    isRetainedTerminalAssistant(message) &&
-      !hasAssistantInSameTurn(merged, message),
-  );
-  for (const retained of retainedTerminalAssistants) {
-    const turnId = chatMessageTurnId(retained);
-    const lastTurnIndex = findLastIndex(
-      merged,
-      (candidate) => Boolean(turnId) && chatMessageTurnId(candidate) === turnId,
-    );
-    merged.splice(lastTurnIndex >= 0 ? lastTurnIndex + 1 : merged.length, 0, retained);
-  }
-  return collapseLoopTranscriptMessages(merged);
-}
-
-function localTranscriptCollectionInheritance(
-  source: ChatMessage,
-  message: ChatMessage,
-  loaded: ChatMessage[],
-) {
-  const sameRoleTurnCount = countMessagesInSameRoleTurn(loaded, message);
-  let preciseIdentity = messageIdentityMatches(source, message);
-  const sourceAssistantId = source.assistantMessageId?.trim() ?? '';
-  const messageAssistantId = message.assistantMessageId?.trim() ?? '';
-  if (
-    sourceAssistantId &&
-    messageAssistantId &&
-    sourceAssistantId === messageAssistantId
-  ) {
-    preciseIdentity = true;
-  }
-  const turnId = chatMessageTurnId(message);
-  if (!turnId) {
-    return {
-      toolExecutions: preciseIdentity,
-      loopHistory: preciseIdentity,
-    };
-  }
-  // A legacy final snapshot can replace one optimistic assistant without a
-  // shared message id. That fallback is safe only when the backend returned a
-  // single assistant for the Turn. With multiple loop segments, assigning the
-  // aggregate local collections to every row is precisely the duplication this
-  // guard prevents.
-  const uniqueTurnMessage = sameRoleTurnCount === 1;
-  return {
-    toolExecutions: preciseIdentity || uniqueTurnMessage,
-    // loopHistory on a local streaming assistant is an aggregate of its prior
-    // loop segments. A multi-segment backend snapshot already contains those
-    // rows, so inheriting it on the matching final row would render them twice.
-    loopHistory: uniqueTurnMessage,
-  };
-}
-
-function countMessagesInSameRoleTurn(
-  messages: ChatMessage[],
-  reference: ChatMessage,
-) {
-  const turnId = chatMessageTurnId(reference);
-  if (!turnId) {
-    return 0;
-  }
-  return messages.filter(
-    (candidate) =>
-      candidate.role === reference.role && chatMessageTurnId(candidate) === turnId,
-  ).length;
-}
-
-function isRetainedTerminalAssistant(message: ChatMessage) {
-  if (
-    message.role !== 'assistant' ||
-    message.metadata?.cardbush_terminal_snapshot !== true
-  ) {
-    return false;
-  }
-  const status = String(message.status ?? message.metadata?.status ?? '')
-    .trim()
-    .toLowerCase();
-  return (
-    status === 'failed' ||
-    status === 'stopped' ||
-    message.metadata?.cardbush_terminal_stopped === true
-  );
-}
-
-function hasAssistantInSameTurn(
-  messages: ChatMessage[],
-  reference: ChatMessage,
-) {
-  const turnId = chatMessageTurnId(reference);
-  return Boolean(
-    turnId && messages.some(
-      (message) =>
-        message.role === 'assistant' && chatMessageTurnId(message) === turnId,
-    ),
-  );
-}
-
-function mergeWorkspaceChangeExecutions(
-  messages: ChatMessage[],
-  workspaceChanges: ChatToolExecution[],
-) {
-  if (workspaceChanges.length === 0) return messages;
-  // The transcript initially carries compact Tool execution summaries. Upgrade
-  // each summary in the assistant segment that issued the Tool call so loop
-  // collapsing cannot leave the summary ahead of a detached full-detail copy.
-  return attachHistoryToolExecutions(messages, workspaceChanges);
-}
-
-function preserveLocalAssistantTimingMetadata(
-  message: ChatMessage,
-  source: ChatMessage,
-) {
-  if (message.role !== 'assistant') {
-    return message.metadata;
-  }
-  return {
-    ...(message.metadata ?? {}),
-    ...(source.metadata?.cardbush_terminal_snapshot === true
-      ? {
-          cardbush_terminal_snapshot: true,
-          cardbush_terminal_stopped:
-            message.metadata?.stopped === true ||
-            source.metadata?.cardbush_terminal_stopped === true,
-          status: message.metadata?.status ?? source.metadata?.status,
-          stopped: message.metadata?.stopped ?? source.metadata?.stopped,
-          stop_reason:
-            message.metadata?.stop_reason ?? source.metadata?.stop_reason,
-          stop_scenario:
-            message.metadata?.stop_scenario ?? source.metadata?.stop_scenario,
-          stop_details:
-            message.metadata?.stop_details ?? source.metadata?.stop_details,
-          terminal_event_sequence:
-            message.metadata?.terminal_event_sequence ??
-            source.metadata?.terminal_event_sequence,
-        }
-      : {}),
-    cardbush_turn_started_at:
-      message.metadata?.cardbush_turn_started_at ??
-      source.metadata?.cardbush_turn_started_at ??
-      source.createdAt ??
-      message.createdAt,
-    cardbush_turn_completed_at:
-      message.metadata?.cardbush_turn_completed_at ??
-      source.metadata?.cardbush_turn_completed_at,
-  };
-}
-
-const normalizedChatMessageDisplayCache = new WeakMap<
-  ChatMessage[],
-  ChatMessage[]
->();
-
-export function normalizeChatMessagesForDisplay(messages: ChatMessage[]) {
-  const cached = normalizedChatMessageDisplayCache.get(messages);
-  if (cached) return cached;
-  const timedMessages = hydrateAssistantTurnTiming(messages);
-  const visibleMessages = timedMessages.filter(
-    (message) =>
-      !isGoalSelfCheckMessage(message) && !isBackendSupersededMessage(message),
-  );
-  const hasIntermediateSegments = hasIntermediateAssistantSegments(visibleMessages);
-  if (isStableVisibleTranscript(visibleMessages) && !hasIntermediateSegments) {
-    normalizedChatMessageDisplayCache.set(messages, visibleMessages);
-    return visibleMessages;
-  }
-  const normalized = dedupeVisibleTranscriptMessages(
-    collapseIntermediateAssistantSegments(
-      collapseLoopTranscriptMessages(visibleMessages),
-    ),
-  );
-  normalizedChatMessageDisplayCache.set(messages, normalized);
-  return normalized;
-}
-
-function mergePolledMessagesPreservingLocalState(
-  existing: ChatMessage[],
-  loaded: ChatMessage[],
-) {
-  if (loaded.length === 0) {
-    return existing;
-  }
-  const hydrated = mergeLoadedMessagesPreservingLocalState(existing, loaded);
-  return collapseLoopTranscriptMessages([...existing, ...hydrated]);
-}
-
-/**
- * While a turn is running, present every assistant segment as one continuous
- * transcript. Persisted/final normalization still owns the completed state;
- * this projection exists only for the active turn and therefore disappears as
- * soon as the terminal `done` event clears `sending`.
- */
-export function normalizeActiveTurnTranscriptForDisplay(
-  messages: ChatMessage[],
-  activeTurnId: string,
-) {
-  const turnId = activeTurnId.trim();
-  if (!turnId) {
-    return messages;
-  }
-  const activeAssistantIndex = findLastIndex(
-    messages,
-    (message) =>
-      message.role === 'assistant' && chatMessageTurnId(message) === turnId,
-  );
-  if (activeAssistantIndex < 0) {
-    return messages;
-  }
-  const activeAssistant = messages[activeAssistantIndex];
-  const siblingIndexes = messages
-    .map((message, index) => ({ message, index }))
-    .filter(
-      ({ message, index }) =>
-        index !== activeAssistantIndex &&
-        message.role === 'assistant' &&
-        chatMessageTurnId(message) === turnId &&
-        !isGuidanceSealedAssistantSegment(message) &&
-        hasVisibleLoopHistory(message),
-    );
-  if (siblingIndexes.length === 0) {
-    return messages;
-  }
-  const siblingIndexSet = new Set(siblingIndexes.map(({ index }) => index));
-  const siblingMessages = siblingIndexes.map(({ message }) =>
-    snapshotLoopHistoryMessage(message),
-  );
-  const stableDisplayId = siblingIndexes[0]?.message.id ?? activeAssistant.id;
-  const inheritedPlan = [...siblingMessages]
-    .reverse()
-    .find((message) => message.taskPlan)?.taskPlan;
-  const mergedAssistant: ChatMessage = {
-    ...activeAssistant,
-    // The latest Runtime segment owns the live facts, but the first visible
-    // segment owns the React row identity. Keeping that identity stable avoids
-    // remounting and reparsing the complete Turn transcript on every segment.
-    id: stableDisplayId,
-    taskPlan: activeAssistant.taskPlan ?? inheritedPlan,
-    loopHistory: mergeLoopHistoryMessages(
-      activeAssistant.loopHistory ?? [],
-      siblingMessages,
-    ),
-  };
-  return messages.flatMap((message, index) => {
-    if (siblingIndexSet.has(index)) {
-      return [];
-    }
-    return [index === activeAssistantIndex ? mergedAssistant : message];
-  });
-}
-
-function hasIntermediateAssistantSegments(messages: ChatMessage[]) {
-  const finalByTurn = finalAssistantSegmentsByTurn(messages);
-  return messages.some((message) => {
-    const final = finalByTurn.get(turnTranscriptKey(message));
-    return Boolean(final && shouldArchiveAssistantSegment(message, final));
-  });
-}
-
-function collapseIntermediateAssistantSegments(messages: ChatMessage[]) {
-  const finalByTurn = finalAssistantSegmentsByTurn(messages);
-  if (finalByTurn.size === 0) {
-    return messages;
-  }
-  const historyByFinalId = new Map<string, ChatMessage[]>();
-  const visible: ChatMessage[] = [];
-  for (const message of messages) {
-    const final = finalByTurn.get(turnTranscriptKey(message));
-    if (!final || !shouldArchiveAssistantSegment(message, final)) {
-      visible.push(message);
-      continue;
-    }
-    historyByFinalId.set(final.id, [
-      ...(historyByFinalId.get(final.id) ?? []),
-      snapshotLoopHistoryMessage(message),
-    ]);
-  }
-  return visible.map((message) => {
-    const history = historyByFinalId.get(message.id);
-    if (!history?.length) {
-      return message;
-    }
-    return {
-      ...message,
-      loopHistory: mergeLoopHistoryMessages(message.loopHistory ?? [], history),
-    };
-  });
-}
-
-function finalAssistantSegmentsByTurn(messages: ChatMessage[]) {
-  const byTurn = new Map<string, ChatMessage>();
-  for (const message of messages) {
-    if (message.role !== 'assistant' || !isAssistantFinalTranscript(message)) {
-      continue;
-    }
-    const turnKey = turnTranscriptKey(message);
-    const current = byTurn.get(turnKey);
-    if (!current || compareAssistantSegments(current, message) <= 0) {
-      byTurn.set(turnKey, message);
-    }
-  }
-  return byTurn;
-}
-
-function shouldArchiveAssistantSegment(
-  message: ChatMessage,
-  final: ChatMessage,
-) {
-  if (message.role !== 'assistant' || message.id === final.id) {
-    return false;
-  }
-  if (turnTranscriptKey(message) !== turnTranscriptKey(final)) {
-    return false;
-  }
-  if (isGuidanceSealedAssistantSegment(message)) {
-    return false;
-  }
-  // Older histories do not always carry transcript_kind or
-  // assistant_segment_index. Once a later final assistant message exists for
-  // the same turn, every other assistant message in that turn is process
-  // history. A turn-guidance boundary is different: it seals a user-visible
-  // assistant reply before the queued guidance and must remain in the chat.
-  return true;
-}
-
-function isGuidanceSealedAssistantSegment(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  return (
-    metadata.segment_boundary === 'turn_guidance' ||
-    metadata.segmentBoundary === 'turn_guidance' ||
-    String(
-      metadata.sealed_by_client_message_id ??
-        metadata.sealedByClientMessageId ??
-        '',
-    ).trim().length > 0
-  );
-}
-
-function compareAssistantSegments(left: ChatMessage, right: ChatMessage) {
-  const leftSegment = assistantSegmentIndex(left);
-  const rightSegment = assistantSegmentIndex(right);
-  if (leftSegment != null && rightSegment != null && leftSegment !== rightSegment) {
-    return leftSegment - rightSegment;
-  }
-  return compareTranscriptOrder(left, right);
-}
-
-function assistantSegmentIndex(message: ChatMessage) {
-  return optionalFiniteNumber(
-    message.metadata?.assistant_segment_index ??
-      message.metadata?.assistantSegmentIndex,
-  );
-}
-
-function isStableVisibleTranscript(messages: ChatMessage[]) {
-  const ids = new Set<string>();
-  const persistedIds = new Set<string>();
-  const positions = new Set<string>();
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (isSupersededLoopAssistant(message) || ids.has(message.id)) {
-      return false;
-    }
-    ids.add(message.id);
-    const persistedId = persistedChatMessageId(message);
-    if (persistedId) {
-      if (persistedIds.has(persistedId)) {
-        return false;
-      }
-      persistedIds.add(persistedId);
-    }
-    const content = normalizeLoopContent(message.content);
-    if (content) {
-      const position = [
-        message.role,
-        chatMessageTurnId(message),
-        numericOrderValue(message.turnSequence) ?? '',
-        numericOrderValue(message.messageIndex) ?? '',
-        numericOrderValue(message.loopIndex) ?? '',
-        content,
-      ].join('\u0000');
-      if (positions.has(position)) {
-        return false;
-      }
-      positions.add(position);
-    }
-    if (index > 0 && compareTranscriptOrder(messages[index - 1], message) > 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function findLocalMessageStateSource(existing: ChatMessage[], message: ChatMessage) {
-  const byId = existing.find((item) => item.id === message.id);
-  if (byId) {
-    return byId;
-  }
-  const clientMessageId = chatMessageClientMessageId(message);
-  if (clientMessageId) {
-    const byClientMessageId = existing.find(
-      (item) => chatMessageClientMessageId(item) === clientMessageId,
-    );
-    if (byClientMessageId) return byClientMessageId;
-  }
-  const turnId = message.turnId?.trim() ?? '';
-  if (!turnId) {
-    return undefined;
-  }
-  return [...existing].reverse().find((item) => {
-    if (item.role !== message.role) {
-      return false;
-    }
-    const assistantMessageId = message.assistantMessageId?.trim() ?? '';
-    if (
-      assistantMessageId &&
-      (item.assistantMessageId?.trim() ?? item.id) === assistantMessageId
-    ) {
-      return true;
-    }
-    if ((item.turnId?.trim() ?? '') !== turnId) {
-      return false;
-    }
-    if (isRetainedTerminalAssistant(item)) {
-      return true;
-    }
-    return (
-      messagesShareTranscriptPosition(item, message) ||
-      (item.loopHistory?.length ?? 0) > 0 ||
-      (item.toolExecutions?.length ?? 0) > 0
-    );
-  });
-}
-
-function messagesShareTranscriptPosition(
-  left: ChatMessage,
-  right: ChatMessage,
-) {
-  if (left.role !== right.role) {
-    return false;
-  }
-  const leftTurn = chatMessageTurnId(left);
-  const rightTurn = chatMessageTurnId(right);
-  if (!leftTurn || leftTurn !== rightTurn) {
-    return false;
-  }
-  const leftMessageIndex = numericOrderValue(left.messageIndex);
-  const rightMessageIndex = numericOrderValue(right.messageIndex);
-  if (leftMessageIndex != null && rightMessageIndex != null) {
-    return leftMessageIndex === rightMessageIndex;
-  }
-  const leftTurnSequence = numericOrderValue(left.turnSequence);
-  const rightTurnSequence = numericOrderValue(right.turnSequence);
-  if (
-    leftTurnSequence != null &&
-    rightTurnSequence != null &&
-    leftTurnSequence !== rightTurnSequence
-  ) {
-    return false;
-  }
-  return normalizeLoopContent(left.content) === normalizeLoopContent(right.content);
-}
-
-function collectLoopHistoryFromReplaced(
-  replacedMessages: ChatMessage[],
-  finalMessages: ChatMessage[],
-  temporaryIds: Set<string>,
-) {
-  const finalIds = new Set(finalMessages.map((message) => message.id));
-  const finalAssistant = finalMessages[findLastIndex(
-    finalMessages,
-    (message) => message.role === 'assistant',
-  )];
-  const replacedAssistants = replacedMessages
-    .filter((message) => message.role === 'assistant')
-    .filter((message) => !finalIds.has(message.id))
-    .filter(
-      (message) =>
-        !isGuidanceSealedAssistantSegment(message) ||
-        !finalMessages.some(
-          (candidate) =>
-            candidate.role === 'assistant' &&
-            isGuidanceSealedAssistantSegment(candidate) &&
-            turnTranscriptKey(candidate) === turnTranscriptKey(message) &&
-            (
-              messageIdentityMatches(candidate, message) ||
-              (
-                assistantSegmentIndex(candidate) != null &&
-                assistantSegmentIndex(candidate) === assistantSegmentIndex(message)
-              )
-            ),
-        ),
-    );
-  const candidates = replacedAssistants.flatMap((message) => [
-    ...(message.loopHistory ?? []),
-    ...(
-      hasVisibleLoopHistory(message) &&
-      !isTemporaryAssistantCoveredByBackendTranscript(
-        message,
-        finalMessages,
-        temporaryIds,
-      ) &&
-      !isRedundantTemporaryAssistant(message, finalAssistant, temporaryIds)
-        ? [message]
-        : []
-    ),
-  ]);
-  return mergeLoopHistoryMessages([], candidates);
-}
-
-function isTemporaryAssistantCoveredByBackendTranscript(
-  message: ChatMessage,
-  finalMessages: ChatMessage[],
-  temporaryIds: Set<string>,
-) {
-  if (!temporaryIds.has(message.id)) {
-    return false;
-  }
-  const turnKey = turnTranscriptKey(message);
-  return finalMessages.some((candidate) => {
-    if (candidate.role !== 'assistant' || turnTranscriptKey(candidate) !== turnKey) {
-      return false;
-    }
-    if (backendLoopMessageMatchesTemporary(candidate, message, temporaryIds)) {
-      return true;
-    }
-    return (candidate.loopHistory ?? []).some(
-      (item) => backendLoopMessageMatchesTemporary(item, message, temporaryIds),
-    );
-  });
-}
-
-function backendLoopMessageMatchesTemporary(
-  candidate: ChatMessage,
-  temporary: ChatMessage,
-  temporaryIds: Set<string>,
-) {
-  if (
-    temporaryIds.has(candidate.id) ||
-    !isSupersededLoopAssistant(candidate) ||
-    turnTranscriptKey(candidate) !== turnTranscriptKey(temporary)
-  ) {
-    return false;
-  }
-  if (messageIdentityMatches(candidate, temporary)) {
-    return true;
-  }
-  const candidateSegment = optionalFiniteNumber(
-    candidate.metadata?.assistant_segment_index,
-  );
-  const temporarySegment = optionalFiniteNumber(
-    temporary.metadata?.assistant_segment_index,
-  );
-  if (candidateSegment != null && temporarySegment != null) {
-    return candidateSegment === temporarySegment;
-  }
-  const candidateLoop = numericOrderValue(candidate.loopIndex);
-  const temporaryLoop = numericOrderValue(temporary.loopIndex);
-  if (candidateLoop != null && temporaryLoop != null) {
-    return candidateLoop === temporaryLoop;
-  }
-  const candidateContent = normalizeLoopContent(candidate.content);
-  return Boolean(
-    candidateContent &&
-    candidateContent === normalizeLoopContent(temporary.content),
-  );
-}
-
-function attachLoopHistoryToFinalAssistant(
-  messages: ChatMessage[],
-  loopHistory: ChatMessage[],
-) {
-  const targetIndex = findLastIndex(
-    messages,
-    (message) => message.role === 'assistant',
-  );
-  if (targetIndex < 0) {
-    return;
-  }
-  const target = messages[targetIndex];
-  messages[targetIndex] = {
-    ...target,
-    loopHistory: mergeLoopHistoryMessages(target.loopHistory ?? [], loopHistory),
-  };
-}
-
-function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
-  if (messages.length === 0) {
-    return messages;
-  }
-  const sorted = sortMessagesByTranscriptOrder(messages);
-  const loopHistoryByTurn = new Map<string, ChatMessage[]>();
-  const visible: ChatMessage[] = [];
-  for (const message of sorted) {
-    // The backend keeps edit/rerun branches for audit when
-    // include_superseded=true. They are not assistant loop segments and must
-    // never fall back into the visible transcript just because the replacement
-    // response belongs to a newly generated turn. Guidance segments are not
-    // marked with this persistence flag and continue through the normal
-    // turn-guidance projection below.
-    if (isBackendSupersededMessage(message)) {
-      continue;
-    }
-    if (isSupersededLoopAssistant(message)) {
-      const key = turnTranscriptKey(message);
-      loopHistoryByTurn.set(key, [
-        ...(loopHistoryByTurn.get(key) ?? []),
-        snapshotLoopHistoryMessage(message),
-      ]);
-      continue;
-    }
-    visible.push(message);
-  }
-  for (const [turnKey, loopHistory] of loopHistoryByTurn) {
-    const targetIndex = findLastIndex(
-      visible,
-      (message) =>
-        message.role === 'assistant' &&
-        turnTranscriptKey(message) === turnKey &&
-        !isSupersededLoopAssistant(message),
-    );
-    if (targetIndex < 0) {
-      visible.push(...loopHistory);
-      continue;
-    }
-    const target = visible[targetIndex];
-    visible[targetIndex] = {
-      ...target,
-      loopHistory: mergeLoopHistoryMessages(target.loopHistory ?? [], loopHistory),
-    };
-  }
-  return sortMessagesByTranscriptOrder(dedupeVisibleTranscriptMessages(visible));
-}
-
-function isBackendSupersededMessage(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  return (
-    metadata.__bush_superseded === true ||
-    metadata.superseded === true ||
-    metadata.is_superseded === true ||
-    metadata.isSuperseded === true
-  );
-}
-
-function dedupeVisibleTranscriptMessages(messages: ChatMessage[]) {
-  const deduped: ChatMessage[] = [];
-  for (const message of messages) {
-    const existingIndex = deduped.findIndex((candidate) =>
-      shouldCollapseDuplicateTranscriptMessage(candidate, message),
-    );
-    if (existingIndex < 0) {
-      deduped.push(message);
-      continue;
-    }
-    deduped[existingIndex] = mergeDuplicateTranscriptMessage(
-      deduped[existingIndex],
-      message,
-    );
-  }
-  return deduped;
-}
-
-function shouldCollapseDuplicateTranscriptMessage(
-  left: ChatMessage,
-  right: ChatMessage,
-) {
-  if (left.id === right.id) {
-    return true;
-  }
-  const leftClientMessageId = chatMessageClientMessageId(left);
-  const rightClientMessageId = chatMessageClientMessageId(right);
-  if (
-    leftClientMessageId &&
-    rightClientMessageId &&
-    leftClientMessageId === rightClientMessageId
-  ) {
-    return true;
-  }
-  const leftPersistedId = persistedChatMessageId(left);
-  const rightPersistedId = persistedChatMessageId(right);
-  if (leftPersistedId && rightPersistedId && leftPersistedId === rightPersistedId) {
-    return true;
-  }
-  if (left.role !== right.role) {
-    return false;
-  }
-  const leftTurn = chatMessageTurnId(left);
-  const rightTurn = chatMessageTurnId(right);
-  if (!leftTurn || leftTurn !== rightTurn) {
-    return false;
-  }
-  if (!transcriptOrderCompatible(left, right)) {
-    return false;
-  }
-  const leftContent = normalizeLoopContent(left.content);
-  const rightContent = normalizeLoopContent(right.content);
-  return Boolean(leftContent && leftContent === rightContent);
-}
-
-function transcriptOrderCompatible(left: ChatMessage, right: ChatMessage) {
-  const leftTurnSequence = numericOrderValue(left.turnSequence);
-  const rightTurnSequence = numericOrderValue(right.turnSequence);
-  if (
-    leftTurnSequence != null &&
-    rightTurnSequence != null &&
-    leftTurnSequence !== rightTurnSequence
-  ) {
-    return false;
-  }
-  const leftMessageIndex = numericOrderValue(left.messageIndex);
-  const rightMessageIndex = numericOrderValue(right.messageIndex);
-  if (
-    leftMessageIndex != null &&
-    rightMessageIndex != null &&
-    leftMessageIndex !== rightMessageIndex
-  ) {
-    return false;
-  }
-  const leftLoopIndex = numericOrderValue(left.loopIndex);
-  const rightLoopIndex = numericOrderValue(right.loopIndex);
-  if (
-    leftLoopIndex != null &&
-    rightLoopIndex != null &&
-    leftLoopIndex !== rightLoopIndex
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function mergeDuplicateTranscriptMessage(left: ChatMessage, right: ChatMessage) {
-  const primary = transcriptMessagePriority(right) >= transcriptMessagePriority(left)
-    ? right
-    : left;
-  const fallback = primary === right ? left : right;
-  const toolExecutions = mergeToolExecutionLists(
-    primary.toolExecutions ?? [],
-    fallback.toolExecutions ?? [],
-  );
-  const loopHistory = mergeLoopHistoryMessages(
-    primary.loopHistory ?? [],
-    fallback.loopHistory ?? [],
-  );
-  return {
-    ...fallback,
-    ...primary,
-    messageId: primary.messageId ?? fallback.messageId,
-    clientMessageId: primary.clientMessageId ?? fallback.clientMessageId,
-    assistantMessageId: primary.assistantMessageId ?? fallback.assistantMessageId,
-    createdAt: primary.createdAt ?? fallback.createdAt,
-    metadata: {
-      ...(fallback.metadata ?? {}),
-      ...(primary.metadata ?? {}),
-    },
-    taskPlan: primary.taskPlan ?? fallback.taskPlan,
-    toolExecutions: toolExecutions.length > 0 ? toolExecutions : undefined,
-    loopHistory: loopHistory.length > 0 ? loopHistory : undefined,
-  };
-}
-
-function transcriptMessagePriority(message: ChatMessage) {
-  let score = 0;
-  if (persistedChatMessageId(message)) {
-    score += 8;
-  }
-  if (message.messageId?.trim()) {
-    score += 4;
-  }
-  if (message.role === 'assistant' && isAssistantFinalTranscript(message)) {
-    score += 2;
-  }
-  if (message.createdAt?.trim()) {
-    score += 1;
-  }
-  return score;
-}
-
-function sortMessagesByTranscriptOrder(messages: ChatMessage[]) {
-  return messages
-    .map((message, index) => ({ message, index }))
-    .sort((left, right) => {
-      return compareTranscriptOrder(left.message, right.message) || left.index - right.index;
-    })
-    .map((item) => item.message);
-}
-
-function compareTranscriptOrder(left: ChatMessage, right: ChatMessage) {
-  const turnDelta = compareOptionalOrder(
-    numericOrderValue(left.turnSequence),
-    numericOrderValue(right.turnSequence),
-  );
-  if (turnDelta !== 0) {
-    return turnDelta;
-  }
-  const sameTurn = turnTranscriptKey(left) === turnTranscriptKey(right);
-  const indexDelta = sameTurn
-    ? compareOptionalOrder(
-        numericOrderValue(left.messageIndex),
-        numericOrderValue(right.messageIndex),
-      )
-    : 0;
-  if (indexDelta !== 0) {
-    return indexDelta;
-  }
-  const loopDelta = sameTurn
-    ? compareOptionalOrder(
-        numericOrderValue(left.loopIndex),
-        numericOrderValue(right.loopIndex),
-      )
-    : 0;
-  if (loopDelta !== 0) {
-    return loopDelta;
-  }
-  const sequenceDelta = compareOptionalOrder(
-    numericOrderValue(left.sequence),
-    numericOrderValue(right.sequence),
-  );
-  if (sequenceDelta !== 0) {
-    return sequenceDelta;
-  }
-  return compareOptionalOrder(
-    dateOrderValue(left.createdAt),
-    dateOrderValue(right.createdAt),
-  );
-}
-
-function compareOptionalOrder(left: number | undefined, right: number | undefined) {
-  if (left == null || right == null) {
-    return 0;
-  }
-  return left - right;
-}
-
-function dateOrderValue(value: string | undefined) {
-  if (!value) {
-    return undefined;
-  }
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : undefined;
-}
-
-function numericOrderValue(value: number | undefined) {
-  return Number.isFinite(value) ? Number(value) : undefined;
-}
-
-function persistedChatMessageId(message: ChatMessage | undefined) {
-  if (!message) {
-    return '';
-  }
-  const explicitId = message.messageId?.trim() ?? '';
-  if (isPersistedChatMessageId(explicitId)) {
-    return explicitId;
-  }
-  const ownId = message.id.trim();
-  if (isPersistedChatMessageId(ownId)) {
-    return ownId;
-  }
-  const metadata = message.metadata ?? {};
-  for (const value of [
-    metadata.message_id,
-    metadata.messageId,
-    metadata.chat_message_id,
-    metadata.chatMessageId,
-  ]) {
-    const candidate = String(value ?? '').trim();
-    if (isPersistedChatMessageId(candidate)) {
-      return candidate;
-    }
-  }
-  return '';
-}
-
-function isPersistedChatMessageId(value: string) {
-  const normalized = value.trim();
-  return (
-    /^msg:\S+$/.test(normalized) ||
-    /^msg-[\w-]+$/.test(normalized) ||
-    /^msg_[\w-]+$/.test(normalized) ||
-    /^message_[\w-]+$/.test(normalized) ||
-    /^\d+$/.test(normalized)
-  );
-}
-
-function findPersistedEditableUserMessage(
-  source: ChatMessage,
-  candidates: ChatMessage[],
-) {
-  if (source.role !== 'user') {
-    return undefined;
-  }
-  const sourceId = persistedChatMessageId(source);
-  if (sourceId) {
-    return source.id === sourceId ? source : { ...source, id: sourceId };
-  }
-  const persistedCandidates = candidates.filter(
-    (candidate) => candidate.role === 'user' && persistedChatMessageId(candidate),
-  );
-  const sourceTurnId = chatMessageTurnId(source);
-  if (sourceTurnId) {
-    const turnMatch = persistedCandidates.find(
-      (candidate) => chatMessageTurnId(candidate) === sourceTurnId,
-    );
-    if (turnMatch) {
-      return turnMatch;
-    }
-  }
-  const sourceTurnSequence = numericOrderValue(source.turnSequence);
-  const sourceMessageIndex = numericOrderValue(source.messageIndex);
-  if (sourceTurnSequence != null && sourceMessageIndex != null) {
-    const orderMatch = persistedCandidates.find(
-      (candidate) =>
-        numericOrderValue(candidate.turnSequence) === sourceTurnSequence &&
-        numericOrderValue(candidate.messageIndex) === sourceMessageIndex,
-    );
-    if (orderMatch) {
-      return orderMatch;
-    }
-  }
-  const sourceContent = normalizeEditableUserContent(source.content);
-  if (!sourceContent) {
-    return undefined;
-  }
-  const contentMatches = persistedCandidates.filter(
-    (candidate) => normalizeEditableUserContent(candidate.content) === sourceContent,
-  );
-  return contentMatches.length === 1 ? contentMatches[0] : undefined;
-}
-
-function findUserMessageForAssistantRegenerate(
-  source: ChatMessage,
-  candidates: ChatMessage[],
-) {
-  const persistedCandidates = candidates.filter(
-    (candidate) => candidate.role === 'user' && persistedChatMessageId(candidate),
-  );
-  const sourceTurnId = chatMessageTurnId(source);
-  if (sourceTurnId) {
-    const turnMatch = [...persistedCandidates]
-      .reverse()
-      .find((candidate) => chatMessageTurnId(candidate) === sourceTurnId);
-    if (turnMatch) {
-      return turnMatch;
-    }
-  }
-  const sourceIndex = candidates.findIndex((candidate) =>
-    messageIdentityMatches(candidate, source),
-  );
-  const previousMessages =
-    sourceIndex >= 0 ? candidates.slice(0, sourceIndex) : candidates;
-  return [...previousMessages]
-    .reverse()
-    .find((candidate) => candidate.role === 'user' && persistedChatMessageId(candidate));
-}
-
-function messageIdentityMatches(left: ChatMessage, right: ChatMessage) {
-  if (left.id === right.id) {
-    return true;
-  }
-  const leftId = persistedChatMessageId(left);
-  const rightId = persistedChatMessageId(right);
-  if (leftId && rightId && leftId === rightId) {
-    return true;
-  }
-  const leftTurn = chatMessageTurnId(left);
-  const rightTurn = chatMessageTurnId(right);
-  if (!leftTurn || leftTurn !== rightTurn) {
-    return false;
-  }
-  const leftMessageIndex = numericOrderValue(left.messageIndex);
-  const rightMessageIndex = numericOrderValue(right.messageIndex);
-  return (
-    leftMessageIndex != null &&
-    rightMessageIndex != null &&
-    leftMessageIndex === rightMessageIndex
-  );
-}
-
-function chatMessageTurnId(message: ChatMessage) {
-  return String(
-    message.turnId ??
-      message.metadata?.turn_id ??
-      message.metadata?.turnId ??
-      '',
-  ).trim();
-}
-
-function chatMessageClientMessageId(message: ChatMessage) {
-  return String(
-    message.clientMessageId ??
-      message.metadata?.client_message_id ??
-      message.metadata?.clientMessageId ??
-      '',
-  ).trim();
-}
-
-function normalizeEditableUserContent(value: string) {
-  return value.trim().replace(/\r\n/g, '\n');
-}
-
-function uniqueMessageIds(values: string[]) {
-  return Array.from(
-    new Set(values.map((value) => value.trim()).filter(Boolean)),
-  );
-}
-
-function turnTranscriptKey(message: ChatMessage) {
-  const turnId = message.turnId?.trim();
-  if (turnId) {
-    return `turn:${turnId}`;
-  }
-  const metadataTurnId = String(
-    message.metadata?.turn_id ?? message.metadata?.turnId ?? '',
-  ).trim();
-  if (metadataTurnId) {
-    return `turn:${metadataTurnId}`;
-  }
-  const assistantMessageId = message.assistantMessageId?.trim();
-  if (assistantMessageId) {
-    return `assistant:${assistantMessageId}`;
-  }
-  return `message:${message.id}`;
-}
-
-function isSupersededLoopAssistant(message: ChatMessage) {
-  const status = String(message.status ?? message.metadata?.status ?? '')
-    .trim()
-    .toLowerCase();
-  const transcriptKind = assistantTranscriptKind(message);
-  const historyVisibility = String(
-    message.metadata?.history_visibility ?? message.metadata?.historyVisibility ?? '',
-  )
-    .trim()
-    .toLowerCase();
-  return (
-    message.role === 'assistant' &&
-    (
-      transcriptKind === 'assistant_loop' ||
-      (transcriptKind === 'assistant_segment' && historyVisibility === 'ephemeral') ||
-      (status === 'superseded' && !transcriptKind)
-    )
-  );
-}
-
-function isAssistantFinalTranscript(message: ChatMessage) {
-  if (message.role !== 'assistant') {
-    return false;
-  }
-  const status = String(message.status ?? message.metadata?.status ?? '')
-    .trim()
-    .toLowerCase();
-  const transcriptKind = assistantTranscriptKind(message);
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'stopped' ||
-    message.metadata?.stopped === true ||
-    message.metadata?.cardbush_terminal_stopped === true ||
-    transcriptKind === 'assistant_final' ||
-    (!status && !transcriptKind)
-  );
-}
-
-function assistantTranscriptKind(message: ChatMessage) {
-  return String(
-    message.metadata?.transcript_kind ??
-      message.metadata?.transcriptKind ??
-      '',
-  )
-    .trim()
-    .toLowerCase();
-}
-
-function mergeLoopHistoryMessages(
-  existing: ChatMessage[],
-  incoming: ChatMessage[],
-) {
-  const byKey = new Map<string, ChatMessage>();
-  for (const message of flattenLoopHistoryMessages([...existing, ...incoming])) {
-    if (!hasVisibleLoopHistory(message)) {
-      continue;
-    }
-    byKey.set(loopHistoryMessageKey(message), snapshotLoopHistoryMessage(message));
-  }
-  return sortMessagesByTranscriptOrder(Array.from(byKey.values()));
-}
-
-function flattenLoopHistoryMessages(messages: ChatMessage[]) {
-  const flattened: ChatMessage[] = [];
-  const visiting = new Set<ChatMessage>();
-  const visit = (message: ChatMessage) => {
-    if (visiting.has(message)) return;
-    visiting.add(message);
-    for (const nested of message.loopHistory ?? []) {
-      visit(nested);
-    }
-    flattened.push(message);
-    visiting.delete(message);
-  };
-  for (const message of messages) visit(message);
-  return flattened;
-}
-
-function snapshotLoopHistoryMessage(message: ChatMessage): ChatMessage {
-  return {
-    id: message.id,
-    messageId: message.messageId,
-    role: message.role,
-    content: message.content,
-    conversationId: message.conversationId,
-    turnId: message.turnId,
-    createdAt: message.createdAt,
-    status: message.status,
-    loopIndex: message.loopIndex,
-    turnSequence: message.turnSequence,
-    messageIndex: message.messageIndex,
-    sequence: message.sequence,
-    requestId: message.requestId,
-    eventId: message.eventId,
-    assistantMessageId: message.assistantMessageId,
-    attachments: message.attachments?.map((attachment) => ({ ...attachment })),
-    toolExecutions: message.toolExecutions?.map((execution) => ({
-      ...execution,
-      artifacts: execution.artifacts?.map((artifact) => ({ ...artifact })),
-      metadata: { ...execution.metadata },
-    })),
-    taskPlan: message.taskPlan,
-    metadata: message.metadata ? { ...message.metadata } : undefined,
-  };
-}
-
-function hasVisibleLoopHistory(message: ChatMessage) {
-  return Boolean(
-    message.content.trim() ||
-      (message.attachments?.length ?? 0) > 0 ||
-      (message.toolExecutions?.length ?? 0) > 0,
-  );
-}
-
-function shouldPreserveExistingAsLoopHistory(
-  existing: ChatMessage,
-  incoming: ChatMessage,
-) {
-  if (existing.role !== 'assistant' || incoming.role !== 'assistant') {
-    return false;
-  }
-  if (!hasVisibleLoopHistory(existing)) {
-    return false;
-  }
-  return normalizeLoopContent(existing.content) !== normalizeLoopContent(incoming.content);
-}
-
-function isRedundantTemporaryAssistant(
-  message: ChatMessage,
-  finalAssistant: ChatMessage | undefined,
-  temporaryIds: Set<string>,
-) {
-  if (!finalAssistant || !temporaryIds.has(message.id)) {
-    return false;
-  }
-  return normalizeLoopContent(message.content) === normalizeLoopContent(finalAssistant.content);
-}
-
-function normalizeLoopContent(content: string) {
-  return content.trim().replace(/\s+/g, ' ');
-}
-
-function loopHistoryMessageKey(message: ChatMessage) {
-  return [
-    message.id.trim(),
-    message.role,
-    message.turnId?.trim() ?? '',
-    message.assistantMessageId?.trim() ?? '',
-    message.status?.trim() ?? '',
-    message.loopIndex ?? '',
-    message.turnSequence ?? '',
-    message.messageIndex ?? '',
-    message.createdAt?.trim() ?? '',
-    normalizeLoopContent(message.content),
-    message.toolExecutions
-      ?.map((execution) =>
-        [
-          execution.id,
-          execution.state,
-          normalizeLoopContent(execution.summary),
-          normalizeLoopContent(execution.output),
-        ].join(':'),
-      )
-      .join(',') ?? '',
-  ].join('|');
-}
-
-function findStreamReplacementSource(
-  existing: ChatMessage[],
-  incoming: ChatMessage,
-  {
-    targetTurnId,
-    temporaryIds,
-  }: {
-    targetTurnId: string;
-    temporaryIds: Set<string>;
-  },
-) {
-  const incomingTurnId = incoming.turnId?.trim() || targetTurnId;
-  if (!incomingTurnId) {
-    return undefined;
-  }
-  const candidates = existing.filter((message) => {
-    if (message.role !== incoming.role) {
-      return false;
-    }
-    const messageTurnId = message.turnId?.trim() ?? '';
-    return messageTurnId === incomingTurnId || temporaryIds.has(message.id);
-  });
-  return (
-    candidates.find((message) => temporaryIds.has(message.id)) ??
-    candidates.at(-1)
-  );
-}
-
-function findLastIndex<T>(values: T[], predicate: (value: T) => boolean) {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (predicate(values[index])) {
-      return index;
-    }
-  }
-  return -1;
 }
 
 function upsertConversationPreview(
@@ -7293,62 +4402,6 @@ function streamAttachmentsForVision(
       ...attachments.images.map((image) => image.path).filter(Boolean),
     ],
   };
-}
-
-function chatTurnStartedAt(
-  messages: ChatMessage[],
-  turnId?: string,
-  fallback?: string,
-) {
-  const normalizedTurnId = turnId?.trim() ?? '';
-  const matching = normalizedTurnId
-    ? messages.filter((message) => chatMessageTurnId(message) === normalizedTurnId)
-    : messages;
-  const userStartedAt = earliestValidTimestamp(
-    matching
-      .filter((message) => message.role === 'user' && !isTurnGuidanceMessage(message))
-      .map((message) => message.createdAt),
-  );
-  if (userStartedAt) return userStartedAt;
-  const metadataStartedAt = earliestValidTimestamp(
-    matching.flatMap((message) => [
-      message.metadata?.cardbush_turn_started_at,
-      message.metadata?.cardbushTurnStartedAt,
-      message.metadata?.turn_started_at,
-      message.metadata?.turnStartedAt,
-    ]),
-  );
-  return metadataStartedAt ?? earliestValidTimestamp([fallback]);
-}
-
-function isTurnGuidanceMessage(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  return (
-    metadata.turn_guidance === true ||
-    metadata.turnGuidance === true ||
-    String(metadata.name ?? '').trim() === 'turn_guidance'
-  );
-}
-
-function earliestValidTimestamp(values: unknown[]) {
-  let earliest: { value: string; timestamp: number } | undefined;
-  for (const value of values) {
-    if (typeof value !== 'string' || !value.trim()) continue;
-    const timestamp = Date.parse(value);
-    if (!Number.isFinite(timestamp)) continue;
-    if (!earliest || timestamp < earliest.timestamp) {
-      earliest = { value, timestamp };
-    }
-  }
-  return earliest?.value;
-}
-
-function timestampDurationMs(startedAt?: string, completedAt?: string) {
-  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
-  const completed = completedAt ? Date.parse(completedAt) : Number.NaN;
-  return Number.isFinite(started) && Number.isFinite(completed) && completed >= started
-    ? completed - started
-    : undefined;
 }
 
 function streamAttachmentsFromChatAttachments(

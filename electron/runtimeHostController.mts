@@ -71,11 +71,11 @@ export class RuntimeUtilityProcessController {
           ),
         );
         if (this.#child === child) {
+          this.#failAll(failure);
           this.#child = undefined;
           child.kill();
         }
         reject(failure);
-        this.#failAll(failure);
       }, startupTimeoutMs);
       const clearStartupTimeout = () => clearTimeout(startupTimeout);
       child.stdout?.on('data', (chunk) => {
@@ -85,6 +85,7 @@ export class RuntimeUtilityProcessController {
         this.#options.onStderr?.(String(chunk));
       });
       child.on('message', (candidate) => {
+        if (this.#child !== child) return;
         let message;
         try {
           message = decodeRuntimeIpcOutboundMessage(candidate);
@@ -121,8 +122,6 @@ export class RuntimeUtilityProcessController {
       });
       child.on('exit', (code) => {
         clearStartupTimeout();
-        this.#child = undefined;
-        this.#ready = undefined;
         const failure = new RuntimeHostControllerError(
           runtimeError(
             'transport',
@@ -131,7 +130,13 @@ export class RuntimeUtilityProcessController {
           ),
         );
         reject(failure);
-        this.#failAll(failure);
+        // A stopped process may exit after its replacement has already started.
+        // Its late events must not clear the new process or reject its commands.
+        if (this.#child === child) {
+          this.#child = undefined;
+          this.#ready = undefined;
+          this.#failAll(failure);
+        }
       });
       child.on('error', (_type, location, report) => {
         clearStartupTimeout();
@@ -145,7 +150,7 @@ export class RuntimeUtilityProcessController {
           ),
         );
         reject(failure);
-        this.#failAll(failure);
+        if (this.#child === child) this.#failAll(failure);
       });
     });
     this.#ready = ready;
@@ -223,8 +228,11 @@ export class RuntimeUtilityProcessController {
     if (message.type !== 'stop_stream') {
       throw new Error('Runtime stop channel received an invalid message.');
     }
-    await this.start();
-    this.#post(message);
+    // Cleanup must not start (or target) a replacement Runtime process.
+    const child = this.#child;
+    if (!child) return;
+    await this.#ready?.catch(() => undefined);
+    if (this.#child === child) child.postMessage(message);
   }
 
   async cancelOperation(input: unknown): Promise<void> {
@@ -242,9 +250,13 @@ export class RuntimeUtilityProcessController {
   }
 
   stop(): void {
-    this.#child?.kill();
+    const child = this.#child;
     this.#child = undefined;
     this.#ready = undefined;
+    this.#failAll(new RuntimeHostControllerError(runtimeError(
+      'transport', 'runtime_host_stopped', 'Runtime Utility Process was stopped.',
+    )));
+    child?.kill();
   }
 
   #post(message: RuntimeIpcInboundMessage) {
@@ -275,8 +287,56 @@ export function registerRuntimeHostIpc(
   isAllowedSender: (sender: WebContents) => boolean,
 ): () => void {
   const subscriptions = new Map<string, RuntimeStreamSubscription>();
+  const startingSubscriptions = new Set<string>();
+  const ownerCleanup = new Map<WebContents, () => void>();
+  let disposed = false;
+  const releaseSubscription = (id: string, stopWorker = true) => {
+    const subscription = subscriptions.get(id);
+    if (!subscription) return;
+    subscriptions.delete(id);
+    if (stopWorker) {
+      void controller.stopStream({
+        protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'stop_stream', subscriptionId: id,
+      }).catch(() => undefined);
+    }
+    if (![...subscriptions.values()].some(item => item.owner === subscription.owner)) {
+      ownerCleanup.get(subscription.owner)?.();
+      ownerCleanup.delete(subscription.owner);
+    }
+  };
+  const watchOwner = (owner: WebContents) => {
+    if (ownerCleanup.has(owner)) return;
+    let navigating = new Map<string, RuntimeStreamSubscription>();
+    const releaseOwner = () => {
+      for (const [id, subscription] of subscriptions) {
+        if (subscription.owner === owner) releaseSubscription(id);
+      }
+    };
+    const navigationStarted = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      // Capture old IDs but do not cancel on a merely attempted navigation: a
+      // beforeunload handler or navigation guard may keep this document alive.
+      navigating = new Map([...subscriptions].filter(([, s]) => s.owner === owner));
+    };
+    const navigationCommitted = () => {
+      for (const [id, subscription] of navigating) {
+        if (subscriptions.get(id) === subscription) releaseSubscription(id);
+      }
+      navigating.clear();
+    };
+    owner.on('destroyed', releaseOwner);
+    owner.on('render-process-gone', releaseOwner);
+    owner.on('did-start-navigation', navigationStarted);
+    owner.on('did-navigate', navigationCommitted);
+    ownerCleanup.set(owner, () => {
+      owner.removeListener('destroyed', releaseOwner);
+      owner.removeListener('render-process-gone', releaseOwner);
+      owner.removeListener('did-start-navigation', navigationStarted);
+      owner.removeListener('did-navigate', navigationCommitted);
+    });
+  };
   const ensureAllowed = (sender: WebContents) => {
-    if (!isAllowedSender(sender)) {
+    if (disposed || !isAllowedSender(sender)) {
       throw new Error('Renderer is not allowed to access the Runtime Host.');
     }
   };
@@ -294,15 +354,29 @@ export function registerRuntimeHostIpc(
     if (!frame || frame.isDestroyed() || frame.detached) {
       throw new Error('Renderer frame is unavailable for Runtime stream.');
     }
-    subscriptions.set(message.subscriptionId, {
+    if (subscriptions.has(message.subscriptionId) || startingSubscriptions.has(message.subscriptionId)) {
+      throw new Error('Runtime subscription identity is already in use.');
+    }
+    const subscription = {
       owner: event.sender,
       frame,
-    });
+    };
+    subscriptions.set(message.subscriptionId, subscription);
+    watchOwner(event.sender);
+    startingSubscriptions.add(message.subscriptionId);
     try {
       await controller.startStream(message);
+      // The frame can disappear while Runtime startup is awaiting readiness.
+      if (subscriptions.get(message.subscriptionId) !== subscription) {
+        await controller.stopStream({
+          protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'stop_stream', subscriptionId: message.subscriptionId,
+        }).catch(() => undefined);
+      }
     } catch (error) {
-      subscriptions.delete(message.subscriptionId);
+      releaseSubscription(message.subscriptionId);
       throw error;
+    } finally {
+      startingSubscriptions.delete(message.subscriptionId);
     }
   });
   ipc.handle(RUNTIME_IPC_STOP_STREAM_CHANNEL, async (event, input) => {
@@ -312,11 +386,10 @@ export function registerRuntimeHostIpc(
       throw new Error('Invalid Runtime stream stop request.');
     }
     const subscription = subscriptions.get(message.subscriptionId);
-    if (subscription && subscription.owner.id !== event.sender.id) {
+    if (subscription && (subscription.owner !== event.sender || subscription.frame !== event.senderFrame)) {
       throw new Error('Runtime stream belongs to a different renderer.');
     }
-    subscriptions.delete(message.subscriptionId);
-    await controller.stopStream(message);
+    releaseSubscription(message.subscriptionId);
   });
   ipc.handle(RUNTIME_IPC_CANCEL_OPERATION_CHANNEL, (event, input) => {
     ensureAllowed(event.sender);
@@ -328,11 +401,10 @@ export function registerRuntimeHostIpc(
     if (
       !subscription
       || subscription.owner.isDestroyed()
-      || subscription.owner.isLoadingMainFrame()
       || subscription.frame.isDestroyed()
       || subscription.frame.detached
     ) {
-      subscriptions.delete(message.subscriptionId);
+      releaseSubscription(message.subscriptionId);
       return;
     }
     try {
@@ -341,20 +413,21 @@ export function registerRuntimeHostIpc(
       // Navigation or a renderer crash can dispose the exact subscribing frame
       // while the owning WebContents remains alive. Never retarget its stream to
       // a replacement frame created by a reload.
-      subscriptions.delete(message.subscriptionId);
+      releaseSubscription(message.subscriptionId);
       return;
     }
     if (message.frame.kind === 'end' || message.frame.kind === 'error') {
-      subscriptions.delete(message.subscriptionId);
+      releaseSubscription(message.subscriptionId, false);
     }
   });
   return () => {
+    disposed = true;
     removeFrameListener();
     ipc.removeHandler(RUNTIME_IPC_COMMAND_CHANNEL);
     ipc.removeHandler(RUNTIME_IPC_START_STREAM_CHANNEL);
     ipc.removeHandler(RUNTIME_IPC_STOP_STREAM_CHANNEL);
     ipc.removeHandler(RUNTIME_IPC_CANCEL_OPERATION_CHANNEL);
-    subscriptions.clear();
+    for (const id of subscriptions.keys()) releaseSubscription(id);
   };
 }
 

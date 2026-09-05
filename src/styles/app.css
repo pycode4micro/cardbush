@@ -1709,6 +1709,14 @@ body.right-inspector-resizing .right-inspector-resizer {
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
+.right-inspector-tab-strip {
+  min-width: 0;
+  min-height: 40px;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+}
+
 .right-inspector-tabs {
   min-width: 0;
   min-height: 40px;
@@ -1727,14 +1735,38 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: none;
 }
 
-.right-inspector-add-tab {
+.right-inspector-tab-scroll {
+  width: 23px;
+  height: 34px;
+  display: inline-flex;
+  flex: 0 0 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border-radius: 8px 8px 0 0;
+}
+
+.right-inspector-tab-scroll:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+}
+
+.right-inspector-tab-scroll:disabled {
+  opacity: 0.3;
+}
+
+.right-inspector-add-tab,
+.right-inspector-tab-manager {
   position: relative;
   flex: 0 0 auto;
   align-self: center;
   margin-bottom: 7px;
 }
 
-.right-inspector-add-tab > button {
+.right-inspector-add-tab > button,
+.right-inspector-tab-manager > button {
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -1746,8 +1778,24 @@ body.right-inspector-resizing .right-inspector-resizer {
   border-radius: 9px;
 }
 
+.right-inspector-tab-manager > button {
+  width: auto;
+  min-width: 30px;
+  gap: 2px;
+  padding: 0 6px;
+}
+
+.right-inspector-tab-manager > button > span {
+  min-width: 9px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 .right-inspector-add-tab > button:hover,
-.right-inspector-add-tab > button.active {
+.right-inspector-add-tab > button.active,
+.right-inspector-tab-manager > button:hover,
+.right-inspector-tab-manager > button.active {
   color: var(--text);
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
@@ -1824,6 +1872,153 @@ body.right-inspector-resizing .right-inspector-resizer {
 .right-inspector-add-menu small {
   color: var(--text-soft);
   font-size: 9.5px;
+}
+
+.right-inspector-tab-menu {
+  position: absolute;
+  z-index: 55;
+  top: calc(100% + 5px);
+  right: 0;
+  width: min(280px, calc(100vw - 24px));
+  overflow: hidden;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 97%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--shadow) 82%, transparent);
+}
+
+.right-inspector-tab-menu-heading {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  color: var(--text-mid);
+  border-bottom: 1px solid var(--border);
+  font-size: 10.5px;
+}
+
+.right-inspector-tab-menu-heading > span {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.right-inspector-tab-menu-list {
+  max-height: min(312px, calc(100vh - 150px));
+  overflow-y: auto;
+  padding: 5px;
+}
+
+.right-inspector-tab-menu-item {
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  color: var(--text-soft);
+  border-radius: 8px;
+}
+
+.right-inspector-tab-menu-item:hover,
+.right-inspector-tab-menu-item.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.right-inspector-tab-menu-item > button {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border-radius: 7px;
+}
+
+.right-inspector-tab-menu-item > button:first-child {
+  min-width: 0;
+  flex: 1;
+  gap: 7px;
+  padding-left: 8px;
+  text-align: left;
+}
+
+.right-inspector-tab-menu-item > button:first-child > svg {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.right-inspector-tab-menu-item > button:first-child > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-inspector-tab-menu-item > button:last-child {
+  width: 28px;
+  flex: 0 0 28px;
+  justify-content: center;
+  opacity: 0.58;
+}
+
+.right-inspector-tab-menu-item > button:last-child:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.right-inspector-tab-menu-close-all {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  color: var(--text-soft);
+  background: transparent;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  font-size: 10.5px;
+  text-align: left;
+}
+
+.right-inspector-tab-menu-close-all:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.right-inspector-tab-context-menu {
+  position: fixed;
+  z-index: 120;
+  width: 188px;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-strong) 97%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 16px 38px color-mix(in srgb, var(--shadow) 84%, transparent);
+}
+
+.right-inspector-tab-context-menu > button {
+  min-height: 32px;
+  padding: 0 9px;
+  color: var(--text-mid);
+  background: transparent;
+  border-radius: 7px;
+  font-size: 10.5px;
+  text-align: left;
+}
+
+.right-inspector-tab-context-menu > button:hover:not(:disabled),
+.right-inspector-tab-context-menu > button:focus-visible:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.right-inspector-tab-context-menu > button:disabled {
+  opacity: 0.35;
 }
 
 .right-inspector-tab {

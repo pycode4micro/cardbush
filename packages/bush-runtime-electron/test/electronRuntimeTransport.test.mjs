@@ -148,6 +148,29 @@ test("classifies malformed same-version payload as a protocol fact", async () =>
   );
 });
 
+test("abort-side IPC failures do not escape as unhandled rejections", async () => {
+  const bridge = fakeBridge();
+  const controller = new AbortController();
+  let respond;
+  bridge.command = request => new Promise(resolve => {
+    respond = () => resolve({protocol:BUSH_RUNTIME_IPC_PROTOCOL,type:"command_response",
+      operationId:request.operationId,ok:true,result:"settled"});
+  });
+  bridge.cancelOperation = async () => { throw new Error("host disposed during cancellation"); };
+  bridge.stopStream = async () => { throw new Error("host disposed during stream cleanup"); };
+  const transport = new ElectronRuntimeTransport(bridge);
+  const command = transport.sendCommand({kind:"runtime.test",payload:{}},controller.signal);
+  const iterator = transport.openEventStream({sessionId:"session_1",turnId:"turn_1",signal:controller.signal});
+  const next = iterator.next();
+  await new Promise(resolve=>setImmediate(resolve));
+  controller.abort();
+  respond();
+  assert.equal(await command,"settled","authoritative command settlement is preserved");
+  assert.equal((await next).done,true);
+  // Node's test runner fails on any unhandled rejection from the abort listener.
+  await new Promise(resolve=>setImmediate(resolve));
+});
+
 function fakeBridge() {
   const listeners = new Set();
   const bridge = {

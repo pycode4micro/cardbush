@@ -90,7 +90,7 @@ assert.equal(merged[0].name, 'updated.png');
 
 const apiSource = read('src', 'backend', 'api.ts');
 const runtimeChatSource = read('src', 'backend', 'runtimeChat.ts');
-const hookSource = read('src', 'hooks', 'useCardbushChat.ts');
+const toolMergeSource = read('src/features/chatMessages/transcript/toolExecutionMerge.ts');
 const bubbleSource = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const toolBlockSource = read('src', 'features', 'tools', 'ToolExecutionBlock.tsx');
 const toolViewerSource = read('src', 'features', 'tools', 'ToolImageArtifactViewer.tsx');
@@ -110,7 +110,7 @@ assert.match(
   'Live Runtime records should use the explicit native artifact adapter',
 );
 assert.doesNotMatch(apiSource, /restored HTTP history/i);
-assert.match(hookSource, /mergeToolArtifacts\(current\.artifacts, incoming\.artifacts\)/);
+assert.match(toolMergeSource, /mergeToolArtifacts\(current\.artifacts, incoming\.artifacts\)/);
 assert.doesNotMatch(bubbleSource, /toolArtifactPaths/);
 assert.match(toolBlockSource, /<ToolImageArtifactViewer/);
 assert.match(toolViewerSource, /'查看图像'/);

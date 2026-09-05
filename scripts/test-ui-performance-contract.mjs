@@ -97,6 +97,9 @@ const hookSource = fs.readFileSync(
   'utf8',
 );
 const mainSource = fs.readFileSync(path.join(process.cwd(), 'electron', 'main.ts'), 'utf8');
+const streamBufferSource = fs.readFileSync(
+  path.join(process.cwd(), 'src/features/chatMessages/transcript/assistantStreamBuffer.ts'), 'utf8',
+);
 const apiSource = fs.readFileSync(path.join(process.cwd(), 'src', 'backend', 'api.ts'), 'utf8');
 const runtimeHostSource = fs.readFileSync(
   path.join(process.cwd(), 'packages', 'bush-runtime', 'src', 'inMemoryRuntimeHost.ts'),
@@ -179,6 +182,19 @@ assert.match(
   'file-reference context must be shared by the list instead of recreated per row',
 );
 assert.match(
+  appSource,
+  /const activeProjectPathAliases = useMemo\([\s\S]*?conversationProjectPathAliases\(chat\.activeConversation\)[\s\S]*?\[chat\.activeConversation\]/,
+  'opening an inspector tab must not replace the file-reference context value for unchanged conversation history',
+);
+assert.match(appSource, /projectPathAliases=\{activeProjectPathAliases\}/);
+assert.match(appSource, /onRevertChangeReport=\{revertActiveConversationChangeReport\}/);
+assert.match(appSource, /onOpenChangeReview=\{openActiveConversationChangeReview\}/);
+assert.doesNotMatch(
+  appSource,
+  /onOpenChangeReview=\{\(filePath\) =>/,
+  'inspector-only state updates must not replace every message bubble callback',
+);
+assert.match(
   apiSource,
   /getConversationSession\(sessionId\)/,
   'history reads must request the transcript transport projection',
@@ -244,12 +260,12 @@ assert.match(
   'sidebar change summaries must stay frozen while a Turn is producing live facts',
 );
 assert.match(
-  hookSource,
+  streamBufferSource,
   /assistantRevealMinimumChunkCharacters = 10;[\s\S]*?assistantRevealMaximumCommits = 72;/,
   'accelerated reveal must have a minimum useful chunk and a hard React commit budget',
 );
 assert.match(
-  hookSource,
+  streamBufferSource,
   /Math\.ceil\(characters\.length \/ assistantRevealMaximumCommits\)/,
   'large terminal replies must automatically use larger chunks',
 );

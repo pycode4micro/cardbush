@@ -42,7 +42,7 @@ assert(
   'scroll diagnostics must require an explicit process-scoped opt-in',
 );
 assert(
-  app.includes("<BackendLoading language={language} />") &&
+  app.includes("<BackendLoading language={language} history={historyLoading} />") &&
     app.includes("Connecting to the runtime..."),
   'runtime loading state must support both UI languages',
 );

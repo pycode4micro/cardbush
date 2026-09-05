@@ -31,7 +31,7 @@ import {
   MessageFileReferenceScope,
   projectRenderableChatMessages,
 } from './features/chatMessages';
-import { normalizeChatMessagesForDisplay } from './hooks/useCardbushChat';
+import { normalizeChatMessagesForDisplay } from './features/chatMessages/transcript/messageProjection';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
 import {
   themeBackgroundColor,

@@ -74,7 +74,7 @@ export class ElectronRuntimeTransport {
         protocol: BUSH_RUNTIME_IPC_PROTOCOL,
         type: "cancel_operation",
         operationId,
-      });
+      }).catch(() => undefined);
     };
     signal?.addEventListener("abort", cancel, { once: true });
     try {
@@ -143,7 +143,9 @@ export class ElectronRuntimeTransport {
       subscriptionId,
     };
     const stop = () => {
-      void this.#bridge.stopStream(stopMessage);
+      // The command/stream owns reporting transport failure. Cancellation is a
+      // best-effort side channel and must not produce an unhandled rejection.
+      void this.#bridge.stopStream(stopMessage).catch(() => undefined);
     };
     request.signal?.addEventListener("abort", stop, { once: true });
     try {

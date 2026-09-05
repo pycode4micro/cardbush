@@ -184,7 +184,7 @@ assert.match(
 );
 assert.match(
   hookSource,
-  /const sessionId = activeConversationId\.trim\(\);[\s\S]*?fetchSessionMessages\(sessionId,[\s\S]*?setMessageHistoryLoading\(sessionId, false\)/,
+  /const finishLoading = beginHistoryLoading\(sessionId\);[\s\S]*?fetchSessionMessages\(sessionId,[\s\S]*?finally \{\s*finishLoading\(\)/,
   'history fetch completion must only clear the loading marker for its own conversation',
 );
 

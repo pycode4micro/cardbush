@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const root = process.cwd();
 const read = (...parts) => fs.readFileSync(path.join(root, ...parts), 'utf8');
@@ -33,7 +34,14 @@ assert.match(bubble, /function assistantFailurePresentation/);
 assert.match(bubble, /status !== 'failed'/);
 assert.match(bubble, /data-failure-reason=\{failurePresentation\.reason\}/);
 assert.match(bubble, /role="alert"/);
-assert.match(hook, /terminal\.status === 'failed'/);
-assert.match(hook, /assistant-terminal-/);
+assert.match(hook, /applyTurnTerminalSnapshot\(/);
+const { applyTurnTerminalSnapshot } = await loadChatTranscript();
+const failed = applyTurnTerminalSnapshot({}, 'session', '', {
+  turnId: 'timeout-turn', status: 'failed', stopped: false,
+  stopReason: 'llm-first-activity-timeout',
+});
+assert.equal(failed.session[0].id, 'assistant-terminal-timeout-turn');
+assert.equal(failed.session[0].status, 'failed');
+assert.equal(failed.session[0].metadata.stop_reason, 'llm-first-activity-timeout');
 
 console.log('LLM timeout frontend contract tests passed');

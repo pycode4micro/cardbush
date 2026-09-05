@@ -126,6 +126,17 @@ assert.match(
 assert.match(app, /type InspectorTab = InspectorResourceTab \| InspectorReviewTab \| InspectorShadowTab/);
 assert.match(app, /className="right-inspector-add-tab"/);
 assert.match(app, /className="right-inspector-add-menu" role="menu"/);
+assert.match(app, /className="right-inspector-tab-strip"/);
+assert.match(app, /className="right-inspector-tab-scroll"/);
+assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedInspectorTabs\.length\)/);
+// Mount, wheel cancellation and ancestor-scroll behavior are exercised in Electron
+// by test-inspector-tabs.cjs, rather than asserting the old buggy implementation.
+assert.match(app, /className="right-inspector-tab-manager"/);
+assert.match(app, /className="right-inspector-tab-menu" role="menu"/);
+assert.match(app, /openInspectorTabContextMenu\(event, tab\.id\)/);
+assert.match(app, /关闭其他标签页/);
+assert.match(app, /关闭右侧标签页/);
+assert.match(app, /关闭全部标签页/);
 assert.match(
   app,
   /className="right-inspector-add-menu"[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab[\s\S]*?openNewBrowserInspectorTab/,
@@ -166,6 +177,9 @@ assert.match(app, /handleInspectorShortcut[\s\S]*?key === 't'[\s\S]*?key === 'p'
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
 assert.match(css, /\.right-inspector-add-menu\s*\{/);
+assert.match(css, /\.right-inspector-tab-scroll\s*\{/);
+assert.match(css, /\.right-inspector-tab-menu\s*\{/);
+assert.match(css, /\.right-inspector-tab-context-menu\s*\{/);
 assert.match(css, /\.shadow-window-shell\.shadow-inspector-shell\s*\{/);
 assert.match(css, /\.right-inspector-toolbar\.with-tabs\s*\{/);
 assert.match(css, /\.right-inspector-toolbar\s*>\s*button\s*\{/);

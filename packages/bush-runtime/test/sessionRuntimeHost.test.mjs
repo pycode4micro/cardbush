@@ -21,6 +21,50 @@ import { InMemoryRuntimeHost, LogicMemoryStore, ToolRegistry } from "../dist/ind
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
+test("detaching a UI stream keeps its Turn running and resumes from the cursor exactly once", async () => {
+  let releaseModel;
+  const modelGate = new Promise(resolve => { releaseModel = resolve; });
+  let calls = 0;
+  const host = new InMemoryRuntimeHost({provider:{async *stream(request) {
+    calls += 1;
+    yield event(request.requestId,0,"response_started");
+    yield event(request.requestId,1,"text_delta",{delta:"before reload"});
+    await modelGate;
+    yield event(request.requestId,2,"text_delta",{delta:" after reload"});
+    yield event(request.requestId,3,"response_completed",{finishReason:"stop"});
+  }}});
+  const request=sessionRequest("request_reload","turn_reload","user_reload","continue once");
+  const oldController=new AbortController();
+  const before=[];
+  const oldStream=(async()=>{
+    for await(const fact of host.openEventStream({sessionId:request.sessionId,turnId:request.turnId,signal:oldController.signal})) {
+      before.push(fact);
+    }
+  })();
+  let settled=false;
+  const command=host.sendCommand({kind:RUN_RUNTIME_SESSION_TURN_COMMAND,payload:request}).then(value=>{settled=true;return value;});
+  try {
+    await waitFor(()=>before.some(fact=>fact.kind==='assistant_segment_delta'));
+    oldController.abort();await oldStream;
+    assert.equal(settled,false,'subscription cancellation must not end the model Turn');
+    const last=before.at(-1);
+    const after=[];
+    const nextStream=(async()=>{
+      for await(const fact of host.openEventStream({sessionId:request.sessionId,turnId:request.turnId,
+        cursor:{afterSequence:last.sequence,lastEventId:last.eventId}})) after.push(fact);
+    })();
+    releaseModel();
+    const result=await command;await nextStream;
+    assert.equal(result.payload.status,'completed');
+    assert.equal(calls,1,'reconnecting must not send another model request');
+    assert.ok(after.every(fact=>fact.sequence>last.sequence));
+    assert.equal(new Set([...before,...after].map(fact=>fact.eventId)).size,before.length+after.length);
+    assert.equal(after.filter(fact=>fact.kind==='turn_terminal').length,1);
+    const session=await host.sendCommand({kind:GET_RUNTIME_SESSION_COMMAND,payload:{sessionId:request.sessionId}});
+    assert.equal(session.turns.length,1,'one canonical Turn is archived');
+  } finally {releaseModel();oldController.abort();await command;}
+});
+
 test("runs consecutive Session Turns from durable facts without duplicating the prefix", async () => {
   const observedRequests = [];
   let response = 0;
