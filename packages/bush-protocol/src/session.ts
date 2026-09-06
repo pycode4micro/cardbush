@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { cacheChainStateSchema } from "./cacheChain.js";
 import { modelMessageSchema, modelRequestSchema } from "./model.js";
+import { workspaceSetupSchema } from "./workspace.js";
 
 export const BUSH_SESSION_EVENT_PROTOCOL = "bush.session_event.v1" as const;
 export const BUSH_SESSION_SNAPSHOT_PROTOCOL = "bush.session_snapshot.v1" as const;
@@ -185,6 +186,7 @@ export type RuntimeSessionReadRequest = z.infer<
 export const createRuntimeSessionRequestSchema = z.object({
   sessionId: z.string().min(1),
   metadata: z.record(z.string(), z.unknown()).default({}),
+  workspace: workspaceSetupSchema.optional(),
 });
 
 export const runtimeSessionListRequestSchema = z.object({});

@@ -122,7 +122,7 @@ import {
 import { SubagentTaskStore } from "./subagentTaskStore.js";
 import { TeamSnapshotStore } from "./teamSnapshotStore.js";
 import { registerTeamTool } from "./teamTool.js";
-import { registerWorkspaceTools, WorkspaceObservationStore } from "./workspaceTools.js";
+import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
   InMemoryRuntimeEventLog,
@@ -144,6 +144,12 @@ import { RuntimeRecoveryCoordinator } from "./runtimeRecoveryCoordinator.js";
 import { InMemoryRuntimeCapabilityStore } from "./runtimeCapabilityStore.js";
 import { SessionStore } from "./sessionStore.js";
 import { ToolExecutionStore } from "./toolExecutionStore.js";
+import { TaskWorkspaceManager } from "./taskWorkspace.js";
+import {
+  GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
+  RUNTIME_WORKSPACE_METADATA_KEY, workspaceUpdateSchema, workspaceReadSchema,
+  type WorkspaceDescriptor,
+} from "@cardbush/bush-protocol";
 import {
   RuntimeSessionCoordinator,
   type GeneratedMessageFact,
@@ -275,6 +281,10 @@ export class InMemoryRuntimeHost {
   readonly #sessions: RuntimeSessionCoordinator;
   readonly #sessionNow: () => string;
   readonly #toolExecutions: ToolExecutionStore;
+  readonly #taskWorkspaces?: TaskWorkspaceManager;
+  readonly #workspaceTerminals = new TerminalSessionManager();
+  #workspaceActions = 0;
+  #turnAdmissions = 0;
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
@@ -316,11 +326,12 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    this.#taskWorkspaces = options.dataRoot ? new TaskWorkspaceManager(join(runtimeDataRoot, "workspaces")) : undefined;
     this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
     registerExtendedBuiltins(this.#toolRegistry, {
       dataRoot: options.dataRoot,
-      readToolResult: (locator) => this.#readArchivedToolResult(locator),
+      readToolResultText: (locator) => this.#readArchivedToolResultText(locator),
       logicMemory: this.#logicMemory,
       modelImages: this.#modelImages,
     });
@@ -349,7 +360,8 @@ export class InMemoryRuntimeHost {
           : undefined,
       });
     if (options.registerDefaultWorkspaceTools !== false) {
-      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations);
+      registerWorkspaceTools(this.#toolRegistry, this.#workspaceObservations, { terminals: this.#workspaceTerminals,
+        ownsFileVersion: (sessionId, path) => this.#taskWorkspaces?.ownsFileVersion(sessionId, path) ?? Promise.resolve(false) });
     }
     this.#subagentTasks = options.subagentTaskStore ?? new SubagentTaskStore();
     const subagentPermissionPolicy = options.subagentPermissionPolicy ??
@@ -432,6 +444,8 @@ export class InMemoryRuntimeHost {
         ].includes(kind),
       ),
       supportedCommands: [
+        GET_RUNTIME_WORKSPACE_COMMAND,
+        UPDATE_RUNTIME_WORKSPACE_COMMAND,
         GET_RUNTIME_CAPABILITIES_COMMAND,
         RUN_MODEL_TURN_COMMAND,
         ANSWER_RUNTIME_PERMISSION_COMMAND,
@@ -489,6 +503,7 @@ export class InMemoryRuntimeHost {
         "bounded_tool_result_projection",
         "project_cognition",
         "workspace_revert",
+        ...(this.#taskWorkspaces ? ["task_workspaces"] : []),
         "explicit_plan_facts",
         "explicit_goal_facts",
         ...(options.durableCoordination ? ["durable_coordination"] : []),
@@ -547,19 +562,56 @@ export class InMemoryRuntimeHost {
       }
       case CREATE_RUNTIME_SESSION_COMMAND: {
         const input = createRuntimeSessionRequestSchema.parse(command.payload);
-        return this.#sessions.create(input.sessionId, input.metadata);
+        const existing = this.#sessions.snapshot(input.sessionId);
+        if (existing) return existing;
+        if (!input.workspace) return this.#sessions.create(input.sessionId, input.metadata);
+        if (!this.#taskWorkspaces) throw new Error("Independent workspaces require persistent Runtime storage.");
+        const workspace = await this.#taskWorkspaces.create(input.sessionId, input.workspace.sourceDir, input.workspace.mode);
+        return this.#sessions.create(input.sessionId, this.#workspaceMetadata(input.metadata, workspace));
+      }
+      case GET_RUNTIME_WORKSPACE_COMMAND: {
+        const { sessionId, view } = workspaceReadSchema.parse(command.payload);
+        const review = await this.#taskWorkspaces?.review(sessionId, view);
+        return review ? { ...review, runningTerminals: this.#workspaceTerminals.hasRunningWithin(review.workspace.workspaceDir) } : null;
+      }
+      case UPDATE_RUNTIME_WORKSPACE_COMMAND: {
+        const input = workspaceUpdateSchema.parse(command.payload);
+        return this.#withWorkspaceAction(async () => {
+          if (!this.#taskWorkspaces) throw new Error("Independent workspaces are unavailable.");
+          if (input.action === "stop_terminals" || input.action === "checkpoint") {
+            const current = await this.#taskWorkspaces.descriptor(input.sessionId);
+            if (!current || current.revision !== input.expectedRevision) throw new Error("Workspace changed. Refresh before applying this action.");
+            if (input.action === "stop_terminals") await this.#workspaceTerminals.stopWithin(current.workspaceDir);
+          }
+          await this.#assertWorkspaceTerminalsStopped(input.sessionId);
+          if (input.action === "checkpoint") await this.#taskWorkspaces.recoverCheckpoint(input.sessionId);
+          const workspace = input.action === "checkpoint" || input.action === "stop_terminals"
+            ? (await this.#taskWorkspaces.descriptor(input.sessionId))!
+            : await this.#taskWorkspaces.update(input.sessionId, input.expectedRevision, input.action, input.expectedSnapshotId);
+          this.#publishWorkspace(workspace);
+          return workspace;
+        });
       }
       case DELETE_RUNTIME_SESSION_COMMAND: {
         const identity = runtimeSessionIdentitySchema.parse(command.payload);
+        const workspace = await this.#taskWorkspaces?.descriptor(identity.sessionId);
+        if (workspace?.mode === "worktree" && workspace.status === "ready") {
+          throw new Error("This task still owns an independent workspace. Apply or review its changes, then discard the copy before deleting the task.");
+        }
         return { sessionId: identity.sessionId, deleted: this.#sessions.delete(identity.sessionId) };
       }
       case LIST_RUNTIME_SESSIONS_COMMAND:
         runtimeSessionListRequestSchema.parse(command.payload);
         return this.#sessions.list();
-      case UPDATE_RUNTIME_SESSION_METADATA_COMMAND:
-        return this.#sessions.updateMetadata(
-          updateRuntimeSessionMetadataRequestSchema.parse(command.payload),
-        );
+      case UPDATE_RUNTIME_SESSION_METADATA_COMMAND: {
+        const input = updateRuntimeSessionMetadataRequestSchema.parse(command.payload);
+        const workspace = await this.#taskWorkspaces?.descriptor(input.sessionId);
+        // The workspace owner determines execution paths; renderer metadata
+        // updates cannot rebind an existing managed task.
+        return this.#sessions.updateMetadata(workspace
+          ? { ...input, metadata: this.#workspaceMetadata(input.metadata, workspace) }
+          : input);
+      }
       case SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND:
         return this.#sessions.supersedeMessages(
           supersedeRuntimeSessionMessagesRequestSchema.parse(command.payload),
@@ -738,14 +790,34 @@ export class InMemoryRuntimeHost {
     input: ModelRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
-    return this.#runModelTurn(input, options);
+    return this.#withTurnAdmission(() => this.#runModelTurn(input, options));
   }
 
   async runSessionTurn(
     input: RuntimeSessionTurnRequest,
     options: { signal?: AbortSignal } = {},
   ): Promise<RuntimeEvent> {
+    return this.#withTurnAdmission(() => this.#runSessionTurn(input, options));
+  }
+
+  async #runSessionTurn(
+    input: RuntimeSessionTurnRequest,
+    options: { signal?: AbortSignal },
+  ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
+    const workspace = await this.#taskWorkspaces?.descriptor(candidate.sessionId);
+    if (workspace?.status === "discarded") throw new Error("This task workspace was discarded. Create a new task to continue.");
+    if (workspace) {
+      candidate.metadata = {
+        ...candidate.metadata, workspaceDir: workspace.workspaceDir,
+        projectDir: workspace.sourceDir, taskRoots: [workspace.workspaceDir],
+        mcpContext: { ...(candidate.metadata.mcpContext as Record<string, unknown> ?? {}), filesystemRoots: [workspace.workspaceDir] },
+      };
+      candidate.prefixMessages.push({ role: "developer", name: "workspace_binding", content:
+        `Task workspace: ${workspace.workspaceDir}\nSource project: ${workspace.sourceDir}\nExecution mode: ${workspace.mode}.` +
+        (workspace.mode === "worktree" ? "\nThe task copy starts from the source's working files, including uncommitted and non-ignored untracked files. Ignored files and dependencies are not copied. Changes remain in this copy until explicitly applied to the source project." : ""),
+      });
+    }
     if (!candidate.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)) {
       const maintenanceTool = this.#toolRegistry.definitions().find((tool) =>
         tool.name === CHECKPOINT_CONTEXT_TOOL,
@@ -758,14 +830,23 @@ export class InMemoryRuntimeHost {
     const prepared = this.#sessions.prepare(
       candidate,
     );
+    let workspaceStarted = false;
     try {
+      if (workspace?.versioning === "git") {
+        workspaceStarted = await this.#taskWorkspaces!.beginTurn(candidate.sessionId, candidate.turnId);
+      }
       return await this.#runModelTurn(prepared.modelRequest, {
         signal: options.signal,
         sessionCommit: prepared.sessionCommit,
         cacheChainState: prepared.cacheChainState,
+        ...(workspaceStarted ? { finalizeWorkspace: () => this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace!.workspaceDir) } : {}),
       });
     } catch (error) {
       this.#sessions.abandon(input.sessionId, input.turnId);
+      if (workspaceStarted) {
+        try { await this.#finalizeWorkspace(candidate.sessionId, candidate.turnId, workspace?.workspaceDir); }
+        catch { /* The checkpoint retains its explicit pending/failed status. */ }
+      }
       throw error;
     }
   }
@@ -777,6 +858,7 @@ export class InMemoryRuntimeHost {
       onFinalized?: TurnFinalizedObserver;
       sessionCommit?: RuntimeSessionCommitCheckpoint;
       cacheChainState?: CacheChainState;
+      finalizeWorkspace?: () => Promise<void>;
     } = {},
   ): Promise<RuntimeEvent> {
     const request = resolveModelRequestContextLimits(modelRequestSchema.parse(input));
@@ -827,6 +909,7 @@ export class InMemoryRuntimeHost {
       nextRound: 1,
       cacheChainState: initialCacheChainState,
       signal: turnController.signal,
+      finalizeWorkspace: options.finalizeWorkspace,
       onSettled: detachAbort,
       sessionCommit: options.sessionCommit,
       onFinalized:
@@ -841,6 +924,14 @@ export class InMemoryRuntimeHost {
     sessionId: string,
     turnId: string,
     options: { signal?: AbortSignal } = {},
+  ): Promise<RuntimeEvent> {
+    return this.#withTurnAdmission(() => this.#resumeModelTurn(sessionId, turnId, options));
+  }
+
+  async #resumeModelTurn(
+    sessionId: string,
+    turnId: string,
+    options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const turnKey = JSON.stringify([sessionId, turnId]);
     if (this.#activeTurns.has(turnKey)) {
@@ -882,6 +973,7 @@ export class InMemoryRuntimeHost {
       signal: turnController.signal,
       onSettled: detachAbort,
       sessionCommit,
+      ...(this.#taskWorkspaces ? { finalizeWorkspace: () => this.#finalizeWorkspace(sessionId, turnId) } : {}),
       onFinalized: sessionCommit
         ? this.#sessions.finalizer(
             request,
@@ -901,6 +993,7 @@ export class InMemoryRuntimeHost {
     onSettled?: () => void;
     onFinalized?: TurnFinalizedObserver;
     sessionCommit?: RuntimeSessionCommitCheckpoint;
+    finalizeWorkspace?: () => Promise<void>;
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
@@ -1094,7 +1187,17 @@ export class InMemoryRuntimeHost {
       }
       activeContextCompaction = undefined;
     };
-    const finalize = (payload: TurnTerminalPayload): RuntimeEvent => {
+    const finalize = async (payload: TurnTerminalPayload): Promise<RuntimeEvent> => {
+      let workspace: WorkspaceDescriptor | undefined;
+      if (input.finalizeWorkspace) {
+        try {
+          await input.finalizeWorkspace();
+          workspace = await this.#taskWorkspaces?.descriptor(request.sessionId);
+        }
+        catch (error) {
+          payload = { ...payload, details: { ...payload.details, workspaceCheckpointError: error instanceof Error ? error.message : String(error) } };
+        }
+      }
       if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
         this.#activeTurnControllers.get(turnKey)?.abort();
       }
@@ -1106,12 +1209,22 @@ export class InMemoryRuntimeHost {
         cacheChain.snapshot(),
         activeContextCheckpoint,
       );
+      if (workspace) {
+        try { this.#publishWorkspace(workspace); }
+        catch (error) {
+          // The canonical workspace and Turn are already durable. A failed
+          // metadata projection must not commit this Turn a second time.
+          try { this.#onRecoveryError?.(error instanceof Error ? error : new Error(String(error))); } catch { /* Diagnostic observers cannot own finalization. */ }
+        }
+      }
       return this.#finishTurn(identity, payload);
     };
-    const stop = (finalMessageId?: string): RuntimeEvent =>
+    const stop = (finalMessageId?: string): Promise<RuntimeEvent> =>
       finalize({
         status: "stopped",
-        reason: "user_stop_requested",
+        // A signal may come from a user, caller budget, or host shutdown.
+        // Record cancellation without inventing who requested it.
+        reason: "turn_stop_requested",
         finalMessageId,
         details: {},
       });
@@ -1141,7 +1254,7 @@ export class InMemoryRuntimeHost {
       while (true) {
         round += 1;
         let dispatchPressure: ContextPressure | undefined;
-        if (input.signal?.aborted) return stop();
+        if (input.signal?.aborted) return await stop();
         const readyAtRoundBoundary = this.#takeSettledAgentGuidance(turnKey);
         if (readyAtRoundBoundary.length > 0) {
           messages = this.#appendAgentGuidance(
@@ -1221,7 +1334,7 @@ export class InMemoryRuntimeHost {
                 summaryLimit -= 1;
               } while (summaryLimit >= 0);
               if (pressure && pressure.ratio >= 1) {
-                return finalize({
+                return await finalize({
                   status: "failed",
                   reason: "current_turn_context_limit_exceeded",
                   details: {
@@ -1291,7 +1404,7 @@ export class InMemoryRuntimeHost {
             maintenancePressure.ratio >= 1 &&
             !acceptedOverLimitRecovery
           ) {
-            return finalize({
+            return await finalize({
               status: "failed",
               reason: "context_compaction_request_limit_exceeded",
               details: {
@@ -1311,17 +1424,19 @@ export class InMemoryRuntimeHost {
           | undefined;
         let completedProjector: RuntimeEventProjector | undefined;
         for (let attempt = 1; this.#maxAttempts === null || attempt <= this.#maxAttempts; attempt += 1) {
-          if (input.signal?.aborted) return stop();
-          const roundRequest = {
+          if (input.signal?.aborted) return await stop();
+          // Hash the same validated request shape that the Provider receives.
+          // In-memory Tool messages and replayed messages can have different JS key order.
+          const roundRequest = modelRequestSchema.parse({
             ...request,
             messages: dispatchMessages,
             providerState: dispatchProviderState,
-          };
+          });
           if (
             contextCompactionRequired &&
             !roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)
           ) {
-            return finalize({
+            return await finalize({
               status: "failed",
               reason: "context_compaction_tool_unavailable",
               details: {},
@@ -1380,9 +1495,9 @@ export class InMemoryRuntimeHost {
                 generatedMessages,
                 this.#sessionNow,
               );
-              return stop(projector.finalMessageId);
+              return await stop(projector.finalMessageId);
             }
-            return finalize({
+            return await finalize({
               status: "failed",
               reason: "provider_stream_exception",
               details: {
@@ -1447,7 +1562,7 @@ export class InMemoryRuntimeHost {
               generatedMessages,
               this.#sessionNow,
             );
-            return stop(projector.finalMessageId);
+            return await stop(projector.finalMessageId);
           }
           if (result.status === "completed" ||
               (result.finishReason === "length" && result.error.code === "incomplete_tool_call")) {
@@ -1495,11 +1610,11 @@ export class InMemoryRuntimeHost {
             });
             await this.#wait(nextRetryMs, input.signal);
             if (input.signal?.aborted) {
-              return stop(projector.finalMessageId);
+              return await stop(projector.finalMessageId);
             }
             continue;
           }
-          return finalize({
+          return await finalize({
             status: "failed",
             reason: result.error.code,
             finalMessageId: projector.finalMessageId,
@@ -1530,7 +1645,7 @@ export class InMemoryRuntimeHost {
             messages = [...messages, partial];
           }
           if (outputLimitContinuations >= 2) {
-            return finalize({ status: "failed", reason: "model_output_limit_exceeded",
+            return await finalize({ status: "failed", reason: "model_output_limit_exceeded",
               finalMessageId: completedProjector.finalMessageId,
               details: { round, continuationAttempts: outputLimitContinuations,
                 maxOutputTokens: request.maxOutputTokens,
@@ -1566,7 +1681,7 @@ export class InMemoryRuntimeHost {
         if (contextCompactionRequired && checkpointCalls.length === 0) {
           contextCompactionFailures += 1;
           if (contextCompactionFailures >= 3) {
-            return finalize({
+            return await finalize({
               status: "failed",
               reason: "context_compaction_required",
               finalMessageId: completedProjector.finalMessageId,
@@ -1591,7 +1706,7 @@ export class InMemoryRuntimeHost {
           if (checkpointCalls.length !== 1 || completedRound.toolCalls.length !== 1) {
             contextCompactionFailures += 1;
             if (contextCompactionFailures >= 3) {
-              return finalize({
+              return await finalize({
                 status: "failed",
                 reason: "context_compaction_protocol_invalid",
                 finalMessageId: completedProjector.finalMessageId,
@@ -1662,7 +1777,7 @@ export class InMemoryRuntimeHost {
             contextCompactionFailures += 1;
             // Persistence/application failures are not malformed model output.
             if (contextCompactionFailures >= 3 || failure.diagnostics.code === "checkpoint_apply_failed") {
-              return finalize({
+              return await finalize({
                 status: "failed",
                 reason: "context_compaction_failed",
                 finalMessageId: completedProjector.finalMessageId,
@@ -1732,6 +1847,8 @@ export class InMemoryRuntimeHost {
             const assistantMessage: ModelMessage = {
               role: "assistant",
               content: completedRound.text,
+              ...(completedRound.providerReplay
+                ? { providerReplay: completedRound.providerReplay } : {}),
               ...(completedRound.reasoning
                 ? { reasoningContent: completedRound.reasoning }
                 : {}),
@@ -1779,7 +1896,7 @@ export class InMemoryRuntimeHost {
           }
           if ((this.#pendingAgentGuidance.get(turnKey)?.length ?? 0) > 0) {
             const joinedAgentResults = await this.#joinPendingAgentGuidance(turnKey);
-            if (input.signal?.aborted) return stop(completedProjector.finalMessageId);
+            if (input.signal?.aborted) return await stop(completedProjector.finalMessageId);
             messages = this.#appendAgentGuidance(
               request.turnId,
               messages,
@@ -1793,7 +1910,7 @@ export class InMemoryRuntimeHost {
             : undefined;
           if (activePlan?.plan.active) {
             if (unresolvedPlanContinuations >= 2) {
-              return finalize({
+              return await finalize({
                 status: "failed",
                 reason: "open_task_plan_not_resolved",
                 finalMessageId: completedProjector.finalMessageId,
@@ -1838,14 +1955,14 @@ export class InMemoryRuntimeHost {
               });
               continue;
             }
-            return finalize({
+            return await finalize({
               status: "failed",
               reason: "empty_model_response",
               finalMessageId: completedProjector.finalMessageId,
               details: { rounds: round, recoveryAttempts: emptyStopRetries },
             });
           }
-          return finalize({
+          return await finalize({
             status: "completed",
             reason: "model_response_completed",
             finalMessageId: completedProjector.finalMessageId,
@@ -1859,6 +1976,8 @@ export class InMemoryRuntimeHost {
         const assistantMessage: ModelMessage = {
           role: "assistant",
           content: completedRound.text,
+          ...(completedRound.providerReplay
+            ? { providerReplay: completedRound.providerReplay } : {}),
           ...(completedRound.reasoning
             ? { reasoningContent: completedRound.reasoning }
             : {}),
@@ -1932,8 +2051,9 @@ export class InMemoryRuntimeHost {
         });
       }
     } catch (error) {
+      if (input.signal?.aborted) return await stop();
       if (!(error instanceof ProviderInputTokenCountError)) throw error;
-      return finalize({
+      return await finalize({
         status: "failed",
         reason: "provider_input_token_count_failed",
         details: { message: error.message },
@@ -1963,10 +2083,16 @@ export class InMemoryRuntimeHost {
     }
     let providerInputTokens: number | undefined;
     try {
-      const measurement = await this.#provider.countInputTokens?.(
-        { ...request, messages, providerState },
-        { signal },
+      signal?.throwIfAborted();
+      const measurement = await settleAtAbort(
+        Promise.resolve(this.#provider.countInputTokens?.(
+          { ...request, messages, providerState },
+          { signal },
+        )),
+        signal,
+        "Provider input-token counting was cancelled.",
       );
+      signal?.throwIfAborted();
       if (
         measurement &&
         (!Number.isInteger(measurement.inputTokens) || measurement.inputTokens < 0)
@@ -1975,6 +2101,7 @@ export class InMemoryRuntimeHost {
       }
       providerInputTokens = measurement?.inputTokens;
     } catch (error) {
+      if (signal?.aborted) throw error;
       throw new ProviderInputTokenCountError(error);
     }
     return estimateContextPressure(
@@ -2212,7 +2339,7 @@ export class InMemoryRuntimeHost {
     throw new Error(`Permission ${answer.permissionId} is not pending.`);
   }
 
-  #readArchivedToolResult(locator: string): unknown {
+  #readArchivedToolResultText(locator: string): string {
     const match = /^tool-result:\/\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(locator);
     if (!match) throw new Error("Invalid archived Tool result locator.");
     const [sessionId, turnId, toolCallId] = match.slice(1).map((value) =>
@@ -2220,9 +2347,10 @@ export class InMemoryRuntimeHost {
     );
     const record = this.#toolExecutions.get(sessionId!, turnId!, toolCallId!);
     if (!record) throw new Error("Archived Tool result was not found.");
-    return record.outcome === "returned"
+    const native = record.outcome === "returned"
       ? record.result
       : { runtimeError: record.error };
+    return record.modelText ?? JSON.stringify(native) ?? "null";
   }
 
   async #recordLogicFeedback(input: {
@@ -2259,8 +2387,71 @@ export class InMemoryRuntimeHost {
     };
   }
 
+  #workspaceMetadata(metadata: Record<string, unknown>, workspace: WorkspaceDescriptor) {
+    return { ...metadata, [RUNTIME_WORKSPACE_METADATA_KEY]: workspace,
+      projectDir: workspace.sourceDir, project_dir: workspace.sourceDir,
+      userProjectDir: workspace.sourceDir, user_project_dir: workspace.sourceDir,
+      workspaceDir: workspace.workspaceDir, workspace_dir: workspace.workspaceDir };
+  }
+
+  async #withTurnAdmission<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#workspaceActions) throw new Error("A workspace action is in progress. Retry the Turn after it settles.");
+    this.#turnAdmissions++;
+    try { return await operation(); } finally { this.#turnAdmissions--; }
+  }
+
+  async #withWorkspaceAction<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.#activeTurns.size || this.#turnAdmissions || this.#workspaceActions) {
+      throw new Error("Workspace actions require active Turns and other workspace actions to settle first.");
+    }
+    this.#workspaceActions++;
+    try { return await operation(); } finally { this.#workspaceActions--; }
+  }
+
+  #publishWorkspace(workspace: WorkspaceDescriptor) {
+    const session = this.#sessions.snapshot(workspace.sessionId);
+    if (session) this.#sessions.updateMetadata({ sessionId: workspace.sessionId, expectedRevision: session.revision,
+      metadata: this.#workspaceMetadata(session.metadata ?? {}, workspace) });
+  }
+
+  async #assertWorkspaceTerminalsStopped(sessionId: string) {
+    const workspace = await this.#taskWorkspaces?.descriptor(sessionId);
+    if (workspace && this.#workspaceTerminals.hasRunningWithin(workspace.workspaceDir)) {
+      throw new Error("A terminal in this workspace is still running. Stop or wait for it before changing the workspace.");
+    }
+  }
+
+  async #finalizeWorkspace(sessionId: string, turnId: string, workspaceDir?: string) {
+    if (!workspaceDir) {
+      const workspace = await this.#taskWorkspaces?.descriptor(sessionId);
+      if (!workspace || workspace.versioning !== "git") return;
+      workspaceDir = workspace.workspaceDir;
+    }
+    await this.#taskWorkspaces!.finishTurn(sessionId, turnId, this.#workspaceTerminals.hasRunningWithin(workspaceDir));
+  }
+
   async #revertWorkspaceChanges(input: { sessionId: string; turnIds: string[] }) {
-    if (this.#activeTurns.size > 0) throw new Error("Workspace changes cannot be reverted while a Turn is active.");
+    return this.#withWorkspaceAction(() => this.#revertWorkspaceChangesSettled(input));
+  }
+
+  async #revertWorkspaceChangesSettled(input: { sessionId: string; turnIds: string[] }) {
+    const workspace = await this.#taskWorkspaces?.descriptor(input.sessionId);
+    const history = workspace?.versioning === "git" ? await this.#taskWorkspaces!.review(input.sessionId, "history") : null;
+    const managedTurns = [...new Set(input.turnIds)].filter(id => history?.checkpoints.some(checkpoint => checkpoint.turnId === id));
+    const outsideChanges = managedTurns.flatMap(turnId => this.#toolExecutions.listTurn(input.sessionId, turnId)
+      .flatMap(record => record.workspaceChanges).filter(change => change.metadata.workspaceVersioned === false));
+    if (managedTurns.length && managedTurns.length !== new Set(input.turnIds).size) {
+      throw workspaceSnapshotUnavailable("Revert legacy Tool changes separately from Git-versioned Turns.");
+    }
+    if (outsideChanges.length && history?.checkpoints.some(checkpoint => managedTurns.includes(checkpoint.turnId) && checkpoint.status !== "reverted" && checkpoint.changes.length)) {
+      throw workspaceSnapshotUnavailable("This selection mixes Git workspace changes with Tool edits outside its version coverage. No files were reverted; restore those separate paths explicitly.");
+    }
+    if (workspace?.versioning === "git" && managedTurns.length && !outsideChanges.length) {
+      await this.#assertWorkspaceTerminalsStopped(input.sessionId);
+      const result = await this.#taskWorkspaces!.revert(input.sessionId, input.turnIds);
+      this.#publishWorkspace((await this.#taskWorkspaces!.descriptor(input.sessionId))!);
+      return result;
+    }
     const session = this.#sessions.snapshot(input.sessionId);
     if (!session) {
       throw workspaceSnapshotUnavailable(`Session ${input.sessionId} does not exist.`);
@@ -2275,8 +2466,9 @@ export class InMemoryRuntimeHost {
       this.#toolExecutions.listTurn(input.sessionId, turnId)
         .reverse()
         .flatMap((record) => {
-          recordedChangeCount += record.workspaceChanges.length;
-          return [...record.workspaceChanges].reverse();
+          const changes = managedTurns.includes(turnId) ? record.workspaceChanges.filter(change => change.metadata.workspaceVersioned !== true) : record.workspaceChanges;
+          recordedChangeCount += changes.length;
+          return [...changes].reverse();
         }),
     ).filter((change) => !previouslyReverted.has(change.change_id));
     if (recordedChangeCount === 0) {
@@ -2524,10 +2716,8 @@ function assertWorkspaceChangeRevision(
 
 function restoredWorkspaceSnapshot(change: WorkspaceChange): WorkspaceFileSnapshot {
   if (change.status === "added") return { exists: false };
-  const encoded = typeof change.metadata.beforeContentBase64 === "string"
-    ? change.metadata.beforeContentBase64
-    : "";
-  if (!encoded) {
+  const encoded = change.metadata.beforeContentBase64;
+  if (typeof encoded !== "string") {
     throw new Error(`Cannot revert ${change.path}; no before-image was recorded.`);
   }
   const content = Buffer.from(encoded, "base64");

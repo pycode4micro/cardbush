@@ -49,6 +49,11 @@ const DEFAULT_TOOL_RESULT_MAX_CHARS = 16_000;
 const TOOL_MESSAGE_OVERHEAD_TOKENS = 64;
 const MODEL_IMAGE_INPUT_ESTIMATED_TOKENS = 1_024;
 
+interface ModelToolResult {
+  content: string;
+  format: "json" | "text";
+}
+
 export class RuntimeToolLoop {
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #identity: RuntimeEventIdentity;
@@ -168,6 +173,7 @@ export class RuntimeToolLoop {
     });
     const toolMessages: ModelMessage[] = [];
     const imageObservations: ToolImageObservation[][] = [];
+    const renderedResults: Array<string | undefined> = [];
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const controller = new AbortController();
@@ -200,7 +206,9 @@ export class RuntimeToolLoop {
         imageObservations[ordinal] = outcome.kind === "returned"
           ? await snapshotToolImages(outcome.result, toolCall.id, this.#modelImages, controller.signal)
           : [];
-        this.#executionStore?.record(toolCall, executionIdentity, outcome);
+        renderedResults[ordinal] = outcome.kind === "returned"
+          ? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
+        this.#executionStore?.record(toolCall, executionIdentity, outcome, renderedResults[ordinal]);
         this.#appendToolOutcome(toolCall, executionIdentity, outcome);
         return outcome;
       } finally {
@@ -217,21 +225,25 @@ export class RuntimeToolLoop {
     const nativeResults = outcomes.map((outcome) =>
       outcome.kind === "returned" ? outcome.result : { runtimeError: outcome.error }
     );
-    const modelResults = nativeResults.map((result, ordinal) =>
-      modelFacingNativeToolResult(result, toolCalls[ordinal]!.name)
-    );
+    const modelResults = nativeResults.map((result, ordinal): ModelToolResult => {
+      const name = toolCalls[ordinal]!.name;
+      const text = renderedResults[ordinal];
+      return text === undefined
+        ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json" }
+        : { content: text, format: "text" };
+    });
     const ingressBudget = Number.isInteger(input.modelContextIngressBudgetTokens) &&
         Number(input.modelContextIngressBudgetTokens) >= 0
       ? Number(input.modelContextIngressBudgetTokens)
       : undefined;
     const minimumResultChars = modelResults.reduce<number>((total, result, ordinal) =>
-      total + serializeNativeToolResult(projectNativeToolResult(
+      total + projectNativeToolResult(
         result,
         this.#identity.sessionId,
         this.#identity.turnId,
         toolCalls[ordinal]!.id,
         0,
-      )).length, 0);
+      ).length, 0);
     const imageCandidateCount = nativeResults.flatMap(nativeImageArtifacts)
       .filter(isModelInputImageArtifact)
       .slice(0, 4)
@@ -267,7 +279,7 @@ export class RuntimeToolLoop {
       toolMessages.push({
         role: "tool",
         toolCallId: toolCall.id,
-        content: serializeNativeToolResult(projectedResult),
+        content: projectedResult,
       });
     }
     const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages);
@@ -370,14 +382,14 @@ export class RuntimeToolLoop {
 }
 
 function projectNativeToolResult(
-  result: unknown,
+  result: ModelToolResult,
   sessionId: string,
   turnId: string,
   toolCallId: string,
   maxChars = DEFAULT_TOOL_RESULT_MAX_CHARS,
-): unknown {
-  const serialized = serializeNativeToolResult(result);
-  if (serialized.length <= maxChars) return result;
+): string {
+  const serialized = result.content;
+  if (serialized.length <= maxChars) return serialized;
   const locator = `tool-result://${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}/${encodeURIComponent(toolCallId)}`;
   const receipt = {
     archived: true,
@@ -385,27 +397,29 @@ function projectNativeToolResult(
     originalChars: serialized.length,
     preview: "",
   };
-  const receiptChars = serializeNativeToolResult(receipt).length;
-  if (receiptChars >= serialized.length) return result;
-  if (maxChars <= receiptChars) return receipt;
+  const renderReceipt = (preview: string) => result.format === "text"
+    ? `${JSON.stringify({ archived: true, locator, originalChars: serialized.length, format: "text" })}\n\n${preview}`
+    : serializeNativeToolResult({ ...receipt, preview });
+  const receiptChars = renderReceipt("").length;
+  if (receiptChars >= serialized.length) return serialized;
+  if (maxChars <= receiptChars) return renderReceipt("");
   let lower = 0;
   let upper = Math.min(serialized.length, maxChars - receiptChars);
   while (lower < upper) {
     const middle = Math.ceil((lower + upper) / 2);
-    const candidate = { ...receipt, preview: serialized.slice(0, middle) };
-    if (serializeNativeToolResult(candidate).length <= maxChars) lower = middle;
+    if (renderReceipt(serialized.slice(0, middle)).length <= maxChars) lower = middle;
     else upper = middle - 1;
   }
-  return { ...receipt, preview: serialized.slice(0, lower) };
+  return renderReceipt(serialized.slice(0, lower));
 }
 
 function projectNativeToolResults(
-  results: unknown[],
+  results: ModelToolResult[],
   toolCalls: ToolCall[],
   sessionId: string,
   turnId: string,
   maxTotalChars?: number,
-): unknown[] {
+): string[] {
   const desired = results.map((result, index) => projectNativeToolResult(
     result,
     sessionId,
@@ -413,7 +427,7 @@ function projectNativeToolResults(
     toolCalls[index]!.id,
   ));
   if (maxTotalChars === undefined) return desired;
-  const desiredChars = desired.map((result) => serializeNativeToolResult(result).length);
+  const desiredChars = desired.map((result) => result.length);
   if (desiredChars.reduce((total, chars) => total + chars, 0) <= maxTotalChars) {
     return desired;
   }
@@ -424,7 +438,7 @@ function projectNativeToolResults(
     toolCalls[index]!.id,
     0,
   ));
-  const allocations = minimum.map((result) => serializeNativeToolResult(result).length);
+  const allocations = minimum.map((result) => result.length);
   let remaining = Math.max(
     0,
     maxTotalChars - allocations.reduce((total, chars) => total + chars, 0),
@@ -554,17 +568,6 @@ function nativeImageArtifacts(result: unknown): Array<{
       detail: metadata.detail,
     }];
   });
-}
-
-async function sequential<TInput, TOutput>(
-  values: TInput[],
-  execute: (value: TInput, index: number) => Promise<TOutput>,
-): Promise<TOutput[]> {
-  const output: TOutput[] = [];
-  for (const [index, value] of values.entries()) {
-    output.push(await execute(value, index));
-  }
-  return output;
 }
 
 function forwardAbort(

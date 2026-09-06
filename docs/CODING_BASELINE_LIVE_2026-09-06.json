@@ -1,0 +1,334 @@
+{
+  "protocol": "cardbush.first_live_coding_baseline.v1",
+  "generatedAt": "2026-09-06T05:16:46.461Z",
+  "model": {
+    "model": "deepseek-v4-flash-vision-exp",
+    "adapter": "openai_responses",
+    "reasoning": "high",
+    "maxRounds": 24,
+    "timeoutMs": 300000,
+    "tokenStop": 150000,
+    "maxOutputTokens": 4096,
+    "maxContextTokens": 100000,
+    "runtimeHashes": {
+      "packages/bush-protocol/src/model.ts": "bba4a11bb1beb735bc63f47746904b410e96d5c0f1846e56b89331b13c4cd535",
+      "packages/bush-runtime/src/modelRound.ts": "49b91070b2469e2ce5bda9e781b171300a074f2eb3593d1beab881be01595e8b",
+      "packages/bush-runtime/src/inMemoryRuntimeHost.ts": "c5f50fad97b753b62728cfaf404c9c33eccb1d02507fc590a0c7ae2b45369a57",
+      "packages/bush-runtime/src/workspaceTools.ts": "aee949e327ea8e477fb47964c2ca369420f085686436cc7b4582f12fbc0393fe",
+      "packages/bush-runtime/src/workspaceFileRead.ts": "0fd1132eb79fae7a04bae2dc9c52dbe22aca1be5f3661b2521caf24059aad986",
+      "packages/bush-runtime/src/modelReplay.ts": "93b6cd64d86b7da87dd50b47ebcbd182fc916b7e88f51655e18f13e678298f54",
+      "packages/bush-runtime/src/contextCompaction.ts": "4ae2233d37b30f8e6eccbfb12b06805f73b2369affebb5ccf792764503c792b8",
+      "packages/bush-provider-openai/src/responses.ts": "ea9646d81307cc88301bfc3f292d13c5192238e60e7ac3cebd08f2c4fc5637a4",
+      "packages/bush-provider-openai/src/responsesReplay.ts": "13c5b92f371f07bc30a8e4f8b3633e84f58530af4df038aa74949d757212d670"
+    },
+    "rootPromptHash": "ca73b23137773636411069ae52b4ac96530a9d83e400c1400039ed907893f748",
+    "driverHash": "d6deffa87c408be107bc6119f80edb9f450090804798f934dfb63811db6df0a9",
+    "permissionMode": "task_free",
+    "tools": [
+      "read_file",
+      "search_file_content",
+      "write_file",
+      "edit_file",
+      "terminal_exec",
+      "terminal_poll",
+      "terminal_write",
+      "terminal_stop",
+      "terminal_list",
+      "checkpoint_context",
+      "read_archived_tool_result",
+      "update_task_plan"
+    ],
+    "tokenStopPolicy": "Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold."
+  },
+  "destinationOrigin": "https://api.deepseek.com",
+  "suiteHash": "e2e494bd3a7da20c7758a6f36384371770f247cdcba259e2706c0ebdee25e018",
+  "environment": {
+    "nodeVersion": "v25.9.0",
+    "platform": "win32",
+    "architecture": "x64"
+  },
+  "sourceReports": [
+    "tmp/coding-benchmark/run-NbsEAK/live-report.json",
+    "tmp/coding-benchmark/run-CrBygY/live-report.json"
+  ],
+  "totals": {
+    "tasks": 8,
+    "passed": 6,
+    "completedTurns": 3,
+    "durationMs": 796442,
+    "modelRequests": 88,
+    "toolCalls": 104,
+    "toolFailures": 4,
+    "permissionRequests": 0,
+    "humanInterventions": 0,
+    "inputTokens": 945007,
+    "outputTokens": 91670,
+    "cachedInputTokens": 893696,
+    "uncachedInputTokens": 51311,
+    "inputCacheHitRatio": 0.9457030477022922,
+    "usageMissingRequests": 0,
+    "postRunPublicTestsPassed": 8,
+    "tasksWithModifiedPublicTests": 6
+  },
+  "tasks": [
+    {
+      "id": "queue-scope",
+      "category": "local-bug",
+      "passed": true,
+      "terminal": "completed",
+      "stopReason": null,
+      "durationMs": 72811,
+      "modelRequests": 9,
+      "toolCalls": 11,
+      "toolFailures": 0,
+      "inputTokens": 76207,
+      "outputTokens": 8259,
+      "cachedInputTokens": 69632,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-NbsEAK\\queue-scope\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 627,
+        "stdout": "All queueOrdering tests passed.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "src/features/composer/queueOrdering.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "queue-stable-move",
+      "category": "local-bug",
+      "passed": true,
+      "terminal": "failed",
+      "stopReason": "reported_token_threshold",
+      "durationMs": 146437,
+      "modelRequests": 12,
+      "toolCalls": 13,
+      "toolFailures": 0,
+      "inputTokens": 137516,
+      "outputTokens": 16895,
+      "cachedInputTokens": 127488,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\queue-stable-move\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 620,
+        "stdout": "All regression tests passed.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "src/features/composer/queueOrdering.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "config-concurrency",
+      "category": "async-concurrency",
+      "passed": true,
+      "terminal": "completed",
+      "stopReason": null,
+      "durationMs": 68928,
+      "modelRequests": 9,
+      "toolCalls": 11,
+      "toolFailures": 0,
+      "inputTokens": 76614,
+      "outputTokens": 7493,
+      "cachedInputTokens": 73344,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\config-concurrency\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 688,
+        "stdout": "All regression tests passed.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "packages/cardbush-product-host/src/atomicFiles.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "context-usage",
+      "category": "accounting",
+      "passed": true,
+      "terminal": "completed",
+      "stopReason": null,
+      "durationMs": 63839,
+      "modelRequests": 10,
+      "toolCalls": 11,
+      "toolFailures": 0,
+      "inputTokens": 81088,
+      "outputTokens": 7247,
+      "cachedInputTokens": 77568,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\context-usage\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 680,
+        "stdout": "All tests passed.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "src/backend/contextWindowUsage.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "local-url-encoding",
+      "category": "path-handling",
+      "passed": true,
+      "terminal": "failed",
+      "stopReason": "reported_token_threshold",
+      "durationMs": 119947,
+      "modelRequests": 12,
+      "toolCalls": 13,
+      "toolFailures": 1,
+      "inputTokens": 147068,
+      "outputTokens": 14116,
+      "cachedInputTokens": 143104,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\local-url-encoding\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 667,
+        "stdout": "Regression tests passed for fileUrl segment-encoding.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "src/shared/localPaths.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "flac-preview",
+      "category": "cross-file",
+      "passed": false,
+      "terminal": "failed",
+      "stopReason": "reported_token_threshold",
+      "durationMs": 135184,
+      "modelRequests": 11,
+      "toolCalls": 15,
+      "toolFailures": 2,
+      "inputTokens": 139776,
+      "outputTokens": 16055,
+      "cachedInputTokens": 133376,
+      "gradeFailureKind": "assertion",
+      "gradeStderr": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\r\n\r\nfalse !== true\r\n\r\n    at file:///D:/proj/cardbush/scripts/coding-benchmark/grader.mjs:61:10 {\r\n  generatedMessage: true,\r\n  code: 'ERR_ASSERTION',\r\n  actual: false,\r\n  expected: true,\r\n  operator: 'strictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v25.9.0\r\n",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\flac-preview\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 676,
+        "stdout": "Public smoke test passed; add regression tests for the task.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [],
+      "publicTestChanged": false
+    },
+    {
+      "id": "markdown-code-boundary",
+      "category": "text-parsing",
+      "passed": true,
+      "terminal": "failed",
+      "stopReason": "reported_token_threshold",
+      "durationMs": 102688,
+      "modelRequests": 13,
+      "toolCalls": 15,
+      "toolFailures": 0,
+      "inputTokens": 140082,
+      "outputTokens": 11681,
+      "cachedInputTokens": 131968,
+      "gradeFailureKind": null,
+      "gradeStderr": "",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\markdown-code-boundary\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 671,
+        "stdout": "All markdown code-boundary regression tests passed.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [
+        "src/features/chatMessages/markdownFormat.ts"
+      ],
+      "publicTestChanged": true
+    },
+    {
+      "id": "file-reference-boundary",
+      "category": "repository-navigation",
+      "passed": false,
+      "terminal": "failed",
+      "stopReason": "reported_token_threshold",
+      "durationMs": 86608,
+      "modelRequests": 12,
+      "toolCalls": 15,
+      "toolFailures": 1,
+      "inputTokens": 146656,
+      "outputTokens": 9924,
+      "cachedInputTokens": 137216,
+      "gradeFailureKind": "assertion",
+      "gradeStderr": "node:internal/modules/run_main:107\r\n    triggerUncaughtException(\r\n    ^\r\n\r\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\r\n+ actual - expected\r\n\r\n  [\r\n    {\r\n      type: 'text',\r\n+     value: '日期 2026'\r\n-     value: '日期 2026/9/29'\r\n    },\r\n+   {\r\n+     children: [\r\n+       {\r\n+         type: 'text',\r\n+         value: '29'\r\n+       }\r\n+     ],\r\n+     type: 'link',\r\n+     url: 'cardbush-local-file:%2F9%2F29'\r\n+   }\r\n  ]\r\n\r\n    at file:///D:/proj/cardbush/scripts/coding-benchmark/grader.mjs:84:10 {\r\n  generatedMessage: true,\r\n  code: 'ERR_ASSERTION',\r\n  actual: [\r\n    { type: 'text', value: '日期 2026' },\r\n    {\r\n      type: 'link',\r\n      url: 'cardbush-local-file:%2F9%2F29',\r\n      children: [ { type: 'text', value: '29' } ]\r\n    }\r\n  ],\r\n  expected: [ { type: 'text', value: '日期 2026/9/29' } ],\r\n  operator: 'deepStrictEqual',\r\n  diff: 'simple'\r\n}\r\n\r\nNode.js v25.9.0\r\n",
+      "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-CrBygY\\file-reference-boundary\\candidate",
+      "cleanup": {
+        "stoppedTerminals": 0,
+        "errors": []
+      },
+      "postRunPublicTest": {
+        "exitCode": 0,
+        "timedOut": false,
+        "durationMs": 664,
+        "stdout": "Public smoke test passed; add regression tests for the task.\n",
+        "stderr": ""
+      },
+      "changedSourceFiles": [],
+      "publicTestChanged": false
+    }
+  ],
+  "limitations": [
+    "One run per deliberately seeded regression task; this is not a general coding benchmark.",
+    "No before/after runtime comparison and no Codex run were performed.",
+    "Tool failures count Runtime failure outcomes; nonzero terminal exit codes are not separately retained in these reports.",
+    "Reported input and output tokens are usage, not a currency cost. Cached input is a subset of input tokens.",
+    "The two failing tasks retain their original smoke test; 8/8 public script exits do not imply 8/8 repairs. Independent grader assertions determine repair success."
+  ]
+}

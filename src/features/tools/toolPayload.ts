@@ -70,21 +70,6 @@ export function summarizeWriteScope(scope: string[]) {
   return scope.length > 4 ? `${visible} +${scope.length - 4}` : visible;
 }
 
-export function firstDefined(values: unknown[]) {
-  return values.find((value) => {
-    if (value == null || value === '') {
-      return false;
-    }
-    if (Array.isArray(value)) {
-      return value.length > 0;
-    }
-    if (typeof value === 'object') {
-      return Object.keys(asRecord(value)).length > 0;
-    }
-    return true;
-  });
-}
-
 export function firstRecord(values: Record<string, unknown>[]) {
   return values.find((value) => Object.keys(value).length > 0) ?? {};
 }

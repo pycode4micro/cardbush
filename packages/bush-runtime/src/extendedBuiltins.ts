@@ -6,10 +6,12 @@ import { homedir } from "node:os";
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { decodeLogicLearnInput, LogicMemoryStore } from "./logicMemory.js";
 import { ModelImageStore } from "./modelImageStore.js";
+import { renderTextFields } from "./toolResultText.js";
 
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
   readToolResult?: (locator: string) => unknown;
+  readToolResultText?: (locator: string) => string;
   logicMemory?: LogicMemoryStore;
   modelImages?: ModelImageStore;
 }
@@ -17,7 +19,7 @@ export interface ExtendedBuiltinOptions {
 export function registerExtendedBuiltins(registry: ToolRegistry, options: ExtendedBuiltinOptions = {}): void {
   const dataRoot = resolve(options.dataRoot || join(process.cwd(), ".cardbush-runtime"));
   registerLogic(registry, options.logicMemory ?? new LogicMemoryStore(join(dataRoot, "lem", "logic.json")));
-  registerArchivedToolResult(registry, options.readToolResult);
+  registerArchivedToolResult(registry, options.readToolResult, options.readToolResultText);
   registerImageInput(registry, options.modelImages ?? new ModelImageStore(dataRoot));
   registerSchedule(registry, dataRoot);
   registerParallel(registry);
@@ -145,6 +147,7 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
 function registerArchivedToolResult(
   registry: ToolRegistry,
   readToolResult?: (locator: string) => unknown,
+  readToolResultText?: (locator: string) => string,
 ) {
   registry.register<{ locator: string; offset: number; maxChars: number }>({
     definition: {
@@ -168,6 +171,7 @@ function registerArchivedToolResult(
     },
     manifest: manifest("tool_result_archive.read", false, "session"),
     parallelSafe: true,
+    renderModelResult: (result) => renderTextFields(result, ["text"]),
     decodeInput: (value) => {
       const input = object(value);
       const locator = requiredText(input.locator, "locator");
@@ -181,9 +185,10 @@ function registerArchivedToolResult(
       };
     },
     execute: async (context) => {
-      if (!readToolResult) throw new Error("Archived Tool result lookup is unavailable.");
-      const archived = readToolResult(context.input.locator);
-      const serialized = JSON.stringify(archived);
+      if (!readToolResult && !readToolResultText) throw new Error("Archived Tool result lookup is unavailable.");
+      const serialized = readToolResultText
+        ? readToolResultText(context.input.locator)
+        : JSON.stringify(readToolResult!(context.input.locator));
       if (typeof serialized !== "string") throw new Error("Archived Tool result could not be serialized.");
       const offset = Math.min(context.input.offset, serialized.length);
       return success(context, {

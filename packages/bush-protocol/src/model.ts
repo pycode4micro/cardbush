@@ -27,10 +27,26 @@ const userModelMessageSchema = z.object({
   images: z.array(modelImageInputSchema).max(4).optional(),
 });
 
+// Provider-owned output for lossless replay. Runtime carries this data without
+// interpreting model-specific phases, reasoning items, or completion semantics.
+export const modelReplayDataSchema = z.object({
+  format: z.string().min(1),
+  data: z.record(z.string(), z.unknown()),
+});
+export type ModelReplayData = z.infer<typeof modelReplayDataSchema>;
+
+export const modelReplayStateSchema = modelReplayDataSchema.extend({
+  model: z.string().min(1),
+  providerBinding: runtimeProviderBindingRefSchema.optional(),
+  messageHash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type ModelReplayState = z.infer<typeof modelReplayStateSchema>;
+
 const assistantModelMessageSchema = z.object({
   role: z.literal("assistant"),
   content: z.string(),
   reasoningContent: z.string().optional(),
+  providerReplay: modelReplayStateSchema.optional(),
   toolCalls: z
     .array(
       z.object({
@@ -177,6 +193,7 @@ export const modelEventSchema = z.discriminatedUnion("kind", [
   eventBaseSchema.extend({
     kind: z.literal("response_completed"),
     finishReason: z.string().optional(),
+    providerReplay: modelReplayDataSchema.optional(),
   }),
   eventBaseSchema.extend({
     kind: z.literal("response_failed"),

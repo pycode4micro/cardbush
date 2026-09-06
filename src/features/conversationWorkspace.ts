@@ -156,6 +156,8 @@ export function isOnlyTalkConversation(
 }
 
 export function conversationWorkspaceRoot(conversation?: ConversationSummary | null) {
+  const managed = conversation?.metadata?.runtimeWorkspace as { workspaceDir?: unknown } | undefined;
+  if (typeof managed?.workspaceDir === 'string' && managed.workspaceDir.trim()) return managed.workspaceDir.trim();
   return (
     conversationProjectDir(conversation) ||
     conversation?.workspaceContext?.executionRoot?.trim() ||

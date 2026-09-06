@@ -37,7 +37,7 @@ import {
   themeBackgroundColor,
   themeClassNames,
 } from './features/appearance/themeRuntime';
-import type { ChatMessage, ThemeMode } from './types';
+import type { ChatMessage } from './types';
 
 type ShadowMode = 'readonly' | 'fork';
 export type ShadowConversationContext = Awaited<

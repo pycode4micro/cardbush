@@ -27,6 +27,7 @@ export function mergeToolExecutionUpdate(
   const merged = {
     ...current,
     ...incoming,
+    metadata: { ...current.metadata, ...incoming.metadata },
     ...(artifacts.length > 0 ? { artifacts } : {}),
   };
   if (!currentSettled || !incomingRunning) {

@@ -4015,11 +4015,6 @@ function normalizeProxyRule(value: string) {
   return `http://${trimmed}`;
 }
 
-function isLoopback(host: string) {
-  const normalized = host.toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
-}
-
 type WallpaperAccentResult = {
   r: number;
   g: number;

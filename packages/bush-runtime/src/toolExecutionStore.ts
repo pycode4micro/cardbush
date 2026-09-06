@@ -34,6 +34,7 @@ export class ToolExecutionStore {
     toolCall: ToolCall,
     identity: ToolExecutionIdentity,
     outcome: ToolExecutionOutcome,
+    modelText?: string,
   ): ToolExecutionRecord {
     const candidate = structuredClone(toolExecutionRecordSchema.parse({
       protocol: BUSH_TOOL_EXECUTION_RECORD_PROTOCOL,
@@ -47,6 +48,7 @@ export class ToolExecutionStore {
       outcome: outcome.kind,
       actionManifest: outcome.actionManifest,
       ...(outcome.kind === "returned" ? { result: outcome.result } : {}),
+      ...(outcome.kind === "returned" && modelText !== undefined ? { modelText } : {}),
       workspaceChanges: outcome.workspaceChanges,
       ...(outcome.kind === "returned" ? {} : { error: outcome.error }),
     }));

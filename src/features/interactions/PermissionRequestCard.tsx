@@ -138,16 +138,6 @@ export function PermissionRequestCard({
   );
 }
 
-export function isPermissionInteraction(interaction: PendingInteraction) {
-  const type = interaction.type?.trim().toLowerCase() ?? '';
-  const tool = interaction.toolName?.trim().toLowerCase() ?? '';
-  return (
-    type.includes('permission') ||
-    tool.includes('permission') ||
-    interaction.runtimePermission != null
-  );
-}
-
 export function permissionQuestion(questions: InteractionQuestion[]) {
   return (
     questions.find((question) => question.id === 'permission') ??

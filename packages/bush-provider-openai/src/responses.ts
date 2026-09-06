@@ -23,6 +23,7 @@ import type {
 } from "@cardbush/bush-runtime";
 import { readLocalModelImage } from "@cardbush/bush-runtime";
 import { providerFailureEvent } from "./providerFailure.js";
+import { replayResponsesOutput, responsesReplayData } from "./responsesReplay.js";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -155,6 +156,7 @@ export function normalizeResponseStreamEvent(
       append({
         kind: "response_completed",
         finishReason: responseFinishReason(event.response),
+        providerReplay: responsesReplayData(event.response),
       });
       state.terminal = true;
       break;
@@ -163,6 +165,7 @@ export function normalizeResponseStreamEvent(
       append({
         kind: "response_completed",
         finishReason: incompleteFinishReason(event.response),
+        providerReplay: responsesReplayData(event.response),
       });
       state.terminal = true;
       break;
@@ -258,7 +261,7 @@ export function toResponsesCreateParams(
   }
   return {
     model: request.model,
-    input: toResponseInput(request.messages.slice(inputMessageOffset)),
+    input: toResponseInput(request.messages.slice(inputMessageOffset), request),
     tools: toResponseTools(request),
     max_output_tokens: request.maxOutputTokens,
     temperature: request.temperature,
@@ -288,13 +291,14 @@ export function toResponsesInputTokenCountParams(
   };
 }
 
-function toResponseInput(messages: ModelMessage[]): ResponseInput {
-  return messages.flatMap((message, index) => toResponseInputItems(message, index));
+function toResponseInput(messages: ModelMessage[], request: ModelRequest): ResponseInput {
+  return messages.flatMap((message, index) => toResponseInputItems(message, index, request));
 }
 
 function toResponseInputItems(
   message: ModelMessage,
   messageIndex: number,
+  request: ModelRequest,
 ): ResponseInputItem[] {
   if (message.role === "tool") {
     return [{
@@ -304,6 +308,8 @@ function toResponseInputItems(
     }];
   }
   if (message.role === "assistant") {
+    const replay = replayResponsesOutput(message, request);
+    if (replay) return replay;
     const items: ResponseInputItem[] = [];
     if (message.reasoningContent) {
       items.push({

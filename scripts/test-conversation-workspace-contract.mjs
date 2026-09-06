@@ -95,6 +95,18 @@ assert.equal(conversationWorkspaceMode(genuineProjectConversation), 'project');
 assert.equal(conversationProjectDir(genuineProjectConversation), genuineProjectRoot);
 assert.equal(isOnlyTalkConversation(genuineProjectConversation), false);
 
+const worktreeConversation = {
+  ...genuineProjectConversation,
+  metadata: { ...genuineProjectConversation.metadata,
+    runtimeWorkspace: { mode: 'worktree', sourceDir: genuineProjectRoot, workspaceDir: taskRoot },
+    workspaceDir: taskRoot,
+  },
+  workspaceContext: { ...genuineProjectConversation.workspaceContext, executionRoot: taskRoot },
+};
+assert.equal(conversationWorkspaceMode(worktreeConversation), 'project');
+assert.equal(conversationProjectDir(worktreeConversation), genuineProjectRoot);
+assert.equal(conversationWorkspaceRoot(worktreeConversation), taskRoot);
+
 // Product Runtime project sessions keep the user project separate from an
 // internal per-session execution directory. The
 // former must never be treated as evidence of Only Talk/task mode.

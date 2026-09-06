@@ -3686,10 +3686,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StepText({ children }: { children: React.ReactNode }) {
-  return <p className="step-text">{children}</p>;
-}
-
 function ModelConfigRow({
   config,
   language,

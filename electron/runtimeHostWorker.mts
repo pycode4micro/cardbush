@@ -1,5 +1,4 @@
 import {
-  BUSH_MODEL_EVENT_PROTOCOL,
   BUSH_RUNTIME_ERROR_PROTOCOL,
   BUSH_RUNTIME_IPC_PROTOCOL,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
@@ -14,8 +13,6 @@ import {
   runtimeProviderBindingIdentitySchema,
   runtimeIpcOutboundMessageSchema,
   mcpSnapshotSchema,
-  type ModelEvent,
-  type ModelRequest,
   type RuntimeIpcOutboundMessage,
   type RuntimeProtocolError,
 } from '@cardbush/bush-protocol';

@@ -304,6 +304,7 @@ export function serializeToolChangeReport(report: ToolChangeReport): SerializedT
 }
 
 function looksLikeFileChangeExecution(execution: ChatToolExecution) {
+  if (execution.metadata.workspaceCheckpointCovered === true) return false;
   if (String(execution.metadata.kind ?? '').trim() === 'file_change') {
     return true;
   }

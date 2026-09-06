@@ -336,6 +336,8 @@ app.whenReady().then(async () => {
     await pause(400);
     assert.deepEqual(await run('failures'), [], 'no renderer exceptions or rejected effects');
     await require('./helpers/capability-refresh.cjs')({ run, until, pause });
+    await require('./helpers/task-workspace-view.cjs')({ run, until, pause, window, root });
+    assert.deepEqual(await run('failures'), [], 'workspace controls must not produce renderer exceptions');
     assert.deepEqual(errors, []);
     console.log('App views passed: module ownership, StrictMode, preview races/reload/error/unmount, lazy syntax, toolbar, welcome, session switch and stop.');
   } finally { window.destroy(); }

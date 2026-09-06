@@ -134,7 +134,8 @@ export async function streamRuntimeChat(
         `Invalid token limits for ${resolvedModel.model}: maxOutputTokens (${configuredMaxOutputTokens}) must be less than maxContextTokens (${maxContextTokens}).`,
       );
     }
-    const workspaceDir = request.workspaceDir?.trim() || request.projectDir?.trim() ||
+    const managedWorkspace = existingSession?.metadata?.runtimeWorkspace as { workspaceDir?: string } | undefined;
+    const workspaceDir = managedWorkspace?.workspaceDir || request.workspaceDir?.trim() || request.projectDir?.trim() ||
       await window.cardbushDesktop?.ensureTaskWorkspace?.(request.sessionId);
     let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession ?? undefined);
     const sharedAgentInput = {
@@ -193,7 +194,6 @@ export async function streamRuntimeChat(
       lastAssistantMessageId = '';
       const unregisterTurn = registerActiveRuntimeTurn(
         currentRequest.turnId,
-        request.sessionId,
         () => runtime.client.stopTurn({
           sessionId: request.sessionId,
           turnId: currentRequest.turnId,

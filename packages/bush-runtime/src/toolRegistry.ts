@@ -56,6 +56,8 @@ export interface ToolRegistration<TInput = unknown> {
     context: ToolAdmissionContext<TInput>,
   ) => ToolAdmissionDecision | Promise<ToolAdmissionDecision>;
   execute: (context: ToolHandlerContext<TInput>) => unknown | Promise<unknown>;
+  /** Pure presentation of a returned result; native execution/review data stays unchanged. */
+  renderModelResult?: (result: unknown) => string | undefined;
   parallelSafe?: boolean;
   executionChannel?: string;
   visibleToChild?: boolean;
@@ -123,6 +125,18 @@ export class ToolRegistry {
     return this.#registrations.get(name);
   }
 
+  renderModelResult(name: string, result: unknown): string | undefined {
+    const render = this.#registrations.get(name)?.renderModelResult;
+    if (!render) return undefined;
+    try {
+      const text = render(structuredClone(result));
+      return typeof text === "string" ? text : undefined;
+    } catch {
+      // A presentation failure must not hide or reclassify a native Tool result.
+      return undefined;
+    }
+  }
+
   definitions(): ToolDefinition[] {
     return [...this.#registrations.values()].map(({ definition }) =>
       structuredClone(definition),
@@ -168,6 +182,7 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     decodeInput: candidate.decodeInput as (input: unknown) => unknown,
     authorize: candidate.authorize as AnyToolRegistration["authorize"],
     execute: candidate.execute as AnyToolRegistration["execute"],
+    renderModelResult: candidate.renderModelResult,
     parallelSafe: candidate.parallelSafe ?? false,
     executionChannel: candidate.executionChannel?.trim() || undefined,
     visibleToChild: candidate.visibleToChild ?? true,

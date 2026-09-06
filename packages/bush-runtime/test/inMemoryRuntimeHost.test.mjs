@@ -185,7 +185,7 @@ test("projects explicit cancellation as a stopped terminal fact", async () => {
 
   const terminal = await host.runModelTurn(request, { signal: controller.signal });
   assert.equal(terminal.payload.status, "stopped");
-  assert.equal(terminal.payload.reason, "user_stop_requested");
+  assert.equal(terminal.payload.reason, "turn_stop_requested");
 });
 
 test("accepts Stop independently and keeps the stream authoritative until terminal", async () => {

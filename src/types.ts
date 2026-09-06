@@ -764,16 +764,6 @@ export interface SubagentListItem {
   error?: string;
 }
 
-export interface SubagentCapabilities {
-  models: Array<Record<string, unknown>>;
-  tools: string[];
-  toolPackages: string[];
-  skills: Array<Record<string, unknown>>;
-  permissionLevels: string[];
-  runModes: string[];
-  toolProfiles: string[];
-}
-
 interface SubagentRuntimeItem extends SubagentListItem {
   runtime: Record<string, unknown>;
 }

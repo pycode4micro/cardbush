@@ -1,4 +1,7 @@
 import {
+  GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
+  workspaceReviewSchema, workspaceDescriptorSchema, workspaceUpdateSchema,
+  type WorkspaceReview, type WorkspaceDescriptor,
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
@@ -138,7 +141,7 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
   }
 
   createSession(
-    input: { sessionId: string; metadata?: Record<string, unknown> },
+    input: { sessionId: string; metadata?: Record<string, unknown>; workspace?: { mode: "auto" | "direct" | "worktree"; sourceDir: string } },
     signal?: AbortSignal,
   ): Promise<SessionSnapshot> {
     const payload = createRuntimeSessionRequestSchema.parse(input);
@@ -436,6 +439,16 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       (value) => goalStateSchema.parse(value),
       signal,
     );
+  }
+
+  getWorkspace(sessionId: string, signal?: AbortSignal, view: 'live' | 'history' = 'live'): Promise<WorkspaceReview | null> {
+    return this.command({ kind: GET_RUNTIME_WORKSPACE_COMMAND, payload: { sessionId, view } },
+      value => value == null ? null : workspaceReviewSchema.parse(value), signal);
+  }
+
+  updateWorkspace(input: unknown, signal?: AbortSignal): Promise<WorkspaceDescriptor> {
+    return this.command({ kind: UPDATE_RUNTIME_WORKSPACE_COMMAND, payload: workspaceUpdateSchema.parse(input) },
+      value => workspaceDescriptorSchema.parse(value), signal);
   }
 
   revertWorkspaceChanges(

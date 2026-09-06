@@ -27,6 +27,22 @@ test("persists native results and Runtime-owned workspace changes", (t) => {
   reopened.close();
 });
 
+test("model text survives restart independently of native result data", (t) => {
+  const root = temporaryRoot(t);
+  const persistence = new FileToolExecutionPersistence({ root });
+  const modelText = "original \\d+\r\n中文😀\n";
+  const store = new ToolExecutionStore({ persistence, now: () => NOW });
+  store.record(toolCall(), identity(), outcome(), modelText);
+  assert.throws(() => store.record(toolCall(), identity(), outcome(), "different presentation"), /different record/);
+  persistence.close();
+  const reopened = new FileToolExecutionPersistence({ root });
+  const recovered = new ToolExecutionStore({ persistence: reopened });
+  assert.equal(recovered.get("session_1", "turn_1", "call_1").modelText, modelText);
+  assert.deepEqual(recovered.get("session_1", "turn_1", "call_1").result, outcome().result);
+  assert.equal("modelText" in recovered.listTurnSummaries("session_1", "turn_1")[0], false);
+  reopened.close();
+});
+
 test("rejects conflicting identities and duplicate Runtime workspace changes", () => {
   const store = new ToolExecutionStore({ now: () => NOW });
   store.record(toolCall(), identity(), outcome());

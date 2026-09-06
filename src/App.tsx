@@ -705,6 +705,7 @@ function CardbushApp() {
     (!onlyTalkMode && !chat.activeConversation
       ? fallbackProjectDir || undefined
       : undefined);
+  const activeContextProjectDir = activeConversationProjectDir || activeProjectDir;
   const activeProjectPathAliases = useMemo(
     () => conversationProjectPathAliases(chat.activeConversation),
     [chat.activeConversation],
@@ -760,9 +761,6 @@ function CardbushApp() {
   const inspectorTabContextTargetIndex = inspectorTabContextTarget
     ? inspectorTabs.findIndex((tab) => tab.id === inspectorTabContextTarget.id)
     : -1;
-  const inspectorTarget = activeInspectorTab?.kind === 'resource'
-    ? activeInspectorTab.detail
-    : null;
   const changeReviewConversationId = activeInspectorTab?.kind === 'review'
     ? activeInspectorTab.conversationId
     : '';
@@ -2235,7 +2233,7 @@ function CardbushApp() {
   }, []);
 
   useEffect(() => {
-    const projectDir = activeProjectDir?.trim();
+    const projectDir = activeContextProjectDir?.trim();
     if (!projectDir) {
       return undefined;
     }
@@ -2264,11 +2262,11 @@ function CardbushApp() {
     return () => {
       cancelled = true;
     };
-  }, [activeProjectDir, projectContexts]);
+  }, [activeContextProjectDir, projectContexts]);
 
   const saveActiveProjectContext = useCallback(
     async (value: string) => {
-      const projectDir = activeProjectDir?.trim();
+      const projectDir = activeContextProjectDir?.trim();
       if (!projectDir) {
         throw new Error(language === 'zh' ? '请先打开一个项目' : 'Open a project first');
       }
@@ -2286,7 +2284,7 @@ function CardbushApp() {
       });
       return saved;
     },
-    [activeProjectDir, language],
+    [activeContextProjectDir, language],
   );
 
   const toggleSkillEnabled = useCallback((skillName: string, enabled: boolean) => {
@@ -2450,6 +2448,9 @@ function CardbushApp() {
           <section className="main-stage">
             {section === 'chat' ? (
               <ChatPanel
+                workspaceControls={<TaskWorkspaceBar key={chat.activeConversationId} sessionId={chat.activeConversationId}
+                  projectDir={activeConversationProjectDir || ''} language={language} busy={chat.sending || chat.stopping}
+                  revisionKey={chat.activeConversation?.updatedAt} onChanged={refreshBackendAndActiveSession} />}
                 language={language}
                 theme={theme}
                 title={chat.activeConversation?.title ?? 'cardbush'}
@@ -2472,7 +2473,7 @@ function CardbushApp() {
                 projectContext={
                   onlyTalkMode
                     ? ''
-                    : projectContexts[projectContextKey(activeProjectDir)] ?? ''
+                    : projectContexts[projectContextKey(activeContextProjectDir)] ?? ''
                 }
                 messages={chat.activeMessages}
                 activeGoal={chat.activeGoal}
@@ -4215,3 +4216,4 @@ function FeaturePanel({
     </div>
   );
 }
+import { TaskWorkspaceBar } from './features/chat/TaskWorkspaceBar';

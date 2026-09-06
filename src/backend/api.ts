@@ -20,7 +20,6 @@ import type {
   StreamExecutionUpdate,
   ThinkingStreamEvent,
   TaskPlanStreamUpdate,
-  SubagentCapabilities,
   SubagentDispatchEvent,
   SubagentRuntimeResult,
   SubagentSupervisorSnapshot,
@@ -68,6 +67,7 @@ import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
+import { coverWorkspaceToolExecution, workspaceCheckpointExecutions } from './workspaceReview';
 import {
   markRuntimeSupersededMessages,
   projectRuntimeSessionMessage,
@@ -87,7 +87,6 @@ import {
   readProductTeams,
   replaceProductTeamConfiguration,
   resetProductTeamConfiguration,
-  validateProductTeamConfiguration,
 } from './productTeams';
 import {
   answerRuntimeInteraction,
@@ -360,15 +359,6 @@ export interface SessionContextSearchResult {
   indexState: string;
 }
 
-export interface SessionMessageWindow {
-  anchorMessageId: string;
-  messages: ChatMessage[];
-  hasMoreBefore: boolean;
-  hasMoreAfter: boolean;
-  beforeCursor?: string;
-  afterCursor?: string;
-}
-
 export interface TeamWorkflowStreamEvent {
   type: string;
   runId: string;
@@ -526,17 +516,6 @@ export interface MaintenanceClearResult {
   counts: Record<string, number>;
 }
 
-export interface SceneEventRequest {
-  sessionId: string;
-  sceneId: string;
-  turnId?: string;
-  event: string;
-  nodeId?: string;
-  text?: string;
-  values?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-}
-
 export interface SessionMessagesResult {
   conversation: ConversationSummary;
   messages: ChatMessage[];
@@ -657,46 +636,6 @@ export async function fetchTeams(
   return readProductTeams();
 }
 
-export async function fetchTeam(
-  teamId: string,
-  signal?: AbortSignal,
-): Promise<TeamDefinition> {
-  void signal;
-  const team = readProductTeams().find((item) => item.id === teamId.trim());
-  if (!team)
-    throw new Error(
-      localizedClientMessage('团队不存在', 'Team does not exist'),
-    );
-  return team;
-}
-
-export async function validateTeamDefinition(
-  team: TeamDefinition,
-  signal?: AbortSignal,
-) {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog(signal);
-    const teams = readProductTeams().filter((item) => item.id !== team.id);
-    const result = validateProductTeamConfiguration({
-      teams: [...teams, team],
-      profiles: readProductAgentProfiles(),
-      tools,
-    });
-    if (!result.success) {
-      throw new Error(
-        result.error.issues
-          .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-          .join('\n'),
-      );
-    }
-    return team;
-  } finally {
-    runtime.dispose();
-  }
-}
-
 export async function saveTeamDefinition(
   team: TeamDefinition,
   signal?: AbortSignal,
@@ -741,53 +680,6 @@ export async function fetchAgentProfiles(
 ): Promise<AgentProfileDefinition[]> {
   void signal;
   return readProductAgentProfiles();
-}
-
-export async function fetchAgentProfile(
-  profileId: string,
-  signal?: AbortSignal,
-) {
-  void signal;
-  const profile = readProductAgentProfiles().find(
-    (item) => item.id === profileId.trim(),
-  );
-  if (!profile)
-    throw new Error(
-      localizedClientMessage(
-        '成员配置不存在',
-        'Agent configuration does not exist',
-      ),
-    );
-  return profile;
-}
-
-export async function validateAgentProfile(
-  profile: AgentProfileDefinition,
-  signal?: AbortSignal,
-) {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog(signal);
-    const profiles = readProductAgentProfiles().filter(
-      (item) => item.id !== profile.id,
-    );
-    const result = validateProductTeamConfiguration({
-      teams: readProductTeams(),
-      profiles: [...profiles, profile],
-      tools,
-    });
-    if (!result.success) {
-      throw new Error(
-        result.error.issues
-          .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-          .join('\n'),
-      );
-    }
-    return profile;
-  } finally {
-    runtime.dispose();
-  }
 }
 
 export async function saveAgentProfile(
@@ -1433,10 +1325,13 @@ export async function fetchSessionMessages(
       ),
     ]);
     const records = recordGroups.flat();
+    const managed = snapshot.metadata?.runtimeWorkspace as { mode?: string; versioning?: string; workspaceDir?: string } | undefined;
+    const workspaceReview = managed?.versioning === 'git' || managed?.mode === 'worktree' ? await runtime.client.getWorkspace(snapshot.sessionId, undefined, 'history') : null;
     const compactionEvents: RuntimeContextCompactionEvent[] =
       compactionEventGroups.flat();
     const toolExecutions = [
-      ...records.map(runtimeHistoryToolExecution),
+      ...records.map(record => coverWorkspaceToolExecution(runtimeHistoryToolExecution(record), workspaceReview)),
+      ...workspaceCheckpointExecutions(workspaceReview),
       ...contextCompactionPresentationExecutions(compactionEvents),
     ];
     const latest = snapshot.turns.at(-1);
@@ -1445,7 +1340,7 @@ export async function fetchSessionMessages(
     const workspaceContext: WorkspaceContext | undefined = projectDir || taskDir
       ? {
           mode: projectDir ? 'project' : 'task',
-          executionRoot: projectDir || taskDir,
+          executionRoot: managed?.workspaceDir || projectDir || taskDir,
           projectDir: projectDir || null,
           taskDir,
           source: 'electron_runtime',
@@ -1734,6 +1629,10 @@ export async function createConversation({
   try {
     const snapshot = await runtime.client.createSession({
       sessionId: normalizedSessionId,
+      ...(normalizedProjectDir ? { workspace: {
+        sourceDir: normalizedProjectDir,
+        mode: window.localStorage.getItem('cardbush.workspace.mode') === 'worktree' ? 'worktree' as const : 'direct' as const,
+      } } : {}),
       metadata: {
         ...normalizedMetadata,
         title,
@@ -2164,52 +2063,6 @@ export async function searchSessionContext({
   }
 }
 
-export async function fetchSessionMessageWindow({
-  sessionId,
-  messageId,
-  before = 6,
-  after = 6,
-  signal,
-}: {
-  sessionId: string;
-  messageId: string;
-  before?: number;
-  after?: number;
-  signal?: AbortSignal;
-}): Promise<SessionMessageWindow> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    const snapshot = await runtime.client.getSession(sessionId.trim(), signal);
-    const messages = (
-      snapshot?.turns.flatMap((turn) =>
-        turn.messages.map((message) => ({ message, turn })),
-      ) ?? []
-    ).filter(({ message }) => !isInternalRuntimeMessage(message));
-    const anchor = messages.findIndex(
-      ({ message }) => message.messageId === messageId.trim(),
-    );
-    if (anchor < 0) {
-      throw new Error(
-        localizedClientMessage('消息不存在', 'Message does not exist'),
-      );
-    }
-    const start = Math.max(0, anchor - before);
-    const end = Math.min(messages.length, anchor + after + 1);
-    return {
-      anchorMessageId: messageId,
-      messages: messages
-        .slice(start, end)
-        .map(({ message, turn }) => projectRuntimeSessionMessage(message, sessionId, turn)),
-      hasMoreBefore: start > 0,
-      hasMoreAfter: end < messages.length,
-      beforeCursor: start > 0 ? String(start) : undefined,
-      afterCursor: end < messages.length ? String(end) : undefined,
-    };
-  } finally {
-    runtime.dispose();
-  }
-}
-
 export async function fetchSessionTurnMessages({
   sessionId,
   messageId,
@@ -2326,6 +2179,14 @@ export async function fetchSessionWorkspaceChanges(
         ),
       )
     ).flat();
+    const managed = snapshot.metadata?.runtimeWorkspace as { mode?: string; versioning?: string } | undefined;
+    if (managed?.versioning === 'git' || managed?.mode === 'worktree') {
+      const review = await runtime.client.getWorkspace(normalized, signal, 'history');
+      return [
+        ...records.map(record => coverWorkspaceToolExecution(runtimeHistoryToolExecution(record), review)),
+        ...workspaceCheckpointExecutions(review),
+      ];
+    }
     const revertedChangeIds = new Set(
       Array.isArray(snapshot.metadata?.[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY])
         ? snapshot.metadata[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY]
@@ -2426,24 +2287,6 @@ export async function sendTeamFlowAction(
       'Legacy Team Flow actions are retired; Teams execute through explicit configuration and team_delegate.',
     ),
   );
-}
-
-export async function fetchSubagentCapabilities(): Promise<SubagentCapabilities> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    const tools = await runtime.client.getToolCatalog();
-    return {
-      models: [],
-      tools: tools.map((tool) => tool.name),
-      toolPackages: [],
-      skills: [],
-      permissionLevels: ['allow', 'ask'],
-      runModes: ['concurrent_context_fork'],
-      toolProfiles: [],
-    };
-  } finally {
-    runtime.dispose();
-  }
 }
 
 export async function fetchSubagentRuntime(): Promise<SubagentRuntimeResult> {
@@ -3043,11 +2886,6 @@ function numberRecord(value: unknown) {
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-function numericValue(value: unknown) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
-}
-
 function recordList(value: unknown) {
   return Array.isArray(value)
     ? value.filter(
@@ -3055,48 +2893,6 @@ function recordList(value: unknown) {
           item != null && typeof item === 'object',
       )
     : [];
-}
-
-function asOptionalRecord(value: unknown) {
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-  return asRecord(value);
-}
-
-function normalizeImageSource(value: unknown) {
-  const text = optionalString(value)?.trim() ?? '';
-  if (!text) {
-    return '';
-  }
-  if (/^data:image\//i.test(text)) {
-    return text;
-  }
-  if (/^<svg[\s>]/i.test(text)) {
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`;
-  }
-  if (/^(https?:|file:|blob:|data:)/i.test(text) || text.startsWith('//')) {
-    return text;
-  }
-  if (text.startsWith('/') || text.startsWith('./') || text.startsWith('../')) {
-    return text;
-  }
-  const compact = text.replace(/\s+/g, '');
-  if (
-    compact.length >= 80 &&
-    compact.length % 4 === 0 &&
-    /^[A-Za-z0-9+/]+={0,2}$/.test(compact)
-  ) {
-    const mime = compact.startsWith('/9j/')
-      ? 'image/jpeg'
-      : compact.startsWith('R0lGOD')
-        ? 'image/gif'
-        : compact.startsWith('PHN2Zy')
-          ? 'image/svg+xml'
-          : 'image/png';
-    return `data:${mime};base64,${compact}`;
-  }
-  return text;
 }
 
 function optionalString(value: unknown) {

@@ -1,0 +1,13 @@
+{
+  "description": "Fixed CardBush source snapshots. Seeded regressions are defined in suite.mjs.",
+  "capturedAt": "2026-09-06T04:16:22.495Z",
+  "hashes": {
+    "src/features/composer/queueOrdering.ts": "00b138478887258b746d12c28c68349b244b298a017c847efb27b3fabe0b3220",
+    "packages/cardbush-product-host/src/atomicFiles.ts": "b9c11604a2617a472b86adc21db0c87f05410e91de8390f65d07eee6e25b6264",
+    "src/backend/contextWindowUsage.ts": "51ff274af60b37e14a25bd95452c08a10754efd16031c0eeec39b02706137439",
+    "src/shared/localPaths.ts": "24769829b5b0afa025425eebc4399778730bd79c582fce3f6c9ab519fbd192e5",
+    "src/features/inspector/inspectorTargets.ts": "a56dc80ee7b09d6a2da4103f8acb422a7b7fa2355ddb3ae390f5ba9f4055adc5",
+    "src/features/chatMessages/markdownFormat.ts": "28227642548a9db580c5b0d7143135b8180207974881278a74d2d71545a13e15",
+    "src/features/chatMessages/fileReferences.ts": "69333a2421cdd9869a7db17a984727649ef431cc71d5cf02cb81eda61df5dc48"
+  }
+}

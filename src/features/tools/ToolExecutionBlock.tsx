@@ -104,7 +104,12 @@ export function ToolExecutionBlock({
   }, []);
   const blockRef = useRef<HTMLDivElement>(null);
   const renderedExecutions = useMemo(
-    () => executions.map((execution) => hydratedExecutions.get(execution.id) ?? execution),
+    () => executions.map((execution) => {
+      const detail = hydratedExecutions.get(execution.id);
+      return detail ? { ...execution, ...detail, metadata: { ...detail.metadata,
+        workspaceCheckpointCovered: execution.metadata.workspaceCheckpointCovered ?? detail.metadata.workspaceCheckpointCovered,
+      } } : execution;
+    }),
     [executions, hydratedExecutions],
   );
   const running = renderedExecutions.some((execution) =>

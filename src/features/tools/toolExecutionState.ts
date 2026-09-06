@@ -76,6 +76,7 @@ export function displayToolName(value: string) {
   }
   const lowered = text.toLowerCase();
   if (lowered === 'runtime_context_compaction') return 'Context compaction';
+  if (lowered === 'workspace_checkpoint') return 'Workspace changes';
   if (lowered === 'consult_logic') return 'LEM Consult';
   if (lowered === 'learn_logic') return 'LEM Learn';
   for (const separator of [':', '.', '/']) {

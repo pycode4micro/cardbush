@@ -493,6 +493,92 @@ test("archives only the model projection while retaining the complete native res
   assert.ok(projected.preview.length < projected.originalChars);
 });
 
+test("tool-owned text reaches the model literally while native execution data stays intact", async () => {
+  const source = "const re = /\\.(mp3|flac)$/;\r\nconst path = 'C:\\\\中文😀';\n";
+  const native = { content: source, semantic_success: false };
+  const registry = registryWithExecution({
+    execute: () => native,
+    renderModelResult(value) {
+      const text = value.content;
+      value.content = "a renderer cannot mutate execution evidence";
+      return text;
+    },
+  });
+  const provider = providerWithRounds([toolRound(), answerRound("done")]);
+  const host = createHost(provider, registry);
+  await host.runModelTurn(request());
+  assert.equal(provider.requests[1].messages.at(-1).content, source);
+  const record = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: { sessionId: "session_tools", turnId: "turn_tools", toolCallId: "call_fixture" },
+  });
+  assert.deepEqual(record.result, native);
+  assert.equal(record.result.content, source);
+});
+
+test("text projection and archive paging preserve literal source under the model ingress limit", async () => {
+  const source = "const re = /\\.(mp3|flac)$/; // 中文😀\r\n".repeat(1_000);
+  let renderCalls = 0;
+  const registry = registryWithExecution({
+    execute: () => ({ content: source }),
+    renderModelResult: value => ++renderCalls === 1 ? value.content : "changed renderer",
+  });
+  const provider = providerWithRounds([
+    toolRound(),
+    [
+      event(0, "tool_call_delta", {
+        index: 0, toolCallId: "read_archive", nameDelta: "read_archived_tool_result",
+        argumentsDelta: JSON.stringify({ locator: "tool-result://session_tools/turn_tools/call_fixture", offset: 500, max_chars: 700 }),
+      }),
+      event(1, "response_completed", { finishReason: "tool_calls" }),
+    ],
+    answerRound("done"),
+  ]);
+  const host = createHost(provider, registry);
+  await host.runModelTurn({ ...request(), tools: registry.definitions() });
+  const preview = provider.requests[1].messages.at(-1).content;
+  assert.ok(preview.length <= 16_000);
+  const boundary = preview.indexOf("\n\n");
+  assert.equal(JSON.parse(preview.slice(0, boundary)).archived, true);
+  assert.ok(source.startsWith(preview.slice(boundary + 2)));
+  assert.ok(preview.slice(boundary + 2).length > 1_000);
+  const archive = await host.sendCommand({
+    kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: { sessionId: "session_tools", turnId: "turn_tools", toolCallId: "read_archive" },
+  });
+  assert.equal(archive.result.text, source.slice(500, 1_200));
+  assert.equal(archive.result.next_offset, 1_200);
+  assert.equal(renderCalls, 1, "Archive offsets bind to the original presentation, even if the renderer changes.");
+  const visible = provider.requests[2].messages.at(-1).content;
+  assert.equal(visible.slice(visible.indexOf("[text]\n") + "[text]\n".length), archive.result.text);
+});
+
+test("a broken renderer falls back to native JSON and does not reclassify the execution", async () => {
+  const native = { content: "kept", success: false };
+  const registry = registryWithExecution({
+    execute: () => native,
+    renderModelResult() { throw new Error("fixture presentation failure"); },
+  });
+  const provider = providerWithRounds([toolRound(), answerRound("done")]);
+  const host = createHost(provider, registry);
+  await host.runModelTurn(request());
+  assert.deepEqual(JSON.parse(provider.requests[1].messages.at(-1).content), native);
+  assert.ok(host.events("session_tools", "turn_tools").some(event => event.kind === "tool_returned"));
+});
+
+test("failed executions bypass tool-owned rendering and retain their runtime error", async () => {
+  let rendered = false;
+  const registry = registryWithExecution({
+    execute() { throw Object.assign(new Error("failure"), { code: "fixture_error" }); },
+    renderModelResult() { rendered = true; return "would hide the failure"; },
+  });
+  const provider = providerWithRounds([toolRound(), answerRound("done")]);
+  const host = createHost(provider, registry);
+  await host.runModelTurn(request());
+  assert.equal(rendered, false);
+  assert.equal(JSON.parse(provider.requests[1].messages.at(-1).content).runtimeError.code, "fixture_error");
+});
+
 test("preserves tool-owned fields without applying Runtime semantic validation", async () => {
   const registry = registryWithExecution({
     execute() {
@@ -988,6 +1074,7 @@ function registryWithExecution(overrides = {}) {
       return { value: input.value };
     },
     authorize: overrides.authorize,
+    renderModelResult: overrides.renderModelResult,
     execute:
       overrides.execute ??
       ((context) => result(context.toolCall.id, context.actionManifest)),

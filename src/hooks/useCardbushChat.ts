@@ -246,9 +246,6 @@ export function useCardbushChat(
     Record<string, ExperimentalGoal | null>
   >({});
   const [goalAvailable, setGoalAvailable] = useState(false);
-  const [goalLatestTurnByConversation, setGoalLatestTurnByConversation] = useState<
-    Record<string, SessionLatestTurn | undefined>
-  >({});
   const [goalCancellingByConversation, setGoalCancellingByConversation] = useState<
     Record<string, boolean>
   >({});
@@ -1381,13 +1378,8 @@ export function useCardbushChat(
         const allowLive = loaded?.latestTurn?.turnId === normalizedTurnId;
         if (loaded && isHistoryReadCurrent(historyRead, undefined, allowLive)) {
           applyHistoryRead(historyRead, loaded.messages, undefined, allowLive);
-          setGoalLatestTurnByConversation((state) => ({
-            ...state,
-            [normalizedSessionId]: loaded.latestTurn,
-          }));
         }
         const refreshedGoal = await refreshGoal(normalizedSessionId);
-        let turnStillRunning = false;
         if (
           goalTurnControllersRef.current[normalizedSessionId]?.controller === controller
         ) {
@@ -1396,14 +1388,14 @@ export function useCardbushChat(
             clearSessionRunning(normalizedSessionId);
           }
         }
-        if (!turnStillRunning && refreshedGoal?.status === 'complete') {
+        if (refreshedGoal?.status === 'complete') {
           markSessionAttention(
             normalizedSessionId,
             'completed',
             truncateText(refreshedGoal.statusReason || refreshedGoal.objective, 180),
             normalizedTurnId,
           );
-        } else if (!turnStillRunning && refreshedGoal?.status === 'blocked') {
+        } else if (refreshedGoal?.status === 'blocked') {
           markSessionAttention(
             normalizedSessionId,
             'waiting',
@@ -1542,10 +1534,6 @@ export function useCardbushChat(
         if (sessionRequest.status === 'fulfilled' && isHistoryReadCurrent(historyRead)) {
           const sessionResult = sessionRequest.value;
           applyHistoryRead(historyRead, sessionResult.messages, mergePolledMessagesPreservingLocalState);
-          setGoalLatestTurnByConversation((current) => ({
-            ...current,
-            [sessionId]: sessionResult.latestTurn,
-          }));
           if (!controllersRef.current[sessionId]) {
             clearSessionRunning(sessionId);
           }
@@ -2089,10 +2077,6 @@ export function useCardbushChat(
           continue;
         }
         applyHistoryRead(historyRead, sessionResult.messages, undefined, allowLive);
-        setGoalLatestTurnByConversation((current) => ({
-          ...current,
-          [sessionId]: sessionResult.latestTurn,
-        }));
         failedAttempts = 0;
         setConnectionRecoveryByConversation((current) => ({
           ...current,

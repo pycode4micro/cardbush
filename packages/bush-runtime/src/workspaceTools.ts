@@ -19,9 +19,11 @@ import type {
   ToolRegistry,
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
+import { readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
+import { renderTextFields } from "./toolResultText.js";
 
 interface PathInput { path: string }
-interface ReadFileInput extends PathInput { encoding: BufferEncoding }
+interface ReadFileInput extends PathInput { encoding: BufferEncoding; range?: FileLineRange }
 interface WriteFileInput extends PathInput { content: string; encoding: BufferEncoding }
 interface EditFileInput extends PathInput {
   oldText: string;
@@ -151,26 +153,35 @@ export class WorkspaceObservationStore {
 export function registerWorkspaceTools(
   registry: ToolRegistry,
   observations: WorkspaceObservationStore = new WorkspaceObservationStore(),
-  options: { createChangeId?: () => string } = {},
+  options: { createChangeId?: () => string; terminals?: TerminalSessionManager;
+    ownsFileVersion?: (sessionId: string, path: string) => Promise<boolean> } = {},
 ): WorkspaceObservationStore {
   const createChangeId = options.createChangeId ?? (() => `change_${randomUUID()}`);
-  const terminals = new TerminalSessionManager();
+  const terminals = options.terminals ?? new TerminalSessionManager();
 
   registerIfMissing(registry, {
     definition: {
       name: "read_file",
-      description: "Read one file exactly. Returns its absolute path, SHA-256 revision and complete content. Use an absolute path when the Turn has no workspace.",
+      description: "Read one file exactly. Prefer start_line and line_count for large files; lines are 1-based, original line endings are preserved, and the SHA-256 revision always covers the entire file. A ranged read returns total_lines and next_start_line; start_line alone reads up to 200 lines. Omit both range arguments for complete content. Use an absolute path when the Turn has no workspace.",
       inputSchema: objectSchema({
         path: { type: "string", minLength: 1 },
         encoding: { type: "string", default: "utf8" },
+        start_line: { type: "integer", minimum: 1, description: "First line to read, inclusive. Defaults to 1 when line_count is supplied." },
+        line_count: { type: "integer", minimum: 1, description: "Maximum lines to return. Defaults to 200 when start_line is supplied." },
       }, ["path"]),
     },
     manifest: manifest("filesystem.read", "observation", false),
     parallelSafe: true,
     decodeInput: decodeRead,
+    renderModelResult: (result) => renderTextFields(result, ["content"]),
     authorize: authorizePath("read"),
     execute: async (context: ToolHandlerContext<ReadFileInput>) => {
       const path = await resolveToolPath(context, context.input.path);
+      if (context.input.range) {
+        const result = await readFileLineRange(path, context.input.encoding, context.input.range, context.signal);
+        observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
+        return { path, ...result };
+      }
       const bytes = await readFile(path);
       const sha256 = digest(bytes);
       observations.record(context.sessionId, path, sha256, workspaceRoot(context));
@@ -196,6 +207,7 @@ export function registerWorkspaceTools(
     manifest: manifest("filesystem.search", "observation", false),
     parallelSafe: true,
     decodeInput: decodeSearch,
+    renderModelResult: (result) => renderTextFields(result, ["output"]),
     authorize: authorizePath("read"),
     execute: async (context: ToolHandlerContext<SearchInput>) => {
       const path = await resolveToolPath(context, context.input.path);
@@ -239,6 +251,7 @@ export function registerWorkspaceTools(
       try {
         const before = await optionalBytes(path);
         assertObservedIfExisting(context, observations, path, before);
+        const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, context.input.content, { encoding: context.input.encoding });
         const after = await readFile(path);
@@ -252,6 +265,7 @@ export function registerWorkspaceTools(
           before ? "modified" : "added",
           context.input.encoding,
           createChangeId(),
+          versioned,
         );
       } finally {
         release();
@@ -280,6 +294,7 @@ export function registerWorkspaceTools(
       try {
         const before = await readFile(path);
         assertObservedIfExisting(context, observations, path, before);
+        const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         const source = before.toString(context.input.encoding);
         const count = occurrences(source, context.input.oldText);
         if (count === 0) {
@@ -296,7 +311,7 @@ export function registerWorkspaceTools(
         }
         const next = context.input.replaceAll
           ? source.split(context.input.oldText).join(context.input.newText)
-          : source.replace(context.input.oldText, context.input.newText);
+          : source.replace(context.input.oldText, () => context.input.newText);
         await writeFile(path, next, { encoding: context.input.encoding });
         const after = await readFile(path);
         const afterHash = digest(after);
@@ -309,6 +324,7 @@ export function registerWorkspaceTools(
           "modified",
           context.input.encoding,
           createChangeId(),
+          versioned,
         );
       } finally {
         release();
@@ -343,6 +359,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.execute", "process_execution", true),
     decodeInput: decodeTerminal,
+    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
     authorize: async (context: ToolAdmissionContext<TerminalInput>) => {
       const cwd = await resolveToolPath(context, terminalWorkingDirectory(context), true);
       const lexicalProjectRoots = protectedProjectRoots(context);
@@ -396,6 +413,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.poll", "observation", false),
     decodeInput: decodeTerminalPoll,
+    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
     execute: (context: ToolHandlerContext<TerminalPollInput>) =>
       terminals.poll(context.sessionId, context.input, context.signal),
   });
@@ -416,6 +434,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.write", "process_execution", true),
     decodeInput: decodeTerminalWrite,
+    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
     execute: (context: ToolHandlerContext<TerminalWriteInput>) =>
       terminals.write(context.sessionId, context.input, context.signal),
   });
@@ -430,6 +449,7 @@ export function registerWorkspaceTools(
     },
     manifest: manifest("terminal.stop", "process_control", true),
     decodeInput: decodeTerminalSession,
+    renderModelResult: (result) => renderTextFields(result, ["stdout", "stderr"]),
     authorize: (context: ToolAdmissionContext<TerminalSessionInput>) => {
       const terminal = terminals.describe(context.sessionId, context.input.sessionId);
       return {
@@ -663,6 +683,7 @@ function changeResult(
   status: "added" | "modified",
   encoding: BufferEncoding,
   changeId: string,
+  versioned: boolean,
 ): Record<string, unknown> {
   const beforeText = before?.toString(encoding) ?? "";
   const afterText = after.toString(encoding);
@@ -676,7 +697,8 @@ function changeResult(
       ...(before ? { before_hash: digest(before) } : {}),
       after_hash: digest(after),
       metadata: {
-        ...(before ? { beforeContentBase64: before.toString("base64") } : {}),
+        ...(before && !versioned ? { beforeContentBase64: before.toString("base64") } : {}),
+        workspaceVersioned: versioned,
         diff: diff.text,
       },
   };
@@ -750,7 +772,22 @@ function normalizedTextLines(value: string): string[] {
 
 function decodeRead(input: unknown): ReadFileInput {
   const object = objectInput(input);
-  return { path: requiredString(object.path, "path"), encoding: encoding(object.encoding) };
+  const fileEncoding = encoding(object.encoding);
+  let range: FileLineRange | undefined;
+  if (object.start_line !== undefined || object.line_count !== undefined) {
+    const startLine = object.start_line === undefined ? 1 : object.start_line;
+    const lineCount = object.line_count === undefined ? 200 : object.line_count;
+    if (!Number.isSafeInteger(startLine) || Number(startLine) < 1 ||
+        !Number.isSafeInteger(lineCount) || Number(lineCount) < 1 ||
+        Number(startLine) > Number.MAX_SAFE_INTEGER - (Number(lineCount) - 1)) {
+      throw new Error("start_line and line_count must be positive safe integers with a safe range end.");
+    }
+    if (["hex", "base64", "base64url"].includes(fileEncoding)) {
+      throw new Error("Line ranges require a text encoding, not hex or base64.");
+    }
+    range = { startLine: Number(startLine), lineCount: Number(lineCount) };
+  }
+  return { path: requiredString(object.path, "path"), encoding: fileEncoding, ...(range ? { range } : {}) };
 }
 
 function decodeWrite(input: unknown): WriteFileInput {
@@ -912,15 +949,6 @@ function occurrences(value: string, search: string): number {
   return count;
 }
 
-function countLines(value: Buffer): number {
-  if (value.length === 0) return 0;
-  let count = 1;
-  for (const byte of value) {
-    if (byte === 10) count += 1;
-  }
-  return value[value.length - 1] === 10 ? count - 1 : count;
-}
-
 async function canonicalPath(path: string): Promise<string> {
   return realpath(resolve(path));
 }
@@ -960,8 +988,20 @@ interface ManagedTerminalSession {
   waiters: Set<() => void>;
 }
 
-class TerminalSessionManager {
+export class TerminalSessionManager {
   readonly #sessions = new Map<string, ManagedTerminalSession>();
+
+  hasRunningWithin(root: string): boolean {
+    return [...this.#sessions.values()].some(terminal => terminal.state === "running" && isWithin(root, terminal.cwd));
+  }
+
+  async stopWithin(root: string): Promise<void> {
+    for (const terminal of [...this.#sessions.values()]) {
+      if (terminal.state === "running" && isWithin(root, terminal.cwd)) {
+        await this.stop(terminal.ownerSessionId, terminal.sessionId);
+      }
+    }
+  }
 
   async start(input: {
     ownerSessionId: string;
@@ -1083,8 +1123,7 @@ class TerminalSessionManager {
     // callers can safely reuse or delete the terminal working directory.
     await this.#waitForClose(terminal, 1_000);
     if (terminal.state === "running") {
-      terminal.state = "stopped";
-      this.#notify(terminal);
+      throw codedError("terminal_stop_unconfirmed", "The terminal has not confirmed exit. Its process and session remain tracked; wait or retry stopping it.");
     }
     const result = this.#consume(terminal);
     this.#sessions.delete(terminal.sessionId);
@@ -1479,13 +1518,17 @@ function terminalShellInvocation(
   command: string,
 ): { executable: string; args: string[] } {
   if (shell === "powershell") {
+    // Sample $? in the command's own scope. Invoking a script block resets the
+    // caller's status even when its last cmdlet reported a non-terminating error.
     const harness = [
-      `& { ${command} }`,
+      "& {",
+      command,
       "$cardbushCommandSucceeded = $?",
       "$cardbushNativeExitCode = $LASTEXITCODE",
       "if ($null -ne $cardbushNativeExitCode -and $cardbushNativeExitCode -ne 0) { exit $cardbushNativeExitCode }",
       "if (-not $cardbushCommandSucceeded) { exit 1 }",
-    ].join("; ");
+      "}",
+    ].join("\n");
     return {
       executable: "powershell.exe",
       args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", harness],

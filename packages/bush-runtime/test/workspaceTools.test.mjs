@@ -11,6 +11,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 import {
   ToolExecutionCoordinator,
@@ -19,6 +20,96 @@ import {
   protectedTerminalDeletion,
   registerWorkspaceTools,
 } from "../dist/index.js";
+
+test("ranged reads preserve exact endings, Unicode, empty files and whole-file revisions", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const cases = [
+    ["a\r\n中文😀\r\nc", "utf8", 2, 1, "中文😀\r\n", 3, 2, 3],
+    ["a\rb\nc\r\n", "utf8", 2, 8, "b\nc\r\n", 3, 3, null],
+    ["a\n", "utf8", 2, 1, "", 1, null, null],
+    ["", "utf8", 1, 1, "", 0, null, null],
+    ["\n\n", "utf8", 1, 1, "\n", 2, 1, 2],
+    ["a\r\n中文😀\r\nc", "utf16le", 2, 1, "中文😀\r\n", 3, 2, 3],
+    // The CR and LF fall in separate 64 KiB stream chunks.
+    ["x".repeat(65_535) + "\r\n中文😀\nlast", "utf8", 1, 1, "x".repeat(65_535) + "\r\n", 3, 1, 2],
+    ["x".repeat(65_535) + "\r\n中文😀\nlast", "utf8", 2, 1, "中文😀\n", 3, 2, 3],
+    ["x".repeat(65_533) + "😀\nlast", "utf8", 2, 1, "last", 2, 2, null],
+  ];
+  for (const [index, [source, encoding, start, count, content, total, end, next]] of cases.entries()) {
+    const path = join(root, `range-${index}.txt`);
+    const bytes = Buffer.from(source, encoding);
+    writeFileSync(path, bytes);
+    const result = await setup.execute("reader", "read_file", {
+      path, encoding, start_line: start, line_count: count,
+    });
+    assert.equal(result.kind, "returned", JSON.stringify(result));
+    assert.equal(result.result.content, content, `case ${index}`);
+    assert.equal(result.result.sha256, createHash("sha256").update(bytes).digest("hex"));
+    assert.equal(result.result.total_lines, total);
+    assert.equal(result.result.end_line, end);
+    assert.equal(result.result.next_start_line, next);
+    const full = await setup.execute("reader", "read_file", { path, encoding });
+    assert.equal(full.result.content, source);
+    assert.equal(full.result.sha256, result.result.sha256);
+  }
+});
+
+test("ranged reads bound the default page and retain stale-write protection", async (t) => {
+  const root = temporaryRoot(t);
+  const path = join(root, "large.txt");
+  const lines = Array.from({ length: 400 }, (_, i) => `line-${i + 1}\n`);
+  writeFileSync(path, lines.join(""));
+  const setup = tools(root);
+  const read = await setup.execute("reader", "read_file", { path, start_line: 100 });
+  assert.equal(read.result.content, lines.slice(99, 299).join(""));
+  assert.equal(read.result.next_start_line, 300);
+  const first = await setup.execute("reader", "read_file", { path, line_count: 2 });
+  assert.equal(first.result.content, lines.slice(0, 2).join(""));
+  const edited = await setup.execute("reader", "edit_file", { path, old_text: "line-1\n", new_text: "updated\n" });
+  assert.equal(edited.kind, "returned");
+  await setup.execute("reader", "read_file", { path, start_line: 1, line_count: 1 });
+  writeFileSync(path, readFileSync(path, "utf8") + "external change outside the read range\n");
+  const rejected = await setup.execute("reader", "edit_file", { path, old_text: "updated", new_text: "overwrite" });
+  assert.equal(rejected.kind, "failed");
+  assert.match(readFileSync(path, "utf8"), /external change/);
+});
+
+test("invalid line ranges and binary line encodings fail without granting read evidence", async (t) => {
+  const root = temporaryRoot(t);
+  const path = join(root, "range.txt");
+  writeFileSync(path, "before\nafter\n");
+  const setup = tools(root);
+  for (const range of [
+    { start_line: 0 }, { start_line: -1 }, { start_line: 1.5 },
+    { line_count: 0 }, { line_count: "2" }, { start_line: null },
+    { start_line: Number.MAX_SAFE_INTEGER, line_count: 2 },
+    { start_line: 1, encoding: "base64" },
+  ]) {
+    const rejected = await setup.execute("unread", "read_file", { path, ...range });
+    assert.equal(rejected.kind, "failed", JSON.stringify(range));
+  }
+  const edited = await setup.execute("unread", "edit_file", { path, old_text: "before", new_text: "wrong" });
+  assert.equal(edited.kind, "failed");
+});
+
+test("edit_file treats replacement content literally in single and replace-all edits", async (t) => {
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const replacement = "$&|$'|$`|$$|${value}|中文\\d+\r\n";
+  for (const replaceAll of [false, true]) {
+    const path = join(root, `literal-${replaceAll}.txt`);
+    const source = replaceAll ? "prefix OLD between OLD suffix" : "prefix OLD suffix";
+    writeFileSync(path, source);
+    await setup.execute("reader", "read_file", { path });
+    const edited = await setup.execute("reader", "edit_file", {
+      path, old_text: "OLD", new_text: replacement, replace_all: replaceAll,
+    });
+    assert.equal(edited.kind, "returned");
+    const expected = replaceAll ? `prefix ${replacement} between ${replacement} suffix` : `prefix ${replacement} suffix`;
+    assert.equal(readFileSync(path, "utf8"), expected);
+  }
+});
 
 test("permanently denies direct deletion of invariant protected directories", () => {
   const home = resolve(homedir());
@@ -295,6 +386,25 @@ test("writes new files, treats search no-match as a successful fact, and reports
   assert.equal(nonzero.result.stderr, "err");
 });
 
+test("PowerShell reports the last command status inside its scope, including trailing comments", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows PowerShell contract");
+  const root = temporaryRoot(t);
+  const setup = tools(root);
+  const cases = [
+    ["Get-Item -LiteralPath './does-not-exist'", 1],
+    ["Get-Item -LiteralPath './does-not-exist'; Write-Output 'recovered'", 0],
+    ["Write-Output 'ok' # a trailing comment must not swallow the status capture", 0],
+    ["throw 'intentional failure'", 1],
+  ];
+  for (const [command, expectedExitCode] of cases) {
+    const result = await setup.execute("session", "terminal_exec", {
+      command, cwd: root, shell: "powershell", yield_time_ms: 5_000,
+    });
+    assert.equal(result.kind, "returned");
+    assert.equal(result.result.exitCode, expectedExitCode, command);
+  }
+});
+
 test("searches with the Node fallback when ripgrep is unavailable in a packaged environment", async (t) => {
   const root = temporaryRoot(t);
   writeFileSync(join(root, "first.txt"), "alpha\nneedle here\n");
@@ -447,10 +557,16 @@ test("returns a session handle at the bounded yield point and later reports exit
   assert.ok(running.result.durationMs >= 90);
   assert.ok(Date.now() - startedAt < 2_000);
 
-  const completed = await setup.execute("session", "terminal_poll", {
-    session_id: running.result.terminalSessionId,
-    yield_time_ms: 1_000,
-  });
+  // A bounded poll may legitimately return "running" when shell startup is
+  // delayed by the rest of the suite. Assert the observed exit, not one poll's timing.
+  const deadline = Date.now() + 10_000;
+  let completed;
+  do {
+    completed = await setup.execute("session", "terminal_poll", {
+      session_id: running.result.terminalSessionId,
+      yield_time_ms: 1_000,
+    });
+  } while (completed.kind === "returned" && completed.result.state === "running" && Date.now() < deadline);
   assert.equal(completed.kind, "returned");
   assert.equal(completed.result.state, "exited");
   assert.equal(completed.result.exitCode, 0);

@@ -12,7 +12,7 @@ import {
   type SubagentPermissionPolicy,
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
-import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import type { ToolRegistry } from "./toolRegistry.js";
 
 export const SUBAGENT_TOOL = "subagent" as const;
 export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;

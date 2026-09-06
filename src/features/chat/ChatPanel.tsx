@@ -142,6 +142,7 @@ function gentleAutoFollowScrollBehavior(): ScrollBehavior {
 }
 
 export function ChatPanel({
+  workspaceControls,
   language,
   theme,
   title,
@@ -229,6 +230,7 @@ export function ChatPanel({
   draft,
   onDraftChange,
 }: {
+  workspaceControls?: import('react').ReactNode;
   language: AppLanguage;
   theme: ThemeMode;
   title: string;
@@ -2375,6 +2377,7 @@ export function ChatPanel({
         onOpenReview={changeReports.length > 0 ? openChangeReview : undefined}
         onRevealSidebar={onRevealSidebar}
       />
+      {workspaceControls}
       {notice && (
         <RuntimeStatusBanner
           language={language}

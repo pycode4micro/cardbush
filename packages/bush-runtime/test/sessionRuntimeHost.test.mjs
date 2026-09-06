@@ -1607,6 +1607,68 @@ test("fails before dispatch when the Provider cannot count the final input proje
   assert.match(terminal.payload.details.message, /count endpoint unavailable/);
 });
 
+for (const settlement of ["cooperative rejection", "late result", "late rejection"]) {
+  test(`cancellation during input-token counting stays stopped after ${settlement}`, { timeout: 3_000 }, async () => {
+    const controller = new AbortController();
+    let enteredCount, resolveCount, rejectCount;
+    const counting = new Promise(resolve => { enteredCount = resolve; });
+    const measurement = new Promise((resolve, reject) => {
+      resolveCount = resolve;
+      rejectCount = reject;
+    });
+    let streamed = false;
+    const host = new InMemoryRuntimeHost({
+      provider: {
+        countInputTokens(_request, { signal }) {
+          if (settlement === "cooperative rejection") {
+            signal.addEventListener("abort", () => rejectCount(signal.reason), { once: true });
+          }
+          enteredCount();
+          return measurement;
+        },
+        async *stream() { streamed = true; },
+      },
+    });
+    const request = sessionRequest("request_count_cancel", "turn_count_cancel", "user_count_cancel", "hello");
+    request.metadata = { contextWindowTokens: 4_000 };
+    const running = host.runSessionTurn(request, { signal: controller.signal });
+    try {
+      await counting;
+      controller.abort();
+      const terminal = await running;
+      assert.equal(terminal.payload.status, "stopped");
+      assert.equal(terminal.payload.reason, "turn_stop_requested");
+      assert.equal(streamed, false);
+      if (settlement === "late rejection") rejectCount(new Error("late count failure"));
+      else resolveCount({ inputTokens: 9_000, source: "provider" });
+      await new Promise(resolve => setImmediate(resolve));
+      const events = host.events(request.sessionId, request.turnId);
+      assert.equal(events.filter(event => event.kind === "turn_terminal").length, 1);
+      assert.equal(events.some(event => event.kind === "provider_retry" || event.kind.startsWith("context_compaction_")), false);
+      const session = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: request.sessionId } });
+      assert.equal(session.turns.at(-1).status, "stopped");
+    } finally {
+      controller.abort();
+      resolveCount(undefined);
+      await running;
+    }
+  });
+}
+
+test("an AbortError without Turn cancellation is still a Provider count failure", async () => {
+  const host = new InMemoryRuntimeHost({
+    provider: {
+      async countInputTokens() { throw new DOMException("provider request aborted", "AbortError"); },
+      async *stream() { assert.fail("must not dispatch after a count failure"); },
+    },
+  });
+  const request = sessionRequest("request_count_abort_error", "turn_count_abort_error", "user_count_abort_error", "hello");
+  request.metadata = { contextWindowTokens: 4_000 };
+  const terminal = await host.runSessionTurn(request);
+  assert.equal(terminal.payload.status, "failed");
+  assert.equal(terminal.payload.reason, "provider_input_token_count_failed");
+});
+
 test("dispatches with a fallback estimate when exact Provider counting is unsupported", async () => {
   let counted = 0;
   let streamed = false;

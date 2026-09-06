@@ -182,6 +182,9 @@ export const toolExecutionRecordSchema = z.object({
   outcome: z.enum(["returned", "failed", "cancelled"]),
   actionManifest: actionManifestSchema.optional(),
   result: z.unknown().optional(),
+  // Frozen, tool-owned presentation for model input and stable archive offsets.
+  // Native result remains authoritative for execution, review and consumers.
+  modelText: z.string().optional(),
   workspaceChanges: z.array(workspaceChangeSchema).default([]),
   error: runtimeToolErrorSchema.optional(),
 }).superRefine((record, context) => {
@@ -198,6 +201,13 @@ export const toolExecutionRecordSchema = z.object({
       code: "custom",
       path: ["result"],
       message: "A failed or cancelled Tool execution cannot contain a native result.",
+    });
+  }
+  if (record.outcome !== "returned" && record.modelText !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["modelText"],
+      message: "A failed or cancelled Tool execution cannot contain a returned-result presentation.",
     });
   }
   if (record.outcome === "returned" && record.error) {

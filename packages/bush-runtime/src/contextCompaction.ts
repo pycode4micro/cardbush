@@ -164,8 +164,10 @@ export function projectContextCompactionMaintenanceMessages(input: {
     index -= 1
   ) {
     const message = messages[index]!;
-    if (message.role !== "assistant" || !message.reasoningContent) continue;
-    const { reasoningContent: _reasoningContent, ...projected } = message;
+    if (message.role !== "assistant" || (!message.reasoningContent && !message.providerReplay)) continue;
+    // A maintenance projection must not replay opaque reasoning or old message
+    // content that it deliberately removed. The durable source is untouched.
+    const { reasoningContent: _reasoningContent, providerReplay: _providerReplay, ...projected } = message;
     const saved = serializedMessageChars(message) - serializedMessageChars(projected);
     if (saved <= 0) continue;
     messages[index] = projected;

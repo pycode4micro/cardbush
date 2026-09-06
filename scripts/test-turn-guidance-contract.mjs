@@ -7,19 +7,6 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
-const protocolPath = path.join(process.cwd(), 'src', 'backend', 'streamProtocol.ts');
-const source = fs.readFileSync(protocolPath, 'utf8');
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.CommonJS,
-    target: ts.ScriptTarget.ES2022,
-  },
-});
-const module = { exports: {} };
-vm.runInNewContext(transpiled.outputText, { module, exports: module.exports });
-
-const { assistantStreamChunkFromPayload, executionUpdateFromPayload } = module.exports;
-
 const projectionPath = path.join(
   process.cwd(),
   'src',
@@ -40,54 +27,6 @@ vm.runInNewContext(projectionTranspiled.outputText, {
   Date,
 });
 const { projectRuntimeTurnMessages } = projectionModule.exports;
-
-assert.deepEqual(
-  plain(assistantStreamChunkFromPayload({
-    message_id: 'msg:assistant:session:turn:2',
-    assistant_segment_index: 2,
-    turn_id: 'turn-1',
-    sequence: 41,
-    request_id: 'request-1',
-    event_id: 'event-41',
-    created_at: '2026-08-12T08:00:00Z',
-  })),
-  {
-    messageId: 'msg:assistant:session:turn:2',
-    assistantSegmentIndex: 2,
-    turnId: 'turn-1',
-    sequence: 41,
-    requestId: 'request-1',
-    eventId: 'event-41',
-    createdAt: '2026-08-12T08:00:00Z',
-  },
-);
-
-assert.deepEqual(
-  plain(executionUpdateFromPayload({
-    kind: 'loop_transition',
-    reason: 'turn_guidance_pending',
-    pending_guidance_count: 1,
-    guidance_round_index: 1,
-    previous_assistant_segment_index: 1,
-    next_assistant_segment_index: 2,
-    next_round: 2,
-    message_id: 'msg:assistant:session:turn:2',
-    assistant_segment_index: 2,
-    turn_id: 'turn-1',
-  })),
-  {
-    kind: 'loop_transition',
-    reason: 'turn_guidance_pending',
-    pendingGuidanceCount: 1,
-    guidanceRoundIndex: 1,
-    previousAssistantSegmentIndex: 1,
-    nextAssistantSegmentIndex: 2,
-    nextRound: 2,
-    messageId: 'msg:assistant:session:turn:2',
-    assistantSegmentIndex: 2,
-    turnId: 'turn-1',
-  },
-);
 
 const apiSource = fs.readFileSync(
   path.join(process.cwd(), 'src', 'backend', 'api.ts'),

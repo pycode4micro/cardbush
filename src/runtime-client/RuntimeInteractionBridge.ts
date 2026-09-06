@@ -14,7 +14,6 @@ interface RuntimePermissionEntry {
 
 const permissions = new Map<string, RuntimePermissionEntry>();
 const activeTurns = new Map<string, {
-  sessionId: string;
   stop: () => Promise<RuntimeStopReceipt>;
 }>();
 
@@ -122,10 +121,9 @@ export function removeRuntimePermissionsForTurn(turnId: string): void {
 
 export function registerActiveRuntimeTurn(
   turnId: string,
-  sessionId: string,
   stop: () => Promise<RuntimeStopReceipt>,
 ): () => void {
-  activeTurns.set(turnId, { sessionId, stop });
+  activeTurns.set(turnId, { stop });
   return () => activeTurns.delete(turnId);
 }
 
@@ -135,13 +133,4 @@ export async function stopActiveRuntimeTurn(
   const active = activeTurns.get(turnId);
   if (!active) return undefined;
   return active.stop();
-}
-
-export function hasActiveRuntimeTurn(sessionId: string, turnId?: string): boolean {
-  const normalizedSessionId = sessionId.trim();
-  const normalizedTurnId = turnId?.trim();
-  return [...activeTurns.entries()].some(([activeTurnId, active]) =>
-    active.sessionId === normalizedSessionId &&
-    (!normalizedTurnId || activeTurnId === normalizedTurnId),
-  );
 }

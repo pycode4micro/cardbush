@@ -2,15 +2,11 @@ import { randomUUID } from "node:crypto";
 
 import {
   BUSH_TASK_PLAN_PROTOCOL,
-  type GoalState,
   type TaskPlan,
 } from "@cardbush/bush-protocol";
 
 import type { CoordinationStore } from "./coordinationStore.js";
-import type {
-  ToolHandlerContext,
-  ToolRegistry,
-} from "./toolRegistry.js";
+import type { ToolRegistry } from "./toolRegistry.js";
 
 export const UPDATE_TASK_PLAN_TOOL = "update_task_plan" as const;
 export const UPDATE_GOAL_TOOL = "update_goal" as const;

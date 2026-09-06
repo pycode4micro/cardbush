@@ -1,6 +1,5 @@
 import {
   BUSH_TEAM_SNAPSHOT_PROTOCOL,
-  teamSnapshotSchema,
   type TeamSnapshotResult,
   type ToolDefinition,
 } from '@cardbush/bush-protocol';
@@ -99,19 +98,6 @@ export async function resetProductTeamConfiguration(
     profiles: [structuredClone(bundledGeneralProfile)],
     tools,
   });
-}
-
-export function validateProductTeamConfiguration(input: {
-  teams: TeamDefinition[];
-  profiles: AgentProfileDefinition[];
-  tools: ToolDefinition[];
-}) {
-  return teamSnapshotSchema.safeParse(snapshot(
-    input.teams,
-    input.profiles,
-    input.tools,
-    1,
-  ));
 }
 
 function snapshot(

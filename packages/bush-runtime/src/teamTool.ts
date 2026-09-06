@@ -185,7 +185,7 @@ async function runPhase(input: {
       },
       prompt: input.prompt,
       inherited: input.inherited,
-      additionalPrefixMessages: [memberMessage(input.team, input.member, input.phase)],
+      additionalPrefixMessages: [memberMessage(input.team, input.member)],
       allowedToolNames: input.toolNames,
       metadata: {
         teamId: input.team.teamId,
@@ -223,7 +223,6 @@ async function runPhase(input: {
 function memberMessage(
   team: TeamDefinition,
   member: TeamMember,
-  phase: "discussion" | "execution",
 ): ModelMessage {
   return {
     role: "developer",

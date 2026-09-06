@@ -1,0 +1,870 @@
+{
+  "schema": "cardbush.workspace_benchmark_report.v1",
+  "date": "2026-09-06",
+  "statisticMethod": "Median of raw per-operation samples; average the middle pair for even sample counts. Operation timings are unmodified.",
+  "setupFailure": {
+    "generatedFiles": 10000,
+    "phase": "fixture git add",
+    "timeoutMs": 60000,
+    "runtimeInvoked": false,
+    "subsequentFixtureTimeoutMs": 300000
+  },
+  "runs": [
+    {
+      "schema": "cardbush.workspace_benchmark.v1",
+      "startedAt": "2026-09-06T08:20:34.96Z",
+      "environment": {
+        "node": "v25.9.0",
+        "platform": "win32",
+        "release": "10.0.26200",
+        "arch": "x64",
+        "cpu": "Intel(R) Core(TM) i5-14400"
+      },
+      "options": {
+        "files": [
+          1000
+        ],
+        "turns": 12,
+        "bytes": 2048,
+        "changes": 5,
+        "output": "D:\\proj\\cardbush\\tmp\\workspace-benchmark\\baseline-1000.json"
+      },
+      "runtime": {
+        "sourceSha256": "fc3848036fc9843d5ffd6c01993206cb80778f2708c931675718f9c7a6ff3c6d",
+        "artifactSha256": "9b8f77f76a2e6068b095140c7449609394b8aff0a66e9f773ca3ac6d949edc5b"
+      },
+      "methodology": [
+        "Synthetic files, real Git repository and worktree, production TaskWorkspaceManager; no model calls.",
+        "Every 257th file is 128 KiB; every 10th file contains binary bytes. Other files use --bytes.",
+        "Repeated four-turn cycle: new bytes, original bytes, new bytes, no edit. Only --changes paths change.",
+        "Review is measured after every turn. No-op and repeated reads must add no content blobs or snapshot manifests.",
+        "Sizes are logical file bytes, not allocated disk space. Fixture creation, assertions, and inventories are excluded from operation timings.",
+        "Runs are sequential, without OS cache flushing. Sample counts are descriptive, not universal latency guarantees.",
+        "Reopening the manager verifies durable reads; this benchmark does not simulate a process kill or power failure."
+      ],
+      "scenarios": [
+        {
+          "generatedFiles": 1000,
+          "operations": [
+            {
+              "name": "create",
+              "elapsedMs": 19415.82
+            },
+            {
+              "name": "review",
+              "turn": 0,
+              "elapsedMs": 1811.84
+            },
+            {
+              "name": "begin",
+              "turn": 1,
+              "elapsedMs": 1899.97
+            },
+            {
+              "name": "finish",
+              "turn": 1,
+              "elapsedMs": 1593.35
+            },
+            {
+              "name": "review",
+              "turn": 1,
+              "elapsedMs": 1201.4
+            },
+            {
+              "name": "begin",
+              "turn": 2,
+              "elapsedMs": 1147.08
+            },
+            {
+              "name": "finish",
+              "turn": 2,
+              "elapsedMs": 1210.79
+            },
+            {
+              "name": "review",
+              "turn": 2,
+              "elapsedMs": 1461.46
+            },
+            {
+              "name": "begin",
+              "turn": 3,
+              "elapsedMs": 1372.85
+            },
+            {
+              "name": "finish",
+              "turn": 3,
+              "elapsedMs": 1875.4
+            },
+            {
+              "name": "review",
+              "turn": 3,
+              "elapsedMs": 1865.09
+            },
+            {
+              "name": "begin",
+              "turn": 4,
+              "elapsedMs": 2022.94
+            },
+            {
+              "name": "finish",
+              "turn": 4,
+              "elapsedMs": 1771.48
+            },
+            {
+              "name": "review",
+              "turn": 4,
+              "elapsedMs": 1624.64
+            },
+            {
+              "name": "begin",
+              "turn": 5,
+              "elapsedMs": 1078.11
+            },
+            {
+              "name": "finish",
+              "turn": 5,
+              "elapsedMs": 1250.67
+            },
+            {
+              "name": "review",
+              "turn": 5,
+              "elapsedMs": 1661.75
+            },
+            {
+              "name": "begin",
+              "turn": 6,
+              "elapsedMs": 1108.25
+            },
+            {
+              "name": "finish",
+              "turn": 6,
+              "elapsedMs": 1106.54
+            },
+            {
+              "name": "review",
+              "turn": 6,
+              "elapsedMs": 1133.16
+            },
+            {
+              "name": "begin",
+              "turn": 7,
+              "elapsedMs": 1073.65
+            },
+            {
+              "name": "finish",
+              "turn": 7,
+              "elapsedMs": 1116.16
+            },
+            {
+              "name": "review",
+              "turn": 7,
+              "elapsedMs": 1134.99
+            },
+            {
+              "name": "begin",
+              "turn": 8,
+              "elapsedMs": 1074.25
+            },
+            {
+              "name": "finish",
+              "turn": 8,
+              "elapsedMs": 1068.65
+            },
+            {
+              "name": "review",
+              "turn": 8,
+              "elapsedMs": 1392.37
+            },
+            {
+              "name": "begin",
+              "turn": 9,
+              "elapsedMs": 1163.62
+            },
+            {
+              "name": "finish",
+              "turn": 9,
+              "elapsedMs": 1236.46
+            },
+            {
+              "name": "review",
+              "turn": 9,
+              "elapsedMs": 1280.87
+            },
+            {
+              "name": "begin",
+              "turn": 10,
+              "elapsedMs": 1049.7
+            },
+            {
+              "name": "finish",
+              "turn": 10,
+              "elapsedMs": 1023.25
+            },
+            {
+              "name": "review",
+              "turn": 10,
+              "elapsedMs": 1089.25
+            },
+            {
+              "name": "begin",
+              "turn": 11,
+              "elapsedMs": 1011.06
+            },
+            {
+              "name": "finish",
+              "turn": 11,
+              "elapsedMs": 1125.76
+            },
+            {
+              "name": "review",
+              "turn": 11,
+              "elapsedMs": 1077.07
+            },
+            {
+              "name": "begin",
+              "turn": 12,
+              "elapsedMs": 1006.34
+            },
+            {
+              "name": "finish",
+              "turn": 12,
+              "elapsedMs": 1197.7
+            },
+            {
+              "name": "review",
+              "turn": 12,
+              "elapsedMs": 1132.29
+            },
+            {
+              "name": "review-reopened",
+              "elapsedMs": 1109.28
+            },
+            {
+              "name": "review-repeat",
+              "turn": 0,
+              "elapsedMs": 1042.17
+            },
+            {
+              "name": "review-repeat",
+              "turn": 1,
+              "elapsedMs": 1109.22
+            },
+            {
+              "name": "review-repeat",
+              "turn": 2,
+              "elapsedMs": 1122.77
+            },
+            {
+              "name": "apply",
+              "elapsedMs": 1074.77
+            },
+            {
+              "name": "revert-all",
+              "elapsedMs": 1115.91
+            },
+            {
+              "name": "review-reverted",
+              "elapsedMs": 1130.93
+            },
+            {
+              "name": "discard",
+              "elapsedMs": 1398.84
+            }
+          ],
+          "rounds": [
+            {
+              "turn": 1,
+              "kind": "new"
+            },
+            {
+              "turn": 2,
+              "kind": "baseline"
+            },
+            {
+              "turn": 3,
+              "kind": "new"
+            },
+            {
+              "turn": 4,
+              "kind": "noop"
+            },
+            {
+              "turn": 5,
+              "kind": "new"
+            },
+            {
+              "turn": 6,
+              "kind": "baseline"
+            },
+            {
+              "turn": 7,
+              "kind": "new"
+            },
+            {
+              "turn": 8,
+              "kind": "noop"
+            },
+            {
+              "turn": 9,
+              "kind": "new"
+            },
+            {
+              "turn": 10,
+              "kind": "baseline"
+            },
+            {
+              "turn": 11,
+              "kind": "new"
+            },
+            {
+              "turn": 12,
+              "kind": "noop"
+            }
+          ],
+          "storage": [
+            {
+              "label": "created",
+              "blobs": {
+                "files": 1002,
+                "bytes": 2435108
+              },
+              "snapshots": {
+                "files": 1,
+                "bytes": 137228
+              },
+              "stateBytes": 693,
+              "historyBytes": 2573029
+            },
+            {
+              "label": "turn-1-new",
+              "blobs": {
+                "files": 1007,
+                "bytes": 2445348
+              },
+              "snapshots": {
+                "files": 2,
+                "bytes": 274456
+              },
+              "stateBytes": 990,
+              "historyBytes": 2720794
+            },
+            {
+              "label": "turn-2-baseline",
+              "blobs": {
+                "files": 1007,
+                "bytes": 2445348
+              },
+              "snapshots": {
+                "files": 2,
+                "bytes": 274456
+              },
+              "stateBytes": 1288,
+              "historyBytes": 2721092
+            },
+            {
+              "label": "turn-3-new",
+              "blobs": {
+                "files": 1012,
+                "bytes": 2455588
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 411684
+              },
+              "stateBytes": 1586,
+              "historyBytes": 2868858
+            },
+            {
+              "label": "turn-4-noop",
+              "blobs": {
+                "files": 1012,
+                "bytes": 2455588
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 411684
+              },
+              "stateBytes": 1884,
+              "historyBytes": 2869156
+            },
+            {
+              "label": "turn-5-new",
+              "blobs": {
+                "files": 1017,
+                "bytes": 2465828
+              },
+              "snapshots": {
+                "files": 4,
+                "bytes": 548912
+              },
+              "stateBytes": 2183,
+              "historyBytes": 3016923
+            },
+            {
+              "label": "turn-6-baseline",
+              "blobs": {
+                "files": 1017,
+                "bytes": 2465828
+              },
+              "snapshots": {
+                "files": 4,
+                "bytes": 548912
+              },
+              "stateBytes": 2481,
+              "historyBytes": 3017221
+            },
+            {
+              "label": "turn-7-new",
+              "blobs": {
+                "files": 1022,
+                "bytes": 2476068
+              },
+              "snapshots": {
+                "files": 5,
+                "bytes": 686140
+              },
+              "stateBytes": 2779,
+              "historyBytes": 3164987
+            },
+            {
+              "label": "turn-8-noop",
+              "blobs": {
+                "files": 1022,
+                "bytes": 2476068
+              },
+              "snapshots": {
+                "files": 5,
+                "bytes": 686140
+              },
+              "stateBytes": 3077,
+              "historyBytes": 3165285
+            },
+            {
+              "label": "turn-9-new",
+              "blobs": {
+                "files": 1027,
+                "bytes": 2486308
+              },
+              "snapshots": {
+                "files": 6,
+                "bytes": 823368
+              },
+              "stateBytes": 3375,
+              "historyBytes": 3313051
+            },
+            {
+              "label": "turn-10-baseline",
+              "blobs": {
+                "files": 1027,
+                "bytes": 2486308
+              },
+              "snapshots": {
+                "files": 6,
+                "bytes": 823368
+              },
+              "stateBytes": 3674,
+              "historyBytes": 3313350
+            },
+            {
+              "label": "turn-11-new",
+              "blobs": {
+                "files": 1032,
+                "bytes": 2496548
+              },
+              "snapshots": {
+                "files": 7,
+                "bytes": 960596
+              },
+              "stateBytes": 3973,
+              "historyBytes": 3461117
+            },
+            {
+              "label": "turn-12-noop",
+              "blobs": {
+                "files": 1032,
+                "bytes": 2496548
+              },
+              "snapshots": {
+                "files": 7,
+                "bytes": 960596
+              },
+              "stateBytes": 4272,
+              "historyBytes": 3461416
+            },
+            {
+              "label": "before-repeat-reviews",
+              "blobs": {
+                "files": 1032,
+                "bytes": 2496548
+              },
+              "snapshots": {
+                "files": 7,
+                "bytes": 960596
+              },
+              "stateBytes": 4272,
+              "historyBytes": 3461416
+            },
+            {
+              "label": "discarded",
+              "blobs": {
+                "files": 1032,
+                "bytes": 2496548
+              },
+              "snapshots": {
+                "files": 7,
+                "bytes": 960596
+              },
+              "stateBytes": 4276,
+              "historyBytes": 3461420
+            }
+          ],
+          "assertions": [
+            "Initial dirty and untracked bytes preserved; ignored cache omitted.",
+            "Every checkpoint matched the changed paths; no-op turns and reused bytes added no blobs or manifests.",
+            "Source remained unchanged through all turns and reviews.",
+            "Reopened review matched durable history; repeated reviews did not grow storage.",
+            "Apply reproduced exact bytes while preserving the source Git index.",
+            "Reverse-order rollback restored every baseline byte without silently changing applied source files.",
+            "Discard removed the owned checkout and preserved source; retained history size measured separately."
+          ],
+          "coveredFiles": 1002,
+          "sourceBytes": 2435108,
+          "latency": {
+            "begin": {
+              "count": 12,
+              "medianMs": 1093.18,
+              "p95Ms": 2022.94,
+              "maxMs": 2022.94
+            },
+            "finish": {
+              "count": 12,
+              "medianMs": 1204.24,
+              "p95Ms": 1875.4,
+              "maxMs": 1875.4
+            },
+            "review": {
+              "count": 13,
+              "medianMs": 1280.87,
+              "p95Ms": 1865.09,
+              "maxMs": 1865.09
+            },
+            "review-repeat": {
+              "count": 3,
+              "medianMs": 1109.22,
+              "p95Ms": 1122.77,
+              "maxMs": 1122.77
+            }
+          },
+          "sampledRssBytes": 200404992,
+          "status": "passed"
+        }
+      ],
+      "status": "passed",
+      "finishedAt": "2026-09-06T08:22:06.705Z"
+    },
+    {
+      "schema": "cardbush.workspace_benchmark.v1",
+      "startedAt": "2026-09-06T08:25:39.889Z",
+      "environment": {
+        "node": "v25.9.0",
+        "platform": "win32",
+        "release": "10.0.26200",
+        "arch": "x64",
+        "cpu": "Intel(R) Core(TM) i5-14400"
+      },
+      "options": {
+        "files": [
+          10000
+        ],
+        "turns": 4,
+        "bytes": 2048,
+        "changes": 5,
+        "output": "D:\\proj\\cardbush\\tmp\\workspace-benchmark\\baseline-10000-complete.json"
+      },
+      "runtime": {
+        "sourceSha256": "fc3848036fc9843d5ffd6c01993206cb80778f2708c931675718f9c7a6ff3c6d",
+        "artifactSha256": "9b8f77f76a2e6068b095140c7449609394b8aff0a66e9f773ca3ac6d949edc5b"
+      },
+      "methodology": [
+        "Synthetic files, real Git repository and worktree, production TaskWorkspaceManager; no model calls.",
+        "Every 257th file is 128 KiB; every 10th file contains binary bytes. Other files use --bytes.",
+        "Repeated four-turn cycle: new bytes, original bytes, new bytes, no edit. Only --changes paths change.",
+        "Review is measured after every turn. No-op and repeated reads must add no content blobs or snapshot manifests.",
+        "Sizes are logical file bytes, not allocated disk space. Fixture creation, assertions, and inventories are excluded from operation timings.",
+        "Runs are sequential, without OS cache flushing. Sample counts are descriptive, not universal latency guarantees.",
+        "Reopening the manager verifies durable reads; this benchmark does not simulate a process kill or power failure."
+      ],
+      "scenarios": [
+        {
+          "generatedFiles": 10000,
+          "operations": [
+            {
+              "name": "fixture-add",
+              "elapsedMs": 91467.57
+            },
+            {
+              "name": "fixture-commit",
+              "elapsedMs": 91094.67
+            },
+            {
+              "name": "create",
+              "elapsedMs": 245077.5
+            },
+            {
+              "name": "review",
+              "turn": 0,
+              "elapsedMs": 8715.02
+            },
+            {
+              "name": "begin",
+              "turn": 1,
+              "elapsedMs": 8386.27
+            },
+            {
+              "name": "finish",
+              "turn": 1,
+              "elapsedMs": 8391.87
+            },
+            {
+              "name": "review",
+              "turn": 1,
+              "elapsedMs": 8765.46
+            },
+            {
+              "name": "begin",
+              "turn": 2,
+              "elapsedMs": 9661.74
+            },
+            {
+              "name": "finish",
+              "turn": 2,
+              "elapsedMs": 16468.13
+            },
+            {
+              "name": "review",
+              "turn": 2,
+              "elapsedMs": 16898.7
+            },
+            {
+              "name": "begin",
+              "turn": 3,
+              "elapsedMs": 10999.6
+            },
+            {
+              "name": "finish",
+              "turn": 3,
+              "elapsedMs": 8737.67
+            },
+            {
+              "name": "review",
+              "turn": 3,
+              "elapsedMs": 8145.64
+            },
+            {
+              "name": "begin",
+              "turn": 4,
+              "elapsedMs": 7937.8
+            },
+            {
+              "name": "finish",
+              "turn": 4,
+              "elapsedMs": 10543.36
+            },
+            {
+              "name": "review",
+              "turn": 4,
+              "elapsedMs": 9176.88
+            },
+            {
+              "name": "review-reopened",
+              "elapsedMs": 11467.76
+            },
+            {
+              "name": "review-repeat",
+              "turn": 0,
+              "elapsedMs": 9473.02
+            },
+            {
+              "name": "review-repeat",
+              "turn": 1,
+              "elapsedMs": 31016.43
+            },
+            {
+              "name": "review-repeat",
+              "turn": 2,
+              "elapsedMs": 11123.78
+            },
+            {
+              "name": "apply",
+              "elapsedMs": 11622.93
+            },
+            {
+              "name": "revert-all",
+              "elapsedMs": 19122.22
+            },
+            {
+              "name": "review-reverted",
+              "elapsedMs": 9355.34
+            },
+            {
+              "name": "discard",
+              "elapsedMs": 11030.09
+            }
+          ],
+          "rounds": [
+            {
+              "turn": 1,
+              "kind": "new"
+            },
+            {
+              "turn": 2,
+              "kind": "baseline"
+            },
+            {
+              "turn": 3,
+              "kind": "new"
+            },
+            {
+              "turn": 4,
+              "kind": "noop"
+            }
+          ],
+          "storage": [
+            {
+              "label": "created",
+              "blobs": {
+                "files": 10002,
+                "bytes": 25382948
+              },
+              "snapshots": {
+                "files": 1,
+                "bytes": 1379228
+              },
+              "stateBytes": 693,
+              "historyBytes": 26762869
+            },
+            {
+              "label": "turn-1-new",
+              "blobs": {
+                "files": 10007,
+                "bytes": 25393188
+              },
+              "snapshots": {
+                "files": 2,
+                "bytes": 2758456
+              },
+              "stateBytes": 990,
+              "historyBytes": 28152634
+            },
+            {
+              "label": "turn-2-baseline",
+              "blobs": {
+                "files": 10007,
+                "bytes": 25393188
+              },
+              "snapshots": {
+                "files": 2,
+                "bytes": 2758456
+              },
+              "stateBytes": 1288,
+              "historyBytes": 28152932
+            },
+            {
+              "label": "turn-3-new",
+              "blobs": {
+                "files": 10012,
+                "bytes": 25403428
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 4137684
+              },
+              "stateBytes": 1586,
+              "historyBytes": 29542698
+            },
+            {
+              "label": "turn-4-noop",
+              "blobs": {
+                "files": 10012,
+                "bytes": 25403428
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 4137684
+              },
+              "stateBytes": 1884,
+              "historyBytes": 29542996
+            },
+            {
+              "label": "before-repeat-reviews",
+              "blobs": {
+                "files": 10012,
+                "bytes": 25403428
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 4137684
+              },
+              "stateBytes": 1884,
+              "historyBytes": 29542996
+            },
+            {
+              "label": "discarded",
+              "blobs": {
+                "files": 10012,
+                "bytes": 25403428
+              },
+              "snapshots": {
+                "files": 3,
+                "bytes": 4137684
+              },
+              "stateBytes": 1889,
+              "historyBytes": 29543001
+            }
+          ],
+          "assertions": [
+            "Initial dirty and untracked bytes preserved; ignored cache omitted.",
+            "Every checkpoint matched the changed paths; no-op turns and reused bytes added no blobs or manifests.",
+            "Source remained unchanged through all turns and reviews.",
+            "Reopened review matched durable history; repeated reviews did not grow storage.",
+            "Apply reproduced exact bytes while preserving the source Git index.",
+            "Reverse-order rollback restored every baseline byte without silently changing applied source files.",
+            "Discard removed the owned checkout and preserved source; retained history size measured separately."
+          ],
+          "coveredFiles": 10002,
+          "sourceBytes": 25382948,
+          "latency": {
+            "begin": {
+              "count": 4,
+              "medianMs": 9024.01,
+              "p95Ms": 10999.6,
+              "maxMs": 10999.6
+            },
+            "finish": {
+              "count": 4,
+              "medianMs": 9640.52,
+              "p95Ms": 16468.13,
+              "maxMs": 16468.13
+            },
+            "review": {
+              "count": 5,
+              "medianMs": 8765.46,
+              "p95Ms": 16898.7,
+              "maxMs": 16898.7
+            },
+            "review-repeat": {
+              "count": 3,
+              "medianMs": 11123.78,
+              "p95Ms": 31016.43,
+              "maxMs": 31016.43
+            }
+          },
+          "sampledRssBytes": 321458176,
+          "status": "passed"
+        }
+      ],
+      "status": "passed",
+      "finishedAt": "2026-09-06T08:37:04.424Z"
+    }
+  ]
+}

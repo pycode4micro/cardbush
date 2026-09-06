@@ -1,0 +1,835 @@
+{
+  "protocol": "cardbush.coding_root_cause_comparison.v1",
+  "generatedAt": "2026-09-06T06:10:27.568Z",
+  "baseline": {
+    "sourceReport": "docs/CODING_BASELINE_LIVE_2026-09-06.json",
+    "totals": {
+      "tasks": 8,
+      "passed": 6,
+      "completedTurns": 3,
+      "durationMs": 796442,
+      "modelRequests": 88,
+      "toolCalls": 104,
+      "toolFailures": 4,
+      "permissionRequests": 0,
+      "humanInterventions": 0,
+      "inputTokens": 945007,
+      "outputTokens": 91670,
+      "cachedInputTokens": 893696,
+      "uncachedInputTokens": 51311,
+      "inputCacheHitRatio": 0.9457030477022922,
+      "usageMissingRequests": 0,
+      "postRunPublicTestsPassed": 8,
+      "tasksWithModifiedPublicTests": 6
+    }
+  },
+  "runs": [
+    {
+      "label": "diagnostic_original",
+      "sourceReport": "tmp/coding-benchmark/run-bRAhfY/live-report.json",
+      "suiteHash": "e2e494bd3a7da20c7758a6f36384371770f247cdcba259e2706c0ebdee25e018",
+      "model": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "adapter": "openai_responses",
+        "reasoning": "high",
+        "maxRounds": 24,
+        "timeoutMs": 300000,
+        "tokenStop": 150000,
+        "maxOutputTokens": 4096,
+        "maxContextTokens": 100000,
+        "runtimeHashes": {
+          "packages/bush-protocol/src/model.ts": "bba4a11bb1beb735bc63f47746904b410e96d5c0f1846e56b89331b13c4cd535",
+          "packages/bush-runtime/src/modelRound.ts": "49b91070b2469e2ce5bda9e781b171300a074f2eb3593d1beab881be01595e8b",
+          "packages/bush-runtime/src/inMemoryRuntimeHost.ts": "c5f50fad97b753b62728cfaf404c9c33eccb1d02507fc590a0c7ae2b45369a57",
+          "packages/bush-runtime/src/workspaceTools.ts": "aee949e327ea8e477fb47964c2ca369420f085686436cc7b4582f12fbc0393fe",
+          "packages/bush-runtime/src/workspaceFileRead.ts": "0fd1132eb79fae7a04bae2dc9c52dbe22aca1be5f3661b2521caf24059aad986",
+          "packages/bush-runtime/src/modelReplay.ts": "93b6cd64d86b7da87dd50b47ebcbd182fc916b7e88f51655e18f13e678298f54",
+          "packages/bush-runtime/src/contextCompaction.ts": "4ae2233d37b30f8e6eccbfb12b06805f73b2369affebb5ccf792764503c792b8",
+          "packages/bush-runtime/src/runtimeToolLoop.ts": "cdd474d1fb85fbc6521be07d22b8218bee79e58a0d677bd1e68a69cdde1f8812",
+          "packages/bush-provider-openai/src/responses.ts": "ea9646d81307cc88301bfc3f292d13c5192238e60e7ac3cebd08f2c4fc5637a4",
+          "packages/bush-provider-openai/src/responsesReplay.ts": "13c5b92f371f07bc30a8e4f8b3633e84f58530af4df038aa74949d757212d670"
+        },
+        "rootPromptHash": "ca73b23137773636411069ae52b4ac96530a9d83e400c1400039ed907893f748",
+        "driverHash": "f77a2fd27cfe447b10057a29befceac01e44898af740017a05c8de68aa2083bf",
+        "permissionMode": "task_free",
+        "tools": [
+          "read_file",
+          "search_file_content",
+          "write_file",
+          "edit_file",
+          "terminal_exec",
+          "terminal_poll",
+          "terminal_write",
+          "terminal_stop",
+          "terminal_list",
+          "checkpoint_context",
+          "read_archived_tool_result",
+          "update_task_plan"
+        ],
+        "tokenStopPolicy": "Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold."
+      },
+      "totals": {
+        "tasks": 2,
+        "passed": 1,
+        "completed": 0,
+        "durationMs": 259032,
+        "modelRequests": 23,
+        "inputTokens": 302653,
+        "outputTokens": 30018,
+        "cachedInputTokens": 286464,
+        "reportedTokens": 332671,
+        "toolCalls": 26,
+        "toolFailures": 2,
+        "lengthResponses": 4,
+        "nonzeroTerminalResults": 1,
+        "permissionRequests": 0
+      },
+      "tasks": [
+        {
+          "id": "flac-preview",
+          "passed": false,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 132774,
+          "modelRequests": 12,
+          "inputTokens": 157465,
+          "outputTokens": 15523,
+          "cachedInputTokens": 147456,
+          "reportedTokens": 172988,
+          "toolCalls": 14,
+          "toolFailures": 2,
+          "lengthResponses": 3,
+          "edits": [
+            {
+              "round": 9,
+              "outcome": "failed",
+              "code": "edit_old_text_not_found",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\flac-preview\\candidate\\src\\shared\\localPaths.ts"
+            },
+            {
+              "round": 10,
+              "outcome": "failed",
+              "code": "edit_old_text_not_found",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\flac-preview\\candidate\\src\\shared\\localPaths.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\flac-preview\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\flac-preview\\candidate"
+        },
+        {
+          "id": "file-reference-boundary",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 126258,
+          "modelRequests": 11,
+          "inputTokens": 145188,
+          "outputTokens": 14495,
+          "cachedInputTokens": 139008,
+          "reportedTokens": 159683,
+          "toolCalls": 12,
+          "toolFailures": 0,
+          "lengthResponses": 1,
+          "edits": [
+            {
+              "round": 8,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\file-reference-boundary\\candidate\\src\\features\\chatMessages\\fileReferences.ts"
+            },
+            {
+              "round": 10,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\file-reference-boundary\\candidate\\test.mjs"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\file-reference-boundary\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-bRAhfY\\file-reference-boundary\\candidate"
+        }
+      ]
+    },
+    {
+      "label": "literal_text_4096",
+      "sourceReport": "tmp/coding-benchmark/run-WCAvtU/live-report.json",
+      "suiteHash": "e2e494bd3a7da20c7758a6f36384371770f247cdcba259e2706c0ebdee25e018",
+      "model": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "adapter": "openai_responses",
+        "reasoning": "high",
+        "maxRounds": 24,
+        "timeoutMs": 300000,
+        "tokenStop": 150000,
+        "maxOutputTokens": 4096,
+        "maxContextTokens": 100000,
+        "runtimeHashes": {
+          "packages/bush-protocol/src/model.ts": "bba4a11bb1beb735bc63f47746904b410e96d5c0f1846e56b89331b13c4cd535",
+          "packages/bush-runtime/src/modelRound.ts": "49b91070b2469e2ce5bda9e781b171300a074f2eb3593d1beab881be01595e8b",
+          "packages/bush-runtime/src/inMemoryRuntimeHost.ts": "534c3e25bc9c4cb6a80bfc7aa9ba61569a23d17184875f75c1717981039fe3b1",
+          "packages/bush-runtime/src/workspaceTools.ts": "24a24f2613bde814a4d306d6f6e402ba3335451e3b97386cd5ab043e690fb39f",
+          "packages/bush-runtime/src/workspaceFileRead.ts": "0fd1132eb79fae7a04bae2dc9c52dbe22aca1be5f3661b2521caf24059aad986",
+          "packages/bush-runtime/src/modelReplay.ts": "93b6cd64d86b7da87dd50b47ebcbd182fc916b7e88f51655e18f13e678298f54",
+          "packages/bush-runtime/src/contextCompaction.ts": "4ae2233d37b30f8e6eccbfb12b06805f73b2369affebb5ccf792764503c792b8",
+          "packages/bush-runtime/src/runtimeToolLoop.ts": "836714a5a12eb0e77661b9d9827b74a09e2ec13581c9906a7f59767e62f44a83",
+          "packages/bush-runtime/src/toolRegistry.ts": "f0a8d33f992da8ac3e22d042a47cc369a0b98a2644cbc33c76e8ad3923814f81",
+          "packages/bush-runtime/src/toolResultText.ts": "6e208ad09204ceb888035c73382f18f89a55705c49607d35e0f0147c5073e937",
+          "packages/bush-runtime/src/extendedBuiltins.ts": "47a703f48a5b58a677f5537e0bfdd1ccd6ef834862f7f038e41bb0c4eb108059",
+          "packages/bush-provider-openai/src/responses.ts": "ea9646d81307cc88301bfc3f292d13c5192238e60e7ac3cebd08f2c4fc5637a4",
+          "packages/bush-provider-openai/src/responsesReplay.ts": "13c5b92f371f07bc30a8e4f8b3633e84f58530af4df038aa74949d757212d670"
+        },
+        "rootPromptHash": "ca73b23137773636411069ae52b4ac96530a9d83e400c1400039ed907893f748",
+        "driverHash": "8043dc84f8b52edfe49ac3b0cd453080665720193cbf201cde574c059050b71b",
+        "permissionMode": "task_free",
+        "tools": [
+          "read_file",
+          "search_file_content",
+          "write_file",
+          "edit_file",
+          "terminal_exec",
+          "terminal_poll",
+          "terminal_write",
+          "terminal_stop",
+          "terminal_list",
+          "checkpoint_context",
+          "read_archived_tool_result",
+          "update_task_plan"
+        ],
+        "tokenStopPolicy": "Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold."
+      },
+      "totals": {
+        "tasks": 2,
+        "passed": 2,
+        "completed": 1,
+        "durationMs": 252403,
+        "modelRequests": 23,
+        "inputTokens": 309253,
+        "outputTokens": 28728,
+        "cachedInputTokens": 294656,
+        "reportedTokens": 337981,
+        "toolCalls": 32,
+        "toolFailures": 1,
+        "lengthResponses": 1,
+        "nonzeroTerminalResults": 0,
+        "permissionRequests": 0
+      },
+      "tasks": [
+        {
+          "id": "flac-preview",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 137016,
+          "modelRequests": 11,
+          "inputTokens": 158221,
+          "outputTokens": 15658,
+          "cachedInputTokens": 150528,
+          "reportedTokens": 173879,
+          "toolCalls": 17,
+          "toolFailures": 0,
+          "lengthResponses": 0,
+          "edits": [
+            {
+              "round": 5,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\flac-preview\\candidate\\src\\shared\\localPaths.ts"
+            },
+            {
+              "round": 5,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\flac-preview\\candidate\\src\\features\\inspector\\inspectorTargets.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\flac-preview\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\flac-preview\\candidate"
+        },
+        {
+          "id": "file-reference-boundary",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 115387,
+          "modelRequests": 12,
+          "inputTokens": 151032,
+          "outputTokens": 13070,
+          "cachedInputTokens": 144128,
+          "reportedTokens": 164102,
+          "toolCalls": 15,
+          "toolFailures": 1,
+          "lengthResponses": 1,
+          "edits": [
+            {
+              "round": 8,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\file-reference-boundary\\candidate\\src\\features\\chatMessages\\fileReferences.ts"
+            },
+            {
+              "round": 11,
+              "outcome": "failed",
+              "code": "edit_old_text_not_found",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\file-reference-boundary\\candidate\\inspect.mjs"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\file-reference-boundary\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-WCAvtU\\file-reference-boundary\\candidate"
+        }
+      ]
+    },
+    {
+      "label": "literal_text_12800",
+      "sourceReport": "tmp/coding-benchmark/run-oRYxaS/live-report.json",
+      "suiteHash": "e2e494bd3a7da20c7758a6f36384371770f247cdcba259e2706c0ebdee25e018",
+      "model": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "adapter": "openai_responses",
+        "reasoning": "high",
+        "maxRounds": 24,
+        "timeoutMs": 300000,
+        "tokenStop": 150000,
+        "maxOutputTokens": 12800,
+        "maxContextTokens": 100000,
+        "runtimeHashes": {
+          "packages/bush-protocol/src/model.ts": "bba4a11bb1beb735bc63f47746904b410e96d5c0f1846e56b89331b13c4cd535",
+          "packages/bush-protocol/src/tool.ts": "4f84f31df23c2dfc1a264334fd104fe25d7d67fb9c83fc27e4471b25e9ad69bc",
+          "packages/bush-runtime/src/modelRound.ts": "49b91070b2469e2ce5bda9e781b171300a074f2eb3593d1beab881be01595e8b",
+          "packages/bush-runtime/src/inMemoryRuntimeHost.ts": "d30894994d4ba96dc9c72da2eb4071d041591f63106d8141cdce163abefc6488",
+          "packages/bush-runtime/src/workspaceTools.ts": "24a24f2613bde814a4d306d6f6e402ba3335451e3b97386cd5ab043e690fb39f",
+          "packages/bush-runtime/src/workspaceFileRead.ts": "0fd1132eb79fae7a04bae2dc9c52dbe22aca1be5f3661b2521caf24059aad986",
+          "packages/bush-runtime/src/modelReplay.ts": "93b6cd64d86b7da87dd50b47ebcbd182fc916b7e88f51655e18f13e678298f54",
+          "packages/bush-runtime/src/contextCompaction.ts": "4ae2233d37b30f8e6eccbfb12b06805f73b2369affebb5ccf792764503c792b8",
+          "packages/bush-runtime/src/runtimeToolLoop.ts": "e5f4baad2089a93ef903aa2c04e4857a5a78be3b9c84353f0c754360e0be9810",
+          "packages/bush-runtime/src/toolRegistry.ts": "f0a8d33f992da8ac3e22d042a47cc369a0b98a2644cbc33c76e8ad3923814f81",
+          "packages/bush-runtime/src/toolResultText.ts": "6e208ad09204ceb888035c73382f18f89a55705c49607d35e0f0147c5073e937",
+          "packages/bush-runtime/src/toolExecutionStore.ts": "b606946376d3b449905d025fe74c1ebe0fd0d48a792b22720bea3ed4e9eec133",
+          "packages/bush-runtime/src/extendedBuiltins.ts": "47a703f48a5b58a677f5537e0bfdd1ccd6ef834862f7f038e41bb0c4eb108059",
+          "packages/bush-provider-openai/src/responses.ts": "ea9646d81307cc88301bfc3f292d13c5192238e60e7ac3cebd08f2c4fc5637a4",
+          "packages/bush-provider-openai/src/responsesReplay.ts": "13c5b92f371f07bc30a8e4f8b3633e84f58530af4df038aa74949d757212d670"
+        },
+        "rootPromptHash": "ca73b23137773636411069ae52b4ac96530a9d83e400c1400039ed907893f748",
+        "driverHash": "77dc696133b590ebfd15aa04f59219b0739c7de074813b0643720aa10fe2e662",
+        "permissionMode": "task_free",
+        "tools": [
+          "read_file",
+          "search_file_content",
+          "write_file",
+          "edit_file",
+          "terminal_exec",
+          "terminal_poll",
+          "terminal_write",
+          "terminal_stop",
+          "terminal_list",
+          "checkpoint_context",
+          "read_archived_tool_result",
+          "update_task_plan"
+        ],
+        "tokenStopPolicy": "Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold."
+      },
+      "totals": {
+        "tasks": 2,
+        "passed": 2,
+        "completed": 0,
+        "durationMs": 250850,
+        "modelRequests": 25,
+        "inputTokens": 290430,
+        "outputTokens": 28713,
+        "cachedInputTokens": 270592,
+        "reportedTokens": 319143,
+        "toolCalls": 33,
+        "toolFailures": 0,
+        "lengthResponses": 0,
+        "nonzeroTerminalResults": 2,
+        "permissionRequests": 0
+      },
+      "tasks": [
+        {
+          "id": "flac-preview",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 132132,
+          "modelRequests": 11,
+          "inputTokens": 143602,
+          "outputTokens": 15496,
+          "cachedInputTokens": 137088,
+          "reportedTokens": 159098,
+          "toolCalls": 19,
+          "toolFailures": 0,
+          "lengthResponses": 0,
+          "edits": [
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\flac-preview\\candidate\\src\\shared\\localPaths.ts"
+            },
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\flac-preview\\candidate\\src\\features\\inspector\\inspectorTargets.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\flac-preview\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\flac-preview\\candidate"
+        },
+        {
+          "id": "file-reference-boundary",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 118718,
+          "modelRequests": 14,
+          "inputTokens": 146828,
+          "outputTokens": 13217,
+          "cachedInputTokens": 133504,
+          "reportedTokens": 160045,
+          "toolCalls": 14,
+          "toolFailures": 0,
+          "lengthResponses": 0,
+          "edits": [
+            {
+              "round": 11,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\file-reference-boundary\\candidate\\src\\features\\chatMessages\\fileReferences.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\file-reference-boundary\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-oRYxaS\\file-reference-boundary\\candidate"
+        }
+      ]
+    },
+    {
+      "label": "final_4096",
+      "sourceReport": "tmp/coding-benchmark/run-GIrWkW/live-report.json",
+      "suiteHash": "e2e494bd3a7da20c7758a6f36384371770f247cdcba259e2706c0ebdee25e018",
+      "model": {
+        "model": "deepseek-v4-flash-vision-exp",
+        "adapter": "openai_responses",
+        "reasoning": "high",
+        "maxRounds": 24,
+        "timeoutMs": 300000,
+        "tokenStop": 150000,
+        "maxOutputTokens": 4096,
+        "maxContextTokens": 100000,
+        "runtimeHashes": {
+          "packages/bush-protocol/src/model.ts": "bba4a11bb1beb735bc63f47746904b410e96d5c0f1846e56b89331b13c4cd535",
+          "packages/bush-protocol/src/tool.ts": "4f84f31df23c2dfc1a264334fd104fe25d7d67fb9c83fc27e4471b25e9ad69bc",
+          "packages/bush-runtime/src/modelRound.ts": "49b91070b2469e2ce5bda9e781b171300a074f2eb3593d1beab881be01595e8b",
+          "packages/bush-runtime/src/inMemoryRuntimeHost.ts": "d30894994d4ba96dc9c72da2eb4071d041591f63106d8141cdce163abefc6488",
+          "packages/bush-runtime/src/workspaceTools.ts": "394b4970d744b64c0639ed956585ac758ef8310e340bd1cd7b3911e9080c27b6",
+          "packages/bush-runtime/src/workspaceFileRead.ts": "0fd1132eb79fae7a04bae2dc9c52dbe22aca1be5f3661b2521caf24059aad986",
+          "packages/bush-runtime/src/modelReplay.ts": "93b6cd64d86b7da87dd50b47ebcbd182fc916b7e88f51655e18f13e678298f54",
+          "packages/bush-runtime/src/contextCompaction.ts": "4ae2233d37b30f8e6eccbfb12b06805f73b2369affebb5ccf792764503c792b8",
+          "packages/bush-runtime/src/runtimeToolLoop.ts": "e5f4baad2089a93ef903aa2c04e4857a5a78be3b9c84353f0c754360e0be9810",
+          "packages/bush-runtime/src/toolRegistry.ts": "f0a8d33f992da8ac3e22d042a47cc369a0b98a2644cbc33c76e8ad3923814f81",
+          "packages/bush-runtime/src/toolResultText.ts": "6e208ad09204ceb888035c73382f18f89a55705c49607d35e0f0147c5073e937",
+          "packages/bush-runtime/src/toolExecutionStore.ts": "b606946376d3b449905d025fe74c1ebe0fd0d48a792b22720bea3ed4e9eec133",
+          "packages/bush-runtime/src/extendedBuiltins.ts": "47a703f48a5b58a677f5537e0bfdd1ccd6ef834862f7f038e41bb0c4eb108059",
+          "packages/bush-provider-openai/src/responses.ts": "ea9646d81307cc88301bfc3f292d13c5192238e60e7ac3cebd08f2c4fc5637a4",
+          "packages/bush-provider-openai/src/responsesReplay.ts": "13c5b92f371f07bc30a8e4f8b3633e84f58530af4df038aa74949d757212d670"
+        },
+        "rootPromptHash": "ca73b23137773636411069ae52b4ac96530a9d83e400c1400039ed907893f748",
+        "driverHash": "77dc696133b590ebfd15aa04f59219b0739c7de074813b0643720aa10fe2e662",
+        "permissionMode": "task_free",
+        "tools": [
+          "read_file",
+          "search_file_content",
+          "write_file",
+          "edit_file",
+          "terminal_exec",
+          "terminal_poll",
+          "terminal_write",
+          "terminal_stop",
+          "terminal_list",
+          "checkpoint_context",
+          "read_archived_tool_result",
+          "update_task_plan"
+        ],
+        "tokenStopPolicy": "Stop before a new request once reported cumulative input + output reaches the threshold; one response can cross it. Missing usage cannot enforce this threshold."
+      },
+      "totals": {
+        "tasks": 8,
+        "passed": 8,
+        "completed": 5,
+        "postRunPublicTestsPassed": 8,
+        "durationMs": 750612,
+        "modelRequests": 92,
+        "inputTokens": 952636,
+        "outputTokens": 84537,
+        "cachedInputTokens": 911616,
+        "reportedTokens": 1037173,
+        "toolCalls": 102,
+        "toolFailures": 1,
+        "lengthResponses": 9,
+        "nonzeroTerminalResults": 5,
+        "permissionRequests": 0
+      },
+      "tasks": [
+        {
+          "id": "queue-scope",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 87197,
+          "modelRequests": 9,
+          "inputTokens": 80450,
+          "outputTokens": 9988,
+          "cachedInputTokens": 77440,
+          "reportedTokens": 90438,
+          "toolCalls": 11,
+          "toolFailures": 0,
+          "lengthResponses": 0,
+          "edits": [
+            {
+              "round": 5,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-scope\\candidate\\src\\features\\composer\\queueOrdering.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-scope\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-scope\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 337,
+            "stdout": "All regression tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "queue-stable-move",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 107440,
+          "modelRequests": 10,
+          "inputTokens": 108552,
+          "outputTokens": 12460,
+          "cachedInputTokens": 105344,
+          "reportedTokens": 121012,
+          "toolCalls": 10,
+          "toolFailures": 0,
+          "lengthResponses": 2,
+          "edits": [
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-stable-move\\candidate\\src\\features\\composer\\queueOrdering.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-stable-move\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\queue-stable-move\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 341,
+            "stdout": "All reorderScopedQueue regression tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "config-concurrency",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 84742,
+          "modelRequests": 14,
+          "inputTokens": 140820,
+          "outputTokens": 8800,
+          "cachedInputTokens": 136192,
+          "reportedTokens": 149620,
+          "toolCalls": 15,
+          "toolFailures": 0,
+          "lengthResponses": 1,
+          "edits": [
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\config-concurrency\\candidate\\packages\\cardbush-product-host\\src\\atomicFiles.ts"
+            },
+            {
+              "round": 9,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\config-concurrency\\candidate\\packages\\cardbush-product-host\\src\\atomicFiles.ts"
+            },
+            {
+              "round": 11,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\config-concurrency\\candidate\\packages\\cardbush-product-host\\src\\atomicFiles.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\config-concurrency\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\config-concurrency\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 1180,
+            "stdout": "All config-concurrency regression tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "context-usage",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 66939,
+          "modelRequests": 10,
+          "inputTokens": 76592,
+          "outputTokens": 7275,
+          "cachedInputTokens": 73344,
+          "reportedTokens": 83867,
+          "toolCalls": 10,
+          "toolFailures": 0,
+          "lengthResponses": 1,
+          "edits": [
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\context-usage\\candidate\\src\\backend\\contextWindowUsage.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\context-usage\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\context-usage\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 341,
+            "stdout": "All contextWindowMetrics regression tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "local-url-encoding",
+          "passed": true,
+          "terminal": "completed",
+          "stopReason": null,
+          "terminalReason": "model_response_completed",
+          "durationMs": 115583,
+          "modelRequests": 10,
+          "inputTokens": 114147,
+          "outputTokens": 13448,
+          "cachedInputTokens": 110208,
+          "reportedTokens": 127595,
+          "toolCalls": 10,
+          "toolFailures": 0,
+          "lengthResponses": 2,
+          "edits": [
+            {
+              "round": 6,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\local-url-encoding\\candidate\\src\\shared\\localPaths.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 0,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\local-url-encoding\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\local-url-encoding\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 350,
+            "stdout": "All tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "flac-preview",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 117870,
+          "modelRequests": 12,
+          "inputTokens": 141533,
+          "outputTokens": 13802,
+          "cachedInputTokens": 130688,
+          "reportedTokens": 155335,
+          "toolCalls": 13,
+          "toolFailures": 1,
+          "lengthResponses": 2,
+          "edits": [
+            {
+              "round": 7,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\flac-preview\\candidate\\src\\shared\\localPaths.ts"
+            },
+            {
+              "round": 7,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\flac-preview\\candidate\\src\\features\\inspector\\inspectorTargets.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\flac-preview\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\flac-preview\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 366,
+            "stdout": "Public smoke test passed; add regression tests for the task.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "markdown-code-boundary",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 94293,
+          "modelRequests": 14,
+          "inputTokens": 146835,
+          "outputTokens": 10259,
+          "cachedInputTokens": 141056,
+          "reportedTokens": 157094,
+          "toolCalls": 17,
+          "toolFailures": 0,
+          "lengthResponses": 0,
+          "edits": [
+            {
+              "round": 8,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\markdown-code-boundary\\candidate\\src\\features\\chatMessages\\markdownFormat.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\markdown-code-boundary\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\markdown-code-boundary\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 356,
+            "stdout": "Public smoke test passed; add regression tests for the task.\nAll regression tests passed.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": true
+        },
+        {
+          "id": "file-reference-boundary",
+          "passed": true,
+          "terminal": "failed",
+          "stopReason": "reported_token_threshold",
+          "terminalReason": "provider_input_token_count_failed",
+          "durationMs": 76548,
+          "modelRequests": 13,
+          "inputTokens": 143707,
+          "outputTokens": 8505,
+          "cachedInputTokens": 137344,
+          "reportedTokens": 152212,
+          "toolCalls": 16,
+          "toolFailures": 0,
+          "lengthResponses": 1,
+          "edits": [
+            {
+              "round": 11,
+              "outcome": "returned",
+              "path": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\file-reference-boundary\\candidate\\src\\features\\chatMessages\\fileReferences.ts"
+            }
+          ],
+          "nonzeroTerminalResults": 1,
+          "permissionRequests": 0,
+          "cleanup": {
+            "stoppedTerminals": 0,
+            "errors": []
+          },
+          "tracePath": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\file-reference-boundary\\runtime\\diagnostic-trace.json",
+          "workspace": "D:\\proj\\cardbush\\tmp\\coding-benchmark\\run-GIrWkW\\file-reference-boundary\\candidate",
+          "postRunPublicTest": {
+            "exitCode": 0,
+            "timedOut": false,
+            "durationMs": 376,
+            "stdout": "Public smoke test passed; add regression tests for the task.\n",
+            "stderr": ""
+          },
+          "publicTestChanged": false
+        }
+      ]
+    }
+  ]
+}

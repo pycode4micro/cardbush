@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 export const appViewFiles = [
   'src/App.tsx',
   'src/features/chat/ChatPanel.tsx',
+  'src/features/chat/TaskWorkspaceBar.tsx',
   'src/features/chat/ChatStatusViews.tsx',
   'src/features/chat/WelcomeComposer.tsx',
   'src/components/TopBar.tsx',

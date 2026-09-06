@@ -6,14 +6,6 @@ import {
   stripWrappingQuotes,
 } from '../shared/localPaths';
 
-export function splitMessageImages(content: string) {
-  const media = splitMessageMedia(content);
-  return {
-    imagePaths: media.imagePaths,
-    text: media.text,
-  };
-}
-
 export function splitMessageMedia(content: string) {
   const imagePaths: string[] = [];
   const videoPaths: string[] = [];

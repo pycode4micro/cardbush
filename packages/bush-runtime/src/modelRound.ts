@@ -4,11 +4,14 @@ import {
   modelRequestSchema,
   type ModelEvent,
   type ModelRequest,
+  type ModelReplayData,
+  type ModelReplayState,
   type ToolCall,
 } from "@cardbush/bush-protocol";
 
 import type { ModelProvider, ModelStreamOptions } from "./modelProvider.js";
 import { ToolCallAccumulator } from "./toolCallAccumulator.js";
+import { modelReplayMessageHash } from "./modelReplay.js";
 
 export interface ModelRoundUsage {
   inputTokens?: number;
@@ -24,6 +27,7 @@ export interface CompletedModelRound {
   toolCalls: ToolCall[];
   finishReason?: string;
   usage: ModelRoundUsage;
+  providerReplay?: ModelReplayState;
 }
 
 export interface FailedModelRound {
@@ -74,6 +78,7 @@ export async function executeModelRound(
   let finishReason: string | undefined;
   let completed = false;
   let providerResponseId: string | undefined;
+  let providerReplay: ModelReplayData | undefined;
   let failure: Extract<ModelEvent, { kind: "response_failed" }> | undefined;
   let lastSequence = -1;
   const usage: ModelRoundUsage = {};
@@ -128,6 +133,7 @@ export async function executeModelRound(
       case "response_completed":
         completed = true;
         finishReason = event.finishReason;
+        providerReplay = event.providerReplay;
         break;
       case "response_failed":
         failure = event;
@@ -183,5 +189,17 @@ export async function executeModelRound(
     toolCalls,
     finishReason,
     usage,
+    ...(providerReplay ? {
+      providerReplay: {
+        ...structuredClone(providerReplay),
+        model: request.model,
+        ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
+        messageHash: modelReplayMessageHash({
+          content: text,
+          reasoningContent: reasoning,
+          toolCalls,
+        }),
+      },
+    } : {}),
   };
 }

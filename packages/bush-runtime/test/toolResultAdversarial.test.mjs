@@ -200,6 +200,9 @@ test("execution record protocol requires exactly one native-result or Runtime-er
     error: runtimeError(),
   }));
   assert.throws(() => toolExecutionRecordSchema.parse({ ...base, outcome: "failed" }));
+  assert.throws(() => toolExecutionRecordSchema.parse({
+    ...base, outcome: "failed", modelText: "a forged successful presentation", error: runtimeError(),
+  }));
 });
 
 async function executeValue(factory, ordinal = 0) {

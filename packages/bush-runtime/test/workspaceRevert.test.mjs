@@ -103,6 +103,16 @@ test("reports an unavailable Runtime snapshot instead of a false zero-file succe
   );
 });
 
+test("restores a previously empty file in direct mode", async (t) => {
+  const setup = await environment(t, "empty-before-session");
+  const path = join(setup.root, "empty.txt");
+  writeFileSync(path, "");
+  await setup.execute("turn-1", 1, "read_file", { path });
+  await setup.execute("turn-1", 2, "write_file", { path, content: "after" });
+  assert.equal((await setup.revert(["turn-1"])).revertedFiles, 1);
+  assert.equal(readFileSync(path).length, 0);
+});
+
 test("replays a historical workspace change after its project folder is renamed", async (t) => {
   const setup = await environment(t, "renamed-project-session");
   const previousPath = join(setup.root, "file.txt");

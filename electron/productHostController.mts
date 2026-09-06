@@ -16,7 +16,6 @@ import {
   ProductModelConfigStore,
   ProductMcpConfigStore,
   ProductSubagentConfigStore,
-  type ProductModelConfigSnapshot,
   type RuntimeAssetCategory,
 } from '@cardbush/product-host';
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
@@ -35,16 +34,6 @@ import {
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
 } from '@cardbush/bush-protocol';
-
-interface ProductRuntimeModelConfig {
-  bindingId: string;
-  provider: string;
-  model: string;
-  apiKey: string;
-  baseURL?: string;
-  defaultHeaders?: Record<string, string>;
-  maxOutputTokens?: number;
-}
 
 export interface ElectronProductHostControllerOptions {
   dataRoot: string;
@@ -69,8 +58,6 @@ export class ElectronProductHostController {
   readonly #legacyModelConfigPaths: string[];
   readonly #dataRoot: string;
   readonly #host: ProductHost;
-  #model?: ProductRuntimeModelConfig;
-  #startup?: Promise<void>;
   #legacyCredentialMigration?: Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
@@ -95,12 +82,10 @@ export class ElectronProductHostController {
     this.#host = new ProductHost({
       get: async () => {
         const snapshot = await this.#models.read();
-        await this.#activateModels(snapshot);
         return this.#models.publicPayload(snapshot);
       },
       update: async (config) => {
         const snapshot = await this.#models.write(config);
-        await this.#activateModels(snapshot);
         return this.#models.publicPayload(snapshot);
       },
       resolve: (modelId) => this.#resolveModel(modelId),
@@ -328,20 +313,6 @@ export class ElectronProductHostController {
         product,
       },
     };
-  }
-
-  async #activateModels(snapshot: ProductModelConfigSnapshot): Promise<void> {
-    const selected = snapshot.models.find((item) => item.id === snapshot.defaultModelId)
-      ?? snapshot.models[0];
-    this.#model = selected ? {
-      bindingId: selected.id,
-      provider: selected.provider,
-      model: selected.model,
-      apiKey: selected.apiKey,
-      baseURL: selected.baseURL,
-      defaultHeaders: selected.defaultHeaders,
-      maxOutputTokens: selected.maxOutputTokens,
-    } : undefined;
   }
 
   async #resolveModel(modelId: string): Promise<Record<string, unknown>> {
