@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { CardbushAppsConfigStore } from '@cardbush/product-host';
 
 import {
   installProductPlugin,
@@ -128,6 +129,35 @@ try {
   const userCatalog = await loadProductPluginCatalog([{ path: temporary, source: 'user' }]);
   assert.deepEqual(userCatalog.map((plugin) => plugin.id), ['chrome']);
   assert.equal(userCatalog[0].installation, 'INSTALLED_BY_DEFAULT');
+
+  // Exercise the management skill's documented package with the real loader
+  // and lifecycle store, without touching the user's installed plugins.
+  const guide = readFileSync(resolve('assets/skills/cardbush-plugin-management/references/plugin-contract.md'), 'utf8');
+  const sample = JSON.parse(guide.match(/```json\s*([\s\S]*?)```/)[1]);
+  const sampleRoot = join(temporary, 'source', sample.name);
+  await mkdir(join(sampleRoot, '.codex-plugin'), { recursive: true });
+  await mkdir(join(sampleRoot, 'assets'), { recursive: true });
+  await mkdir(join(sampleRoot, 'skills', sample.name), { recursive: true });
+  await writeFile(join(sampleRoot, '.codex-plugin', 'plugin.json'), JSON.stringify(sample));
+  await writeFile(join(sampleRoot, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  await writeFile(join(sampleRoot, 'skills', sample.name, 'SKILL.md'), `---\nname: ${sample.name}\ndescription: Test helper\n---\n\nTest helper.\n`);
+  // Install beside chrome, so each state change can also verify preservation.
+  await installProductPlugin(sampleRoot, temporary);
+  const roots = [{ path: temporary, source: 'user' }];
+  const statePath = join(temporary, 'lifecycle.json');
+  const store = new CardbushAppsConfigStore(statePath, { loadCatalog: () => loadProductPluginCatalog(roots) });
+  const initial = await store.read();
+  const helper = initial.plugins.find(plugin => plugin.id === sample.name);
+  assert.deepEqual(helper.components.map(component => component.kind), ['skill']);
+  const other = initial.plugins.find(plugin => plugin.id === 'chrome');
+  for (const [installed, enabled] of [[true, false], [false, false], [true, true]]) {
+    const current = await store.read();
+    const updated = await store.write({ serviceEnabled: current.serviceEnabled, plugins: [{ id: helper.id, installed, enabled, config: helper.config }] });
+    assert.deepEqual(updated.plugins.find(plugin => plugin.id === 'chrome'), other);
+    const activeRoots = await loadEnabledProductPluginSkillRoots(roots, statePath);
+    assert.equal(activeRoots.includes(helper.skillRoots[0]), installed && enabled);
+    assert.equal(updated.plugins.find(plugin => plugin.id === helper.id).installed, installed);
+  }
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

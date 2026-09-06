@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { cp, mkdir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -25,9 +24,12 @@ interface MarketplaceEntry {
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
 }
 
+let pluginInstallQueue: Promise<void> = Promise.resolve();
+
 export async function loadProductPluginCatalog(
   roots: PluginRoot[],
 ): Promise<CardbushPluginCatalogEntry[]> {
+  await pluginInstallQueue;
   const plugins = new Map<string, CardbushPluginCatalogEntry>();
   for (const root of roots) {
     const rootPath = resolve(root.path);
@@ -72,6 +74,23 @@ export async function loadEnabledProductPluginSkillRootEntries(
   roots: PluginRoot[],
   configPath: string,
 ): Promise<EnabledProductPluginSkillRoot[]> {
+  const catalog = await loadEnabledProductPlugins(roots, configPath);
+  const result = new Map<string, EnabledProductPluginSkillRoot>();
+  for (const plugin of catalog) {
+    for (const root of plugin.skillRoots ?? []) {
+      const resolvedRoot = resolve(root);
+      result.set(resolvedRoot, {
+        path: resolvedRoot,
+        pluginId: plugin.id,
+        pluginName: plugin.name,
+        pluginSource: plugin.source,
+      });
+    }
+  }
+  return [...result.values()];
+}
+
+async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string) {
   const catalog = await loadProductPluginCatalog(roots);
   let snapshot: Record<string, unknown> | null = null;
   try {
@@ -88,31 +107,69 @@ export async function loadEnabledProductPluginSkillRootEntries(
       if (id) stored.set(id, state);
     }
   }
-  const result = new Map<string, EnabledProductPluginSkillRoot>();
-  for (const plugin of catalog) {
+  return catalog.filter((plugin) => {
     const state = stored.get(plugin.id);
     const installed = state
       ? state.installed === true
       : plugin.installation === 'INSTALLED_BY_DEFAULT';
     const enabled = installed && (state ? state.enabled === true : installed);
-    if (!enabled) continue;
-    for (const root of plugin.skillRoots ?? []) {
-      const resolvedRoot = resolve(root);
-      result.set(resolvedRoot, {
-        path: resolvedRoot,
-        pluginId: plugin.id,
-        pluginName: plugin.name,
-        pluginSource: plugin.source,
+    return enabled;
+  });
+}
+
+/** External plugin MCP servers use their own namespace and explicit permission. */
+export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string) {
+  const servers: Record<string, unknown>[] = [];
+  for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
+    // These two integrations have product-owned launchers in Runtime Host.
+    if (plugin.id === 'computer-use' || plugin.id === 'chrome') continue;
+    const root = dirname(dirname(plugin.manifestPath));
+    const manifest = await readJson(plugin.manifestPath);
+    const configured = manifest.mcpServers;
+    if (!configured) continue;
+    const config = typeof configured === 'string'
+      ? await readJson(safePluginPath(root, configured)) : object(configured, 'Invalid plugin MCP configuration.');
+    for (const [name, candidate] of Object.entries(objectOrEmpty(config.mcpServers ?? config))) {
+      const server = object(candidate, 'Plugin MCP server must be an object.');
+      const expand = (value: unknown) => string(value).replaceAll('${CARDBUSH_PLUGIN_ROOT}', root);
+      const stringMap = (value: unknown) => Object.fromEntries(
+        Object.entries(objectOrEmpty(value)).map(([key, item]) => [key, expand(item)]),
+      );
+      const kind = string(server.type ?? server.transport) || (server.url ? 'http' : 'stdio');
+      if (!['stdio', 'http', 'streamable_http', 'sse'].includes(kind)) {
+        throw new Error(`Unsupported MCP transport in plugin ${plugin.id}: ${kind}`);
+      }
+      servers.push({
+        id: `plugin_${plugin.id.replaceAll('.', '_')}_${name}`,
+        transport: kind === 'stdio' ? {
+          kind, command: expand(server.command), args: stringArray(server.args).map(expand),
+          cwd: server.cwd ? resolve(root, expand(server.cwd)) : root,
+          env: stringMap(server.env),
+        } : {
+          kind: kind === 'http' ? 'streamable_http' : kind,
+          url: expand(server.url), headers: stringMap(server.headers),
+        },
+        defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
+        toolPolicies: {},
       });
     }
   }
-  return [...result.values()];
+  if (new Set(servers.map((server) => server.id)).size !== servers.length) {
+    throw new Error('Plugin MCP server IDs collide after namespacing.');
+  }
+  return servers;
 }
 
 export async function installProductPlugin(
   sourcePath: string,
   userPluginRoot: string,
 ): Promise<{ id: string; manifestPath: string }> {
+  const result = pluginInstallQueue.then(() => installProductPluginTransaction(sourcePath, userPluginRoot));
+  pluginInstallQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string) {
   const source = resolve(sourcePath);
   const manifestPath = join(source, '.codex-plugin', 'plugin.json');
   const manifest = await readJson(manifestPath);
@@ -130,12 +187,44 @@ export async function installProductPlugin(
   const targetRoot = resolve(userPluginRoot);
   const target = resolve(targetRoot, id);
   if (!inside(targetRoot, target)) throw new Error('Plugin destination escapes the user plugin root.');
-  const temporary = `${target}.tmp-${randomUUID()}`;
+  if (inside(source, targetRoot)) throw new Error('Plugin destination must not be inside its source directory.');
   await mkdir(targetRoot, { recursive: true });
-  await cp(source, temporary, { recursive: true, errorOnExist: true });
-  await rm(target, { recursive: true, force: true });
-  await rename(temporary, target);
-  return { id, manifestPath: join(target, '.codex-plugin', 'plugin.json') };
+  if (inside(await realpath(source), await realpath(targetRoot))) {
+    throw new Error('Plugin destination must not be inside its source directory.');
+  }
+  // Staging is outside the catalog so incomplete copies are never discovered.
+  const work = await mkdtemp(join(dirname(targetRoot), '.cardbush-plugin-install-'));
+  const temporary = join(work, 'staged', id);
+  const backup = join(work, 'previous');
+  let preserveBackup = false;
+  try {
+    await mkdir(dirname(temporary), { recursive: true });
+    await cp(source, temporary, { recursive: true, errorOnExist: true });
+    await decodeManifest({ manifest: await readJson(join(temporary, '.codex-plugin', 'plugin.json')),
+      manifestPath: join(temporary, '.codex-plugin', 'plugin.json'), pluginRoot: temporary,
+      source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
+    let movedExisting = false;
+    try { await rename(target, backup); movedExisting = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    try { await rename(temporary, target); }
+    catch (error) {
+      if (movedExisting) {
+        try { await rename(backup, target); }
+        catch (restoreError) {
+          preserveBackup = true;
+          throw new AggregateError([error, restoreError], `Plugin update failed; previous plugin retained at ${backup}`);
+        }
+      }
+      throw error;
+    }
+    return { id, manifestPath: join(target, '.codex-plugin', 'plugin.json') };
+  } finally {
+    if (!preserveBackup) await rm(work, { recursive: true, force: true }).catch((error: unknown) => {
+      // A running old plugin may still hold a Windows file handle. The committed
+      // installation remains successful; retain cleanup diagnostics for this directory.
+      console.warn('Plugin staging cleanup deferred:', work, error instanceof Error ? error.message : String(error));
+    });
+  }
 }
 
 async function marketplaceEntries(root: string): Promise<MarketplaceEntry[]> {

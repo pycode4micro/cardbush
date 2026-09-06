@@ -57,8 +57,10 @@ function searchRegistration(
       const allowed = Array.isArray(configured)
         ? new Set(configured.filter((item): item is string => typeof item === "string"))
         : undefined;
+      const disabled = new Set(Array.isArray(context.turn?.request.metadata.disabledSkills)
+        ? context.turn.request.metadata.disabledSkills : []);
       const skills = (await loadCards(activeRoots)).filter((skill) =>
-        allowed === undefined || allowed.has(skill.name),
+        (allowed === undefined || allowed.has(skill.name)) && !disabled.has(skill.name),
       );
       const matches = skills
         .map((skill) => ({ ...skill, score: score(skill, terms) }))

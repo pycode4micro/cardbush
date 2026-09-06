@@ -90,7 +90,13 @@ export async function streamRuntimeChat(
       } : { mode: 'inherit' },
       disabledTools: subagentConfig.disabledTools,
     };
-    await synchronizeProductMcpSnapshot(runtime.client);
+    await synchronizeProductMcpSnapshot(runtime.client).catch(async (error) => {
+      const previous = await runtime.client.getMcpSnapshot();
+      if (!previous?.servers.length) throw error;
+      // A broken newly added server must not block conversations using the
+      // last successfully applied catalog. Settings reports the apply failure.
+      console.warn('MCP update failed; retaining the active catalog', error);
+    });
     const [catalog, activeGoal, existingSession] = await Promise.all([
       runtime.client.getToolCatalogDetails(controller.signal),
       runtime.client.getGoal(request.sessionId, controller.signal),
@@ -147,6 +153,7 @@ export async function streamRuntimeChat(
       visionEnabled: vision,
       teamId: request.teamId,
       allowedSkills: request.allowedSkills,
+      disabledSkills: request.disabledSkills,
       planEnabled: request.referencePlanMode !== 'off',
       maxOutputTokens: configuredMaxOutputTokens,
       maxContextTokens,
@@ -257,10 +264,10 @@ export async function streamRuntimeChat(
     const finalText = finalMessage?.message.role === 'assistant'
       ? finalMessage.message.content
       : '';
-    if (finalText) {
+    if (finalText && finalMessage) {
       request.onFinalAssistantText?.(
         finalText,
-        streamChunk(terminal, lastAssistantMessageId || finalMessage?.messageId || ''),
+        streamChunk(terminal, finalMessage.messageId),
       );
     }
     const contextMetrics = contextWindowMetrics(
@@ -697,7 +704,8 @@ function assistantStreamChunk(
 ): AssistantStreamChunk {
   return {
     ...streamChunk(event, event.payload.messageId),
-    assistantSegmentIndex: event.payload.ordinal,
+    // This ordinal orders content blocks inside one model response, not
+    // assistant messages across the Turn's tool loop. Route by messageId.
     segmentId: event.payload.segmentId,
     segmentOrdinal: event.payload.ordinal,
   };

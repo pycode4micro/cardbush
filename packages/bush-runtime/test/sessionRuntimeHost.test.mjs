@@ -1721,6 +1721,55 @@ for (const recover of [true, false]) {
   });
 }
 
+test('continues after a successful checkpoint with a half-window output allowance', async () => {
+  const observed = [];
+  const host = new InMemoryRuntimeHost({ provider: {
+    async countInputTokens(request) {
+      return { inputTokens: request.messages.some(m => m.content === 'large-prior') ? 124_000 : 6_945, source: 'provider' };
+    },
+    async *stream(request) {
+      observed.push(request);
+      yield event(request.requestId, 0, 'response_started');
+      if (request.messages.some(m => m.name === 'context_pressure')) {
+        yield event(request.requestId, 1, 'tool_call_delta', { index: 0, toolCallId: 'checkpoint',
+          nameDelta: 'checkpoint_context', argumentsDelta: JSON.stringify({ summaries: ['Prior work retained.'], active_summary: '' }) });
+        yield event(request.requestId, 2, 'response_completed', { finishReason: 'tool_calls' });
+      } else {
+        yield event(request.requestId, 1, 'text_delta', { delta: observed.length === 1 ? 'large-prior' : 'continued successfully' });
+        yield event(request.requestId, 2, 'response_completed', { finishReason: 'stop' });
+      }
+    },
+  } });
+  await host.runSessionTurn(sessionRequest('seed-request', 'seed-turn', 'seed-user', 'seed'));
+  const next = { ...sessionRequest('large-output', 'large-output', 'next-user', 'continue'),
+    maxOutputTokens: 128_000, metadata: { contextWindowTokens: 256_000 } };
+  const terminal = await host.runSessionTurn(next);
+  assert.equal(terminal.payload.status, 'completed');
+  assert.equal(observed.length, 3);
+  assert.equal(observed[2].maxOutputTokens, 128_000, 'does not silently reduce configured output');
+  assert.ok(observed[2].messages.some(m => m.content.includes('Prior work retained.')));
+  assert.equal(host.events('session_1', 'large-output').filter(e => e.kind === 'context_compaction_completed').length, 1);
+});
+
+for (const [inputTokens, succeeds] of [[191_000, true], [225_000, false]]) {
+  test(`uses actual input fit when no more context can be summarized (${inputTokens})`, async () => {
+    let calls = 0;
+    const host = new InMemoryRuntimeHost({ provider: {
+      async countInputTokens() { return { inputTokens, source: 'provider' }; },
+      async *stream(request) { calls++;
+        yield event(request.requestId, 0, 'text_delta', { delta: 'done' });
+        yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
+      },
+    } });
+    const request = { ...sessionRequest('fit', 'fit', 'fit', 'continue'),
+      maxOutputTokens: 32_000, metadata: { contextWindowTokens: 256_000 } };
+    const terminal = await host.runSessionTurn(request);
+    assert.equal(terminal.payload.status, succeeds ? 'completed' : 'failed');
+    assert.equal(calls, succeeds ? 1 : 0);
+    if (!succeeds) assert.equal(terminal.payload.reason, 'current_turn_context_limit_exceeded');
+  });
+}
+
 function sessionRequest(requestId, turnId, messageId, content) {
   return {
     protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,

@@ -6,6 +6,17 @@ import {
   latestSessionEnvironmentLocalDate,
 } from "../dist/index.js";
 
+test('dynamic Skill selection keeps exclusions without freezing the installed catalog', () => {
+  const input = { requestId: 'dynamic', sessionId: 'dynamic', turnId: 'dynamic', messageId: 'dynamic',
+    createdAt: '2026-09-06T00:00:00Z', localDate: '2026-09-06',
+    userText: 'test', model: 'fixture', tools: [], disabledSkills: ['disabled-skill'] };
+  const dynamic = createProductAgentTurnRequest(input);
+  assert.equal('allowedSkills' in dynamic.metadata, false);
+  assert.deepEqual(dynamic.metadata.disabledSkills, ['disabled-skill']);
+  const restricted = createProductAgentTurnRequest({ ...input, allowedSkills: ['one-skill'] });
+  assert.deepEqual(restricted.metadata.allowedSkills, ['one-skill']);
+});
+
 test("builds one stable explicit product Turn for desktop and transport callers", () => {
   const request = createProductAgentTurnRequest({
     requestId: "request_1",

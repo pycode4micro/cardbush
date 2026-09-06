@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
-import { replaceFile } from "./atomicFiles.js";
+import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
@@ -105,6 +105,10 @@ export class CardbushAppsConfigStore {
   }
 
   async read(): Promise<CardbushAppsConfigSnapshot> {
+    return withConfigFileLock(this.#path, () => this.#read());
+  }
+
+  async #read(): Promise<CardbushAppsConfigSnapshot> {
     const catalog = await this.#catalog();
     try {
       return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")), catalog);
@@ -115,10 +119,14 @@ export class CardbushAppsConfigStore {
   }
 
   async write(input: unknown): Promise<CardbushAppsConfigSnapshot> {
-    const existing = await this.read();
+    return withConfigFileLock(this.#path, () => this.#write(input));
+  }
+
+  async #write(input: unknown): Promise<CardbushAppsConfigSnapshot> {
+    const existing = await this.#read();
     const snapshot = decodeUpdate(input, existing);
     await mkdir(dirname(this.#path), { recursive: true });
-    const temporary = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
+    const temporary = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temporary, `${JSON.stringify(snapshot, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,

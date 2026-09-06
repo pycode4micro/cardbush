@@ -266,6 +266,23 @@ function assistantFailurePresentation(
   const providerMessage = String(
     stopDetails.message ?? stopDetails.error ?? '',
   ).trim();
+  if (reason === 'current_turn_context_limit_exceeded') {
+    const inputTokens = Number(stopDetails.estimatedPromptTokens);
+    const usableTokens = Number(stopDetails.usableInputTokens);
+    const measured = Number.isFinite(inputTokens) && Number.isFinite(usableTokens)
+      ? (language === 'zh' ? `输入估算 ${inputTokens.toLocaleString()} token，可用输入额度 ${usableTokens.toLocaleString()} token。` :
+        `Estimated input: ${inputTokens.toLocaleString()} tokens; input allowance: ${usableTokens.toLocaleString()} tokens. `) : '';
+    return { reason, title: language === 'zh' ? '当前输入超出上下文额度' : 'Current input exceeds the context allowance',
+      detail: measured + (language === 'zh' ? '输入额度是总上下文减去预留输出额度；增大最大输出会减少可用输入。已有进度已保留。' :
+        'Input allowance is the total context minus reserved output. Increasing maximum output reduces room for input. Existing progress is preserved.') };
+  }
+  if (reason === 'reasoning-budget-exhausted-before-action' || reason === 'model_output_limit_exceeded') {
+    const attempts = Number(stopDetails.continuationAttempts) || 0;
+    return { reason, title: language === 'zh' ? '模型输出达到单次上限' : 'Model output reached its per-response limit',
+      detail: language === 'zh'
+        ? `${attempts ? `已自动续接 ${attempts} 次，仍未完成。` : '模型在达到输出上限前未能完成有效回复。'}已有正文和工具操作进度已保留，可继续任务。`
+        : `${attempts ? `Automatic continuation was attempted ${attempts} times without completion. ` : 'The model could not complete a response within the output limit. '}Existing text and tool progress are preserved; the task can be continued.` };
+  }
   return {
     reason,
     title: language === 'zh' ? '本轮执行失败' : 'This turn failed',
@@ -920,6 +937,7 @@ function MessageBubbleView({
       )
     : [];
   const renderActiveTranscript =
+    isActiveAssistantTurn ||
     activeTranscriptMessages.length > 1 ||
     (freezeTerminalTranscript && activeTranscriptMessages.length > 0);
   const guidanceBoundaryRound =
@@ -1415,6 +1433,37 @@ function TaskPlanBlock({
   );
 }
 
+function AssistantSegmentAttachments({
+  message,
+  language,
+}: {
+  message: ChatMessage;
+  language: AppLanguage;
+}) {
+  const embedded = splitMessageMedia(message.content);
+  const attachments = message.attachments ?? [];
+  const paths = (type: 'image' | 'video' | 'audio') => uniqueAttachmentPaths(
+    attachments
+      .filter((attachment) => attachment.type === type ||
+        (type === 'video' && isVideoPath(attachment.path ?? '')) ||
+        (type === 'audio' && isAudioPath(attachment.path ?? '')))
+      .map((attachment) => attachment.path?.trim() ?? '')
+      .filter(Boolean),
+  );
+  return <>
+    <MessageImageStrip
+      paths={pathsNotEmbeddedInContent(paths('image'), embedded.imagePaths)}
+      language={language}
+      showPaths
+    />
+    <MessageMediaStrip
+      videoPaths={pathsNotEmbeddedInContent(paths('video'), embedded.videoPaths)}
+      audioPaths={pathsNotEmbeddedInContent(paths('audio'), embedded.audioPaths)}
+      language={language}
+    />
+  </>;
+}
+
 function AssistantActiveTranscript({
   messages,
   language,
@@ -1434,15 +1483,15 @@ function AssistantActiveTranscript({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const visibleMessages = messages.filter(hasVisibleLoopHistoryMessage);
-  if (visibleMessages.length === 0) {
-    return null;
-  }
   const hasRunningTool = visibleMessages.some((message) =>
     (message.toolExecutions ?? []).some((execution) => isToolRunningInContext(execution, active)),
   );
   const showThinkingPlaceholder = active && !hasRunningTool;
   return (
     <div className="assistant-active-transcript">
+      {visibleMessages.length === 0 && active && (
+        <AssistantThinkingProcessLine language={language} model={selectedModel} />
+      )}
       {visibleMessages.map((segment, index) => {
         const executions = segment.toolExecutions ?? [];
         const isLastSegment = index === visibleMessages.length - 1;
@@ -1450,31 +1499,21 @@ function AssistantActiveTranscript({
           <section
             key={segment.id}
             className="assistant-active-transcript-segment"
+            data-segment-id={segment.id}
           >
-            {executions.length > 0 ? (
-              <AssistantMessageContent
-                content={segment.content}
-                executions={executions}
-                language={language}
-                message={segment}
-                active={active}
-                historyLabel={false}
-                selectedModel={selectedModel}
-                showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
-                onRevertChangeReport={onRevertChangeReport}
-                onOpenScene={onOpenScene}
-              />
-            ) : segment.content ? (
-              <>
-                <MessageInlineMediaContent content={segment.content} language={language} />
-                {showThinkingPlaceholder && isLastSegment && (
-                  <AssistantThinkingProcessLine
-                    language={language}
-                    model={selectedModel}
-                  />
-                )}
-              </>
-            ) : null}
+            <AssistantSegmentAttachments message={segment} language={language} />
+            <AssistantMessageContent
+              content={segment.content}
+              executions={executions}
+              language={language}
+              message={segment}
+              active={active}
+              historyLabel={false}
+              selectedModel={selectedModel}
+              showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
+              onRevertChangeReport={onRevertChangeReport}
+              onOpenScene={onOpenScene}
+            />
           </section>
         );
       })}
@@ -1534,7 +1573,7 @@ function AssistantMessageContent({
     if (segment.trim()) {
       blocks.push(
         <MessageInlineMediaContent
-          key={`text-before-${groupKey || index}`}
+          key={`text-${cursor}`}
           content={segment.trim()}
           language={language}
         />,
@@ -1558,7 +1597,7 @@ function AssistantMessageContent({
   const tail = displayContent.slice(cursor);
   if (tail.trim()) {
     blocks.push(
-      <MessageInlineMediaContent key="text-tail" content={tail.trim()} language={language} />,
+      <MessageInlineMediaContent key={`text-${cursor}`} content={tail.trim()} language={language} />,
     );
   }
   if (

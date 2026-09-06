@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -14,9 +15,11 @@ import { basename } from '../../shared/localPaths';
 import { shouldUsePlainTextPreview, textPreviewErrorMessage } from '../../shared/textPreview';
 import type { InspectorOpenDetail } from './inspectorEvents';
 import type { AppLanguage } from '../../types';
+import { MediaInspectorPreview } from './MediaInspectorPreview';
 import {
   normalizeInspectorBrowserAddress,
   inspectorMarkdownPath,
+  inspectorMediaTarget,
   isMarkdownInspectorTarget,
   parentDirectory,
 } from './inspectorTargets';
@@ -110,11 +113,14 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const requestedUrlRef = useRef(source);
   const markdownPath = inspectorMarkdownPath(target);
   const markdownPreview = isMarkdownInspectorTarget(target);
+  const mediaPreview = inspectorMediaTarget(target);
   const sourcePreview = !markdownPreview && /^cardbush-file:\/\/text-preview(?:\/|\?|$)/i.test(source);
-  const rendererPreview = markdownPreview || sourcePreview;
+  const rendererPreview = markdownPreview || sourcePreview || mediaPreview !== null;
   const [markdownRevision, setMarkdownRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
+  const [webviewRevision, setWebviewRevision] = useState(0);
+  const [previewError, setPreviewError] = useState(false);
 
   useEffect(() => {
     requestedUrlRef.current = source;
@@ -218,6 +224,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       }
     },
     reload: () => {
+      setPreviewError(false);
       loadingRef.current = true;
       setLoading(true);
       if (rendererPreview) {
@@ -232,6 +239,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       } else {
         const webview = webviewRef.current;
         if (!webview?.isConnected || !webviewDomReadyRef.current) {
+          setWebviewRevision((value) => value + 1);
           publishNavigation();
           return;
         }
@@ -286,16 +294,36 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     });
   }, [identity, markdownPath, onNavigationStateChange, target]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (rendererPreview) return undefined;
     const webview = webviewRef.current;
     if (!webview) return undefined;
+    webviewDomReadyRef.current = false;
+    let deadline = 0;
+    const armDeadline = () => {
+      window.clearTimeout(deadline);
+      deadline = window.setTimeout(() => {
+        setPreviewError(true);
+        loadingRef.current = false;
+        setLoading(false);
+        publishNavigation();
+      }, 30000);
+    };
+    setPreviewError(false);
+    loadingRef.current = true;
+    setLoading(true);
+    armDeadline();
     const ready = () => {
       webviewDomReadyRef.current = true;
+      window.clearTimeout(deadline);
+      loadingRef.current = false;
+      setLoading(false);
       publishNavigation();
       scheduleBrowserViewportFit();
     };
     const start = () => {
+      setPreviewError(false);
+      armDeadline();
       browserFitRevisionRef.current += 1;
       if (browserFitTimerRef.current) {
         window.clearTimeout(browserFitTimerRef.current);
@@ -311,12 +339,17 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       publishNavigation();
     };
     const finish = () => {
+      window.clearTimeout(deadline);
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
       scheduleBrowserViewportFit(80);
     };
-    const fail = () => {
+    const fail = (event: Event) => {
+      const detail = event as Event & { isMainFrame?: boolean; errorCode?: number };
+      if (detail.isMainFrame === false || detail.errorCode === -3) return;
+      window.clearTimeout(deadline);
+      setPreviewError(true);
       loadingRef.current = false;
       setLoading(false);
       publishNavigation();
@@ -376,13 +409,16 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     webview.addEventListener('dom-ready', ready);
     webview.addEventListener('did-start-loading', start);
     webview.addEventListener('did-finish-load', finish);
+    webview.addEventListener('did-stop-loading', finish);
     webview.addEventListener('did-fail-load', fail);
+    webview.addEventListener('render-process-gone', fail);
     webview.addEventListener('did-navigate', navigate);
     webview.addEventListener('did-navigate-in-page', navigate);
     webview.addEventListener('page-title-updated', updateTitle);
     webview.addEventListener('new-window', openWindow);
     webview.addEventListener('context-menu', contextMenu);
     return () => {
+      window.clearTimeout(deadline);
       browserFitRevisionRef.current += 1;
       if (browserFitTimerRef.current) {
         window.clearTimeout(browserFitTimerRef.current);
@@ -392,7 +428,9 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       webview.removeEventListener('dom-ready', ready);
       webview.removeEventListener('did-start-loading', start);
       webview.removeEventListener('did-finish-load', finish);
+      webview.removeEventListener('did-stop-loading', finish);
       webview.removeEventListener('did-fail-load', fail);
+      webview.removeEventListener('render-process-gone', fail);
       webview.removeEventListener('did-navigate', navigate);
       webview.removeEventListener('did-navigate-in-page', navigate);
       webview.removeEventListener('page-title-updated', updateTitle);
@@ -406,11 +444,21 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     scheduleBrowserViewportFit,
     source,
     target,
+    webviewRevision,
   ]);
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
-      {markdownPreview ? (
+      {mediaPreview ? (
+        <MediaInspectorPreview
+          key={`${mediaPreview.source}:${markdownRevision}`}
+          kind={mediaPreview.kind}
+          source={mediaPreview.source}
+          path={mediaPreview.path}
+          language={language}
+          onLoadingChange={publishMarkdownNavigation}
+        />
+      ) : markdownPreview ? (
         <MarkdownInspectorPreview
           key={`${markdownPath}:${markdownRevision}`}
           path={markdownPath}
@@ -425,11 +473,20 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           onLoadingChange={publishMarkdownNavigation}
         />
       ) : createElement('webview', {
+          key: webviewRevision,
           ref: webviewRef,
           className: 'right-inspector-webview',
           src: source,
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}
+      {!rendererPreview && previewError && (
+        <div className="inspector-preview-error" role="alert">
+          <p>{language === 'zh' ? '无法加载预览，文件可能不可用、格式不受支持，或加载已超时。' : 'Preview unavailable. The file may be missing, unsupported, or taking too long to load.'}</p>
+          <button type="button" onClick={() => setWebviewRevision(value => value + 1)}>
+            {language === 'zh' ? '重试' : 'Retry'}
+          </button>
+        </div>
+      )}
       {loading && (
         <div className="right-inspector-preview-loading" role="status">
           <span />

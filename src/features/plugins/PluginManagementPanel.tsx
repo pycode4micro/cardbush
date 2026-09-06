@@ -1,3 +1,4 @@
+import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
   Check,
@@ -67,6 +68,34 @@ export function PluginManagementPanel({
   const [error, setError] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  const dirtyPluginIds = useRef(new Set<string>());
+  const skillLoadRevision = useRef(0);
+
+  const loadSkillDetail = useCallback(async (name: string, isCurrent: () => boolean) => {
+    const revision = ++skillLoadRevision.current;
+    const current = () => isCurrent() && revision === skillLoadRevision.current;
+    setBusy(`skill:${name}`);
+    setError('');
+    try {
+      const detail = await onLoadSkillDetail(name);
+      if (current()) setSkillDetail(detail);
+    } catch (caught) {
+      if (current()) setError(errorMessage(caught));
+    } finally {
+      if (current()) setBusy(value => value === `skill:${name}` ? '' : value);
+    }
+  }, [onLoadSkillDetail]);
+
+  useEffect(() => {
+    if (page.kind !== 'skill') {
+      setBusy(value => value.startsWith('skill:') ? '' : value);
+      return;
+    }
+    let disposed = false;
+    setSkillDetail(null);
+    void loadSkillDetail(page.skillName, () => !disposed);
+    return () => { disposed = true; };
+  }, [page, loadSkillDetail]);
 
   useEffect(() => setLocalSkills(skills), [skills]);
   useEffect(() => {
@@ -111,6 +140,18 @@ export function PluginManagementPanel({
     void load();
   }, [load]);
 
+  useCapabilityCatalogRefresh(useCallback(async (isCurrent: () => boolean) => {
+    const apps = await fetchCardbushAppsConfiguration();
+    if (isCurrent()) setConfiguration((current) => ({
+      ...apps,
+      plugins: apps.plugins.map((plugin) => dirtyPluginIds.current.has(plugin.id)
+        ? current?.plugins.find((item) => item.id === plugin.id) ?? plugin : plugin),
+    }));
+    if (page.kind === 'skill') {
+      await loadSkillDetail(page.skillName, isCurrent);
+    }
+  }, [page, loadSkillDetail]));
+
   const persist = useCallback(async (
     next: CardbushAppsConfiguration,
     key: string,
@@ -120,6 +161,7 @@ export function PluginManagementPanel({
     setError('');
     try {
       const saved = await saveCardbushAppsConfiguration(next);
+      dirtyPluginIds.current.clear();
       setConfiguration(saved);
       setLocalSkills(await onReloadSkills());
       onNotify(message);
@@ -131,25 +173,16 @@ export function PluginManagementPanel({
   }, [onNotify, onReloadSkills]);
 
   const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
+    dirtyPluginIds.current.add(plugin.id);
     setConfiguration((current) => current ? {
       ...current,
       plugins: current.plugins.map((item) => item.id === plugin.id ? plugin : item),
     } : current);
   }, []);
 
-  const openSkill = useCallback(async (skill: SkillSummary) => {
+  const openSkill = useCallback((skill: SkillSummary) => {
     setPage({ kind: 'skill', skillName: skill.name });
-    setSkillDetail(null);
-    setBusy(`skill:${skill.name}`);
-    setError('');
-    try {
-      setSkillDetail(await onLoadSkillDetail(skill.name));
-    } catch (caught) {
-      setError(errorMessage(caught));
-    } finally {
-      setBusy('');
-    }
-  }, [onLoadSkillDetail]);
+  }, []);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const plugins = configuration?.plugins ?? [];
@@ -662,7 +695,15 @@ export function ChromeConnectionSettings({ language, plugin, busy, onReplace, on
 }
 
 function SkillDetailPage({ language, skill, loading, error, enabled, onBack, onToggle }: { language: AppLanguage; skill: SkillSummary | SkillDetail | null; loading: boolean; error: string; enabled: boolean; onBack: () => void; onToggle: (enabled: boolean) => void }) {
-  return <div className="plugin-detail-page"><button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>{loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <><header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header><section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '来源' : 'Source'} value={skillSourceText(language, skill) || '—'} /><Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>{'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}</> : <p className="plugin-hub-error">{error}</p>}</div>;
+  return <div className="plugin-detail-page">
+    <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>
+    {error && <p className="plugin-hub-error" role="alert">{error}</p>}
+    {loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <>
+      <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>
+      <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '来源' : 'Source'} value={skillSourceText(language, skill) || '—'} /><Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>
+      {'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
+    </> : null}
+  </div>;
 }
 
 function skillSourceText(language: AppLanguage, skill: SkillSummary): string {

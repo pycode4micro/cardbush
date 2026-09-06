@@ -55,6 +55,51 @@ and becomes stale whenever another Turn changes the shared desktop. Semantic ele
 index, `invoke`, and `set_value`) are preferred because they do not normally move
 the pointer; window-relative SendInput remains a guarded fallback.
 
+Observation never activates a background window. Target observations report
+`is_foreground`; `actionable` means input is ready in the foreground, while
+`window_action_available` permits window operations with the fresh state ID.
+For a background target, call `window` / `activate`, then observe that HWND again
+before sending input. Activation validates the observed HWND, process and bounds
+directly, including secondary application windows, and fails if Windows does not
+actually bring the target forward. Focus changes count as observation progress.
+
+State and presentation rejections before target dispatch do not count as
+unchanged action cycles. They retain a same-action retry limit and a separate
+budget of six preflight failures, so a different corrective action remains
+possible without allowing an endless invalid-action loop. Failures after target
+dispatch remain conservatively counted because input may have partially run.
+User takeover, explicit stop and one-use observation checks still apply.
+
+Regression coverage includes the Apps MCP unit suite and the opt-in Windows
+suite `npm run test:native --workspace=@cardbush/apps-mcp`. It opens disposable
+WinForms, WPF and uniquely titled Windows Terminal fixtures. Run desktop suites
+serially on an interactive Windows desktop; terminal tests require `wt.exe`.
+Independent application IPC and marker files verify effects, rather than tool
+dispatch acknowledgements. Reports and screenshots are written to temporary
+directories. See `../COMPUTER_USE_TEST_REPORT_2026-09-05.md` for coverage.
+
+Discovery enumerates visible top-level windows, including secondary windows in
+the same process. A concurrent request rejected as busy never cancels the owning
+request, including when both requests belong to the same scope.
+
+Long text is dispatched a Unicode code point at a time, with foreground and
+process checks between characters. The presentation hook drops tagged input
+downs after focus loss or pause; release events remain allowed to avoid stuck
+keys/buttons. Dragging rechecks the target and path. This remains cooperative
+desktop control, not an OS security boundary.
+
+Progress detection includes a bounded hash of visible, non-password UIA
+TextPattern content, so small terminal/document changes need not exceed a global
+image-difference threshold. No-progress limits still apply to unchanged output.
+A successful input result acknowledges dispatch only: verify the requested
+application result in the next observation. In particular, a terminal occupied
+by another process may receive characters without executing a shell command.
+
+If target PrintWindow capture fails, observation fails without issuing a state
+token. It does not substitute a desktop crop that could show an overlapping
+application. Applications that do not support target capture now report this
+limitation explicitly.
+
 Uninstall is a local catalog state change: the bundled package remains available
 for reinstall, while its Tool is not registered with MCP. Disabling the service
 removes the complete server from Runtime's MCP snapshot. Neither operation adds a

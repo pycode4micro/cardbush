@@ -242,8 +242,8 @@ function memberMessage(
   };
 }
 
-function narrowedSkills(parent: unknown, member: string[] | undefined): string[] {
-  if (!Array.isArray(parent)) return member ?? [];
+function narrowedSkills(parent: unknown, member: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(parent)) return member;
   const parentSkills = Array.isArray(parent)
     ? parent.filter((item): item is string => typeof item === "string")
     : [];

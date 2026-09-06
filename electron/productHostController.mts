@@ -31,6 +31,9 @@ import {
   runtimeSessionIdentitySchema,
   runtimeSessionListRequestSchema,
   sessionSnapshotSchema,
+  APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  BUSH_MCP_SNAPSHOT_PROTOCOL,
+  mcpSnapshotSchema,
 } from '@cardbush/bush-protocol';
 
 interface ProductRuntimeModelConfig {
@@ -121,6 +124,28 @@ export class ElectronProductHostController {
   async execute(command: unknown): Promise<unknown> {
     await this.#ensureLegacyModelCredentials();
     return this.#host.execute(command);
+  }
+
+  async refreshMcp(): Promise<unknown> {
+    const config = await this.#mcp.read();
+    const snapshot = mcpSnapshotSchema.parse({
+      protocol: BUSH_MCP_SNAPSHOT_PROTOCOL,
+      snapshotId: 'cardbush-product-mcp',
+      revision: config.revision,
+      servers: config.servers.filter((server) => server.enabled === true).map((server) => ({
+        id: server.id,
+        transport: server.transport === 'stdio' ? {
+          kind: 'stdio', command: server.command, args: server.args ?? [],
+          ...(server.cwd ? { cwd: server.cwd } : {}), env: server.env ?? {},
+        } : {
+          kind: server.transport === 'http' ? 'streamable_http' : server.transport,
+          url: server.url, headers: server.headers ?? {},
+        },
+        defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
+        toolPolicies: {},
+      })),
+    });
+    return this.#runtime.sendCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
   }
 
   async shutdown(): Promise<void> {

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readdirSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -159,6 +159,29 @@ async function run() {
     assert.ok(toolNames.includes('search_skills'));
     assert.ok(toolNames.includes('mcp__cardbush_apps__computer_use'));
     assert.ok(toolNames.includes('mcp__chrome_devtools__navigate_page'));
+    const originalApps = JSON.parse(readFileSync(appsConfigPath, 'utf8'));
+    const changedApps = structuredClone(originalApps);
+    changedApps.plugins.find(plugin => plugin.id === 'chrome').enabled = false;
+    // External edits need not know the host's revision bookkeeping.
+    writeFileSync(appsConfigPath, JSON.stringify(changedApps));
+    const hotApply = operationId => controller.command({
+      protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId,
+      command: { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {
+        protocol: BUSH_MCP_SNAPSHOT_PROTOCOL, snapshotId: 'utility-bundled-plugins', revision: 1, servers: [],
+      } },
+    });
+    const disabledChrome = await hotApply('hot_disable_chrome');
+    assert.equal(disabledChrome.ok, true);
+    assert.deepEqual(disabledChrome.result.servers.map(server => server.id), ['cardbush_apps']);
+    assert.ok(disabledChrome.result.revision > mcpResponse.result.revision);
+    writeFileSync(appsConfigPath, JSON.stringify(originalApps));
+    const restoredChrome = await hotApply('hot_restore_chrome');
+    assert.equal(restoredChrome.ok, true);
+    assert.deepEqual(restoredChrome.result.servers.map(server => server.id), ['cardbush_apps', 'chrome_devtools']);
+    assert.ok(restoredChrome.result.revision > disabledChrome.result.revision);
+    const noop = await hotApply('hot_noop');
+    assert.equal(noop.result.revision, restoredChrome.result.revision);
+    console.log('Utility hot refresh passed: external config edits, disable/enable and stable no-op revision on the same Runtime process.');
     const configuredProvider = await controller.command({
       protocol: BUSH_RUNTIME_IPC_PROTOCOL,
       type: 'command',

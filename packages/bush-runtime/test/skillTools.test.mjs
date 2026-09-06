@@ -66,6 +66,30 @@ test('resolves active Skill roots for every search', async () => {
   }
 });
 
+test('discovers additions, edits and removals during a turn while preserving disabled skills', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-live-skill-'));
+  try {
+    const registry = new ToolRegistry();
+    registerSkillTools(registry, [root]);
+    const search = registry.resolve('search_skills');
+    const ctx = { ...context({ query: 'browser', limit: 10 }, 'search'),
+      turn: { request: { metadata: { disabledSkills: ['blocked'] } } } };
+    assert.equal((await search.execute(ctx)).matches.length, 0);
+    await writeSkill(root, 'added', 'browser workflow');
+    await writeSkill(root, 'blocked', 'browser workflow');
+    assert.deepEqual((await search.execute(ctx)).matches.map(item => item.name), ['added']);
+    await writeSkill(root, 'added', 'spreadsheet workflow');
+    assert.equal((await search.execute(ctx)).matches.length, 0);
+    ctx.input.query = 'spreadsheet';
+    assert.equal((await search.execute(ctx)).matches[0].name, 'added');
+    ctx.turn.request.metadata.allowedSkills = [];
+    assert.equal((await search.execute(ctx)).matches.length, 0, 'an explicit allowlist remains restrictive');
+    delete ctx.turn.request.metadata.allowedSkills;
+    await rm(join(root, 'added'), { recursive: true });
+    assert.equal((await search.execute(ctx)).matches.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 async function writeSkill(root, name, description) {
   const packageDir = join(root, name);
   await mkdir(packageDir, { recursive: true });

@@ -569,28 +569,33 @@ export function normalizeActiveTurnTranscriptForDisplay(
         !isGuidanceSealedAssistantSegment(message) &&
         hasVisibleLoopHistory(message),
     );
-  if (siblingIndexes.length === 0) {
+  if (siblingIndexes.length === 0 && !activeAssistant.loopHistory?.length) {
     return messages;
   }
   const siblingIndexSet = new Set(siblingIndexes.map(({ index }) => index));
   const siblingMessages = siblingIndexes.map(({ message }) =>
     snapshotLoopHistoryMessage(message),
   );
-  const stableDisplayId = siblingIndexes[0]?.message.id ?? activeAssistant.id;
+  const loopHistory = mergeLoopHistoryMessages(
+    activeAssistant.loopHistory ?? [],
+    siblingMessages,
+  );
+  // Snapshot normalization may already have moved earlier segments into
+  // loopHistory. The row must keep the same key through that path as well.
+  const firstVisible = loopHistory.find((message) =>
+    chatMessageTurnId(message) === turnId && !isGuidanceSealedAssistantSegment(message),
+  ) ?? siblingIndexes[0]?.message ?? activeAssistant;
+  const stableRenderKey = firstVisible.renderKey ?? firstVisible.id;
   const inheritedPlan = [...siblingMessages]
     .reverse()
     .find((message) => message.taskPlan)?.taskPlan;
   const mergedAssistant: ChatMessage = {
     ...activeAssistant,
-    // The latest Runtime segment owns the live facts, but the first visible
-    // segment owns the React row identity. Keeping that identity stable avoids
-    // remounting and reparsing the complete Turn transcript on every segment.
-    id: stableDisplayId,
+    // Keep the row mounted without aliasing the current segment's identity to
+    // its first history entry (which would give transcript children duplicate keys).
+    renderKey: stableRenderKey,
     taskPlan: activeAssistant.taskPlan ?? inheritedPlan,
-    loopHistory: mergeLoopHistoryMessages(
-      activeAssistant.loopHistory ?? [],
-      siblingMessages,
-    ),
+    loopHistory,
   };
   return messages.flatMap((message, index) => {
     if (siblingIndexSet.has(index)) {

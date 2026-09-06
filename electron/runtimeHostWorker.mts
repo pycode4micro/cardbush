@@ -13,6 +13,7 @@ import {
   runtimeProviderBindingConfigSchema,
   runtimeProviderBindingIdentitySchema,
   runtimeIpcOutboundMessageSchema,
+  mcpSnapshotSchema,
   type ModelEvent,
   type ModelRequest,
   type RuntimeIpcOutboundMessage,
@@ -51,10 +52,12 @@ import {
 } from '@cardbush/bush-provider-openai';
 import {
   loadEnabledProductPluginSkillRoots,
+  loadEnabledProductPluginMcpServers,
   type PluginRoot,
 } from './productPlugins.js';
 import { dirname, isAbsolute, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -66,6 +69,10 @@ const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAIResponsesProviderRegistry;
 let mcp: McpClientManager;
+let mcpUpdate: Promise<unknown> = Promise.resolve();
+let effectiveMcp: ReturnType<typeof mcpSnapshotSchema.parse> | undefined;
+let effectiveMcpContent = '';
+let sourceMcpRevision = 0;
 
 async function handleMessage(input: unknown) {
   let message;
@@ -229,7 +236,26 @@ async function executeRuntimeCommand(
     return providers.remove(runtimeProviderBindingIdentitySchema.parse(command.payload));
   }
   if (command.kind === APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND) {
-    return mcp.apply(withBundledAppsServer(command.payload));
+    const operation = mcpUpdate.then(async () => {
+      const source = mcpSnapshotSchema.parse(command.payload);
+      // A late UI read must not overwrite a newer saved configuration.
+      if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) return mcp.snapshot();
+      const pluginServers = await loadEnabledProductPluginMcpServers(
+        pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '',
+      );
+      const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
+        ...source, servers: [...source.servers, ...pluginServers],
+      }));
+      const content = JSON.stringify({ snapshotId: combined.snapshotId, servers: combined.servers });
+      const revision = effectiveMcp && content === effectiveMcpContent
+        ? effectiveMcp.revision : Math.max(combined.revision, (effectiveMcp?.revision ?? 0) + 1);
+      effectiveMcp = { ...combined, revision };
+      effectiveMcpContent = content;
+      sourceMcpRevision = source.revision;
+      return mcp.apply(effectiveMcp);
+    });
+    mcpUpdate = operation.catch(() => undefined);
+    return operation;
   }
   if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
     return mcp.snapshot() ?? null;
@@ -270,6 +296,9 @@ function withBundledAppsServer(input: unknown): unknown {
         env: runtimeChildEnvironment({
           ELECTRON_RUN_AS_NODE: '1',
           ...(appsConfigPath ? { CARDBUSH_APPS_CONFIG_PATH: appsConfigPath } : {}),
+          // The bundled Apps process reads its config at launch. Only that
+          // connection needs replacement when its effective config changes.
+          CARDBUSH_APPS_CONFIG_FINGERPRINT: appsConfig.fingerprint,
         }),
       },
       versionMode: 'auto',
@@ -342,6 +371,7 @@ function readBundledAppsConfig(path: string | undefined): {
   revision: number;
   enabledPluginIds: Set<string>;
   chromeConnectionMode: 'connector' | 'remote_debugging';
+  fingerprint: string;
 } {
   if (!path) {
     return {
@@ -349,6 +379,7 @@ function readBundledAppsConfig(path: string | undefined): {
       revision: 1,
       enabledPluginIds: new Set(),
       chromeConnectionMode: 'connector',
+      fingerprint: '',
     };
   }
   if (!isAbsolute(path)) throw new Error('CARDBUSH_APPS_CONFIG_PATH must be absolute.');
@@ -384,6 +415,11 @@ function readBundledAppsConfig(path: string | undefined): {
       revision,
       enabledPluginIds,
       chromeConnectionMode,
+      fingerprint: createHash('sha256').update(JSON.stringify({
+        serviceEnabled: value.serviceEnabled,
+        plugins: plugins.filter((candidate) => candidate && typeof candidate === 'object' &&
+          ['computer-use', 'computer_use'].includes(String((candidate as Record<string, unknown>).id))),
+      })).digest('hex'),
     };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
@@ -392,6 +428,7 @@ function readBundledAppsConfig(path: string | undefined): {
         revision: 1,
         enabledPluginIds: new Set(),
         chromeConnectionMode: 'connector',
+        fingerprint: '',
       };
     }
     throw error;

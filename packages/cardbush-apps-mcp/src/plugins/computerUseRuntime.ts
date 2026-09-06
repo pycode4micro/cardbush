@@ -68,6 +68,7 @@ type ComputerUseSafetyState = {
   actionsSinceObservation: number;
   lastActionFingerprint: string;
   repeatedActionCount: number;
+  preflightFailures: number;
   lastObservationFingerprint: string;
   unchangedActionCycles: number;
   actionSinceObservation: boolean;
@@ -81,10 +82,13 @@ type ComputerUseSafetyState = {
 
 const maxActionsWithoutObservation = 3;
 const maxRepeatedActionAttempts = 2;
+const maxPreflightFailures = 6;
 const maxUserYields = 2;
 const maxPassiveObservations = 3;
 const safetyStateTtlMs = 20 * 60_000;
 const observationStateTtlMs = 30_000;
+
+class ComputerUseDesktopBusyError extends Error {}
 
 /** Session-scoped coordination for physical desktop input. */
 export class ComputerUseSafetyGuard {
@@ -97,7 +101,7 @@ export class ComputerUseSafetyGuard {
     this.#cleanup();
     const state = this.#state(scopeId);
     if (this.#activeScope || state.busy) {
-      throw new Error('Another Computer Use action is already using the desktop. Wait for it to finish, then observe before continuing.');
+      throw new ComputerUseDesktopBusyError('Another Computer Use action is already using the desktop. Wait for it to finish, then observe before continuing.');
     }
     const action = String(input.action ?? '').trim();
     if (isObservationAction(action)) {
@@ -123,6 +127,9 @@ export class ComputerUseSafetyGuard {
       }
       if (state.unchangedActionCycles >= maxRepeatedActionAttempts) {
         throw new Error('Computer Use stopped after two action cycles without visible progress. Use another route or report the blocker instead of retrying.');
+      }
+      if (state.preflightFailures >= maxPreflightFailures) {
+        throw new Error('Computer Use stopped after repeated preflight rejections. Report the blocker and wait for a new user request.');
       }
     }
     state.busy = true;
@@ -235,7 +242,27 @@ export class ComputerUseSafetyGuard {
     state.lastActionFingerprint = fingerprint;
     this.#desktopGeneration += 1;
     state.observation = undefined;
-    if (successful) state.userYieldCount = 0;
+    if (successful) {
+      state.userYieldCount = 0;
+      state.preflightFailures = 0;
+    }
+    state.touchedAt = Date.now();
+  }
+
+  recordPreflightFailure(scopeId: string, input: Record<string, unknown>): void {
+    if (!scopeId) return;
+    const state = this.#state(scopeId);
+    const fingerprint = actionFingerprint(input);
+    state.preflightFailures += 1;
+    state.repeatedActionCount = fingerprint === state.lastActionFingerprint
+      ? state.repeatedActionCount + 1
+      : 1;
+    state.lastActionFingerprint = fingerprint;
+    // No target action was dispatched. Allow a fresh observation and a different
+    // corrective action without inventing an unchanged desktop action cycle.
+    // The separate rejection budget still bounds alternating invalid attempts.
+    state.observationsWithoutAction = 0;
+    state.observation = undefined;
     state.touchedAt = Date.now();
   }
 
@@ -279,6 +306,7 @@ export class ComputerUseSafetyGuard {
       actionsSinceObservation: 0,
       lastActionFingerprint: '',
       repeatedActionCount: 0,
+      preflightFailures: 0,
       lastObservationFingerprint: '',
       unchangedActionCycles: 0,
       actionSinceObservation: false,
@@ -318,8 +346,13 @@ export async function executeComputerUse(
   computerUsePresentation.assertAvailable(scopeId);
   let release: () => void;
   try { release = computerUseSafety.begin(scopeId, input); }
-  catch (error) { await computerUsePresentation.finish(scopeId).catch(() => undefined); throw error; }
+  catch (error) {
+    // A rejected concurrent caller does not own the active operation's lease.
+    if (!(error instanceof ComputerUseDesktopBusyError)) await computerUsePresentation.finish(scopeId).catch(() => undefined);
+    throw error;
+  }
   let presentationAction: Awaited<ReturnType<typeof computerUsePresentation.action>> | undefined;
+  let actionMayHaveDispatched = false;
   const requestSignal = signal;
   try {
     if (action === 'observe' || action === 'screenshot') {
@@ -394,6 +427,7 @@ export async function executeComputerUse(
       if (!config.allowOpenApp) throw new Error('Opening applications is disabled in Computer Use settings.');
       await yieldForUserIfNeeded(config, computerUseSafety.expectedInputTick(scopeId), signal);
       const app = requiredString(input.app, 'app');
+      actionMayHaveDispatched = true;
       const launch = record(json(await powershell(openApplicationScript, {
         CARDBUSH_APP_TARGET: app,
       }, signal)));
@@ -408,6 +442,7 @@ export async function executeComputerUse(
       await yieldForUserIfNeeded(config, computerUseSafety.expectedInputTick(scopeId), signal);
       presentationAction = await computerUsePresentation.action(scopeId, input, observation, signal);
       signal = presentationAction.signal;
+      actionMayHaveDispatched = true;
       const output = await controlWindow(input, observation, signal);
       computerUseSafety.recordAction(scopeId, input);
       return plain(output);
@@ -416,6 +451,7 @@ export async function executeComputerUse(
       const observation = computerUseSafety.claimObservation(scopeId, input);
       presentationAction = await computerUsePresentation.action(scopeId, input, observation, signal);
       signal = presentationAction.signal;
+      actionMayHaveDispatched = true;
       if (
         action === 'invoke' ||
         action === 'set_value' ||
@@ -449,9 +485,10 @@ export async function executeComputerUse(
     if (error instanceof ComputerUseUserActiveError || computerUsePresentation.isPaused(scopeId)) {
       computerUseSafety.recordUserYield(scopeId);
     } else if (!isObservationAction(action) && !isAbortError(error)) {
-      // Failed input can still have partially reached the desktop. Counting the
-      // attempt prevents an agent from retrying the same failure forever.
-      computerUseSafety.recordAction(scopeId, input, false);
+      // Once dispatched, failed input may have partially reached the desktop.
+      // Presentation/state validation failures occur before target input starts.
+      if (actionMayHaveDispatched) computerUseSafety.recordAction(scopeId, input, false);
+      else computerUseSafety.recordPreflightFailure(scopeId, input);
     }
     if (error instanceof ComputerUseUserActiveError || computerUsePresentation.isPaused(scopeId)) {
       await computerUsePresentation.pause(scopeId).catch(() => undefined);
@@ -631,8 +668,14 @@ async function captureWindowState(
   const elements = includeAccessibility
     ? observedElements(recordOrEmpty(rawOutput.accessibility).elements)
     : [];
-  const semanticFingerprint = accessibilityFingerprint(elements);
+  const foregroundHwnd = optionalInteger(rawOutput.foreground_hwnd) ?? 0;
+  const isForeground = foregroundHwnd === hwnd;
   const accessibilityRecord = recordOrEmpty(rawOutput.accessibility);
+  const semanticFingerprint = JSON.stringify([
+    isForeground,
+    accessibilityFingerprint(elements),
+    optionalString(accessibilityRecord.text_fingerprint),
+  ]);
   const accessibility = includeAccessibility
     ? {
         available: accessibilityRecord.available === true,
@@ -650,8 +693,15 @@ async function captureWindowState(
     window,
     bounds,
     capture_method: optionalString(rawOutput.capture_method) || 'unknown',
-    foreground_hwnd: optionalInteger(rawOutput.foreground_hwnd) ?? 0,
-    actionable: includeAccessibility,
+    foreground_hwnd: foregroundHwnd,
+    is_foreground: isForeground,
+    actionable: includeAccessibility && isForeground,
+    window_action_available: includeAccessibility,
+    next_step: !includeAccessibility
+      ? 'Call observe with this exact hwnd before any action.'
+      : isForeground
+        ? 'Use the one-use state_id and exact hwnd for one action, then observe again to verify the result.'
+        : 'The target is in the background. Use this state_id and hwnd with action="window", operation="activate", then observe the same hwnd again and verify is_foreground before input. Observing alone does not activate a window.',
     ...(accessibility ? { accessibility } : {}),
   };
   const artifact: ComputerUseArtifact = {
@@ -732,9 +782,7 @@ try {
   try { $captured = [CardBushWindowCapture]::PrintWindow($h, $hdc, 2) }
   finally { $graphics.ReleaseHdc($hdc) }
   if (-not $captured) {
-    $graphics.Clear([System.Drawing.Color]::Black)
-    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, [System.Drawing.Size]::new($width, $height))
-    $captureMethod = 'screen_fallback'
+    throw 'Target window capture failed. A screen crop could contain another window, so no target observation was issued.'
   }
   $bitmap.Save($env:CARDBUSH_CAPTURE_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
   $sample = New-Object System.Drawing.Bitmap 32, 32
@@ -763,6 +811,8 @@ $accessibilityError = $null
 $totalElements = 0
 $truncated = $false
 $elements = [System.Collections.Generic.List[object]]::new()
+$visibleText = [Text.StringBuilder]::new()
+$textFingerprint = ''
 if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
   try {
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($h)
@@ -819,6 +869,21 @@ if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
           $valueReadOnly = [bool]$rangePattern.Current.IsReadOnly
         }
         $patternObject = $null
+        # Small terminal/document changes disappear in a downsampled screenshot.
+        # Hash bounded visible TextPattern content; never include password text.
+        if (-not $isPassword -and $visibleText.Length -lt 32768) {
+          try {
+            if ($element.TryGetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern, [ref]$patternObject)) {
+              $ranges = ([System.Windows.Automation.TextPattern]$patternObject).GetVisibleRanges()
+              foreach ($range in @($ranges | Select-Object -First 4)) {
+                $remaining = 32768 - $visibleText.Length
+                if ($remaining -le 0) { break }
+                [void]$visibleText.Append($range.GetText([Math]::Min(8192, $remaining)))
+              }
+            }
+          } catch { }
+        }
+        $patternObject = $null
         if ($element.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$patternObject)) {
           $semanticState = [string]([System.Windows.Automation.TogglePattern]$patternObject).Current.ToggleState
         } elseif ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$patternObject)) {
@@ -854,6 +919,12 @@ if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
   }
 }
 
+if ($visibleText.Length -gt 0) {
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { $textFingerprint = [Convert]::ToBase64String($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($visibleText.ToString()))) }
+  finally { $hasher.Dispose() }
+}
+
 [PSCustomObject]@{
   path = $env:CARDBUSH_CAPTURE_PATH
   window = [PSCustomObject]@{ process_id=$processId; hwnd=$h.ToInt64(); title=$windowTitle; process_name=$processName }
@@ -862,6 +933,7 @@ if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
   foreground_hwnd = [CardBushWindowCapture]::GetForegroundWindow().ToInt64()
   visual_fingerprint = [Convert]::ToBase64String($fingerprint)
   accessibility = [PSCustomObject]@{
+    text_fingerprint = $textFingerprint
     available = $accessibilityAvailable
     total_elements = $totalElements
     truncated = $truncated
@@ -872,12 +944,35 @@ if ($env:CARDBUSH_INCLUDE_ACCESSIBILITY -eq '1') {
 
 async function listWindows(signal?: AbortSignal): Promise<unknown[]> {
   const output = await powershell(String.raw`
-$items = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-  $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.MainWindowTitle -ne 'Program Manager'
-} | ForEach-Object {
-  [PSCustomObject]@{ process_id=$_.Id; hwnd=$_.MainWindowHandle.ToInt64(); title=$_.MainWindowTitle; process_name=$_.ProcessName }
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class CardBushWindowList {
+  delegate bool EnumProc(IntPtr hwnd,IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback,IntPtr parameter);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int capacity);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
+  public class Item { public long hwnd; public uint process_id; public string title,process_name; }
+  public static Item[] Read(){
+    var items=new List<Item>();
+    EnumWindows((hwnd,p)=>{
+      if(!IsWindowVisible(hwnd))return true;
+      var title=new StringBuilder(4096);GetWindowText(hwnd,title,title.Capacity);
+      if(title.Length==0 || title.ToString()=="Program Manager")return true;
+      uint pid;GetWindowThreadProcessId(hwnd,out pid);string name="";
+      try{name=Process.GetProcessById((int)pid).ProcessName;}catch{}
+      items.Add(new Item{hwnd=hwnd.ToInt64(),process_id=pid,title=title.ToString(),process_name=name});
+      return true;
+    },IntPtr.Zero);
+    return items.ToArray();
+  }
 }
-@($items) | ConvertTo-Json -Compress`, {}, signal);
+'@
+@([CardBushWindowList]::Read()) | ConvertTo-Json -Compress`, {}, signal);
   if (!output.trim()) return [];
   const value = json(output);
   return Array.isArray(value) ? value : [value];
@@ -893,8 +988,14 @@ async function controlWindow(
   if (!['focus', 'minimize', 'maximize', 'restore', 'close', 'move', 'resize'].includes(normalized)) {
     throw new Error(`Unsupported window operation: ${operation}`);
   }
-  const windows = await listWindows(signal) as Array<Record<string, unknown>>;
-  const target = selectWindowTarget(windows, input);
+  // MainWindowHandle enumeration may omit an observed secondary window.
+  // Use the bound identity and revalidate HWND/PID/bounds in the native action.
+  const target = selectWindowTarget([{
+    hwnd: observation.hwnd,
+    process_id: observation.processId,
+    process_name: observation.processName,
+    title: observation.title,
+  }], input);
   if (optionalInteger(target.hwnd) !== observation.hwnd) {
     throw new Error('The selected window no longer matches the observed target. Observe again.');
   }
@@ -909,6 +1010,7 @@ async function controlWindow(
   await powershell(windowControlScript, {
     CARDBUSH_WINDOW_HWND: String(target.hwnd),
     CARDBUSH_WINDOW_OPERATION: normalized,
+    CARDBUSH_EXPECTED_WINDOW_PID: String(observation.processId ?? 0),
     CARDBUSH_WINDOW_X: String(bounds.x ?? 0),
     CARDBUSH_WINDOW_Y: String(bounds.y ?? 0),
     CARDBUSH_WINDOW_WIDTH: String(bounds.width ?? 0),
@@ -1021,6 +1123,7 @@ async function runAccessibilityAction(
     action,
     hwnd: observation.hwnd,
     element_index: elementIndex,
+    observed_process_id: observation.processId,
     element_runtime_id: element.runtimeId,
     element_name: element.name,
     element_automation_id: element.automationId,
@@ -1052,6 +1155,13 @@ using System.Runtime.InteropServices;
 public static class CardBushUiaWindow {
   [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+  public static void CheckTarget(IntPtr hwnd, uint expectedPid) {
+    uint pid; GetWindowThreadProcessId(hwnd, out pid);
+    if (!IsWindow(hwnd) || expectedPid == 0 || pid != expectedPid || GetForegroundWindow() != hwnd)
+      throw new InvalidOperationException("Target window identity or foreground changed. Observe again.");
+  }
   [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
   [DllImport("user32.dll", EntryPoint="SetProcessDpiAwarenessContext")] private static extern bool SetDpiContext(IntPtr value);
   [DllImport("user32.dll", EntryPoint="SetProcessDPIAware")] private static extern bool SetDpiAware();
@@ -1146,6 +1256,7 @@ if ([bool]$p.has_observed_state) {
 }
 
 $usedPattern = $null
+[CardBushUiaWindow]::CheckTarget($h, [uint32]$p.observed_process_id)
 if ($p.action -eq 'set_value') {
   $pattern = $null
   if ($target.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
@@ -1209,6 +1320,7 @@ async function runInput(
     ...input,
     hwnd: observation.hwnd,
     observed_bounds: observation.bounds,
+    observed_process_id: observation.processId,
     coordinate_space: 'window',
   }), 'utf8').toString('base64');
   const output = await powershell(
@@ -1220,6 +1332,7 @@ async function runInput(
       CARDBUSH_EXPECTED_INPUT_TICK: String(expectedInputTick ?? 0),
     },
     signal,
+    action === 'type' ? 15_000 + String(input.text ?? '').length * 50 : 15_000,
   );
   const result = output.trim() ? record(json(output)) : { action };
   if (result.yielded_to_user === true) throw new ComputerUseUserActiveError();
@@ -1234,6 +1347,8 @@ public static class CardBushWindowControl {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int w, int h2, uint f);
@@ -1245,6 +1360,10 @@ public static class CardBushWindowControl {
 [CardBushWindowControl]::EnableDpiAwareness()
 $h = [IntPtr]([Int64]$env:CARDBUSH_WINDOW_HWND)
 $op = $env:CARDBUSH_WINDOW_OPERATION
+[uint32]$actualPid = 0
+[void][CardBushWindowControl]::GetWindowThreadProcessId($h, [ref]$actualPid)
+$expectedPid = [uint32]$env:CARDBUSH_EXPECTED_WINDOW_PID
+if ($actualPid -eq 0 -or ($expectedPid -gt 0 -and $actualPid -ne $expectedPid)) { throw 'The target window identity changed after observation. Observe the exact window again.' }
 $rect = New-Object CardBushWindowControl+RECT
 if (-not [CardBushWindowControl]::GetWindowRect($h, [ref]$rect)) { throw 'The target window is no longer available. Observe again.' }
 $expectedX = [int]$env:CARDBUSH_EXPECTED_WINDOW_X
@@ -1258,7 +1377,13 @@ if (
   [Math]::Abs(($rect.Bottom - $rect.Top) - $expectedHeight) -gt 2
 ) { throw 'The target window bounds changed after observation. Observe again.' }
 switch ($op) {
-  'focus' { [void][CardBushWindowControl]::ShowWindow($h,9); [void][CardBushWindowControl]::SetForegroundWindow($h) }
+  'focus' {
+    [void][CardBushWindowControl]::ShowWindow($h,9)
+    [void][CardBushWindowControl]::SetForegroundWindow($h)
+    $focusWait = [Diagnostics.Stopwatch]::StartNew()
+    while ([CardBushWindowControl]::GetForegroundWindow() -ne $h -and $focusWait.ElapsedMilliseconds -lt 250) { Start-Sleep -Milliseconds 25 }
+    if ([CardBushWindowControl]::GetForegroundWindow() -ne $h) { throw 'Windows did not activate the target window. Do not send input or repeat activation blindly; report the blocker and ask the user to bring the target forward.' }
+  }
   'minimize' { [void][CardBushWindowControl]::ShowWindow($h,6) }
   'maximize' { [void][CardBushWindowControl]::ShowWindow($h,3) }
   'restore' { [void][CardBushWindowControl]::ShowWindow($h,9) }
@@ -1286,6 +1411,9 @@ public static class CardBushInput {
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
   [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint period);
+  [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint period);
   [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT point);
   [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
@@ -1300,17 +1428,40 @@ public static class CardBushInput {
   public static long ForegroundWindow(){return GetForegroundWindow().ToInt64();}
   public static long RootWindowAt(int x,int y){POINT point=new POINT{x=x,y=y};IntPtr found=WindowFromPoint(point);if(found==IntPtr.Zero)return 0;IntPtr root=GetAncestor(found,2);return (root==IntPtr.Zero?found:root).ToInt64();}
   public static readonly UIntPtr InputTag=new UIntPtr(0x43425553);
-  public static void Key(byte k,bool d){keybd_event(k,0,d?0u:2u,InputTag);}
+  public static IntPtr ExpectedWindow;
+  public static uint ExpectedProcessId;
+  public static void CheckTarget(){
+    uint pid; GetWindowThreadProcessId(ExpectedWindow,out pid);
+    if(GetForegroundWindow()!=ExpectedWindow || pid==0 || (ExpectedProcessId!=0 && pid!=ExpectedProcessId))
+      throw new InvalidOperationException("The target window or foreground changed during input. Input stopped; observe again before resuming.");
+  }
+  public static void Key(byte k,bool d){
+    if(d)CheckTarget();
+    uint extended=(k>=33 && k<=40)||k==45||k==46||k==91?1u:0u;
+    INPUT item=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{virtualKey=k,flags=extended|(d?0u:2u),extraInfo=InputTag}}};
+    if(SendInput(1,new INPUT[]{item},Marshal.SizeOf(typeof(INPUT)))!=1)throw new InvalidOperationException("Keyboard input failed.");
+  }
   public static void Text(string text){
-    foreach(char character in text){
-      INPUT down=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=4,extraInfo=InputTag}}};
-      INPUT up=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=6,extraInfo=InputTag}}};
-      INPUT[] inputs=new INPUT[]{down,up};
-      if(SendInput(2,inputs,Marshal.SizeOf(typeof(INPUT)))!=2) throw new InvalidOperationException("Unicode keyboard input failed.");
-    }
+    timeBeginPeriod(1);
+    try{for(int index=0;index<text.Length;index++){
+      CheckTarget();
+      int length=char.IsHighSurrogate(text[index])&&index+1<text.Length&&char.IsLowSurrogate(text[index+1])?2:1;
+      INPUT[] inputs=new INPUT[length*2];
+      for(int part=0;part<length;part++){
+        ushort character=text[index+part];
+        inputs[part*2]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=4,extraInfo=InputTag}}};
+        inputs[part*2+1]=new INPUT{type=1,data=new InputUnion{keyboard=new KEYBDINPUT{scanCode=character,flags=6,extraInfo=InputTag}}};
+      }
+      if(SendInput((uint)inputs.Length,inputs,Marshal.SizeOf(typeof(INPUT)))!=inputs.Length) throw new InvalidOperationException("Unicode keyboard input failed.");
+      index+=length-1;
+      // Let the target process input and any resulting focus change before
+      // queueing another character. A dispatch ACK is not application success.
+      Thread.Sleep(40);
+      CheckTarget();
+    }}finally{timeEndPeriod(1);}
   }
   public static void MovePointer(int x,int y){if(!SetCursorPos(x,y))throw new InvalidOperationException("Pointer target is outside the interactive desktop.");}
-  public static void Drag(int x,int y,int tx,int ty,int steps,int duration){MovePointer(x,y);mouse_event(2,0,0,0,InputTag);try{for(int i=1;i<=steps;i++){MovePointer(x+(tx-x)*i/steps,y+(ty-y)*i/steps);if(duration>0)Thread.Sleep(duration/steps);}}finally{mouse_event(4,0,0,0,InputTag);}}
+  public static void Drag(int x,int y,int tx,int ty,int steps,int duration){CheckTarget();MovePointer(x,y);mouse_event(2,0,0,0,InputTag);try{for(int i=1;i<=steps;i++){CheckTarget();int nx=x+(tx-x)*i/steps,ny=y+(ty-y)*i/steps;if(RootWindowAt(nx,ny)!=ExpectedWindow.ToInt64())throw new InvalidOperationException("The drag path is covered by another window. Input stopped.");MovePointer(nx,ny);if(duration>0)Thread.Sleep(duration/steps);}}finally{mouse_event(4,0,0,0,InputTag);}}
 }
 '@
 [CardBushInput]::EnableDpiAwareness()
@@ -1340,6 +1491,8 @@ if (-not $ready) {
 $pointer = New-Object CardBushInput+POINT
 [void][CardBushInput]::GetCursorPos([ref]$pointer)
 $expectedHwnd = if ($null -ne $p.hwnd) { [Int64]$p.hwnd } else { 0 }
+[CardBushInput]::ExpectedWindow = [IntPtr]$expectedHwnd
+[CardBushInput]::ExpectedProcessId = if ($null -ne $p.observed_process_id) { [uint32]$p.observed_process_id } else { 0 }
 if ($expectedHwnd -gt 0) {
   $observedBounds = $p.observed_bounds
   $currentBounds = New-Object CardBushInput+RECT
@@ -1385,12 +1538,13 @@ $mouseAction = $p.action -eq 'click' -or $p.action -eq 'drag' -or $p.action -eq 
 $expectedPointerX = $pointer.x
 $expectedPointerY = $pointer.y
 try {
+  [CardBushInput]::CheckTarget()
   switch ($p.action) {
     'click' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;$b=if($p.button -eq 'right'){@(8,16)}elseif($p.button -eq 'middle'){@(32,64)}else{@(2,4)};$clicks=if($null -ne $p.clicks){[int]$p.clicks}else{1};[CardBushInput]::MovePointer($screenX,$screenY);1..$clicks|%{[CardBushInput]::mouse_event($b[0],0,0,0,[CardBushInput]::InputTag);[CardBushInput]::mouse_event($b[1],0,0,0,[CardBushInput]::InputTag)} }
     'scroll' { $expectedPointerX=$screenX;$expectedPointerY=$screenY;[CardBushInput]::MovePointer($screenX,$screenY);[CardBushInput]::mouse_event(2048,0,0,([int]$p.delta)*120,[CardBushInput]::InputTag) }
     'drag' { $expectedPointerX=$screenToX;$expectedPointerY=$screenToY;$steps=if($null -ne $p.steps){[int]$p.steps}else{20};$duration=if($null -ne $p.duration_ms){[int]$p.duration_ms}else{400};[CardBushInput]::Drag($screenX,$screenY,$screenToX,$screenToY,$steps,$duration) }
     'type' { [CardBushInput]::Text([string]$p.text) }
-    'key' { $keys=@($p.keys);if($keys.Count -eq 0 -or $null -eq $keys[0]){$keys=@($p.key)};$codes=@($keys|%{KeyCode ([string]$_)});$codes|%{[CardBushInput]::Key($_,$true)};[array]::Reverse($codes);$codes|%{[CardBushInput]::Key($_,$false)} }
+    'key' { $keys=@($p.keys);if($keys.Count -eq 0 -or $null -eq $keys[0]){$keys=@($p.key)};$codes=@($keys|%{KeyCode ([string]$_)});$pressed=[System.Collections.Generic.List[byte]]::new();try{foreach($code in $codes){[CardBushInput]::Key($code,$true);$pressed.Add($code)}}finally{for($index=$pressed.Count-1;$index -ge 0;$index--){[CardBushInput]::Key($pressed[$index],$false)}} }
   }
 } finally {
   if ($restorePointer -and $mouseAction) {
@@ -1450,6 +1604,7 @@ async function powershell(
   script: string,
   extraEnv: Record<string, string> = {},
   signal?: AbortSignal,
+  timeoutMs = 15_000,
 ): Promise<string> {
   throwIfAborted(signal);
   const utf8Script = [
@@ -1471,7 +1626,7 @@ async function powershell(
     encodedCommand,
   ], {
     windowsHide: true,
-    timeout: 15_000,
+    timeout: timeoutMs,
     signal,
     maxBuffer: 8 * 1024 * 1024,
     encoding: 'utf8',

@@ -215,6 +215,11 @@ const desktopApi = {
       icon?: string;
     } | null>,
   listSkills: () => ipcRenderer.invoke('skills:list') as Promise<unknown[]>,
+  onCapabilityCatalogChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('capabilities:changed', listener);
+    return () => ipcRenderer.removeListener('capabilities:changed', listener);
+  },
   readSkill: (skillName: string) =>
     ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
   installLocalPlugin: () => ipcRenderer.invoke('plugins:install-local') as Promise<{

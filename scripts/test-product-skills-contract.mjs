@@ -12,6 +12,10 @@ import {
 
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cardbush-product-skills-'));
 try {
+  const management = await readProductSkill([path.resolve('assets/skills')], 'cardbush-plugin-management');
+  assert.equal(management.name, 'cardbush-plugin-management');
+  assert.ok(management.description);
+  assert.ok((await fs.readFile(path.join(management.packageDir, 'references/plugin-contract.md'), 'utf8')).length > 0);
   const bundled = path.join(root, 'bundled');
   const user = path.join(root, 'user');
   await writeSkill(bundled, 'xlsx', 'Bundled spreadsheet support');

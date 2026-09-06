@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RuntimeRemoteError } from '@cardbush/bush-runtime-electron';
 
+import { useCapabilityCatalogRefresh } from './useCapabilityCatalogRefresh';
 import {
   cancelInteraction,
   createConversation,
@@ -1075,6 +1076,11 @@ export function useCardbushChat(
     setSkills(loadedSkills);
     return loadedSkills;
   }, []);
+
+  useCapabilityCatalogRefresh(useCallback(async (isCurrent: () => boolean) => {
+    const loaded = await fetchSkills();
+    if (isCurrent()) setSkills(loaded);
+  }, []));
 
 
   const loadSkillDetail = useCallback(
@@ -2248,9 +2254,7 @@ export function useCardbushChat(
           projectDir,
           workspaceDir,
           projectUserPrompt,
-          allowedSkills: skills
-            .map((skill) => skill.name)
-            .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+          disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
           referencePlanMode,
           permissionMode,
           subagentPermissionRouting,
@@ -3171,9 +3175,7 @@ export function useCardbushChat(
             projectDir,
             workspaceDir,
             projectUserPrompt,
-            allowedSkills: skills
-              .map((skill) => skill.name)
-              .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+            disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
             referencePlanMode,
             permissionMode,
             subagentPermissionRouting,
@@ -3348,9 +3350,7 @@ export function useCardbushChat(
             projectDir,
             workspaceDir,
             projectUserPrompt,
-            allowedSkills: skills
-              .map((skill) => skill.name)
-              .filter((name) => !requestContext.disabledSkillNames?.has(name)),
+            disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
             referencePlanMode,
             permissionMode,
             subagentPermissionRouting,

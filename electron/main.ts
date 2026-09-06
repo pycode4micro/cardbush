@@ -30,6 +30,7 @@ import type {
 } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 
 import { inspectProjectRoots } from './projectRoots';
+import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
@@ -155,7 +156,9 @@ let productHostController: {
   execute: (command: unknown) => Promise<unknown>;
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
+  refreshMcp: () => Promise<unknown>;
 } | null = null;
+let disposeCapabilityCatalogWatcher: (() => void) | undefined;
 let cardlingWindow: BrowserWindow | null = null;
 type ShadowWindowMode = 'readonly' | 'fork';
 type ShadowWindowPayload = {
@@ -3274,7 +3277,24 @@ async function initializeProductHost(controller: RuntimeHostController) {
     execute: (command: unknown) => Promise<unknown>;
     executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
     shutdown: () => Promise<void>;
+    refreshMcp: () => Promise<unknown>;
   };
+  disposeCapabilityCatalogWatcher?.();
+  disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
+    ...productSkillRoots(),
+    bundledPluginRoot, userPluginRoot,
+    path.join(app.getPath('userData'), 'product-host', 'config'),
+  ], () => {
+    const notify = () => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('capabilities:changed');
+      }
+    };
+    notify();
+    void productHostController?.refreshMcp().catch((error: unknown) => {
+      console.warn('[capability-refresh]', error instanceof Error ? error.message : String(error));
+    }).finally(notify);
+  });
 }
 
 function legacyBushserverModelConfigPaths(): string[] {
@@ -3647,6 +3667,8 @@ async function officePreviewRendererAssetResponse(
 
 app.on('before-quit', (event) => {
   isQuitting = true;
+  disposeCapabilityCatalogWatcher?.();
+  disposeCapabilityCatalogWatcher = undefined;
   if (hostShutdownComplete) {
     return;
   }
@@ -3779,6 +3801,8 @@ function localPathFromProtocolUrl(value: string) {
 
 function imageMimeTypeForPath(filePath: string) {
   const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.avif') return 'image/avif';
+  if (extension === '.apng') return 'image/apng';
   if (extension === '.png') {
     return 'image/png';
   }

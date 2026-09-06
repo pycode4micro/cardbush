@@ -7,7 +7,7 @@ import {
   type ChildAgentModelPolicy,
 } from "@cardbush/bush-protocol";
 
-import { replaceFile } from "./atomicFiles.js";
+import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
 export { CARDBUSH_SUBAGENT_CONFIG_PROTOCOL } from "@cardbush/bush-protocol";
 export const DEFAULT_SUBAGENT_DISABLED_TOOLS = DEFAULT_CHILD_AGENT_DISABLED_TOOLS;
@@ -33,6 +33,9 @@ export class ProductSubagentConfigStore {
   }
 
   async read(): Promise<ProductSubagentConfig> {
+    return withConfigFileLock(this.#path, () => this.#read());
+  }
+  async #read(): Promise<ProductSubagentConfig> {
     try {
       const raw = JSON.parse(await readFile(this.#path, "utf8"));
       const decoded = decodeProductSubagentConfig(raw);
@@ -48,7 +51,7 @@ export class ProductSubagentConfigStore {
 
   async #write(config: ProductSubagentConfig): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true });
-    const temp = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
+    const temp = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,

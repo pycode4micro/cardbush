@@ -98,11 +98,13 @@ export function contextMaintenanceInputReserveTokens(usableInputTokens: number):
  * the space required to issue the mandatory checkpoint on the next boundary.
  */
 export function requiresContextCompactionBeforeRound(pressure: ContextPressure): boolean {
+  const nextResponseReserve = pressure.reservedOutputTokens +
+    contextMaintenanceInputReserveTokens(pressure.usableInputTokens);
   return pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE ||
-    pressure.estimatedPromptTokens +
-      pressure.reservedOutputTokens +
-      contextMaintenanceInputReserveTokens(pressure.usableInputTokens) >=
-        pressure.usableInputTokens;
+    // If this speculative reserve alone fills the entire input allowance,
+    // no amount of summarization can satisfy it. Use actual input pressure.
+    (nextResponseReserve < pressure.usableInputTokens &&
+      pressure.estimatedPromptTokens + nextResponseReserve >= pressure.usableInputTokens);
 }
 
 /**

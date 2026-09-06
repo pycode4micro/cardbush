@@ -213,6 +213,7 @@ export function ImagePreviewDialog({
             type="button"
             onClick={onClose}
             aria-label={language === 'zh' ? '关闭预览' : 'Close preview'}
+            title={language === 'zh' ? '关闭预览（Esc）' : 'Close preview (Esc)'}
           >
             <X size={16} />
           </button>
@@ -252,6 +253,7 @@ export function ImagePreviewDialog({
         </div>
       </section>
     </div>,
-    document.body,
+    // Escape message containment while retaining the application's live theme tokens.
+    document.querySelector('.app') ?? document.body,
   );
 }

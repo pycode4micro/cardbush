@@ -1,6 +1,6 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { replaceFile } from "./atomicFiles.js";
+import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
 export const PRODUCT_MCP_CONFIG_PROTOCOL = "cardbush.product_mcp_config.v1" as const;
 
@@ -17,6 +17,9 @@ export class ProductMcpConfigStore {
     this.#path = resolve(path);
   }
   async read(): Promise<ProductMcpConfigSnapshot> {
+    return withConfigFileLock(this.#path, () => this.#read());
+  }
+  async #read(): Promise<ProductMcpConfigSnapshot> {
     try {
       return decode(JSON.parse(await readFile(this.#path, "utf8")));
     } catch (error) {
@@ -27,13 +30,16 @@ export class ProductMcpConfigStore {
     }
   }
   async write(input: unknown): Promise<ProductMcpConfigSnapshot> {
+    return withConfigFileLock(this.#path, () => this.#write(input));
+  }
+  async #write(input: unknown): Promise<ProductMcpConfigSnapshot> {
     const value = input && typeof input === "object" && !Array.isArray(input)
       ? input as Record<string, unknown> : {};
     if (!Array.isArray(value.servers)) throw new Error("servers must be an array.");
-    const before = await this.read();
+    const before = await this.#read();
     const next = decode({ protocol: PRODUCT_MCP_CONFIG_PROTOCOL, revision: before.revision + 1, servers: value.servers });
     await mkdir(dirname(this.#path), { recursive: true });
-    const temp = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
+    const temp = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
     await replaceFile(temp, this.#path);
     await chmod(this.#path, 0o600).catch(() => undefined);

@@ -103,17 +103,19 @@ const LazyRuntimeStreamPreTest = import.meta.env.DEV
 
 type RefreshActiveSession = (options?: { silent?: boolean }) => Promise<void>;
 
-function scrollDebug(label: string, data: Record<string, unknown>) {
+function scrollDebugEnabled() {
   try {
     // Detailed scroll traces are intentionally session-scoped. A persisted
     // localStorage switch previously left synchronous IPC logging enabled in
     // ordinary GUI runs long after the original diagnosis had finished.
-    if (window.sessionStorage.getItem('cardbush_scroll_debug') !== 'true') {
-      return;
-    }
+    return window.sessionStorage.getItem('cardbush_scroll_debug') === 'true';
   } catch {
-    return;
+    return false;
   }
+}
+
+function scrollDebug(label: string, data: Record<string, unknown>) {
+  if (!scrollDebugEnabled()) return;
   const entry = {
     at: new Date().toISOString(),
     label,
@@ -555,6 +557,8 @@ export function ChatPanel({
 
   const captureScrollGeometry = useCallback(
     (label: string, extra: Record<string, unknown> = {}) => {
+      // Disabled diagnostics must not force layout just to discard the result.
+      if (!scrollDebugEnabled()) return;
       const scroller = listScrollerRef.current;
       const chatBody = chatBodyRef.current;
       const frame = chatBody?.querySelector('.chat-content-frame');
@@ -2493,13 +2497,18 @@ export function ChatPanel({
               <div className="message-list-content">
                 {renderMessages.map((message, index) => (
                   <div
-                    key={message.id}
+                    key={message.renderKey ?? message.id}
                     className={`message-list-item${index === 0 ? ' first' : ''}${
                       message.role === 'user' && (
                         enteringUserMessageIds.has(message.id) ||
                         pendingSubmittedUserEntryMessageId === message.id
                       )
                         ? ' user-message-entering'
+                        : ''
+                    }${
+                      sending && message.role === 'assistant' &&
+                      activeAssistantForRender?.message.id === message.id
+                        ? ' streaming'
                         : ''
                     }${
                       sending &&
@@ -2513,7 +2522,6 @@ export function ChatPanel({
                     data-message-role={message.role}
                   >
                     <MessageBubble
-                      key={message.id}
                       message={message}
                       language={language}
                       sending={sending}

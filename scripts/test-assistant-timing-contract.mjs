@@ -69,6 +69,19 @@ vm.runInNewContext(projectionTranspiled.outputText, {
 });
 
 assert.equal(formatCompactDuration(null), '');
+const continuationProjection = projectionModule.exports.projectRuntimeTurnMessages({
+  turnId: 'continued', createdAt: '2026-09-06T00:00:00Z', completedAt: '2026-09-06T00:01:00Z', status: 'completed',
+  messages: [
+    { messageId: 'internal-continue', createdAt: '2026-09-06T00:00:20Z', message: {
+      role: 'developer', name: 'output_limit_continuation', content: 'Internal continuation instruction',
+    } },
+    { messageId: 'final-answer', createdAt: '2026-09-06T00:01:00Z', message: {
+      role: 'assistant', content: 'Complete answer', toolCalls: [],
+    } },
+  ],
+}, 'continued');
+assert.equal(continuationProjection.length, 1, 'internal developer continuation is not a chat message');
+assert.equal(continuationProjection[0].content, 'Complete answer');
 assert.equal(formatCompactDuration(999), '<1s');
 assert.equal(formatCompactDuration(59_000), '59s');
 assert.equal(formatCompactDuration(60_000), '1m');

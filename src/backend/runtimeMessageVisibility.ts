@@ -8,6 +8,7 @@ const legacyInternalRuntimeMessageNames = new Set([
 ]);
 
 export function isInternalRuntimeMessage(message: RuntimeSessionMessage): boolean {
+  if (message.message.role === 'developer' && message.message.name === 'output_limit_continuation') return true;
   if (message.message.role !== 'user') return false;
   if (message.message.visibility === 'internal') return true;
   return Boolean(

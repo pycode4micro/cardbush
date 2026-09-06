@@ -48,6 +48,9 @@ export class ComputerUsePresentation {
     this.#controller = controller;
     try {
       await this.#send({ op: 'action', scope, hwnd: target.hwnd, action: input.action, x, y });
+      // Long paced input is active work. Native input activity maintains its
+      // own watchdog; release/finish re-arms this process's idle cleanup.
+      if (this.#idleTimer) { clearTimeout(this.#idleTimer); this.#idleTimer = undefined; }
       this.assertAvailable(scope);
       if (controller.signal.aborted) throw controller.signal.reason;
       return {

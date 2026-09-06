@@ -28,6 +28,7 @@ export interface CompletedModelRound {
 
 export interface FailedModelRound {
   status: "failed";
+  finishReason?: string;
   providerResponseId?: string;
   text: string;
   reasoning: string;
@@ -165,6 +166,7 @@ export async function executeModelRound(
   if (failure) {
     return {
       status: "failed",
+      finishReason,
       providerResponseId,
       text,
       reasoning,

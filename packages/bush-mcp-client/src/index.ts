@@ -79,6 +79,11 @@ export class McpClientManager {
   #connections: ConnectedServer[] = [];
   #snapshot?: McpSnapshot;
   #result?: McpSnapshotResult;
+  #pending?: McpSnapshot;
+  #applicationError?: string;
+  #retryTimer?: ReturnType<typeof setTimeout>;
+  #queue: Promise<unknown> = Promise.resolve();
+  #closed = false;
 
   constructor(options: McpClientManagerOptions) {
     this.#registry = options.registry;
@@ -92,10 +97,19 @@ export class McpClientManager {
   }
 
   snapshot(): McpSnapshotResult | undefined {
-    if (!this.#result) return undefined;
+    const result = this.#result ?? (this.#pending ? {
+      protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
+      snapshotId: this.#pending.snapshotId,
+      revision: this.#pending.revision,
+      servers: [],
+    } : undefined);
+    if (!result) return undefined;
     return structuredClone({
-      ...this.#result,
-      servers: this.#result.servers.map((server) => {
+      ...result,
+      applicationState: this.#pending ? (this.#applicationError ? "failed" : "pending") : "applied",
+      ...(this.#pending ? { pendingRevision: this.#pending.revision } : {}),
+      ...(this.#applicationError ? { applicationError: this.#applicationError } : {}),
+      servers: result.servers.map((server) => {
         const connection = this.#connections.find((item) => item.config.id === server.id);
         return connection
           ? {
@@ -109,10 +123,22 @@ export class McpClientManager {
     });
   }
 
-  async apply(input: unknown): Promise<McpSnapshotResult> {
+  apply(input: unknown): Promise<McpSnapshotResult> {
     const snapshot = mcpSnapshotSchema.parse(input);
-    if (!this.#canApply()) {
-      throw new Error("MCP configuration cannot change while a Runtime Turn is active.");
+    const operation = this.#queue.then(() => this.#apply(snapshot));
+    this.#queue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  async #apply(snapshot: McpSnapshot): Promise<McpSnapshotResult> {
+    if (this.#closed) throw new Error("MCP manager is closed.");
+    const latest = this.#pending ?? this.#snapshot;
+    if (latest?.snapshotId === snapshot.snapshotId && snapshot.revision < latest.revision) {
+      throw new Error("MCP snapshot revision cannot move backwards.");
+    }
+    if (latest?.snapshotId === snapshot.snapshotId && snapshot.revision === latest.revision &&
+        fingerprint(snapshot) !== fingerprint(latest)) {
+      throw new Error("MCP snapshot identity was reused with different content.");
     }
     if (this.#snapshot?.snapshotId === snapshot.snapshotId) {
       if (snapshot.revision < this.#snapshot.revision) {
@@ -126,23 +152,49 @@ export class McpClientManager {
       }
     }
 
+    this.#pending = snapshot;
+    this.#applicationError = undefined;
+    if (!this.#canApply()) {
+      this.#scheduleRetry();
+      return this.snapshot()!;
+    }
+
     const next: ConnectedServer[] = [];
+    const created: ConnectedServer[] = [];
     try {
       for (const server of snapshot.servers) {
-        next.push(await this.#connect(server));
+        const reusable = this.#connections.find((connection) =>
+          connection.config.id === server.id && !connection.retired &&
+          connection.health === "ready" && JSON.stringify(connection.config) === JSON.stringify(server),
+        );
+        const connection = reusable ?? await this.#connect(server);
+        next.push(connection);
+        if (!reusable) created.push(connection);
+      }
+      // A new turn may have started while the transports were connecting.
+      if (this.#closed || !this.#canApply()) {
+        await this.#retireConnections(created);
+        this.#scheduleRetry();
+        return this.snapshot()!;
       }
       const registrations = next.flatMap((connection) =>
         connection.tools.map((tool) => this.#registration(connection, tool)),
       );
       this.#registry.replaceOwned("runtime_mcp", registrations);
     } catch (error) {
-      await this.#retireConnections(next);
+      await this.#retireConnections(created);
+      this.#applicationError = errorMessage(error);
+      this.#scheduleRetry(5_000);
       throw error;
     }
 
     const previous = this.#connections;
     this.#connections = next;
     this.#snapshot = snapshot;
+    this.#pending = undefined;
+    this.#applicationError = undefined;
+    clearTimeout(this.#retryTimer);
+    this.#retryTimer = undefined;
     this.#result = {
       protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
       snapshotId: snapshot.snapshotId,
@@ -159,15 +211,28 @@ export class McpClientManager {
         })),
       })),
     };
-    await this.#retireConnections(previous);
+    await this.#retireConnections(previous.filter((connection) => !next.includes(connection)));
     return this.snapshot()!;
   }
 
+  #scheduleRetry(delayMs = 250): void {
+    if (this.#closed || this.#retryTimer) return;
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined;
+      if (this.#pending && !this.#closed) void this.apply(this.#pending).catch(() => undefined);
+    }, delayMs);
+    this.#retryTimer.unref?.();
+  }
+
   async close(): Promise<void> {
+    this.#closed = true;
+    clearTimeout(this.#retryTimer);
+    await this.#queue;
     const current = this.#connections;
     this.#connections = [];
     this.#snapshot = undefined;
     this.#result = undefined;
+    this.#pending = undefined;
     this.#registry.removeOwned("runtime_mcp");
     await this.#retireConnections(current);
   }

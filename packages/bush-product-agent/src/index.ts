@@ -10,6 +10,12 @@ import {
   type ToolDefinition,
 } from "@cardbush/bush-protocol";
 
+const LOCAL_DELIVERABLE_INSTRUCTIONS = `For every local deliverable, include its verified absolute filesystem path in the final response. Use the actual path returned by a Tool or verified on disk; never invent a path or claim an unfinished file is ready.
+
+CardBush renders image, video and audio deliverables from standalone media-path lines. Put each media file's absolute path on its own line, outside code fences and without backticks, a list marker, a sentence prefix or trailing punctuation. Put the caption or explanation on a separate line. Preserve spaces in paths; a Windows path may use forward slashes. This format lets the UI show an image or an audio/video player instead of only text. Do not substitute a directory path for the media file.
+
+For documents and other downloadable files, use a descriptive Markdown link targeting the absolute file path; wrap the target in angle brackets when it contains spaces. Do not use an image embed for a document. Report any unavailable or unverified deliverable explicitly instead of promising a preview.`;
+
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
 
 Use read_archived_tool_result only when a preceding Tool result explicitly supplies a tool-result:// locator; it is not a general file, Skill, temporary-object, or knowledge reader.
@@ -22,9 +28,13 @@ For delivery or review work, use update_task_plan when a visible plan materially
 
 For local pages and development previews, use CardBush's integrated browser by default. Use chrome_devtools when the task needs the user's current Chrome cookies or signed-in state; this route is confined to the current CardBush session's visibly named Chrome tab groups. Create pages with new_page and only use pages returned by list_pages. Existing personal tabs remain invisible until the user explicitly copies one into the CardBush group from the extension popup. Never launch a managed or temporary automation profile. Remote-debugging attachment is an explicitly selected compatibility mode, not the default fallback. If the connector is unavailable, use the integrated browser when practical or explain the exact connector setup/grant needed instead of silently switching browser profiles.
 
-Default to a concise final response stating the outcome, verification and remaining risk. For every local deliverable, include its absolute path. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.`;
+Default to a concise final response stating the outcome, verification and remaining risk. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.
 
-export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further. Include absolute paths for local deliverables.`;
+${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
+
+export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further.
+
+${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
 
 export const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 
@@ -66,6 +76,7 @@ export interface ProductAgentTurnInput {
   visionEnabled?: boolean;
   teamId?: string;
   allowedSkills?: string[];
+  disabledSkills?: string[];
   planEnabled: boolean;
   maxOutputTokens?: number;
   maxContextTokens?: number;
@@ -146,7 +157,9 @@ function createBaseProductAgentTurnRequest(
         sessionTitle: input.sessionTitle?.trim() || initialTitle(input.userText),
       },
       teamId: input.teamId,
-      allowedSkills: input.allowedSkills ?? [],
+      ...(input.allowedSkills !== undefined || input.disabledSkills === undefined
+        ? { allowedSkills: input.allowedSkills ?? [] } : {}),
+      ...(input.disabledSkills !== undefined ? { disabledSkills: input.disabledSkills } : {}),
       planEnabled: input.planEnabled,
       contextWindowTokens: input.maxContextTokens,
       subagentChildPrefixMessages: [{ role: "system", content: CHILD_AGENT_SYSTEM_PROMPT }],

@@ -25,6 +25,7 @@ public static class Fixture {
   [StructLayout(LayoutKind.Sequential)] struct POINT { public int x,y; }
   [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h,EnumProc p,IntPtr l);
   [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h,out RECT r);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
@@ -37,6 +38,9 @@ public static class Fixture {
     Form f=new Form(); f.Text="CardBush Computer Use · isolated visual test";
     f.StartPosition=FormStartPosition.Manual; f.Bounds=new Rectangle(70,110,760,450);
     f.BackColor=Color.FromArgb(24,27,30);
+    Form cover=new Form(); cover.Text="CardBush background-window test fixture";
+    cover.StartPosition=FormStartPosition.Manual; cover.Bounds=new Rectangle(900,110,360,220);
+    f.FormClosed+=(s,e)=>cover.Dispose();
     Label label=new Label(); label.Text="Computer Use presentation test\n\nWindow-scoped border / CardBush pointer / Stop";
     label.ForeColor=Color.FromArgb(213,222,224); label.Font=new Font("Segoe UI",15);
     label.Bounds=new Rectangle(50,95,630,140); f.Controls.Add(label);
@@ -53,6 +57,7 @@ public static class Fixture {
           if(op=="move") f.Left+=60;
           if(op=="minimize") f.WindowState=FormWindowState.Minimized;
           if(op=="activate") { f.WindowState=FormWindowState.Normal; f.Activate(); }
+          if(op=="background") { cover.Show(); cover.Activate(); }
           var children=new List<object>(); IntPtr stop=IntPtr.Zero; RECT stopRect=new RECT();
           EnumChildWindows(f.Handle,(h,p)=> { RECT r; GetWindowRect(h,out r); if(r.b-r.t==32){stop=h;stopRect=r;} children.Add(new {hwnd=h.ToInt64(), visible=IsWindowVisible(h),x=r.l,y=r.t,width=r.r-r.l,height=r.b-r.t}); return true; },IntPtr.Zero);
           if(op=="stop" && stop!=IntPtr.Zero) PostMessage(stop,0x202,new IntPtr(0),new IntPtr((16<<16)|(stopRect.r-stopRect.l-20)));
@@ -63,7 +68,7 @@ public static class Fixture {
               b.Save(Convert.ToString(v["path"]),System.Drawing.Imaging.ImageFormat.Png);
             }
           }
-          POINT cursor; GetCursorPos(out cursor); Emit(new {kind="ack",op=op,children=children,x=cursor.x,y=cursor.y});
+          POINT cursor; GetCursorPos(out cursor); Emit(new {kind="ack",op=op,children=children,x=cursor.x,y=cursor.y,foreground=GetForegroundWindow().ToInt64(),count=count});
         }));
       }
       try { f.BeginInvoke(new Action(()=>f.Close())); } catch {}
@@ -151,7 +156,25 @@ try {
   await bridge.finish('next-user-turn'); await wait(200);
   bridge.dispose(); await wait(200);
   const config=defaultAppsRuntimeConfig().computerUse.config;
+  const background=await inspect('background');
+  assert.notEqual(background.foreground,hwnd,'only the second disposable fixture takes foreground');
   let observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  assert.equal(observed.output.is_foreground,false);
+  assert.equal(observed.output.actionable,false);
+  assert.equal(observed.output.window_action_available,true);
+  assert.match(observed.output.next_step,/operation="activate"/);
+  assert.notEqual((await inspect()).foreground,hwnd,'observation must not steal focus');
+  for(const input of [{action:'type',text:'must not be sent'},{action:'click',x:20,y:20}]) {
+    await assert.rejects(executeComputerUse({...input,hwnd,state_id:observed.output.state_id},config,undefined,'runtime-smoke'),/not foreground; no input was sent.*operation=activate/);
+    observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  }
+  assert.equal((await inspect()).count,0,'rejected actions have not clicked the fixture');
+  const activated=await executeComputerUse({action:'window',operation:'activate',hwnd,state_id:observed.output.state_id},config,undefined,'runtime-smoke');
+  assert.equal(activated.output.operation,'focus');
+  assert.equal((await inspect()).foreground,hwnd,'activation succeeds only when the target actually becomes foreground');
+  observed=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
+  assert.equal(observed.output.is_foreground,true);
+  assert.equal(observed.output.actionable,true);
   let button=observed.output.accessibility.elements.find(x=>x.name==='Increment 0');
   assert.ok(button,'the fixture button is observable');
   const semantic=button.patterns.some(p=>['Invoke','Toggle','SelectionItem','ExpandCollapse'].includes(p));
@@ -169,7 +192,7 @@ try {
   const verified=await executeComputerUse({action:'observe',hwnd},config,undefined,'runtime-smoke');
   assert.ok(verified.output.accessibility.elements.some(x=>x.name==='Increment 1'),`the real action completed exactly once: ${JSON.stringify({clicked:clicked.output,elements:verified.output.accessibility.elements})}`);
   await executeComputerUse({action:'finish'},config,undefined,'runtime-smoke');
-  console.log(JSON.stringify({passed:true,screenshot,inputMode:clicked.output.input_mode,checks:['native child window clipping','single owner','window move','screenshot hide','minimize','pause blocks action','stop button','pointer unchanged','stop aborts running operation','stopped turn cannot restart','explicit finish cleanup','real Runtime observe/click/verify/finish','unsupported UIA cannot report success']}));
+  console.log(JSON.stringify({passed:true,screenshot,inputMode:clicked.output.input_mode,checks:['native child window clipping','single owner','window move','screenshot hide','minimize','pause blocks action','stop button','pointer unchanged','stop aborts running operation','stopped turn cannot restart','explicit finish cleanup','background observation does not steal focus','two preflight failures allow activation recovery','activation verifies actual foreground','real Runtime observe/click/verify/finish','unsupported UIA cannot report success']}));
 } catch (error) {
   console.error(String(error.stderr || error.stack || error).slice(-5000));
   process.exitCode=1;

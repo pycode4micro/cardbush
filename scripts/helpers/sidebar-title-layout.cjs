@@ -126,8 +126,10 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
   // The hidden offscreen test window needs focus emulation to receive keyboard input.
   window.webContents.debugger.attach('1.3');
   await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab' });
-  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab' });
+  // Await dispatch: fire-and-forget keyboard input could arrive after focus()
+  // and advance focus again, making the accessibility assertion race the browser.
+  await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+  await window.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
   await run("sidebarRow(1).querySelector('.conversation-pin').focus()");
   await until("sidebarRow(1).querySelector('.conversation-pin').matches(':focus-visible')", 'keyboard focus');
   await until("sidebarGeometry(1).pinOpacity === '1' && sidebarGeometry(1).menuOpacity === '1'", 'keyboard action lane finishes its transition');

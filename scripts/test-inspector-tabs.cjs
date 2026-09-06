@@ -46,7 +46,8 @@ app.whenReady().then(async () => {
           strip.state.overflow && h('button',{className:'right-inspector-tab-scroll'},'>')
         ), createPortal(h('div',{className:'right-inspector-tab-context-menu',style:{left:720,top:85}},'Menu'),document.querySelector('.app') ?? document.body)));
       }
-      createRoot(document.getElementById('root')).render(h(React.StrictMode,null,h(Harness)));
+      const reactRoot = createRoot(document.getElementById('root'));
+      reactRoot.render(h(React.StrictMode,null,h(Harness)));
     `);
     const run = (code) => window.webContents.executeJavaScript(code);
     await pause();
@@ -78,7 +79,58 @@ app.whenReady().then(async () => {
     await run('controls.setWidth(390)'); await pause();
     assert.equal((await snapshot()).state.overflow,false,'arrows disappear even when their old slots would cause overflow');
     assert.equal(await run('document.documentElement.scrollLeft'),0,'tab reveal never scrolls app ancestors');
+    await run(`
+      const {useOutsideDismiss} = load(${JSON.stringify(compile('src/hooks/useOutsideDismiss.ts'))});
+      function MenuHarness() {
+        const [open,setOpen] = React.useState('');
+        const menuRef=React.useRef(null), portalRef=React.useRef(null);
+        const refs=React.useMemo(()=>[menuRef,portalRef],[]);
+        const dismiss=React.useCallback(()=>setOpen(''),[]);
+        useOutsideDismiss(Boolean(open),refs,dismiss);
+        window.menuControl={setOpen};
+        return h('div',{className:'app',style:{height:650}},
+          h('button',{id:'outside',onPointerDown:e=>e.stopPropagation()},'Outside stopping propagation'),
+          h('div',{style:{position:'absolute',left:400,top:100,width:400,height:300}},
+            h('iframe',{id:'guest',srcDoc:'<button onclick="parent.guestClicks++">Guest action</button>',style:{width:'100%',height:'100%'}}),
+            open&&h('div',{className:'inspector-menu-dismiss-layer','aria-hidden':true,onPointerDown:dismiss})),
+          open&&(open==='context'
+            ? createPortal(h('div',{ref:portalRef,role:'menu',style:{position:'fixed',zIndex:120,left:410,top:105}},
+                h('button',{id:'inside',onClick:()=>{window.menuActions++;}},open+' item')),document.body)
+            : h('header',{className:'right-inspector-toolbar'},h('div',{ref:menuRef,role:'menu',style:{position:'fixed',left:410,top:105}},
+                h('button',{id:'inside',onClick:()=>{window.menuActions++;}},open+' item')))));
+      }
+      window.guestClicks=0;window.menuActions=0;
+      reactRoot.render(h(React.StrictMode,null,h(MenuHarness)));
+    `);
+    await pause();
+    for (const kind of ['all-tabs', 'context', 'add']) {
+      await run(`menuControl.setOpen(${JSON.stringify(kind)})`); await pause();
+      assert.equal(await run('(()=>{const b=document.getElementById("inside"),r=b.getBoundingClientRect();return document.elementFromPoint(r.x+3,r.y+3)===b;})()'),true,'menu remains above guest dismissal layer: '+kind);
+      await run(`document.getElementById('inside').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.getElementById('inside').click()`);
+      assert.equal(await run('Boolean(document.querySelector("[role=menu]"))'),true,'inside portal click stays available');
+      await run(`document.getElementById('outside').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))`); await pause();
+      assert.equal(await run('Boolean(document.querySelector("[role=menu]"))'),false,'capture closes despite stopPropagation: '+kind);
+      await run(`menuControl.setOpen(${JSON.stringify(kind)})`); await pause();
+      await run(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`); await pause();
+      assert.equal(await run('Boolean(document.querySelector("[role=menu]"))'),false,'Escape closes '+kind);
+      await run(`menuControl.setOpen(${JSON.stringify(kind)})`); await pause();
+      await run(`window.dispatchEvent(new Event('blur'))`); await pause();
+      assert.equal(await run('Boolean(document.querySelector("[role=menu]"))'),false,'window blur closes '+kind);
+      await run(`menuControl.setOpen(${JSON.stringify(kind)})`); await pause();
+      assert.equal(await run('document.elementFromPoint(650,200).className'),'inspector-menu-dismiss-layer','guest area is covered while menu opens');
+      window.webContents.sendInputEvent({type:'mouseDown',x:650,y:200,button:'left',clickCount:1});
+      window.webContents.sendInputEvent({type:'mouseUp',x:650,y:200,button:'left',clickCount:1});
+      await pause();
+      assert.equal(await run('Boolean(document.querySelector("[role=menu]"))'),false,'native click above guest closes '+kind);
+      assert.equal(await run('Boolean(document.querySelector(".inspector-menu-dismiss-layer"))'),false,'dismiss layer removed');
+    }
+    assert.equal(await run('guestClicks'),0,'dismiss click never activates content behind menu');
+    assert.equal(await run('menuActions'),3,'inside menu actions execute once');
+    const appSource=fs.readFileSync(path.join(root,'src/App.tsx'),'utf8');
+    assert.match(appSource,/useOutsideDismiss\(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus\)/);
+    assert.match(appSource,/inspector-menu-dismiss-layer[\s\S]*?onPointerDown=\{dismissInspectorMenus\}/);
     assert.deepEqual(errors,[]);
+    console.log('Inspector menus: portal actions, outside capture, Escape, blur, native guest-area dismissal and cleanup passed.');
     console.log('Inspector behavior: delayed mount, reopen, active reveal, portal, wheel, zoom, resize and ancestor isolation passed.');
   } finally { window.destroy(); }
 }).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1);});

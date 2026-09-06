@@ -68,6 +68,19 @@ test("applies the same checkpoint invariant to a one-million-token window", () =
   }), 41_760);
 });
 
+test('large output allowances do not create an impossible compaction target', () => {
+  for (const input of [6_945, 45_937]) {
+    assert.equal(requiresContextCompactionBeforeRound(pressure({
+      estimatedPromptTokens: input, reservedOutputTokens: 128_000,
+      usableInputTokens: 128_000, ratio: input / 128_000,
+    })), false);
+  }
+  assert.equal(requiresContextCompactionBeforeRound(pressure({
+    estimatedPromptTokens: 124_000, reservedOutputTokens: 128_000,
+    usableInputTokens: 128_000, ratio: 124_000 / 128_000,
+  })), true, 'actual context pressure still triggers compaction');
+});
+
 test("slims only an emergency checkpoint request without mutating legacy history", () => {
   const archivedResult = (id) => JSON.stringify({
     archived: true,

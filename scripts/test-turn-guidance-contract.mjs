@@ -1095,10 +1095,11 @@ const activeProjection = normalizeActiveTurnTranscriptForDisplay([
 ], 'active-turn');
 assert.equal(activeProjection.length, 1);
 assert.equal(
-  activeProjection[0].id,
+  activeProjection[0].renderKey,
   'active-segment-1',
   'the first visible assistant segment must keep ownership of the active React row key',
 );
+assert.equal(activeProjection[0].id, 'active-segment-2', 'the current Runtime segment keeps its real identity');
 assert.equal(activeProjection[0].content, '第二段惯性回复');
 assert.deepEqual(
   plain(activeProjection[0].loopHistory.map((message) => message.content)),

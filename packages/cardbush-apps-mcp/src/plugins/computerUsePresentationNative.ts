@@ -43,7 +43,7 @@ public static class CardBushPresentation {
   static Layer frame, badge;
   static IntPtr target;
   static string scope = "";
-  static bool paused, suspended, pointer, active, closing;
+  static bool paused, suspended, pointer, active, closing, windowAction;
   static DateTime touched, entered, lastHuman = DateTime.MinValue, fadeStarted;
   static float pointerX, pointerY;
   static bool click;
@@ -139,14 +139,15 @@ public static class CardBushPresentation {
         if (!IsWindow(new IntPtr(Number(v,"hwnd")))) throw new Exception("The target window no longer exists.");
         bool newScope=scope!=requestScope;
         if(newScope) paused=false;
-        scope=requestScope; active=true; closing=false; suspended=false; pointer=false;
+        scope=requestScope; active=true; closing=false; suspended=false; pointer=false; windowAction=false;
         Bind(new IntPtr(Number(v,"hwnd")));
         if (paused && (DateTime.UtcNow-lastHuman).TotalMilliseconds>=1200) paused=false;
         touched=DateTime.UtcNow; timer.Interval=250; SyncWindow();
       } else if(op=="action") {
         if(!active || scope!=requestScope || target.ToInt64()!=Number(v,"hwnd")) throw new Exception("Observe the exact target window before control.");
         if(paused) throw new Exception("User has taken over. Observe again after the user finishes.");
-        if(Text(v,"action")!="window" && GetAncestor(GetForegroundWindow(),2)!=target) throw new Exception("The observed window is no longer foreground. Observe it again.");
+        windowAction=Text(v,"action")=="window";
+        if(Text(v,"action")!="window" && GetAncestor(GetForegroundWindow(),2)!=target) throw new Exception("The target window is not foreground; no input was sent. Observe the exact hwnd for a fresh state_id, use action=window with operation=activate and that state_id/hwnd, then observe again to verify foreground before input. Observing alone does not activate the window.");
         pointer=v.ContainsKey("x") && v["x"]!=null && v.ContainsKey("y") && v["y"]!=null;
         if(pointer) {
           RECT wr; POINT origin=new POINT(); GetWindowRect(target,out wr); ClientToScreen(target,ref origin);
@@ -154,7 +155,7 @@ public static class CardBushPresentation {
         }
         click=Text(v,"action")=="click" || Text(v,"action")=="invoke";
         touched=DateTime.UtcNow; suspended=false; Redraw(); SyncWindow();
-      } else if(op=="idle") { if(scope==requestScope) { ReleaseInput(); pointer=false; touched=DateTime.UtcNow; Redraw(); } }
+      } else if(op=="idle") { if(scope==requestScope) { ReleaseInput(); pointer=false; windowAction=false; touched=DateTime.UtcNow; Redraw(); } }
       else if(op=="pause") { if(scope==requestScope) Human(false); }
       Emit(new { kind="ack", id=id, paused=paused });
     } catch(Exception ex) { Emit(new { kind="ack", id=id, error=ex.Message }); }
@@ -164,6 +165,7 @@ public static class CardBushPresentation {
     Application.EnableVisualStyles();
     dispatcher=new Form(); IntPtr handle=dispatcher.Handle;
     onWindow=(hook,evt,hwnd,obj,child,thread,time)=> {
+      if(evt==3 && active && !suspended && !windowAction && GetAncestor(GetForegroundWindow(),2)!=target) Human(false);
       if(evt==3 || (hwnd==target && obj==0)) SyncWindow();
     };
     eventHooks.Add(SetWinEventHook(3,3,IntPtr.Zero,onWindow,0,0,2));
@@ -171,7 +173,14 @@ public static class CardBushPresentation {
     onMouse=(code,msg,data)=> {
       if(code>=0) {
         MOUSE input=(MOUSE)Marshal.PtrToStructure(data,typeof(MOUSE));
+        long inputMessage=msg.ToInt64();
+        bool buttonUp=inputMessage==0x202 || inputMessage==0x205 || inputMessage==0x208;
+        if(input.extra==inputTag && !buttonUp && (!active || paused || GetAncestor(GetForegroundWindow(),2)!=target)) {
+          if(active && !paused) Human(false);
+          return new IntPtr(1);
+        }
         if(input.extra==inputTag) {
+          if(active && !paused) touched=DateTime.UtcNow;
           long message=msg.ToInt64();
           if(message==0x201) heldMouse|=4; else if(message==0x202) heldMouse&=~4u;
           if(message==0x204) heldMouse|=16; else if(message==0x205) heldMouse&=~16u;
@@ -184,6 +193,11 @@ public static class CardBushPresentation {
     onKey=(code,msg,data)=> {
       if(code>=0) {
         KEY input=(KEY)Marshal.PtrToStructure(data,typeof(KEY));
+        if(input.extra==inputTag && (input.flags&0x80)==0 && (!active || paused || GetAncestor(GetForegroundWindow(),2)!=target)) {
+          if(active && !paused) Human(false);
+          return new IntPtr(1);
+        }
+        if(input.extra==inputTag && active && !paused) touched=DateTime.UtcNow;
         if(input.extra==inputTag && input.key!=0xE7) {
           if((input.flags&0x80)==0) heldKeys.Add((byte)input.key); else heldKeys.Remove((byte)input.key);
         }

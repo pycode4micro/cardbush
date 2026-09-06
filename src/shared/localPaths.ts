@@ -16,7 +16,7 @@ export function stripWrappingQuotes(value: string) {
 }
 
 export function isImagePath(value: string) {
-  return /\.(png|jpe?g|webp|gif|bmp|ico)(?:[?#].*)?$/i.test(
+  return /\.(png|apng|avif|jpe?g|webp|gif|bmp|ico)(?:[?#].*)?$/i.test(
     stripWrappingQuotes(value.trim()),
   );
 }

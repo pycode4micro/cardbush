@@ -918,6 +918,13 @@ export class InMemoryRuntimeHost {
     let round = input.nextRound - 1;
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
+    let outputLimitContinuations = 0;
+    for (const message of input.nextRound > 1 ? [...input.messages].reverse() : []) {
+      if (message.role === "tool" || message.role === "user") break;
+      if (message.role === "developer" && message.name === "output_limit_continuation") {
+        outputLimitContinuations += 1;
+      }
+    }
     let contextCompactionFailures = 0;
     let contextPressureNoticeKey: string | undefined;
     // Resumed checkpoints retain their saved tool catalog and cache prefix.
@@ -1162,7 +1169,7 @@ export class InMemoryRuntimeHost {
               state.unsummarizedTurnIds.length === 0 &&
               state.activeTurn === undefined &&
               pressure &&
-              requiresContextCompactionBeforeRound(pressure)
+              pressure.ratio >= CONTEXT_COMPACTION_HARD_PRESSURE
             ) {
               let summaryLimit = Math.min(
                 CONTEXT_SUMMARY_FALLBACK_TURNS,
@@ -1188,10 +1195,10 @@ export class InMemoryRuntimeHost {
                   appendOnlyInputFloorTokens,
                 );
                 dispatchPressure = pressure;
-                if (!pressure || !requiresContextCompactionBeforeRound(pressure)) break;
+                if (!pressure || pressure.ratio < CONTEXT_COMPACTION_HARD_PRESSURE) break;
                 summaryLimit -= 1;
               } while (summaryLimit >= 0);
-              if (pressure && requiresContextCompactionBeforeRound(pressure)) {
+              if (pressure && pressure.ratio >= 1) {
                 return finalize({
                   status: "failed",
                   reason: "current_turn_context_limit_exceeded",
@@ -1199,6 +1206,7 @@ export class InMemoryRuntimeHost {
                     estimatedPromptTokens: pressure.estimatedPromptTokens,
                     measurement: pressure.measurement,
                     usableInputTokens: pressure.usableInputTokens,
+                    reservedOutputTokens: pressure.reservedOutputTokens,
                     preservedSummaryTurns: Math.max(0, summaryLimit),
                   },
                 });
@@ -1419,8 +1427,9 @@ export class InMemoryRuntimeHost {
             );
             return stop(projector.finalMessageId);
           }
-          if (result.status === "completed") {
-            completedRound = result;
+          if (result.status === "completed" ||
+              (result.finishReason === "length" && result.error.code === "incomplete_tool_call")) {
+            completedRound = { ...result, status: "completed" };
             completedProjector = projector;
             break;
           }
@@ -1486,6 +1495,49 @@ export class InMemoryRuntimeHost {
         if (!completedRound || !completedProjector) {
           throw new Error("Runtime retry loop exited without a model result.");
         }
+        if (completedRound.finishReason === "length") {
+          // Nothing from a truncated tool-call batch has been dispatched yet.
+          // Retain prose/reasoning but never place partial calls in model history.
+          if (completedRound.text || completedRound.reasoning) {
+            const partial: ModelMessage = {
+              role: "assistant", content: completedRound.text, toolCalls: [],
+              ...(completedRound.reasoning ? { reasoningContent: completedRound.reasoning } : {}),
+            };
+            generatedMessages.push({ messageId: completedProjector.messageId,
+              createdAt: this.#sessionNow(), message: partial });
+            messages = [...messages, partial];
+          }
+          if (outputLimitContinuations >= 2) {
+            return finalize({ status: "failed", reason: "model_output_limit_exceeded",
+              finalMessageId: completedProjector.finalMessageId,
+              details: { round, continuationAttempts: outputLimitContinuations,
+                maxOutputTokens: request.maxOutputTokens,
+                outputTokens: completedRound.usage.outputTokens,
+                hadHiddenReasoning: Boolean(completedRound.reasoning.trim()) } });
+          }
+          outputLimitContinuations += 1;
+          const instruction: ModelMessage = {
+            role: "developer", name: "output_limit_continuation",
+            content: "The preceding model response reached its output token limit before completion. Continue the original task from the current state. All tool results from earlier rounds remain authoritative; do not repeat completed side effects. No tool call from the truncated response was executed: re-emit any needed call with complete arguments. Keep reasoning concise and take the next concrete action. If the work is complete, provide one complete concise final answer. This continuation does not change the user's scope, permissions, cancellation, or configured token limits.",
+          };
+          messages = [...messages, instruction];
+          generatedMessages.push({
+            messageId: `msg_output_limit_${request.turnId}_${round}`,
+            createdAt: this.#sessionNow(), message: instruction,
+          });
+          // Start a fresh transport chain containing the saved facts, rather
+          // than binding an unfinished provider response with partial calls.
+          providerState = freshResponseChain();
+          this.#eventLog.append(identity, { kind: "provider_retry", payload: {
+            attempt: outputLimitContinuations + 1, maxAttempts: 3, nextRetryMs: 0,
+            code: "model_output_limit_continuation",
+            message: "Model output reached its token limit; continuing the current task from saved progress.",
+          } });
+          this.#recovery.save({ request, messages, nextRound: round + 1,
+            cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
+          continue;
+        }
+        outputLimitContinuations = 0;
         const checkpointCalls = completedRound.toolCalls.filter((call) =>
           call.name === CHECKPOINT_CONTEXT_TOOL,
         );
@@ -1654,20 +1706,6 @@ export class InMemoryRuntimeHost {
           }
         }
         if (completedRound.toolCalls.length === 0) {
-          if (
-            completedRound.finishReason === "length" &&
-            !completedRound.text.trim()
-          ) {
-            return finalize({
-              status: "failed",
-              reason: "reasoning-budget-exhausted-before-action",
-              finalMessageId: completedProjector.finalMessageId,
-              details: {
-                round,
-                hadHiddenReasoning: Boolean(completedRound.reasoning.trim()),
-              },
-            });
-          }
           if (completedRound.text) {
             const assistantMessage: ModelMessage = {
               role: "assistant",

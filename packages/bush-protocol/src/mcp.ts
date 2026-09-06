@@ -70,6 +70,9 @@ export const mcpSnapshotResultSchema = z.object({
   protocol: z.literal(BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL),
   snapshotId: z.string().min(1),
   revision: z.number().int().positive(),
+  applicationState: z.enum(["applied", "pending", "failed"]).optional(),
+  pendingRevision: z.number().int().positive().optional(),
+  applicationError: z.string().optional(),
   servers: z.array(z.object({
     id: z.string().min(1),
     negotiatedProtocolVersion: z.string().min(1).optional(),

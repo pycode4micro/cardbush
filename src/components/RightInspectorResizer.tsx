@@ -1,4 +1,4 @@
-import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 
 import {
   conversationPaneMinimum,
@@ -29,8 +29,12 @@ export function RightInspectorResizer({
   label: string;
 }) {
   const dragRef = useRef<InspectorDragState | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelRef.current?.(), []);
 
   const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    cancelRef.current?.();
     event.preventDefault();
     const scope = event.currentTarget.closest<HTMLElement>('.right-inspector');
     if (!scope) {
@@ -59,10 +63,12 @@ export function RightInspectorResizer({
         writePreviewWidth(state.scope, state.startWidth);
       }
       dragRef.current = null;
+      cancelRef.current = null;
       document.body.classList.remove('right-inspector-resizing');
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerCancel);
+      window.removeEventListener('blur', handleWindowBlur);
     };
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const state = dragRef.current;
@@ -94,10 +100,15 @@ export function RightInspectorResizer({
       finish();
       onWidthChange(finalWidth);
     };
-    const handlePointerCancel = () => finish(true);
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (event.pointerId === dragRef.current?.pointerId) finish(true);
+    };
+    const handleWindowBlur = () => finish(true);
+    cancelRef.current = handleWindowBlur;
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerCancel);
+    window.addEventListener('blur', handleWindowBlur);
   }, [onWidthChange, width, windowMaximized]);
 
   return (
@@ -108,6 +119,7 @@ export function RightInspectorResizer({
       aria-label={label}
       title={label}
       onPointerDown={beginResize}
+      onLostPointerCapture={() => cancelRef.current?.()}
     />
   );
 }

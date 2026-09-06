@@ -109,6 +109,27 @@ test('does not register an uninstalled or disabled plugin', () => {
   assert.deepEqual(Object.keys(createCardbushAppsServer(uninstalled)._registeredTools), []);
 });
 
+test('adversarial numeric and size boundaries are rejected by the MCP schema', () => {
+  const schema = createCardbushAppsServer()._registeredTools.computer_use.inputSchema;
+  const target = { hwnd: 100, state_id: 'desktop_state_test' };
+  const invalid = [
+    { action: 'click', x: Infinity, y: 0 },
+    { action: 'click', x: NaN, y: 0 },
+    { action: 'click', x: Number.MAX_SAFE_INTEGER + 1, y: 0 },
+    { action: 'click', x: 0.5, y: 0 },
+    { action: 'click', x: 0, y: 0, clicks: 6 },
+    { action: 'scroll', x: 0, y: 0, delta: -21 },
+    { action: 'drag', x: 0, y: 0, to_x: 1, to_y: 1, steps: 0 },
+    { action: 'drag', x: 0, y: 0, to_x: 1, to_y: 1, duration_ms: 1501 },
+    { action: 'set_value', element_index: 0, value: 'x'.repeat(8193) },
+    { action: 'observe', max_elements: 301 },
+    { action: 'window', operation: 'resize', width: 0, height: 1 },
+    { action: 'key', keys: [''] },
+    { action: 'invoke', element_index: -1 },
+  ];
+  for (const input of invalid) assert.equal(schema.safeParse({ ...target, ...input }).success, false, JSON.stringify(input));
+});
+
 test('honors Runtime cancellation before issuing desktop input', async () => {
   const controller = new AbortController();
   controller.abort(new DOMException('Turn stopped', 'AbortError'));
@@ -305,6 +326,71 @@ test('counts failed attempts so identical errors cannot retry forever', () => {
     release();
   }
   assert.throws(() => guard.begin(scope, input), /repeated action loop/);
+});
+
+test('preflight rejections preserve the observe/activate/observe/input recovery path', () => {
+  const guard = new ComputerUseSafetyGuard();
+  const scope = 'background-recovery';
+  const visual = Buffer.alloc(256, 42).toString('base64');
+  const observe = () => {
+    const release = guard.begin(scope, { action: 'observe', hwnd: 901 });
+    guard.recordObservation(scope, visual, 'background');
+    release();
+  };
+  for (const input of [{ action: 'type', text: 'demo' }, { action: 'click', element_index: 6 }]) {
+    observe();
+    const release = guard.begin(scope, input);
+    guard.recordPreflightFailure(scope, input);
+    release();
+  }
+  observe();
+  const activate = { action: 'window', operation: 'activate', hwnd: 901 };
+  const release = guard.begin(scope, activate);
+  guard.recordAction(scope, activate);
+  release();
+  guard.recordObservation(scope, visual, 'foreground');
+  assert.doesNotThrow(() => guard.begin(scope, { action: 'type', text: 'demo' })());
+});
+
+test('repeated preflight rejection blocks the same action but permits correction', () => {
+  const guard = new ComputerUseSafetyGuard();
+  const input = { action: 'type', hwnd: 901, text: 'demo' };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const release = guard.begin('rejected', input);
+    guard.recordPreflightFailure('rejected', input);
+    release();
+    guard.recordObservation('rejected', 'unchanged');
+  }
+  assert.throws(() => guard.begin('rejected', input), /repeated action loop/);
+  assert.doesNotThrow(() => guard.begin('rejected', { action: 'window', operation: 'activate', hwnd: 901 })());
+});
+
+test('alternating preflight errors remain bounded across observations and finish', () => {
+  const guard = new ComputerUseSafetyGuard();
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const input = { action: 'click', element_index: attempt, hwnd: 901 };
+    const release = guard.begin('invalid', input);
+    guard.recordPreflightFailure('invalid', input);
+    release();
+    const observed = guard.begin('invalid', { action: 'observe', hwnd: 901 });
+    guard.recordObservation('invalid', `visual-${attempt}`);
+    observed();
+  }
+  guard.releaseObservation('invalid');
+  assert.throws(() => guard.begin('invalid', { action: 'open_app', app: 'notepad' }), /preflight rejections/);
+  assert.doesNotThrow(() => guard.begin('next-turn', { action: 'open_app', app: 'notepad' })());
+});
+
+test('possibly dispatched failures still stop alternating no-progress cycles', () => {
+  const guard = new ComputerUseSafetyGuard();
+  guard.recordObservation('partial', 'unchanged');
+  for (const input of [{ action: 'click', x: 10, y: 10 }, { action: 'key', keys: ['enter'] }]) {
+    const release = guard.begin('partial', input);
+    guard.recordAction('partial', input, false);
+    release();
+    guard.recordObservation('partial', 'unchanged');
+  }
+  assert.throws(() => guard.begin('partial', { action: 'window', operation: 'activate' }), /without visible progress/);
 });
 
 test('ends repeated user-yield and passive-observation loops', () => {

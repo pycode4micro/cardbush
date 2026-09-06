@@ -553,7 +553,7 @@ test("drains stdio stderr so MCP diagnostics cannot backpressure the child proce
   await manager.close();
 });
 
-test("rejects snapshot mutation during a Turn and conflicting revision reuse", async () => {
+test("queues snapshot mutation during a Turn and rejects conflicting revision reuse", async () => {
   const registry = new ToolRegistry();
   let canApply = true;
   const manager = new McpClientManager({
@@ -565,17 +565,101 @@ test("rejects snapshot mutation during a Turn and conflicting revision reuse", a
   await manager.apply(snapshot());
 
   canApply = false;
-  await assert.rejects(
-    manager.apply({ ...snapshot(), revision: 2 }),
-    /while a Runtime Turn is active/,
-  );
+  const pending = await manager.apply({ ...snapshot(), revision: 2 });
+  assert.equal(pending.applicationState, 'pending');
+  assert.equal(pending.revision, 1);
+  assert.equal(pending.pendingRevision, 2);
   assert.ok(registry.resolve("mcp__server__echo_tool"));
 
   canApply = true;
   const changed = snapshot();
+  changed.revision = 2;
   changed.servers[0].exposeTools = [];
   await assert.rejects(manager.apply(changed), /reused with different content/);
   assert.ok(registry.resolve("mcp__server__echo_tool"));
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  assert.equal(manager.snapshot().revision, 2);
+  assert.equal(manager.snapshot().applicationState, 'applied');
+  await manager.close();
+});
+
+test('hot update reuses unchanged connections and rolls back failed additions', async () => {
+  const registry = new ToolRegistry();
+  const clients = [];
+  const manager = new McpClientManager({ registry,
+    createClient: (server) => {
+      const client = fakeClient({ content: [] }, { connect: () => {
+        if (server.id === 'bad') throw new Error('fixture connection failed');
+      } });
+      clients.push(client);
+      return client;
+    }, createTransport: () => ({}),
+  });
+  try {
+    await manager.apply(snapshot());
+    await manager.apply({ ...snapshot(), revision: 2, servers: [
+      ...snapshot().servers, ...snapshot(undefined, 'second').servers,
+    ] });
+    assert.equal(clients.length, 2);
+    assert.equal(clients[0].closeCalls, 0);
+    await assert.rejects(manager.apply({ ...snapshot(), revision: 3, servers: [
+      ...snapshot().servers, ...snapshot(undefined, 'bad').servers,
+    ] }), /fixture connection failed/);
+    assert.ok(registry.resolve('mcp__server__echo_tool'));
+    assert.ok(registry.resolve('mcp__second__echo_tool'));
+    assert.equal(clients[0].closeCalls, 0);
+    assert.equal(manager.snapshot().applicationState, 'failed');
+    await manager.apply({ ...snapshot(), revision: 4 });
+    assert.equal(clients[1].closeCalls, 1);
+    assert.equal(clients[0].closeCalls, 0);
+    assert.equal(registry.resolve('mcp__second__echo_tool'), undefined);
+  } finally { await manager.close(); }
+});
+
+test('coalesces busy updates and does not resurrect pending connections after close', async () => {
+  let idle = false;
+  let connected = 0;
+  const manager = new McpClientManager({ registry: new ToolRegistry(), canApply: () => idle,
+    createClient: () => { connected++; return fakeClient({ content: [] }); }, createTransport: () => ({}),
+  });
+  await Promise.all([manager.apply(snapshot()), manager.apply({ ...snapshot(), revision: 2, servers: [] })]);
+  assert.equal(connected, 0);
+  idle = true;
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(manager.snapshot().revision, 2);
+  assert.equal(connected, 0);
+  idle = false;
+  await manager.apply({ ...snapshot(), revision: 3 });
+  await manager.close();
+  idle = true;
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(connected, 0);
+  assert.equal(manager.snapshot(), undefined);
+});
+
+test('defers commit if a turn starts while an MCP connection is opening', async () => {
+  let idle = true;
+  let release;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const clients = [];
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, canApply: () => idle,
+    createClient: () => {
+      const client = fakeClient({ content: [] }, { connect: () => waiting });
+      clients.push(client); return client;
+    }, createTransport: () => ({}),
+  });
+  const update = manager.apply(snapshot());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  idle = false;
+  release();
+  assert.equal((await update).applicationState, 'pending');
+  assert.equal(registry.resolve('mcp__server__echo_tool'), undefined);
+  assert.equal(clients[0].closeCalls, 1);
+  idle = true;
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.ok(registry.resolve('mcp__server__echo_tool'));
+  await manager.close();
 });
 
 test("synthesizes a conservative Action Manifest for a standard MCP Tool", async () => {

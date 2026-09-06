@@ -199,6 +199,17 @@ async function renderOfficeFile() {
     throw new Error(`无法读取本地文件（${response.status}）。`);
   }
   const buffer = await response.arrayBuffer();
+  if (extension === '.xlsx') {
+    // The spreadsheet decoder also accepts CSV/plain text. A mislabeled or
+    // corrupt XLSX must not silently turn into a plausible-looking worksheet.
+    const { default: JSZip } = await import('jszip');
+    const archive = await JSZip.loadAsync(buffer).catch(() => {
+      throw new Error('XLSX 文件不是有效的 OpenXML 压缩包。');
+    });
+    if (!archive.file('[Content_Types].xml') || !archive.file('xl/workbook.xml')) {
+      throw new Error('XLSX 文件缺少工作簿结构，无法预览。');
+    }
+  }
   if (buffer.byteLength === 0) {
     throw new Error('文件为空。');
   }

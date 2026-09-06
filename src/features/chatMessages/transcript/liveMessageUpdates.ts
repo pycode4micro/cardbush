@@ -88,10 +88,10 @@ export function appendAssistantDelta(
   const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
   if (targetIndex < 0) {
     const messageId = route?.messageId.trim() ?? '';
-    const segmentIndex = route?.assistantSegmentIndex ?? 1;
+    const segmentIndex = route?.assistantSegmentIndex;
     const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
     messages.push({
-      id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex}`,
+      id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex ?? 1}`,
       messageId: messageId || undefined,
       assistantMessageId: messageId || undefined,
       role: 'assistant',
@@ -412,6 +412,23 @@ function assistantStreamTargetIndex(
       ),
     );
     if (exact >= 0) return exact;
+    // Runtime message identity is stronger than a content-block ordinal, which
+    // restarts within each model round. Only an unbound local placeholder can
+    // adopt a new identity; never rename and append to an earlier bound reply.
+    const placeholder = messages.findIndex((message) =>
+      message.role === 'assistant' &&
+      !message.messageId?.trim() &&
+      !message.assistantMessageId?.trim() &&
+      !String(message.metadata?.message_id ?? '').trim() &&
+      (!chatMessageTurnId(message) || chatMessageTurnId(message) === route?.turnId) &&
+      (
+        route?.assistantSegmentIndex != null
+          ? Number(message.metadata?.assistant_segment_index) === route.assistantSegmentIndex ||
+            (message.id === fallbackAssistantId && message.metadata?.assistant_segment_index == null)
+          : message.id === fallbackAssistantId
+      ),
+    );
+    return placeholder;
   }
   const segmentIndex = route?.assistantSegmentIndex;
   if (segmentIndex != null) {
@@ -457,7 +474,7 @@ function assistantStreamReleaseMetadata(
     ...(release.reason === 'segment_completed' ? { segment_complete: true } : {}),
     ...(release.segmentId ? { assistant_segment_id: release.segmentId } : {}),
     ...(release.segmentOrdinal != null
-      ? { assistant_segment_index: release.segmentOrdinal }
+      ? { assistant_stream_segment_ordinal: release.segmentOrdinal }
       : {}),
   };
 }
@@ -625,9 +642,10 @@ export function markLocalAssistantTurnCompleted(
       );
       return {
         ...routed,
-        content: routed.content || finalText,
+        content: finalText || routed.content,
         metadata: {
           ...(routed.metadata ?? {}),
+          transcript_kind: 'assistant_final',
           cardbush_turn_started_at:
             startedAt ?? routed.metadata?.cardbush_turn_started_at ?? routed.createdAt,
           cardbush_turn_completed_at:

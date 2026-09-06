@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
-import { replaceFile } from "./atomicFiles.js";
+import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
 export interface ProductModelConfig {
   id: string;
@@ -29,6 +29,9 @@ export class ProductModelConfigStore {
   }
 
   async read(): Promise<ProductModelConfigSnapshot> {
+    return withConfigFileLock(this.#path, () => this.#read());
+  }
+  async #read(): Promise<ProductModelConfigSnapshot> {
     try {
       return decodeSnapshot(JSON.parse(await readFile(this.#path, "utf8")));
     } catch (error) {
@@ -38,14 +41,20 @@ export class ProductModelConfigStore {
   }
 
   async write(input: unknown): Promise<ProductModelConfigSnapshot> {
-    const existing = await this.read();
+    return withConfigFileLock(this.#path, () => this.#write(input));
+  }
+  async #write(input: unknown): Promise<ProductModelConfigSnapshot> {
+    const existing = await this.#read();
     const snapshot = decodeUpdate(input, existing);
     await this.#writeSnapshot(snapshot);
     return snapshot;
   }
 
   async migrateMissingCredentials(input: unknown): Promise<number> {
-    const existing = await this.read();
+    return withConfigFileLock(this.#path, () => this.#migrateMissingCredentials(input));
+  }
+  async #migrateMissingCredentials(input: unknown): Promise<number> {
+    const existing = await this.#read();
     const credentials = decodeLegacyCredentials(input);
     let imported = 0;
     const models = existing.models.map((config) => {
@@ -62,7 +71,7 @@ export class ProductModelConfigStore {
 
   async #writeSnapshot(snapshot: ProductModelConfigSnapshot): Promise<void> {
     await mkdir(dirname(this.#path), { recursive: true });
-    const temp = `${this.#path}.${process.pid}.${Date.now()}.tmp`;
+    const temp = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;
     await writeFile(temp, `${JSON.stringify(snapshot, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,

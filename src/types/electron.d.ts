@@ -122,6 +122,7 @@ declare global {
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') => Promise<void>;
       productHostCommand: (command: unknown) => Promise<unknown>;
       listSkills: () => Promise<unknown[]>;
+      onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
       installLocalPlugin: () => Promise<{ id: string; manifestPath: string } | null>;
       setProxy: (proxy: {

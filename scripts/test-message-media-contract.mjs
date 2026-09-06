@@ -61,7 +61,7 @@ assert.match(imagePreviewDialog, /zoomRef\.current === 1 \? 2 : 1/);
 assert.match(imagePreviewDialog, /import \{ createPortal \} from 'react-dom'/);
 assert.match(
   imagePreviewDialog,
-  /return createPortal\([\s\S]*?image-preview-backdrop[\s\S]*?document\.body/,
+  /return createPortal\([\s\S]*?image-preview-backdrop[\s\S]*?document\.querySelector\('\.app'\) \?\? document\.body/,
   'Image preview dialogs must escape message content containment and render at the application root',
 );
 assert.match(css, /\.message-video-player video\s*\{/);

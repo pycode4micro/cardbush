@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:native": "npm run build && node test/computerUsePresentation.native.mjs && node test/computerUseAdversarial.native.mjs && node test/computerUseTerminal.native.mjs"
   },
   "dependencies": {
     "@cardbush/bush-protocol": "^0.1.0",

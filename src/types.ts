@@ -532,6 +532,8 @@ export interface AssistantRevision {
 
 export interface ChatMessage {
   id: string;
+  /** View projection identity only; never replaces a Runtime message ID. */
+  renderKey?: string;
   messageId?: string;
   clientMessageId?: string;
   role: ChatRole;

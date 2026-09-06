@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import type { AppLanguage } from '../types';
 
@@ -32,9 +32,14 @@ export function SidebarResizer({
   softVisible?: boolean;
 }) {
   const dragStateRef = useRef<SidebarDragState | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelRef.current?.(), []);
+  useEffect(() => { if (!softVisible) cancelRef.current?.(); }, [softVisible]);
 
   const beginResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      cancelRef.current?.();
       event.preventDefault();
       const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
       const currentWidth = readCurrentSidebarWidth(event.currentTarget);
@@ -59,10 +64,12 @@ export function SidebarResizer({
           writePreviewWidth(state.scope, state.startWidth);
         }
         dragStateRef.current = null;
+        cancelRef.current = null;
         document.body.classList.remove('sidebar-resizing');
         window.removeEventListener('pointermove', handlePointerMove);
         window.removeEventListener('pointerup', handlePointerUp);
         window.removeEventListener('pointercancel', handlePointerCancel);
+        window.removeEventListener('blur', handleWindowBlur);
       };
       const handlePointerMove = (moveEvent: PointerEvent) => {
         const state = dragStateRef.current;
@@ -109,10 +116,15 @@ export function SidebarResizer({
           onWidthChange(state.currentWidth);
         }
       };
-      const handlePointerCancel = () => endResize(true);
+      const handlePointerCancel = (event: PointerEvent) => {
+        if (event.pointerId === dragStateRef.current?.pointerId) endResize(true);
+      };
+      const handleWindowBlur = () => endResize(true);
+      cancelRef.current = handleWindowBlur;
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerCancel);
+      window.addEventListener('blur', handleWindowBlur);
     },
     [onCollapse, onResizeEnd, onWidthChange],
   );
@@ -125,6 +137,7 @@ export function SidebarResizer({
       aria-label={language === 'zh' ? '调整侧边栏宽度' : 'Resize sidebar'}
       title={language === 'zh' ? '拖动调整侧边栏宽度' : 'Drag to resize sidebar'}
       onPointerDown={beginResize}
+      onLostPointerCapture={() => cancelRef.current?.()}
     />
   );
 }

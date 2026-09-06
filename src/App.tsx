@@ -49,6 +49,7 @@ import {
 } from './features/chatMessages/transcript/messageProjection';
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
+import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
 import { SidebarResizer } from './components/SidebarResizer';
 import { RightInspectorResizer } from './components/RightInspectorResizer';
@@ -1167,46 +1168,16 @@ function CardbushApp() {
     shadowAccentColor,
     theme,
   ]);
-  useEffect(() => {
-    if (!inspectorAddMenuOpen) return undefined;
-    const closeOnOutsidePointer = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Node && !inspectorAddMenuRef.current?.contains(target)) {
-        setInspectorAddMenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setInspectorAddMenuOpen(false);
-    };
-    window.addEventListener('pointerdown', closeOnOutsidePointer);
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      window.removeEventListener('pointerdown', closeOnOutsidePointer);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [inspectorAddMenuOpen]);
-  useEffect(() => {
-    if (!inspectorTabsMenuOpen && !inspectorTabContextMenu) return undefined;
-    const closeTabMenusFromPointer = (event: globalThis.PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (inspectorTabsMenuRef.current?.contains(target)) return;
-      if (inspectorTabContextMenuRef.current?.contains(target)) return;
-      setInspectorTabsMenuOpen(false);
-      setInspectorTabContextMenu(null);
-    };
-    const closeTabMenusFromKeyboard = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setInspectorTabsMenuOpen(false);
-      setInspectorTabContextMenu(null);
-    };
-    window.addEventListener('pointerdown', closeTabMenusFromPointer);
-    window.addEventListener('keydown', closeTabMenusFromKeyboard);
-    return () => {
-      window.removeEventListener('pointerdown', closeTabMenusFromPointer);
-      window.removeEventListener('keydown', closeTabMenusFromKeyboard);
-    };
-  }, [inspectorTabContextMenu, inspectorTabsMenuOpen]);
+  const dismissInspectorMenus = useCallback(() => {
+    setInspectorAddMenuOpen(false);
+    setInspectorTabsMenuOpen(false);
+    setInspectorTabContextMenu(null);
+  }, []);
+  const inspectorMenuContainers = useMemo(() => [
+    inspectorAddMenuRef, inspectorTabsMenuRef, inspectorTabContextMenuRef,
+  ], []);
+  const inspectorMenuOpen = inspectorAddMenuOpen || inspectorTabsMenuOpen || !!inspectorTabContextMenu;
+  useOutsideDismiss(inspectorMenuOpen, inspectorMenuContainers, dismissInspectorMenus);
   useEffect(() => {
     if (!inspectorOpen || settingsOpen) return undefined;
     const handleInspectorShortcut = (event: KeyboardEvent) => {
@@ -2993,6 +2964,12 @@ function CardbushApp() {
                 </div>
               )}
               <div className="right-inspector-body">
+                {inspectorMenuOpen && (
+                  // Guest webview pointer events do not bubble into the app document.
+                  <div className="inspector-menu-dismiss-layer" aria-hidden="true"
+                    onPointerDown={dismissInspectorMenus}
+                    onContextMenu={(event) => { event.preventDefault(); dismissInspectorMenus(); }} />
+                )}
                 {displayedInspectorTab ? (
                   <div className="right-inspector-tab-pages">
                     {displayedInspectorTabs.map((tab) => {

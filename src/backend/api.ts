@@ -155,6 +155,7 @@ export interface ChatStreamRequest {
   workspaceDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
+  disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
   subagentPermissionRouting?: SubagentPermissionRouting;
@@ -238,6 +239,7 @@ export interface ControlStreamRequest {
   workspaceDir?: string;
   projectUserPrompt?: string;
   allowedSkills?: string[];
+  disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
   permissionMode?: PermissionMode;
   subagentPermissionRouting?: SubagentPermissionRouting;
@@ -979,9 +981,11 @@ export async function saveCardbushAppsConfiguration(
   const runtime = createDesktopRuntimeSession();
   try {
     await synchronizeProductMcpSnapshot(runtime.client);
-  } catch {
-    // A running turn can temporarily lock the MCP catalog. The persisted Product Host
-    // configuration is applied by the mandatory snapshot sync before the next turn.
+  } catch (error) {
+    throw new Error(localizedClientMessage(
+      `插件配置已保存，但 MCP 加载失败：${error instanceof Error ? error.message : String(error)}`,
+      `Plugin configuration was saved, but MCP loading failed: ${error instanceof Error ? error.message : String(error)}`,
+    ));
   } finally {
     runtime.dispose();
   }
@@ -994,7 +998,7 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
     const apps = await fetchCardbushAppsConfiguration();
     const servers = await readProductMcpServers();
     const result = await synchronizeProductMcpSnapshot(runtime.client).catch(
-      () => null,
+      () => runtime.client.getMcpSnapshot().catch(() => null),
     );
     const toolCounts = new Map(
       result?.servers.map((server) => [server.id, server.tools.length]) ?? [],
@@ -1010,7 +1014,9 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
           transport: 'stdio' as const,
           args: [],
           toolCount: bundledApps?.tools.length ?? 0,
-          status: apps.serviceEnabled ? (bundledApps ? 'connected' : 'unavailable') : 'disabled',
+          lastError: result?.applicationError,
+          status: result?.applicationState === 'pending' ? 'pending' : result?.applicationState === 'failed' ? 'unavailable' :
+            apps.serviceEnabled ? (bundledApps ? 'connected' : 'unavailable') : 'disabled',
           raw: {
             source: 'cardbush_builtin_plugin',
             bundled: true,
@@ -1022,7 +1028,8 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
         ...servers.map((server) => ({
           ...server,
           toolCount: toolCounts.get(server.id) ?? 0,
-          status: result
+          lastError: result?.applicationError,
+          status: result?.applicationState === 'pending' ? 'pending' : result?.applicationState === 'failed' ? 'unavailable' : result
             ? server.enabled
               ? 'connected'
               : 'disabled'
@@ -1106,7 +1113,7 @@ export async function saveMcpServerConfig(
     return {
       ...candidate,
       toolCount: connected?.tools.length ?? 0,
-      status: candidate.enabled ? 'connected' : 'disabled',
+      status: result.applicationState === 'pending' ? 'pending' : candidate.enabled ? 'connected' : 'disabled',
     };
   } finally {
     runtime.dispose();
@@ -1140,7 +1147,7 @@ export async function setMcpServerEnabled(
       toolCount:
         result.servers.find((server) => server.id === normalized)?.tools
           .length ?? 0,
-      status: enabled ? 'connected' : 'disabled',
+      status: result.applicationState === 'pending' ? 'pending' : enabled ? 'connected' : 'disabled',
     };
   } finally {
     runtime.dispose();

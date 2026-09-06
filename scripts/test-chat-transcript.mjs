@@ -151,6 +151,59 @@ assert.strictEqual(api.normalizeChatMessagesForDisplay(history), normalized);
 assert.equal(history[1].metadata, undefined);
 assert.deepEqual(plain(normalized.map(m => [m.id, m.content])), plain(history.map(m => [m.id, m.content])));
 assert.strictEqual(api.normalizeActiveTurnTranscriptForDisplay(history, ''), history);
+
+// Both explicit live segments and older unlabelled snapshots retain the first
+// row key without replacing the latest segment's actual identity.
+for (const metadata of [undefined, { transcript_kind: 'assistant_segment' }]) {
+  const input = freeze([
+    { id: 'first-live', role: 'assistant', content: 'First paragraph', turnId: 'live', metadata },
+    { id: 'next-live', role: 'assistant', content: 'Second paragraph', turnId: 'live', metadata },
+  ]);
+  const projected = api.normalizeActiveTurnTranscriptForDisplay(api.normalizeChatMessagesForDisplay(input), 'live');
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0].renderKey, 'first-live');
+  assert.equal(projected[0].id, 'next-live');
+  const segmentIds = [...projected[0].loopHistory.map(message => message.id), projected[0].id];
+  assert.equal(new Set(segmentIds).size, segmentIds.length);
+  assert.equal(input[1].renderKey, undefined);
+}
 assert.equal(api.persistedChatMessageId({ id: 'optimistic', metadata: { message_id: 'message_durable' } }), 'message_durable');
+
+// Runtime content-block ordinals restart at 1 in every model/tool round.
+// Different durable message IDs must never append to the same optimistic row.
+for (const withLegacySegmentIndex of [true, false]) {
+  let state = { s: [{ id: 'optimistic', role: 'assistant', content: '', turnId: 'loop-turn' }] };
+  const chunks = api.createSegmentedAssistantStreamBuffers((delta, target, release) => {
+    state = api.appendAssistantDelta(state, 's', 'optimistic', delta, target, release);
+  }, { shouldAnimate: () => false });
+  const routes = Array.from({ length: 11 }, (_, index) => ({
+    messageId: `round-${index}`, turnId: 'loop-turn',
+    ...(withLegacySegmentIndex ? { assistantSegmentIndex: 1 } : {}),
+    segmentOrdinal: 1, segmentId: `block-${index}`,
+  }));
+  for (let index = 0; index < routes.length; index++) {
+    const content = index === 10 ? '最终答复' : `过程说明 ${index}。`;
+    chunks.push(content, routes[index]);
+    await chunks.completeSegment(content, routes[index]);
+  }
+  await chunks.completeRoute('最终答复', routes[10]);
+  await chunks.releaseTerminal();
+  state = api.markLocalAssistantTurnCompleted(state, 's', 'optimistic', '2026-09-05T13:14:58.342Z', routes[10], '最终答复');
+  state = api.applyTurnTerminalSnapshot(state, 's', 'optimistic', {
+    turnId: 'loop-turn', status: 'completed', stopped: false,
+    completedAt: '2026-09-05T13:14:58.342Z',
+  });
+  assert.equal(state.s.length, 11, 'Every model round retains its own message identity');
+  const visible = api.normalizeChatMessagesForDisplay(state.s);
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].content, '最终答复', 'Final body must not include loop narration');
+  assert.equal(visible[0].loopHistory.length, 10, 'Process messages remain available as history');
+  assert.equal(visible[0].metadata.transcript_kind, 'assistant_final');
+  chunks.dispose();
+
+  // Late delivery from an earlier round cannot contaminate the final reply.
+  const lateState = api.appendAssistantDelta(state, 's', 'optimistic', '迟到的过程文本', routes[0]);
+  assert.equal(api.normalizeChatMessagesForDisplay(lateState.s)[0].content, '最终答复');
+}
 
 console.log('Chat transcript module boundaries, buffering, mutation and identity tests passed.');

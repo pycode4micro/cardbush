@@ -210,6 +210,9 @@ function assertSelfTestResult(target, result) {
   if (name === 'reading-sample.pptx' && result.pptxSlides < 1) {
     throw new Error('PPTX self-test did not render a slide.');
   }
+  if (name === 'invalid-sample.xlsx' && !result.error) {
+    throw new Error('Invalid XLSX must report an error instead of rendering text as a worksheet.');
+  }
   if (name === 'invalid-sample.pptx' && !result.error) {
     throw new Error('Invalid PPTX did not expose the compatibility fallback.');
   }

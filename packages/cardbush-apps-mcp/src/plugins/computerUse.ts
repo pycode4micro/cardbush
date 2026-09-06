@@ -167,8 +167,11 @@ export function registerComputerUsePlugin(
       "Input shares the user's mouse and keyboard, yields while the user is active, and restores the pointer after mouse actions by default.",
       'Call observe once to discover windows, then observe an exact hwnd to receive a one-use state_id, a window screenshot, and accessibility elements.',
       'Every action against an existing window must include that state_id and hwnd. The state is consumed after one action and becomes stale if another turn changes the desktop.',
+      'Observation does not activate a window. actionable describes foreground input readiness; window_action_available allows window operations even in the background. If is_foreground is false, use window/activate with the observed state_id and hwnd, then observe again before input. Do not retry activation blindly if Windows refuses it.',
+      'For a desktop-control demo, open a fresh text-editor window and verify the displayed text; do not type demo commands into an existing terminal or claim interaction succeeded from observation alone.',
       'Click with element_index, invoke, and set_value use UI Automation without moving the pointer. Coordinates are window-relative and remain available when an element has no semantic action.',
       'Screenshots are returned as image artifacts.',
+      'A successful input call acknowledges dispatch only. It does not verify that the application processed the input or that a terminal command ran. Observe the requested application result before claiming completion; an unchanged screen is not proof of a scrolling problem.',
       'Call finish when desktop work is complete or abandoned to release the window border and stop control. A user stop ends desktop control for this turn.',
     ].join(' '),
     annotations: {

@@ -45,7 +45,10 @@ async function buildViews() {
   const { build } = await import('vite');
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
-  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx']
+  const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
+    'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
+    'src/hooks/useCapabilityCatalogRefresh.ts',
+    'src/features/chatMessages/transcript/liveMessageUpdates.ts']
     .map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n');
   const result = await build({
     configFile: false,
@@ -83,7 +86,7 @@ app.whenReady().then(async () => {
   });
   const errors = [];
   window.webContents.on('console-message', event => {
-    if (/Maximum update depth|Invalid hook call|ResizeObserver loop|passive event listener/.test(event.message)) errors.push(event.message);
+    if (/Maximum update depth|Invalid hook call|ResizeObserver loop|passive event listener|Encountered two children with the same key/.test(event.message)) errors.push(event.message);
   });
   window.webContents.session.webRequest.onBeforeRequest((details, done) => {
     const external = /^https?:/.test(details.url);
@@ -127,7 +130,7 @@ app.whenReady().then(async () => {
       })();
       const h = React.createElement;
       const reactRoot = createRoot(document.getElementById('root'));
-      window.renderView = child => reactRoot.render(h(React.StrictMode, null, h('div', { className: 'app theme-dark', style: { height: '100vh', width: '900px' } }, child)));
+      window.renderView = child => reactRoot.render(h(React.StrictMode, null, h('div', { className: 'app ' + (window.viewTheme || 'theme-dark'), style: { height: '100vh', width: '900px' } }, child)));
       window.views = views;
       window.h = h;
       window.inspectorRef = React.createRef();
@@ -206,6 +209,7 @@ app.whenReady().then(async () => {
     await run("resolveReads('D:/fixture/abandoned.md', '# Must stay unmounted')");
     await pause();
     assert.equal(await run('navigation.length'), unmountedNavigationCount);
+    await require('./helpers/resizer-lifecycle.cjs')({ run, until, pause });
 
     await run(`
       window.reviewArgs = null;
@@ -268,9 +272,48 @@ app.whenReady().then(async () => {
     await run("updateChat({ sending: false, activeTurnId: '' })");
     await until("document.querySelector('.message-list')?.textContent.includes('Fixture assistant answer')", 'stop keeps transcript');
     assert.equal(await run("document.querySelectorAll('.message-list').length"), 1);
+    await run(`
+      const localId = 'loop-optimistic';
+      window.loopState = { 'session-a': [
+        { id: 'loop-user', role: 'user', content: 'Desktop demo', turnId: 'loop-turn' },
+        { id: localId, role: 'assistant', content: '', turnId: 'loop-turn' },
+      ] };
+      window.loopRoutes = Array.from({ length: 11 }, (_, index) => ({
+        messageId: 'loop-round-' + index, turnId: 'loop-turn', segmentOrdinal: 1,
+      }));
+      for (let index = 0; index < loopRoutes.length; index++) {
+        loopState = views.appendAssistantDelta(loopState, 'session-a', localId,
+          index === 10 ? 'Only the final answer.' : 'Loop narration ' + index + '.', loopRoutes[index],
+          { reason: 'segment_completed', segmentId: 'block-' + index, segmentOrdinal: 1 });
+      }
+      updateChat({ messages: loopState['session-a'], sending: true, activeTurnId: 'loop-turn' });
+    `);
+    await until("document.querySelector('.assistant-active-transcript')?.textContent.includes('Loop narration 0.')", 'live loop transcript');
+    await run(`
+      loopState = views.markLocalAssistantTurnCompleted(loopState, 'session-a', 'loop-optimistic',
+        new Date().toISOString(), loopRoutes[10], 'Only the final answer.');
+      loopState = views.applyTurnTerminalSnapshot(loopState, 'session-a', 'loop-optimistic', {
+        turnId: 'loop-turn', status: 'completed', stopped: false, completedAt: new Date().toISOString(),
+      });
+      updateChat({ messages: loopState['session-a'], sending: false, activeTurnId: '' });
+    `);
+    await until("document.querySelector('.assistant-final-answer')?.textContent === 'Only the final answer.'", 'final answer excludes loop narration');
+    assert.equal(await run("document.querySelectorAll('.message-row.assistant').length"), 1, 'one completed answer row');
+    assert.equal(await run("document.querySelector('.message-list').textContent.includes('Loop narration')"), false, 'process text does not leak into completed chat');
+    await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });
+    await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
+    await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-cyberpunk' });
+    await run("window.viewTheme = 'theme-dark'; void 0;");
     await run("updateChat({ activeConversationId: 'session-b', messages: [{ id: 'user-b', role: 'user', content: 'Other session only', createdAt: '2026-09-05T00:00:02Z' }] })");
     await until("document.querySelector('.message-list')?.textContent.includes('Other session only')", 'session switch');
     assert.equal(await run("document.querySelector('.message-list').textContent.includes('Fixture assistant answer')"), false, 'no cross-session transcript');
+    await run(`updateChat({ sending: false, messages: [{ id: 'context-failure', role: 'assistant', content: '', status: 'failed',
+      metadata: { stop_reason: 'current_turn_context_limit_exceeded', stop_details: { estimatedPromptTokens: 225000, usableInputTokens: 224000 } } }] });`);
+    await until("document.querySelector('[data-failure-reason=current_turn_context_limit_exceeded]')?.textContent.includes('225,000')", 'context failure explains the measured budget');
+    assert.equal(await run("document.querySelector('[data-failure-reason=current_turn_context_limit_exceeded]').textContent.includes('224,000')"), true);
+    await run(`updateChat({ messages: [{ id: 'output-failure', role: 'assistant', content: '', status: 'failed',
+      metadata: { stop_reason: 'model_output_limit_exceeded', stop_details: { continuationAttempts: 2 } } }] });`);
+    await until("document.querySelector('[data-failure-reason=model_output_limit_exceeded]')?.textContent.includes('2 times')", 'output failure explains bounded continuation');
     await require('./helpers/quick-context-layout.cjs')({ run, until, pause, window, root });
     await require('./helpers/sidebar-title-layout.cjs')({ run, until, pause, window, root });
     await run(`
@@ -292,6 +335,7 @@ app.whenReady().then(async () => {
     await run('renderView(null)');
     await pause(400);
     assert.deepEqual(await run('failures'), [], 'no renderer exceptions or rejected effects');
+    await require('./helpers/capability-refresh.cjs')({ run, until, pause });
     assert.deepEqual(errors, []);
     console.log('App views passed: module ownership, StrictMode, preview races/reload/error/unmount, lazy syntax, toolbar, welcome, session switch and stop.');
   } finally { window.destroy(); }

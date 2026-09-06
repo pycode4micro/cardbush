@@ -1,4 +1,4 @@
-import { basename, fileUrl, stripWrappingQuotes } from '../../shared/localPaths';
+import { basename, fileUrl, isAbsoluteLocalPath, isAudioPath, isImagePath, isVideoPath, stripWrappingQuotes } from '../../shared/localPaths';
 import type { InspectorOpenDetail } from './inspectorEvents';
 
 export function inspectorTargetIdentity(target: string) {
@@ -58,8 +58,7 @@ export function inspectorSource(target: string) {
     return value;
   }
   if (/^file:\/\//i.test(value)) {
-    if (isOfficeDocumentPath(value)) return officeDocumentPreviewUrl(value);
-    return usesNativeFilePreview(value) ? value : textFilePreviewUrl(value);
+    return inspectorSource(inspectorMarkdownPath(value));
   }
   if (/^cardbush-file:\/\//i.test(value)) {
     try {
@@ -67,7 +66,7 @@ export function inspectorSource(target: string) {
       if (['office-preview', 'text-preview'].includes(parsed.hostname.toLowerCase())) {
         return value;
       }
-      return localFilePreviewUrl(decodeURIComponent(parsed.pathname));
+      return inspectorSource(inspectorMarkdownPath(value));
     } catch {
       return value;
     }
@@ -95,6 +94,12 @@ export function inspectorMarkdownPath(target: string) {
         return inspectorMarkdownPath(parsed.searchParams.get('path') ?? '');
       }
       const decoded = decodeURIComponent(parsed.pathname);
+      if (/^[a-z]$/i.test(parsed.hostname)) {
+        return `${parsed.hostname.toUpperCase()}:${decoded.replaceAll('/', '\\')}`;
+      }
+      if (parsed.hostname) {
+        return `\\\\${decodeURIComponent(parsed.hostname)}${decoded.replaceAll('/', '\\')}`;
+      }
       return decoded.replace(/^\/([a-zA-Z]:)/, '$1').replaceAll('/', '\\');
     } catch {
       return '';
@@ -115,7 +120,17 @@ export function inspectorMarkdownPath(target: string) {
 }
 
 export function isMarkdownInspectorTarget(target: string) {
-  return /\.(?:md|markdown)$/i.test(inspectorMarkdownPath(target).split(/[?#]/, 1)[0]);
+  return /\.(?:md|markdown)$/i.test(inspectorMarkdownPath(target));
+}
+
+export function inspectorMediaTarget(target: string): { kind: 'image' | 'video' | 'audio'; path: string; source: string } | null {
+  const path = inspectorMarkdownPath(target);
+  if (!isAbsoluteLocalPath(path)) return null;
+  // This is a decoded filesystem path: '#' belongs to the filename, not a URL fragment.
+  const extension = path.slice(path.lastIndexOf('.'));
+  const kind = isImagePath(extension) || /^\.svg$/i.test(extension) ? 'image'
+    : isVideoPath(extension) ? 'video' : isAudioPath(extension) ? 'audio' : null;
+  return kind ? { kind, path, source: fileUrl(path) } : null;
 }
 
 export function parentDirectory(value: string) {
@@ -125,7 +140,7 @@ export function parentDirectory(value: string) {
 }
 
 function isOfficeDocumentPath(value: string) {
-  return /\.(?:docx?|xlsx?|pptx?)$/i.test(value.split(/[?#]/, 1)[0]);
+  return /\.(?:docx?|xlsx?|pptx?)$/i.test(value);
 }
 
 function officeDocumentPreviewUrl(value: string) {
@@ -137,12 +152,16 @@ function textFilePreviewUrl(value: string) {
 }
 
 function usesNativeFilePreview(value: string) {
-  return /\.(?:html?|xhtml|pdf|svg|png|jpe?g|gif|webp|bmp|ico|mp3|m4a|mp4|aac|wav|ogg|oga|opus|flac|webm)$/i.test(
-    value.split(/[?#]/, 1)[0],
+  return /\.(?:html?|xhtml|pdf|svg|png|apng|avif|jpe?g|gif|webp|bmp|ico|mp3|m4a|mp4|m4v|mov|ogv|aac|wav|ogg|oga|opus|flac|webm)$/i.test(
+    value,
   );
 }
 
 function localFilePreviewUrl(value: string) {
+  if (value.startsWith('\\\\')) {
+    const [host, ...parts] = value.slice(2).replaceAll('\\', '/').split('/');
+    return `file://${host}/${parts.map(encodeURIComponent).join('/')}`;
+  }
   const normalized = value.replaceAll('\\', '/').replace(/^\/+/, '');
   const encoded = normalized
     .split('/')

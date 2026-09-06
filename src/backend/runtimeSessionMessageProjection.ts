@@ -137,7 +137,8 @@ export function projectRuntimeTurnMessages(
       ...projected,
       ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
-  });
+  }).filter((message) => !(message.role === 'system' &&
+    message.metadata?.name === 'output_limit_continuation'));
 }
 
 export function projectRuntimeSessionMessage(
