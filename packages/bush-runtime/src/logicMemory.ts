@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { LogicRetriever, retrieveLogic } from "./logicRetrieval.js";
 
 export type LogicFeedbackRating = "up" | "down";
 
@@ -26,55 +27,73 @@ type LogicFeedbackEvent = {
   source: string;
   note: string;
   updated_at: string;
+  scope: "logic" | "turn";
 };
 
 const MAX_FEEDBACK_EVENTS = 40;
-const RL_POLICY_VERSION = "lem-lightweight-reward-v1";
+const RL_POLICY_VERSION = "lem-attributed-feedback-v2";
 
 export class LogicMemoryStore {
   readonly path: string;
   #mutation: Promise<void> = Promise.resolve();
+  readonly #reminderRetriever = new LogicRetriever();
 
   constructor(path: string) {
     this.path = resolve(path);
   }
 
+  /** Local hint eligibility only; no Tool execution, memory output or mutation. */
+  async hasConversationMatch(texts: string[]): Promise<boolean> {
+    if (!texts.length) { this.#reminderRetriever.clear(); return false; }
+    await this.#mutation;
+    const records = await this.#read();
+    // Do not tokenize long conversation history for an empty memory store.
+    return this.#reminderRetriever.search(records, texts).length > 0;
+  }
+
   async consult(input: Record<string, unknown>): Promise<Record<string, unknown>> {
     await this.#mutation;
+    const mode = input.mode ?? "search";
+    if (mode !== "search" && mode !== "list") throw new Error("mode must be search or list.");
+    const records = await this.#read();
+    if (mode === "list") {
+      const offset = clampInteger(input.offset, 0, Number.MAX_SAFE_INTEGER, 0);
+      const limit = clampInteger(input.max_results, 1, 10, 10);
+      const page = records.slice(offset, offset + limit);
+      return {
+        status: records.length ? "ok" : "empty",
+        tool: "consult_logic",
+        mode: "inventory",
+        usage_contract: "Inventory of stored reasoning lessons, not relevance matches or adopted advice.",
+        total_count: records.length,
+        records: page.map((record) => ({
+          logic_id: logicId(record),
+          scenario: boundedText(record.scenario, 400),
+          conditions: textList(record.conditions, 16),
+          evidence_state: record.evidence_state === "verified" ? "verified" : "unverified",
+        })),
+        next_offset: offset + page.length < records.length ? offset + page.length : null,
+      };
+    }
     const query = boundedText(input.query, 1_000);
     if (!query) throw new Error("query is required.");
     const scenarioConditions = textList(input.scenario_conditions, 16);
     const decisionContext = boundedText(input.decision_context, 1_600);
     const cognitivePatterns = textList(input.cognitive_patterns, 16).map(normalizeLabel);
-    const requestedTerms = tokens(
+    const matches = retrieveLogic(records.map(applyFeedbackMetrics), [
       query,
       scenarioConditions.join(" "),
       decisionContext,
       cognitivePatterns.join(" "),
-    );
-    const maxResults = clampInteger(input.max_results, 1, 10, 5);
-    const matches = (await this.#read())
-      .map((record) => rankRecord(record, requestedTerms))
-      .filter((candidate) => candidate.lexicalScore > 0)
-      .sort((left, right) => right.score - left.score)
-      .slice(0, maxResults);
+    ]).slice(0, clampInteger(input.max_results, 1, 10, 3));
     return {
       status: matches.length ? "ok" : "no_learned_match",
       tool: "consult_logic",
       mode: "advisory_memory",
       usage_contract:
-        "These are retrieved local reasoning records, not task answers, execution steps, routing policy, or domain facts.",
-      query,
-      scenario_conditions: scenarioConditions,
-      cognitive_patterns: cognitivePatterns,
+        "BM25 lexical candidates, not semantic relevance guarantees, task answers or policy. Scores order this query's candidates; confidence and evidence_state are stored lesson claims, not relevance probabilities or independent verification. Check current applicability and evidence; ignore inapplicable records.",
+      retrieval_method: "bm25",
       matched_count: matches.length,
-      match_quality: matches.length === 0 ? "none" : matches[0]!.score >= 4 ? "strong" : "partial",
-      reflection_questions: matches
-        .map(({ record }) => boundedText(record.reflection_question ?? record.reflection_prompt, 800))
-        .filter(Boolean),
-      bias_warnings: matches
-        .map(({ record }) => boundedText(record.bias, 600))
-        .filter(Boolean),
       matched_logic: matches.map(({ record, score, matchedTerms }) => ({
         logic_id: logicId(record),
         scenario: boundedText(record.scenario, 400),
@@ -87,10 +106,13 @@ export class LogicMemoryStore {
           800,
         ),
         confidence: finiteNumber(record.confidence, 0.7),
+        evidence_state: record.evidence_state === "verified" ? "verified" : "unverified",
+        evidence: boundedText(record.evidence, 800),
+        outcome: boundedText(record.outcome, 500),
         reward_score: finiteNumber(record.reward_score, 0),
         suppression_score: finiteNumber(record.suppression_score, 0),
         score: Number(score.toFixed(4)),
-        matched_terms: matchedTerms,
+        matched_terms: matchedTerms.slice(0, 24),
       })),
       ...(matches.length
         ? {}
@@ -99,7 +121,8 @@ export class LogicMemoryStore {
   }
 
   async learn(input: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const action = boundedText(input.action, 40).toLowerCase() || "learn";
+    input = decodeLogicLearnInput(input);
+    const action = input.action;
     if (action === "feedback") {
       const logicIdValue = boundedText(input.logic_id, 160);
       if (!logicIdValue) throw new Error("logic_id is required for feedback.");
@@ -126,45 +149,47 @@ export class LogicMemoryStore {
     const scenario = boundedText(input.scenario, 400);
     if (!scenario) throw new Error("scenario is required.");
     const bias = boundedText(input.bias, 600);
-    const correction = boundedText(input.correction ?? input.lesson, 800);
+    const correction = boundedText(input.correction, 800);
     if (!bias && !correction) throw new Error("bias or correction is required.");
-    const conditions = textList(input.conditions, 16);
+    const conditions = canonicalConditions(input.conditions);
     const cognitivePatterns = textList(input.cognitive_patterns, 16).map(normalizeLabel);
-    const id = `logic_${createHash("sha256")
-      .update(JSON.stringify([scenario, bias, correction, conditions]))
-      .digest("hex")
-      .slice(0, 24)}`;
+    let id = learningIdentity({ scenario, bias, correction, conditions });
     const now = new Date().toISOString();
     let stored: LogicRecord = {};
     await this.#mutate(async (records) => {
-      const index = records.findIndex((record) => logicId(record) === id);
+      // Recognize pre-canonicalization identities without changing their stable IDs.
+      const index = records.findIndex((record) => logicId(record) === id || learningIdentity(record) === id);
       const existing = index >= 0 ? records[index]! : undefined;
-      const learningCount = clampInteger(existing?.learning_count, 1, 9_999, 0) + 1;
-      const requestedConfidence = clampNumber(input.confidence, 0.1, 0.98, 0.76);
-      const evidenceState = boundedText(input.evidence_state, 20) === "verified"
+      if (existing && logicId(existing)) id = logicId(existing);
+      const evidence = boundedText(input.evidence ?? existing?.evidence, 800);
+      const newEvidence = Boolean(evidence && evidence !== boundedText(existing?.evidence, 800));
+      const learningCount = existing
+        ? Math.min(9_999, clampInteger(existing.learning_count, 1, 9_999, 1) + (newEvidence ? 1 : 0))
+        : 1;
+      const requestedConfidence = clampNumber(input.confidence ?? existing?.base_confidence, 0.1, 0.98, 0.76);
+      const evidenceState = boundedText(input.evidence_state ?? existing?.evidence_state, 20) === "verified"
         ? "verified"
         : "unverified";
       const baseConfidence = Math.min(
         evidenceState === "verified" ? 0.98 : 0.8,
-        Math.max(requestedConfidence, finiteNumber(existing?.base_confidence, 0)) +
-          (existing ? 0.04 : 0),
+        existing && !newEvidence ? finiteNumber(existing.base_confidence ?? existing.confidence, requestedConfidence) : requestedConfidence,
       );
       stored = applyFeedbackMetrics({
         ...(existing ?? {}),
         logic_id: id,
         created_at: boundedText(existing?.created_at, 80) || now,
         updated_at: now,
-        schema_version: 2,
+        schema_version: 3,
         scenario,
         conditions,
-        cognitive_patterns: cognitivePatterns,
+        cognitive_patterns: input.cognitive_patterns === undefined ? existing?.cognitive_patterns ?? [] : cognitivePatterns,
         bias,
         correction,
-        reflection_question: boundedText(input.reflection_question, 800),
-        chain: textList(input.chain, 20),
-        tags: textList(input.tags, 12),
-        evidence: boundedText(input.evidence, 800),
-        outcome: boundedText(input.outcome, 500),
+        reflection_question: boundedText(input.reflection_question ?? existing?.reflection_question, 800),
+        chain: textList(input.chain ?? existing?.chain, 20),
+        tags: textList(input.tags ?? existing?.tags, 12),
+        evidence,
+        outcome: boundedText(input.outcome ?? existing?.outcome, 500),
         evidence_state: evidenceState,
         base_confidence: baseConfidence,
         learning_count: learningCount,
@@ -202,13 +227,14 @@ export class LogicMemoryStore {
   async recordFeedbackForLogicIds(
     logicIds: string[],
     rating: LogicFeedbackRating | null,
-    options: { sourceId: string; source?: string; note?: string },
+    options: { sourceId: string; source?: string; note?: string; scope?: "logic" | "turn" },
   ): Promise<LogicFeedbackBatchResult> {
     const requested = [...new Set(logicIds.map((value) => value.trim()).filter(Boolean))];
     const updatedLogicIds: string[] = [];
     const missingLogicIds: string[] = [];
     const sourceId = options.sourceId.trim();
     if (!sourceId) throw new Error("feedback sourceId is required.");
+    if (!requested.length) return { updatedLogicIds, missingLogicIds, rating };
     await this.#mutate(async (records) => {
       for (const requestedId of requested) {
         const index = records.findIndex((record) => logicId(record) === requestedId);
@@ -223,15 +249,20 @@ export class LogicMemoryStore {
             source_id: sourceId,
             rating,
             reward: rating === "up" ? 1 : -1,
-            source: boundedText(options.source, 120) || "user_thumb",
+            source: boundedText(options.source, 120) || (options.scope === "turn" ? "user_thumb" : "logic_feedback"),
             note: boundedText(options.note, 300),
             updated_at: new Date().toISOString(),
+            scope: options.scope ?? "logic",
           });
         }
         records[index] = applyFeedbackMetrics({
           ...current,
           updated_at: new Date().toISOString(),
-          feedback_events: events.slice(-MAX_FEEDBACK_EVENTS),
+          // Turn feedback cannot evict explicit lesson feedback and indirectly alter its score.
+          feedback_events: [
+            ...events.filter((event) => event.scope === "logic").slice(-MAX_FEEDBACK_EVENTS),
+            ...events.filter((event) => event.scope === "turn").slice(-MAX_FEEDBACK_EVENTS),
+          ],
           rl_policy_version: RL_POLICY_VERSION,
         });
         updatedLogicIds.push(requestedId);
@@ -243,9 +274,10 @@ export class LogicMemoryStore {
   async #read(): Promise<LogicRecord[]> {
     try {
       const parsed = JSON.parse(await readFile(this.path, "utf8"));
-      return Array.isArray(parsed)
-        ? parsed.filter((item): item is LogicRecord => Boolean(item && typeof item === "object"))
-        : [];
+      if (!Array.isArray(parsed) || parsed.some((item) => !item || typeof item !== "object" || Array.isArray(item))) {
+        throw new Error("Invalid LEM store: expected an array of records.");
+      }
+      return parsed as LogicRecord[];
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
@@ -259,10 +291,12 @@ export class LogicMemoryStore {
       await mkdir(dirname(this.path), { recursive: true });
       const temporary = `${this.path}.${randomUUID()}.tmp`;
       await writeFile(temporary, `${JSON.stringify(records, null, 2)}\n`, "utf8");
-      await rename(temporary, this.path).catch(async () => {
-        await rm(this.path, { force: true });
+      try {
         await rename(temporary, this.path);
-      });
+      } finally {
+        // Never delete the last committed store to work around a failed replacement.
+        await rm(temporary, { force: true }).catch(() => undefined);
+      }
     });
     this.#mutation = run.catch(() => undefined);
     return run;
@@ -271,8 +305,8 @@ export class LogicMemoryStore {
 
 function applyFeedbackMetrics(record: LogicRecord): LogicRecord {
   const events = feedbackEvents(record);
-  const positive = events.filter((event) => event.rating === "up").length;
-  const negative = events.filter((event) => event.rating === "down").length;
+  const positive = events.filter((event) => event.scope === "logic" && event.rating === "up").length;
+  const negative = events.filter((event) => event.scope === "logic" && event.rating === "down").length;
   const baseConfidence = clampNumber(
     record.base_confidence ?? record.confidence,
     0.1,
@@ -285,6 +319,8 @@ function applyFeedbackMetrics(record: LogicRecord): LogicRecord {
     feedback_events: events,
     positive_feedback_count: positive,
     negative_feedback_count: negative,
+    turn_positive_feedback_count: events.filter((event) => event.scope === "turn" && event.rating === "up").length,
+    turn_negative_feedback_count: events.filter((event) => event.scope === "turn" && event.rating === "down").length,
     reward_score: positive - negative,
     suppression_score: Math.max(0, negative - positive * 0.45),
     confidence: clampNumber(baseConfidence + positive * 0.08 - negative * 0.12, 0.1, 0.98, baseConfidence),
@@ -312,31 +348,9 @@ function feedbackEvents(record?: LogicRecord): LogicFeedbackEvent[] {
       source: boundedText(value.source, 120),
       note: boundedText(value.note, 300),
       updated_at: boundedText(value.updated_at, 80),
+      scope: value.scope === "logic" ? "logic" : value.scope === "turn" || value.source === "user_thumb" ? "turn" : "logic",
     } satisfies LogicFeedbackEvent];
   });
-}
-
-function rankRecord(record: LogicRecord, requestedTerms: Set<string>) {
-  const recordTerms = tokens(
-    record.scenario,
-    record.conditions,
-    record.cognitive_patterns,
-    record.bias,
-    record.correction ?? record.correction_logic ?? record.lesson,
-    record.reflection_question ?? record.reflection_prompt,
-    record.tags,
-  );
-  const matchedTerms = [...requestedTerms].filter((term) => recordTerms.has(term));
-  const lexicalScore = matchedTerms.length;
-  const confidence = finiteNumber(record.confidence, 0.7);
-  const reward = finiteNumber(record.reward_score, 0);
-  const suppression = finiteNumber(record.suppression_score, 0);
-  return {
-    record,
-    matchedTerms: matchedTerms.slice(0, 24),
-    lexicalScore,
-    score: lexicalScore + confidence + Math.min(4, Math.max(0, reward)) * 0.35 - suppression * 0.8,
-  };
 }
 
 function feedbackRating(input: Record<string, unknown>): LogicFeedbackRating {
@@ -354,17 +368,66 @@ function logicId(record: LogicRecord): string {
   return boundedText(record.logic_id ?? record.id, 160);
 }
 
-function tokens(...values: unknown[]): Set<string> {
-  const normalized = values.flatMap((value) => {
-    if (Array.isArray(value)) return value.map(String);
-    return [String(value ?? "")];
-  }).join(" ").normalize("NFKC").toLowerCase();
-  const result = new Set(normalized.match(/[a-z0-9_]{2,}|[\p{Script=Han}]/gu) ?? []);
-  const cjk = [...normalized].filter((character) => /\p{Script=Han}/u.test(character));
-  for (let index = 0; index + 1 < cjk.length; index += 1) {
-    result.add(`${cjk[index]}${cjk[index + 1]}`);
+function canonicalConditions(value: unknown): string[] {
+  return [...new Set(textList(value, 16).map((condition) => condition.normalize("NFKC")))].sort();
+}
+
+function learningIdentity(record: LogicRecord): string {
+  return `logic_${createHash("sha256").update(JSON.stringify([
+    boundedText(record.scenario, 400), boundedText(record.bias, 600),
+    boundedText(record.correction ?? record.correction_logic ?? record.lesson, 800), canonicalConditions(record.conditions),
+  ])).digest("hex").slice(0, 24)}`;
+}
+
+export function decodeLogicLearnInput(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object.");
+  const input = value as Record<string, unknown>;
+  const textFields = ["logic_id", "scenario", "bias", "correction", "reflection_question", "evidence", "outcome", "source", "source_id", "note", "feedback", "evidence_state"];
+  const listFields = ["cognitive_patterns", "conditions", "chain", "tags"];
+  const fields = new Set(["action", "confidence", "reward", "rating", ...textFields, ...listFields]);
+  for (const key of Object.keys(input)) {
+    if (!fields.has(key)) throw new Error(`Unknown learning field: ${key}.`);
   }
-  return result;
+  for (const key of textFields) {
+    if (input[key] !== undefined && typeof input[key] !== "string") throw new Error(`${key} must be a string.`);
+  }
+  for (const key of listFields) {
+    const list = input[key];
+    if (list !== undefined && typeof list !== "string" && (!Array.isArray(list) || list.some((item) => typeof item !== "string"))) {
+      throw new Error(`${key} must be a string or string array.`);
+    }
+  }
+  if (input.confidence !== undefined && (typeof input.confidence !== "number" || !Number.isFinite(input.confidence) || input.confidence < 0.1 || input.confidence > 0.98)) {
+    throw new Error("confidence must be a number between 0.1 and 0.98.");
+  }
+  if (input.evidence_state !== undefined && input.evidence_state !== "verified" && input.evidence_state !== "unverified") {
+    throw new Error("evidence_state must be verified or unverified.");
+  }
+  const action = input.action ?? (input.logic_id !== undefined ? "feedback" : "learn");
+  if (action !== "learn" && action !== "feedback") throw new Error("action must be learn or feedback.");
+  const hasText = (key: string) => typeof input[key] === "string" && Boolean((input[key] as string).trim());
+  for (const key of ["logic_id", "scenario", "bias", "correction"]) {
+    if (input[key] !== undefined && !hasText(key)) throw new Error(`${key} must not be empty.`);
+  }
+  if (action === "feedback") {
+    if (!hasText("logic_id") || input.scenario !== undefined) throw new Error("Feedback requires logic_id without a learning scenario.");
+    for (const [key, maximum] of [["reward", 1], ["rating", 5]] as const) {
+      if (input[key] !== undefined && (typeof input[key] !== "number" || !Number.isFinite(input[key]) || input[key] === 0 || Math.abs(input[key]) > maximum)) {
+        throw new Error(`${key} must be a non-zero number between -${maximum} and ${maximum}.`);
+      }
+    }
+    if (input.feedback !== undefined && !["thumbs_up", "thumbs_down", "helpful", "unhelpful", "success", "failure", "positive", "negative", "up", "down"].includes(String(input.feedback))) {
+      throw new Error("Unknown feedback rating.");
+    }
+    feedbackRating(input);
+  } else {
+    if (!hasText("scenario")) throw new Error("scenario is required.");
+    if (!hasText("bias") && !hasText("correction")) throw new Error("bias or correction is required.");
+    if (["logic_id", "feedback", "reward", "rating"].some((key) => input[key] !== undefined)) {
+      throw new Error("Do not mix learning and feedback fields.");
+    }
+  }
+  return { ...input, action };
 }
 
 function textList(value: unknown, limit: number): string[] {

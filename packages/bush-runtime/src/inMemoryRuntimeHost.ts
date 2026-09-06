@@ -113,6 +113,7 @@ import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import { LogicMemoryStore } from "./logicMemory.js";
+import { prepareLogicReminder } from "./logicReminder.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import {
   registerSubagentTool,
@@ -941,9 +942,8 @@ export class InMemoryRuntimeHost {
       ?.activeContextCheckpoint
       ? structuredClone(input.sessionCommit.activeContextCheckpoint)
       : undefined;
-    const previousCommittedUsage = input.sessionCommit
-      ? this.#sessions.snapshot(request.sessionId)?.turns.at(-1)?.usage
-      : undefined;
+    const priorSession = input.sessionCommit ? this.#sessions.snapshot(request.sessionId) : undefined;
+    const previousCommittedUsage = priorSession?.turns.at(-1)?.usage;
     const usage: {
       model?: string;
       contextWindowTokens?: number;
@@ -1116,6 +1116,28 @@ export class InMemoryRuntimeHost {
         details: {},
       });
     try {
+      // One optional reminder per Turn, outside both the Tool loop and provider retry loop.
+      // Append it as a durable fact before pressure measurement and checkpoint saving.
+      const logicReminder = !input.signal?.aborted ? await prepareLogicReminder({
+        memory: this.#logicMemory,
+        enabled: request.tools.some((tool) => tool.name === "consult_logic"),
+        nextRound: input.nextRound,
+        turnId: request.turnId,
+        session: priorSession,
+        currentMessages: input.sessionCommit
+          ? input.sessionCommit.inputMessages.map((entry) => entry.message) : messages,
+        generatedMessages: generatedMessages.map((entry) => entry.message),
+        messages,
+        supersededMessageIds: input.sessionCommit?.supersession?.messageIds,
+      }) : undefined;
+      if (logicReminder && !input.signal?.aborted) {
+        messages = [...messages, logicReminder];
+        generatedMessages.push({
+          messageId: `msg_logic_reminder_${request.turnId}`,
+          createdAt: this.#sessionNow(),
+          message: logicReminder,
+        });
+      }
       while (true) {
         round += 1;
         let dispatchPressure: ContextPressure | undefined;
@@ -2225,6 +2247,8 @@ export class InMemoryRuntimeHost {
       {
         sourceId: `assistant:${input.sessionId}:${input.turnId}:${input.messageId}`,
         source: "user_thumb",
+        // A Turn's retrieved/learned records are not proof of adoption or utility.
+        scope: "turn",
       },
     );
     return {

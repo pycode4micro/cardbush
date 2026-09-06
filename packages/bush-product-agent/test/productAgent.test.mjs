@@ -60,6 +60,12 @@ test("builds one stable explicit product Turn for desktop and transport callers"
   );
   assert.match(request.prefixMessages[0].content, /LEM is advisory reasoning memory/);
   assert.match(request.prefixMessages[0].content, /User thumbs are recorded by Runtime/);
+  assert.match(request.prefixMessages[0].content, /BM25 returns lexical candidates/);
+  assert.match(request.prefixMessages[0].content, /need not first feel uncertain/);
+  assert.match(request.prefixMessages[0].content, /one optional developer reminder per Turn/);
+  assert.match(request.prefixMessages[0].content, /not as a routine startup or completion step/);
+  assert.match(request.prefixMessages[0].content, /keep task-specific commands or fixes in evidence/);
+  assert.match(request.metadata.subagentChildPrefixMessages[0].content, /Never fabricate or mirror user thumbs/);
   assert.equal(request.prefixMessages.length, 2);
   assert.equal(request.prefixMessages[1].name, "runtime_context");
   assert.doesNotMatch(request.prefixMessages[1].content, /Local date/);

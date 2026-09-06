@@ -352,7 +352,7 @@ test("serializes Session Turn commits while allowing the next Turn after complet
   })).turns.length, 2);
 });
 
-test("associates assistant thumbs with LEM records used by that Turn", async (context) => {
+test("records assistant thumbs as Turn feedback without crediting retrieved LEM records", async (context) => {
   const dataRoot = await mkdtemp(join(tmpdir(), "cardbush-runtime-lem-"));
   context.after(() => rm(dataRoot, { recursive: true, force: true }));
   const memory = new LogicMemoryStore(join(dataRoot, "lem", "logic.json"));
@@ -421,7 +421,11 @@ test("associates assistant thumbs with LEM records used by that Turn", async (co
   assert.deepEqual(feedback.associatedLogicIds, [learned.logic_id]);
   assert.deepEqual(feedback.updatedLogicIds, [learned.logic_id]);
   const stored = JSON.parse(await readFile(memory.path, "utf8"))[0];
-  assert.equal(stored.positive_feedback_count, 1);
+  assert.equal(stored.positive_feedback_count, 0);
+  assert.equal(stored.turn_positive_feedback_count, 1);
+  assert.equal(stored.reward_score, 0);
+  assert.equal(stored.confidence, learned.confidence);
+  assert.equal(stored.feedback_events[0].scope, "turn");
 });
 
 test("forces atomic context compaction and resumes the same active Turn", async () => {

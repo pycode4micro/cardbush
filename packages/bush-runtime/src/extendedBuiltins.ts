@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
-import { LogicMemoryStore } from "./logicMemory.js";
+import { decodeLogicLearnInput, LogicMemoryStore } from "./logicMemory.js";
 import { ModelImageStore } from "./modelImageStore.js";
 
 export interface ExtendedBuiltinOptions {
@@ -27,13 +27,14 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
   registry.register<Record<string, unknown>>({
     definition: {
       name: "consult_logic",
-      description: "Consult local LEM advisory reasoning memory before consequential judgments, evidence conflicts, correction-direction decisions, complex tradeoffs, delegation, or uncertain completion criteria. Retrieved records are reflection candidates, not task answers or policy.",
+      description: "Search local reasoning lessons to check an assumption, judgment or useful past correction; you need not first feel uncertain. Uses word segmentation and BM25, not semantic matching; check applicability and evidence, and ignore unrelated candidates. A Runtime reminder is optional, not a required Tool call. Do not call routinely on every Turn or completion. Use mode=list only when the user asks to inspect stored lessons; it is paginated inventory, not a search for all topics.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
-        required: ["query"],
         properties: {
-          query: { type: "string", minLength: 1 },
+          mode: { type: "string", enum: ["search", "list"], default: "search" },
+          query: { type: "string", minLength: 1, pattern: "\\S", description: "The actual decision or reasoning doubt, with concrete terms from the situation; not a request to list all memories." },
+          offset: { type: "integer", minimum: 0, description: "List mode only. Use the previous next_offset to continue." },
           scenario_conditions: {
             oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
           },
@@ -47,8 +48,12 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
           cognitive_patterns: {
             oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
           },
-          max_results: { type: "integer", minimum: 1, maximum: 10, default: 5 },
+          max_results: { type: "integer", minimum: 1, maximum: 10, description: "Defaults to 3 search candidates or 10 inventory entries." },
         },
+        oneOf: [
+          { properties: { mode: { const: "search" } }, required: ["query"] },
+          { properties: { mode: { const: "list" } }, required: ["mode"] },
+        ],
       },
     },
     manifest: manifest("logic.consult", false, "session"),
@@ -56,7 +61,9 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
     visibleToChild: true,
     decodeInput: (value) => {
       const input = object(value);
-      requiredText(input.query, "query");
+      const mode = input.mode ?? "search";
+      if (mode !== "search" && mode !== "list") throw new Error("mode must be search or list.");
+      if (mode === "search") requiredText(input.query, "query");
       const conditions = [
         ...stringList(input.scenario_conditions),
         text(input.decision_phase),
@@ -65,27 +72,22 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
       ].filter(Boolean);
       return { ...input, scenario_conditions: conditions };
     },
-    execute: async (context) => {
-      const result = { ...await store.consult(context.input) };
-      delete result.query;
-      delete result.scenario_conditions;
-      delete result.cognitive_patterns;
-      return success(context, result, [store.path], ["logic", "lem"]);
-    },
+    execute: async (context) =>
+      success(context, await store.consult(context.input), [store.path], ["logic", "lem"]),
   });
   registry.register<Record<string, unknown>>({
     definition: {
       name: "learn_logic",
-      description: "Store a local LEM reasoning lesson as scenario-bias-correction memory, or record reward feedback for an existing logic_id. Store how to think, not task instructions or domain answers.",
+      description: "Store a valuable reasoning correction after checking the outcome. Bound the lesson to its applicable conditions; keep commands and domain-specific fixes in evidence, not universal rules. Repeating a lesson does not strengthen it. action=feedback concerns an explicitly evaluated logic_id, never overall answer satisfaction or fabricated user thumbs; Runtime records user thumbs separately.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         properties: {
-          action: { type: "string", enum: ["learn", "feedback"], default: "learn" },
-          logic_id: { type: "string" },
-          scenario: { type: "string" },
-          bias: { type: "string" },
-          correction: { type: "string" },
+          action: { type: "string", enum: ["learn", "feedback"], description: "Defaults to learn, or feedback when logic_id is supplied." },
+          logic_id: { type: "string", minLength: 1, pattern: "\\S" },
+          scenario: { type: "string", minLength: 1, pattern: "\\S" },
+          bias: { type: "string", minLength: 1, pattern: "\\S" },
+          correction: { type: "string", minLength: 1, pattern: "\\S" },
           reflection_question: { type: "string" },
           cognitive_patterns: {
             oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
@@ -103,31 +105,40 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
             oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
           },
           confidence: { type: "number", minimum: 0.1, maximum: 0.98, default: 0.76 },
-          background: { type: "boolean", default: false },
           feedback: {
             type: "string",
-            enum: ["thumbs_up", "thumbs_down", "helpful", "unhelpful", "success", "failure", "positive", "negative"],
+            enum: ["thumbs_up", "thumbs_down", "helpful", "unhelpful", "success", "failure", "positive", "negative", "up", "down"],
           },
-          reward: { type: "number", minimum: -1, maximum: 1 },
-          rating: { type: "number", minimum: -5, maximum: 5 },
+          reward: { type: "number", minimum: -1, maximum: 1, not: { const: 0 } },
+          rating: { type: "number", minimum: -5, maximum: 5, not: { const: 0 } },
           source: { type: "string" },
           source_id: { type: "string" },
           note: { type: "string" },
         },
         oneOf: [
-          { required: ["scenario"] },
-          { required: ["action", "logic_id"] },
-          { required: ["logic_id", "feedback"] },
-          { required: ["logic_id", "reward"] },
+          {
+            properties: { action: { const: "learn" } }, required: ["scenario"],
+            anyOf: [{ required: ["bias"] }, { required: ["correction"] }],
+            not: { anyOf: ["logic_id", "feedback", "reward", "rating"].map((key) => ({ required: [key] })) },
+          },
+          {
+            properties: { action: { const: "feedback" } }, required: ["logic_id"],
+            anyOf: ["feedback", "reward", "rating"].map((key) => ({ required: [key] })),
+            not: { required: ["scenario"] },
+          },
         ],
       },
     },
     manifest: manifest("logic.learn", true, "session"),
     parallelSafe: false,
     visibleToChild: true,
-    decodeInput: object,
+    decodeInput: decodeLogicLearnInput,
     execute: async (context) =>
-      success(context, await store.learn(context.input), [store.path], ["logic", "lem"]),
+      success(context, await store.learn({
+        ...context.input,
+        ...(context.input.action === "feedback" && !context.input.source_id
+          ? { source_id: `tool:${context.sessionId}:${context.turnId}` } : {}),
+      }), [store.path], ["logic", "lem"]),
   });
 }
 
