@@ -42,7 +42,6 @@ import {
   isToolCancelled,
   isToolRunning,
   isToolRunningInContext,
-  runningToolLabel,
 } from './toolExecutionState';
 import {
   defaultToolExecutionExpanded,
@@ -128,6 +127,7 @@ export function ToolExecutionBlock({
         ...changeReport,
         id: `${message.id}:${message.turnId ?? ''}`,
         messageId: message.id,
+        executionIds: renderedExecutions.map(execution => execution.id),
         turnId: message.turnId,
         createdAt: message.createdAt,
       }
@@ -240,45 +240,48 @@ export function ToolExecutionBlock({
     );
   }
 
-  if (messageChangeReport) {
-    return (
-      <ToolChangeBlock
-        report={messageChangeReport}
-        running={running}
-        tone={tone}
-        language={language}
-        toolName={executions.find((execution) =>
-          ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
-        )?.name ?? executions[0]?.name ?? 'edit_file'}
-        detailsDeferred={detailsDeferred}
-        detailsStatus={deferredDetailStatus}
-        onRequestDetails={requestDeferredDetails}
-        onRetryDetails={retryDeferredDetails}
-        onRevert={active
-          ? undefined
-          : () => onRevertChangeReport(messageChangeReport, message)}
-      />
-    );
-  }
+  const changes = messageChangeReport ? (
+    <ToolChangeBlock
+      report={messageChangeReport}
+      running={running}
+      tone={tone}
+      language={language}
+      toolName={executions.find((execution) =>
+        ['write_file', 'edit_file'].includes(execution.name.trim().toLowerCase()),
+      )?.name ?? executions[0]?.name ?? 'edit_file'}
+      detailsDeferred={detailsDeferred}
+      detailsStatus={deferredDetailStatus}
+      onRequestDetails={requestDeferredDetails}
+      onRetryDetails={retryDeferredDetails}
+      onRevert={active
+        ? undefined
+        : () => onRevertChangeReport(messageChangeReport, message)}
+    />
+  ) : null;
 
-  const runSummary = running
-    ? runningToolLabel(executions, language)
-    : failedCount > 0
+  const awaitingPermission = running && renderedExecutions.some(
+    execution => execution.state === 'awaiting_permission',
+  );
+  const runSummary = awaitingPermission
+    ? language === 'zh' ? '等待授权' : 'Awaiting permission'
+    : running
       ? language === 'zh'
-        ? `已运行 ${renderedExecutions.length} 条命令，${failedCount} 条失败`
-        : `Ran ${renderedExecutions.length} tools, ${failedCount} failed`
-      : language === 'zh'
-        ? `已运行 ${renderedExecutions.length} 条命令`
-        : `Ran ${renderedExecutions.length} tools`;
+        ? `正在处理 · ${renderedExecutions.length} 项操作`
+        : `Processing · ${renderedExecutions.length} actions`
+      : failedCount > 0
+        ? language === 'zh'
+          ? `已处理 ${renderedExecutions.length} 项操作，${failedCount} 项失败`
+          : `Processed ${renderedExecutions.length} actions, ${failedCount} failed`
+        : language === 'zh'
+          ? `已处理 ${renderedExecutions.length} 项操作`
+          : `Processed ${renderedExecutions.length} actions`;
   const historySummary = historyLabel && !running
     ? language === 'zh'
       ? `历史执行记录 · ${runSummary}`
       : `Execution history · ${runSummary}`
     : runSummary;
   const summary = historySummary;
-  const logoExecution = renderedExecutions.find((execution) =>
-    isToolRunningInContext(execution, active),
-  ) ?? renderedExecutions[0];
+  const logoExecution = renderedExecutions[0];
 
   return (
     <div
@@ -288,6 +291,7 @@ export function ToolExecutionBlock({
       <button
         className="tool-execution-summary"
         type="button"
+        aria-expanded={expanded}
         onClick={toggleExpanded}
       >
         <ToolLogo name={logoExecution?.name ?? ''} size={16} />
@@ -296,7 +300,14 @@ export function ToolExecutionBlock({
       </button>
       {expanded && (
         <div className="tool-execution-details">
-          {renderedExecutions.map((execution) => (
+          {renderedExecutions.map((execution) => isContextCompactionPresentationExecution(execution) ? (
+            <RuntimeContextCompactionDetail
+              key={execution.id}
+              execution={execution}
+              active={active}
+              language={language}
+            />
+          ) : (
             <ToolExecutionDetail
               key={execution.id}
               execution={execution}
@@ -306,6 +317,7 @@ export function ToolExecutionBlock({
               onOpenScene={onOpenScene}
             />
           ))}
+          {changes}
         </div>
       )}
     </div>
@@ -436,7 +448,7 @@ function RuntimeContextCompactionDetail({
     : '';
 
   return (
-    <section className="tool-execution-detail runtime-context-compaction-detail">
+    <section className="tool-execution-detail runtime-context-compaction-detail" data-execution-id={execution.id}>
       <header>
         <ToolLogo name={execution.name} size={16} />
         <strong>{language === 'zh' ? '上下文维护' : 'Context maintenance'}</strong>
@@ -771,7 +783,7 @@ function ToolExecutionDetail({
             ? '完成'
             : 'Done';
   return (
-    <section className="tool-execution-detail">
+    <section className="tool-execution-detail" data-execution-id={execution.id}>
       <header>
         <ToolLogo name={execution.name} size={16} />
         <strong>{displayToolName(execution.name)}</strong>

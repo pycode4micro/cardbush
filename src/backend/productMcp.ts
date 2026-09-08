@@ -12,12 +12,17 @@ const snapshotId = 'cardbush-product-mcp';
 export const CARDBUSH_APPS_MCP_SERVER_ID = 'cardbush_apps';
 
 export async function readProductMcpServers(): Promise<McpServerConfig[]> {
+  return (await readProductMcpConfiguration()).servers;
+}
+
+export async function readProductMcpConfiguration() {
   const stored = await productHostMcp('mcp.get');
-  return (Array.isArray(stored.servers) ? stored.servers : [])
+  const servers = (Array.isArray(stored.servers) ? stored.servers : [])
     .map(serverFromStored)
     .filter((value): value is McpServerConfig => (
       value != null && value.id !== CARDBUSH_APPS_MCP_SERVER_ID
     ));
+  return { revision: Number(stored.revision) || 1, servers };
 }
 
 export async function synchronizeProductMcpSnapshot(
@@ -32,11 +37,13 @@ export async function synchronizeProductMcpSnapshot(
 export async function replaceProductMcpServers(
   client: Pick<ProtocolRuntimeClient, 'applyMcpSnapshot'>,
   servers: McpServerConfig[],
+  expectedRevision: number,
 ): Promise<McpSnapshotResult> {
   if (servers.some((server) => server.id === CARDBUSH_APPS_MCP_SERVER_ID)) {
     throw new Error(`${CARDBUSH_APPS_MCP_SERVER_ID} is a reserved bundled MCP server ID.`);
   }
   const saved = await productHostMcp('mcp.update', {
+    expectedRevision,
     servers: servers.map(storedServer),
   });
   return client.applyMcpSnapshot(snapshot(servers, Number(saved.revision) || 1));

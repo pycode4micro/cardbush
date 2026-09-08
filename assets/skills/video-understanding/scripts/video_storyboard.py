@@ -14,10 +14,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterable, Sequence
 
 
 SCHEMA = "cardbush.video_storyboard.v1"
+SHORT_VIDEO_SECONDS = 120.0
 
 
 @dataclass(frozen=True)
@@ -44,18 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("uniform", "scenes", "sequence"),
-        default="uniform",
-        help="Sampling strategy (default: uniform)",
+        choices=("auto", "all", "uniform", "scenes", "sequence"),
+        default="auto",
+        help="Default auto: all frames up to 2 minutes, time-based sampling for longer ranges",
     )
     parser.add_argument("--start", default="0", help="Start time in seconds or HH:MM:SS.mmm")
     parser.add_argument("--end", help="End time in seconds or HH:MM:SS.mmm")
-    parser.add_argument("--frames", type=int, default=16, help="Total samples, 1-120")
+    parser.add_argument("--frames", type=int, help="Manual sample count, 1-120; overrides auto with uniform sampling, incompatible with all")
+    parser.add_argument("--short-video-seconds", type=float, default=SHORT_VIDEO_SECONDS,
+                        help="Auto mode includes every decoded frame up to this duration (default: 120)")
     parser.add_argument(
         "--step",
         type=float,
-        default=0.5,
-        help="Seconds between sequence samples (default: 0.5)",
+        help="Seconds between sequence samples (default: 0.5), or override auto sampling interval",
     )
     parser.add_argument(
         "--sheet-size",
@@ -95,6 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--jpeg-quality", type=int, default=90, help="JPEG quality, 70-95")
     parser.add_argument("--pretty", action="store_true", help="Pretty-print the JSON manifest")
+    parser.add_argument("--read-manifest", help="Read an existing manifest's next contact-sheet batch without decoding again")
+    parser.add_argument("--sheet-offset", type=int, default=0, help="Zero-based sheet offset in the JSON response (default: 0)")
+    parser.add_argument("--sheet-limit", type=int, default=4, help="Sheets listed per JSON response, 1-4 (default: 4)")
+    parser.add_argument("--full-manifest", action="store_true", help="Print all sheet and frame records instead of a compact batch")
     parser.add_argument(
         "--check-dependencies",
         action="store_true",
@@ -347,16 +353,17 @@ def compose_sheet(
     columns: int,
     tile_width: int,
     sheet_number: int,
-    total_sheets: int,
+    total_sheets: int | None,
     mode: str,
     destination: Path,
     quality: int,
 ) -> None:
     if not frames:
         raise RuntimeError("Cannot compose an empty contact sheet")
+    columns = min(columns, len(frames))
     first_image = frames[0][2]
     aspect_height = round(tile_width * first_image.height / max(1, first_image.width))
-    tile_height = max(140, min(round(tile_width * 1.5), aspect_height))
+    tile_height = max(140, min(round(tile_width * 2), aspect_height))
     label_height = 28
     header_height = 42
     gap = 8
@@ -366,10 +373,18 @@ def compose_sheet(
     canvas_height = margin * 2 + header_height + rows * (tile_height + label_height) + (rows - 1) * gap
     canvas = Image.new("RGB", (canvas_width, canvas_height), "#181a18")
     draw = ImageDraw.Draw(canvas)
+    ImageFont = importlib.import_module("PIL.ImageFont")
+    try:
+        label_font = ImageFont.load_default(size=max(12, min(20, round(tile_width / 20))))
+        header_font = ImageFont.load_default(size=18)
+    except TypeError:  # Pillow before 10.1 has only the fixed-size default font.
+        label_font = header_font = ImageFont.load_default()
     draw.text(
         (margin, margin),
-        f"VIDEO STORYBOARD | {mode.upper()} | SHEET {sheet_number}/{total_sheets}",
+        f"{mode.upper()} | SHEET {sheet_number}"
+        + (f"/{total_sheets}" if total_sheets is not None else ""),
         fill="#f1f3ef",
+        font=header_font,
     )
     for cell, (index, timestamp, image) in enumerate(frames):
         row, column = divmod(cell, columns)
@@ -382,9 +397,10 @@ def compose_sheet(
             fill="#252825",
         )
         draw.text(
-            (left + 8, top + tile_height + 7),
-            f"#{index:03d}  {format_time(timestamp)}",
+            (left + 8, top + tile_height + 4),
+            f"F{index:05d}  {format_time(timestamp)}",
             fill="#f1f3ef",
+            font=label_font,
         )
     canvas.save(destination, format="JPEG", quality=quality, optimize=True)
 
@@ -408,12 +424,203 @@ def manifest_json(payload: dict[str, Any], pretty: bool, *, ascii_safe: bool = F
     return json.dumps(payload, ensure_ascii=ascii_safe, indent=2 if pretty else None)
 
 
+def sampling_plan(args: argparse.Namespace, duration: float, fps: float) -> dict[str, Any]:
+    """Choose density from the selected duration; explicit sampling remains available."""
+    if args.mode == "all":
+        if args.frames is not None or args.step is not None:
+            raise ValueError("--mode all cannot be combined with --frames or --step")
+        strategy, step = "all", None
+    elif args.mode != "auto":
+        strategy, step = args.mode, args.step if args.step is not None else 0.5
+    elif args.frames is not None:
+        if args.step is not None:
+            raise ValueError("Use --mode sequence to combine --frames and --step")
+        strategy, step = "uniform", None
+    elif args.step is not None:
+        strategy, step = "interval", max(args.step, 1 / fps)
+    elif duration <= args.short_video_seconds + 1e-9:
+        strategy, step = "all", None
+    else:
+        strategy = "interval"
+        step = max(0.5 if duration <= 600 else 1.0 if duration <= 1800 else 5.0, 1 / fps)
+    return {
+        "strategy": strategy,
+        "selected_duration_seconds": round(duration, 6),
+        "short_video_seconds": args.short_video_seconds,
+        "interval_seconds": step if strategy in ("interval", "sequence") else None,
+        "manual_frame_count": args.frames,
+    }
+
+
+@dataclass(frozen=True)
+class DecodedSample:
+    frame: Any
+    source_frame_index: int
+    timestamp: float
+    timestamp_source: str
+
+
+def sequential_frames(
+    capture: Any, cv2: Any, metadata: VideoMetadata, start: float,
+    selected_end: float | None, coverage: dict[str, Any], warnings: list[str],
+) -> Iterable[DecodedSample]:
+    """Read each decoded frame once, in order, without seek, dedupe or a sample cap."""
+    decoded_count = 0
+    included_count = 0
+    previous_timestamp = -1.0
+    estimated_timestamps = 0
+    end_reached = False
+    reached_eof = False
+    while True:
+        ok, frame = capture.read()
+        if not ok or frame is None:
+            reached_eof = True
+            break
+        index = decoded_count
+        decoded_count += 1
+        reported_timestamp = float(capture.get(cv2.CAP_PROP_POS_MSEC)) / 1000
+        if math.isfinite(reported_timestamp) and reported_timestamp >= 0 and (
+            index == 0 or reported_timestamp > previous_timestamp
+        ):
+            timestamp, time_source = reported_timestamp, "decoder"
+        else:
+            timestamp = max(index / metadata.fps, previous_timestamp + 1 / metadata.fps)
+            time_source = "fps_estimate"
+            estimated_timestamps += 1
+        previous_timestamp = timestamp
+        if selected_end is not None and timestamp > selected_end + 1e-9:
+            end_reached = True
+            break
+        if timestamp < start - 1e-9:
+            continue
+        included_count += 1
+        yield DecodedSample(frame, index, timestamp, time_source)
+
+    reconciled = decoded_count == metadata.frame_count if reached_eof else None
+    complete = end_reached or (reached_eof and reconciled is True)
+    coverage.update({
+        "kind": "all_decoded_frames",
+        "decode_complete": complete,
+        "all_decoded_frames_in_range_included": True,
+        "decoded_frames": decoded_count,
+        "included_frames": included_count,
+        "metadata_frame_count_matches": reconciled,
+        "reached_eof": reached_eof,
+        "fps_estimated_timestamps": estimated_timestamps,
+    })
+    if reached_eof and not reconciled:
+        warnings.append(
+            f"Decoded {decoded_count} frames but metadata declares {metadata.frame_count}. "
+            "The decoder may have stopped early or the metadata may be inaccurate; full coverage is unverified."
+        )
+    if estimated_timestamps:
+        warnings.append(
+            f"{estimated_timestamps} timestamps used FPS estimates because decoder timestamps "
+            "were unavailable or non-increasing; time-range boundaries may be approximate."
+        )
+
+
+def sampled_frames(
+    capture: Any, cv2: Any, timestamps: Sequence[float], frame_duration: float,
+) -> Iterable[DecodedSample]:
+    for timestamp in timestamps:
+        frame, source_index = read_frame(capture, cv2, timestamp, frame_duration)
+        yield DecodedSample(frame, source_index, timestamp, "seek_target")
+
+
+def write_contact_sheets(
+    samples: Iterable[DecodedSample], args: argparse.Namespace, modules: tuple[Any, ...],
+    run_directory: Path, strategy: str, total_sheets: int | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    cv2, _, Image, ImageDraw = modules
+    frame_records: list[dict[str, Any]] = []
+    sheet_records: list[dict[str, Any]] = []
+    tiles: list[tuple[int, float, Any]] = []
+    sheet_frames: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        sheet_number = len(sheet_records) + 1
+        sheet_path = run_directory / f"contact-sheet-{sheet_number:04d}.jpg"
+        compose_sheet(
+            Image, ImageDraw, tiles, args.columns, args.tile_width, sheet_number,
+            total_sheets, strategy, sheet_path, args.jpeg_quality,
+        )
+        sheet_records.append({
+            "sheet": sheet_number,
+            "path": str(sheet_path),
+            "frame_indices": [record["index"] for record in sheet_frames],
+            "source_frame_start": sheet_frames[0]["source_frame_index"],
+            "source_frame_end": sheet_frames[-1]["source_frame_index"],
+            "start": sheet_frames[0]["timestamp"],
+            "end": sheet_frames[-1]["timestamp"],
+        })
+        for _, _, tile in tiles:
+            tile.close()
+        tiles.clear()
+        sheet_frames.clear()
+
+    for sample in samples:
+        display_index = len(frame_records) + 1
+        image = Image.fromarray(cv2.cvtColor(sample.frame, cv2.COLOR_BGR2RGB))
+        frame_path = None
+        if args.keep_frames:
+            frame_path = run_directory / f"frame-{display_index:06d}-source-{sample.source_frame_index:06d}.jpg"
+            retained_frame(image, Image, args.full_frame_max_width).save(
+                frame_path, format="JPEG", quality=args.jpeg_quality, optimize=True,
+            )
+        # Retain only one sheet of thumbnails, never a sheet of full-resolution
+        # decoded images. All-frame mode can contain thousands of source frames.
+        image.thumbnail((args.tile_width, args.tile_width * 2), Image.Resampling.LANCZOS)
+        tiles.append((sample.source_frame_index, sample.timestamp, image))
+        record = {
+            "index": display_index,
+            "timestamp_seconds": round(sample.timestamp, 6),
+            "timestamp": format_time(sample.timestamp),
+            "timestamp_source": sample.timestamp_source,
+            "source_frame_index": sample.source_frame_index,
+            "sheet": len(sheet_records) + 1,
+            "cell": len(tiles),
+            **({"path": str(frame_path)} if frame_path else {}),
+        }
+        frame_records.append(record)
+        sheet_frames.append(record)
+        if len(tiles) == args.sheet_size:
+            flush()
+    if tiles:
+        flush()
+    if not frame_records:
+        raise RuntimeError("No frames were decoded inside the selected time range")
+    return frame_records, sheet_records
+
+
+def manifest_batch(payload: dict[str, Any], offset: int, limit: int, full: bool = False) -> dict[str, Any]:
+    bounded(offset, 0, sys.maxsize, "--sheet-offset")
+    bounded(limit, 1, 4, "--sheet-limit")
+    if payload.get("schema") != SCHEMA or not isinstance(payload.get("contact_sheets"), list):
+        raise ValueError("Not a video storyboard manifest")
+    if full:
+        return payload
+    sheets = payload["contact_sheets"]
+    if offset > len(sheets):
+        raise ValueError("--sheet-offset is outside the manifest's contact sheets")
+    end = min(len(sheets), offset + limit)
+    return {
+        **{key: value for key, value in payload.items() if key not in ("frames", "contact_sheets")},
+        "contact_sheet_count": len(sheets),
+        "contact_sheets": sheets[offset:end],
+        "sheet_offset": offset,
+        "next_sheet_offset": end if end < len(sheets) else None,
+        "frame_records_in_manifest": payload.get("sampled_frames", 0),
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if not args.video:
-        raise ValueError("video is required unless --check-dependencies is used")
+        raise ValueError("video is required unless --check-dependencies or --read-manifest is used")
     if not args.output_dir:
         raise ValueError("--output-dir is required")
-    bounded(args.frames, 1, 120, "--frames")
+    if args.frames is not None:
+        bounded(args.frames, 1, 120, "--frames")
     bounded(args.sheet_size, 4, 20, "--sheet-size")
     bounded(args.columns, 2, 5, "--columns")
     bounded(args.tile_width, 200, 640, "--tile-width")
@@ -421,8 +628,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     bounded(args.scene_scan_limit, 100, 5000, "--scene-scan-limit")
     bounded(args.full_frame_max_width, 640, 3840, "--full-frame-max-width")
     bounded(args.jpeg_quality, 70, 95, "--jpeg-quality")
-    if not math.isfinite(args.step) or args.step <= 0:
-        raise ValueError("--step must be a finite positive number")
+    bounded(args.sheet_offset, 0, sys.maxsize, "--sheet-offset")
+    bounded(args.sheet_limit, 1, 4, "--sheet-limit")
+    for value, label in [(args.short_video_seconds, "--short-video-seconds"), (args.step, "--step")]:
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            raise ValueError(f"{label} must be a finite positive number")
 
     source_candidate = Path(args.video).expanduser()
     if not source_candidate.exists():
@@ -431,100 +641,63 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if not source.is_file():
         raise ValueError(f"video is not a file: {source}")
     output_parent = Path(args.output_dir).expanduser().resolve()
-    cv2, np, Image, ImageDraw = load_media_modules()
+    modules = load_media_modules()
+    cv2, np, _, _ = modules
     capture, metadata = open_video(cv2, source)
     try:
         start = parse_time(args.start, "--start")
         requested_end = parse_time(args.end, "--end") if args.end is not None else None
         start, end, warnings = normalize_range(start, requested_end, metadata)
+        duration = min(requested_end if requested_end is not None else metadata.duration_seconds,
+                       metadata.duration_seconds) - start
+        plan = sampling_plan(args, duration, metadata.fps)
+        strategy = plan["strategy"]
         frame_duration = 1 / metadata.fps
         detected_scenes = None
         uniform_supplements = None
-        if args.mode == "sequence":
-            timestamps = sequence_timestamps(start, end, args.frames, args.step)
-            if len(timestamps) < args.frames:
-                warnings.append("Sequence reached the selected range before the requested frame count.")
-        elif args.mode == "scenes":
-            timestamps, detected_scenes, uniform_supplements = scene_timestamps(
-                capture,
-                cv2,
-                np,
-                start,
-                end,
-                args.frames,
-                args.scene_threshold,
-                args.scene_scan_limit,
-                frame_duration,
-            )
-            if uniform_supplements > 0:
-                warnings.append(
-                    "Scene candidates were supplemented with uniform samples to preserve coverage."
-                )
+        coverage: dict[str, Any] = {"kind": "sampled", "all_decoded_frames_in_range_included": False}
+        timestamps = None
+        if strategy == "all":
+            # Full-video decoding ends at EOF, not at duration estimated from FPS.
+            # A selected interval is filtered by decoder timestamps during the same
+            # sequential pass, avoiding imprecise seeks and repeated nearby frames.
+            samples = sequential_frames(capture, cv2, metadata, start, requested_end, coverage, warnings)
         else:
-            timestamps = uniform_timestamps(start, end, args.frames)
+            count = args.frames if args.frames is not None else 16
+            if strategy == "sequence":
+                timestamps = sequence_timestamps(start, end, count, plan["interval_seconds"])
+                if len(timestamps) < count:
+                    warnings.append("Sequence reached the selected range before the requested frame count.")
+            elif strategy == "scenes":
+                timestamps, detected_scenes, uniform_supplements = scene_timestamps(
+                    capture, cv2, np, start, end, count, args.scene_threshold,
+                    args.scene_scan_limit, frame_duration,
+                )
+                if uniform_supplements > 0:
+                    warnings.append("Scene candidates were supplemented with uniform samples to preserve coverage.")
+            elif strategy == "interval":
+                step = plan["interval_seconds"]
+                timestamps = sequence_timestamps(start, end, math.floor((end - start) / step) + 1, step)
+                if end > timestamps[-1] + 1e-9:
+                    timestamps.append(end)
+            else:
+                timestamps = uniform_timestamps(start, end, count)
+            samples = sampled_frames(capture, cv2, timestamps, frame_duration)
+            warnings.append("This is temporal sampling, not full-frame coverage; brief events may be absent.")
+            warnings.append("Timestamps are decoder seek targets and may resolve to a nearby encoded frame.")
 
         run_directory = make_run_directory(output_parent)
-        sheet_count = math.ceil(len(timestamps) / args.sheet_size)
-        frame_records: list[dict[str, Any]] = []
-        sheet_records: list[dict[str, Any]] = []
-        for sheet_index in range(sheet_count):
-            chunk = timestamps[
-                sheet_index * args.sheet_size : (sheet_index + 1) * args.sheet_size
-            ]
-            decoded: list[tuple[int, float, Any]] = []
-            first_record_index = len(frame_records)
-            for timestamp in chunk:
-                display_index = len(frame_records) + 1
-                frame, source_frame_index = read_frame(capture, cv2, timestamp, frame_duration)
-                image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                frame_path = None
-                if args.keep_frames:
-                    frame_path = run_directory / (
-                        f"frame-{display_index:03d}-{format_time(timestamp).replace(':', '-')}.jpg"
-                    )
-                    retained_frame(image, Image, args.full_frame_max_width).save(
-                        frame_path,
-                        format="JPEG",
-                        quality=args.jpeg_quality,
-                        optimize=True,
-                    )
-                decoded.append((display_index, timestamp, image))
-                frame_records.append({
-                    "index": display_index,
-                    "timestamp_seconds": round(timestamp, 6),
-                    "timestamp": format_time(timestamp),
-                    "source_frame_index": source_frame_index,
-                    "sheet": sheet_index + 1,
-                    "cell": len(decoded),
-                    **({"path": str(frame_path)} if frame_path else {}),
-                })
-            sheet_path = run_directory / f"contact-sheet-{sheet_index + 1:02d}.jpg"
-            compose_sheet(
-                Image,
-                ImageDraw,
-                decoded,
-                args.columns,
-                args.tile_width,
-                sheet_index + 1,
-                sheet_count,
-                args.mode,
-                sheet_path,
-                args.jpeg_quality,
-            )
-            records = frame_records[first_record_index:]
-            sheet_records.append({
-                "sheet": sheet_index + 1,
-                "path": str(sheet_path),
-                "frame_indices": [record["index"] for record in records],
-                "start": records[0]["timestamp"],
-                "end": records[-1]["timestamp"],
-            })
-
+        frame_records, sheet_records = write_contact_sheets(
+            samples, args, modules, run_directory, strategy,
+            math.ceil(len(timestamps) / args.sheet_size) if timestamps is not None else None,
+        )
         payload: dict[str, Any] = {
             "schema": SCHEMA,
             "source": str(source),
             "run_directory": str(run_directory),
             "mode": args.mode,
+            "sampling": plan,
+            "coverage": coverage,
             "metadata": {
                 "duration_seconds": round(metadata.duration_seconds, 6),
                 "duration": format_time(metadata.duration_seconds),
@@ -539,13 +712,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "end_seconds": round(end, 6),
                 "start": format_time(start),
                 "end": format_time(end),
+                "first_frame_timestamp": frame_records[0]["timestamp"],
+                "last_frame_timestamp": frame_records[-1]["timestamp"],
             },
             "requested_frames": args.frames,
             "sampled_frames": len(frame_records),
             "contact_sheets": sheet_records,
             "frames": frame_records,
             "warnings": warnings + [
-                "Timestamps are decoder seek targets and may resolve to a nearby encoded frame.",
+                "Decoder timestamps and FPS-derived duration may be approximate, especially for variable-frame-rate video.",
                 "This storyboard contains visual evidence only; audio was not analyzed.",
             ],
         }
@@ -567,7 +742,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(manifest_json(dependency_report(), args.pretty, ascii_safe=True))
         return 0
     try:
-        payload = run(args)
+        if args.read_manifest:
+            if args.video or args.output_dir:
+                raise ValueError("--read-manifest cannot be combined with video or --output-dir")
+            payload = json.loads(Path(args.read_manifest).expanduser().read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Not a video storyboard manifest")
+        else:
+            payload = run(args)
+        response = manifest_batch(payload, args.sheet_offset, args.sheet_limit, args.full_manifest)
     except (OSError, RuntimeError, ValueError) as error:
         print(manifest_json({
             "schema": SCHEMA,
@@ -579,7 +762,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     # ASCII-safe JSON survives Windows shell/code-page boundaries. The persisted
     # manifest remains normal UTF-8 with readable local paths.
-    print(manifest_json(payload, args.pretty, ascii_safe=True))
+    print(manifest_json(response, args.pretty, ascii_safe=True))
     return 0
 
 

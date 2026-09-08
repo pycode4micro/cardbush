@@ -6,17 +6,17 @@
 |---|---|
 | Label | Create PPT decks from scratch |
 | Use when | There is no existing deck or template to reuse and you need to generate slides programmatically |
-| Gives you | PptxGenJS API patterns, single-file deck structure, visual-style helpers, and generation rules for new presentations |
+| Gives you | PptxGenJS API patterns, deck source structure, visual-style helpers, and generation rules for new presentations |
 | Not for | Template-based edits to an existing presentation |
 | Pair with | [references/pptx-layout-constraints.md](references/pptx-layout-constraints.md) |
 
-For any deck that requires non-trivial positioning, slide budgeting, or split-slide decisions, pair this guide with [references/pptx-layout-constraints.md](references/pptx-layout-constraints.md). This file explains how to use the API; the layout-constraints file defines what is allowed to fit on a slide.
+For any deck that requires non-trivial positioning, slide budgeting, or split-slide decisions, pair this guide with [references/pptx-layout-constraints.md](references/pptx-layout-constraints.md). This file explains how to use the API; the layout guide provides budgets for its stated page size; actual rendered fit decides.
 
-Use `SKILL.md` to decide the deck's direction, slide routing, and variety rules first. Use this file to implement that deck lock and routing cleanly in code.
+Use `SKILL.md` for task scope, evidence, and QA. Consult the API sections needed for the selected slide elements; this tutorial does not require reading the entire design catalogue.
 
-## Required Project Structure
+## Suggested Project Structure
 
-For generated PPTX code, keep the whole deck in a single source file by default. Do not split code into one file per slide.
+Start a small deck in one source file with shared helpers. Split into modules when the size or reuse needs justify it; avoid a file-per-slide structure without a practical benefit.
 
 Recommended structure:
 
@@ -27,11 +27,9 @@ deck/
 
 Rules:
 
-- Keep deck generation in one `index.js`, regardless of slide count.
-- Do not create `slides/`, `slide-01.js`, `constants.js`, or section assembly files unless the user explicitly asks for a multi-file code layout.
-- Put shared constants, theme tokens, reusable coordinates, and tiny helper functions near the top of the same file.
-- Keep the file readable with named helpers and comment sections, but treat `index.js` as the single source of truth for the full deck.
-- The same file should create the presentation, define slides in order, and write the output file.
+- Keep one clear entry point that defines deck order and writes the output.
+- Share theme tokens, coordinates, and helper functions instead of copying them across slides.
+- Keep generated source readable and patch it as often as the task requires.
 
 ## Setup & Basic Structure
 
@@ -57,10 +55,10 @@ Slide dimensions (coordinates in inches):
 - `LAYOUT_4x3`: 10" × 7.5"
 - `LAYOUT_WIDE`: 13.3" × 7.5"
 
-When working in `LAYOUT_16x9`, use [references/pptx-layout-constraints.md](references/pptx-layout-constraints.md) as the authoritative source for:
+When working in `LAYOUT_16x9`, use [references/pptx-layout-constraints.md](references/pptx-layout-constraints.md) as starting guidance for:
 
 - title/body/footer safe regions
-- maximum cards, bullets, comparison columns, and timeline nodes
+- suggested budgets for cards, bullets, comparison columns, and timeline nodes
 - content-density limits
 - split-slide decisions when one slide would otherwise overflow
 
@@ -68,16 +66,16 @@ When working in `LAYOUT_16x9`, use [references/pptx-layout-constraints.md](refer
 
 ## Visual Bias Correction
 
-This guide explains the API and gives implementation-side visual helpers, but it does not replace the deck design lock or slide routing table.
+These implementation helpers are optional visual directions; use those that fit the brief and available evidence.
 
 If the brief calls for a deck that feels energetic, contemporary, approachable, optimistic, or personal, do **not** default to dark navy + gold + white cards everywhere. That combination often reads older, more formal, and more corporate than the intended tone.
 
 Prefer these biases unless the brief or brand says otherwise:
 
 - Use brighter palette families such as `Teal & Coral` or `Warm Terracotta` when the deck should feel lively, warm, or contemporary rather than formal and institutional.
-- Use at least one gradient or split-background slide in any non-trivial deck.
+- A gradient or split background can support hierarchy when it fits the brief; neither is a deck requirement.
 - Use decorative geometry as atmosphere: low-opacity circles, rotated bands, cropped color blocks, or split panels.
-- Let at least one slide be image-led and at least one slide be chart-led instead of making every slide a card grid.
+- Use image-led or chart-led slides when there are useful images or numerical evidence; do not add either solely to satisfy a layout quota.
 - Treat cards as one layout tool, not the default answer for every content type.
 
 ### Theme Tokens to Declare Near the Top of `index.js`

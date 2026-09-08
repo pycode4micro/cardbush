@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 
 const sourcePath = path.join(
@@ -41,6 +45,7 @@ vm.runInNewContext(transpiled.outputText, {
 const {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
+  remarkAutolinkBoundaries,
 } = module.exports;
 
 const cases = [
@@ -97,6 +102,145 @@ for (const testCase of cases) {
     testCase.expected,
     testCase.name,
   );
+}
+
+// Exercise the actual GFM -> Markdown AST -> React link pipeline. String-only
+// normalization tests cannot detect a visually plausible link with a wrong href.
+const linkCases = [
+  {
+    name: 'localhost links stop before Chinese prose in the reported paragraph',
+    input: '一条命令即可：`npm start`（前台 http://localhost:51231/，后台 http://localhost:51231/admin.html）。如果之前是用自定义 `PORT/ADMIN_TOKEN` 启动的',
+    hrefs: ['http://localhost:51231/', 'http://localhost:51231/admin.html'],
+    includes: ['</a>，后台 ', '</a>）。如果之前是用自定义 <code>PORT/ADMIN_TOKEN</code>'],
+  },
+  {
+    name: 'multiple links separated only by Chinese punctuation remain independent',
+    input: 'http://localhost:51231/，后台：http://localhost:51231/admin.html）。下一句',
+    hrefs: ['http://localhost:51231/', 'http://localhost:51231/admin.html'],
+    includes: ['</a>，后台：<a ', '</a>）。下一句'],
+  },
+  {
+    name: 'Unicode domains, paths, query values and fragments are retained',
+    input: 'https://例子.测试/中文?q=你好&x=1#章节，下一句',
+    hrefs: [encodeURI('https://例子.测试/中文?q=你好&x=1#章节')],
+    includes: ['>https://例子.测试/中文?q=你好&amp;x=1#章节</a>，下一句'],
+  },
+  {
+    name: 'balanced URL parentheses and ASCII query punctuation remain native',
+    input: '（https://example.com/wiki/Foo_(bar)?q=a,b;c:d!e&x=1）。下一句',
+    hrefs: ['https://example.com/wiki/Foo_(bar)?q=a,b;c:d!e&x=1'],
+    includes: ['</a>）。下一句'],
+  },
+  {
+    name: 'ASCII trailing punctuation is handled after separating Chinese prose',
+    input: 'https://example.com/a).，继续',
+    hrefs: ['https://example.com/a'],
+    includes: ['</a>).，继续'],
+  },
+  {
+    name: 'percent-encoded punctuation belongs to the URL',
+    input: 'https://example.com/a%EF%BC%8Cb?x=%E3%80%82，继续',
+    hrefs: ['https://example.com/a%EF%BC%8Cb?x=%E3%80%82'],
+  },
+  {
+    name: 'www autolinks use the same prose boundaries',
+    input: 'www.example.com/docs，继续',
+    hrefs: ['http://www.example.com/docs'],
+    includes: ['>www.example.com/docs</a>，继续'],
+  },
+  {
+    name: 'GFM fallback www links after Chinese punctuation are corrected',
+    input: '地址：www.example.com/docs，后台：www.example.com/admin。',
+    hrefs: ['http://www.example.com/docs', 'http://www.example.com/admin'],
+    includes: ['>www.example.com/docs</a>，后台：', '>www.example.com/admin</a>。'],
+  },
+  {
+    name: 'entities inside bare URL destinations remain literal',
+    input: 'https://example.com/?q=&copy;&x=1，继续',
+    hrefs: ['https://example.com/?q=&copy;&x=1'],
+  },
+  {
+    name: 'source offsets remain correct after emoji and repeated URLs',
+    input: '😀 http://localhost:51231/，前台；http://localhost:51231/，后台。',
+    hrefs: ['http://localhost:51231/', 'http://localhost:51231/'],
+    includes: ['😀 <a ', '</a>，前台；<a ', '</a>，后台。'],
+  },
+  {
+    name: 'explicit links preserve punctuation even with a URL as the label',
+    input: '[https://example.com/中文，版本](https://example.com/中文，版本 "完整地址")',
+    hrefs: [encodeURI('https://example.com/中文，版本')],
+    includes: ['title="完整地址"', '>https://example.com/中文，版本</a>'],
+  },
+  {
+    name: 'angle autolinks preserve their explicit destination',
+    input: '<https://example.com/中文，版本>',
+    hrefs: [encodeURI('https://example.com/中文，版本')],
+  },
+  {
+    name: 'reference links preserve their explicit destination',
+    input: '[后台][admin]\n\n[admin]: https://example.com/中文，版本',
+    hrefs: [encodeURI('https://example.com/中文，版本')],
+    includes: ['>后台</a>'],
+  },
+  {
+    name: 'code examples remain literal',
+    input: '`https://example.com/a，继续`\n\n```text\nhttps://example.com/a，继续\n```',
+    hrefs: [],
+    includes: ['<code>https://example.com/a，继续</code>', '<pre><code class="language-text">https://example.com/a，继续\n</code></pre>'],
+  },
+  {
+    name: 'emphasized URL normalization does not turn prose into an explicit URL',
+    input: '**http://localhost:51231/，继续**',
+    hrefs: ['http://localhost:51231/'],
+    includes: ['<strong><a ', '</a>，继续</strong>'],
+  },
+  {
+    name: 'existing emphasized URL display remains correct',
+    input: '**http://127.0.0.1:8000**(F5 刷新)',
+    hrefs: ['http://127.0.0.1:8000'],
+    includes: ['</a></strong>(F5 刷新)'],
+  },
+  {
+    name: 'swallowed inline code and emphasis regain native Markdown semantics',
+    input: 'http://localhost:51231/，`npm start`，**继续**',
+    hrefs: ['http://localhost:51231/'],
+    includes: ['</a>，<code>npm start</code>，<strong>继续</strong>'],
+  },
+  {
+    name: 'native references elsewhere in the message survive reparsing',
+    input: '> http://localhost:51231/，`npm start`\n>\n> [说明][doc]\n\n[doc]: https://example.com/中文，版本',
+    hrefs: ['http://localhost:51231/', encodeURI('https://example.com/中文，版本')],
+    includes: ['<blockquote>', '</a>，<code>npm start</code>', '>说明</a>'],
+  },
+  {
+    name: 'GFM lists, tables, tasks and strikethrough remain available',
+    input: '- [x] ~~旧~~ http://localhost:51231/，继续\n\n| 地址 |\n| --- |\n| https://example.com/，结束 |',
+    hrefs: ['http://localhost:51231/', 'https://example.com/'],
+    includes: ['type="checkbox"', '<del>旧</del>', '<table>', '</a>，结束</td>'],
+  },
+  ...Array.from('，。；：！？、（）【】《》〈〉「」『』〔〕［］｛｝“”‘’…', (punctuation) => ({
+    name: `prose delimiter ${punctuation} remains outside the link`,
+    input: `https://example.com/path${punctuation}后文`,
+    hrefs: ['https://example.com/path'],
+    includes: [`</a>${punctuation}后文`],
+  })),
+];
+
+for (const testCase of linkCases) {
+  const hrefs = [];
+  const html = renderToStaticMarkup(createElement(ReactMarkdown, {
+    remarkPlugins: [remarkGfm, remarkAutolinkBoundaries],
+    components: {
+      a: ({ node: _node, ...props }) => {
+        hrefs.push(props.href);
+        return createElement('a', props);
+      },
+    },
+  }, normalizeMarkdownContentForDisplay(testCase.input)));
+  assert.deepEqual(hrefs, testCase.hrefs, testCase.name);
+  for (const expected of testCase.includes ?? []) {
+    assert.ok(html.includes(expected), `${testCase.name}: missing ${expected}\n${html}`);
+  }
 }
 
 const crowdedNarration =
@@ -166,4 +310,4 @@ assert.match(
   'compact headings must not add a decorative rail beside ordinary sections',
 );
 
-console.log(`markdown format tests passed (${cases.length})`);
+console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links)`);

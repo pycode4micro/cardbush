@@ -1,8 +1,6 @@
 import {
   createElement,
   forwardRef,
-  Suspense,
-  lazy,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -10,21 +8,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { basename } from '../../shared/localPaths';
-import { shouldUsePlainTextPreview, textPreviewErrorMessage } from '../../shared/textPreview';
 import type { InspectorOpenDetail } from './inspectorEvents';
 import type { AppLanguage } from '../../types';
-import { MediaInspectorPreview } from './MediaInspectorPreview';
+import { InspectorErrorBoundary } from './InspectorErrorBoundary';
+import { resolveFilePreview } from './filePreviewRegistry';
+import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import {
   normalizeInspectorBrowserAddress,
-  inspectorMarkdownPath,
-  inspectorMediaTarget,
-  isMarkdownInspectorTarget,
-  parentDirectory,
+  inspectorFilePath,
+  isInspectorBrowserTarget,
 } from './inspectorTargets';
-
-const SourceSyntaxLines = lazy(() => import('../tools/SourceSyntaxLines'));
 
 export type InspectorNavigationState = {
   url: string;
@@ -111,12 +105,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const browserFitRevisionRef = useRef(0);
   const browserFitTimerRef = useRef(0);
   const requestedUrlRef = useRef(source);
-  const markdownPath = inspectorMarkdownPath(target);
-  const markdownPreview = isMarkdownInspectorTarget(target);
-  const mediaPreview = inspectorMediaTarget(target);
-  const sourcePreview = !markdownPreview && /^cardbush-file:\/\/text-preview(?:\/|\?|$)/i.test(source);
-  const rendererPreview = markdownPreview || sourcePreview || mediaPreview !== null;
-  const [markdownRevision, setMarkdownRevision] = useState(0);
+  const filePath = inspectorFilePath(target);
+  const adapter = isInspectorBrowserTarget(target) ? null : resolveFilePreview(filePath);
+  const FilePreview = isInspectorBrowserTarget(target) || adapter?.renderer === 'webview'
+    ? null : inspectorFilePreviewRenderers[adapter?.renderer ?? 'fallback'];
+  const rendererPreview = FilePreview !== null;
+  const [filePreviewRevision, setFilePreviewRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
   const [webviewRevision, setWebviewRevision] = useState(0);
@@ -228,10 +222,10 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
       loadingRef.current = true;
       setLoading(true);
       if (rendererPreview) {
-        setMarkdownRevision((value) => value + 1);
+        setFilePreviewRevision((value) => value + 1);
         onNavigationStateChange(identity, {
           url: target,
-          title: basename(markdownPath),
+          title: basename(filePath),
           canGoBack: false,
           canGoForward: false,
           loading: true,
@@ -280,19 +274,19 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         publishNavigation();
       }
     },
-  }), [identity, markdownPath, onNavigationStateChange, publishNavigation, rendererPreview, target]);
+  }), [identity, filePath, onNavigationStateChange, publishNavigation, rendererPreview, target]);
 
-  const publishMarkdownNavigation = useCallback((isLoading: boolean) => {
+  const publishFileNavigation = useCallback((isLoading: boolean) => {
     loadingRef.current = isLoading;
     setLoading(isLoading);
     onNavigationStateChange(identity, {
       url: target,
-      title: basename(markdownPath),
+      title: basename(filePath),
       canGoBack: false,
       canGoForward: false,
       loading: isLoading,
     });
-  }, [identity, markdownPath, onNavigationStateChange, target]);
+  }, [identity, filePath, onNavigationStateChange, target]);
 
   useLayoutEffect(() => {
     if (rendererPreview) return undefined;
@@ -449,28 +443,22 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
 
   return (
     <div className={`right-inspector-preview ${loading ? 'loading' : 'ready'}`}>
-      {mediaPreview ? (
-        <MediaInspectorPreview
-          key={`${mediaPreview.source}:${markdownRevision}`}
-          kind={mediaPreview.kind}
-          source={mediaPreview.source}
-          path={mediaPreview.path}
+      <InspectorErrorBoundary
+        key={`${target}:${filePreviewRevision}:${webviewRevision}`}
+        target={target}
+        language={language}
+        onError={() => { loadingRef.current = false; setLoading(false); }}
+        onRetry={() => rendererPreview
+          ? setFilePreviewRevision(value => value + 1)
+          : setWebviewRevision(value => value + 1)}
+      >
+      {FilePreview ? (
+        <FilePreview
+          key={`${filePath}:${filePreviewRevision}`}
+          path={filePath}
+          source={source}
           language={language}
-          onLoadingChange={publishMarkdownNavigation}
-        />
-      ) : markdownPreview ? (
-        <MarkdownInspectorPreview
-          key={`${markdownPath}:${markdownRevision}`}
-          path={markdownPath}
-          language={language}
-          onLoadingChange={publishMarkdownNavigation}
-        />
-      ) : sourcePreview ? (
-        <SourceInspectorPreview
-          key={`${markdownPath}:${markdownRevision}`}
-          path={markdownPath}
-          language={language}
-          onLoadingChange={publishMarkdownNavigation}
+          onLoadingChange={publishFileNavigation}
         />
       ) : createElement('webview', {
           key: webviewRevision,
@@ -479,6 +467,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           src: source,
           webpreferences: 'contextIsolation=yes,nodeIntegration=no,sandbox=yes',
         })}
+      </InspectorErrorBoundary>
       {!rendererPreview && previewError && (
         <div className="inspector-preview-error" role="alert">
           <p>{language === 'zh' ? '无法加载预览，文件可能不可用、格式不受支持，或加载已超时。' : 'Preview unavailable. The file may be missing, unsupported, or taking too long to load.'}</p>
@@ -498,151 +487,3 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
     </div>
   );
 });
-
-function MarkdownInspectorPreview({
-  path,
-  language,
-  onLoadingChange,
-}: {
-  path: string;
-  language: AppLanguage;
-  onLoadingChange: (loading: boolean) => void;
-}) {
-  const [content, setContent] = useState('');
-  const [truncated, setTruncated] = useState(false);
-  const [encoding, setEncoding] = useState('');
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let disposed = false;
-    onLoadingChange(true);
-    setError('');
-    setContent('');
-    setTruncated(false);
-    setEncoding('');
-    const readTextPreview = window.cardbushDesktop?.readTextPreview;
-    if (!readTextPreview) {
-      setError(language === 'zh' ? '当前环境不支持本地 Markdown 预览。' : 'Local Markdown preview is unavailable.');
-      onLoadingChange(false);
-      return () => {
-        disposed = true;
-      };
-    }
-    void readTextPreview(path)
-      .then((result) => {
-        if (disposed) return;
-        setContent(result.content);
-        setTruncated(result.truncated);
-        setEncoding(result.encoding ?? '');
-      })
-      .catch((reason: unknown) => {
-        if (disposed) return;
-        setError(textPreviewErrorMessage(reason, language));
-      })
-      .finally(() => {
-        if (!disposed) onLoadingChange(false);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [language, onLoadingChange, path]);
-
-  return (
-    <article className="markdown-inspector-preview">
-      <div className="markdown-inspector-document">
-        {error ? (
-          <div className="markdown-inspector-error" role="alert">{error}</div>
-        ) : (
-          <>
-            {encoding === 'gb18030' && <div className="inspector-preview-notice">
-              {language === 'zh' ? '按 GB18030 编码预览，原文件未修改。' : 'Preview decoded as GB18030; original file unchanged.'}
-            </div>}
-            {truncated && (
-              <div className="inspector-preview-notice">
-                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
-              </div>
-            )}
-            {shouldUsePlainTextPreview(content) ? <Suspense fallback={null}>
-              <SourceSyntaxLines content={content} path={path} language={language} />
-            </Suspense> : <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
-              <MarkdownContent content={content} language={language} />
-            </MessageFileReferenceScope>}
-          </>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function SourceInspectorPreview({
-  path,
-  language,
-  onLoadingChange,
-}: {
-  path: string;
-  language: AppLanguage;
-  onLoadingChange: (loading: boolean) => void;
-}) {
-  const [content, setContent] = useState('');
-  const [truncated, setTruncated] = useState(false);
-  const [encoding, setEncoding] = useState('');
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    let disposed = false;
-    onLoadingChange(true);
-    setError('');
-    setContent('');
-    setTruncated(false);
-    setEncoding('');
-    const readTextPreview = window.cardbushDesktop?.readTextPreview;
-    if (!readTextPreview) {
-      setError(language === 'zh' ? '当前环境不支持本地源码预览。' : 'Local source preview is unavailable.');
-      onLoadingChange(false);
-      return () => {
-        disposed = true;
-      };
-    }
-    void readTextPreview(path)
-      .then((result) => {
-        if (disposed) return;
-        setContent(result.content);
-        setTruncated(result.truncated);
-        setEncoding(result.encoding ?? '');
-      })
-      .catch((reason: unknown) => {
-        if (disposed) return;
-        setError(textPreviewErrorMessage(reason, language));
-      })
-      .finally(() => {
-        if (!disposed) onLoadingChange(false);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [language, onLoadingChange, path]);
-
-  return (
-    <article className="source-inspector-preview">
-      <div className="source-inspector-document">
-        {error ? (
-          <div className="markdown-inspector-error" role="alert">{error}</div>
-        ) : (
-          <>
-            {encoding === 'gb18030' && <div className="inspector-preview-notice source">
-              {language === 'zh' ? '按 GB18030 编码预览，原文件未修改。' : 'Preview decoded as GB18030; original file unchanged.'}
-            </div>}
-            {truncated && (
-              <div className="inspector-preview-notice source">
-                {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
-              </div>
-            )}
-            <Suspense fallback={null}>
-              <SourceSyntaxLines content={content} path={path} language={language} />
-            </Suspense>
-          </>
-        )}
-      </div>
-    </article>
-  );
-}

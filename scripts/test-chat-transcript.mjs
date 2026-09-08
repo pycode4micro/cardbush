@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { loadChatTranscript, transcriptDirectory, transcriptModules } from './helpers/load-chat-transcript.mjs';
+import { testLoopTranscript } from './helpers/chat-loop-transcript.mjs';
 
 // Keep a one-way dependency graph, not six files importing a shared mega-Hook.
 const allowed = {
@@ -206,4 +207,5 @@ for (const withLegacySegmentIndex of [true, false]) {
   assert.equal(api.normalizeChatMessagesForDisplay(lateState.s)[0].content, '最终答复');
 }
 
+testLoopTranscript(api);
 console.log('Chat transcript module boundaries, buffering, mutation and identity tests passed.');

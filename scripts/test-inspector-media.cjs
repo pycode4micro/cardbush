@@ -52,8 +52,12 @@ app.whenReady().then(async () => {
     await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/app.css'), 'utf8'));
     const modules = Object.fromEntries([
       'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
+      'src/shared/showUiError.ts',
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
+      'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',
+      'src/features/inspector/TextInspectorPreview.tsx', 'src/features/inspector/filePreviewRegistry.ts',
+      'src/features/inspector/inspectorFilePreviewRenderers.tsx',
     ].map(file => [path.join(root, file), compile(fs.readFileSync(path.join(root, file), 'utf8'))]));
     await run(`
       const React = require(${JSON.stringify(require.resolve('react'))});
@@ -99,12 +103,15 @@ app.whenReady().then(async () => {
     for (const target of ['C:/fixture/test.mov', 'file:///C:/fixture/test.mov', 'cardbush-file:///C:/fixture/test.mov', 'cardbush-file://c/fixture/test.mov']) {
       assert.equal(await run(`targets.inspectorMediaTarget(${JSON.stringify(target)})?.kind`), 'video');
     }
-    for (const extension of ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'ts', 'json', 'zip', 'blend']) {
+    for (const extension of ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'ts', 'json']) {
       const expected = /^(docx?|xlsx?|pptx?)$/.test(extension) ? 'office-preview' : 'text-preview';
       const rawPath = `C:/中文/report #1.${extension}`;
       const result = await run(`targets.inspectorSource(${JSON.stringify('cardbush-file:///C:/中文/report%20%231.' + extension)})`);
       assert.equal(new URL(result).hostname, expected, extension + ' chooses its renderer for protocol links');
       assert.equal(new URL(result).searchParams.get('path').replaceAll('\\', '/'), rawPath);
+    }
+    for (const extension of ['zip', 'unknownfuture']) {
+      assert.equal(await run(`targets.inspectorSource('cardbush-file:///C:/中文/report%20%231.${extension}')`), 'about:blank', 'unknown formats have no guest navigation source');
     }
     assert.equal(await run('targets.isMarkdownInspectorTarget("C:/文档/notes #1.md")'), true);
     assert.equal(await run('targets.inspectorMediaTarget("C:/文档/image.png#notes.md")'), null, 'local fragment-like name retains its actual extension');

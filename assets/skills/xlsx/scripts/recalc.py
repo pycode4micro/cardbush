@@ -1,189 +1,248 @@
-"""
-Excel Formula Recalculation Script
-Recalculates all formulas in an Excel file using LibreOffice
+"""Recalculate XLSX formulas in isolation; publish only verified results.
+
+Uses the standard library for streaming OOXML validation. LibreOffice is needed
+only for calculation, never assumed to be installed. It may normalize Excel
+formatting/features; this is not an Excel compatibility certification.
 """
 
+import argparse
+import hashlib
 import json
+import math
 import os
-import platform
+import posixpath
+import shutil
 import subprocess
-import sys
+import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape
 
-from office.soffice import get_soffice_env
-from openpyxl import load_workbook
-
-MACRO_DIR_MACOS = "~/Library/Application Support/LibreOffice/4/user/basic/Standard"
-MACRO_DIR_LINUX = "~/.config/libreoffice/4/user/basic/Standard"
-MACRO_FILENAME = "Module1.xba"
-
-RECALCULATE_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd">
-<script:module xmlns:script="http://openoffice.org/2000/script" script:name="Module1" script:language="StarBasic">
-    Sub RecalculateAndSave()
-      ThisComponent.calculateAll()
-      ThisComponent.store()
-      ThisComponent.close(True)
-    End Sub
-</script:module>"""
+from office.soffice import find_soffice, run_soffice
 
 
-def has_gtimeout():
-    try:
-        subprocess.run(
-            ["gtimeout", "--version"], capture_output=True, timeout=1, check=False
-        )
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+def _tag(element):
+    return element.tag.rsplit("}", 1)[-1]
 
 
-def setup_libreoffice_macro():
-    macro_dir = os.path.expanduser(
-        MACRO_DIR_MACOS if platform.system() == "Darwin" else MACRO_DIR_LINUX
+def _record(summary, key, location):
+    entry = summary.setdefault(key, {"count": 0, "locations": []})
+    entry["count"] += 1
+    if len(entry["locations"]) < 20:
+        entry["locations"].append(location)
+
+
+def scan_workbook(filename):
+    """Read populated cells once, without loading sheets or shared strings."""
+    report = {
+        "total_formulas": 0, "total_errors": 0, "error_summary": {},
+        "missing_formula_caches": {"count": 0, "locations": []},
+        "warnings": [], "_formula_layout": {}, "_has_macros": False,
+    }
+    with zipfile.ZipFile(filename) as archive:
+        names = set(archive.namelist())
+        report["_has_macros"] = any(name.lower().endswith("vbaproject.bin") for name in names)
+        if any(name.startswith("xl/externalLinks/") for name in names):
+            report["warnings"].append("External workbook links are not refreshed; their cached source data may be stale.")
+        with archive.open("xl/_rels/workbook.xml.rels") as stream:
+            relationships = {}
+            for rel in ET.parse(stream).getroot():
+                if rel.get("TargetMode") == "External":
+                    continue
+                target = rel.get("Target", "").replace("\\", "/")
+                relationships[rel.get("Id")] = (
+                    target.lstrip("/") if target.startswith("/")
+                    else posixpath.normpath(posixpath.join("xl", target))
+                )
+        with archive.open("xl/workbook.xml") as stream:
+            sheets = [element for element in ET.parse(stream).getroot().iter() if _tag(element) == "sheet"]
+        for sheet in sheets:
+            sheet_name = sheet.get("name", "")
+            relation_id = next((value for key, value in sheet.attrib.items() if key.endswith("}id")), None)
+            part = relationships.get(relation_id)
+            if not part or part not in names:
+                raise ValueError(f"Missing worksheet part for {sheet_name}")
+            count, layout = 0, hashlib.sha256()
+            with archive.open(part) as stream:
+                stack = []
+                for event, cell in ET.iterparse(stream, events=("start", "end")):
+                    if event == "start":
+                        stack.append(cell)
+                        continue
+                    if _tag(cell) == "c":
+                        children = {_tag(child): child for child in cell}
+                        value = children.get("v")
+                        location = f"{sheet_name}!{cell.get('r', '?')}"
+                        if cell.get("t") == "e":
+                            _record(report["error_summary"], value.text if value is not None and value.text else "unknown_error", location)
+                            report["total_errors"] += 1
+                        if "f" in children:
+                            count += 1
+                            layout.update((cell.get("r", "?") + "\n").encode("utf-8"))
+                            # A formula returning "" has t="str" and an empty v;
+                            # openpyxl's uncalculated numeric <v/> is not a cache.
+                            if value is None or (value.text is None and cell.get("t") != "str"):
+                                missing = report["missing_formula_caches"]
+                                missing["count"] += 1
+                                if len(missing["locations"]) < 20:
+                                    missing["locations"].append(location)
+                    # Retain f/v until their parent cell is inspected. Removing
+                    # processed nodes also bounds memory for very sparse sheets.
+                    if len(stack) > 1 and _tag(stack[-2]) != "c":
+                        stack[-2].remove(cell)
+                    stack.pop()
+            report["total_formulas"] += count
+            report["_formula_layout"][sheet_name] = (count, layout.hexdigest())
+    return report
+
+
+def _public(report):
+    return {key: value for key, value in report.items() if not key.startswith("_")}
+
+
+def _fingerprint(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _basic_string(value):
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _write_profile(profile, workbook, receipt):
+    """Install only our application macro, never touch the user's LO profile."""
+    basic = profile / "user" / "basic"
+    standard = basic / "Standard"
+    standard.mkdir(parents=True)
+    (basic / "script.xlc").write_text('''<?xml version="1.0" encoding="UTF-8"?>
+<library:libraries xmlns:library="http://openoffice.org/2000/library" xmlns:xlink="http://www.w3.org/1999/xlink">
+ <library:library library:name="Standard" xlink:href="$(USER)/basic/Standard/script.xlb/" xlink:type="simple" library:link="false"/>
+</library:libraries>''', encoding="utf-8")
+    (standard / "script.xlb").write_text('''<?xml version="1.0" encoding="UTF-8"?>
+<library:library xmlns:library="http://openoffice.org/2000/library" library:name="Standard" library:readonly="false" library:passwordprotected="false">
+ <library:element library:name="Recalc"/>
+</library:library>''', encoding="utf-8")
+    # NEVER_EXECUTE=0, NO_UPDATE=0 per the UNO document constants. These apply
+    # to the opened workbook; the trusted application macro is in this profile.
+    source = f'''Sub RecalculateAndSave
+  Dim doc As Object, properties(2) As New com.sun.star.beans.PropertyValue
+  Dim handle As Integer, message As String
+  On Error GoTo Failed
+  properties(0).Name = "Hidden"
+  properties(0).Value = True
+  properties(1).Name = "MacroExecutionMode"
+  properties(1).Value = 0
+  properties(2).Name = "UpdateDocMode"
+  properties(2).Value = 0
+  doc = StarDesktop.loadComponentFromURL({_basic_string(workbook.as_uri())}, "_blank", 0, properties())
+  doc.calculateAll()
+  doc.store()
+  doc.close(True)
+  message = "ok"
+  GoTo Finish
+Failed:
+  message = "error: " & Error$
+  On Error Resume Next
+  doc.close(True)
+Finish:
+  handle = FreeFile
+  Open {_basic_string(receipt)} For Output As #handle
+  Print #handle, message
+  Close #handle
+  StarDesktop.terminate()
+End Sub'''
+    (standard / "Recalc.xba").write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<script:module xmlns:script="http://openoffice.org/2000/script" '
+        'script:name="Recalc" script:language="StarBasic">'
+        + escape(source) + '</script:module>', encoding="utf-8",
     )
-    macro_file = os.path.join(macro_dir, MACRO_FILENAME)
 
-    if (
-        os.path.exists(macro_file)
-        and "RecalculateAndSave" in Path(macro_file).read_text()
-    ):
-        return True
 
-    if not os.path.exists(macro_dir):
-        subprocess.run(
-            ["soffice", "--headless", "--terminate_after_init"],
-            capture_output=True,
-            timeout=10,
-            env=get_soffice_env(),
-        )
-        os.makedirs(macro_dir, exist_ok=True)
-
+def recalc(filename, timeout=30, soffice=None):
+    path = Path(filename).resolve()
+    failure = {"modified": False}
+    if not math.isfinite(timeout) or timeout <= 0:
+        return {**failure, "status": "error", "error": "timeout must be a positive finite number"}
+    if path.suffix.lower() != ".xlsx":
+        return {**failure, "status": "unsupported", "error": "Automatic recalculation supports .xlsx only; use Excel for macro-enabled or other formats."}
     try:
-        Path(macro_file).write_text(RECALCULATE_MACRO)
-        return True
-    except Exception:
-        return False
-
-
-def recalc(filename, timeout=30):
-    if not Path(filename).exists():
-        return {"error": f"File {filename} does not exist"}
-
-    abs_path = str(Path(filename).absolute())
-
-    if not setup_libreoffice_macro():
-        return {"error": "Failed to setup LibreOffice macro"}
-
-    cmd = [
-        "soffice",
-        "--headless",
-        "--norestore",
-        "vnd.sun.star.script:Standard.Module1.RecalculateAndSave?language=Basic&location=application",
-        abs_path,
-    ]
-
-    if platform.system() == "Linux":
-        cmd = ["timeout", str(timeout)] + cmd
-    elif platform.system() == "Darwin" and has_gtimeout():
-        cmd = ["gtimeout", str(timeout)] + cmd
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        errors="replace",
-        env=get_soffice_env(),
-    )
-
-    if result.returncode != 0 and result.returncode != 124:  
-        error_msg = result.stderr or "Unknown error during recalculation"
-        if "Module1" in error_msg or "RecalculateAndSave" not in error_msg:
-            return {"error": "LibreOffice macro not configured properly"}
-        return {"error": error_msg}
-
-    try:
-        wb = load_workbook(filename, data_only=True)
-
-        excel_errors = [
-            "#VALUE!",
-            "#DIV/0!",
-            "#REF!",
-            "#NAME?",
-            "#NULL!",
-            "#NUM!",
-            "#N/A",
-        ]
-        error_details = {err: [] for err in excel_errors}
-        total_errors = 0
-
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            for row in ws.iter_rows():
-                for cell in row:
-                    if cell.value is not None and isinstance(cell.value, str):
-                        for err in excel_errors:
-                            if err in cell.value:
-                                location = f"{sheet_name}!{cell.coordinate}"
-                                error_details[err].append(location)
-                                total_errors += 1
-                                break
-
-        wb.close()
-
-        result = {
-            "status": "success" if total_errors == 0 else "errors_found",
-            "total_errors": total_errors,
-            "error_summary": {},
-        }
-
-        for err_type, locations in error_details.items():
-            if locations:
-                result["error_summary"][err_type] = {
-                    "count": len(locations),
-                    "locations": locations[:20],  
-                }
-
-        wb_formulas = load_workbook(filename, data_only=False)
-        formula_count = 0
-        for sheet_name in wb_formulas.sheetnames:
-            ws = wb_formulas[sheet_name]
-            for row in ws.iter_rows():
-                for cell in row:
-                    if (
-                        cell.value
-                        and isinstance(cell.value, str)
-                        and cell.value.startswith("=")
-                    ):
-                        formula_count += 1
-        wb_formulas.close()
-
-        result["total_formulas"] = formula_count
-
-        return result
-
-    except Exception as e:
-        return {"error": str(e)}
+        if not path.is_file():
+            raise FileNotFoundError(f"Workbook not found: {path}")
+        # Put staging on the same volume for atomic replacement. Calculation
+        # failures, missing caches and concurrent edits leave the source intact.
+        with tempfile.TemporaryDirectory(prefix=".cardbush-recalc-", dir=path.parent) as directory:
+            scratch = Path(directory)
+            working = scratch / "workbook.xlsx"
+            shutil.copy2(path, working)
+            original = _fingerprint(working)
+            before = scan_workbook(working)
+            if before["_has_macros"]:
+                return {**failure, "status": "unsupported", "error": "The workbook contains VBA; use Excel to preserve and verify its behavior."}
+            if not before["total_formulas"]:
+                return {**failure, **_public(before), "status": "errors_found" if before["total_errors"] else "not_needed"}
+            try:
+                executable = find_soffice(soffice)
+            except FileNotFoundError as error:
+                return {**failure, "status": "dependency_missing", "error": str(error)}
+            profile, receipt = scratch / "profile", scratch / "receipt.txt"
+            _write_profile(profile, working, receipt)
+            result = run_soffice([
+                f"-env:UserInstallation={profile.as_uri()}",
+                "--headless", "--norestore", "--nodefault", "--nofirststartwizard",
+                "macro:///Standard.Recalc.RecalculateAndSave",
+            ], executable=executable, timeout=timeout, capture_output=True, text=True, errors="replace")
+            if result.returncode != 0:
+                return {**failure, "status": "error", "error": (result.stderr or f"LibreOffice exited with code {result.returncode}")[-2000:]}
+            completed = receipt.read_text(encoding="utf-8", errors="replace").strip() if receipt.is_file() else ""
+            if completed != "ok":
+                return {**failure, "status": "incomplete", "error": completed or "LibreOffice did not confirm calculation and save completion."}
+            after = scan_workbook(working)
+            if after["_formula_layout"] != before["_formula_layout"]:
+                return {**failure, "status": "incomplete", "error": "Worksheet names or formula locations changed during recalculation."}
+            checked = _public(after)
+            if after["total_errors"]:
+                return {**failure, **checked, "status": "errors_found"}
+            if after["missing_formula_caches"]["count"]:
+                return {**failure, **checked, "status": "incomplete", "error": "Some formulas still have no cached result."}
+            if not path.is_file() or _fingerprint(path) != original:
+                return {**failure, "status": "conflict", "error": "The source changed during recalculation; it was not overwritten."}
+            os.replace(working, path)
+            # A subsequent temporary-directory cleanup failure must not claim
+            # that the already-published workbook remained unchanged.
+            failure["modified"] = True
+            return {**checked, "status": "success", "modified": True}
+    except subprocess.TimeoutExpired:
+        return {**failure, "status": "timeout", "error": f"LibreOffice exceeded {timeout:g} seconds; calculation was not verified."}
+    except (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.ParseError, subprocess.SubprocessError) as error:
+        return {**failure, "status": "error", "error": str(error)}
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python recalc.py <excel_file> [timeout_seconds]")
-        print("\nRecalculates all formulas in an Excel file using LibreOffice")
-        print("\nReturns JSON with error details:")
-        print("  - status: 'success' or 'errors_found'")
-        print("  - total_errors: Total number of Excel errors found")
-        print("  - total_formulas: Number of formulas in the file")
-        print("  - error_summary: Breakdown by error type with locations")
-        print("    - #VALUE!, #DIV/0!, #REF!, #NAME?, #NULL!, #NUM!, #N/A")
-        sys.exit(1)
-
-    filename = sys.argv[1]
-    timeout = int(sys.argv[2]) if len(sys.argv) > 2 else 30
-
-    result = recalc(filename, timeout)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("filename", nargs="?")
+    parser.add_argument("timeout", nargs="?", type=float, default=30)
+    parser.add_argument("--soffice", help="LibreOffice executable path (also supports SOFFICE_PATH)")
+    parser.add_argument("--check-dependencies", action="store_true")
+    args = parser.parse_args()
+    if args.check_dependencies:
+        try:
+            result = {"ready": True, "soffice": find_soffice(args.soffice)}
+        except FileNotFoundError as error:
+            result = {"ready": False, "status": "dependency_missing", "error": str(error)}
+        code = 0 if result["ready"] else 1
+    else:
+        if not args.filename:
+            parser.error("filename is required unless --check-dependencies is used")
+        result = recalc(args.filename, args.timeout, args.soffice)
+        code = 0 if result["status"] in ("success", "not_needed") else 1
     print(json.dumps(result, indent=2))
+    return code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

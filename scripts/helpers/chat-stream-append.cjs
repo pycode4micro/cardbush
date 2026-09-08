@@ -88,5 +88,49 @@ module.exports = async ({ run, until, pause, window, root, theme = 'theme-dark' 
   `);
   await until("Boolean(document.querySelector('[data-segment-id=append-after-media]'))", 'round after attachment');
   assert.equal(await run('appendMediaNodes.every(node => node.isConnected)'), true, 'media survives the next assistant segment');
+  // Exercise the live update functions as well as the component: a runtime
+  // round with no assistant text keeps its runtime owner while joining the
+  // latest visual package until the next assistant narration.
+  await run(`
+    window.loopState = { s: [{ id: 'loop-placeholder', role: 'assistant', content: '', turnId: 'loop-fixture' }] };
+    window.loopTool = (id, owner, state = 'running') => ({ id, name: 'terminal_exec', assistantMessageId: owner,
+      turnId: 'loop-fixture', state, summary: id, output: '', metadata: {}, success: state === 'completed', durationMs: 0,
+      contentOffset: 0, createdAt: '2026-09-08T00:00:00Z' });
+    window.renderLoop = () => updateChat({ conversation: { id: 'loop-fixture', title: 'Loop fixture' },
+      messages: loopState.s, loading: false, historyLoading: false, sending: true, activeTurnId: 'loop-fixture' });
+    loopState = views.appendAssistantDelta(loopState, 's', 'loop-placeholder', 'Original loop narration.', { messageId: 'msg_intro', turnId: 'loop-fixture' });
+    renderLoop();
+  `);
+  await until("document.querySelector('.message-row.streaming .markdown-content p')?.textContent === 'Original loop narration.'", 'loop initial text');
+  await run(`
+    window.originalLoopParagraph = document.querySelector('.message-row.streaming .markdown-content p');
+    loopState = views.appendToolExecution(loopState, 's', 'loop-placeholder', loopTool('round-tool', 'msg_tools'));
+    renderLoop();
+  `);
+  await until("Boolean(document.querySelector('[data-segment-id=loop-placeholder] .tool-execution-block'))", 'tool-only round joins the latest narration package');
+  assert.equal(await run('originalLoopParagraph.isConnected'), true);
+  await run(`
+    window.originalLoopTool = document.querySelector('[data-segment-id=loop-placeholder] .tool-execution-block');
+    loopState = views.appendAssistantDelta(loopState, 's', 'loop-placeholder', 'Following loop narration.', { messageId: 'msg_after', turnId: 'loop-fixture' });
+    renderLoop();
+  `);
+  await until("Boolean(document.querySelector('[data-segment-id=msg_after] .markdown-content p'))", 'narration follows tool-only round');
+  await run(`
+    loopState = views.appendToolExecution(loopState, 's', 'loop-placeholder', loopTool('round-tool', 'msg_tools', 'completed'));
+    renderLoop();
+  `);
+  await pause(100);
+  assert.equal(await run('originalLoopParagraph.isConnected && originalLoopTool.isConnected'), true, 'late Tool completion retains the original DOM');
+  assert.deepEqual(await run("[...document.querySelectorAll('.message-row.streaming [data-segment-id]')].map(node => node.dataset.segmentId)"),
+    ['loop-placeholder', 'msg_after'], 'the merged package remains before new assistant text');
+  assert.equal(await run("loopState.s.find(message => message.assistantMessageId === 'msg_tools').toolExecutions[0].id"), 'round-tool', 'grouping does not change the runtime owner');
+  await run(`
+    loopState = views.appendAssistantDelta(loopState, 's', 'loop-placeholder', 'Text received after the tool.', { messageId: 'msg_tools', turnId: 'loop-fixture' });
+    renderLoop();
+  `);
+  await until("document.querySelector('[data-segment-id=msg_tools] p')?.textContent === 'Text received after the tool.'", 'late narration retains its factual boundary');
+  assert.equal(await run('originalLoopParagraph.isConnected && originalLoopTool.isConnected'), true, 'late narration cannot pull an earlier tool out of its established package');
+  assert.equal(await run("originalLoopTool.closest('[data-segment-id]').dataset.segmentId"), 'loop-placeholder');
+  assert.equal(await run("document.querySelectorAll('.message-row.streaming .tool-execution-block').length"), 1);
   console.log('Streaming append passed (' + theme + '): paragraph and row identity, tool insertion, segment/token append, frame height/scroll stability and detached reading.');
 };

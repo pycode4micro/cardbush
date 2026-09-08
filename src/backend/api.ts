@@ -77,6 +77,7 @@ import {
 import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
   CARDBUSH_APPS_MCP_SERVER_ID,
+  readProductMcpConfiguration,
   readProductMcpServers,
   replaceProductMcpServers,
   synchronizeProductMcpSnapshot,
@@ -992,13 +993,13 @@ export async function saveMcpServerConfig(
     );
   }
   const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
-  const servers = await readProductMcpServers();
+  const { servers, revision } = await readProductMcpConfiguration();
   const index = servers.findIndex((server) => server.id === normalized);
   if (index >= 0) servers[index] = candidate;
   else servers.push(candidate);
   const runtime = createDesktopRuntimeSession();
   try {
-    const result = await replaceProductMcpServers(runtime.client, servers);
+    const result = await replaceProductMcpServers(runtime.client, servers, revision);
     const connected = result.servers.find(
       (server) => server.id === candidate.id,
     );
@@ -1022,7 +1023,7 @@ export async function setMcpServerEnabled(
       localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
     );
   }
-  const servers = await readProductMcpServers();
+  const { servers, revision } = await readProductMcpConfiguration();
   const index = servers.findIndex((server) => server.id === normalized);
   if (index < 0) {
     throw new Error(
@@ -1032,7 +1033,7 @@ export async function setMcpServerEnabled(
   servers[index] = { ...servers[index], enabled };
   const runtime = createDesktopRuntimeSession();
   try {
-    const result = await replaceProductMcpServers(runtime.client, servers);
+    const result = await replaceProductMcpServers(runtime.client, servers, revision);
     const current = servers[index];
     return {
       ...current,
@@ -1055,7 +1056,7 @@ export async function deleteMcpServerConfig(
       localizedClientMessage('MCP 服务 ID 为空', 'MCP server ID is empty'),
     );
   }
-  const servers = await readProductMcpServers();
+  const { servers, revision } = await readProductMcpConfiguration();
   const exists = servers.some((server) => server.id === normalized);
   if (!exists)
     return { id: normalized, deleted: false, source: 'cardbush_product' };
@@ -1064,6 +1065,7 @@ export async function deleteMcpServerConfig(
     await replaceProductMcpServers(
       runtime.client,
       servers.filter((server) => server.id !== normalized),
+      revision,
     );
     return { id: normalized, deleted: true, source: 'cardbush_product' };
   } finally {
@@ -2687,6 +2689,13 @@ export async function sendGuidance(request: SendGuidanceRequest) {
       ),
     );
   }
+  const trace = (stage: string, details: Record<string, unknown> = {}) => {
+    void window.cardbushDesktop?.writeDebugLog?.('renderer-lifecycle', {
+      stage, sessionId, turnId, clientMessageId: request.clientMessageId,
+      characters: guidance.length, ...details,
+    }).catch(() => undefined);
+  };
+  trace('guidance-requested');
   const runtime = createDesktopRuntimeSession();
   try {
     await runtime.client.enqueueGuidance({
@@ -2697,6 +2706,10 @@ export async function sendGuidance(request: SendGuidanceRequest) {
       content: guidance,
       createdAt: new Date().toISOString(),
     }, request.signal);
+    trace('guidance-accepted');
+  } catch (error) {
+    trace('guidance-failed', { error: String(error) });
+    throw error;
   } finally {
     runtime.dispose();
   }

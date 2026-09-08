@@ -261,13 +261,15 @@ async function executeRuntimeCommand(
 }
 
 function withBundledAppsServer(input: unknown): unknown {
+  const managementUrl = process.env.CARDBUSH_MCP_MANAGEMENT_URL?.trim();
+  const managementToken = process.env.CARDBUSH_MCP_MANAGEMENT_TOKEN?.trim();
   const appsEntry = process.env.CARDBUSH_APPS_MCP_ENTRY?.trim();
   const chromeConnectorEntry = process.env.CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY?.trim();
   const chromeRemoteDebuggingEntry = process.env.CARDBUSH_CHROME_REMOTE_DEBUGGING_MCP_ENTRY?.trim();
-  if (!appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry) return input;
+  if (!managementUrl && !appsEntry && !chromeConnectorEntry && !chromeRemoteDebuggingEntry) return input;
   const snapshot = object(input, 'MCP snapshot must be an object.');
   const configured = Array.isArray(snapshot.servers) ? snapshot.servers : [];
-  const reservedIds = new Set(['cardbush_apps', 'chrome_devtools']);
+  const reservedIds = new Set(['cardbush_apps', 'chrome_devtools', 'cardbush_management']);
   const overridden = configured.find((candidate) =>
     candidate && typeof candidate === 'object' && reservedIds.has(String((candidate as { id?: unknown }).id ?? ''))
   );
@@ -281,8 +283,18 @@ function withBundledAppsServer(input: unknown): unknown {
     throw new Error('MCP snapshot revision must be a positive integer.');
   }
   const revision = sourceRevision * 1_000_000 + appsConfig.revision;
-  if (!appsConfig.serviceEnabled) return { ...snapshot, revision, servers: configured };
   const bundled = [];
+  if (managementUrl) {
+    if (!managementToken) throw new Error('CardBush MCP management authentication is missing.');
+    bundled.push({
+      id: 'cardbush_management',
+      transport: { kind: 'streamable_http', url: managementUrl,
+        headers: { Authorization: `Bearer ${managementToken}` } },
+      defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
+      toolPolicies: { list_mcp_servers: { permission: 'allow', parallelSafe: true, visibleToChild: true } },
+    });
+  }
+  if (!appsConfig.serviceEnabled) return { ...snapshot, revision, servers: [...bundled, ...configured] };
   if (appsEntry) {
     bundled.push({
       id: 'cardbush_apps',

@@ -1,6 +1,6 @@
 ---
 name: cardbush-plugin-management
-description: 在 CardBush 中创建、校验、安装、启用、停用或卸载插件时使用。遵循 CardBush 本地插件目录、清单和 Product Host 生命周期；不用于管理 Codex、ChatGPT 或其他宿主的插件。
+description: 创建、安装、更新、启停或卸载由 CardBush 加载的插件包时使用，遵循 CardBush 的清单和 Product Host 生命周期。单独添加第三方 MCP 连接使用 cardbush-mcp-management；其他软件自身的插件按该软件的流程管理。
 license: Proprietary
 ---
 
@@ -10,6 +10,8 @@ license: Proprietary
 
 ## 宿主与边界
 
+- 按安装对象选择流程。同一任务可以同时包含外部软件的插件、MCP 服务程序和 CardBush 的连接配置；本 skill 只覆盖其中的 CardBush 插件包部分。
+- 将第三方 MCP 接入 CardBush 时，搜索并读取 `cardbush-mcp-management`。可直接注册 MCP 连接，无需额外创建 CardBush 插件包。外部软件的插件步骤不适用本 skill，不影响继续完成 CardBush 端接入。
 - `.codex-plugin/plugin.json` 是 CardBush 当前采用的兼容清单格式，不代表插件应安装到 Codex。插件目录、配置、启停和卸载均由 CardBush 管理。
 - 不为本任务调用 Codex 插件安装/卸载工具、运行 `codex plugin`，或改写 `.codex` 的插件缓存和市场配置。用户明确要求其他宿主时，该任务不适用本 skill。
 - 插件拥有自己的 skill、MCP 或 app 组件及原生返回结果。不要为安装插件新增统一事实协议或改造 Runtime Built-in Tools。

@@ -16,6 +16,31 @@ try {
   assert.equal(management.name, 'cardbush-plugin-management');
   assert.ok(management.description);
   assert.ok((await fs.readFile(path.join(management.packageDir, 'references/plugin-contract.md'), 'utf8')).length > 0);
+  // Read the bundled catalog through the product loader, preserving CardBush's
+  // metadata extensions and checking every declared resource still exists.
+  const bundledRoot = path.resolve('assets/skills');
+  for (const summary of await listProductSkills([bundledRoot])) {
+    const detail = await readProductSkill([bundledRoot], summary.name);
+    assert.ok(detail.name && detail.description && detail.content, summary.name);
+    assert.equal(path.basename(detail.packageDir), detail.name);
+    const references = [
+      ...detail.requiredReads,
+      ...detail.conditionalReads.map(item => item.split(/:\s/, 1)[0]),
+      ...detail.resourceQuickRefs.map(item => item.path),
+    ];
+    for (const reference of references) {
+      assert.equal(typeof reference, 'string', `${detail.name}: invalid resource`);
+      const target = path.resolve(detail.packageDir, reference);
+      assert.ok(!path.relative(detail.packageDir, target).startsWith('..'), reference);
+      assert.ok((await fs.stat(target)).isFile(), `${detail.name}: ${reference}`);
+    }
+  }
+  const presentation = await readProductSkill([bundledRoot], 'pptx');
+  assert.deepEqual(presentation.requiredReads, [], 'read-only PPTX tasks do not need generation references');
+  assert.ok(presentation.conditionalReads.some(item => item.startsWith('pptxgenjs.md: ')));
+  const spreadsheet = await readProductSkill([bundledRoot], 'xlsx');
+  assert.ok(spreadsheet.conditionalReads.some(item => item.startsWith('references/workbook-design.md: ')));
+  assert.ok(spreadsheet.resourceQuickRefs.every(item => item.path && item.label && item.use_when && item.gives_you && item.not_for));
   const bundled = path.join(root, 'bundled');
   const user = path.join(root, 'user');
   await writeSkill(bundled, 'xlsx', 'Bundled spreadsheet support');
@@ -38,6 +63,37 @@ try {
   assert.equal(detail.description, 'User override');
   assert.equal(path.dirname(detail.path), detail.packageDir);
   await assert.rejects(() => readProductSkill([bundled, user], 'missing'), /not installed/);
+
+  const metadataRoot = path.join(root, 'metadata');
+  await writeSkill(metadataRoot, 'sample', 'Metadata fixture');
+  await fs.writeFile(path.join(metadataRoot, 'sample', 'SKILL.md'), `---
+name: sample
+description: Metadata fixture
+required_reads:
+  - base.md
+conditional_reads:
+  - create.md: When creating a file
+  - "legacy.md: When editing a file"
+resource_quick_refs:
+  - path: first.md
+    label: First reference
+    use_when: When creating
+  - path: second.md
+    label: Second reference
+    use_when: When editing
+companion_tools:
+  - read_file
+---
+Body
+`, 'utf8');
+  const metadata = await readProductSkill([metadataRoot], 'sample');
+  assert.deepEqual(metadata.requiredReads, ['base.md']);
+  assert.deepEqual(metadata.conditionalReads, ['create.md: When creating a file', 'legacy.md: When editing a file']);
+  assert.deepEqual(metadata.resourceQuickRefs, [
+    { path: 'first.md', label: 'First reference', use_when: 'When creating' },
+    { path: 'second.md', label: 'Second reference', use_when: 'When editing' },
+  ]);
+  assert.deepEqual(metadata.companionTools, ['read_file']);
 
   const legacy = path.join(root, 'legacy');
   const migrated = path.join(root, 'migrated');

@@ -18,6 +18,7 @@ import {
 } from './messageFacts';
 import {
   shouldPreserveExistingAsLoopHistory,
+  localLoopHistorySnapshot,
   mergeLoopHistoryMessages,
   collapseLoopTranscriptMessages,
   collectLoopHistoryFromReplaced,
@@ -64,7 +65,7 @@ export function mergeMessages(
         : existing?.toolExecutions;
     const preservedVersions =
       existing && shouldPreserveExistingAsLoopHistory(existing, message)
-        ? [existing]
+        ? [localLoopHistorySnapshot(existing)]
         : [];
     const nextLoopHistory = mergeLoopHistoryMessages(
       existing?.loopHistory ?? [],
@@ -579,7 +580,7 @@ export function normalizeActiveTurnTranscriptForDisplay(
   const loopHistory = mergeLoopHistoryMessages(
     activeAssistant.loopHistory ?? [],
     siblingMessages,
-  );
+  ).filter(message => message.metadata?.ui_transcript_only === true || !messageIdentityMatches(message, activeAssistant));
   // Snapshot normalization may already have moved earlier segments into
   // loopHistory. The row must keep the same key through that path as well.
   const firstVisible = loopHistory.find((message) =>

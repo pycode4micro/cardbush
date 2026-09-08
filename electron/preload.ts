@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { readTextPreviewResult } from './textPreview';
 
 type CardlingDesktopState = {
   enabled: boolean;
@@ -168,6 +169,8 @@ const desktopApi = {
   },
   writeDebugLog: (scope: string, payload: unknown) =>
     ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
+  showErrorDialog: (error: { title: string; message: string }) =>
+    ipcRenderer.invoke('app:show-error', error) as Promise<void>,
   wallpaperAccent: () =>
     ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{
       r: number;
@@ -390,14 +393,12 @@ const desktopApi = {
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   readTextPreview: (targetPath: string) =>
-    ipcRenderer.invoke('shell:read-text-preview', targetPath) as Promise<{
-      path: string;
-      content: string;
-      size: number;
-      modifiedAt: number;
-      truncated: boolean;
-      encoding?: string;
-    }>,
+    ipcRenderer.invoke('shell:read-text-preview', targetPath).then(
+      (result: Awaited<ReturnType<typeof readTextPreviewResult>>) => {
+        if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+        return result.value;
+      },
+    ),
   showInspectorContextMenu: (payload: {
     guestWebContentsId: number;
     target: string;

@@ -15,16 +15,28 @@ Examples:
     # Creates: grid.jpg (or grid-1.jpg, grid-2.jpg for large decks)
 """
 
+from __future__ import annotations
+
 import argparse
+import json
+import shutil
 import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
-import defusedxml.minidom
-from office.soffice import get_soffice_env
-from PIL import Image, ImageDraw, ImageFont
+from office.soffice import find_soffice, run_soffice
+
+DEPENDENCY_ERRORS = []
+try:
+    import defusedxml.minidom
+except ImportError as error:
+    DEPENDENCY_ERRORS.append(str(error))
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError as error:
+    DEPENDENCY_ERRORS.append(str(error))
 
 THUMBNAIL_WIDTH = 300
 CONVERSION_DPI = 100
@@ -37,11 +49,25 @@ FONT_SIZE_RATIO = 0.10
 LABEL_PADDING_RATIO = 0.4
 
 
+def dependency_report():
+    missing = list(DEPENDENCY_ERRORS)
+    try:
+        executable = find_soffice()
+    except FileNotFoundError as error:
+        executable = None
+        missing.append(str(error))
+    poppler = shutil.which("pdftoppm")
+    if not poppler:
+        missing.append("Poppler pdftoppm is unavailable")
+    return {"ready": not missing, "soffice": executable, "pdftoppm": poppler, "errors": missing}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Create thumbnail grids from PowerPoint slides."
     )
-    parser.add_argument("input", help="Input PowerPoint file (.pptx)")
+    parser.add_argument("input", nargs="?", help="Input PowerPoint file (.pptx)")
+    parser.add_argument("--check-dependencies", action="store_true")
     parser.add_argument(
         "output_prefix",
         nargs="?",
@@ -56,6 +82,16 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if not args.input and not args.check_dependencies:
+        parser.error("input is required unless --check-dependencies is used")
+    dependencies = dependency_report()
+    if args.check_dependencies:
+        print(json.dumps(dependencies))
+        sys.exit(0 if dependencies["ready"] else 1)
+    if not dependencies["ready"]:
+        print("Error: " + "; ".join(dependencies["errors"]), file=sys.stderr)
+        sys.exit(1)
 
     cols = min(args.cols, MAX_COLS)
     if args.cols > MAX_COLS:
@@ -158,9 +194,9 @@ def create_hidden_placeholder(size: tuple[int, int]) -> Image.Image:
 def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
     pdf_path = temp_dir / f"{pptx_path.stem}.pdf"
 
-    result = subprocess.run(
+    result = run_soffice(
         [
-            "soffice",
+            f"-env:UserInstallation={(temp_dir / 'profile').resolve().as_uri()}",
             "--headless",
             "--convert-to",
             "pdf",
@@ -171,7 +207,7 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
         capture_output=True,
         text=True,
         errors="replace",
-        env=get_soffice_env(),
+        timeout=120,
     )
     if result.returncode != 0 or not pdf_path.exists():
         raise RuntimeError("PDF conversion failed")
@@ -188,6 +224,7 @@ def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
         capture_output=True,
         text=True,
         errors="replace",
+        timeout=120,
     )
     if result.returncode != 0:
         raise RuntimeError("Image conversion failed")

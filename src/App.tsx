@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import {
   ArrowLeft,
   ArrowRight,
@@ -44,6 +45,7 @@ import {
   saveProjectContext,
 } from './backend/api';
 import { useCardbushChat } from './hooks/useCardbushChat';
+import { showUiError } from './shared/showUiError';
 import {
   normalizeChatMessagesForDisplay,
 } from './features/chatMessages/transcript/messageProjection';
@@ -175,7 +177,7 @@ class AppErrorBoundary extends Component<
 
   static getDerivedStateFromError(error: unknown): AppErrorBoundaryState {
     return {
-      message: error instanceof Error ? error.message : String(error),
+      message: (error instanceof Error ? error.message : String(error)) || '未知渲染错误',
     };
   }
 
@@ -186,6 +188,7 @@ class AppErrorBoundary extends Component<
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       componentStack: info.componentStack,
     }).catch(() => undefined);
+    void showUiError('CardBush 界面异常', `${this.state.message}\n应用未自动重新加载。请关闭窗口后手动重新打开。`);
   }
 
   render() {
@@ -195,12 +198,10 @@ class AppErrorBoundary extends Component<
     return (
       <div className="app theme-dark">
         <div className="render-failure-shell">
-          <section className="render-failure-card">
+          <section className="render-failure-card" role="alert" aria-label="CardBush 界面异常">
             <h1>CardBush 渲染异常</h1>
             <p>{this.state.message}</p>
-            <button type="button" onClick={() => window.location.reload()}>
-              重新加载
-            </button>
+            <p>应用未自动重新加载。请关闭窗口后手动重新打开。</p>
           </section>
         </div>
       </div>
@@ -2518,7 +2519,7 @@ function CardbushApp() {
                 )}
                 contextWindowMaxTokens={appSettings.managedModelConfigs.find(
                   (config) => config.id === chat.selectedModel,
-                )?.maxContextTokens}
+                )?.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS}
                 contextWindowUsage={chat.activeContextWindowUsage}
                 availableModels={availableModels}
                 referencePlanAvailable={backendCapabilities.taskPlan}

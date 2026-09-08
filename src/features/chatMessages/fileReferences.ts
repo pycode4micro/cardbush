@@ -59,6 +59,18 @@ export function localFileReferenceFromHref(href: string) {
   }
 }
 
+/** Resolve file destinations before Markdown treats a Windows drive as a URL scheme. */
+export function markdownLocalFileReference(href: string | undefined, workspaceRoot = '') {
+  if (!href || href.startsWith('#')) return null;
+  const internalPath = localFileReferenceFromHref(href);
+  if (internalPath) return { path: internalPath, label: basename(internalPath) };
+  const windowsPath = /^[a-z]:(?:[\\/]|%5c|%2f)/i.test(href);
+  const fileUri = /^file:\/\//i.test(href);
+  if (!windowsPath && !fileUri && /^[a-z][a-z0-9+.-]*:/i.test(href)) return null;
+  return localFileReference(href, workspaceRoot) ??
+    localFileReference(`./${href}`, workspaceRoot);
+}
+
 type MarkdownNode = {
   type: string;
   value?: string;

@@ -9,9 +9,7 @@
 | Gives you | Safe regions, content budgets, and hard layout constraints for PPT slide geometry |
 | Not for | API usage details for generating slides |
 
-> This file defines the layout safety rules for PPT generation.  
-> Every slide must strictly follow the constraints below.  
-> Any slide that violates a hard rule should fail visual QA.
+> Geometry and density guidance for the stated 10 × 5.625 inch layout. For another page size or an existing template, recompute the budgets. Actual clipping, unintended overlap, and unreadable text fail visual QA; content counts, variant choices, and default font sizes are planning guidelines, not universal requirements.
 
 ---
 
@@ -61,8 +59,7 @@
 
 ### 2.1 Maximum Content Blocks Per Slide
 
-This is the most important rule.  
-The root cause of overflow is usually not bad coordinates. It is putting too much content on one slide.
+These budgets help detect density problems before rendering. Overflow can also come from font metrics, wrapping, or coordinates; inspect the actual rendered result.
 
 | Slide type | Maximum content blocks | Maximum bullet rows per block |
 |----------|------------|--------------|
@@ -92,11 +89,11 @@ The summary bar is NOT free space — it must be budgeted BEFORE laying out cont
 
 1. Decide first: does this slide have a summary bar? If yes, reserve 0.50" at the bottom.
 2. Calculate the available content height: 3.70" (full) → 2.95" (with summary bar).
-3. Fit content blocks into the reduced height. If they don't fit, split the page.
+3. Fit content blocks into the reduced height. If they do not fit, simplify, choose a different layout, or split when the brief permits.
 
 **Never place content below y=4.05" on a slide that also has a summary bar.**
 
-**Hard rule: if content exceeds these limits, split it into multiple slides. Never shrink font size or collapse spacing just to force everything onto one slide.**
+**When content exceeds these budgets, edit redundancy, choose a better layout, or split when the requested page count permits. Preserve required evidence and legibility; do not shrink text until it becomes unreadable.**
 
 ### 2.3 Slide-Splitting Rules
 
@@ -106,7 +103,7 @@ If a slide would require:
 - a list longer than 4 items
 - a grid larger than `2×2 = 4` cells
 
-**Split the slide immediately.**
+**Reassess the layout and content density. Split when useful and compatible with the requested page count; the counts above are not hard caps on all slide designs.**
 
 Recommended split patterns:
 
@@ -366,30 +363,12 @@ const textArea  = { x: 5.50, y: 1.10, w: 4.00, h: 3.50 };
 | `G3 Quote/profile` | Portrait or contextual image on one side, quote or insight block on the other | Customer story, leadership message, testimonial |
 | `G4 Stat + narrative` | Large number, symbol, or compact visual on one side, implication text on the other | Outcome storytelling, synthesis, impact summary |
 
-### 3.3 Visual Variant Selection and Deck Diversity Rules
+### 3.3 Reusing geometry
 
-The same coordinate template can support many different slide designs.  
-To prevent visual homogenization, geometry reuse must be paired with visual variation.
-
-**Hard rules:**
-
-- A slide is not fully specified until it has both a coordinate template and a visual variant.
-- Reusing a coordinate template across a deck is allowed.
-- Reusing the same template + visual variant pair in the same deck is not allowed.
-- **Do not use the same visual variant of the same template more than once in a single deck.**
-
-If a template must be reused later in the deck, change at least two of the following:
-
-- background contrast treatment
-- dominant media type (`text`, `icon`, `number`, `image`, or `chart`)
-- hierarchy driver (headline-led, metric-led, image-led, or list-led)
-- container style (plain, carded, banded, or full-bleed)
-
-Recommended planning rule for LLMs:
-
-- Track template usage with short codes such as `A2`, `B3`, `E1`.
-- Before rendering a slide, check whether that exact code has already appeared in the same deck.
-- If yes, switch to another variant or another template before generating shapes.
+Reuse coordinate templates to keep alignment and spacing stable. Repeated
+visual variants are appropriate for comparable content or a consistent template.
+Vary emphasis, media, or contrast when the slide's purpose changes; there is
+no requirement to change a template solely because it appeared earlier.
 
 ---
 
@@ -412,7 +391,7 @@ Block height 0.95" → fits: 1 title row (20pt) + 2 body rows (14pt)
 Block height 1.70" → fits: 1 title row (24pt) + 3 body rows (14pt) + 1 note row (10pt)
 ```
 
-**Hard rule: body text must never go below 14pt, and footer text must never go below 10pt. Do not shrink font size to fit more content.**
+**For this page size, prefer body text at least 14pt and footers at least 10pt. Follow a readable user template when it differs, and verify actual rendered legibility. Avoid solving overflow by shrinking text.**
 
 ### 4.3 Chinese Text Width Estimate
 
@@ -472,7 +451,7 @@ Chart + explanation combined width must not exceed 9.00"
 Run this checklist for every slide:
 
 ```text
-□ 1. Count content blocks — does the slide exceed the chosen template limit? If yes, split it.
+□ 1. Check content density against the chosen composition; simplify or rebalance when crowded, and split if appropriate.
 □ 2. Count text rows per block — does any block exceed 3 body rows? If yes, trim or split it.
 □ 3. Is the bottom-most element's (top + height) < 5.25"?
 □ 3a. If this slide has a summary/takeaway bar at the bottom:
@@ -543,34 +522,19 @@ Run this checklist for every slide:
 - Option 3: Move summary text into the last content block as its final line, eliminate the separate bar
 - Option 4: Split into two slides — content on first, summary + elaboration on second
 
-The root cause is always the same: the summary bar was added AFTER content layout
-instead of being reserved BEFORE. Budget it first, then fill remaining space with content.
+A common cause is adding the summary bar after content layout. Reserve its space first, and also check text wrapping and actual element bounds.
 
 ---
 
-## 8. Execution Summary for LLMs
+## 8. Applying the budgets
 
-**Before generating any slide, answer these five questions first:**
+1. Confirm the actual page size, template safe regions, and required page count.
+2. Count content and choose a suitable composition; example coordinates are a starting point.
+3. Reserve space for titles, source notes, and any summary bar before laying out the body.
+4. Check element bounds against that composition's budget and the actual slide dimensions.
+5. Render and inspect for clipping, unintended overlap, wrapping, and legibility. PowerPoint does not automatically paginate overflowing content.
+6. Fix the observed cause. Rephrase, rebalance, or split when appropriate, then verify the affected slides again.
 
-1. **How many content blocks does this slide need?** If it is more than 4 for single-column or more than 6 for two-column, split the slide before writing code.
-2. **Which coordinate template fits this slide?** Choose one from Section 3.2, templates A through G, and use the precomputed coordinates directly.
-3. **Which visual variant fits this slide, and has that exact template + variant already appeared in this deck?** Pick a variant code such as `B2` or `F1`; if that code was already used earlier in the deck, choose another one.
-4. **What is the bottom edge of the last element?** Mentally compute `y + h` for the final block. It must stay below `4.80"`.
-5. **Does this slide have a bottom summary bar?** If yes, content must stop at `y=4.05"`. Budget the summary bar FIRST, then fit content into the remaining space — not the other way around.
-
-**Never do the following:**
-
-- Shrink font size just to fit more content
-- Place any body content below `y > 4.80"`
-- Put more than 4 cards on one slide
-- Lay out more than 4 equal-width horizontal elements
-- Reuse the exact same template + visual variant pair across multiple slides in the same deck
-- Default repeated templates to the same plain visual treatment without making a deliberate variant choice
-- Assume PowerPoint will auto-paginate for you — it will not, and overflow content will simply disappear
-
-**Always do the following:**
-
-- Split slides when content grows; one more slide is better than overflow
-- Count content blocks first, pick a template second, pick a visual variant third, place coordinates last
-- Track template/variant codes across the deck to avoid repeated visual treatments
-- Reuse budgeted coordinate templates instead of inventing ad hoc positions
+A clean visual pass can finish without mandatory layout changes. Repeating a
+layout, using a different content count, or preserving a readable user template
+is not itself a defect.

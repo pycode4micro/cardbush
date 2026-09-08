@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  crashReporter,
   Menu,
   net,
   Notification,
@@ -31,11 +32,13 @@ import type {
 
 import { inspectProjectRoots } from './projectRoots';
 import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
+import { sendToLiveRenderer } from './rendererDelivery';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
 import { readFilePrefix, readHandleBytes } from './fileRead';
-import { readTextPreview, renderTextFilePreview } from './textPreview';
+import { readTextPreviewResult, renderTextFilePreview } from './textPreview';
+import { ModelPreviewError, ModelPreviewService } from './modelPreview';
 import {
   listProductSkills,
   migrateLegacyProductSkills,
@@ -63,6 +66,7 @@ import {
 
 const devServerUrl = process.env.CARDBUSH_ELECTRON_DEV_SERVER_URL?.trim();
 const localFileProtocol = 'cardbush-file';
+let modelPreviewService: ModelPreviewService | undefined;
 const cardbushProductionAppUserModelId = 'com.cardbush.desktop';
 const cardbushDevelopmentRuntime =
   process.env.CARDBUSH_DEVELOPMENT_RUNTIME?.trim() === '1';
@@ -157,7 +161,11 @@ let productHostController: {
   executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
   shutdown: () => Promise<void>;
   refreshMcp: () => Promise<unknown>;
+  listMcpServers: () => Promise<unknown>;
+  configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
+  removeMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
 } | null = null;
+let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
 let cardlingWindow: BrowserWindow | null = null;
 type ShadowWindowMode = 'readonly' | 'fork';
@@ -727,7 +735,11 @@ function createShadowWindow(value: unknown) {
   shadowWindow.on('close', (event) => {
     if (isQuitting || state.allowClose || shadowWindow.webContents.isDestroyed()) return;
     event.preventDefault();
-    shadowWindow.webContents.send('shadow:close-request');
+    if (!sendToLiveRenderer(shadowWindow, 'shadow:close-request')) {
+      state.allowClose = true;
+      shadowWindow.close();
+      return;
+    }
     if (state.closeFallbackTimer == null) {
       state.closeFallbackTimer = setTimeout(() => {
         state.closeFallbackTimer = null;
@@ -797,27 +809,43 @@ function installMainWindowNavigationGuard(target: BrowserWindow) {
     return { action: 'deny' };
   });
   target.webContents.on('will-navigate', (event, targetUrl) => {
+    event.preventDefault();
     if (isAllowedAppNavigation(targetUrl)) {
+      appendDebugLog('renderer-lifecycle', { stage: 'app-navigation-blocked', targetUrl });
+      void showWindowError(target, '无法打开链接', '链接指向了应用页面，已阻止离开当前界面。');
       return;
     }
     if (sendUiPreviewToInspector(target, targetUrl)) {
-      event.preventDefault();
       return;
     }
     const parsed = safeUrl(targetUrl);
     if (parsed != null && isWebProtocol(parsed)) {
-      event.preventDefault();
       void openUiPreview(targetUrl);
       return;
     }
-    event.preventDefault();
     void openTargetExternally(targetUrl);
   });
 }
 
+const windowErrorDialogs = new WeakMap<BrowserWindow, Promise<void>>();
+
+function showWindowError(target: BrowserWindow, title: string, message: string) {
+  if (isQuitting || target.isDestroyed()) return Promise.resolve();
+  const active = windowErrorDialogs.get(target);
+  if (active) return active;
+  const pending = dialog.showMessageBox(target, {
+    type: 'error', title, message,
+    buttons: ['关闭提示'], defaultId: 0, cancelId: 0, noLink: true,
+  }).then(() => undefined).catch((error: unknown) => {
+    appendDebugLog('renderer-lifecycle', { stage: 'error-dialog-failed', error: String(error) });
+  }).finally(() => { windowErrorDialogs.delete(target); });
+  windowErrorDialogs.set(target, pending);
+  return pending;
+}
+
 function installMainRendererResilience(target: BrowserWindow) {
-  let lastRecoveryAt = 0;
-  let recoveryAttempts = 0;
+  let rendererPid = 0;
+  target.webContents.on('dom-ready', () => { rendererPid = target.webContents.getOSProcessId(); });
 
   target.webContents.on('before-input-event', (event, input) => {
     const key = input.key.toLowerCase();
@@ -838,35 +866,21 @@ function installMainRendererResilience(target: BrowserWindow) {
       stage: 'render-process-gone',
       reason: details.reason,
       exitCode: details.exitCode,
+      exitCodeHex: `0x${(details.exitCode >>> 0).toString(16).padStart(8, '0')}`,
+      rendererPid,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      crashDumps: app.getPath('crashDumps'),
     });
     if (isQuitting || target.isDestroyed() || details.reason === 'clean-exit') return;
 
-    const now = Date.now();
-    if (now - lastRecoveryAt > 30_000) recoveryAttempts = 0;
-    lastRecoveryAt = now;
-    recoveryAttempts += 1;
-    if (recoveryAttempts > 2) {
-      appendDebugLog('renderer-lifecycle', {
-        stage: 'automatic-reload-suppressed',
-        reason: 'repeated_renderer_failure',
-        recoveryAttempts,
-      });
-      return;
-    }
-
-    setTimeout(() => {
-      if (isQuitting || target.isDestroyed() || target.webContents.isDestroyed()) return;
-      applyMainWindowVisualMaterial(target, lastMainWindowTheme);
-      appendDebugLog('renderer-lifecycle', {
-        stage: 'automatic-reload',
-        recoveryAttempts,
-      });
-      target.webContents.reload();
-    }, 250);
+    void showWindowError(target, 'CardBush 界面异常',
+      `界面进程已退出（${details.reason}，退出码 ${details.exitCode}）。\n应用未自动重新加载。请关闭窗口后手动重新打开。`);
   });
 
   target.on('unresponsive', () => {
     appendDebugLog('renderer-lifecycle', { stage: 'unresponsive' });
+    void showWindowError(target, 'CardBush 暂时未响应', '当前界面未响应。可以关闭此提示继续等待，应用不会自动重新加载。');
   });
   target.on('responsive', () => {
     appendDebugLog('renderer-lifecycle', { stage: 'responsive' });
@@ -881,6 +895,7 @@ function installMainRendererResilience(target: BrowserWindow) {
         errorDescription,
         validatedURL,
       });
+      void showWindowError(target, '无法加载应用界面', `${errorDescription}（${errorCode}）\n${validatedURL}`);
     },
   );
 }
@@ -892,13 +907,12 @@ function sendUiPreviewToInspector(target: BrowserWindow, value: string) {
   }
   const inspectorTarget = previewTarget.localPath || previewTarget.url;
   const parsed = safeUrl(previewTarget.url);
-  target.webContents.send('shell:open-inspector', {
+  return sendToLiveRenderer(target, 'shell:open-inspector', {
     target: inspectorTarget,
     title: previewTarget.localPath
       ? path.basename(previewTarget.localPath)
       : parsed?.hostname || inspectorTarget,
   });
-  return true;
 }
 
 async function openUiPreview(targetUrl: string) {
@@ -923,7 +937,7 @@ function resolveUiPreviewTarget(value: string): UiPreviewTarget | null {
   if (
     parsed != null &&
     parsed.protocol === `${localFileProtocol}:` &&
-    ['office-preview', 'text-preview'].includes(parsed.hostname.toLowerCase())
+    ['office-preview', 'text-preview', 'model-preview'].includes(parsed.hostname.toLowerCase())
   ) {
     const localPath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
     if (localPath && fs.existsSync(localPath) && fs.statSync(localPath).isFile()) {
@@ -1132,7 +1146,7 @@ function createCardlingWindow() {
     if (!cardlingExpanded || cardlingWindow == null || cardlingWindow.isDestroyed()) {
       return;
     }
-    cardlingWindow.webContents.send('cardling:collapse');
+    sendToLiveRenderer(cardlingWindow, 'cardling:collapse');
   });
   cardlingWindow.on('closed', () => {
     stopCardlingDrag(false);
@@ -1176,7 +1190,7 @@ function sendCardlingState() {
   ) {
     return;
   }
-  cardlingWindow.webContents.send('cardling:state', lastCardlingState);
+  sendToLiveRenderer(cardlingWindow, 'cardling:state', lastCardlingState);
 }
 
 function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopState {
@@ -1832,7 +1846,7 @@ function publishSessionAttentionOpenAvailable() {
     mainWindow.isDestroyed() ||
     mainWindow.webContents.isLoadingMainFrame()
   ) return;
-  mainWindow.webContents.send('attention:open-session');
+  sendToLiveRenderer(mainWindow, 'attention:open-session');
 }
 
 function showMainWindow() {
@@ -1936,6 +1950,16 @@ ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
 ipcMain.handle('app:runtime-startup-status', (event) => {
   assertMainWindowSender(event.sender.id);
   return { ...runtimeStartupStatus };
+});
+
+ipcMain.handle('app:show-error', (event, error: { title?: unknown; message?: unknown }) => {
+  assertMainWindowSender(event.sender.id);
+  const target = BrowserWindow.fromWebContents(event.sender);
+  if (!target || target.isDestroyed()) return;
+  const title = typeof error?.title === 'string' ? error.title.slice(0, 200) : 'CardBush';
+  const message = typeof error?.message === 'string' ? error.message.slice(0, 8000) : '发生了未知错误。';
+  appendDebugLog('renderer-lifecycle', { stage: 'error-dialog', title, message });
+  return showWindowError(target, title, message);
 });
 
 ipcMain.handle('app:retry-runtime', async (event) => {
@@ -2570,7 +2594,7 @@ ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
     return;
   }
   if (typeof action === 'object' && action?.type === 'miniChatSend') {
-    mainWindow.webContents.send('cardling:action', {
+    sendToLiveRenderer(mainWindow, 'cardling:action', {
       type: 'miniChatSend',
       text: typeof action.text === 'string' ? action.text : '',
     });
@@ -2581,7 +2605,7 @@ ipcMain.handle('cardling:action', (event, action: CardlingDesktopAction) => {
     return;
   }
   showMainWindow();
-  mainWindow.webContents.send('cardling:action', action);
+  sendToLiveRenderer(mainWindow, 'cardling:action', action);
 });
 
 ipcMain.handle('shell:open-path', (event, targetPath: string) => {
@@ -2673,7 +2697,7 @@ ipcMain.handle('shell:read-text-preview', async (event, targetPath: string) => {
   if (!normalizedPath) {
     throw new Error('Invalid preview path.');
   }
-  return readTextPreview(normalizedPath);
+  return readTextPreviewResult(normalizedPath);
 });
 
 async function runPackagedApplicationSmoke(): Promise<void> {
@@ -2833,6 +2857,17 @@ function withPackagedSmokeTimeout<T>(
   });
 }
 
+// Collect the native stack locally: a Chromium crash cannot be diagnosed from
+// a renderer error boundary or an exit code alone. No reports are uploaded.
+try {
+  crashReporter.start({ uploadToServer: false, productName: 'CardBush' });
+} catch (error) {
+  console.warn('[crash-reporter]', String(error));
+}
+app.on('child-process-gone', (_event, details) => {
+  appendDebugLog('renderer-lifecycle', { stage: 'child-process-gone', ...details });
+});
+
 app.whenReady().then(async () => {
   // CardBush owns its complete frameless application chrome. Removing
   // Electron's hidden default menu also removes browser-style reload
@@ -2914,7 +2949,7 @@ function publishRuntimeStartupStatus(next: RuntimeStartupStatus) {
     processElapsedMs: Date.now() - desktopStartupStartedAt,
   });
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(runtimeStartupStatusChannel, { ...next });
+    sendToLiveRenderer(mainWindow, runtimeStartupStatusChannel, { ...next });
   }
 }
 
@@ -3100,6 +3135,8 @@ async function startRuntimeServices(force = false): Promise<void> {
     runtimeHostController?.stop();
     runtimeHostController = null;
     productHostController = null;
+    await productMcpManagement?.close();
+    productMcpManagement = null;
   }
   const attempt = runtimeStartupStatus.attempt + 1;
   const startedAtMs = Date.now();
@@ -3149,12 +3186,19 @@ async function initializeRuntimeHost() {
     runtimeHostController?.stop();
     runtimeHostController = null;
     productHostController = null;
+    await productMcpManagement?.close();
+    productMcpManagement = null;
     throw error;
   }
 }
 
 async function initializeRuntimeHostWithinDeadline() {
   const bundledRipgrep = resolveBundledRipgrepPath();
+  const managementModule = await import(pathToFileURL(path.join(__dirname, 'productMcpManagement.mjs')).href);
+  productMcpManagement = await managementModule.startProductMcpManagement(() => {
+    if (!productHostController) throw new Error('CardBush Product Host is not ready.');
+    return productHostController;
+  });
   const controllerModuleUrl = pathToFileURL(
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
@@ -3164,6 +3208,8 @@ async function initializeRuntimeHostWithinDeadline() {
       startupTimeoutMs: 12_000,
       env: {
         ...process.env,
+        CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
+        CARDBUSH_MCP_MANAGEMENT_TOKEN: productMcpManagement!.token,
         CARDBUSH_RUNTIME_STATE_ROOT: path.join(
           app.getPath('userData'),
           'runtime-state',
@@ -3273,12 +3319,7 @@ async function initializeProductHost(controller: RuntimeHostController) {
     userPluginRoot,
     legacyModelConfigPaths: legacyBushserverModelConfigPaths(),
     runtimeBridge: controller,
-  }) as {
-    execute: (command: unknown) => Promise<unknown>;
-    executeTool: (request: { toolName: string; input: unknown }) => Promise<unknown>;
-    shutdown: () => Promise<void>;
-    refreshMcp: () => Promise<unknown>;
-  };
+  }) as NonNullable<typeof productHostController>;
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
     ...productSkillRoots(),
@@ -3287,7 +3328,7 @@ async function initializeProductHost(controller: RuntimeHostController) {
   ], () => {
     const notify = () => {
       for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('capabilities:changed');
+        sendToLiveRenderer(window, 'capabilities:changed');
       }
     };
     notify();
@@ -3395,7 +3436,7 @@ async function startChromeConnectorBroker(): Promise<void> {
   chromeConnectorBroker = broker;
   unregisterChromeConnectorStatus = broker.onStatus((status) => {
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
-      mainWindow.webContents.send('chrome-connector:status', {
+      sendToLiveRenderer(mainWindow, 'chrome-connector:status', {
         ...currentChromeConnectorRegistrationStatus(),
         ...status,
       });
@@ -3487,6 +3528,46 @@ function registerLocalFileProtocol() {
     try {
       const parsed = new URL(request.url);
       const protocolHost = parsed.hostname.toLowerCase();
+      if (protocolHost === 'model-preview') {
+        if (parsed.pathname.startsWith('/assets/')) {
+          return await previewRendererAssetResponse(parsed.pathname) ?? new Response('Not found', { status: 404 });
+        }
+        if (parsed.pathname === '/' || parsed.pathname === '/model-preview.html') {
+          if (devServerUrl) {
+            const url = new URL('/model-preview.html', devServerUrl);
+            url.search = parsed.search;
+            return Response.redirect(url.toString(), 302);
+          }
+          return await previewRendererAssetResponse('/model-preview.html', false) ?? new Response('Not found', { status: 404 });
+        }
+        modelPreviewService ??= new ModelPreviewService({ scriptPath: path.join(app.getAppPath(), 'assets', 'previewers', 'blender_preview.py') });
+        const headers = { 'cache-control': 'no-store', ...(devServerUrl ? {
+          'access-control-allow-origin': new URL(devServerUrl).origin,
+          'access-control-allow-methods': 'GET, DELETE, OPTIONS',
+        } : {}) };
+        if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+        if (parsed.pathname === '/manifest' && request.method === 'GET') {
+          try {
+            const result = await modelPreviewService.preview(normalizeShellPath(parsed.searchParams.get('path') ?? ''), parsed.searchParams.get('scene') ?? '', request.signal, parsed.searchParams.get('requestId') || undefined);
+            return Response.json({ ...result.metadata, size: result.size, resource: `cardbush-file://model-preview/resource/${result.id}` }, { headers });
+          } catch (error) {
+            return Response.json({ error: error instanceof Error ? error.message : String(error), code: error instanceof ModelPreviewError ? error.code : 'read_failed' }, { headers });
+          }
+        }
+        if (parsed.pathname.startsWith('/resource/')) {
+          const id = parsed.pathname.slice('/resource/'.length);
+          if (request.method === 'DELETE') {
+            await modelPreviewService.release(id);
+            return new Response(null, { status: 204, headers });
+          }
+          if (request.method !== 'GET') return new Response('Method not allowed', { status: 405, headers });
+          const file = modelPreviewService.resource(id);
+          if (!file) return new Response('Preview expired', { status: 404, headers });
+          const response = await net.fetch(pathToFileURL(file).toString());
+          return new Response(response.body, { headers: { ...headers, 'content-type': 'model/gltf-binary', ...(response.headers.has('content-length') ? { 'content-length': response.headers.get('content-length')! } : {}) } });
+        }
+        return new Response('Not found', { status: 404 });
+      }
       if (protocolHost === 'office-source') {
         const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
         const stats = await fs.promises.stat(officePath);
@@ -3507,7 +3588,7 @@ function registerLocalFileProtocol() {
       }
       if (protocolHost === 'office-preview') {
         if (parsed.pathname.startsWith('/assets/')) {
-          return await officePreviewRendererAssetResponse(parsed.pathname)
+          return await previewRendererAssetResponse(parsed.pathname)
             ?? new Response('Not found', { status: 404 });
         }
         const officePath = normalizeShellPath(parsed.searchParams.get('path') ?? '');
@@ -3622,10 +3703,10 @@ async function officePreviewRendererEntryResponse(officePath: string) {
     url.searchParams.set('path', officePath);
     return Response.redirect(url.toString(), 302);
   }
-  return officePreviewRendererAssetResponse('/office-preview.html', false);
+  return previewRendererAssetResponse('/office-preview.html', false);
 }
 
-async function officePreviewRendererAssetResponse(
+async function previewRendererAssetResponse(
   requestPath: string,
   immutable = true,
 ): Promise<Response | null> {
@@ -3674,7 +3755,11 @@ app.on('before-quit', (event) => {
   }
   event.preventDefault();
   if (hostShutdownPromise == null) {
-    hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(() => {
+    hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
+      await productMcpManagement?.close();
+      productMcpManagement = null;
+      await modelPreviewService?.dispose();
+      modelPreviewService = undefined;
       hostShutdownComplete = true;
       app.quit();
     });
@@ -4845,7 +4930,7 @@ function sendToOwner(ownerId: number, channel: string, payload: unknown) {
   if (!owner || owner.webContents.isDestroyed()) {
     return;
   }
-  owner.webContents.send(channel, payload);
+  sendToLiveRenderer(owner, channel, payload);
 }
 
 function terminalShell(runtime?: TerminalRuntime, cwd?: string) {

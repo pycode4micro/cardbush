@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { decodeTextPreview, readTextPreview, renderTextFilePreview, maxPreviewBytes } = require('../dist-electron/textPreview.js');
+const { decodeTextPreview, readTextPreview, readTextPreviewResult, renderTextFilePreview, maxPreviewBytes } = require('../dist-electron/textPreview.js');
 const { readHandleBytes, readFilePrefix } = require('../dist-electron/fileRead.js');
 const ts = require('typescript');
 const rendererHelpers = { exports: {} };
@@ -77,12 +77,47 @@ test('preview limits do not introduce broken characters or silently hide errors 
 });
 
 test('binary files cannot bypass the guard by being renamed txt or having a Unicode BOM', () => {
-  for (const hex of ['89504e470d0a1a0a', '504b0304', '255044462d312e37', '1f8b0800']) {
+  for (const hex of ['89504e470d0a1a0a', '504b0304', '255044462d312e37', '1f8b0800',
+    '28b52ffda0410601002537004a47801149', '424c454e4445522d76353032000000', '80ff001780']) {
     assert.throws(() => decodeTextPreview(Buffer.from(hex, 'hex'), 'renamed.txt'), /text_preview_binary/);
   }
   assert.throws(() => decodeTextPreview(Buffer.alloc(100), 'zeros.txt'), /text_preview_binary/);
   assert.throws(() => decodeTextPreview(encoded('hello\0world', 'utf-16le'), 'binary.txt'), /text_preview_binary/);
   assert.throws(() => decodeTextPreview(Buffer.from([1, 2, 3, 4]), 'control.txt'), /text_preview_binary/);
+  assert.equal(decodeTextPreview(Buffer.from('BLENDER Python reference'), 'readme.txt').content, 'BLENDER Python reference');
+});
+
+test('binary and malformed text cross the actual preload adapter as typed preview failures', async () => {
+  const source = ts.createSourceFile('preload.ts', await readFile(new URL('../electron/preload.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true);
+  let adapter;
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && node.name.getText(source) === 'readTextPreview') adapter = node.initializer.getText(source);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(adapter);
+  const directory = await mkdtemp(join(tmpdir(), 'cardbush-preview-ipc-'));
+  const invoke = async (_channel, file) => JSON.parse(JSON.stringify(await readTextPreviewResult(file)));
+  const read = new Function('ipcRenderer', ts.transpileModule(`return (${adapter});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText)({ invoke });
+  try {
+    for (const [name, bytes, code] of [
+      ['avatar.blend', Buffer.from('28b52ffda0410601002537004a47801149', 'hex'), 'text_preview_binary'],
+      ['invalid.txt', Buffer.from('efbbbf80', 'hex'), 'text_preview_encoding'],
+    ]) {
+      const file = join(directory, name);
+      await writeFile(file, bytes);
+      assert.equal((await readTextPreviewResult(file)).ok, false, 'expected limitations do not throw from the IPC handler');
+      await assert.rejects(read(file), { code });
+      assert.deepEqual(await readFile(file), bytes, 'preview never changes the source');
+    }
+    const file = join(directory, 'valid.txt');
+    await writeFile(file, 'valid 中文');
+    assert.equal((await read(file)).content, 'valid 中文');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('short reads are accumulated and EOF never exposes unread buffer contents', async () => {

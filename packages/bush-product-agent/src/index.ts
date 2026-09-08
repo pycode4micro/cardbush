@@ -40,6 +40,8 @@ ${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
 
 export const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 
+export const DEFAULT_MAX_CONTEXT_TOKENS = 400_000;
+
 export interface ProductAgentTurnInput {
   requestId: string;
   sessionId: string;
@@ -163,7 +165,7 @@ function createBaseProductAgentTurnRequest(
         ? { allowedSkills: input.allowedSkills ?? [] } : {}),
       ...(input.disabledSkills !== undefined ? { disabledSkills: input.disabledSkills } : {}),
       planEnabled: input.planEnabled,
-      contextWindowTokens: input.maxContextTokens,
+      contextWindowTokens: input.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
       subagentChildPrefixMessages: [{ role: "system", content: CHILD_AGENT_SYSTEM_PROMPT }],
     },
   });

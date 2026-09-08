@@ -412,6 +412,18 @@ textarea {
   background: var(--bg);
 }
 
+.markdown-content .markdown-link-error {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
 .render-failure-card {
   width: min(520px, 100%);
   padding: 22px;
@@ -430,15 +442,6 @@ textarea {
   margin: 0 0 18px;
   color: var(--text-mid);
   line-height: 1.5;
-}
-
-.render-failure-card button {
-  min-height: 34px;
-  padding: 0 14px;
-  color: var(--surface);
-  background: var(--text);
-  border-radius: 8px;
-  font-weight: 700;
 }
 
 .theme-parchment .desktop-shell,
@@ -2713,17 +2716,33 @@ body.right-inspector-resizing .right-inspector-resizer {
   border-radius: 8px;
 }
 
-.markdown-inspector-error {
-  width: min(100%, 720px);
-  margin: 20px auto;
-  padding: 12px 14px;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--border));
-  border-radius: 9px;
-  font-size: 11px;
-  white-space: pre-wrap;
+.inspector-file-fallback {
+  width: min(100%, 520px);
+  margin: 32px auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
+
+.inspector-file-fallback-name { max-width: 100%; color: var(--text); font-size: 14px; }
+.inspector-file-fallback-path { max-width: 100%; font-size: 11px; user-select: text; }
+.inspector-file-fallback p { margin: 0; white-space: pre-wrap; }
+.inspector-open-external {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+.inspector-open-external:disabled { opacity: 0.6; cursor: wait; }
 
 .right-inspector-preview-loading {
   position: absolute;
@@ -3429,6 +3448,14 @@ body.right-inspector-resizing .right-inspector-resizer {
 .message-list-item.streaming {
   content-visibility: visible;
   contain-intrinsic-block-size: none;
+}
+
+/* Restore against actual message geometry before returning history to lazy
+   layout. Estimated offscreen heights must not replay a scroll on session entry. */
+.message-list[data-scroll-restoring] .message-list-item:not(.streaming) {
+  content-visibility: visible;
+  /* Keep auto's containment so child margins have the same geometry. */
+  contain: layout style paint;
 }
 
 .message-list-item.assistant-render-stage {

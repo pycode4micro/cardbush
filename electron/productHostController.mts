@@ -22,6 +22,13 @@ import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
 import { loadProductPluginCatalog } from './productPlugins.js';
 import {
+  assertUserMcpServerId,
+  mergeMcpServer,
+  mcpServerPatchSchema,
+  publicMcpServer,
+  type McpServerPatch,
+} from './productMcpManagement.mjs';
+import {
   DELETE_RUNTIME_SESSION_COMMAND,
   LIST_RUNTIME_SESSIONS_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
@@ -31,8 +38,10 @@ import {
   runtimeSessionListRequestSchema,
   sessionSnapshotSchema,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
+  mcpSnapshotResultSchema,
 } from '@cardbush/bush-protocol';
 
 export interface ElectronProductHostControllerOptions {
@@ -100,7 +109,13 @@ export class ElectronProductHostController {
       update: async (config) => this.#apps.write(config),
     }, {
       get: async () => this.#mcp.read(),
-      update: async (config) => this.#mcp.write(config),
+      update: async (config) => {
+        if (!Array.isArray(config.servers)) throw new Error('servers must be an array.');
+        return this.#mcp.write({
+          expectedRevision: config.expectedRevision,
+          servers: config.servers.map((server) => mergeMcpServer(undefined, server)),
+        });
+      },
     }, {
       get: async () => this.#subagents.read(),
     });
@@ -131,6 +146,51 @@ export class ElectronProductHostController {
       })),
     });
     return this.#runtime.sendCommand({ kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: snapshot });
+  }
+
+  async listMcpServers(): Promise<unknown> {
+    const config = await this.#mcp.read();
+    const configuration = { revision: config.revision, servers: config.servers.map(publicMcpServer) };
+    try {
+      const snapshot = await this.#runtime.sendCommand({ kind: GET_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {} });
+      return { configuration, runtime: snapshot == null ? null : mcpSnapshotResultSchema.parse(snapshot) };
+    } catch (error) {
+      return { configuration, runtime: null, runtimeError: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async configureMcpServer(input: McpServerPatch, signal?: AbortSignal): Promise<unknown> {
+    const patch = mcpServerPatchSchema.parse(input);
+    assertUserMcpServerId(patch.id);
+    const config = await this.#mcp.updateServer(patch.id, (current) => {
+      signal?.throwIfAborted();
+      return mergeMcpServer(current, patch);
+    });
+    return this.#applyMcpConfiguration(config.revision);
+  }
+
+  async removeMcpServer(id: string, signal?: AbortSignal): Promise<unknown> {
+    assertUserMcpServerId(id);
+    const config = await this.#mcp.updateServer(id, () => {
+      signal?.throwIfAborted();
+      return undefined;
+    });
+    return this.#applyMcpConfiguration(config.revision);
+  }
+
+  async #applyMcpConfiguration(configurationRevision: number): Promise<unknown> {
+    let applicationError: string | undefined;
+    try {
+      await this.refreshMcp();
+    } catch (error) {
+      applicationError = error instanceof Error ? error.message : String(error);
+    }
+    return {
+      saved: true,
+      configurationRevision,
+      ...objectValue(await this.listMcpServers(), 'MCP management state'),
+      ...(applicationError ? { applicationError } : {}),
+    };
   }
 
   async shutdown(): Promise<void> {

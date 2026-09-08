@@ -11,6 +11,10 @@ export const appViewFiles = [
   'src/features/interactions/InteractionCard.tsx',
   'src/features/inspector/inspectorTargets.ts',
   'src/features/inspector/InspectorWebview.tsx',
+  'src/features/inspector/TextInspectorPreview.tsx',
+  'src/features/inspector/FilePreviewFallback.tsx',
+  'src/features/inspector/filePreviewRegistry.ts',
+  'src/features/inspector/inspectorFilePreviewRenderers.tsx',
   'src/shared/cssEscape.ts',
 ];
 

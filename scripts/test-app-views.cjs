@@ -48,6 +48,8 @@ async function buildViews() {
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    'src/features/chatMessages/MessageBubble.tsx',
+    'src/features/inspector/InspectorErrorBoundary.tsx',
     'src/features/chatMessages/transcript/liveMessageUpdates.ts']
     .map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n');
   const result = await build({
@@ -135,9 +137,12 @@ app.whenReady().then(async () => {
       window.h = h;
       window.inspectorRef = React.createRef();
       window.reads = [];
+      window.errorDialogs = [];
       window.navigation = [];
       window.cardbushDesktop = {
         readTextPreview: path => new Promise((resolve, reject) => reads.push({ path, resolve, reject })),
+        showErrorDialog: async error => { errorDialogs.push(error); },
+        inspectLocalReference: async path => ({ path, name: path.replaceAll('\\\\', '/').split('/').pop(), kind: 'file' }),
       };
       const onNavigationStateChange = (identity, state) => navigation.push({ identity, ...state });
       const onOpenTarget = () => {};
@@ -169,6 +174,25 @@ app.whenReady().then(async () => {
     await until("reads.some(read => read.path.endsWith('second.md') && !read.done)", 'reload reads again');
     await run("resolveReads('D:/fixture/second.md', '# Reloaded preview')");
     await until("document.querySelector('h1')?.textContent === 'Reloaded preview'", 'reload result');
+    const urlParagraph = '一条命令即可：`npm start`（前台 http://localhost:51231/，后台 http://localhost:51231/admin.html）。如果之前是用自定义 `PORT/ADMIN_TOKEN` 启动的';
+    await run("preview('D:/fixture/links.md')");
+    await until("reads.some(read => read.path.endsWith('links.md'))", 'URL paragraph read');
+    await run(`resolveReads('D:/fixture/links.md', ${JSON.stringify(urlParagraph)})`);
+    await until("document.querySelectorAll('.markdown-content a').length === 2", 'two independent localhost links');
+    assert.deepEqual(await run("Array.from(document.querySelectorAll('.markdown-content a'), link => [link.textContent, link.getAttribute('href')])"), [
+      ['http://localhost:51231/', 'http://localhost:51231/'],
+      ['http://localhost:51231/admin.html', 'http://localhost:51231/admin.html'],
+    ], 'display labels and navigation URLs must both exclude Chinese prose');
+    assert.equal(await run("document.querySelector('.markdown-content p').textContent"), urlParagraph.replaceAll('`', ''), 'all surrounding prose and punctuation remain visible');
+    await run(`
+      window.linkTargets = [];
+      window.recordLinkTarget = event => linkTargets.push(event.detail.target);
+      addEventListener('cardbush:open-inspector', recordLinkTarget);
+      for (const link of document.querySelectorAll('.markdown-content a')) link.click();
+      removeEventListener('cardbush:open-inspector', recordLinkTarget);
+    `);
+    assert.deepEqual(await run('linkTargets'), ['http://localhost:51231/', 'http://localhost:51231/admin.html'], 'clicks open the exact URL in the inspector');
+    await require('./helpers/markdown-file-navigation.cjs')({ run, until, pause, window });
     await run("preview('D:/fixture/code.ts')");
     await until("reads.some(read => read.path.endsWith('code.ts'))", 'source read');
     await run("resolveReads('D:/fixture/code.ts', 'const extractedView = true;', true)");
@@ -195,8 +219,46 @@ app.whenReady().then(async () => {
     }
     await run("preview('D:/fixture/binary.txt')");
     await until("reads.some(read => read.path.endsWith('binary.txt'))", 'binary file read');
+    const binaryDialogsBefore = await run('errorDialogs.length');
     await run("for (const read of reads.filter(read => read.path.endsWith('binary.txt'))) read.reject(new Error('Error invoking remote method: [text_preview_binary] Preview target is not a text file.'))");
-    await until("document.querySelector('[role=alert]')?.textContent === 'This is a binary file and cannot be previewed as text.'", 'binary errors do not expose IPC boilerplate');
+    await until("document.querySelector('[role=alert] p')?.textContent === 'This is a binary file and cannot be previewed as text.'", 'binary errors do not expose IPC boilerplate');
+    assert.equal(await run('errorDialogs.length'), binaryDialogsBefore, 'unsupported file previews stay in their panel');
+    await run("window.externalFiles = []; cardbushDesktop.openPath = async path => { externalFiles.push(path); return ''; }; document.querySelector('.inspector-open-external').click()");
+    await until('externalFiles.length === 1', 'unsupported file opens only on explicit click');
+    assert.deepEqual(await run('externalFiles'), ['D:/fixture/binary.txt']);
+    await until("!document.querySelector('.inspector-open-external').disabled", 'external opener has finished');
+    await run("cardbushDesktop.openPath = async () => 'No application associated with this file'; document.querySelector('.inspector-open-external').click()");
+    await until(`errorDialogs.length === ${binaryDialogsBefore + 1}`, 'external opener failure is a dialog, not navigation');
+    await run("preview('D:/fixture/invalid.txt')");
+    await until("reads.some(read => read.path.endsWith('invalid.txt'))", 'malformed text read');
+    const encodingDialogsBefore = await run('errorDialogs.length');
+    await run("for (const read of reads.filter(read => read.path.endsWith('invalid.txt'))) read.reject(new Error('[text_preview_encoding] Unsupported encoding'))");
+    await until("document.querySelector('.inspector-file-fallback [role=alert]')?.textContent.includes('encoding')", 'unreadable text uses the same fallback');
+    assert.equal(await run('errorDialogs.length'), encodingDialogsBefore, 'expected decoding limits stay in the preview');
+
+    await run("preview('D:/fixture/pending.md')");
+    await until("reads.some(read => read.path.endsWith('pending.md'))", 'pending read before fallback');
+    const readsBeforeFallback = await run('reads.length');
+    await run("window.externalFiles = []; cardbushDesktop.openPath = async path => { externalFiles.push(path); return ''; }; void 0");
+    for (const target of ['D:/fixture/unregistered.project', 'file:///D:/fixture/未识别%20%23%201.futureformat', 'cardbush-file://text-preview/?path=D%3A%2Ffixture%2Funregistered.custom']) {
+      await run(`preview(${JSON.stringify(target)})`);
+      await until(`!!document.querySelector('.inspector-file-fallback') && navigation.at(-1)?.url === ${JSON.stringify(target)} && navigation.at(-1)?.loading === false`, 'unknown format fallback is ready');
+      assert.equal(await run('reads.length'), readsBeforeFallback, 'unregistered format does not read or decode its content');
+      assert.equal(await run("!!document.querySelector('webview, .right-inspector-preview-loading, [role=alert]')"), false, 'unsupported formats are a normal UI state, without guests or error dialogs');
+      assert.equal(await run('externalFiles.length'), 0, 'opening a preview never starts an external application');
+      await run('inspectorRef.current.reload()');
+      await until('navigation.at(-1)?.loading === false', 'fallback refresh settles');
+      assert.equal(await run('reads.length'), readsBeforeFallback, 'refresh does not change unknown-format policy');
+    }
+    const fallbackNavigationCount = await run('navigation.length');
+    await run("resolveReads('D:/fixture/pending.md', '# Stale result')");
+    await pause();
+    assert.equal(await run('navigation.length'), fallbackNavigationCount, 'old text read cannot alter fallback navigation');
+    assert.equal(await run("document.querySelector('.inspector-file-fallback-name').textContent"), 'unregistered.custom');
+    await run("document.querySelector('.inspector-open-external').click()");
+    await until('externalFiles.length === 1', 'fallback opens file on explicit click');
+    assert.deepEqual(await run('externalFiles'), ['D:/fixture/unregistered.custom'], 'opener receives decoded local path');
+    assert.equal(await run('errorDialogs.length'), encodingDialogsBefore, 'unknown formats do not create popup errors');
     await run("preview('D:/fixture/missing.md')");
     await until("reads.some(read => read.path.endsWith('missing.md'))", 'error preview read');
     await run("for (const read of reads.filter(read => read.path.endsWith('missing.md'))) read.reject(new Error('Fixture file unavailable'))");
@@ -301,8 +363,12 @@ app.whenReady().then(async () => {
     assert.equal(await run("document.querySelectorAll('.message-row.assistant').length"), 1, 'one completed answer row');
     assert.equal(await run("document.querySelector('.message-list').textContent.includes('Loop narration')"), false, 'process text does not leak into completed chat');
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });
+    await require('./helpers/chat-tool-packages.cjs')({ run, until, pause });
+    await require('./helpers/chat-session-scroll.cjs')({ run, until, pause });
     await window.webContents.insertCSS(fs.readFileSync(path.join(root, 'src/styles/themes/cyberpunk.css'), 'utf8'));
     await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root, theme: 'theme-cyberpunk' });
+    await require('./helpers/chat-tool-packages.cjs')({ run, until, pause, theme: 'theme-cyberpunk' });
+    await require('./helpers/chat-session-scroll.cjs')({ run, until, pause, theme: 'theme-cyberpunk' });
     await run("window.viewTheme = 'theme-dark'; void 0;");
     await run("updateChat({ activeConversationId: 'session-b', messages: [{ id: 'user-b', role: 'user', content: 'Other session only', createdAt: '2026-09-05T00:00:02Z' }] })");
     await until("document.querySelector('.message-list')?.textContent.includes('Other session only')", 'session switch');

@@ -183,29 +183,9 @@ const transcriptPresentationPath = path.join(
   'chatMessages',
   'assistantTranscriptPresentation.ts',
 );
-const transcriptPresentationSource = fs.readFileSync(
-  transcriptPresentationPath,
-  'utf8',
-);
-const transcriptPresentationTranspiled = ts.transpileModule(
-  transcriptPresentationSource,
-  {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  },
-);
-const transcriptPresentationModule = { exports: {} };
-vm.runInNewContext(transcriptPresentationTranspiled.outputText, {
-  module: transcriptPresentationModule,
-  exports: transcriptPresentationModule.exports,
-  Array,
-  Map,
-  Math,
-  Number,
+const { coalesceAssistantTranscript } = await loadChatTranscript({
+  source: `export * from ${JSON.stringify(transcriptPresentationPath)};`,
 });
-const { coalesceStoppedAssistantTranscript } = transcriptPresentationModule.exports;
 
 const messages = [
   { id: 'user-1', role: 'user', content: '检查项目', turnId: 'turn-1' },
@@ -343,7 +323,7 @@ const stoppedTranscript = [
     }],
   },
 ];
-const compactStoppedTranscript = coalesceStoppedAssistantTranscript(stoppedTranscript);
+const compactStoppedTranscript = coalesceAssistantTranscript(stoppedTranscript);
 assert.equal(
   compactStoppedTranscript.length,
   2,
@@ -367,7 +347,7 @@ assert.equal(
   0,
   'Stopped presentation compaction must not mutate the archived transcript projection.',
 );
-const isolatedStoppedTranscript = coalesceStoppedAssistantTranscript([
+const isolatedStoppedTranscript = coalesceAssistantTranscript([
   stoppedTranscript[0],
   {
     ...stoppedTranscript[1],
@@ -380,7 +360,7 @@ assert.equal(
   2,
   'Presentation compaction must not cross Turn boundaries.',
 );
-const attachmentBoundaryTranscript = coalesceStoppedAssistantTranscript([
+const attachmentBoundaryTranscript = coalesceAssistantTranscript([
   stoppedTranscript[0],
   {
     ...stoppedTranscript[1],
@@ -393,6 +373,42 @@ assert.equal(
   2,
   'Presentation compaction must not hide an attachment-bearing round.',
 );
+
+const toolOnlyRounds = Array.from({ length: 100 }, (_, index) => ({
+  id: `tool-only-round-${index}`, role: 'assistant', turnId: 'compact-live', content: '',
+  toolExecutions: [{ ...baseTool, id: `compact-tool-${index}`, assistantMessageId: `tool-only-round-${index}`,
+    sequence: index, contentOffset: 0, contentOffsetExplicit: true }],
+}));
+const toolOnlySnapshot = JSON.stringify(toolOnlyRounds);
+const compactLive = coalesceAssistantTranscript(toolOnlyRounds);
+assert.equal(compactLive.length, 1, 'One hundred tool-only rounds form one presentation group');
+assert.equal(compactLive[0].toolExecutions.length, 100);
+assert.equal(JSON.stringify(toolOnlyRounds), toolOnlySnapshot, 'Presentation grouping never rewrites runtime message ownership');
+assert.equal(compactLive[0].toolExecutions[99].assistantMessageId, 'tool-only-round-99');
+const narrationBoundary = { id: 'new-narration', role: 'assistant', turnId: 'compact-live', content: '下一段说明' };
+const afterNarration = coalesceAssistantTranscript([...toolOnlyRounds.slice(0, 50), narrationBoundary, ...toolOnlyRounds.slice(50)]);
+assert.equal(afterNarration.length, 2);
+assert.equal(afterNarration[0].toolExecutions.length, 50);
+assert.equal(afterNarration[1].toolExecutions.length, 50);
+assert.ok(afterNarration[1].toolExecutions.every(tool => tool.contentOffset === narrationBoundary.content.length && tool.contentOffsetExplicit));
+const guidanceBoundary = coalesceAssistantTranscript([
+  { ...toolOnlyRounds[0], metadata: { segment_boundary: 'turn_guidance' } }, toolOnlyRounds[1],
+]);
+assert.equal(guidanceBoundary.length, 2, 'Queued user guidance cannot be crossed by a tool-only group');
+const sameMessageTextBoundary = { ...narrationBoundary, content: '前文\n\n新的说明',
+  toolExecutions: [{ ...baseTool, contentOffset: 2, contentOffsetExplicit: true }] };
+const afterTrailingText = coalesceAssistantTranscript([sameMessageTextBoundary, toolOnlyRounds[0]]);
+assert.equal(afterTrailingText[0].toolExecutions[0].contentOffset, 2);
+assert.equal(afterTrailingText[0].toolExecutions[1].contentOffset, sameMessageTextBoundary.content.length, 'New tools cannot be pulled back across trailing assistant text');
+const lateNarration = { ...narrationBoundary, toolExecutions: [
+  { ...toolOnlyRounds[1].toolExecutions[0], contentOffset: 0, contentOffsetExplicit: true },
+  { ...toolOnlyRounds[2].toolExecutions[0], contentOffset: narrationBoundary.content.length, contentOffsetExplicit: true },
+] };
+const withLateNarration = coalesceAssistantTranscript([toolOnlyRounds[0], lateNarration]);
+assert.deepEqual(Array.from(withLateNarration[0].toolExecutions, tool => tool.id), ['compact-tool-0', 'compact-tool-1'],
+  'Text arriving after an explicit leading Tool cannot pull that Tool out of its existing package');
+assert.deepEqual(Array.from(withLateNarration[1].toolExecutions, tool => tool.id), ['compact-tool-2']);
+assert.equal(lateNarration.toolExecutions.length, 2, 'Leading-Tool grouping is renderer-only');
 
 const detailedWorkspaceExecution = {
   ...baseTool,
@@ -974,9 +990,11 @@ assert.match(toolBlockSource, /正在压缩上下文/);
 assert.match(toolBlockSource, /已压缩上下文/);
 assert.match(
   bubbleSource,
-  /!isContextCompactionPresentationExecution\(execution\)[\s\S]*?!previous\.executions\.some\(isContextCompactionPresentationExecution\)/,
-  'A context-maintenance row must not merge into an adjacent ordinary Tool group.',
+  /previous\.offset === offset/,
+  'Adjacent operations at the same narration boundary share one disclosure.',
 );
+assert.match(toolBlockSource, /isContextCompactionPresentationExecution\(execution\) \? \([\s\S]*?<RuntimeContextCompactionDetail/,
+  'A mixed execution package preserves dedicated context-maintenance details.');
 assert.match(
   toolBlockSource,
   /原始会话与工具记录保持不变/,
@@ -984,8 +1002,8 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /coalesceStoppedAssistantTranscript\(transcript\)/,
-  'A stopped Turn must rebuild the compact live-loop narration groups.',
+  /coalesceAssistantTranscript\(transcript\)/,
+  'Live and stopped Turns use the same compact narration groups.',
 );
 assert.match(
   bubbleSource,

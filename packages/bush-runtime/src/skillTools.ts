@@ -129,8 +129,33 @@ function score(skill: SkillCard, terms: string[]): number {
     total + (name === term ? 4 : name.includes(term) ? 2 : description.includes(term) ? 1 : 0), 0);
 }
 
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+
 function tokens(value: string) {
-  return [...new Set(normalize(value).split(/[^\p{L}\p{N}_]+/u).filter(Boolean))];
+  // Whitespace splitting treats a Chinese request as one unmatchable term. Keep
+  // identifiers intact, but segment unspaced text. ICU can split unknown terms
+  // such as 插件 into single characters; pairs preserve recall without matching
+  // every description on a particle such as 的.
+  return [...new Set(normalize(value).split(/[^\p{L}\p{N}_]+/u).flatMap((part) =>
+    /\p{Script=Han}/u.test(part)
+      ? segmentHanText(part)
+      : part ? [part] : [],
+  ))];
+}
+
+function segmentHanText(value: string): string[] {
+  const result = [...value].length > 1 ? [value] : [];
+  let previousHan = "";
+  for (const item of wordSegmenter.segment(value)) {
+    if (/^\p{Script=Han}$/u.test(item.segment)) {
+      if (previousHan) result.push(previousHan + item.segment);
+      previousHan = item.segment;
+    } else {
+      previousHan = "";
+      if (item.isWordLike) result.push(item.segment);
+    }
+  }
+  return result;
 }
 
 function normalize(value: string) {

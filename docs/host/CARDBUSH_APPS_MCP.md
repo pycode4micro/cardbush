@@ -14,6 +14,21 @@ servers. It does not open an HTTP port.
 - Product Host owns model and plugin configuration, but never plugin execution.
 - External Bot, Browser, Office and other products remain independent MCP servers.
 
+CardBush MCP connection management is served separately by Product Host as
+`cardbush_management`, using the same standard MCP client and registry. Its
+authenticated loopback endpoint exists only for the desktop process lifetime;
+it has no separate configuration store. `list_mcp_servers`,
+`configure_mcp_server`, and `remove_mcp_server` read or update the existing
+Product Host MCP configuration and return the actual Runtime snapshot. It stays
+available when optional app plugins are disabled. Server dependencies and add-ons
+inside other applications remain owned by their respective installers; registering
+a standalone MCP connection does not require a CardBush plugin package.
+
+Configuration updates made during active turns return `pending`. Runtime applies
+them after active turns finish; subsequent tool discovery reports the connection
+health and real tool names. Saving a configuration or testing a separate MCP
+client does not establish that CardBush has connected to the server.
+
 The Runtime must never hard-code a `computer_use` handler or a private
 `host_tool_request` transport. A plugin is visible only after MCP discovery and is
 namespaced by the MCP client. Tool behavior is described with standard MCP schema

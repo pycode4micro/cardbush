@@ -51,7 +51,7 @@ For a requested desktop or native-window screenshot, use `screenshot` directly a
 - Do not use `Alt+Tab` to guess the target window.
 - Before an externally visible or destructive action such as submit, send, delete, close, or overwrite, confirm it is within the user's request and current permission scope.
 - Never repeat the same action more than once against an unchanged screen. After the second unchanged result, stop and report the blocker or switch to a dedicated interface.
-- Perform no more than three input actions without a fresh observation. Re-check after every state-changing step and do not create open-ended retry loops.
+- Observe the exact window before every input action: each action consumes its one-use state, even when the screen appears unchanged. Keep retries bounded.
 
 ## Coordinate Fallback
 

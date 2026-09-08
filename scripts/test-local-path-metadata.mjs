@@ -31,9 +31,25 @@ const {
   localFileReference,
   localFileReferenceFromHref,
   localFileReferenceHref,
+  markdownLocalFileReference,
   remarkLocalFileReferences,
 } = fileReferenceModule.exports;
 const absoluteDocument = 'C:\\Users\\wfang\\Documents\\report.docx';
+for (const destination of [
+  'C:\\Users\\fixture\\拍摄脚本-3.mp4.md',
+  'C:/Users/fixture/拍摄脚本-3.mp4.md',
+  'C:%5CUsers%5Cfixture%5C%E6%8B%8D%E6%91%84%E8%84%9A%E6%9C%AC-3.mp4.md',
+  'file:///C:/Users/fixture/%E6%8B%8D%E6%91%84%E8%84%9A%E6%9C%AC-3.mp4.md',
+]) {
+  const reference = markdownLocalFileReference(destination, 'D:\\fixture');
+  assert.ok(reference, `Windows file destination must survive Markdown URL sanitization: ${destination}`);
+  assert.equal(reference.path.replaceAll('\\', '/'), 'C:/Users/fixture/拍摄脚本-3.mp4.md');
+  assert.equal(markdownLocalFileReference(localFileReferenceHref(reference.path)).path, reference.path);
+}
+for (const destination of ['', '#section', 'https://example.com/report.md', 'javascript:alert(1)', 'data:text/html,test', 'vbscript:evil', 'cardbush-local-file:relative.md']) {
+  assert.equal(markdownLocalFileReference(destination, 'D:\\fixture'), null, `${destination} must not bypass standard URL sanitization`);
+}
+assert.equal(markdownLocalFileReference('report.md', 'D:\\fixture').path, 'D:\\fixture\\report.md');
 const absoluteSkillDirectory =
   'C:\\Users\\wfang\\AppData\\Roaming\\cardbush\\skills\\transport-delivery';
 assert.equal(localFileReference(absoluteDocument)?.path, absoluteDocument);

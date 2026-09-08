@@ -88,10 +88,11 @@ export function compareTranscriptOrder(left: ChatMessage, right: ChatMessage) {
   if (loopDelta !== 0) {
     return loopDelta;
   }
-  const sequenceDelta = compareOptionalOrder(
+  // Runtime event sequences restart in every Turn.
+  const sequenceDelta = sameTurn ? compareOptionalOrder(
     numericOrderValue(left.sequence),
     numericOrderValue(right.sequence),
-  );
+  ) : 0;
   if (sequenceDelta !== 0) {
     return sequenceDelta;
   }

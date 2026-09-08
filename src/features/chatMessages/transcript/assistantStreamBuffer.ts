@@ -370,6 +370,7 @@ export type AssistantStreamRoute = Pick<
   | 'segmentOrdinal'
   | 'turnId'
   | 'createdAt'
+  | 'sequence'
   | 'eventId'
 >;
 

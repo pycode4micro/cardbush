@@ -16,6 +16,7 @@ export default defineConfig({
       input: {
         main: path.resolve(rootDir, 'index.html'),
         officePreview: path.resolve(rootDir, 'office-preview.html'),
+        modelPreview: path.resolve(rootDir, 'model-preview.html'),
       },
       output: {
         codeSplitting: {

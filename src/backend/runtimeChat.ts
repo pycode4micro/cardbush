@@ -10,6 +10,7 @@ import {
 } from '@cardbush/bush-protocol';
 import {
   GOAL_CONTINUATION_PROMPT,
+  DEFAULT_MAX_CONTEXT_TOKENS,
   createProductAgentTurnRequest,
   latestSessionEnvironmentLocalDate,
 } from '@cardbush/bush-product-agent';
@@ -121,7 +122,7 @@ export async function streamRuntimeChat(
     ).map((entry) => entry.definition);
     const maxContextTokens = positiveInteger(
       request.modelConfig?.maxContextTokens ?? resolvedModel.maxContextTokens,
-    );
+    ) ?? DEFAULT_MAX_CONTEXT_TOKENS;
     const configuredMaxOutputTokens = positiveInteger(
       request.modelConfig?.maxCompletionTokens ?? resolvedModel.maxOutputTokens,
     );

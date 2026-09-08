@@ -1,4 +1,5 @@
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
+import { DEFAULT_MAX_CONTEXT_TOKENS as defaultMaxContextTokens } from '@cardbush/bush-product-agent';
 import {
   AlertCircle,
   Archive,
@@ -97,7 +98,6 @@ import type {
 const COPY_FEEDBACK_EVENT = 'cardbush-copy-feedback';
 const pendingRuntimeAssetResetStorageKey = 'cardbush_pending_runtime_asset_reset';
 const customProviderValue = '__custom_provider__';
-const defaultMaxContextTokens = 256_000;
 const suggestedProviders = [
   'openai',
   'anthropic',

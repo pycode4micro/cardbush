@@ -211,7 +211,7 @@ async function loadProductSkills(
         companionTools: stringArray(metadata.companion_tools),
         blockedTools: stringArray(metadata.blocked_tools),
         requiredReads: stringArray(metadata.required_reads),
-        conditionalReads: stringArray(metadata.conditional_reads),
+        conditionalReads: conditionalReadArray(metadata.conditional_reads),
         resourceQuickRefs: recordArray(metadata.resource_quick_refs),
       });
     }
@@ -280,21 +280,29 @@ function parseFrontmatter(content: string): Record<string, unknown> {
   const lines = normalized.slice(3, end).split(/\r?\n/);
   const result: Record<string, unknown> = {};
   let activeList = '';
+  let activeRecord: Record<string, unknown> | undefined;
   for (const line of lines) {
     const topLevel = line.match(/^([A-Za-z0-9_]+):(?:\s*(.*))?$/);
     if (topLevel) {
       activeList = topLevel[1];
+      activeRecord = undefined;
       const raw = (topLevel[2] ?? '').trim();
       result[activeList] = raw ? scalar(raw) : [];
       continue;
     }
     const listItem = line.match(/^\s+-\s+(.*)$/);
-    if (!listItem || !activeList) continue;
+    if (!activeList) continue;
+    if (!listItem) {
+      const property = line.match(/^\s{4,}([A-Za-z0-9_]+):\s*(.*)$/);
+      if (activeRecord && property) activeRecord[property[1]] = scalar(property[2].trim());
+      continue;
+    }
     const values = Array.isArray(result[activeList]) ? result[activeList] as unknown[] : [];
-    const mapping = listItem[1].match(/^([^:]+):\s*(.*)$/);
-    values.push(mapping
-      ? { [mapping[1].trim()]: scalar(mapping[2].trim()) }
-      : scalar(listItem[1].trim()));
+    const text = listItem[1].trim();
+    const mapping = text.startsWith('"') || text.startsWith("'")
+      ? null : text.match(/^([^:]+):(?:\s+(.*))?$/);
+    activeRecord = mapping ? { [mapping[1].trim()]: scalar((mapping[2] ?? '').trim()) } : undefined;
+    values.push(activeRecord ?? scalar(text));
     result[activeList] = values;
   }
   return result;
@@ -362,6 +370,16 @@ async function legacyCatalogSkillNames(catalogPath: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+function conditionalReadArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item === 'string') return item.trim() ? [item.trim()] : [];
+    if (item == null || typeof item !== 'object' || Array.isArray(item)) return [];
+    return Object.entries(item).flatMap(([resource, condition]) =>
+      typeof condition === 'string' ? [`${resource}: ${condition}`] : []);
+  });
 }
 
 async function persistLegacyMigrationMarker(

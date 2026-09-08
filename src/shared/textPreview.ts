@@ -13,15 +13,25 @@ export function shouldUsePlainTextPreview(content: string): boolean {
   return false;
 }
 
-export function textPreviewErrorMessage(error: unknown, language: 'zh' | 'en'): string {
+export function textPreviewErrorCode(error: unknown): 'text_preview_binary' | 'text_preview_encoding' | undefined {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes('[text_preview_binary]')) {
+  // Electron contextBridge may omit custom Error properties; keep the code in
+  // the message as well so callers receive the same fact across both bridges.
+  for (const code of ['text_preview_binary', 'text_preview_encoding'] as const) {
+    if (message.includes(`[${code}]`)) return code;
+  }
+  return undefined;
+}
+
+export function textPreviewErrorMessage(error: unknown, language: 'zh' | 'en'): string {
+  const code = textPreviewErrorCode(error);
+  if (code === 'text_preview_binary') {
     return language === 'zh' ? '这是二进制文件，无法作为文本预览。' : 'This is a binary file and cannot be previewed as text.';
   }
-  if (message.includes('[text_preview_encoding]')) {
+  if (code === 'text_preview_encoding') {
     return language === 'zh'
       ? '无法可靠识别文本编码，或文件含有损坏的字符。原文件未修改。'
       : 'The text encoding is unsupported or contains invalid characters. The original file is unchanged.';
   }
-  return message;
+  return error instanceof Error ? error.message : String(error);
 }

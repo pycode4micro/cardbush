@@ -15,8 +15,11 @@ Usage:
 """
 
 import os
+import shutil
+import signal
 import socket
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -25,16 +28,71 @@ def get_soffice_env() -> dict:
     env = os.environ.copy()
     env["SAL_USE_VCLPLUGIN"] = "svp"
 
-    if _needs_shim():
+    if sys.platform.startswith("linux") and _needs_shim():
         shim = _ensure_shim()
         env["LD_PRELOAD"] = str(shim)
 
     return env
 
 
-def run_soffice(args: list[str], **kwargs) -> subprocess.CompletedProcess:
-    env = get_soffice_env()
-    return subprocess.run(["soffice"] + args, env=env, **kwargs)
+def find_soffice(executable: str | None = None) -> str:
+    override = executable or os.environ.get("SOFFICE_PATH")
+    if override:
+        candidate = shutil.which(override) or (str(Path(override).resolve()) if Path(override).is_file() else None)
+        if candidate:
+            return candidate
+        raise FileNotFoundError(f"LibreOffice executable not found: {override}")
+    names = ("soffice.com", "soffice.exe") if sys.platform == "win32" else ("soffice", "libreoffice")
+    for name in names:
+        if candidate := shutil.which(name):
+            return candidate
+    candidates = [Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")] if sys.platform == "darwin" else []
+    if sys.platform == "win32":
+        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+            if directory := os.environ.get(variable):
+                candidates.extend(Path(directory) / "LibreOffice" / "program" / name for name in names)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    raise FileNotFoundError("LibreOffice is unavailable. Install it in the task environment or set SOFFICE_PATH.")
+
+
+def run_soffice(args: list[str], *, timeout: float = 120, executable: str | None = None, **kwargs) -> subprocess.CompletedProcess:
+    """Bound headless work and terminate only this invocation's process tree."""
+    command = [find_soffice(executable), *args]
+    kwargs.setdefault("env", get_soffice_env())
+    if kwargs.pop("capture_output", False):
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    check = kwargs.pop("check", False)
+    input_data = kwargs.pop("input", None)
+    if input_data is not None:
+        kwargs.setdefault("stdin", subprocess.PIPE)
+    if sys.platform == "win32":
+        kwargs.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+    else:
+        kwargs.setdefault("start_new_session", True)
+    process = subprocess.Popen(command, **kwargs)
+    try:
+        stdout, stderr = process.communicate(input_data, timeout=timeout)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=5)
+        raise
+    result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    if check:
+        result.check_returncode()
+    return result
 
 
 
@@ -178,6 +236,13 @@ int close(int fd) {
 
 
 if __name__ == "__main__":
-    import sys
-    result = run_soffice(sys.argv[1:])
-    sys.exit(result.returncode)
+    import json
+
+    try:
+        if sys.argv[1:] == ["--check-dependencies"]:
+            print(json.dumps({"ready": True, "soffice": find_soffice()}))
+        else:
+            sys.exit(run_soffice(sys.argv[1:]).returncode)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(json.dumps({"ready": False, "error": str(error)}))
+        sys.exit(1)

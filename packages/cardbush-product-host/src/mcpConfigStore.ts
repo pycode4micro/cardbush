@@ -32,11 +32,32 @@ export class ProductMcpConfigStore {
   async write(input: unknown): Promise<ProductMcpConfigSnapshot> {
     return withConfigFileLock(this.#path, () => this.#write(input));
   }
+  /** Update one server against the current configuration while holding its lock. */
+  async updateServer(
+    id: string,
+    update: (current: Record<string, unknown> | undefined) => Record<string, unknown> | undefined,
+  ): Promise<ProductMcpConfigSnapshot> {
+    return withConfigFileLock(this.#path, async () => {
+      const before = await this.#read();
+      const current = before.servers.find((server) => server.id === id);
+      const next = update(current ? structuredClone(current) : undefined);
+      if (next && next.id !== id) throw new Error("MCP server identity cannot change during an update.");
+      if (JSON.stringify(current) === JSON.stringify(next)) return before;
+      const servers = before.servers.filter((server) => server.id !== id);
+      if (next) servers.splice(current ? before.servers.indexOf(current) : servers.length, 0, next);
+      return this.#write({ servers });
+    });
+  }
   async #write(input: unknown): Promise<ProductMcpConfigSnapshot> {
     const value = input && typeof input === "object" && !Array.isArray(input)
       ? input as Record<string, unknown> : {};
     if (!Array.isArray(value.servers)) throw new Error("servers must be an array.");
     const before = await this.#read();
+    if (value.expectedRevision !== undefined && value.expectedRevision !== before.revision) {
+      throw Object.assign(new Error("MCP configuration changed; read the current configuration before saving again."), {
+        code: "mcp_configuration_conflict",
+      });
+    }
     const next = decode({ protocol: PRODUCT_MCP_CONFIG_PROTOCOL, revision: before.revision + 1, servers: value.servers });
     await mkdir(dirname(this.#path), { recursive: true });
     const temp = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;

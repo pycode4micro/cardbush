@@ -6,141 +6,66 @@
 |---|---|
 | Label | Deck visual pattern catalog |
 | Use when | Creating or substantially redesigning a deck from scratch after the story spine and deck profile are known |
-| Gives you | Deck lock fields, slide visual type catalog, palettes, typography, reusable components, and variety gates |
+| Gives you | Planning aids, slide patterns, palettes, typography, and reusable components |
 | Not for | Reading/editing an existing deck, route control, or source/data validation |
 | Pair with | `pptxgenjs.md` and `references/pptx-layout-constraints.md` |
 
 Use this file only after the main skill has selected create-from-scratch or substantial redesign. It is a visual pattern catalog, not an execution route.
 
 
-> Scope: The rules below apply when creating a deck from scratch or when no template or brand guidelines are provided. If a template or brand system exists, follow it first and only borrow from these ideas when they do not conflict.
+> Scope: Optional design patterns for new decks and substantial redesigns. User requirements and existing templates take precedence. Coordinates below target a 10 × 5.625 inch slide; recalculate them for other sizes. Geometry budgets apply to the selected example, not every possible slide.
 
-**Don't create boring slides.** Plain bullets on a white background won't impress anyone.
+Prioritize an understandable argument and readable evidence. A text-only slide can be appropriate; visual variety should serve comprehension.
 
 ---
 
-### Step 0: Lock the Deck Before Touching Coordinates
+### Plan only what helps the deck
 
-Do not jump from raw content straight into `addText()`, `addShape()`, or `addChart()`.
+Choose the main argument, intended audience, and the role of each slide before
+placing elements. Preserve a supplied template or brand system. For a small
+deck, a short outline plus palette and typography is enough; for a complex
+deck, a routing table can keep claims, proof objects, and layouts coherent.
 
-If a template, reference deck, or brand guideline exists, extract its visual contract first and preserve it.
-If no visual contract exists, create one here before laying out slide geometry.
-
-### Deck Design Lock (Required)
-
-Before writing any code, output this block and commit to it for the whole deck:
+A useful working note might contain:
 
 ```text
-DECK DESIGN LOCK
-----------------
-Theme intent:
-Palette:
-Font pair:
-Dark/light rhythm:
-Visual motif:
-Motif placement:
-Card/background treatment:
-Banned defaults:
+Audience and intended decision:
+Main argument and supporting sources:
+Palette and typography:
+Slide | purpose/claim | evidence or proof object | layout
 ```
 
-Rules:
+Keep these notes with the working source; there is no required user-facing
+design-lock block. Update them when evidence or rendering suggests a better
+choice. Do not add dark slides, charts, photographs, motifs, or extra pages just
+to meet a visual quota.
 
-1. `Theme intent` is one concrete direction, such as `midnight executive`, `warm policy editorial`, or `industrial systems briefing`. Do not use vague filler like `modern`, `clean`, or `professional` by itself.
-2. `Palette` must name either one palette from this file or a custom set with `PRIMARY / ACCENT / NEUTRAL / TEXT_DARK / TEXT_LIGHT`. Generic default blue is banned unless the user or brand requires it.
-3. `Font pair` must explicitly declare one display font and one body font. Do not leave typography implicit.
-4. `Dark/light rhythm` must name which slide numbers or slide roles are dark. Cover, section dividers, and closing slides are dark by default.
-5. `Visual motif` must be one reusable design move that can recur across the deck, such as split backgrounds, caption bars, vertical accent rails, cropped photo bands, or tinted icon circles. A motif is an element, not a mood word.
-6. `Motif placement` must say where the motif appears in at least 3 slide situations.
-7. `Card/background treatment` must explain how light slides avoid looking identical, for example alternating `white cards on NEUTRAL` and `NEUTRAL cards on white`.
-8. `Banned defaults` must list the repetitive patterns to avoid for this deck, such as `blue title + white card + 3 equal columns` or `accent lines under titles`.
+### Content-to-layout options
 
-If the deck changes direction later, regenerate the full lock before changing slide layouts.
+| Content intent | Useful patterns |
+|---|---|
+| Cover, closing, single idea | TYPE 1, or a concise text composition |
+| Section transition | TYPE 2 when a real section break is useful |
+| KPI or metric highlights | TYPE 3 |
+| Case study, image-supported explanation | TYPE 4 or TYPE 7 |
+| Four-part framework or quadrant | TYPE 5 |
+| Three pillars or steps | TYPE 6 |
+| Four-step sequence | TYPE 8 |
+| Quote, tension, before/after | TYPE 9 |
+| Timeline or roadmap | TYPE 10 |
+| Chart and interpretation | TYPE 11 |
 
----
-
-### Content-to-Layout Routing (Required)
-
-Assign content intent before choosing coordinates. Layout follows semantics, not habit.
-
-| Content intent | Default Visual Type | Why | Avoid |
-|----------------|---------------------|-----|-------|
-| Cover, closing, single-idea emphasis | TYPE 1 | Full-bleed focus and strong deck framing | Plain title + paragraph on white |
-| Section transition, chapter opener | TYPE 2 | Creates rhythm break and hierarchy reset | Reusing a normal content slide as a divider |
-| KPI, metric highlights, headline numbers | TYPE 3 | Large numbers and icon-led emphasis | Converting metrics into text cards |
-| Case study, narrative detail, image-supported explanation | TYPE 4 or TYPE 7 | Combines evidence and commentary without card spam | Long bullets with a tiny thumbnail |
-| Four-part framework, quadrant, 4-item analysis | TYPE 5 | Explicit 2x2 structure matches the content | Squeezing 4 concepts into 3 columns |
-| Agenda, 3 pillars, 3-step process | TYPE 6 | Clean 3-part rhythm with summary option | Three generic cards with no progression |
-| Four-step process, action strip, 4 learning points | TYPE 8 | Horizontal sequence reads as progression | Forcing 4 steps into numbered bullets |
-| Tension, quote, challenge vs opportunity, contrast frame | TYPE 9 | Strong asymmetry prevents monotony | Yet another two-card comparison |
-| Timeline, roadmap, milestone sequence | TYPE 10 | Time-ordered visual grammar | Card grid with dates pasted on top |
-| Chart with short interpretation | TYPE 11 | Data stays visual; insight stays concise | Chart plus a wall of explanation text |
-
-If the content does not fit one of these intents cleanly, reframe the slide. Do not fall back to a generic card layout just because the content arrived as bullets.
-
----
-
-### Execution Checklist (Required)
-
-1. Produce the `DECK DESIGN LOCK` before any coordinates or code.
-2. Route every slide through the `Content-to-Layout Routing` table before assigning a Visual Type.
-3. Assign Visual Types for every slide and verify no adjacent duplicates.
-4. Mark which slides are dark vs light, then confirm both the dark rhythm and the card/background treatment variety.
-5. Decide if each slide has a summary bar; if yes, reserve space first (content bottom <= `4.05"`).
-6. Count content blocks per slide and confirm they do not exceed template limits.
-7. Confirm all body text is >= 14pt and footer text is >= 10pt.
-8. Confirm total shapes per slide < 30; simplify if exceeded.
-9. Run the `VARIETY GATES` below. If any gate fails, revise the deck design lock or slide routing table before writing code.
-
----
-
-### Output Deck Design Format (Required)
-
-Before writing code, output a short deck design lock and routing table in this format:
-
-```text
-DECK DESIGN LOCK
-Theme intent: midnight executive
-Palette: Midnight Executive
-Font pair: Cambria / Calibri
-Dark/light rhythm: slides 1, 4, 8 dark; all others light
-Visual motif: vertical accent rail + tinted icon circle
-Motif placement: divider card edge, KPI cards, chart insight panel
-Card/background treatment: alternate white cards on NEUTRAL and NEUTRAL cards on white
-Banned defaults: blue title bars, accent lines under titles, repeated 3-column white cards
-
-SLIDE ROUTING TABLE
-1 | cover | title + subtitle + attribution | TYPE 1 | full-bleed | dark | summary bar: no | motif in background texture
-2 | agenda | 3 pillars | TYPE 6 | Template D | light | summary bar: yes | motif in top bars
-3 | proof | chart + insight | TYPE 11 | chart split | light | summary bar: no | motif in insight rail
-4 | section divider | chapter opener | TYPE 2 | divider card | dark | summary bar: no | motif in card edge
-
-VARIETY GATES
-Adjacent visual types unique: yes
-Column-count run <= 2: yes
-Dark rhythm satisfied: yes
-Card-heavy slides <= 50% of content slides: yes
-At least one non-card-led content slide: yes
-Summary bars <= 50% of content slides: yes
-```
-
-Rules:
-
-- `SLIDE ROUTING TABLE` must be deck-complete. Do not plan only the first few slides and improvise the rest later.
-- The `purpose` field states what the slide is doing in the story, not just what objects it contains.
-- `Card-heavy slides` means `TYPE 3`, `TYPE 5`, `TYPE 6`, and `TYPE 8`.
-- `Non-card-led content slides` means `TYPE 4`, `TYPE 7`, `TYPE 9`, `TYPE 10`, and `TYPE 11`.
-- `Summary bar` means any bottom summary/takeaway strip, including a required strip in `TYPE 8`.
-- If a gate does not apply because the deck is too short, mark it `n/a` with a brief reason instead of forcing a fake `yes`.
-- If any applicable line in `VARIETY GATES` would be `no`, revise the deck design lock or slide routing table before writing code.
-
+These are options, not an exhaustive classifier. Use a different layout when it
+represents the content better. Budget any title, source note, and summary bar
+before filling the body.
 
 ---
 
 ### Color Palettes
 
-Choose colors that match your topic. The palette drives the entire deck's feel. Do not default to generic blue.
+Choose colors that fit the topic, audience, and brand. The palettes below are examples; blue and single-background decks are valid when appropriate.
 
-Palette structure (required):
+A useful palette structure:
 - `PRIMARY` - dominant color, used for large backgrounds, section slides, strong accents (~60% visual weight)
 - `ACCENT` - secondary highlight, used for card top bars, icon backgrounds, stat numbers (~20%)
 - `NEUTRAL` - off-white or light tint, used for card backgrounds and body slide backgrounds (~20%)
@@ -162,7 +87,7 @@ Palette structure (required):
 
 ### Slide Visual Type Catalog
 
-Every slide must be assigned one of the following types before layout begins. The type determines the layout template, the elements required, and the coordinate budget to use from `pptx-layout-constraints.md`.
+Consult the patterns relevant to your content. Each includes a suggested composition and budget from `pptx-layout-constraints.md`; adapt it to the actual slide size and brief.
 
 ---
 
@@ -368,14 +293,14 @@ Use for: action items, learning points, 4-step process
 
 Rules:
 - Budget reference: custom 4-column strip within the body area; obey summary-bar limits in `pptx-layout-constraints.md` Section 2.2.
-- Maximum 4 columns. If there are 5 items, split across two slides (e.g., TYPE 6 + another slide).
+- This example budgets 4 columns. For more items, use a different composition or split when the brief allows it.
 - Layout: `col_w = 1.97"`, gap `0.37"`, `x` starts at `0.50"`.
 - Col coordinates: `x = 0.50, 2.84, 5.18, 7.52` (all `w:1.97`).
 - Each column card height: `h:2.80`, `y:1.10`.
 - Top accent bar per card: `h:0.07`.
 - Icon circle: `w:0.40, h:0.40`.
 - Header: 14pt bold, max 1 line; body: >= 14pt, max 2 lines.
-- Bottom summary/takeaway bar required for this layout: `y:4.15, h:0.40`. Count it as this slide's summary bar in planning and variety gates.
+- This example includes a bottom summary/takeaway bar at `y:4.15, h:0.40`; reserve its space if you keep it.
 - Content bottom must stay <= `y:3.90"` (card bottom = 1.10 + 2.80 = 3.90).
 
 ---
@@ -410,7 +335,7 @@ Use for: milestones, quarterly events, roadmap
 
 Rules:
 - Budget reference: Template E in `pptx-layout-constraints.md` Section 3.2 E (use exact coordinates).
-- Maximum 4 nodes (split to a second slide for 5+).
+- This example budgets 4 nodes. For more, adapt the geometry or split when the requested page count permits.
 - Timeline axis: `LINE` shape, `y:2.00`, full width, `PRIMARY` color, `width:2pt`.
 - Each node: dot circle on axis + card below (or above alternating for visual interest).
 - Card: white background, `w:2.03, h:2.00`, shadow.
@@ -437,16 +362,16 @@ Rules:
 - Suggested layout: chart `x:0.50, y:1.10, w:6.00, h:3.40`; insight `x:6.80, y:1.10, w:2.70, h:3.40`.
 - Insight area: 1 bold header + up to 2 body lines (>= 14pt).
 - If using a summary bar, reduce both areas to keep content bottom <= `4.05"` and place the bar at `y:4.20"`.
-- If you need more than 2 insight lines, split the slide.
+- If the insight needs more text, reconsider the chart/text balance or split when the brief allows it.
 
 
 ---
 
-### Failure Fallback Rule (Mandatory)
+### When content does not fit
 
-1. If content does not fit the template, split the slide.
-2. Do not reduce font sizes below the minimums.
-3. Do not shrink gaps below 0.30" or push content below the allowed bottom.
+1. Edit redundant text or choose a better composition; preserve required evidence.
+2. Split a slide when the requested page count allows it. Otherwise prioritize the requested content, use notes/appendices if appropriate, and disclose a real constraint when needed.
+3. Verify actual legibility, spacing, and clipping after rendering. Do not squeeze text into unreadability.
 
 ### Reusable Visual Component Patterns
 
@@ -532,17 +457,16 @@ slide.addText("Caption text", {
 
 ---
 
-### Layout Variety Rules (Mandatory)
+### Visual rhythm
 
-These rules are hard requirements, not suggestions:
+Review the contact sheet for coherence and unnecessary repetition. Different
+slide roles can benefit from different emphasis, backgrounds, or media. Repeated
+layouts also help readers compare similar evidence, so do not mirror columns,
+switch backgrounds, or add divider slides simply to force variety.
 
-1. No two adjacent slides may use the same Visual Type. If you plan TYPE 4 for slide 3 and need a similar layout for slide 4, use TYPE 7 (its mirror) instead.
-2. Dark/light rhythm: at minimum, every 4th slide must be a dark-background slide (TYPE 1, TYPE 2, or TYPE 9). Section dividers naturally provide this rhythm.
-3. Column count variety: a deck must not use the same column count for more than 2 consecutive content slides. After two 2-column slides, switch to 3-column, full-bleed, or left-image layout.
-4. For decks with 4 or more content slides, card-heavy slides (`TYPE 3`, `TYPE 5`, `TYPE 6`, `TYPE 8`) must not exceed 50% of content slides, and the deck must include at least one non-card-led content slide (`TYPE 4`, `TYPE 7`, `TYPE 9`, `TYPE 10`, or `TYPE 11`). For shorter decks, avoid an all-card sequence unless the story genuinely fits a single card-led content slide.
-5. Every deck needs a TYPE 1 cover and a TYPE 1 closing slide. Use TYPE 2 once per major section when the deck has section breaks; do not force divider slides into a very short deck with no real section change.
-6. Background color variety: light content slides should vary their card/background treatment - not every light slide should have white cards on white background. Alternate white cards on `NEUTRAL` background vs `NEUTRAL` cards on white background.
-7. Do not let the same motif expression repeat mechanically on every slide. Reuse the motif family, but vary its position, scale, or role so it feels intentional rather than stamped.
+Use images and charts when the evidence calls for them. Keep repeated typography,
+spacing, and visual semantics stable. There are no fixed quotas for dark slides,
+column counts, cards, or summary bars.
 
 ---
 
@@ -597,15 +521,14 @@ If a line exceeds the estimate, treat it as two lines when computing height.
 
 ### Avoid (Common Mistakes)
 
-- Do not let `pptxgenjs.md` replace the deck design lock or slide routing table. It contains implementation patterns, not permission to skip the `DECK DESIGN LOCK`.
-- Do not write a `DECK DESIGN LOCK` full of vague adjectives and then ignore it when laying out slides.
-- Never use accent lines under titles - this is a hallmark of AI-generated slides. Use whitespace, background color change, or a small icon instead.
-- Do not default to `blue title + white card + 3 equal columns`, even when the source content arrives as three bullets.
+- Keep the argument and evidence visible through the design; API examples alone do not decide the story.
+- Use decorative rules, icons, and accents only when they clarify hierarchy.
+- Do not turn every input list into equal cards by habit; choose a composition that explains the content.
 - Do not choose a layout because the bullet count happens to fit. Choose the content intent first, then the Visual Type.
 - Do not center body text - left-align paragraphs; center only titles and bottom summary/takeaway bars.
 - Do not mix spacing randomly - pick 0.30" or 0.50" gaps and use consistently.
-- Do not create text-only slides - every slide needs at least one of: icon set, image, chart, or shape composition.
-- Do not use decorative shapes that occupy more than 40% of slide area without carrying substantive content. Placeholder circles or abstract fills must contain real data, icons, or stats, not filler text.
+- Do not add an icon, image, chart, or shape solely to avoid a text-only slide.
+- Avoid decorative filler that crowds out evidence or weakens the hierarchy.
 - Do not use low-contrast elements - icons and text must have strong contrast against their backgrounds.
 - Do not use `ROUNDED_RECTANGLE` with accent overlay bars - use `RECTANGLE` instead (see `pptxgenjs.md` pitfalls).
 - Do not reuse option objects - always use a `makeShadow()` factory function.

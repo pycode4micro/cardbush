@@ -30,6 +30,7 @@
 - `skills` 当前为一个相对目录字符串，目录下每个子目录是一个 skill 包。
 - `mcpServers` 可为内联对象或指向 JSON 文件的相对路径；`apps` 为指向 app 配置文件的相对路径。只添加当前任务需要的组件，并检查对应文件及实际加载链。
 - 已安装且启用的普通插件 MCP 会由 Runtime 自动加载，支持 stdio、HTTP 和 SSE；服务 ID 为 `plugin_<插件ID>_<服务ID>`（插件 ID 中的点替换为下划线），工具名以宿主实际返回为准。stdio 默认 cwd 为插件根目录，command/args/env/cwd 中可用 `${CARDBUSH_PLUGIN_ROOT}`。普通插件工具默认需要权限检查。Computer Use 和 Chrome 保留专用启动链。app 组件的目录展示仍不等于通用执行接入，必须验证实际入口。
+- 单独添加 MCP 连接使用 `cardbush-mcp-management` 和 `mcp__cardbush_management__*` 管理工具。这些工具管理 CardBush MCP 配置，不是通用插件包安装器，也不替代外部软件自己的扩展安装接口。
 
 ## CardBush 自己的目录
 

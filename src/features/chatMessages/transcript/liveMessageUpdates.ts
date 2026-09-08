@@ -17,7 +17,6 @@ import {
   isSupersededLoopAssistant,
   normalizeLoopContent,
   timestampDurationMs,
-  numericOrderValue,
   optionalFiniteNumber,
 } from './messageFacts';
 import {
@@ -87,22 +86,12 @@ export function appendAssistantDelta(
   const messages = [...(current[sessionId] ?? [])];
   const targetIndex = assistantStreamTargetIndex(messages, assistantId, route);
   if (targetIndex < 0) {
-    const messageId = route?.messageId.trim() ?? '';
-    const segmentIndex = route?.assistantSegmentIndex;
-    const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
+    const message = createAssistantStreamMessage(messages, sessionId, route);
     messages.push({
-      id: messageId || `assistant-${route?.turnId || sessionId}-segment-${segmentIndex ?? 1}`,
-      messageId: messageId || undefined,
-      assistantMessageId: messageId || undefined,
-      role: 'assistant',
+      ...message,
       content: delta,
-      conversationId: sessionId,
-      turnId: route?.turnId || undefined,
-      createdAt: route?.createdAt || new Date().toISOString(),
       metadata: {
-        ...(segmentIndex ? { assistant_segment_index: segmentIndex } : {}),
-        ...(messageId ? { message_id: messageId } : {}),
-        ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
+        ...message.metadata,
         ...assistantStreamReleaseMetadata(release),
       },
     });
@@ -403,14 +392,7 @@ function assistantStreamTargetIndex(
 ) {
   const messageId = route?.messageId.trim() ?? '';
   if (messageId) {
-    const exact = messages.findIndex((message) =>
-      message.role === 'assistant' && (
-        message.id === messageId ||
-        message.messageId === messageId ||
-        message.assistantMessageId === messageId ||
-        String(message.metadata?.message_id ?? '') === messageId
-      ),
-    );
+    const exact = messages.findIndex((message) => assistantMessageMatchesRoute(message, messageId));
     if (exact >= 0) return exact;
     // Runtime message identity is stronger than a content-block ordinal, which
     // restarts within each model round. Only an unbound local placeholder can
@@ -443,6 +425,40 @@ function assistantStreamTargetIndex(
   return messages.findIndex((message) => message.id === fallbackAssistantId);
 }
 
+function assistantMessageMatchesRoute(message: ChatMessage, messageId: string) {
+  return message.role === 'assistant' && Boolean(messageId) && (
+    message.id === messageId ||
+    message.messageId === messageId ||
+    message.assistantMessageId === messageId ||
+    String(message.metadata?.message_id ?? '') === messageId
+  );
+}
+
+function createAssistantStreamMessage(
+  messages: ChatMessage[],
+  sessionId: string,
+  route?: AssistantStreamRoute,
+): ChatMessage {
+  const messageId = route?.messageId.trim() ?? '';
+  const turnStartedAt = chatTurnStartedAt(messages, route?.turnId);
+  return {
+    id: messageId || `assistant-${route?.turnId || sessionId}-segment-${route?.assistantSegmentIndex ?? 1}`,
+    messageId: messageId || undefined,
+    assistantMessageId: messageId || undefined,
+    role: 'assistant',
+    content: '',
+    conversationId: sessionId,
+    turnId: route?.turnId || undefined,
+    createdAt: route?.createdAt || new Date().toISOString(),
+    sequence: route?.sequence,
+    metadata: {
+      ...(route?.assistantSegmentIndex != null ? { assistant_segment_index: route.assistantSegmentIndex } : {}),
+      ...(messageId ? { message_id: messageId } : {}),
+      ...(turnStartedAt ? { cardbush_turn_started_at: turnStartedAt } : {}),
+    },
+  };
+}
+
 export function applyAssistantStreamRoute(
   message: ChatMessage,
   route?: AssistantStreamRoute,
@@ -455,6 +471,8 @@ export function applyAssistantStreamRoute(
     assistantMessageId: messageId || message.assistantMessageId,
     turnId: route.turnId || message.turnId,
     createdAt: message.createdAt ?? route.createdAt,
+    sequence: message.sequence == null ? route.sequence :
+      route.sequence == null ? message.sequence : Math.min(message.sequence, route.sequence),
     metadata: {
       ...(message.metadata ?? {}),
       ...(messageId ? { message_id: messageId } : {}),
@@ -734,64 +752,58 @@ export function appendToolExecution(
 ) {
   const messages = [...(current[sessionId] ?? [])];
   const executionRoute = assistantRouteFromToolExecution(execution);
-  if (
-    executionRoute.assistantSegmentIndex != null &&
-    executionRoute.assistantSegmentIndex > 1 &&
-    assistantStreamTargetIndex(messages, assistantId, executionRoute) < 0
-  ) {
-    const messageId = executionRoute.messageId.trim();
-    messages.push({
-      id:
-        messageId ||
-        `assistant-${executionRoute.turnId || sessionId}-segment-${executionRoute.assistantSegmentIndex}`,
-      messageId: messageId || undefined,
-      assistantMessageId: messageId || undefined,
-      role: 'assistant',
-      content: '',
-      conversationId: sessionId,
-      turnId: executionRoute.turnId || undefined,
-      createdAt: execution.createdAt,
-      status: 'streaming',
-      metadata: {
-        assistant_segment_index: executionRoute.assistantSegmentIndex,
-        ...(messageId ? { message_id: messageId } : {}),
-      },
-    });
+  // Enrichment can arrive after the owner has moved into loopHistory, or without
+  // its original route. Update that execution in place before resolving a new call.
+  const owner = findTranscriptAssistant(messages, message =>
+    (!executionRoute.turnId || chatMessageTurnId(message) === executionRoute.turnId) &&
+    Boolean(message.toolExecutions?.some(item => item.id === execution.id)),
+  ) ?? findTranscriptAssistant(messages, message =>
+    assistantMessageMatchesRoute(message, executionRoute.messageId),
+  );
+  if (owner) {
+    return {
+      ...current,
+      [sessionId]: messages.map(message => updateTranscriptToolOwner(message, owner, execution)),
+    };
   }
-  const targetMessageId = toolExecutionTargetMessageId(messages, assistantId, execution);
+  // Text and Tools share one identity resolver. A tool-only model round is still
+  // a new assistant message, even though it has no assistant_segment events.
+  let targetIndex = assistantStreamTargetIndex(messages, assistantId, executionRoute);
+  if (
+    !executionRoute.messageId && executionRoute.assistantSegmentIndex == null &&
+    execution.loopIndex != null && executionRoute.turnId
+  ) {
+    const loopTarget = messages.findIndex(message =>
+      message.role === 'assistant' && chatMessageTurnId(message) === executionRoute.turnId &&
+      message.loopIndex === execution.loopIndex,
+    );
+    if (loopTarget >= 0) targetIndex = loopTarget;
+  }
+  if (targetIndex < 0) {
+    targetIndex = messages.length;
+    messages.push(createAssistantStreamMessage(messages, sessionId, executionRoute));
+  }
+  messages[targetIndex] = appendToolToAssistant(
+    applyAssistantStreamRoute(messages[targetIndex], executionRoute), execution,
+  );
+  return { ...current, [sessionId]: messages };
+}
+
+function appendToolToAssistant(message: ChatMessage, execution: ChatToolExecution): ChatMessage {
+  const existing = message.toolExecutions ?? [];
+  const index = existing.findIndex(item => item.id === execution.id);
+  const nextExecution = {
+    ...execution,
+    contentOffset: index >= 0
+      ? existing[index].contentOffset
+      : execution.contentOffsetExplicit ? execution.contentOffset : message.content.length,
+    contentOffsetExplicit: true,
+  };
   return {
-    ...current,
-    [sessionId]: messages.map((message) => {
-      if (message.id !== targetMessageId) {
-        return message;
-      }
-      const existing = message.toolExecutions ?? [];
-      const index = existing.findIndex((item) => item.id === execution.id);
-      if (index < 0 && loopHistoryHasToolExecution(message, execution.id)) {
-        return updateLoopHistoryToolExecution(message, execution);
-      }
-      const contentOffset =
-        index >= 0
-          ? existing[index].contentOffset
-          : execution.contentOffsetExplicit
-            ? execution.contentOffset
-            : message.content.length;
-      const nextExecution = {
-        ...execution,
-        contentOffset,
-        contentOffsetExplicit: true,
-      };
-      const nextExecutions =
-        index >= 0
-          ? existing.map((item, itemIndex) =>
-              itemIndex === index ? mergeToolExecutionUpdate(item, nextExecution) : item,
-            )
-          : [...existing, nextExecution];
-      return {
-        ...message,
-        toolExecutions: nextExecutions,
-      };
-    }),
+    ...message,
+    toolExecutions: index >= 0
+      ? existing.map((item, itemIndex) => itemIndex === index ? mergeToolExecutionUpdate(item, nextExecution) : item)
+      : [...existing, nextExecution],
   };
 }
 
@@ -829,80 +841,27 @@ export function applyTaskPlanUpdate(
   return applied ? { ...current, [sessionId]: nextMessages } : current;
 }
 
-function loopHistoryHasToolExecution(message: ChatMessage, executionId: string) {
-  return Boolean(
-    message.loopHistory?.some((loopMessage) =>
-      loopMessage.toolExecutions?.some((item) => item.id === executionId),
-    ),
-  );
-}
-
-function updateLoopHistoryToolExecution(
-  message: ChatMessage,
-  execution: ChatToolExecution,
-) {
-  return {
-    ...message,
-    loopHistory: message.loopHistory?.map((loopMessage) => {
-      const existing = loopMessage.toolExecutions ?? [];
-      const index = existing.findIndex((item) => item.id === execution.id);
-      if (index < 0) {
-        return loopMessage;
-      }
-      const nextExecutions = existing.map((item, itemIndex) =>
-        itemIndex === index
-          ? mergeToolExecutionUpdate(item, {
-              ...execution,
-              contentOffset: item.contentOffset,
-            })
-          : item,
-      );
-      return {
-        ...loopMessage,
-        toolExecutions: nextExecutions,
-      };
-    }),
-  };
-}
-
-function toolExecutionTargetMessageId(
+function findTranscriptAssistant(
   messages: ChatMessage[],
-  fallbackAssistantId: string,
+  predicate: (message: ChatMessage) => boolean,
+): ChatMessage | undefined {
+  for (const message of messages) {
+    const nested = findTranscriptAssistant(message.loopHistory ?? [], predicate);
+    if (nested) return nested;
+    if (message.role === 'assistant' && predicate(message)) return message;
+  }
+  return undefined;
+}
+
+function updateTranscriptToolOwner(
+  message: ChatMessage,
+  owner: ChatMessage,
   execution: ChatToolExecution,
-) {
-  const assistantMessageId = execution.assistantMessageId?.trim() ?? '';
-  if (assistantMessageId) {
-    const matched = messages.find(
-      (message) =>
-        message.id === assistantMessageId ||
-        message.messageId === assistantMessageId ||
-        message.assistantMessageId === assistantMessageId,
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  const route = assistantRouteFromToolExecution(execution);
-  if (route.assistantSegmentIndex != null) {
-    const matched = messages.find((message) =>
-      message.role === 'assistant' &&
-      chatMessageTurnId(message) === route.turnId &&
-      Number(message.metadata?.assistant_segment_index) === route.assistantSegmentIndex,
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  if (execution.loopIndex != null) {
-    const matched = messages.find((message) =>
-      message.role === 'assistant' &&
-      numericOrderValue(message.loopIndex) === numericOrderValue(execution.loopIndex),
-    );
-    if (matched) {
-      return matched.id;
-    }
-  }
-  return fallbackAssistantId;
+): ChatMessage {
+  if (message === owner) return appendToolToAssistant(message, execution);
+  const loopHistory = message.loopHistory?.map(item => updateTranscriptToolOwner(item, owner, execution));
+  return loopHistory?.some((item, index) => item !== message.loopHistory?.[index])
+    ? { ...message, loopHistory } : message;
 }
 
 function assistantRouteFromToolExecution(
@@ -917,5 +876,6 @@ function assistantRouteFromToolExecution(
     turnId:
       execution.turnId?.trim() || String(execution.metadata.turn_id ?? '').trim(),
     createdAt: execution.createdAt,
+    sequence: execution.sequence,
   };
 }

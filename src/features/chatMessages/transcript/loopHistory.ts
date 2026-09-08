@@ -383,6 +383,8 @@ function shouldCollapseDuplicateTranscriptMessage(
   if (leftPersistedId && rightPersistedId && leftPersistedId === rightPersistedId) {
     return true;
   }
+  // Matching prose is not matching identity: model rounds may repeat text.
+  if (leftPersistedId && rightPersistedId) return false;
   if (left.role !== right.role) {
     return false;
   }
@@ -486,7 +488,10 @@ export function mergeLoopHistoryMessages(
     if (!hasVisibleLoopHistory(message)) {
       continue;
     }
-    byKey.set(loopHistoryMessageKey(message), snapshotLoopHistoryMessage(message));
+    const key = loopHistoryMessageKey(message);
+    const previous = byKey.get(key);
+    const snapshot = snapshotLoopHistoryMessage(message);
+    byKey.set(key, previous ? mergeDuplicateTranscriptMessage(previous, snapshot) : snapshot);
   }
   return sortMessagesByTranscriptOrder(Array.from(byKey.values()));
 }
@@ -553,6 +558,11 @@ export function shouldPreserveExistingAsLoopHistory(
   if (!hasVisibleLoopHistory(existing)) {
     return false;
   }
+  // A durable message snapshot replaces its streamed prefix. Archiving every
+  // prefix creates duplicate child keys and repeats Tools in the active loop.
+  if (messageIdentityMatches(existing, incoming) && (
+    persistedChatMessageId(existing) || existing.messageId || existing.assistantMessageId
+  )) return false;
   return normalizeLoopContent(existing.content) !== normalizeLoopContent(incoming.content);
 }
 
@@ -568,26 +578,12 @@ function isRedundantTemporaryAssistant(
 }
 
 function loopHistoryMessageKey(message: ChatMessage) {
-  return [
-    message.id.trim(),
+  // Local revisions deliberately have their own snapshot ID. Every other
+  // history entry is keyed by identity, never mutable prose or Tool status.
+  return JSON.stringify([
     message.role,
-    message.turnId?.trim() ?? '',
-    message.assistantMessageId?.trim() ?? '',
-    message.status?.trim() ?? '',
-    message.loopIndex ?? '',
-    message.turnSequence ?? '',
-    message.messageIndex ?? '',
-    message.createdAt?.trim() ?? '',
-    normalizeLoopContent(message.content),
-    message.toolExecutions
-      ?.map((execution) =>
-        [
-          execution.id,
-          execution.state,
-          normalizeLoopContent(execution.summary),
-          normalizeLoopContent(execution.output),
-        ].join(':'),
-      )
-      .join(',') ?? '',
-  ].join('|');
+    chatMessageTurnId(message),
+    message.metadata?.ui_transcript_only === true ? message.id :
+      message.messageId?.trim() || message.assistantMessageId?.trim() || persistedChatMessageId(message) || message.id,
+  ]);
 }

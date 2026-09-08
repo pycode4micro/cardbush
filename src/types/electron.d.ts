@@ -112,6 +112,7 @@ declare global {
         callback: () => void,
       ) => () => void;
       writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
+      showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
       wallpaperAccent: () => Promise<{
         r: number;
         g: number;

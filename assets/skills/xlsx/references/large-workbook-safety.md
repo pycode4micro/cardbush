@@ -6,18 +6,18 @@ pressure.
 
 ## First Pass
 
-Run the memory-safe inspector before using pandas or normal openpyxl mode:
+Resolve `SKILL_DIR` to the absolute directory containing the main `SKILL.md`, and replace example input paths with absolute paths. Run the memory-safe inspector before using pandas or normal openpyxl mode:
 
 ```bash
-python scripts/inspect_large_workbook.py input.xlsx --pretty
-python scripts/inspect_tabular_file.py input.csv --pretty
+python "SKILL_DIR/scripts/inspect_large_workbook.py" input.xlsx --pretty
+python "SKILL_DIR/scripts/inspect_tabular_file.py" input.csv --pretty
 ```
 
 For targeted inspection:
 
 ```bash
-python scripts/inspect_large_workbook.py input.xlsx --sheet Transactions --sample-rows 30 --max-rows-scan 100000
-python scripts/inspect_tabular_file.py input.tsv --delimiter "\t" --header yes --sample-rows 30 --max-rows-scan 100000
+python "SKILL_DIR/scripts/inspect_large_workbook.py" input.xlsx --sheet Transactions --sample-rows 30 --max-rows-scan 100000
+python "SKILL_DIR/scripts/inspect_tabular_file.py" input.tsv --delimiter "\t" --header yes --sample-rows 30 --max-rows-scan 100000
 ```
 
 The XLSX script reads zip/XML parts directly, samples sheet rows, counts scanned
@@ -98,9 +98,9 @@ file:
 5. Validate field-level assumptions with counts, rejected-row reasons, and
    reconciliation totals before presenting exact results.
 
-If a runtime guard blocks a command, treat that as an instruction to follow this
-field-first workflow. Do not try another full-file loading API to get around the
-guard.
+If a runtime guard blocks a command, read its actual reason. For memory-related
+blocks, follow this field-first workflow; do not switch eager loaders to bypass
+the guard.
 
 ## Safe Workflow
 
@@ -117,12 +117,13 @@ guard.
 5. For financial or exact analytical work, use `Decimal` or integer minor units
    for calculations and keep a row-count/check-total audit trail.
 6. Record row counts and any truncation in the final answer or workbook notes.
-7. Recalculate and scan formula errors with `scripts/recalc.py` when formulas are
-   present.
+7. When formula results need updating, use the recalculation workflow in the
+   main skill. For read-only analysis, recalculate a task-local copy rather than
+   overwriting the input. Report missing caches or engine limitations explicitly.
 
 ## Stop Conditions
 
-Stop and replan instead of continuing when:
+Resolve the issue or state the resulting limitation before making a dependent conclusion when:
 
 - inspection shows required sheets are missing;
 - `scan_truncated=true` and the requested answer requires exact full-sheet

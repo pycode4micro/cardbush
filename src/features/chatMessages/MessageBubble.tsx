@@ -61,14 +61,16 @@ import { modelLogoFor } from '../composer/modelLogos';
 import {
   normalizeExecutionNarrationForDisplay,
   normalizeMarkdownContentForDisplay,
+  remarkAutolinkBoundaries,
 } from './markdownFormat';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
 import {
   localFileReference,
-  localFileReferenceFromHref,
-  localFileReferenceScheme,
+  localFileReferenceHref,
+  markdownLocalFileReference,
   remarkLocalFileReferences,
 } from './fileReferences';
+import { showUiError } from '../../shared/showUiError';
 import {
   remapProjectPath,
   type ProjectPathAlias,
@@ -101,8 +103,7 @@ import {
   writeToolExecutionDisclosure,
 } from '../tools/toolExecutionDisclosure';
 import { formatCompactDuration } from './assistantTurnTiming';
-import { coalesceStoppedAssistantTranscript } from './assistantTranscriptPresentation';
-import { isContextCompactionPresentationExecution } from '../../backend/contextCompactionPresentation';
+import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
 
 type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
 
@@ -327,17 +328,16 @@ const LazyMarkdownContent = lazy(async () => {
     <ReactMarkdown
       remarkPlugins={[
         remarkGfm,
+        remarkAutolinkBoundaries,
         [remarkLocalFileReferences, { workspaceRoot }],
       ]}
-      urlTransform={(url) =>
-        url.startsWith(localFileReferenceScheme) ? url : defaultUrlTransform(url)
-      }
+      urlTransform={(url) => {
+        const reference = markdownLocalFileReference(url, workspaceRoot);
+        return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
+      }}
       components={{
         a: ({ href, children, ...props }) => {
-          const directReference = explicitMarkdownLocalReference(href, workspaceRoot);
-          const localPath = href
-            ? localFileReferenceFromHref(href) || directReference?.path || ''
-            : '';
+          const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
           if (localPath) {
             return (
               <LocalFileReferenceLink
@@ -348,12 +348,22 @@ const LazyMarkdownContent = lazy(async () => {
               </LocalFileReferenceLink>
             );
           }
+          if (!href) {
+            return <button
+              type="button"
+              className="markdown-link-error"
+              onClick={() => void showUiError(
+                language === 'zh' ? '无法打开链接' : 'Unable to open link',
+                language === 'zh' ? '链接地址为空或使用了不支持的协议。' : 'The link is empty or uses an unsupported protocol.',
+              )}
+            >{children}</button>;
+          }
           return (
             <a
               {...props}
               href={href}
               onClick={(event) => {
-                if (!href || href.startsWith('#')) {
+                if (href.startsWith('#')) {
                   return;
                 }
                 event.preventDefault();
@@ -365,7 +375,7 @@ const LazyMarkdownContent = lazy(async () => {
           );
         },
         img: ({ src, alt, ...props }) => {
-          const reference = explicitMarkdownLocalReference(src, workspaceRoot);
+          const reference = markdownLocalFileReference(src, workspaceRoot);
           const resolvedPath = reference
             ? remapProjectPath(reference.path, pathAliases)
             : '';
@@ -431,17 +441,6 @@ const LazyMarkdownContent = lazy(async () => {
 
   return { default: MarkdownRenderer };
 });
-
-function explicitMarkdownLocalReference(
-  href: string | undefined,
-  workspaceRoot: string,
-) {
-  if (!href || href.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(href)) {
-    return null;
-  }
-  return localFileReference(href, workspaceRoot) ??
-    localFileReference(`./${href}`, workspaceRoot);
-}
 
 const FileReferenceWorkspaceContext = createContext('');
 const FileReferencePathAliasesContext = createContext<ProjectPathAlias[]>([]);
@@ -933,7 +932,6 @@ function MessageBubbleView({
     ? activeAssistantTranscriptMessages(
         loopHistory,
         message,
-        freezeTerminalTranscript,
       )
     : [];
   const renderActiveTranscript =
@@ -1524,13 +1522,10 @@ function AssistantActiveTranscript({
 function activeAssistantTranscriptMessages(
   loopHistory: ChatMessage[],
   currentMessage: ChatMessage,
-  stopped = false,
 ) {
   const transcript = [...loopHistory, currentMessage]
     .filter(hasVisibleLoopHistoryMessage);
-  return stopped
-    ? coalesceStoppedAssistantTranscript(transcript)
-    : transcript;
+  return coalesceAssistantTranscript(transcript);
 }
 
 function AssistantMessageContent({
@@ -1726,9 +1721,7 @@ function groupExecutionsByContentOffset(
     const previous = groups.at(-1);
     if (
       previous &&
-      previous.offset === offset &&
-      !isContextCompactionPresentationExecution(execution) &&
-      !previous.executions.some(isContextCompactionPresentationExecution)
+      previous.offset === offset
     ) {
       previous.executions.push(execution);
       continue;
@@ -2282,7 +2275,7 @@ export function AssistantLoopHistoryBlock({
   ) => Promise<void>;
   onOpenScene?: (scene: CardlingScene) => void;
 }) {
-  const visibleHistory = history.filter(hasVisibleLoopHistoryMessage);
+  const visibleHistory = coalesceAssistantTranscript(history).filter(hasVisibleLoopHistoryMessage);
   const summary =
     language === 'zh'
       ? '历史执行记录'

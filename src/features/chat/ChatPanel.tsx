@@ -39,6 +39,11 @@ import {
   projectRenderableChatMessages,
 } from '../chatMessages';
 import { QuickContextRail } from './QuickContextRail';
+import {
+  captureConversationScrollPosition,
+  restoreConversationScrollPosition,
+  type ConversationScrollPosition,
+} from './conversationScrollPosition';
 import { ConversationWorkSummary } from './ConversationWorkSummary';
 import {
   ComposerRuntimePreTest,
@@ -421,20 +426,21 @@ export function ChatPanel({
   const handledWheelEventsRef = useRef<WeakSet<globalThis.WheelEvent>>(new WeakSet());
   const scrollbarDragActiveRef = useRef(false);
   const scrollbarDragUntilRef = useRef(0);
-  const listScrollerWheelCleanupRef = useRef<(() => void) | null>(null);
   const scrollBottomWheelCleanupRef = useRef<(() => void) | null>(null);
   const lastWheelLockRef = useRef<{
     at: number;
     source: string;
     scrollTop: number;
   } | null>(null);
-  const latestConversationScrollRef = useRef<{
-    conversationId: string;
-    latestMessageId: string;
-  }>({
-    conversationId: '',
-    latestMessageId: '',
-  });
+  const conversationScrollPositionsRef = useRef(new Map<string, ConversationScrollPosition>());
+  const scrollActivationRef = useRef<{
+    scroller: HTMLElement;
+    position: ConversationScrollPosition | undefined;
+    restoring: boolean;
+  } | null>(null);
+  const scrollRestoreFrameRef = useRef<number | null>(null);
+  const submittedUserFocusFrameRef = useRef<number | null>(null);
+  const [scrollMountRevision, setScrollMountRevision] = useState(0);
 
   useEffect(() => {
     if (!notice) {
@@ -528,6 +534,18 @@ export function ChatPanel({
 
   const releaseAssistantStageReservation = useCallback(() => {
     setAssistantStageReservationActive(false);
+  }, []);
+
+  const finishConversationScrollRestoration = useCallback(() => {
+    const activation = scrollActivationRef.current;
+    if (activation) {
+      activation.restoring = false;
+      delete activation.scroller.dataset.scrollRestoring;
+    }
+    if (scrollRestoreFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+      scrollRestoreFrameRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -807,14 +825,21 @@ export function ChatPanel({
 
   const focusSubmittedUserMessage = useCallback(
     (_index: number, messageId: string) => {
+      const scroller = listScrollerRef.current;
+      if (!scroller) return;
       pendingSubmittedUserFocusRef.current = false;
       programmaticScrollUntilRef.current = Date.now() + 1200;
       manualScrollDetachUntilRef.current = 0;
       autoFollowStreamRef.current = true;
       userDetachedFromBottomRef.current = false;
       setScrollBottomVisible(false);
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
+      if (submittedUserFocusFrameRef.current != null) {
+        window.cancelAnimationFrame(submittedUserFocusFrameRef.current);
+      }
+      submittedUserFocusFrameRef.current = window.requestAnimationFrame(() => {
+        submittedUserFocusFrameRef.current = window.requestAnimationFrame(() => {
+          submittedUserFocusFrameRef.current = null;
+          if (listScrollerRef.current !== scroller || userDetachedFromBottomRef.current) return;
           positionMessageAtReadingAnchor(messageId);
         });
       });
@@ -863,6 +888,8 @@ export function ChatPanel({
 
   const scheduleActiveAssistantFollow = useCallback(
     (messageId: string, _index: number) => {
+      const scroller = listScrollerRef.current;
+      if (!scroller || scrollActivationRef.current?.restoring) return;
       if (streamScrollFrameRef.current != null) {
         window.cancelAnimationFrame(streamScrollFrameRef.current);
       }
@@ -870,19 +897,23 @@ export function ChatPanel({
       streamScrollFrameRef.current = window.requestAnimationFrame(() => {
         streamScrollFrameRef.current = null;
         if (
+          listScrollerRef.current !== scroller ||
+          scrollActivationRef.current?.restoring ||
           !autoFollowStreamRef.current ||
           userDetachedFromBottomRef.current ||
           Date.now() < manualScrollDetachUntilRef.current
         ) {
           return;
         }
-        const scroller = listScrollerRef.current;
-        const item = scroller?.querySelector(
+        const item = scroller.querySelector(
           `[data-message-id="${cssEscape(messageId)}"]`,
         );
         if (!(item instanceof HTMLElement)) {
-          window.requestAnimationFrame(() => {
+          streamScrollFrameRef.current = window.requestAnimationFrame(() => {
+            streamScrollFrameRef.current = null;
             if (
+              listScrollerRef.current === scroller &&
+              !scrollActivationRef.current?.restoring &&
               autoFollowStreamRef.current &&
               !userDetachedFromBottomRef.current &&
               Date.now() >= manualScrollDetachUntilRef.current
@@ -1049,6 +1080,8 @@ export function ChatPanel({
   );
 
   const markUserDetachedFromBottom = useCallback((reason = 'user-scroll') => {
+    finishConversationScrollRestoration();
+    const scroller = listScrollerRef.current;
     captureScrollGeometry('trace-detach', { reason });
     lastWheelLockRef.current = null;
     programmaticScrollUntilRef.current = 0;
@@ -1070,7 +1103,7 @@ export function ChatPanel({
       return;
     }
     window.requestAnimationFrame(() => {
-      if (userDetachedFromBottomRef.current && !atBottomRef.current) {
+      if (listScrollerRef.current === scroller && userDetachedFromBottomRef.current && !atBottomRef.current) {
         setScrollBottomVisible(
           shouldShowScrollBottomForScroller(listScrollerRef.current),
         );
@@ -1079,6 +1112,7 @@ export function ChatPanel({
   }, [
     cancelScheduledStreamFollow,
     captureScrollGeometry,
+    finishConversationScrollRestoration,
     releaseAssistantStageReservation,
     sending,
     setScrollBottomVisible,
@@ -1402,6 +1436,7 @@ export function ChatPanel({
         return;
       }
       const scroller = event.currentTarget;
+      finishConversationScrollRestoration();
       const metrics = readBottomMetrics(scroller);
       scrollbarDragActiveRef.current = true;
       scrollbarDragUntilRef.current = Date.now() + 4000;
@@ -1422,6 +1457,7 @@ export function ChatPanel({
     [
       cancelScheduledStreamFollow,
       isPointerOnVerticalScrollbar,
+      finishConversationScrollRestoration,
       readBottomMetrics,
       releaseAssistantStageReservation,
       sending,
@@ -1436,6 +1472,11 @@ export function ChatPanel({
         return;
       }
       const scroller = event.currentTarget;
+      if (scroller !== listScrollerRef.current) return;
+      if (scrollActivationRef.current?.restoring) {
+        lastScrollTopRef.current = scroller.scrollTop;
+        return;
+      }
       if (scroller.dataset.cardbushPreserveScroll === '1') {
         lastScrollTopRef.current = scroller.scrollTop;
         return;
@@ -1580,7 +1621,7 @@ export function ChatPanel({
     ],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const chatBody = chatBodyRef.current;
     if (loading || showWelcome) {
       setComposerDockHeight(0);
@@ -1749,6 +1790,8 @@ export function ChatPanel({
       });
       if (
         !scroller ||
+        listScrollerRef.current !== scroller ||
+        scrollActivationRef.current?.restoring ||
         scroller.dataset.cardbushPreserveScroll === '1' ||
         scrollbarDragActiveRef.current ||
         Date.now() < scrollbarDragUntilRef.current ||
@@ -1764,6 +1807,8 @@ export function ChatPanel({
       outerResizeFollowFrameRef.current = window.requestAnimationFrame(() => {
         outerResizeFollowFrameRef.current = null;
         if (
+          listScrollerRef.current !== scroller ||
+          scrollActivationRef.current?.restoring ||
           scroller.dataset.cardbushPreserveScroll === '1' ||
           scrollbarDragActiveRef.current ||
           Date.now() < scrollbarDragUntilRef.current ||
@@ -1836,8 +1881,6 @@ export function ChatPanel({
         window.clearTimeout(timer);
       }
       userMessageEntryTimersRef.current.clear();
-      listScrollerWheelCleanupRef.current?.();
-      listScrollerWheelCleanupRef.current = null;
       scrollBottomWheelCleanupRef.current?.();
       scrollBottomWheelCleanupRef.current = null;
     };
@@ -1859,6 +1902,7 @@ export function ChatPanel({
     }
     if (
       submittedUserIndex >= 0 &&
+      previous.conversationId === activeConversationId &&
       Date.now() <= pendingSubmittedUserEntryUntilRef.current
     ) {
       const messageId = renderMessages[submittedUserIndex].id;
@@ -1885,26 +1929,14 @@ export function ChatPanel({
       );
     }
     if (previous.conversationId !== activeConversationId) {
-      autoFollowStreamRef.current = true;
-      userDetachedFromBottomRef.current = false;
-      manualScrollDetachUntilRef.current = 0;
-      atBottomRef.current = true;
-      setScrollBottomVisible(false);
+      pendingSubmittedUserFocusRef.current = false;
+      pendingSubmittedUserEntryUntilRef.current = 0;
       messageSnapshotRef.current = { conversationId: activeConversationId, ids };
-      if (
-        renderMessages.length > 0 &&
-        (pendingSubmittedUserFocusRef.current || sending)
-      ) {
-        for (let index = renderMessages.length - 1; index >= 0; index -= 1) {
-          if (renderMessages[index]?.role === 'user') {
-            focusSubmittedUserMessage(index, renderMessages[index].id);
-            break;
-          }
-        }
-      }
       return;
     }
     if (
+      !loading &&
+      !scrollActivationRef.current?.restoring &&
       submittedUserIndex >= 0 &&
       (pendingSubmittedUserFocusRef.current ||
         (sending &&
@@ -1920,6 +1952,7 @@ export function ChatPanel({
   }, [
     activeConversationId,
     focusSubmittedUserMessage,
+    loading,
     renderMessages,
     sending,
     setScrollBottomVisible,
@@ -2048,6 +2081,8 @@ export function ChatPanel({
 
   const jumpToLatestMessage = useCallback(
     (_reason: string) => {
+      const scroller = listScrollerRef.current;
+      finishConversationScrollRestoration();
       cancelScheduledStreamFollow();
       scrollTraceSequenceRef.current += 1;
       activeScrollTraceIdRef.current = `${Date.now().toString(36)}-${scrollTraceSequenceRef.current}`;
@@ -2065,7 +2100,7 @@ export function ChatPanel({
       forceListToVisualBottom();
       streamScrollFrameRef.current = window.requestAnimationFrame(() => {
         streamScrollFrameRef.current = null;
-        if (userDetachedFromBottomRef.current) {
+        if (listScrollerRef.current !== scroller || userDetachedFromBottomRef.current) {
           captureScrollGeometry('trace-jump-abort', {
             reason: 'user-detached',
           });
@@ -2083,6 +2118,7 @@ export function ChatPanel({
       cancelScheduledStreamFollow,
       captureScrollGeometry,
       forceListToVisualBottom,
+      finishConversationScrollRestoration,
       setScrollBottomVisible,
     ],
   );
@@ -2094,76 +2130,142 @@ export function ChatPanel({
     jumpToLatestMessage('scroll-bottom-button');
   }, [jumpToLatestMessage, messages.length]);
 
-  useEffect(() => {
-    if (loading || showWelcome || messages.length === 0) {
-      return;
-    }
-    const conversationKey = activeConversationId.trim() || '__new__';
-    const latestMessageId = messages[messages.length - 1]?.id ?? '';
-    if (!latestMessageId) {
-      return;
-    }
-    const previous = latestConversationScrollRef.current;
-    if (previous.conversationId === conversationKey) {
-      return;
-    }
-    latestConversationScrollRef.current = {
-      conversationId: conversationKey,
-      latestMessageId,
+  // The ref belongs to this conversation's DOM lifetime. Event subscriptions
+  // change independently, so a new token/callback never saves or restores it.
+  const setListScrollerRef = useMemo(() => {
+    let attachedScroller: HTMLElement | null = null;
+    return (scroller: HTMLDivElement | null) => {
+      if (scroller === attachedScroller) return;
+      if (attachedScroller) {
+        const activation = scrollActivationRef.current;
+        const position = activation?.restoring && activation.position
+          ? activation.position
+          : captureConversationScrollPosition(
+              attachedScroller,
+              autoFollowStreamRef.current && !userDetachedFromBottomRef.current,
+            );
+        conversationScrollPositionsRef.current.set(activeConversationId, position);
+        scrollDebug('session-scroll-save', { conversationId: activeConversationId, position });
+      }
+      cancelScheduledStreamFollow();
+      for (const frame of [outerResizeFollowFrameRef, scrollRestoreFrameRef, submittedUserFocusFrameRef]) {
+        if (frame.current != null) window.cancelAnimationFrame(frame.current);
+        frame.current = null;
+      }
+      attachedScroller = scroller;
+      listScrollerRef.current = scroller;
+      scrollActivationRef.current = null;
+      if (!scroller) return;
+      const position = conversationScrollPositionsRef.current.get(activeConversationId);
+      const freshSubmission = messageSnapshotRef.current.conversationId === activeConversationId
+        && pendingSubmittedUserFocusRef.current;
+      scrollActivationRef.current = { scroller, position, restoring: !freshSubmission };
+      if (!freshSubmission) scroller.dataset.scrollRestoring = 'true';
+      // Ref replay can remount a keyed child without rerunning its parent's
+      // effects (StrictMode). Every activation must own a restoration commit.
+      setScrollMountRevision((revision) => revision + 1);
+      autoFollowStreamRef.current = position?.followLatest ?? true;
+      userDetachedFromBottomRef.current = !autoFollowStreamRef.current;
+      atBottomRef.current = autoFollowStreamRef.current;
+      manualScrollDetachUntilRef.current = 0;
+      programmaticScrollUntilRef.current = 0;
+      lastWheelEventAtRef.current = 0;
+      lastWheelLockRef.current = null;
+      scrollbarDragActiveRef.current = false;
+      scrollbarDragUntilRef.current = 0;
+      lastScrollTopRef.current = scroller.scrollTop;
+      if (!freshSubmission) {
+        pendingSubmittedUserFocusRef.current = false;
+        pendingSubmittedUserEntryUntilRef.current = 0;
+        setAssistantStageReservationActive(position?.assistantStageReserved ?? false);
+        if (position?.submittedUserReadingAnchor) {
+          scroller.style.setProperty('--submitted-user-reading-anchor', position.submittedUserReadingAnchor);
+        }
+      }
+      setScrollBottomVisible(false);
     };
-    jumpToLatestMessage('session-enter');
+  }, [activeConversationId, cancelScheduledStreamFollow, setScrollBottomVisible]);
+
+  useLayoutEffect(() => {
+    const activation = scrollActivationRef.current;
+    if (!activation?.restoring) return;
+    const restore = () => {
+      if (scrollActivationRef.current !== activation || !activation.restoring) return;
+      restoreConversationScrollPosition(activation.scroller, activation.position, quickContextBottomInset);
+      lastScrollTopRef.current = activation.scroller.scrollTop;
+      scrollDebug('session-scroll-restore', {
+        conversationId: activeConversationId,
+        position: activation.position,
+        scrollTop: activation.scroller.scrollTop,
+      });
+      const metrics = readBottomMetrics(activation.scroller);
+      atBottomRef.current = metrics.visualAtBottom;
+      setScrollBottomVisible(shouldShowScrollBottomForMetrics(activation.scroller, metrics));
+    };
+    restore();
+    // Composer measurements may cause one synchronous layout commit. Settle it
+    // before handing subsequent live updates back to the ordinary follow path.
+    scrollRestoreFrameRef.current = window.requestAnimationFrame(() => {
+      scrollRestoreFrameRef.current = null;
+      if (scrollActivationRef.current !== activation) return;
+      restore();
+      delete activation.scroller.dataset.scrollRestoring;
+      activation.restoring = false;
+    });
+    return () => {
+      if (scrollRestoreFrameRef.current != null) window.cancelAnimationFrame(scrollRestoreFrameRef.current);
+      scrollRestoreFrameRef.current = null;
+    };
   }, [
     activeConversationId,
-    jumpToLatestMessage,
+    scrollMountRevision,
     loading,
-    messages,
     showWelcome,
+    renderMessages,
+    quickContextBottomInset,
+    readBottomMetrics,
+    setScrollBottomVisible,
+    shouldShowScrollBottomForMetrics,
   ]);
 
-  const setListScrollerRef = useCallback(
-    (ref: HTMLElement | Window | null) => {
-      listScrollerWheelCleanupRef.current?.();
-      listScrollerWheelCleanupRef.current = null;
-      const nextScroller = ref instanceof HTMLElement ? ref : null;
-      listScrollerRef.current = nextScroller;
-      if (!nextScroller) {
+  useEffect(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) return undefined;
+    const handleNativeWheel = (event: globalThis.WheelEvent) => {
+      if (event.defaultPrevented || wheelAlreadyHandled(event)) {
         return;
       }
-      lastScrollTopRef.current = nextScroller.scrollTop;
-      const handleNativeWheel = (event: globalThis.WheelEvent) => {
-        if (event.defaultPrevented || wheelAlreadyHandled(event)) {
-          return;
-        }
-        lastWheelEventAtRef.current = Date.now();
-        if (event.deltaY !== 0) {
-          releaseAssistantStageReservation();
-        }
-        if (releaseWheelBottomFreeze(event)) {
-          markWheelHandled(event);
-          return;
-        }
-        if (lockNativeWheelDownAtBottom('native-list', event)) {
-          markWheelHandled(event);
-        }
-      };
-      nextScroller.addEventListener('wheel', handleNativeWheel, {
+      lastWheelEventAtRef.current = Date.now();
+      if (event.deltaY !== 0) {
+        releaseAssistantStageReservation();
+      }
+      if (releaseWheelBottomFreeze(event)) {
+        markWheelHandled(event);
+        return;
+      }
+      if (lockNativeWheelDownAtBottom('native-list', event)) {
+        markWheelHandled(event);
+      }
+    };
+    scroller.addEventListener('wheel', handleNativeWheel, {
+      capture: true,
+      passive: false,
+    });
+    return () => {
+      scroller.removeEventListener('wheel', handleNativeWheel, {
         capture: true,
-        passive: false,
       });
-      listScrollerWheelCleanupRef.current = () => {
-        nextScroller.removeEventListener('wheel', handleNativeWheel, {
-          capture: true,
-        });
-      };
-    },
-    [
-      lockNativeWheelDownAtBottom,
-      markWheelHandled,
-      releaseAssistantStageReservation,
-      releaseWheelBottomFreeze,
-      wheelAlreadyHandled,
-    ],
-  );
+    };
+  }, [
+    activeConversationId,
+    loading,
+    showWelcome,
+    lockNativeWheelDownAtBottom,
+    markWheelHandled,
+    releaseAssistantStageReservation,
+    releaseWheelBottomFreeze,
+    wheelAlreadyHandled,
+  ]);
 
   const setScrollBottomRef = useCallback(
     (ref: HTMLButtonElement | null) => {
@@ -2233,6 +2335,7 @@ export function ChatPanel({
         return;
       }
       if (!sending) {
+        finishConversationScrollRestoration();
         pendingSubmittedUserEntryUntilRef.current = Date.now() + 2000;
         const shouldFollowSubmission =
           !showScrollBottomRef.current || !userDetachedFromBottomRef.current;
@@ -2252,6 +2355,7 @@ export function ChatPanel({
       activeConversationId,
       activeTurnId,
       guidanceDeliveryMode,
+      finishConversationScrollRestoration,
       onGuideMessage,
       onSend,
       sending,

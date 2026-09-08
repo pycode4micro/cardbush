@@ -32,7 +32,7 @@ assert.doesNotMatch(preview, /fs\.promises\.(?:writeFile|rename|unlink|rm)/);
 // Preview windows were consolidated into the shared inspector. Assert routing
 // and read-only rendering, not the removed standalone window's menu options.
 assert.match(main, /sendUiPreviewToInspector\(mainWindow, targetUrl\)/);
-assert.match(main, /target\.webContents\.send\('shell:open-inspector'/);
+assert.match(main, /sendToLiveRenderer\(target, 'shell:open-inspector'/);
 assert.match(main, /protocolHost === 'office-source'/);
 assert.match(main, /isHighFidelityOfficePreviewPath/);
 assert.match(main, /officePreviewRendererEntryResponse/);

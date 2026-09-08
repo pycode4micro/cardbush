@@ -21,8 +21,6 @@ assert.match(skill, /--mode scenes/);
 assert.match(skill, /--mode sequence/);
 assert.match(skill, /audio was not analyzed|audio was not/i);
 assert.match(script, /cardbush\.video_storyboard\.v1/);
-assert.match(script, /choices=\("uniform", "scenes", "sequence"\)/);
-assert.match(script, /sheet_size, 4, 20/);
 assert.match(script, /uniform_supplements/);
 assert.match(script, /video_storyboard_failed/);
 assert.ok(fs.existsSync(path.join(root, 'assets', 'logo.svg')));
@@ -56,6 +54,15 @@ if (python) {
   assert.equal(payload.operation, 'dependency_check');
   assert.equal(typeof payload.ready, 'boolean');
   assert.equal(typeof payload.modules.numpy, 'boolean');
+
+  const behavior = spawnSync(
+    python.command,
+    [...python.prefix, '-B', path.join(process.cwd(), 'scripts', 'test-video-storyboard.py')],
+    { cwd: process.cwd(), encoding: 'utf8', shell: false, timeout: 120_000 },
+  );
+  assert.equal(behavior.status, 0, behavior.stderr || behavior.stdout || behavior.error?.message);
+  process.stdout.write(behavior.stdout || '');
+  process.stdout.write(behavior.stderr || '');
 }
 
 console.log('video understanding Skill contract tests passed');

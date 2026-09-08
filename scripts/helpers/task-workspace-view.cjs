@@ -78,7 +78,9 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await pause();
   await run("workspaceFixture.workspace = { ...workspaceFixture.workspace, mode: 'direct', workspaceDir: 'D:/source', status: 'ready', versioning: 'none' }; workspaceFixture.changes = []; showWorkspace()");
   await until("Boolean(workspaceButton('创建 Git 仓库'))", 'Local folder offers explicit repository creation');
-  assert.equal(await run("document.querySelector('.task-workspace-bar select').value"), 'direct', 'Local is the default');
+  assert.equal(await run("document.querySelector('.task-workspace-heading span').textContent"), '项目目录', 'the Runtime Local workspace is shown as the project directory');
+  assert.equal(await run("document.querySelector('.task-workspace-heading code').textContent"), 'D:/source');
+  assert.equal(await run("document.querySelector('.task-workspace-bar select')"), null, 'automatic workspace presentation does not expose a mode selector');
   assert.equal(await run("Boolean(workspaceButton('丢弃副本')) || Boolean(workspaceButton('应用到原项目'))"), false, 'Local never offers source-copy disposal');
   await run("workspaceButton('创建 Git 仓库').click()");
   await until("!workspaceButton('创建 Git 仓库')", 'Git version capability refreshes after explicit initialization');
