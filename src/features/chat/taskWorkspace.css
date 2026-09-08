@@ -1,10 +1,13 @@
 .task-workspace-bar { flex: 0 0 auto; padding: 8px 16px; border-bottom: 1px solid var(--border-color, #80808030); font-size: 12px; -webkit-app-region: no-drag; }
-.task-workspace-bar label, .task-workspace-heading, .task-workspace-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.task-workspace-heading, .task-workspace-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .task-workspace-heading code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .75; }
-.task-workspace-bar button, .task-workspace-bar select { color: inherit; background: transparent; border: 1px solid var(--border-color, #80808050); border-radius: 5px; padding: 3px 8px; font: inherit; }
+.task-workspace-bar button { color: inherit; background: transparent; border: 1px solid var(--border-color, #80808050); border-radius: 5px; padding: 3px 8px; font: inherit; }
 .task-workspace-bar button:not(:disabled), .task-workspace-bar summary { cursor: pointer; }
 .task-workspace-bar button:disabled { opacity: .45; }
 .task-workspace-actions { margin-top: 6px; }
 .task-workspace-review { margin-top: 6px; max-height: 35vh; overflow: auto; }
 .task-workspace-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
 .task-workspace-error { color: var(--error-color, #c55); margin: 5px 0; }
+.task-workspace-details > summary { width: fit-content; color: var(--text-secondary, inherit); }
+.task-workspace-details[open] > summary { margin-bottom: 8px; }
+.task-workspace-details > summary.task-workspace-error { color: var(--error-color, #c55); }

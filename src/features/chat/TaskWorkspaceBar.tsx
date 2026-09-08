@@ -14,7 +14,6 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
   const [loading, setLoading] = useState(false);
   const [supported, setSupported] = useState(false);
   const readSequence = useRef(0);
-  const [mode, setMode] = useState(() => window.localStorage.getItem('cardbush.workspace.mode') === 'worktree' ? 'worktree' : 'direct');
   const load = useCallback(async (signal?: AbortSignal) => {
     const sequence = ++readSequence.current;
     let runtime: ReturnType<typeof createDesktopRuntimeSession> | undefined;
@@ -64,24 +63,21 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
   const workspace = review?.workspace;
   const disabled = busy || working || loading;
   const incomplete = review?.checkpoints.some(checkpoint => checkpoint.status === 'failed' || checkpoint.status === 'pending');
-  const modeSelector = <label>
-    {zh ? '新任务执行位置：' : 'New task environment: '}
-    <select aria-label={zh ? '新任务工作区模式' : 'New task workspace mode'} value={mode} onChange={event => {
-      const value = event.target.value;
-      window.localStorage.setItem('cardbush.workspace.mode', value);
-      setMode(value);
-    }}>
-      <option value="direct">{zh ? 'Local · 原目录' : 'Local · project directory'}</option>
-      <option value="worktree">{zh ? 'Worktree · Git 独立副本' : 'Worktree · Git checkout'}</option>
-    </select>
-  </label>;
+  const attention = Boolean(error || review?.error || workspace?.versioningError || incomplete || workspace?.status === 'discarded');
+  const count = review?.changes.length ?? 0;
+  const summary = attention
+    ? (zh ? '工作区需要处理' : 'Workspace needs attention')
+    : count > 0
+      ? (zh ? `${count} 个文件${workspace?.mode === 'worktree' ? '待应用' : '有修改'}` : `${count} files ${workspace?.mode === 'worktree' ? 'pending' : 'changed'}`)
+      : (zh ? '工作区详情' : 'Workspace details');
   return <div className="task-workspace-bar">
+    <details className="task-workspace-details">
+      <summary className={attention ? 'task-workspace-error' : undefined}>{summary}</summary>
     {!workspace ? <>
-      <p>{zh ? 'Local · 当前任务在原项目目录执行。' : 'Local · This task runs in the project directory.'}</p>
-      {modeSelector}
+      <p>{zh ? '任务自动使用当前项目目录。' : 'Tasks automatically use the current project directory.'}</p>
     </> : <>
       <div className="task-workspace-heading">
-        <span>{workspace.status === 'discarded' ? (zh ? '任务副本已丢弃' : 'Task copy discarded') : workspace.mode === 'worktree' ? 'Worktree' : 'Local'}</span>
+        <span>{workspace.status === 'discarded' ? (zh ? '任务副本已丢弃' : 'Task copy discarded') : workspace.mode === 'worktree' ? (zh ? '独立任务副本' : 'Task copy') : (zh ? '项目目录' : 'Project directory')}</span>
         <code title={workspace.workspaceDir}>{workspace.workspaceDir}</code>
       </div>
       {workspace.status === 'ready' && <>
@@ -96,11 +92,9 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
         </div>
         {workspace.versioning === 'none' ? <>
           <p>{workspace.versioningError || (zh ? '此目录尚未启用 Git。文件工具保留原有撤回能力；Git 版本还可记录终端和脚本的文件修改。' : 'Git is not enabled for this directory. File tools retain their existing undo support; Git versions can also capture file edits made by terminals and scripts.')}</p>
-          {modeSelector}
         </> : <details className="task-workspace-review">
           <summary>{zh ? `${review.changes.length} 个文件${workspace.mode === 'worktree' ? '待应用' : '有任务修改'} · 查看修改` : `${review.changes.length} ${workspace.mode === 'worktree' ? 'files pending' : 'files changed in this task'} · Review changes`}</summary>
           <p>{zh ? 'Git 版本覆盖已跟踪文件及未被忽略的新文件。任务修改包含终端、脚本和文件工具产生的变更。' : 'Git versions cover tracked and new non-ignored files, including edits made by terminals, scripts and file tools.'}</p>
-          {modeSelector}
           {review.changes.map(change => <details key={change.change_id}>
             <summary>{change.status} · {change.path}</summary>
             <pre>{String(change.metadata.diff ?? '')}</pre>
@@ -112,5 +106,6 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
     {review?.runningTerminals && <p>{zh ? '工作区终端仍在运行。可继续对话；应用、撤回或丢弃副本前需停止终端。' : 'Workspace terminals are running. You can continue chatting; stop them before applying, reverting or discarding files.'}</p>}
     {review?.checkpoints.filter(checkpoint => checkpoint.status === 'failed' || checkpoint.status === 'pending').map(checkpoint =>
       <p className="task-workspace-error" key={checkpoint.turnId}>{checkpoint.error || (zh ? '检查点尚未完成。' : 'Checkpoint is incomplete.')}</p>)}
+    </details>
   </div>;
 }

@@ -1631,7 +1631,7 @@ export async function createConversation({
       sessionId: normalizedSessionId,
       ...(normalizedProjectDir ? { workspace: {
         sourceDir: normalizedProjectDir,
-        mode: window.localStorage.getItem('cardbush.workspace.mode') === 'worktree' ? 'worktree' as const : 'direct' as const,
+        mode: 'auto' as const,
       } } : {}),
       metadata: {
         ...normalizedMetadata,
