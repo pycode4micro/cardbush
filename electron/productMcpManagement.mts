@@ -111,7 +111,7 @@ export function createProductMcpManagementServer(getHost: () => ProductMcpManage
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async () => result(() => getHost().listMcpServers()));
   server.registerTool('list_plugin_connections', {
-    description: 'Read installed plugins’ MCP connection identities, effective authentication source and endpoint, OAuth options, per-tool settings, configuration revision and actual Runtime state. Credential values are never returned.',
+    description: 'Read installed plugins’ registered app IDs, selected and available connection sources, OpenAI app authorization URLs, effective endpoint, OAuth options, tool policies, configuration revision and Runtime state for the listed connections. Available sources describe host support, not authorization. OpenAI account sign-in and granting the service provider’s access to OpenAI are separate steps. Credential values are never returned.',
     inputSchema: { pluginId: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ pluginId }) => result(() => getHost().listPluginConnections(pluginId)));

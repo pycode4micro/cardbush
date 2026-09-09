@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { mcpOAuthConfigSchema, mcpOAuthFromConfig, mcpServerSnapshotSchema } from '@cardbush/bush-protocol';
+import { mcpOAuthConfigSchema, mcpOAuthFromConfig, mcpServerSnapshotSchema, openAiAppAuthorizationUrl, usesOpenAiHostedConnection } from '@cardbush/bush-protocol';
 import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
 import type { CardbushAppsConfigStore, CardbushAppPluginConfig, ProductMcpConfigStore } from '@cardbush/product-host';
 import { pluginRootForManifest, resolvePluginManifest } from './pluginManifest.js';
@@ -55,11 +55,16 @@ export class PluginConnectionManager {
     const connections = [];
     for (const plugin of plugins) for (const component of plugin.components.filter(item => item.kind === 'mcp' || item.kind === 'app')) {
       const settings = record(record(plugin.config.mcp_servers)[component.id]);
+      const registeredAppId = component.mcp?.registeredAppId;
+      const source = registeredAppId && settings.server ? 'bound_server'
+        : usesOpenAiHostedConnection(registeredAppId, settings) ? 'openai' : 'direct';
       let effective, configurationError;
       try { effective = await this.resolve(plugin, component.id, { ...settings, required: false }); }
       catch (error) { configurationError = error instanceof Error ? error.message : String(error); }
       connections.push({ pluginId: plugin.id, componentId: component.id, name: component.name,
         serverId: `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`, pluginEnabled: plugin.enabled,
+        registeredAppId, source, availableSources: registeredAppId ? ['openai', 'direct', 'bound_server'] : ['direct'],
+        openaiAuthorizationUrl: openAiAppAuthorizationUrl(component.name, registeredAppId),
         settings: publicSettings(settings),
         effective: effective ? { transport: effective.transport.kind, ...(effective.transport.kind === 'stdio' ? {} : {
           auth: effective.transport.auth, openaiAppId: effective.transport.openaiAppId,
@@ -67,7 +72,7 @@ export class PluginConnectionManager {
           hasCredentialReference: Boolean(effective.transport.oauth?.clientSecretRef),
         }) } : null, ...(configurationError ? { configurationError } : {}) });
     }
-    return { configurationRevision: config.revision, connections, ...await this.runtimeStatus() };
+    return { configurationRevision: config.revision, connections, ...await this.runtimeStatus(new Set(connections.map(connection => connection.serverId))) };
   }
 
   async configure(candidate: unknown, signal?: AbortSignal) {
@@ -128,7 +133,8 @@ export class PluginConnectionManager {
       let applicationError;
       try { await this.options.refresh(); } catch (error) { applicationError = error instanceof Error ? error.message : String(error); }
       return { saved: true, configurationRevision: saved.revision, connections,
-        ...await this.runtimeStatus(), ...(applicationError ? { applicationError } : {}) };
+        ...await this.runtimeStatus(new Set(plugin.components.filter(component => component.kind === 'mcp' || component.kind === 'app')
+          .map(component => `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`))), ...(applicationError ? { applicationError } : {}) };
     } finally {
       for (const ref of created) await this.options.credentials?.write(ref, undefined);
     }
@@ -161,8 +167,15 @@ export class PluginConnectionManager {
     if (!plugin || ['chrome', 'computer-use'].includes(plugin.id)) throw new Error('This plugin has no externally configurable MCP connections.');
     return { config, plugin };
   }
-  private async runtimeStatus() {
-    try { return await this.options.runtime(); }
+  private async runtimeStatus(serverIds: ReadonlySet<string>) {
+    try {
+      const status = await this.options.runtime();
+      const runtime = record(status.runtime);
+      // Keep snapshot revisions, pending state and errors while excluding unrelated tools.
+      return Array.isArray(runtime.servers) ? { ...status, runtime: { ...runtime,
+        servers: runtime.servers.filter(server => serverIds.has(String(record(server).id))),
+      } } : status;
+    }
     catch (error) { return { runtime: null, runtimeError: error instanceof Error ? error.message : String(error) }; }
   }
   private component(plugin: CardbushAppPluginConfig, name: string) {

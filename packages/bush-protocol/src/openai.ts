@@ -5,8 +5,17 @@ export const OPENAI_HOSTED_PROTOCOL = Object.freeze({
   authorizationEndpoint: 'https://auth.openai.com/oauth/authorize',
   tokenEndpoint: 'https://auth.openai.com/oauth/token',
   mcpEndpoint: 'https://chatgpt.com/backend-api/ps/mcp',
+  appsEndpoint: 'https://chatgpt.com/apps',
   scopes: 'openid profile email offline_access api.connectors.read api.connectors.invoke',
 });
+
+/** OpenAI's app page starts the provider's authorization flow; no credentials enter this URL. */
+export function openAiAppAuthorizationUrl(name: string, registeredAppId: unknown): string | undefined {
+  if (typeof registeredAppId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/.test(registeredAppId)) return undefined;
+  // Same app-name slug convention as the public client's connector directory.
+  const slug = Array.from(name, character => /^[A-Za-z0-9]$/.test(character) ? character.toLowerCase() : '-').join('').replace(/^-+|-+$/g, '') || 'app';
+  return `${OPENAI_HOSTED_PROTOCOL.appsEndpoint}/${slug}/${registeredAppId}`;
+}
 
 /** Explicit user connections take precedence over the default hosted registration. */
 export function usesOpenAiHostedConnection(registeredAppId: unknown, settings: Record<string, unknown>): boolean {

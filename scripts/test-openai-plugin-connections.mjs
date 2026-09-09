@@ -3,13 +3,22 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { mcpServerSnapshotSchema, OPENAI_HOSTED_PROTOCOL } from '@cardbush/bush-protocol';
+import { mcpServerSnapshotSchema, openAiAppAuthorizationUrl, OPENAI_HOSTED_PROTOCOL } from '@cardbush/bush-protocol';
 import { resolvePluginMcpConnection } from '../dist-electron/pluginMcpConfiguration.mjs';
 import { loadEnabledProductPluginMcpServers } from '../dist-electron/productPlugins.js';
 
 const bundled = { calendar: { type: 'http', url: 'https://calendar.example/mcp', oauth: { client_id: '<CLIENT_ID>' }, headers: { 'X-Package': 'private-fixture' } } };
 const apps = { calendar: { id: 'connector_fixture' } };
 const connection = (settings = {}, declarations = bundled, standalone = []) => mcpServerSnapshotSchema.parse(resolvePluginMcpConnection('calendar', 'calendar', process.cwd(), declarations, apps, settings, standalone));
+
+test('app authorization links follow the OpenAI directory route without accepting credentials or injected URL components', () => {
+  assert.equal(openAiAppAuthorizationUrl('Google Calendar', 'connector_fixture'), 'https://chatgpt.com/apps/google-calendar/connector_fixture');
+  assert.equal(openAiAppAuthorizationUrl('产品', 'asdk_app_fixture'), 'https://chatgpt.com/apps/app/asdk_app_fixture');
+  assert.equal(openAiAppAuthorizationUrl('My App & Tools', 'app-123'), 'https://chatgpt.com/apps/my-app---tools/app-123');
+  for (const id of [undefined, '', '../other', 'x?token=private', 'https://example.com', 'x#fragment', 'x%2fother', 'a'.repeat(257)]) {
+    assert.equal(openAiAppAuthorizationUrl('Calendar', id), undefined);
+  }
+});
 
 test('registered applications use hosted MCP by default without inheriting bundled OAuth or headers; explicit direct settings win', () => {
   for (const declarations of [bundled, {}]) {

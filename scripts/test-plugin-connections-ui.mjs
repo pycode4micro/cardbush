@@ -25,8 +25,8 @@ window.fixtureApps.plugins[2].components[0].mcp={transport:'http',url:'https://f
 window.fixtureApps.plugins[2].components.push(...['command','prompt'].map((type,index)=>({kind:'hook',id:'hook-'+type,name:type==='command'?'SessionStart':'Stop',description:'Hook fixture',hook:{definitionHash:'hash-'+index,definition:{event:type==='command'?'SessionStart':'Stop',handler:{type,command:'echo reviewed'}},executable:type==='command'}})));
 window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',description:'Blender tools',enabled:true,transport:'stdio'}],snapshot:{protocol:'bush.mcp_snapshot_result.v1',snapshotId:'cardbush-product-mcp',revision:2000001,configurationRevision:2,applicationState:'applied',servers:[{id:'blender',health:'ready',tools:Array.from({length:26},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__blender__tool'+i}))}]}};
 window.fixtureOverview.snapshot.servers.push({id:'chrome_devtools',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__chrome_devtools__tool'+i}))});
-window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];
-window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}};
+window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];window.externalUrls=[];window.externalOpenFails=false;
+window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},openExternal:async url=>{if(externalOpenFails)throw Error('fixture browser unavailable');externalUrls.push(url)}};
 window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;
 window.publishAccount=state=>{accountStatus={state,experimental:true};for(const fn of accountListeners)fn()};
 Object.assign(window.cardbushDesktop,{
