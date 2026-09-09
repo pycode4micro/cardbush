@@ -1,5 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
 
@@ -85,9 +85,9 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
     } catch {
       continue;
     }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const packageDir = join(root, entry.name);
+    const directories = entries.some(entry => entry.isFile() && entry.name === 'SKILL.md') ? [root]
+      : entries.filter(entry => entry.isDirectory()).map(entry => join(root, entry.name));
+    for (const packageDir of directories) {
       let content;
       try {
         content = await readFile(join(packageDir, "SKILL.md"), "utf8");
@@ -95,7 +95,7 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
         continue;
       }
       const frontmatter = parseFrontmatter(content);
-      const name = frontmatter.name || entry.name;
+      const name = frontmatter.name || basename(packageDir);
       byName.set(name, {
         name,
         description: frontmatter.description || "",

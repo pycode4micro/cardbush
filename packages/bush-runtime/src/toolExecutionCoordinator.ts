@@ -19,6 +19,7 @@ import { pluginCommandDeniesTool } from './pluginCommandTools.js';
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
+  permission?: (context: { toolCall: ToolCall; input: unknown; reason: string; signal?: AbortSignal }) => Promise<PluginHookResult>;
   after: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal; outcome: ToolExecutionOutcome }) => Promise<PluginHookResult>;
 }
 
@@ -35,7 +36,7 @@ export interface ToolExecutionObserver {
   running?: (toolCall: ToolCall, identity: ToolExecutionIdentity) => void;
 }
 
-export type ToolExecutionOutcome = { hookMessages?: string[] } & (
+export type ToolExecutionOutcome = { hookMessages?: string[]; hookFeedback?: string; rejectToolResult?: boolean } & (
   | {
       kind: "returned";
       result: unknown;
@@ -205,12 +206,14 @@ export class ToolExecutionCoordinator {
         } else if (this.#capabilities?.hasAll(capabilitySessionId, grantKeys)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
-          let answer: RuntimePermissionAnswer;
+          let answer: Pick<RuntimePermissionAnswer, 'decision' | 'grantedCapabilityIds'>;
           try {
-            answer = await this.#permissions.request(
-              { ...admission.request, toolCallId: toolCall.id },
-              signal,
-            );
+            const hookPermission = await this.#hooks?.permission?.({ toolCall, input: parsedArguments, reason: admission.request.reason, signal });
+            if (hookPermission) hookResult.messages.push(...hookPermission.messages);
+            if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
+            answer = hookPermission?.permissionDecision === 'allow'
+              ? { decision: 'allow_once', grantedCapabilityIds: [...admission.request.capabilityIds] }
+              : await this.#permissions.request({ ...admission.request, toolCallId: toolCall.id }, signal);
           } catch (error) {
             if (isAbortError(error)) {
               return cancelledResult(
@@ -256,6 +259,7 @@ export class ToolExecutionCoordinator {
     }
     this.#observer.running?.(toolCall, identity);
     let nativeResult: unknown;
+    const nestedHookMessages: string[] = [], nestedHookFeedback: string[] = [];
     const workspaceChanges: WorkspaceChange[] = [];
     try {
       let nestedOrdinal = 0;
@@ -280,7 +284,12 @@ export class ToolExecutionCoordinator {
               ...identity,
               ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
             }, signal, turn);
-            if (nested.kind === "returned") return nested.result;
+            nestedHookMessages.push(...(nested.hookMessages ?? []));
+            if (nested.kind === "returned") {
+              if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
+              if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
+              return nested.result;
+            }
             throw Object.assign(new Error(nested.error.message), {
               code: nested.error.code,
               details: nested.error.details,
@@ -305,8 +314,8 @@ export class ToolExecutionCoordinator {
       if (this.#hooks) {
         try {
           const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome: failed });
-          failed.hookMessages = [...hookResult.messages, ...post.messages];
-        } catch (postError) { failed.hookMessages = [...hookResult.messages, `Plugin hook failed after tool failure: ${errorMessage(postError)}`]; }
+          failed.hookMessages = [...hookResult.messages, ...nestedHookMessages, ...post.messages];
+        } catch (postError) { failed.hookMessages = [...hookResult.messages, ...nestedHookMessages, `Plugin hook failed after tool failure: ${errorMessage(postError)}`]; }
       }
       return failed;
     }
@@ -337,7 +346,9 @@ export class ToolExecutionCoordinator {
     if (this.#hooks) {
       try {
         const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome });
-        outcome.hookMessages = [...hookResult.messages, ...post.messages];
+        outcome.hookMessages = [...hookResult.messages, ...nestedHookMessages, ...post.messages];
+        outcome.hookFeedback = post.toolFeedback ?? (nestedHookFeedback.length ? nestedHookFeedback.join('\n') : undefined);
+        outcome.rejectToolResult = post.rejectToolResult;
       } catch (postError) { outcome.hookMessages = [...hookResult.messages, `Plugin hook failed after tool execution; the tool's completed result remains valid: ${errorMessage(postError)}`]; }
     }
     return outcome;

@@ -64,6 +64,7 @@ import {
   remarkAutolinkBoundaries,
 } from './markdownFormat';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
   localFileReference,
   localFileReferenceHref,
@@ -389,6 +390,7 @@ const LazyMarkdownContent = lazy(async () => {
               {...props}
               src={resolvedSource}
               alt={alt ?? ''}
+              onContextMenu={event => openFileContextMenu(event, resolvedPath, { image: true, language })}
               onClick={reference
                 ? () => openInspector(resolvedPath, reference.label)
                 : undefined}
@@ -1003,12 +1005,11 @@ function MessageBubbleView({
       <AgentHookSummaryBadge message={message} language={language} />
       {!renderActiveTranscript && (
         <>
-          <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
+          <MessageImageStrip paths={detachedImagePaths} language={language} />
           <MessageMediaStrip
             videoPaths={detachedVideoPaths}
             audioPaths={detachedAudioPaths}
             language={language}
-            showPaths
           />
         </>
       )}
@@ -1070,12 +1071,11 @@ function MessageBubbleView({
   const assistantBody = assistantBodyContent;
   const finalAnswerBody = (
     <div className="assistant-final-answer">
-      <MessageImageStrip paths={detachedImagePaths} language={language} showPaths />
+      <MessageImageStrip paths={detachedImagePaths} language={language} />
       <MessageMediaStrip
         videoPaths={detachedVideoPaths}
         audioPaths={detachedAudioPaths}
         language={language}
-        showPaths
       />
       {assistantContent && (
         <MessageInlineMediaContent
@@ -1413,8 +1413,9 @@ function TaskPlanBlock({
   language: AppLanguage;
 }) {
   const completed = plan.nodes.filter((item) => item.status === 'completed').length;
+  const waiting = plan.nodes.some(item => item.status === 'waiting');
   return (
-    <section className={`task-plan-block ${plan.active ? 'active' : 'completed'}`}>
+    <section className={`task-plan-block ${waiting ? 'waiting' : plan.active ? 'active' : 'completed'}`}>
       <div className="task-plan-header">
         <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
         <span>{completed}/{plan.nodes.length}</span>
@@ -1430,7 +1431,7 @@ function TaskPlanBlock({
             ) : (
               <Clock3 size={14} />
             )}
-            <span>{item.step}</span>
+            <span>{item.step}{item.status === 'waiting' && <small> — {language === 'zh' ? '等待：' : 'Waiting: '}{item.waitingFor}</small>}</span>
           </li>
         ))}
       </ol>
@@ -1459,7 +1460,6 @@ function AssistantSegmentAttachments({
     <MessageImageStrip
       paths={pathsNotEmbeddedInContent(paths('image'), embedded.imagePaths)}
       language={language}
-      showPaths
     />
     <MessageMediaStrip
       videoPaths={pathsNotEmbeddedInContent(paths('video'), embedded.videoPaths)}
@@ -2580,12 +2580,10 @@ function MessageMediaStrip({
   videoPaths,
   audioPaths,
   language,
-  showPaths = false,
 }: {
   videoPaths: string[];
   audioPaths: string[];
   language: AppLanguage;
-  showPaths?: boolean;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
   if (videoPaths.length === 0 && audioPaths.length === 0) return null;
@@ -2595,7 +2593,8 @@ function MessageMediaStrip({
         const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
         return (
-          <figure className="message-video-player" key={`video-${pathValue}`}>
+          <figure className="message-video-player" key={`video-${pathValue}`}
+            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
             <video
               controls
               playsInline
@@ -2604,7 +2603,7 @@ function MessageMediaStrip({
               aria-label={language === 'zh' ? `播放视频 ${name}` : `Play video ${name}`}
             />
             <figcaption title={pathValue}>
-              {showPaths ? <MessageMediaPath pathValue={pathValue} language={language} /> : name}
+              {name}
             </figcaption>
           </figure>
         );
@@ -2613,9 +2612,10 @@ function MessageMediaStrip({
         const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
         return (
-          <figure className="message-audio-player" key={`audio-${pathValue}`}>
+          <figure className="message-audio-player" key={`audio-${pathValue}`}
+            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
             <figcaption title={pathValue}>
-              {showPaths ? <MessageMediaPath pathValue={pathValue} language={language} /> : name}
+              {name}
             </figcaption>
             <audio
               controls
@@ -2756,6 +2756,7 @@ function MessageFileAttachmentStrip({
             key={attachment.id || pathValue}
             title={pathValue}
             disabled={!pathValue}
+            onContextMenu={event => openFileContextMenu(event, pathValue, { language })}
             onClick={() => kind === 'folder'
               ? void window.cardbushDesktop?.openPath?.(pathValue)
               : openInspector(pathValue, name)}
@@ -2779,11 +2780,9 @@ function MessageFileAttachmentStrip({
 function MessageImageStrip({
   paths,
   language,
-  showPaths = false,
 }: {
   paths: string[];
   language: AppLanguage;
-  showPaths?: boolean;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
@@ -2802,11 +2801,6 @@ function MessageImageStrip({
                 language={language}
                 onPreview={setPreview}
               />
-              {showPaths && (
-                <figcaption>
-                  <MessageMediaPath pathValue={pathValue} language={language} />
-                </figcaption>
-              )}
             </figure>
           );
         })}
@@ -2819,38 +2813,6 @@ function MessageImageStrip({
         />
       )}
     </>
-  );
-}
-
-function MessageMediaPath({
-  pathValue,
-  language,
-}: {
-  pathValue: string;
-  language: AppLanguage;
-}) {
-  const local = isAbsoluteLocalPath(pathValue) || /^file:\/\//i.test(pathValue);
-  const label = /^data:/i.test(pathValue)
-    ? language === 'zh' ? '内嵌媒体' : 'Embedded media'
-    : pathValue;
-  return (
-    <button
-      className="message-media-path"
-      type="button"
-      title={pathValue}
-      onClick={() => {
-        if (local) {
-          openInspector(pathValue, basename(pathValue));
-          return;
-        }
-        if (/^https?:\/\//i.test(pathValue)) {
-          window.open(pathValue, '_blank', 'noopener,noreferrer');
-        }
-      }}
-    >
-      <FileIcon size={11} />
-      <span>{label}</span>
-    </button>
   );
 }
 
@@ -2891,12 +2853,11 @@ function MessageInlineMediaContent({
             // eslint-disable-next-line react/no-array-index-key
             key={`media-${index}`}
           >
-            <MessageImageStrip paths={imagePaths} language={language} showPaths />
+            <MessageImageStrip paths={imagePaths} language={language} />
             <MessageMediaStrip
               videoPaths={videoPaths}
               audioPaths={audioPaths}
               language={language}
-              showPaths
             />
           </div>
         );
@@ -2953,6 +2914,7 @@ function MessageImagePreviewButton({
       className={`message-image-preview${failed ? ' is-failed' : ''}`}
       type="button"
       title={name}
+      onContextMenu={event => openFileContextMenu(event, pathValue, { image: true, language })}
       onClick={() => {
         if (!failed) onPreview({ src, name, path: pathValue });
       }}

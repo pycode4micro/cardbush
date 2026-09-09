@@ -1,10 +1,22 @@
 import { createHash } from "node:crypto";
+import { McpInteractiveCalls, ScopedMcpClient, type McpElicitationHandler } from './elicitation.js';
+import { McpOAuthCoordinator, McpAuthenticationRequired, McpOAuthConfigurationRequired, credentialKey } from './oauth.js';
+import { mcpHeaderFetch } from './headerHelper.js';
+import { createOpenAiTransport, scopeOpenAiClient, attachOpenAiResultAdapter, type OpenAiTokenProvider } from './openaiHosted.js';
+import { OpenAiAuthError } from './openaiAuth.js';
+export * from './openaiAuth.js';
+export { createOpenAiResultNormalizer, createOpenAiTransport, type OpenAiTokenProvider } from './openaiHosted.js';
+export { McpOAuthCoordinator, credentialKey, McpAuthenticationRequired, McpOAuthConfigurationRequired, type McpCredentialStore, type CredentialState } from './oauth.js';
+export type { McpElicitationHandler } from './elicitation.js';
+export { validateMcpFormResponse } from './elicitation.js';
 
 import {
   Client,
   SdkErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
+  UnauthorizedError,
+  type OAuthClientProvider,
   type Tool as McpTool,
   type Transport,
 } from "@modelcontextprotocol/client";
@@ -29,10 +41,12 @@ interface ConnectedServer {
   config: McpServerSnapshot;
   client: Client;
   transport: Transport;
-  health: "ready" | "restarting" | "unavailable";
+  health: "ready" | "restarting" | "unavailable" | "auth_required" | "configuration_required";
   restartAttempts: number;
   lastError?: string;
   restartPromise?: Promise<void>;
+  authorization?: Promise<void>;
+  authorizationAbort?: AbortController;
   pendingClient?: Client;
   pendingTransport?: Transport;
   retired: boolean;
@@ -45,6 +59,10 @@ interface ConnectedServer {
 }
 
 export interface McpClientManagerOptions {
+  openai?: { getToken: OpenAiTokenProvider; fetch?: typeof fetch };
+  oauth?: McpOAuthCoordinator;
+  onElicitation?: McpElicitationHandler;
+  onAuthenticationRequired?: (request: { serverId: string; sessionId: string; turnId: string; toolCallId: string }, signal: AbortSignal) => Promise<boolean>;
   registry: ToolRegistry;
   canApply?: () => boolean;
   createClient?: (server: McpServerSnapshot) => Client;
@@ -53,7 +71,7 @@ export interface McpClientManagerOptions {
   closeTimeoutMs?: number;
   onServiceStateChange?: (state: {
     serverId: string;
-    health: "ready" | "restarting" | "unavailable";
+    health: "ready" | "restarting" | "unavailable" | "auth_required" | "configuration_required";
     restartAttempts: number;
     transportKind: McpServerSnapshot["transport"]["kind"];
     recoveryOwner: "cardbush_supervisor";
@@ -68,6 +86,9 @@ export interface McpClientManagerOptions {
  * from a Tool name or description.
  */
 export class McpClientManager {
+  readonly #openai?: McpClientManagerOptions['openai'];
+  readonly #oauth?: McpOAuthCoordinator;
+  readonly #interactive: McpInteractiveCalls;
   readonly #registry: ToolRegistry;
   readonly #canApply: () => boolean;
   readonly #createClient: (server: McpServerSnapshot) => Client;
@@ -76,6 +97,7 @@ export class McpClientManager {
   readonly #closeTimeoutMs: number;
   readonly #onServiceStateChange?: McpClientManagerOptions["onServiceStateChange"];
   readonly #onServerStderr?: McpClientManagerOptions["onServerStderr"];
+  readonly #onAuthenticationRequired?: McpClientManagerOptions['onAuthenticationRequired'];
   #connections: ConnectedServer[] = [];
   #snapshot?: McpSnapshot;
   #result?: McpSnapshotResult;
@@ -84,12 +106,58 @@ export class McpClientManager {
   #retryTimer?: ReturnType<typeof setTimeout>;
   #queue: Promise<unknown> = Promise.resolve();
   #closed = false;
+  readonly #forceReconnect = new Set<string>();
+
+  refresh(serverId: string, snapshot: McpSnapshot): Promise<McpSnapshotResult> {
+    return this.refreshServers([serverId], snapshot);
+  }
+
+  refreshServers(serverIds: string[], snapshot: McpSnapshot): Promise<McpSnapshotResult> {
+    serverIds.forEach(id => this.#forceReconnect.add(id));
+    return this.apply(snapshot);
+  }
+
+  async invalidateOpenAiConnections(): Promise<void> {
+    await Promise.all(this.#connections.filter(item => item.config.transport.kind !== 'stdio' && item.config.transport.auth === 'openai').map(async connection => {
+      connection.health = 'auth_required'; connection.lastError = 'OpenAI account changed; reconnect after current tasks finish.';
+      connection.authorizationAbort?.abort();
+      this.#publishServiceState(connection, 'cardbush_supervisor');
+      await closeConnection(connection.client, connection.transport, this.#closeTimeoutMs);
+    }));
+  }
+
+  /** Manual and tool-initiated login report failures through the same connection state. */
+  async login(server: McpServerSnapshot, signal?: AbortSignal): Promise<void> {
+    if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai') {
+      throw new OpenAiAuthError();
+    }
+    if (!this.#oauth) throw new McpAuthenticationRequired();
+    try { await this.#oauth.login(server, signal); }
+    catch (error) {
+      const connection = this.#connections.find(item => item.config.id === server.id);
+      // A late failure from an older configuration must not overwrite its replacement.
+      if (connection && server.transport.kind !== 'stdio' && connection.config.transport.kind !== 'stdio'
+        && credentialKey(connection.config) === credentialKey(server)) this.#recordAuthenticationFailure(connection, error);
+      throw error;
+    }
+  }
 
   constructor(options: McpClientManagerOptions) {
+    this.#openai = options.openai;
+    this.#oauth = options.oauth;
+    this.#onAuthenticationRequired = options.onAuthenticationRequired;
+    this.#interactive = new McpInteractiveCalls(options.onElicitation);
     this.#registry = options.registry;
     this.#canApply = options.canApply ?? (() => true);
-    this.#createClient = options.createClient ?? createClient;
-    this.#createTransport = options.createTransport ?? createTransport;
+    this.#createClient = server => {
+      const client = options.createClient?.(server) ?? createClient(server, this.#interactive);
+      if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai') scopeOpenAiClient(client, server.transport.openaiAppId!);
+      return client;
+    };
+    this.#createTransport = options.createTransport ?? (server => server.transport.kind !== 'stdio' && server.transport.auth === 'openai'
+      ? createOpenAiTransport(server, this.#openai?.getToken, this.#openai?.fetch) : createTransport(server,
+      server.transport.kind !== 'stdio' && server.transport.auth !== 'none' && !Object.keys(server.transport.headers).some(key => key.toLowerCase() === 'authorization')
+        ? this.#oauth?.provider(server) : undefined));
     this.#wait = options.wait ?? delay;
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000;
     this.#onServiceStateChange = options.onServiceStateChange;
@@ -164,7 +232,7 @@ export class McpClientManager {
     try {
       for (const server of snapshot.servers) {
         const reusable = this.#connections.find((connection) =>
-          connection.config.id === server.id && !connection.retired &&
+          connection.config.id === server.id && !connection.retired && !this.#forceReconnect.has(server.id) &&
           connection.health === "ready" && JSON.stringify(connection.config) === JSON.stringify(server),
         );
         const connection = reusable ?? await this.#connect(server);
@@ -192,6 +260,7 @@ export class McpClientManager {
     this.#connections = next;
     this.#snapshot = snapshot;
     this.#pending = undefined;
+    this.#forceReconnect.clear();
     this.#applicationError = undefined;
     clearTimeout(this.#retryTimer);
     this.#retryTimer = undefined;
@@ -225,6 +294,7 @@ export class McpClientManager {
   }
 
   async close(): Promise<void> {
+    this.#oauth?.close();
     this.#closed = true;
     clearTimeout(this.#retryTimer);
     await this.#queue;
@@ -239,14 +309,17 @@ export class McpClientManager {
 
   async #connect(config: McpServerSnapshot): Promise<ConnectedServer> {
     const client = this.#createClient(config);
+    this.#interactive.prepare(client);
     const transport = this.#createTransport(config);
     drainTransportStderr(transport, config.id, this.#onServerStderr);
     try {
-      await client.connect(transport);
+      await client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000 });
+      if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai') attachOpenAiResultAdapter(client, transport);
       const listed = await client.listTools();
+      if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai' && !listed.tools.length) throw new McpOAuthConfigurationRequired('This application is not available in the signed-in OpenAI account. Connect it in ChatGPT Apps, then reconnect.');
       const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
       const tools = listed.tools
-        .filter((tool) => !exposed || exposed.has(tool.name))
+        .filter((tool) => (!exposed || exposed.has(tool.name)) && !config.disabledTools?.includes(tool.name) && config.toolPolicies[tool.name]?.enabled !== false)
         .map((remote) => {
           const policy = config.toolPolicies[remote.name] ?? config.defaultToolPolicy;
           return {
@@ -274,6 +347,10 @@ export class McpClientManager {
       return connection;
     } catch (error) {
       await closeConnection(client, transport, this.#closeTimeoutMs);
+      const authentication = authenticationFailure(error);
+      // Keep sign-in/configuration failures visible and recoverable even for required services.
+      if (!config.required || authentication) return { config, client, transport, tools: [], health: authentication?.health ?? 'unavailable',
+        restartAttempts: 0, retired: false, lastError: authentication?.error.message ?? errorMessage(error) };
       throw error;
     }
   }
@@ -285,6 +362,18 @@ export class McpClientManager {
     const resource = `mcp://${connection.config.id}/tools/${encodeURIComponent(tool.remote.name)}`;
     return {
       registrationOwner: "runtime_mcp",
+      mcpHook: {
+        server: connection.config.id,
+        tool: tool.remote.name,
+        call: async (input, options) => {
+          if (connection.retired || connection.health !== 'ready') throw new Error(`MCP service ${connection.config.id} is not connected.`);
+          try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
+            Math.min(options.timeoutMs, connection.config.toolTimeoutMs ?? 60_000), signal => connection.client.callTool({ name: tool.remote.name, arguments: input,
+            _meta: mcpRequestMetadata({ requestId: options.request.requestId, sessionId: options.request.sessionId, turnId: options.request.turnId, turn: { request: options.request, contextMessages: [] } }, connection.config.id, tool.remote) },
+          { signal, timeout: 2_147_483_647, toolDefinition: tool.remote })); }
+          catch (error) { this.#recordAuthenticationFailure(connection, error); throw error; }
+        },
+      },
       definition: {
         name: tool.runtimeName,
         description: tool.remote.description ?? "",
@@ -313,7 +402,8 @@ export class McpClientManager {
         };
       },
       execute: async (context) => {
-        if (connection.health !== "ready") {
+        if (connection.health === 'configuration_required') throw new McpOAuthConfigurationRequired(connection.lastError);
+        if (connection.health !== "ready" && connection.health !== 'auth_required') {
           throw codedMcpError(
             connection.health === "restarting"
               ? "mcp_service_restarting"
@@ -329,19 +419,33 @@ export class McpClientManager {
         }
         const activeClient = connection.client;
         let candidate;
-        try {
-          candidate = await activeClient.callTool(
+        const invoke = () => this.#interactive.run(activeClient, { serverId: connection.config.id, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id, signal: context.signal },
+            connection.config.toolTimeoutMs ?? 60_000, signal => activeClient.callTool(
             {
               name: tool.remote.name,
               arguments: context.input,
               _meta: mcpRequestMetadata(context, connection.config.id, tool.remote),
             },
             {
-              signal: context.signal,
+              signal,
+              timeout: 2_147_483_647,
               toolDefinition: tool.remote,
             },
-          );
+          ));
+        try {
+          let authorized = false;
+          if (connection.health === 'auth_required') { await this.#authenticate(connection, context); authorized = true; }
+          try { candidate = await invoke(); }
+          catch (error) {
+            const failure = this.#recordAuthenticationFailure(connection, error);
+            if (authorized || failure?.health !== 'auth_required') throw error;
+            await this.#authenticate(connection, context);
+            // Only an authentication rejection is retried, once, with the original input.
+            candidate = await invoke();
+          }
         } catch (error) {
+          const authentication = this.#recordAuthenticationFailure(connection, error);
+          if (authentication) throw authentication.error;
           if (context.signal?.aborted || isAbortError(error)) {
             throw abortErrorFromSignal(context.signal, error);
           }
@@ -385,6 +489,49 @@ export class McpClientManager {
     };
   }
 
+  #recordAuthenticationFailure(connection: ConnectedServer, error: unknown) {
+    const failure = authenticationFailure(error);
+    if (failure && !connection.retired) {
+      const changed = connection.health !== failure.health || connection.lastError !== failure.error.message;
+      connection.health = failure.health;
+      connection.lastError = failure.error.message;
+      if (changed) this.#publishServiceState(connection, 'cardbush_supervisor');
+    }
+    return failure;
+  }
+
+  async #authenticate(connection: ConnectedServer, context: ToolHandlerContext<Record<string, unknown>>) {
+    // Reauthentication changes the shared account and requires fresh app-scoped sessions.
+    // The account settings own that transition; never resume an old session after login.
+    if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') throw new OpenAiAuthError();
+    if (!this.#oauth || !this.#onAuthenticationRequired) throw new McpAuthenticationRequired();
+    if (!connection.authorization) {
+      const client = connection.client, controller = new AbortController();
+      connection.authorizationAbort = controller;
+      const signal = context.signal ? AbortSignal.any([context.signal, controller.signal]) : controller.signal;
+      connection.authorization = (async () => {
+        signal.throwIfAborted();
+        const accepted = await this.#onAuthenticationRequired!({ serverId: connection.config.id, sessionId: context.sessionId, turnId: context.turnId, toolCallId: context.toolCall.id }, signal);
+        signal.throwIfAborted();
+        if (!accepted) throw new McpAuthenticationRequired();
+        await this.login(connection.config, signal);
+        signal.throwIfAborted();
+        if (connection.retired || connection.client !== client) throw new Error('The MCP connection changed during sign-in.');
+        connection.health = 'ready'; connection.lastError = undefined;
+        this.#publishServiceState(connection, 'cardbush_supervisor');
+      })().finally(() => { connection.authorization = undefined; connection.authorizationAbort = undefined; });
+    }
+    // A second caller can stop waiting without cancelling the originating task's login.
+    const pending = connection.authorization;
+    if (!context.signal) return pending;
+    const signal = context.signal;
+    let abort!: () => void;
+    try { await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+      abort = () => reject(abortErrorFromSignal(signal, 'MCP sign-in was cancelled.'));
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    })]); } finally { signal.removeEventListener('abort', abort); }
+  }
+
   #invalidateConnection(
     connection: ConnectedServer,
     failedClient: Client,
@@ -426,6 +573,7 @@ export class McpClientManager {
       connection.restartAttempts = attempt;
       this.#publishServiceState(connection, "cardbush_supervisor");
       const client = this.#createClient(connection.config);
+      this.#interactive.prepare(client);
       const transport = this.#createTransport(connection.config);
       drainTransportStderr(
         transport,
@@ -435,11 +583,15 @@ export class McpClientManager {
       connection.pendingClient = client;
       connection.pendingTransport = transport;
       try {
-        await client.connect(transport);
+        await client.connect(transport, { timeout: connection.config.startupTimeoutMs ?? 15_000 });
+        if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') attachOpenAiResultAdapter(client, transport);
         const listed = await client.listTools();
         const byName = new Map(listed.tools.map((remote) => [remote.name, remote]));
         const missing = connection.tools.filter((tool) => !byName.has(tool.remote.name));
         if (missing.length > 0) {
+          if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') {
+            throw new McpOAuthConfigurationRequired('OpenAI application tools changed or access was removed. Refresh the application connection.');
+          }
           throw new Error(
             `Restarted MCP service omitted configured tools: ${missing.map((tool) => tool.remote.name).join(", ")}`,
           );
@@ -466,10 +618,12 @@ export class McpClientManager {
       } catch (error) {
         connection.pendingClient = undefined;
         connection.pendingTransport = undefined;
-        connection.health = "unavailable";
-        connection.lastError = errorMessage(error);
+        const authentication = authenticationFailure(error);
+        connection.health = authentication?.health ?? "unavailable";
+        connection.lastError = authentication?.error.message ?? errorMessage(error);
         this.#publishServiceState(connection, "cardbush_supervisor");
         await closeConnection(client, transport, this.#closeTimeoutMs);
+        if (authentication) { connection.restartPromise = undefined; return; }
       }
     }
   }
@@ -477,6 +631,7 @@ export class McpClientManager {
   async #retireConnections(connections: ConnectedServer[]): Promise<void> {
     connections.forEach((connection) => {
       connection.retired = true;
+      connection.authorizationAbort?.abort();
     });
     await Promise.allSettled(
       connections.flatMap((connection) => [
@@ -508,7 +663,7 @@ export class McpClientManager {
 }
 
 function mcpRequestMetadata(
-  context: ToolHandlerContext<unknown>,
+  context: Pick<ToolHandlerContext<unknown>, 'requestId' | 'sessionId' | 'turnId' | 'turn'>,
   serverId: string,
   tool: McpTool,
 ): Record<string, unknown> {
@@ -558,8 +713,8 @@ function explicitActionManifest(
   };
 }
 
-function createClient(server: McpServerSnapshot): Client {
-  return new Client(
+function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls): Client {
+  return new ScopedMcpClient(
     { name: "cardbush-runtime", version: "0.1.0" },
     {
       versionNegotiation: {
@@ -567,11 +722,11 @@ function createClient(server: McpServerSnapshot): Client {
           ? { pin: "2026-07-28" }
           : server.versionMode,
       },
-    },
+    }, calls,
   );
 }
 
-function createTransport(server: McpServerSnapshot): Transport {
+export function createTransport(server: McpServerSnapshot, authProvider?: OAuthClientProvider): Transport {
   const transport = server.transport;
   if (transport.kind === "stdio") {
     return new StdioClientTransport({
@@ -585,10 +740,18 @@ function createTransport(server: McpServerSnapshot): Transport {
   const requestInit = Object.keys(transport.headers).length > 0
     ? { headers: transport.headers }
     : undefined;
+  const fetchWithHeaders = transport.headersHelper ? mcpHeaderFetch(transport.url, transport.headersHelper) : undefined;
   if (transport.kind === "sse") {
-    return new SSEClientTransport(new URL(transport.url), { requestInit });
+    return new SSEClientTransport(new URL(transport.url), { requestInit, authProvider, fetch: fetchWithHeaders });
   }
-  return new StreamableHTTPClientTransport(new URL(transport.url), { requestInit });
+  return new StreamableHTTPClientTransport(new URL(transport.url), { requestInit, authProvider, fetch: fetchWithHeaders });
+}
+
+function authenticationFailure(error: unknown) {
+  if (error instanceof McpOAuthConfigurationRequired || (error as { code?: unknown })?.code === 'mcp_oauth_configuration_required') return { health: 'configuration_required' as const, error: error as Error };
+  if (error instanceof OpenAiAuthError) return { health: 'auth_required' as const, error };
+  if (error instanceof UnauthorizedError || mcpErrorCode(error) === SdkErrorCode.ClientHttpAuthentication || (error as { code?: unknown })?.code === 'mcp_auth_required') return { health: 'auth_required' as const, error: new McpAuthenticationRequired() };
+  return undefined;
 }
 
 function codedMcpError(

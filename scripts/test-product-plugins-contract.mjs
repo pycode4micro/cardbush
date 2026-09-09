@@ -135,10 +135,9 @@ try {
   const guide = readFileSync(resolve('assets/skills/cardbush-plugin-management/references/plugin-contract.md'), 'utf8');
   const sample = JSON.parse(guide.match(/```json\s*([\s\S]*?)```/)[1]);
   const sampleRoot = join(temporary, 'source', sample.name);
-  await mkdir(join(sampleRoot, '.codex-plugin'), { recursive: true });
   await mkdir(join(sampleRoot, 'assets'), { recursive: true });
   await mkdir(join(sampleRoot, 'skills', sample.name), { recursive: true });
-  await writeFile(join(sampleRoot, '.codex-plugin', 'plugin.json'), JSON.stringify(sample));
+  await writeFile(join(sampleRoot, 'plugin.json'), JSON.stringify(sample));
   await writeFile(join(sampleRoot, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   await writeFile(join(sampleRoot, 'skills', sample.name, 'SKILL.md'), `---\nname: ${sample.name}\ndescription: Test helper\n---\n\nTest helper.\n`);
   // Install beside chrome, so each state change can also verify preservation.

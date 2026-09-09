@@ -29,18 +29,19 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
   registry.register<Record<string, unknown>>({
     definition: {
       name: "consult_logic",
-      description: "Search local reasoning lessons to check an assumption, judgment or useful past correction; you need not first feel uncertain. Uses word segmentation and BM25, not semantic matching; check applicability and evidence, and ignore unrelated candidates. A Runtime reminder is optional, not a required Tool call. Do not call routinely on every Turn or completion. Use mode=list only when the user asks to inspect stored lessons; it is paginated inventory, not a search for all topics.",
+      description: "Retrieve lessons from accumulated past experience using the current task or conversation context supplied in the call. Results contain stored historical situations, applicable conditions, reasoning corrections and evidence. mode=search uses BM25 lexical matching against that supplied context; mode=list returns a paginated inventory of historical lessons. Matches and scores describe lexical overlap, not verified applicability or facts about the current task.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         properties: {
           mode: { type: "string", enum: ["search", "list"], default: "search" },
-          query: { type: "string", minLength: 1, pattern: "\\S", description: "The actual decision or reasoning doubt, with concrete terms from the situation; not a request to list all memories." },
+          query: { type: "string", minLength: 1, pattern: "\\S", description: "The current context or decision for which to retrieve lessons from past experience, expressed with concrete search terms. Required in search mode." },
           offset: { type: "integer", minimum: 0, description: "List mode only. Use the previous next_offset to continue." },
           scenario_conditions: {
+            description: "Conditions of the current situation to match against historical experience.",
             oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
           },
-          decision_context: { type: "string" },
+          decision_context: { type: "string", description: "Relevant context from the current task or conversation, supplied by the caller as additional retrieval evidence." },
           decision_phase: {
             type: "string",
             enum: ["before_action", "after_tool_result", "before_delegation", "before_final", "recovery", "postmortem"],
@@ -80,7 +81,7 @@ function registerLogic(registry: ToolRegistry, store: LogicMemoryStore) {
   registry.register<Record<string, unknown>>({
     definition: {
       name: "learn_logic",
-      description: "Store a valuable reasoning correction after checking the outcome. Bound the lesson to its applicable conditions; keep commands and domain-specific fixes in evidence, not universal rules. Repeating a lesson does not strengthen it. action=feedback concerns an explicitly evaluated logic_id, never overall answer satisfaction or fabricated user thumbs; Runtime records user thumbs separately.",
+      description: "Store a reasoning lesson with its applicable conditions, correction and evidence (action=learn), or record feedback for a specified logic_id (action=feedback). Repeating identical evidence does not increase the learning count. Reply thumbs are recorded separately by Runtime and do not rate individual lessons.",
       inputSchema: {
         type: "object",
         additionalProperties: false,

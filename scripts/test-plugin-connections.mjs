@@ -16,16 +16,28 @@ assert.equal(mcpConnectionState('blender', false, { ...snapshot, applicationStat
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, applicationState: 'failed' }, 2), 'unavailable');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, servers: [{ id: 'blender', health: 'unavailable', tools: [] }] }, 2), 'unavailable');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, servers: [{ id: 'blender', health: 'restarting', tools: [] }] }, 2), 'restarting');
+assert.equal(mcpConnectionState('blender', true, { ...snapshot, servers: [{ id: 'blender', health: 'auth_required', tools: [] }] }, 2), 'auth_required');
+assert.equal(mcpConnectionState('blender', true, { ...snapshot, servers: [{ id: 'blender', health: 'configuration_required', tools: [] }] }, 2), 'configuration_required');
 assert.equal(mcpConnectionState('blender', false, snapshot, 2), 'disabled');
 assert.equal(mcpConnectionState('blender', true, null, 2), 'unknown');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, snapshotId: 'different' }, 2), 'unknown');
 
-const plugin = (id, component) => ({ id, name: id, installed: true, enabled: true,
+const plugin = (id, component) => ({ id, name: id, installed: true, enabled: true, config: {},
   components: [{ kind: 'mcp', id: component, name: component, description: '' }] });
 const plugins = [plugin('computer-use', 'cardbush_apps'), plugin('chrome', 'chrome-devtools'), plugin('example.tools', 'echo')];
+plugins[1].components[0].name = 'Chrome Devtools';
+plugins[1].components.push({ kind: 'app', id: 'chrome', name: 'Chrome', description: 'Registered MCP connection' });
+snapshot.servers.push({ id: 'chrome_devtools', health: 'ready', tools: Array.from({ length: 15 }, (_, i) => ({ remoteName: `tool${i}`, runtimeName: `mcp__chrome_devtools__tool${i}` })) });
 const overview = { revision: 2, snapshot, servers: [{ id: 'blender', name: 'Blender MCP', description: '', enabled: true, transport: 'stdio' }] };
 const entries = pluginMcpConnections(plugins, overview, true);
 assert.equal(entries.map(item => item.id).join(','), 'cardbush_apps,chrome_devtools,plugin_example_tools_echo,blender');
+assert.equal(entries.filter(item => item.plugin?.id === 'chrome').length, 1, 'application and MCP declarations for one runtime connection form one row');
+assert.equal(entries[1].toolCount, 15, 'the connection tool count is not duplicated');
+assert.equal(entries[1].name, 'Chrome Devtools');
+assert.equal(pluginMcpConnections([{ ...plugins[1], components: [...plugins[1].components].reverse() }], overview, true)[0].name, 'Chrome Devtools', 'transport metadata takes precedence regardless of declaration order');
+assert.equal(plugins[1].components.filter(item => item.kind === 'app').length, 1, 'the original application declaration remains available');
+const separate = { ...plugins[2], components: [...plugins[2].components, { kind: 'app', id: 'other', name: 'Other', description: '' }] };
+assert.equal(pluginMcpConnections([separate], overview, true).filter(item => item.plugin).length, 2, 'distinct runtime IDs within one plugin remain distinct connections');
 assert.equal(entries.at(-1).plugin, undefined);
 assert.equal(entries.at(-1).state, 'connected');
 assert.equal(entries.at(-1).toolCount, 1);

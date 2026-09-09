@@ -2,6 +2,7 @@ import { FolderOpen, Play } from 'lucide-react';
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { openInspector } from '../inspector/inspectorEvents';
 import { FileTypeIcon } from './FileTypeIcon';
 
@@ -78,9 +79,7 @@ export function LocalFileReferenceLink({
   }
 
   function openContextMenu(event: MouseEvent<HTMLAnchorElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    void window.cardbushDesktop?.showFileContextMenu?.(path);
+    openFileContextMenu(event, path);
   }
 
   return (

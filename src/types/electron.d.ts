@@ -1,5 +1,5 @@
 export {};
-import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview } from '../../electron/pluginMarketplaceTypes';
+import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview, PluginMarketPresentation } from '../../electron/pluginMarketplaceTypes';
 
 import type {
   CardlingDesktopAction,
@@ -44,6 +44,9 @@ declare global {
         cancelOperation: (message: unknown) => Promise<void>;
         onStreamFrame: (callback: (message: unknown) => void) => () => void;
       };
+      readGlobalInstructions: () => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
+      readAgentInstructions: (projectDir?: string, workspaceDir?: string) => Promise<import('@cardbush/bush-product-agent').AgentInstructionDocument[]>;
+      saveGlobalInstructions: (content: string, revision: string) => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
       rendererReady: () => Promise<void>;
       ensureTaskWorkspace: (sessionId: string) => Promise<string>;
       runtimeStartupStatus: () => Promise<RuntimeStartupStatus>;
@@ -124,6 +127,15 @@ declare global {
       }>;
       setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') => Promise<void>;
       productHostCommand: (command: unknown) => Promise<unknown>;
+      mcpRequests: () => Promise<import('../../electron/mcpDesktopHost').McpUserRequest[]>;
+      answerMcpRequest: (id: string, answer: unknown) => Promise<boolean>;
+      openMcpRequestUrl: (id: string) => Promise<void>;
+      mcpConnectionAction: (serverId: string, action: 'login' | 'logout' | 'cancel_login' | 'reconnect') => Promise<unknown>;
+      openAiAccountStatus: () => Promise<import('@cardbush/bush-protocol').OpenAiAccountStatus>;
+      openAiAccountAction: (action: 'login' | 'logout' | 'cancel_login' | 'reconnect' | 'manage_apps') => Promise<import('@cardbush/bush-protocol').OpenAiAccountStatus>;
+      onOpenAiAccountChanged: (callback: () => void) => () => void;
+      savePluginConnections: (input: { pluginId: string; expectedRevision: number; connections: Record<string, unknown>; secrets?: Record<string, string | null> }) => Promise<{ saved: boolean; configurationRevision: number; connections: Record<string, unknown>; applicationError?: string; runtimeError?: string }>;
+      onMcpRequestsChanged: (callback: () => void) => () => void;
       listSkills: () => Promise<unknown[]>;
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
@@ -134,6 +146,7 @@ declare global {
       addLocalPluginMarket: () => Promise<PluginMarketSource | null>;
       removePluginMarket: (id: string) => Promise<void>;
       pluginMarketCatalog: (id: string, refresh?: boolean) => Promise<PluginMarketCatalog>;
+      pluginMarketPresentation: (id: string, name: string) => Promise<PluginMarketPresentation>;
       previewMarketPlugin: (sourceId: string, name: string) => Promise<PluginMarketPreview>;
       installMarketPlugin: (token: string) => Promise<{ id: string; manifestPath: string }>;
       setProxy: (proxy: {
@@ -307,7 +320,7 @@ declare global {
       onCardlingCollapse: (callback: () => void) => () => void;
       openPath: (targetPath: string) => Promise<string>;
       openFileInCardbush: (targetPath: string) => Promise<string>;
-      showFileContextMenu: (targetPath: string) => Promise<string>;
+      showFileContextMenu: (targetPath: string, options?: import('../../electron/fileContextMenu').FileContextMenuOptions) => Promise<string>;
       openUiPreview: (target: string) => Promise<void>;
       readTextPreview: (targetPath: string) => Promise<{
         path: string;

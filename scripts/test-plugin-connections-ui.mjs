@@ -14,15 +14,42 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
 import {Composer} from '${local('src/features/composer/Composer.tsx')}';
+import {McpUserRequests} from '${local('src/features/plugins/McpUserRequests.tsx')}';
 import '${local('src/styles/app.css')}';
 import '${local('src/styles/themes/cyberpunk.css')}';
 const plugin=(id,name,component,source='bundled')=>({id,name,source,description:name+' tools',longDescription:'',category:'Tools',keywords:[],capabilities:[],defaultPrompts:[],config:{},installed:true,enabled:true,brandColor:'#74d2f7',components:[{kind:'mcp',id:component,name,description:'MCP service'}]});
-window.fixtureApps={serviceEnabled:true,plugins:[plugin('computer-use','Computer Use','cardbush_apps'),plugin('chrome','Chrome','chrome-devtools'),plugin('personal.tools','Personal Tools','echo','user')]};
+window.fixtureApps={revision:1,serviceEnabled:true,plugins:[plugin('computer-use','Computer Use','cardbush_apps'),plugin('chrome','Chrome','chrome-devtools'),plugin('personal.tools','Personal Tools','echo','user')]};
+window.fixtureApps.plugins[1].components[0].name='Chrome Devtools';
+window.fixtureApps.plugins[1].components.push({kind:'app',id:'chrome',name:'Chrome',description:'Registered MCP connection',mcp:{registeredAppId:'cardbush_chrome'}});
+window.fixtureApps.plugins[2].components[0].mcp={transport:'http',url:'https://fixture.invalid/mcp'};
+window.fixtureApps.plugins[2].components.push(...['command','prompt'].map((type,index)=>({kind:'hook',id:'hook-'+type,name:type==='command'?'SessionStart':'Stop',description:'Hook fixture',hook:{definitionHash:'hash-'+index,definition:{event:type==='command'?'SessionStart':'Stop',handler:{type,command:'echo reviewed'}},executable:type==='command'}})));
 window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',description:'Blender tools',enabled:true,transport:'stdio'}],snapshot:{protocol:'bush.mcp_snapshot_result.v1',snapshotId:'cardbush-product-mcp',revision:2000001,configurationRevision:2,applicationState:'applied',servers:[{id:'blender',health:'ready',tools:Array.from({length:26},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__blender__tool'+i}))}]}};
+window.fixtureOverview.snapshot.servers.push({id:'chrome_devtools',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__chrome_devtools__tool'+i}))});
 window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];
 window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}};
+window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;
+window.publishAccount=state=>{accountStatus={state,experimental:true};for(const fn of accountListeners)fn()};
+Object.assign(window.cardbushDesktop,{
+ openAiAccountStatus:async()=>structuredClone(accountStatus),
+ onOpenAiAccountChanged:fn=>{accountListeners.add(fn);return()=>accountListeners.delete(fn)},
+ openAiAccountAction:async action=>{accountActions.push(action);if(accountFailure)throw Error('OpenAI fixture unavailable');
+  if(action==='login'){publishAccount('signing_in');await new Promise(resolve=>{window.finishOpenAiLogin=resolve});}
+  if(action==='cancel_login'){publishAccount('signed_out');window.finishOpenAiLogin?.();}
+  if(action==='logout')publishAccount('signed_out');return structuredClone(accountStatus);},
+});
 window.fixtureCommands=[{id:'native-demo:review',description:'原生命令审查',argumentHint:'[file] [mode]'}];window.sentCommands=[];
 window.cardbushDesktop.pluginCommands=async()=>fixtureCommands;
+window.mcpRequests=[];window.mcpAnswers=[];window.mcpListeners=new Set();window.authCalls=[];window.authUrls=[];window.fixtureLoginError=false;
+Object.assign(window.cardbushDesktop,{
+ savePluginConnections:async({pluginId,expectedRevision,connections,secrets})=>{if(window.marketSaveFails)throw Error('fixture activation failed');if(expectedRevision!==fixtureApps.revision)throw Error('revision conflict');const saved=structuredClone(connections);for(const [name,secret] of Object.entries(secrets??{})){saved[name]??={};saved[name].oauth??={};if(secret===null)delete saved[name].oauth.clientSecretRef;else saved[name].oauth.clientSecretRef='a'.repeat(64);}fixtureApps={...fixtureApps,revision:fixtureApps.revision+1,plugins:fixtureApps.plugins.map(item=>item.id===pluginId?{...item,config:{...item.config,mcp_servers:saved}}:item)};return{saved:true,configurationRevision:fixtureApps.revision,connections:saved}},
+ mcpRequests:async()=>window.mcpRequests,
+ onMcpRequestsChanged:fn=>{mcpListeners.add(fn);return()=>mcpListeners.delete(fn)},
+ answerMcpRequest:async(id,answer)=>{mcpAnswers.push({id,answer});window.mcpRequests=window.mcpRequests.filter(item=>item.id!==id);for(const fn of mcpListeners)fn();return true},
+ openMcpRequestUrl:async id=>authUrls.push(id),
+ mcpConnectionAction:async(id,action)=>{authCalls.push({id,action});if(action==='login'&&fixtureLoginError){fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,servers:fixtureOverview.snapshot.servers.map(server=>server.id===id?{...server,health:'configuration_required',lastError:'Client ID placeholder'}:server)}};throw Error('Client ID placeholder');}if(action==='login')return new Promise(resolve=>{window.finishLogin=resolve});if(action==='cancel_login')window.finishLogin?.();return{}},
+ pluginMarketPresentation:async()=>({displayName:'',description:'',logo:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect width="36" height="36" rx="8" fill="teal"/></svg>'),logoDark:''}),
+});
+window.showMcpRequests=value=>{window.mcpRequests=value;for(const fn of mcpListeners)fn()};
 window.marketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true}];
 window.marketInstalls=0;window.marketSaveFails=false;window.marketSlow=false;window.marketCached=false;window.marketAddFails=false;
 Object.assign(window.cardbushDesktop,{
@@ -38,7 +65,7 @@ Object.assign(window.cardbushDesktop,{
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
 const props={language:'zh',initialTab:'plugins',skills:[],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[],onLoadSkillDetail:async()=>null,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:()=>{}};
-function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');window.showComposer=()=>setComposer(true);return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props}/>}</main></div>}
+function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');window.showComposer=()=>setComposer(true);return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props}/>}</main><McpUserRequests language="zh"/></div>}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 try {
@@ -46,7 +73,7 @@ try {
     name:'plugin-connections-fixture',enforce:'pre',
     resolveId(id,importer){
       if(id.endsWith('__plugin_connections_fixture__.tsx'))return '\0plugin-fixture.tsx';
-      if(id==='../../backend/api'&&importer?.endsWith('PluginManagementPanel.tsx'))return '\0plugin-fixture-api';
+      if(id==='../../backend/api'&&/Plugin(?:ManagementPanel|McpSettings)\.tsx$/.test(importer??''))return '\0plugin-fixture-api';
     },
     load(id){
       if(id==='\0plugin-fixture.tsx')return source;

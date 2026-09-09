@@ -2,6 +2,7 @@ import { Eye, FileImage, LoaderCircle } from 'lucide-react';
 import { useCallback, useState } from 'react';
 
 import { basename, fileUrl } from '../../shared/localPaths';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage, ChatToolArtifact } from '../../types';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
 
@@ -69,6 +70,7 @@ export function ToolImageArtifactViewer({
               title={pathValue}
               disabled={!pathValue || loading}
               onClick={() => void openImage(artifact)}
+              onContextMenu={event => openFileContextMenu(event, pathValue, { language })}
             >
               <span className="tool-image-artifact-icon" aria-hidden="true">
                 {loading ? <LoaderCircle size={14} /> : <FileImage size={14} />}

@@ -161,7 +161,6 @@ export function ChatPanel({
   selectedProjectDir,
   availableProjects,
   onWelcomeProjectChange,
-  projectContext,
   messages,
   activeGoal,
   goalAvailable,
@@ -170,8 +169,6 @@ export function ChatPanel({
   changeReports,
   skills,
   disabledSkillNames,
-  visualInputAvailable,
-  visualInputEnabled,
   contextSearchAvailable,
   subagentObservabilityAvailable,
   shadowAvailable,
@@ -203,7 +200,6 @@ export function ChatPanel({
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
-  gitAvailable,
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
@@ -211,9 +207,7 @@ export function ChatPanel({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
-  onSaveProjectContext,
   onToggleSkill,
-  onVisualInputEnabledChange,
   onRefreshActiveSession,
   onSend,
   onRetryMessage,
@@ -249,7 +243,6 @@ export function ChatPanel({
   selectedProjectDir: string;
   availableProjects: ProjectItem[];
   onWelcomeProjectChange: (projectDir: string | null) => Promise<void>;
-  projectContext: string;
   messages: ChatMessage[];
   activeGoal: ExperimentalGoal | null;
   goalAvailable: boolean;
@@ -258,8 +251,6 @@ export function ChatPanel({
   changeReports: ConversationChangeReport[];
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
-  visualInputAvailable: boolean;
-  visualInputEnabled: boolean;
   contextSearchAvailable: boolean;
   subagentObservabilityAvailable: boolean;
   shadowAvailable: boolean;
@@ -291,7 +282,6 @@ export function ChatPanel({
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
-  gitAvailable: boolean;
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
@@ -299,9 +289,7 @@ export function ChatPanel({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation: () => void;
-  onSaveProjectContext: (value: string) => Promise<string>;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onVisualInputEnabledChange: (enabled: boolean) => void;
   onRefreshActiveSession: RefreshActiveSession;
   onSend: (text: string) => Promise<void>;
   onRetryMessage: (message: ChatMessage) => Promise<void>;
@@ -2566,19 +2554,12 @@ export function ChatPanel({
             onReasoningLevelChange={onReasoningLevelChange}
             onConfigureModels={onConfigureModels}
             onCreateConversation={onCreateConversation}
-            activeProjectDir={activeProjectDir}
             selectedProjectDir={selectedProjectDir}
             availableProjects={availableProjects}
             onProjectChange={onWelcomeProjectChange}
-            projectContext={projectContext}
             skills={skills}
             disabledSkillNames={disabledSkillNames}
-            visualInputAvailable={visualInputAvailable}
-            visualInputEnabled={visualInputEnabled}
-            gitAvailable={gitAvailable}
             onToggleSkill={onToggleSkill}
-            onVisualInputEnabledChange={onVisualInputEnabledChange}
-            onSaveProjectContext={onSaveProjectContext}
             onEditQueuedMessage={editQueuedMessage}
             onGuideQueuedMessage={(queuedId) =>
               onGuideQueuedMessage(queuedId, 'append_context')
@@ -2778,15 +2759,8 @@ export function ChatPanel({
               }}
               skills={skills}
               disabledSkillNames={disabledSkillNames}
-              visualInputAvailable={visualInputAvailable}
-              visualInputEnabled={visualInputEnabled}
-              gitAvailable={gitAvailable}
               onToggleSkill={onToggleSkill}
-              onVisualInputEnabledChange={onVisualInputEnabledChange}
-              activeProjectDir={activeProjectDir}
-              projectContext={projectContext}
               onQuickLoad={applyQuickLoad}
-              onSaveProjectContext={onSaveProjectContext}
               onConfigureModels={onConfigureModels}
               onCreateConversation={onCreateConversation}
             />

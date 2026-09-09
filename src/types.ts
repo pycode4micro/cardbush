@@ -5,6 +5,7 @@ import type {
 
 export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team';
 export type SettingsSection =
+  | 'instructions'
   | 'profile'
   | 'companion'
   | 'runtime'
@@ -48,7 +49,7 @@ export interface ImportedThemeStyle {
 export type AppLanguage = 'zh' | 'en';
 export type AppLanguageMode = 'system' | 'zh' | 'en';
 export type ReferencePlanMode = 'off' | 'auto';
-export type TaskPlanStatus = 'pending' | 'in_progress' | 'completed';
+export type TaskPlanStatus = 'pending' | 'in_progress' | 'waiting' | 'completed';
 type ProxyMode = 'none' | 'system' | 'manual';
 export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type SubagentPermissionRouting = 'user' | 'parent';
@@ -401,11 +402,14 @@ export interface CardbushAppPlugin {
   manifestPath: string;
   source: 'bundled' | 'user';
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
+  authentication?: 'ON_INSTALL' | 'ON_USE';
   components: Array<{
     kind: 'skill' | 'mcp' | 'app' | 'agent' | 'hook' | 'command';
     id: string;
     name: string;
     description: string;
+    hook?: { definitionHash: string; definition: Record<string, unknown>; executable: boolean };
+    mcp?: { transport?: string; url?: string; registeredAppId?: string; required?: boolean };
   }>;
   installed: boolean;
   enabled: boolean;
@@ -499,6 +503,7 @@ interface TaskPlanNode {
   id?: string;
   step: string;
   status: TaskPlanStatus;
+  waitingFor?: string;
 }
 
 export interface TaskPlanSnapshot {

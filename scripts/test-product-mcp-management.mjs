@@ -78,7 +78,7 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
     await client.connect(transport);
     await t.test('management is discovered through the ordinary Runtime MCP registry', async () => {
       const tools = await client.listTools();
-      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'list_mcp_servers', 'remove_mcp_server']);
+      assert.deepEqual(tools.tools.map(t => t.name).sort(), ['configure_mcp_server', 'configure_plugin_connection', 'list_mcp_servers', 'list_plugin_connections', 'remove_mcp_server', 'request_plugin_credentials']);
       for (const tool of tools.tools) assert.ok(registry.resolve(`mcp__cardbush_management__${tool.name}`));
       const status = await invoke('list_mcp_servers');
       assert.equal(status.runtime.applicationState, 'applied');
@@ -138,12 +138,14 @@ test('MCP management uses the Product Host store and real Runtime MCP discovery'
       }
       assert.equal(await readFile(configPath, 'utf8'), before);
     });
-    await t.test('connection failure is saved/failed with old working tools preserved', async () => {
+    await t.test('connection failure is reported per server while working tools stay available', async () => {
       const result = await invoke('configure_mcp_server', { id: 'broken', transport: 'stdio', command: join(root, 'missing-executable') });
       assert.equal(result.saved, true);
-      assert.equal(result.runtime.applicationState, 'failed');
-      assert.ok(result.applicationError);
-      assert.equal(result.runtime.servers.some(s => s.id === 'broken'), false);
+      assert.equal(result.runtime.applicationState, 'applied');
+      const broken = result.runtime.servers.find(s => s.id === 'broken');
+      assert.equal(broken.health, 'unavailable');
+      assert.ok(broken.lastError);
+      assert.deepEqual(broken.tools, []);
       assert.equal((await echo()).value, 'two');
       const repaired = await invoke('remove_mcp_server', { id: 'broken' });
       assert.equal(repaired.runtime.applicationState, 'applied');

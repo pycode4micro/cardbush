@@ -34,7 +34,9 @@ import {
   type ModelProvider,
   type SubagentPermissionPolicy,
 } from '@cardbush/bush-runtime';
-import { McpClientManager } from '@cardbush/bush-mcp-client';
+import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
+import { net } from 'electron';
+import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import {
   decodeProductSubagentConfig,
   defaultProductSubagentConfig,
@@ -63,6 +65,11 @@ if (!parentPort) {
 }
 
 const operations = new Map<string, AbortController>();
+const mcpHost = new McpHostBridge(message => parentPort.postMessage(message));
+const mcpOAuth = new McpOAuthCoordinator({
+  read: key => mcpHost.request<CredentialState | undefined>('credentials.read', { key }),
+  write: (key, value) => mcpHost.request<void>('credentials.write', { key, value }),
+}, url => mcpHost.request<void>('open-url', { url }));
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAIResponsesProviderRegistry;
@@ -73,6 +80,7 @@ let effectiveMcpContent = '';
 let sourceMcpRevision = 0;
 
 async function handleMessage(input: unknown) {
+  if (isMcpHostMessage(input)) { mcpHost.receive(input); return; }
   let message;
   try {
     message = decodeRuntimeIpcInboundMessage(input);
@@ -242,7 +250,7 @@ async function executeRuntimeCommand(
         return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
       }
       const pluginServers = await loadEnabledProductPluginMcpServers(
-        pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '',
+        pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '', source.servers,
       );
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
@@ -262,6 +270,36 @@ async function executeRuntimeCommand(
   if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
     const current = mcp.snapshot();
     return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
+  }
+  if (command.kind === 'runtime.openai_account_changed') {
+    await mcp.invalidateOpenAiConnections();
+    const operation = mcpUpdate.then(async () => {
+      if (!effectiveMcp) return null;
+      const ids = effectiveMcp.servers.filter(server => server.transport.kind !== 'stdio' && server.transport.auth === 'openai').map(server => server.id);
+      effectiveMcp = { ...effectiveMcp, revision: effectiveMcp.revision + 1 };
+      return { ...await mcp.refreshServers(ids, effectiveMcp), configurationRevision: sourceMcpRevision };
+    });
+    mcpUpdate = operation.catch(() => undefined); return operation;
+  }
+  if (['runtime.mcp_login', 'runtime.mcp_logout', 'runtime.mcp_cancel_login', 'runtime.mcp_reconnect'].includes(command.kind)) {
+    const id = String((command.payload as { serverId?: unknown })?.serverId ?? '');
+    if (command.kind === 'runtime.mcp_cancel_login') { mcpOAuth.cancel(id); return { cancelled: true }; }
+    const server = effectiveMcp?.servers.find(item => item.id === id);
+    if (!server) throw new Error('This MCP service is not enabled. Enable it before connecting.');
+    if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai' && command.kind !== 'runtime.mcp_reconnect') {
+      throw new Error('Manage the shared OpenAI login in CardBush plugin settings.');
+    }
+    if (command.kind === 'runtime.mcp_login') await mcp.login(server, signal);
+    if (command.kind === 'runtime.mcp_logout') await mcpOAuth.logout(server);
+    const operation = mcpUpdate.then(async () => {
+      signal?.throwIfAborted();
+      const current = effectiveMcp?.servers.find(item => item.id === id);
+      if (!current || JSON.stringify(current.transport) !== JSON.stringify(server.transport)) throw new Error('This MCP connection changed during sign-in. Use the latest saved connection.');
+      effectiveMcp = { ...effectiveMcp!, revision: effectiveMcp!.revision + 1 };
+      return { ...await mcp.refresh(id, effectiveMcp), configurationRevision: sourceMcpRevision };
+    });
+    mcpUpdate = operation.catch(() => undefined);
+    return operation;
   }
   return host.sendCommand(command, signal);
 }
@@ -294,10 +332,14 @@ function withBundledAppsServer(input: unknown): unknown {
     if (!managementToken) throw new Error('CardBush MCP management authentication is missing.');
     bundled.push({
       id: 'cardbush_management',
+      toolTimeoutMs: 5 * 60_000,
       transport: { kind: 'streamable_http', url: managementUrl,
         headers: { Authorization: `Bearer ${managementToken}` } },
       defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
-      toolPolicies: { list_mcp_servers: { permission: 'allow', parallelSafe: true, visibleToChild: true } },
+      toolPolicies: {
+        list_mcp_servers: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+        list_plugin_connections: { permission: 'allow', parallelSafe: true, visibleToChild: true },
+      },
     });
   }
   if (!appsConfig.serviceEnabled) return { ...snapshot, revision, servers: [...bundled, ...configured] };
@@ -652,6 +694,15 @@ host = new InMemoryRuntimeHost({
   },
 });
 mcp = new McpClientManager({
+  ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? {
+    oauth: mcpOAuth,
+    openai: {
+      getToken: input => mcpHost.request('openai.access-token', { rejectedToken: input.rejectedToken }, input.signal),
+      fetch: (input, init) => net.fetch(String(input), init),
+    },
+    onElicitation: (({ signal: _signal, ...input }, signal) => mcpHost.request('elicitation', input, signal)) as import('@cardbush/bush-mcp-client').McpElicitationHandler,
+    onAuthenticationRequired: async (input, signal) => (await mcpHost.request<{ action: string }>('authentication', input, signal)).action === 'accept',
+  } : {}),
   registry: toolRegistry,
   canApply: () => !host.hasActiveTurns(),
   onServiceStateChange: (state) => {

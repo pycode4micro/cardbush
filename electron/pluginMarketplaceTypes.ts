@@ -1,6 +1,6 @@
 export interface PluginMarketSource {
   id: string;
-  kind: 'github' | 'local';
+  kind: 'github' | 'git' | 'local';
   location: string;
   ref?: string;
   builtin?: boolean;
@@ -12,6 +12,14 @@ export interface PluginMarketEntry {
   category: string;
   available: boolean;
   unavailableReason?: string;
+  presentation?: PluginMarketPresentation;
+}
+
+export interface PluginMarketPresentation {
+  displayName: string;
+  description: string;
+  logo: string;
+  logoDark: string;
 }
 
 export interface PluginMarketCatalog {
@@ -38,5 +46,6 @@ export interface PluginMarketPreview {
   issues: Array<{ code: string; detail: string }>;
   notes?: string[];
   updating: boolean;
-  format: 'openai' | 'claude';
+  format: 'agent-plugins' | 'openai' | 'claude';
+  authentication?: 'ON_INSTALL' | 'ON_USE';
 }

@@ -5,6 +5,7 @@ import {
   type WebContents,
   type WebFrameMain,
 } from 'electron';
+import { isMcpHostMessage, handleMcpHostRequest, type McpHostOperation } from './mcpHostBridge.js';
 
 import {
   BUSH_RUNTIME_ERROR_PROTOCOL,
@@ -24,6 +25,7 @@ import {
 } from '@cardbush/bush-protocol';
 
 export interface RuntimeHostControllerOptions {
+  onMcpHostRequest?: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>;
   modulePath: string;
   env?: NodeJS.ProcessEnv;
   startupTimeoutMs?: number;
@@ -61,6 +63,8 @@ export class RuntimeUtilityProcessController {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       this.#child = child;
+      const hostRequests = new Map<string, AbortController>();
+      child.once('exit', () => { for (const request of hostRequests.values()) request.abort(); hostRequests.clear(); });
       const startupTimeoutMs = Math.max(1_000, this.#options.startupTimeoutMs ?? 12_000);
       const startupTimeout = setTimeout(() => {
         const failure = new RuntimeHostControllerError(
@@ -86,6 +90,18 @@ export class RuntimeUtilityProcessController {
       });
       child.on('message', (candidate) => {
         if (this.#child !== child) return;
+        if (isMcpHostMessage(candidate)) {
+          if (candidate.type === 'cancel') { hostRequests.get(candidate.id)?.abort(); return; }
+          if (candidate.type === 'request') {
+            const abort = new AbortController();
+            hostRequests.set(candidate.id, abort);
+            void handleMcpHostRequest(candidate, abort.signal, this.#options.onMcpHostRequest ?? (async () => { throw new Error('MCP desktop integration is unavailable.'); }))
+              .then(response => { if (this.#child === child) child.postMessage(response); })
+              .catch(error => this.#options.onStderr?.(`MCP host response delivery failed: ${errorMessage(error)}`))
+              .finally(() => hostRequests.delete(candidate.id));
+          }
+          return;
+        }
         let message;
         try {
           message = decodeRuntimeIpcOutboundMessage(candidate);

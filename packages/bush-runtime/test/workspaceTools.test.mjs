@@ -12,6 +12,8 @@ import { dirname, join, parse, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 import {
   ToolExecutionCoordinator,
@@ -20,6 +22,27 @@ import {
   protectedTerminalDeletion,
   registerWorkspaceTools,
 } from "../dist/index.js";
+
+test('search retains accessible matches when another file is locked', { timeout: 20_000 }, async t => {
+  if (process.platform !== 'win32') return t.skip('Windows file sharing violation regression');
+  const root = temporaryRoot(t);
+  const locked = join(root, 'locked.txt');
+  writeFileSync(locked, 'needle in locked file'); writeFileSync(join(root, 'visible.txt'), 'needle visible');
+  const script = `$stream = [IO.File]::Open('${locked.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None'); try { [Console]::WriteLine('ready'); [Console]::Out.Flush(); [Console]::ReadLine() | Out-Null } finally { $stream.Dispose() }`;
+  const locker = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = once(locker, 'close');
+  try {
+    const [chunk] = await once(locker.stdout, 'data', { signal: AbortSignal.timeout(10_000) });
+    assert.match(String(chunk), /ready/);
+    const result = await tools(root).execute('session', 'search_file_content', { path: root, query: 'needle' });
+    assert.equal(result.kind, 'returned');
+    assert.equal(result.result.complete, false);
+    assert.equal(result.result.exitCode, 2);
+    assert.equal(result.result.matched, true);
+    assert.match(result.result.output, /visible.txt.*needle visible/);
+    assert.match(result.result.warnings, /locked.txt/);
+  } finally { locker.stdin.end('\n'); await closed; }
+});
 
 test("ranged reads preserve exact endings, Unicode, empty files and whole-file revisions", async (t) => {
   const root = temporaryRoot(t);

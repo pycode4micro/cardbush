@@ -4,8 +4,12 @@ import { dirname, join, resolve, relative, isAbsolute, basename } from 'node:pat
 import JSZip from 'jszip';
 import type { Readable } from 'node:stream';
 import { installProductPlugin, inspectProductPlugin } from './productPlugins';
-import { importPluginManifest } from './pluginManifestImport';
+import { resolvePluginManifest } from './pluginManifest';
+import { safePackagePath as safeRelative, withinPackage as within } from './pluginPackagePaths';
+import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPluginArchive, acquireNpmPlugin, type NpmPluginSource, type AcquisitionCommand } from './pluginAcquisition';
 import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource } from './pluginMarketplaceTypes';
+import { readPluginPresentation } from './pluginPresentation';
+import { pluginChild } from './pluginExtensions';
 
 type Json = Record<string, unknown>;
 type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: string };
@@ -20,12 +24,14 @@ const maxFileBytes = 16 * 1024 * 1024;
 export class PluginMarketplaceService {
   private readonly catalogs = new Map<string, StoredCatalog>();
   private readonly prepared = new Map<string, Prepared>();
+  private readonly presentations = new Map<string, ReturnType<typeof readPluginPresentation>>();
   private mutation: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: {
     dataRoot: string;
     userPluginRoot: string;
     bundledPluginRoot: string;
     fetch: typeof fetch;
+    runAcquisition?: AcquisitionCommand;
   }) {}
 
   async sources(): Promise<PluginMarketSource[]> {
@@ -41,6 +47,12 @@ export class PluginMarketplaceService {
   addGitHub(input: string): Promise<PluginMarketSource> {
     const { repo, ref } = githubSource(input);
     return this.add({ id: hash(`github:${repo}@${ref}`), kind: 'github', location: repo, ref });
+  }
+
+  addSource(input: string): Promise<PluginMarketSource> {
+    if (/^[\w-]+\/[\w.-]+(?:@.+)?$/.test(input.trim())) return this.addGitHub(input);
+    const { url, ref } = gitSource(input);
+    return this.add({ id: hash(`git:${url}@${ref}`), kind: 'git', location: url, ref });
   }
 
   addLocal(directory: string): Promise<PluginMarketSource> {
@@ -65,6 +77,7 @@ export class PluginMarketplaceService {
       if (id === 'builtin') throw new Error('The bundled marketplace cannot be removed.');
       await this.saveSources((await this.sources()).filter(item => item.id !== id));
       this.catalogs.delete(id);
+      for (const key of this.presentations.keys()) if (key.startsWith(`${id}:`)) this.presentations.delete(key);
       // Removing a source intentionally leaves already installed plugins in place.
       await this.removeCache(id);
     });
@@ -74,7 +87,11 @@ export class PluginMarketplaceService {
     const source = await this.source(id);
     const memory = this.catalogs.get(id);
     if (memory && !refresh) return memory.view;
-    try { return (await this.readCatalog(source)).view; }
+    try {
+      const catalog = await this.readCatalog(source);
+      for (const key of this.presentations.keys()) if (key.startsWith(`${id}:`) && (source.kind === 'local' || !key.startsWith(`${id}:${catalog.revision}:`))) this.presentations.delete(key);
+      return catalog.view;
+    }
     catch (error) {
       const stored: StoredCatalog | null = memory ?? await this.cached(id);
       if (!stored) throw error;
@@ -86,6 +103,51 @@ export class PluginMarketplaceService {
 
   preview(sourceId: string, name: string): Promise<PluginMarketPreview> {
     return this.serial(() => this.prepare(sourceId, name));
+  }
+
+  async presentation(sourceId: string, name: string) {
+    const source = await this.source(sourceId);
+    if (!this.catalogs.has(sourceId)) await this.catalog(sourceId);
+    const catalog = this.catalogs.get(sourceId)!;
+    const entry = catalog.entries.find(item => item.name === name);
+    if (!entry) throw new Error('Plugin is not in this marketplace.');
+    const key = `${sourceId}:${catalog.revision}:${name}`;
+    let pending = this.presentations.get(key);
+    if (!pending) {
+      pending = (async () => {
+        const origin = pluginSource(entry.source, source);
+        if (origin.kind === 'local') {
+          const root = await pluginChild(source.location, origin.path);
+          return readPluginPresentation(async file => {
+            const path = await pluginChild(root, file);
+            if ((await lstat(path)).size > 512 * 1024) throw new Error('Plugin presentation is too large.');
+            return readFile(path);
+          });
+        }
+        if (origin.kind === 'github') {
+          const revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
+          return readPluginPresentation(async file => {
+            const path = [origin.path, safeRelative(file)].filter(Boolean).join('/');
+            if (file.endsWith('.json')) return Buffer.from(await this.catalogFile(origin.repo, revision, path));
+            return this.bytes(rawUrl(origin.repo, revision, path), 512 * 1024);
+          });
+        }
+        if (origin.kind === 'git') return withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot,
+          (repository, revision, run) => readPluginPresentation(async file => {
+            const path = [origin.path, safeRelative(file)].filter(Boolean).join('/');
+            if (file.endsWith('.json')) return Buffer.from(await gitCatalogFile(repository, revision, path, run));
+            const zip = await JSZip.loadAsync(await gitPluginArchive(repository, revision, path, run));
+            const asset = Object.values(zip.files).find(item => !item.dir && item.name.endsWith(`/${path}`));
+            if (!asset) throw new Error('Plugin logo is missing.');
+            return asset.async('nodebuffer');
+          }), this.options.runAcquisition);
+        return { displayName: '', description: '', logo: '', logoDark: '' };
+      })();
+      this.presentations.set(key, pending);
+      while (this.presentations.size > 128) this.presentations.delete(this.presentations.keys().next().value!);
+      void pending.catch(() => this.presentations.delete(key));
+    }
+    return pending;
   }
 
   private async prepare(sourceId: string, name: string): Promise<PluginMarketPreview> {
@@ -103,6 +165,7 @@ export class PluginMarketplaceService {
     const stage = await mkdtemp(join(stageBase, 'preview-'));
     const root = join(stage, name);
     let revision = catalog.revision;
+    let sourceLabel = source.location;
     try {
       if (origin.kind === 'local') {
         const from = within(source.location, origin.path);
@@ -111,15 +174,28 @@ export class PluginMarketplaceService {
         await portableTree(from);
         await cp(from, root, { recursive: true, errorOnExist: true });
         revision = 'local';
-      } else {
+      } else if (origin.kind === 'github') {
         revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
         const archive = await this.bytes(`https://codeload.github.com/${origin.repo}/zip/${revision}`, maxArchiveBytes, 60_000);
         await extractPluginArchive(archive, origin.path, root);
+        sourceLabel = `https://github.com/${origin.repo}`;
+      } else if (origin.kind === 'git') {
+        await withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot, async (repository, sha, run) => {
+          revision = sha;
+          await extractPluginArchive(await gitPluginArchive(repository, sha, origin.path, run), origin.path, root);
+        }, this.options.runAcquisition);
+        sourceLabel = origin.url;
+      } else {
+        const acquired = await acquireNpmPlugin(origin, stage, root, this.options.runAcquisition);
+        revision = acquired.revision; sourceLabel = acquired.source;
       }
-      const { manifest, format, issues: importIssues, notes } = await importPluginManifest(root, entry);
+      // Retain the original marketplace declaration, never a rewritten plugin manifest.
+      await writeFile(join(root, '.cardbush-marketplace.json'), JSON.stringify({ sourceId, name, revision, source: sourceLabel, entry }, null, 2));
+      const { manifest, format, issues: importIssues, notes } = await resolvePluginManifest(root);
+      if (manifest.name !== entry.name) throw new Error('Marketplace entry does not match the plugin manifest name.');
       const plugin = await inspectProductPlugin(root);
       const issues = [...importIssues, ...await compatibilityIssues(root, manifest)];
-      if (!plugin.components.some(component => ['skill', 'mcp', 'agent', 'hook', 'command'].includes(component.kind))) issues.push({ code: 'empty', detail: '' });
+      if (!plugin.components.some(component => ['skill', 'mcp', 'app', 'agent', 'hook', 'command'].includes(component.kind))) issues.push({ code: 'empty', detail: '' });
       if (reserved.has(name)) issues.push({ code: 'reserved', detail: name });
       const receipt = await this.receipt(name);
       const installed = await lstat(join(this.options.userPluginRoot, name)).catch(error => { if (missing(error)) return null; throw error; });
@@ -128,10 +204,9 @@ export class PluginMarketplaceService {
       const token = randomUUID();
       const view: PluginMarketPreview = { token, id: name, name: plugin.name, description: plugin.longDescription,
         version: plugin.version, developerName: plugin.developerName,
-        source: origin.kind === 'github' ? `https://github.com/${origin.repo}` : source.location,
-        revision, format, components: plugin.components, requirements, issues, notes, updating: Boolean(installed) };
+        source: sourceLabel,
+        revision, format, components: plugin.components, requirements, issues, notes, updating: Boolean(installed), authentication: object(entry.policy).authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE' };
       // The user installs this exact staged snapshot, even if a branch moves after preview.
-      await writeFile(join(root, '.cardbush-marketplace.json'), JSON.stringify({ sourceId, name, revision, source: view.source }, null, 2));
       this.prepared.set(token, { sourceId, root, stage, preview: view, expiresAt: Date.now() + 30 * 60_000 });
       return view;
     } catch (error) { await this.cleanStage(stage); throw error; }
@@ -155,14 +230,19 @@ export class PluginMarketplaceService {
   }
 
   private async readCatalog(source: PluginMarketSource): Promise<StoredCatalog> {
+    if (source.kind === 'git') return withGitSnapshot(source.location, source.ref ?? 'HEAD', this.options.dataRoot,
+      (repository, revision, run) => this.decodeCatalog(source, revision, file => gitCatalogFile(repository, revision, file, run)), this.options.runAcquisition);
     const revision = source.kind === 'github' ? await this.commit(source.location, source.ref ?? 'HEAD') : 'local';
+    return this.decodeCatalog(source, revision, file => source.kind === 'github'
+      ? this.catalogFile(source.location, revision, file) : readFile(join(source.location, file), 'utf8'));
+  }
+
+  private async decodeCatalog(source: PluginMarketSource, revision: string, read: (file: string) => Promise<string>): Promise<StoredCatalog> {
     let payload: Json | undefined;
     let format = 'openai';
     for (const file of ['.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json', 'marketplace.json']) {
       try {
-        payload = object(JSON.parse(source.kind === 'github'
-          ? await this.catalogFile(source.location, revision, file)
-          : await readFile(join(source.location, file), 'utf8')));
+        payload = object(JSON.parse(await read(file)));
         format = file.startsWith('.claude-plugin') ? 'claude' : 'openai';
         break;
       } catch (error) { if (!missing(error)) throw error; }
@@ -308,30 +388,29 @@ export function githubSource(input: string): { repo: string; ref: string } {
 }
 
 function pluginSource(value: unknown, market: PluginMarketSource):
-  { kind: 'local'; path: string } | { kind: 'github'; repo: string; ref: string; path: string; sameRepository: boolean } {
+  { kind: 'local'; path: string } | { kind: 'github'; repo: string; ref: string; path: string; sameRepository: boolean }
+  | { kind: 'git'; url: string; ref: string; path: string; sameRepository: boolean } | NpmPluginSource {
   const source = typeof value === 'string' ? { source: 'local', path: value } : object(value);
   if (source.source === 'local') {
     const path = safeRelative(string(source.path));
     return market.kind === 'local' ? { kind: 'local', path }
+      : market.kind === 'git' ? { kind: 'git', url: market.location, ref: market.ref ?? 'HEAD', path, sameRepository: true }
       : { kind: 'github', repo: market.location, ref: market.ref ?? 'HEAD', path, sameRepository: true };
   }
+  if (source.source === 'npm') return npmSource(source);
   if (!['url', 'git-subdir', 'github'].includes(string(source.source))) throw new Error('Unsupported marketplace source type.');
-  const { repo, ref } = githubSource(string(source.source === 'github' ? source.repo : source.url));
+  const input = string(source.source === 'github' ? source.repo : source.url);
+  const { url, ref } = gitSource(input);
   const selector = string(source.sha) || string(source.ref) || ref;
-  if (source.sha && !/^[a-f0-9]{40}$/i.test(string(source.sha))) throw new Error('Invalid pinned commit.');
-  return { kind: 'github', repo, ref: selector,
+  gitRef(selector);
+  if (source.sha && !/^[a-f0-9]{40,64}$/i.test(string(source.sha))) throw new Error('Invalid pinned commit.');
+  // Keep archive acquisition for legacy public GitHub shorthand sources.
+  if (source.source === 'github' || (market.kind === 'github' && url.startsWith('https://github.com/'))) {
+    const { repo } = githubSource(url);
+    return { kind: 'github', repo, ref: selector, path: source.source === 'git-subdir' ? safeRelative(string(source.path)) : '', sameRepository: false };
+  }
+  return { kind: 'git', url, ref: selector,
     path: source.source === 'git-subdir' ? safeRelative(string(source.path)) : '', sameRepository: false };
-}
-
-function safeRelative(value: string): string {
-  const path = value.replace(/^\.\//, '').replace(/\/$/, '');
-  if (!path || path.split('/').some(part => !part || part === '.' || part === '..' || /[<>:"\\|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\.|$)/i.test(part))) throw new Error('Plugin path must stay inside the marketplace root.');
-  return path;
-}
-function within(root: string, value: string) {
-  const target = resolve(root, safeRelative(value)), rel = relative(resolve(root), target);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error('Plugin path escapes its source root.');
-  return target;
 }
 function rawUrl(repo: string, revision: string, file: string) {
   return `https://raw.githubusercontent.com/${repo}/${revision}/${file.split('/').map(encodeURIComponent).join('/')}`;
@@ -403,13 +482,13 @@ async function mcpRequirements(root: string, manifest: Json): Promise<string[]> 
 async function compatibilityIssues(root: string, manifest: Json): Promise<PluginMarketPreview['issues']> {
   const issues: PluginMarketPreview['issues'] = [];
   const config = await mcpConfig(root, manifest);
-  const variables = [...JSON.stringify(config).matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]).filter(name => name !== 'CARDBUSH_PLUGIN_ROOT' && name !== 'CODEX_PLUGIN_ROOT' && !/^[A-Za-z_][A-Za-z0-9_]*:-/.test(name) && !process.env[name]);
+  const variables = [...JSON.stringify(config).matchAll(/\$\{([^}]+)\}/g)].map(match => match[1]).filter(name => !['PLUGIN_ROOT', 'CARDBUSH_PLUGIN_ROOT', 'CODEX_PLUGIN_ROOT', 'CLAUDE_PLUGIN_ROOT'].includes(name) && !/^[A-Za-z_][A-Za-z0-9_]*:-/.test(name) && !process.env[name]);
   if (variables.length) issues.push({ code: 'variables', detail: [...new Set(variables)].join(', ') });
   for (const [name, raw] of Object.entries(config)) {
     const server = object(raw), kind = string(server.type ?? server.transport) || (server.url ? 'http' : 'stdio');
     if (!['stdio', 'http', 'streamable_http', 'sse'].includes(kind)) issues.push({ code: 'transport', detail: `${name}: ${kind}` });
     if (kind === 'stdio' ? !string(server.command) : !/^https?:\/\//i.test(string(server.url))) issues.push({ code: 'configuration', detail: name });
-    if (server.oauth || server.auth || server.headersHelper) issues.push({ code: 'authentication', detail: name });
+
   }
   return issues;
 }

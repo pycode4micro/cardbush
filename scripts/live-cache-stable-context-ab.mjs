@@ -97,6 +97,10 @@ async function runBranch(branch) {
     `Cache A/B branch identity: ${branch.name}-${crypto.randomUUID()}`,
     commonReference,
   ].join('\n');
+  const instructionsDirectory = join(reportRoot, branch.name);
+  await mkdir(instructionsDirectory, { recursive: true });
+  const instructionsPath = join(instructionsDirectory, 'AGENTS.md');
+  await writeFile(instructionsPath, projectInstructions, 'utf8');
   const allTurnInputs = [
     { text: 'Cache validation step one. Reply with exactly ACK-1.', images: [] },
     {
@@ -146,7 +150,9 @@ async function runBranch(branch) {
       tools: [],
       projectDir: process.cwd(),
       workspaceDir: process.cwd(),
+      // The frozen baseline reads projectInstructions; the current request uses AGENTS.md.
       projectInstructions,
+      instructionDocuments: [{ path: instructionsPath, scope: 'global', content: projectInstructions }],
       images: turnInput.images,
       filesystemLocations: [
         { id: 'desktop', name: 'Desktop', path: join(process.env.USERPROFILE || '', 'Desktop') },

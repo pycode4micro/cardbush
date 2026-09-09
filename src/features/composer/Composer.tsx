@@ -3,8 +3,6 @@ import {
   ArrowRight,
   ArrowUp,
   Box,
-  BookOpen,
-  Brain,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -13,15 +11,12 @@ import {
   Clock3,
   CornerDownLeft,
   Edit3,
-  Eye,
-  EyeOff,
   File as FileIcon,
   FileArchive,
   FileCode2,
   FileSpreadsheet,
   FileText,
   FolderOpen,
-  GitBranch,
   KeyRound,
   ListChecks,
   LoaderCircle,
@@ -55,7 +50,6 @@ import { createPortal } from 'react-dom';
 
 import {
   basename,
-  compactPath,
   fileUrl,
   isImagePath,
 } from '../../shared/localPaths';
@@ -138,20 +132,11 @@ type ComposerQueuedMessage = {
 
 type ComposerMenu =
   | 'more'
-  | 'project'
-  | 'git'
   | 'skills'
   | 'models'
   | 'permissions'
   | 'teams'
   | null;
-
-type MorePanelMenu =
-  | 'project'
-  | 'skills'
-  | 'git'
-  | 'plan'
-  | 'vision';
 
 export type ContextWindowUsage = {
   usedTokens?: number;
@@ -190,9 +175,7 @@ type ComposerPopoverAnchor = {
 };
 
 const composerPopoverWidths: Record<Exclude<ComposerMenu, null>, number> = {
-  more: 350,
-  project: 300,
-  git: 260,
+  more: 320,
   skills: 336,
   models: 300,
   permissions: 274,
@@ -341,20 +324,13 @@ export function Composer({
   cancelEnabled = true,
   skills = [],
   disabledSkillNames,
-  visualInputAvailable,
-  visualInputEnabled,
-  gitAvailable = false,
-  activeProjectDir,
-  projectContext = '',
   onQuickLoad,
-  onSaveProjectContext,
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
   onConfigureModels,
   onCreateConversation,
   onToggleSkill,
-  onVisualInputEnabledChange,
   shadowActive = false,
   shadowAvailable = false,
   shadowAgentName,
@@ -392,20 +368,13 @@ export function Composer({
   cancelEnabled?: boolean;
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
-  visualInputAvailable: boolean;
-  visualInputEnabled: boolean;
-  gitAvailable?: boolean;
-  activeProjectDir?: string;
-  projectContext?: string;
   onQuickLoad?: (payload: QuickLoadPayload) => void;
-  onSaveProjectContext?: (value: string) => Promise<string>;
   onEditQueuedMessage?: (item: ComposerQueuedMessage) => void;
   onGuideQueuedMessage?: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage?: (queuedId: string) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onVisualInputEnabledChange: (enabled: boolean) => void;
   shadowActive?: boolean;
   shadowAvailable?: boolean;
   shadowAgentName?: string;
@@ -479,12 +448,6 @@ export function Composer({
     return () => window.clearTimeout(timer);
   }, [cancelEnabled, sending]);
 
-  useEffect(() => {
-    if (!gitAvailable && activeMenu === 'git') {
-      setActiveMenu(null);
-      setPopoverAnchor(null);
-    }
-  }, [activeMenu, gitAvailable]);
 
   const resizeComposerTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -1027,9 +990,6 @@ export function Composer({
               contextWindow={contextWindow}
               skills={skills}
               disabledSkillNames={disabledSkillNames}
-              visualInputAvailable={visualInputAvailable}
-              visualInputEnabled={visualInputEnabled}
-              gitAvailable={gitAvailable}
               selectedModel={selectedModel}
               availableModels={availableModels}
               permissionMode={permissionMode}
@@ -1039,11 +999,7 @@ export function Composer({
               reasoningLevels={reasoningLevels}
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
-              activeProjectDir={activeProjectDir}
-              projectContext={projectContext}
               onToggleSkill={onToggleSkill}
-              onVisualInputEnabledChange={onVisualInputEnabledChange}
-              onSaveProjectContext={onSaveProjectContext}
               onSelectModel={selectModel}
               onSelectPermissionMode={onPermissionModeChange}
               onSelectSubagentPermissionRouting={onSubagentPermissionRoutingChange}
@@ -1354,12 +1310,7 @@ export function Composer({
             <ToolChip
               icon={<Plus size={15} />}
               label={language === 'zh' ? '添加' : 'Add'}
-              active={
-                activeMenu === 'more' ||
-                activeMenu === 'project' ||
-                (gitAvailable && activeMenu === 'git') ||
-                activeMenu === 'skills'
-              }
+              active={activeMenu === 'more'}
               menuTrigger
               onClick={(event) => toggleMenu('more', event)}
             />
@@ -1605,9 +1556,6 @@ function ComposerPopover({
   contextWindow,
   skills,
   disabledSkillNames,
-  visualInputAvailable,
-  visualInputEnabled,
-  gitAvailable,
   selectedModel,
   availableModels,
   permissionMode,
@@ -1617,11 +1565,7 @@ function ComposerPopover({
   reasoningLevels,
   referencePlanAvailable,
   referencePlanMode,
-  activeProjectDir,
-  projectContext,
   onToggleSkill,
-  onVisualInputEnabledChange,
-  onSaveProjectContext,
   onSelectModel,
   onConfigureModels,
   onPickAttachments,
@@ -1637,9 +1581,6 @@ function ComposerPopover({
   contextWindow?: ContextWindowUsage;
   skills: SkillSummary[];
   disabledSkillNames: Set<string>;
-  visualInputAvailable: boolean;
-  visualInputEnabled: boolean;
-  gitAvailable: boolean;
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   permissionMode: PermissionMode;
@@ -1649,11 +1590,7 @@ function ComposerPopover({
   reasoningLevels: ReasoningLevel[];
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
-  activeProjectDir?: string;
-  projectContext: string;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onVisualInputEnabledChange: (enabled: boolean) => void;
-  onSaveProjectContext?: (value: string) => Promise<string>;
   onSelectModel: (model: string) => void;
   onConfigureModels: () => void;
   onPickAttachments: () => void;
@@ -1666,18 +1603,12 @@ function ComposerPopover({
 }) {
   const models = availableModels;
   const pickerMenu = menu === 'models';
-  const [morePanel, setMorePanel] = useState<MorePanelMenu | null>(null);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const reasoningLevelGroups = useMemo(
     () => splitReasoningLevels(reasoningLevels),
     [reasoningLevels],
   );
   const referencePlanEnabled = referencePlanMode === 'auto';
-  useEffect(() => {
-    if (!gitAvailable && morePanel === 'git') {
-      setMorePanel(null);
-    }
-  }, [gitAvailable, morePanel]);
   useEffect(() => {
     if (menu !== 'models' || reasoningLevelGroups.secondary.length === 0) {
       setReasoningExpanded(false);
@@ -1686,9 +1617,6 @@ function ComposerPopover({
   const selectPermission = (mode: PermissionMode) => {
     onSelectPermissionMode(mode);
     onClose();
-  };
-  const selectMorePanel = (panel: MorePanelMenu) => {
-    setMorePanel((current) => current === panel ? null : panel);
   };
   const anchorStyle = anchor
     ? ({
@@ -1714,194 +1642,31 @@ function ComposerPopover({
         </header>
       )}
       {menu === 'more' && (
-        <div className={`more-hierarchy-menu panel-${morePanel}`}>
-          <div className="more-hierarchy-primary">
-            <MoreMenuRow
-              active={false}
-              icon={<Paperclip size={13} />}
-              title={language === 'zh' ? '文件和文件夹' : 'Files and folders'}
-              detail={language === 'zh' ? '添加到当前消息' : 'Add to this message'}
-              onClick={onPickAttachments}
-            />
-            <div className="more-menu-separator" />
-            <MoreMenuRow
-              active={morePanel === 'project'}
-              icon={<BookOpen size={13} />}
-              title={language === 'zh' ? '项目上下文' : 'Project'}
-              detail={
-                activeProjectDir
-                  ? compactPath(activeProjectDir)
-                  : language === 'zh'
-                    ? '无项目'
-                    : 'None'
-              }
-              onClick={() => selectMorePanel('project')}
-            />
-            {referencePlanAvailable && (
-              <MoreMenuRow
-                active={morePanel === 'plan'}
-                icon={<ListChecks size={13} />}
-                title={language === 'zh' ? '复杂任务' : 'Plan'}
-                detail={referencePlanEnabled ? (language === 'zh' ? '开' : 'On') : (language === 'zh' ? '关' : 'Off')}
-                onClick={() => selectMorePanel('plan')}
-              />
-            )}
-            <MoreMenuRow
-              active={morePanel === 'vision'}
-              icon={visualInputEnabled ? <Eye size={13} /> : <EyeOff size={13} />}
-              title={language === 'zh' ? '视觉功能' : 'Vision'}
-              detail={
-                visualInputAvailable
-                  ? visualInputEnabled
-                    ? language === 'zh'
-                      ? '开'
-                      : 'On'
-                    : language === 'zh'
-                      ? '关'
-                      : 'Off'
-                  : language === 'zh'
-                    ? '不可用'
-                    : 'Unavailable'
-              }
-              onClick={() => selectMorePanel('vision')}
-            />
-            <div className="more-menu-separator" />
-            <MoreMenuRow
-              active={morePanel === 'skills'}
-              icon={<Brain size={13} />}
-              title="Skills"
-              detail={language === 'zh' ? `${skills.length} 个` : `${skills.length}`}
-              onClick={() => selectMorePanel('skills')}
-            />
-            {gitAvailable && (
-              <MoreMenuRow
-                active={morePanel === 'git'}
-                icon={<GitBranch size={13} />}
-                title={language === 'zh' ? 'Git 分支' : 'Git'}
-                detail={language === 'zh' ? '分支' : 'Branch'}
-                onClick={() => selectMorePanel('git')}
-              />
-            )}
-          </div>
-          <div className="more-hierarchy-panel">
-            {morePanel === 'project' && (
-              <ProjectContextEditor
-                language={language}
-                activeProjectDir={activeProjectDir}
-                value={projectContext}
-                onSave={onSaveProjectContext}
-              />
-            )}
-            {referencePlanAvailable && morePanel === 'plan' && (
-              <div className="more-plan-panel">
-                <button
-                  className={`more-plan-toggle ${referencePlanEnabled ? 'active' : ''}`}
-                  type="button"
-                  aria-pressed={referencePlanEnabled}
-                  onClick={() =>
-                    onSelectReferencePlanMode(referencePlanEnabled ? 'off' : 'auto')
-                  }
-                >
-                  {referencePlanEnabled ? <CheckCircle2 size={14} /> : <Circle size={14} />}
-                  <span>
-                    <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
-                    <small>
-                      {language === 'zh'
-                        ? '允许模型提交并更新可见任务节点。'
-                        : 'Allow the model to submit and update visible task nodes.'}
-                    </small>
-                  </span>
-                </button>
-                <p>
-                  {language === 'zh'
-                    ? '默认开启，适合交付、Review、审查和需要核对多个证据的工作；轻量问答不会强制建计划。'
-                    : 'Enabled by default for delivery, review, audit, and multi-evidence work; lightweight questions are not forced to create a plan.'}
-                </p>
-              </div>
-            )}
-            {morePanel === 'vision' && (
-              <div className="more-plan-panel">
-                <button
-                  className={`more-plan-toggle ${visualInputEnabled ? 'active' : ''}`}
-                  type="button"
-                  disabled={!visualInputAvailable}
-                  aria-pressed={visualInputEnabled}
-                  onClick={() => onVisualInputEnabledChange(!visualInputEnabled)}
-                >
-                  {visualInputEnabled ? <Eye size={14} /> : <EyeOff size={14} />}
-                  <span>
-                    <strong>{language === 'zh' ? '视觉功能' : 'Vision input'}</strong>
-                    <small>
-                      {visualInputAvailable
-                        ? language === 'zh'
-                          ? '显式允许模型接收图片视觉输入。'
-                          : 'Explicitly allow images as native vision input.'
-                        : language === 'zh'
-                          ? '当前运行环境未提供视觉输入工具。'
-                          : 'Vision input is unavailable in the current runtime.'}
-                    </small>
-                  </span>
-                </button>
-                <p>
-                  {language === 'zh'
-                    ? '默认关闭。开启后，请求会携带 standard_image_input_enabled=true；关闭时图片仍可作为普通文件路径交给 Agent 处理。'
-                    : 'Off by default. When enabled, requests send standard_image_input_enabled=true; when off, images are passed to the agent as regular file paths.'}
-                </p>
-              </div>
-            )}
-            {morePanel === 'skills' && (
-              <div className="popover-list skill-popover-list nested">
-                {skills.length === 0 ? (
-                  <p className="composer-popover-empty">
-                    {language === 'zh' ? '暂无可用 skill' : 'No skills available'}
-                  </p>
-                ) : (
-                  skills.map((skill) => {
-                    const enabled = !disabledSkillNames.has(skill.name);
-                    return (
-                      <div
-                        className={`skill-popover-row ${enabled ? '' : 'disabled'}`}
-                        key={skill.name}
-                      >
-                        <button
-                          className="skill-popover-main"
-                          type="button"
-                          onClick={() => onToggleSkill(skill.name, !enabled)}
-                        >
-                          <SkillIcon skill={skill} compact />
-                          <span>
-                            <strong>{skill.name}</strong>
-                            <small>
-                              {language === 'zh' ? skill.descriptionZh : skill.description}
-                            </small>
-                          </span>
-                        </button>
-                        <button
-                          className={`skill-popover-toggle ${enabled ? 'on' : ''}`}
-                          type="button"
-                          onClick={() => onToggleSkill(skill.name, !enabled)}
-                        >
-                          {enabled ? <CheckCircle2 size={13} /> : <Circle size={13} />}
-                          <span>
-                            {enabled
-                              ? language === 'zh'
-                                ? '开'
-                                : 'On'
-                              : language === 'zh'
-                                ? '关'
-                                : 'Off'}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            )}
-            {morePanel === 'git' && gitAvailable && (
-              <GitBranchMenu language={language} activeProjectDir={activeProjectDir} />
-            )}
-          </div>
+        <div className="composer-add-menu">
+          <button className="composer-add-action" type="button" onClick={onPickAttachments}>
+            <Paperclip size={18} />
+            <span className="composer-add-copy">
+              <strong>{language === 'zh' ? '文件和文件夹' : 'Files and folders'}</strong>
+              <small>{language === 'zh' ? '添加到当前消息' : 'Attach to this message'}</small>
+            </span>
+          </button>
+          {referencePlanAvailable && (
+            <button
+              className="composer-add-action"
+              type="button"
+              role="switch"
+              aria-checked={referencePlanEnabled}
+              aria-label={language === 'zh' ? '任务计划' : 'Task plan'}
+              onClick={() => onSelectReferencePlanMode(referencePlanEnabled ? 'off' : 'auto')}
+            >
+              <ListChecks size={18} />
+              <span className="composer-add-copy">
+                <strong>{language === 'zh' ? '任务计划' : 'Task plan'}</strong>
+                <small>{language === 'zh' ? '允许模型规划和更新任务步骤' : 'Let the model plan and update task steps'}</small>
+              </span>
+              <span className={`composer-add-toggle${referencePlanEnabled ? ' on' : ''}`} aria-hidden="true" />
+            </button>
+          )}
         </div>
       )}
       {menu === 'permissions' && (
@@ -1962,17 +1727,6 @@ function ComposerPopover({
         </div>
       )}
       {menu === 'teams' && <ComposerTeamPicker language={language} onClose={onClose} />}
-      {menu === 'project' && (
-        <ProjectContextEditor
-          language={language}
-          activeProjectDir={activeProjectDir}
-          value={projectContext}
-          onSave={onSaveProjectContext}
-        />
-      )}
-      {menu === 'git' && gitAvailable && (
-        <GitBranchMenu language={language} activeProjectDir={activeProjectDir} />
-      )}
       {menu === 'skills' && (
         <div className="popover-list skill-popover-list">
           {skills.length === 0 ? (
@@ -2138,8 +1892,6 @@ function ComposerPopover({
 function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLanguage) {
   const labels: Record<Exclude<ComposerMenu, null>, { zh: string; en: string }> = {
     more: { zh: '添加', en: 'Add' },
-    project: { zh: '项目上下文', en: 'Project context' },
-    git: { zh: 'Git 分支', en: 'Git branches' },
     skills: { zh: 'Skills', en: 'Skills' },
     models: { zh: '模型', en: 'Model' },
     permissions: { zh: '权限中心', en: 'Permissions' },
@@ -2272,34 +2024,6 @@ function reasoningLevelDescription(level: ReasoningLevel, language: AppLanguage)
     max: { zh: '当前模型支持的最大推理强度', en: 'Maximum reasoning effort supported by the current model' },
   };
   return descriptions[level][language];
-}
-
-function MoreMenuRow({
-  active,
-  icon,
-  title,
-  detail,
-  onClick,
-}: {
-  active: boolean;
-  icon: ReactNode;
-  title: string;
-  detail: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`more-menu-row ${active ? 'active' : ''}`}
-      type="button"
-      onClick={onClick}
-    >
-      {icon}
-      <span>
-        <strong>{title}</strong>
-        <small>{detail}</small>
-      </span>
-    </button>
-  );
 }
 
 function compactTokenCount(value: number) {
@@ -2443,253 +2167,6 @@ function permissionModeDescription(mode: PermissionMode, language: AppLanguage) 
   return (
     permissionModeOptions(language).find((option) => option.id === mode)?.description ??
     permissionModeOptions(language)[0].description
-  );
-}
-
-function GitBranchMenu({
-  language,
-  activeProjectDir,
-}: {
-  language: AppLanguage;
-  activeProjectDir?: string;
-}) {
-  const [branches, setBranches] = useState<string[]>([]);
-  const [currentBranch, setCurrentBranch] = useState('');
-  const [newBranch, setNewBranch] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('');
-
-  const reload = useCallback(async () => {
-    const root = activeProjectDir?.trim();
-    if (!root || !window.cardbushDesktop?.gitInfo) {
-      setBranches([]);
-      setCurrentBranch('');
-      setStatus(language === 'zh' ? '请先打开一个 Git 项目' : 'Open a Git project first');
-      return;
-    }
-    setLoading(true);
-    setStatus('');
-    try {
-      const [info, loadedBranches] = await Promise.all([
-        window.cardbushDesktop.gitInfo(root),
-        window.cardbushDesktop.gitBranches?.(root) ?? Promise.resolve([]),
-      ]);
-      setCurrentBranch(info.branch);
-      setBranches(loadedBranches);
-      if (info.error || info.missing) {
-        setStatus(info.error || (language === 'zh' ? '不是 Git 项目' : 'Not a Git project'));
-      }
-    } catch (caught) {
-      setStatus(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeProjectDir, language]);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  const switchBranch = useCallback(
-    async (branch: string) => {
-      const root = activeProjectDir?.trim();
-      if (!root || !branch.trim()) {
-        return;
-      }
-      setLoading(true);
-      setStatus('');
-      try {
-        const result = await window.cardbushDesktop!.gitCheckout(root, branch);
-        setCurrentBranch(result.branch || branch);
-        setStatus(result.output || (language === 'zh' ? '已切换分支' : 'Branch switched'));
-        void reload();
-      } catch (caught) {
-        setStatus(caught instanceof Error ? caught.message : String(caught));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [activeProjectDir, language, reload],
-  );
-
-  const createBranch = useCallback(async () => {
-    const root = activeProjectDir?.trim();
-    const branch = newBranch.trim();
-    if (!root || !branch) {
-      setStatus(language === 'zh' ? '请输入新分支名称' : 'Enter a new branch name');
-      return;
-    }
-    setLoading(true);
-    setStatus('');
-    try {
-      const result = await window.cardbushDesktop!.gitCreateBranch(root, branch);
-      setCurrentBranch(result.branch || branch);
-      setNewBranch('');
-      setStatus(result.output || (language === 'zh' ? '已创建并切换分支' : 'Branch created'));
-      void reload();
-    } catch (caught) {
-      setStatus(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeProjectDir, language, newBranch, reload]);
-
-  return (
-    <div className="popover-stack git-branch-menu">
-      <p>
-        {activeProjectDir?.trim()
-          ? activeProjectDir
-          : language === 'zh'
-            ? '请先打开一个 Git 项目'
-            : 'Open a Git project first'}
-      </p>
-      <div className="branch-create-row">
-        <input
-          value={newBranch}
-          disabled={loading || !activeProjectDir}
-          onChange={(event) => setNewBranch(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              void createBranch();
-            }
-          }}
-          placeholder={language === 'zh' ? '新分支名称' : 'New branch name'}
-        />
-        <button type="button" disabled={loading || !newBranch.trim()} onClick={() => void createBranch()}>
-          <Plus size={14} />
-          {language === 'zh' ? '创建' : 'Create'}
-        </button>
-      </div>
-      <div className="branch-list">
-        {branches.length === 0 && (
-          <span className="popover-status">
-            {loading
-              ? language === 'zh'
-                ? '正在加载分支...'
-                : 'Loading branches...'
-              : language === 'zh'
-                ? '暂无分支列表'
-                : 'No branches found'}
-          </span>
-        )}
-        {branches.map((branch) => (
-          <button
-            className={`popover-row ${branch === currentBranch ? 'active' : ''}`}
-            type="button"
-            key={branch}
-            disabled={loading || branch === currentBranch}
-            onClick={() => void switchBranch(branch)}
-          >
-            <GitBranch size={16} />
-            <span>
-              <strong>{branch}</strong>
-              <small>
-                {branch === currentBranch
-                  ? language === 'zh'
-                    ? '当前分支'
-                    : 'Current branch'
-                  : language === 'zh'
-                    ? '切换到此分支'
-                    : 'Switch to this branch'}
-              </small>
-            </span>
-          </button>
-        ))}
-      </div>
-      {status && <p className="popover-status">{status}</p>}
-    </div>
-  );
-}
-
-function ProjectContextEditor({
-  language,
-  activeProjectDir,
-  value,
-  onSave,
-}: {
-  language: AppLanguage;
-  activeProjectDir?: string;
-  value: string;
-  onSave?: (value: string) => Promise<string>;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [status, setStatus] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(value);
-    setStatus('');
-  }, [value, activeProjectDir]);
-
-  const save = useCallback(
-    async (nextValue: string) => {
-      if (!activeProjectDir || !onSave) {
-        setStatus(
-          language === 'zh'
-            ? '请先从左侧打开项目'
-            : 'Open a project from the sidebar first',
-        );
-        return;
-      }
-      setSaving(true);
-      setStatus('');
-      try {
-        const saved = await onSave(nextValue);
-        setDraft(saved);
-        setStatus(
-          saved.trim()
-            ? language === 'zh'
-              ? '已保存为项目系统提示词'
-              : 'Saved as project system prompt'
-            : language === 'zh'
-              ? '已清空项目上下文'
-              : 'Project context cleared',
-        );
-      } catch (caught) {
-        setStatus(caught instanceof Error ? caught.message : String(caught));
-      } finally {
-        setSaving(false);
-      }
-    },
-    [activeProjectDir, language, onSave],
-  );
-
-  return (
-    <div className="popover-stack project-context-editor">
-      <p>
-        {activeProjectDir
-          ? activeProjectDir
-          : language === 'zh'
-            ? '请先从左侧打开项目'
-            : 'Open a project from the sidebar first'}
-      </p>
-      <textarea
-        value={draft}
-        disabled={!activeProjectDir || saving}
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        placeholder={
-          language === 'zh'
-            ? '写给当前项目的长期提示词，例如代码风格、约束、偏好或特殊上下文。发送时会作为项目上下文进入系统提示词，不会插入输入框。'
-            : 'Write persistent instructions for this project. They are sent as project context for the system prompt, not inserted into the composer.'
-        }
-      />
-      <div className="popover-actions">
-        <button type="button" onClick={() => void save('')} disabled={saving || !activeProjectDir}>
-          {language === 'zh' ? '清空' : 'Clear'}
-        </button>
-        <button
-          className="primary-button"
-          type="button"
-          onClick={() => void save(draft)}
-          disabled={saving || !activeProjectDir}
-        >
-          {saving ? <LoaderCircle size={14} /> : <CheckCircle2 size={14} />}
-          {language === 'zh' ? '保存' : 'Save'}
-        </button>
-      </div>
-      {status && <p className="popover-status">{status}</p>}
-    </div>
   );
 }
 

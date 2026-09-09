@@ -53,6 +53,7 @@ app.whenReady().then(async () => {
     const modules = Object.fromEntries([
       'src/shared/localPaths.ts', 'src/shared/textPreview.ts',
       'src/shared/showUiError.ts',
+      'src/shared/fileContextMenu.ts',
       'src/features/inspector/inspectorTargets.ts', 'src/features/inspector/InspectorWebview.tsx',
       'src/features/inspector/MediaInspectorPreview.tsx',
       'src/features/inspector/InspectorErrorBoundary.tsx', 'src/features/inspector/FilePreviewFallback.tsx',

@@ -32,6 +32,12 @@ test('registers only the published Skill discovery tool', async () => {
     assert.equal(searchResult.matches[0].name, 'xlsx');
     assert.equal(searchResult.matches[0].mainResource, join(packageDir, 'SKILL.md'));
 
+    const directRegistry = new ToolRegistry();
+    registerSkillTools(directRegistry, [packageDir]);
+    const directSearch = directRegistry.resolve('search_skills');
+    const directResult = await directSearch.execute(context(searchInput, 'direct_skill_root'));
+    assert.equal(directResult.matches[0].mainResource, join(packageDir, 'SKILL.md'), 'a declared individual Skill keeps its original resource directory');
+
     assert.equal(registry.resolve('read_skill'), undefined);
   } finally {
     await rm(root, { recursive: true, force: true });

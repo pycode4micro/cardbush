@@ -5,6 +5,7 @@ export * from "./delegation.js";
 export * from "./environment.js";
 export * from "./guidance.js";
 export * from "./mcp.js";
+export * from "./openai.js";
 export * from "./model.js";
 export * from "./providerBinding.js";
 export * from "./recovery.js";

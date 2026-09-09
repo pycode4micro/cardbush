@@ -106,17 +106,17 @@ import {
   type ContextCompactionState,
   type ContextPressure,
 } from "./contextCompaction.js";
-import { projectActiveTurnContext } from "./contextAssembler.js";
+import { projectActiveTurnContext, wrapContextSource } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
 import { registerInteractionTools } from "./interactionTools.js";
 import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import { LogicMemoryStore } from "./logicMemory.js";
-import { prepareLogicReminder } from "./logicReminder.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { randomUUID } from 'node:crypto';
 import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner.js';
+import { PluginTerminalHooks } from './pluginToolHooks.js';
 import { registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
 import type { PluginExtensionLoader, PluginExtensions, PluginHookEvent, PluginHookContext } from './pluginExtensions.js';
 import {
@@ -277,6 +277,8 @@ export class InMemoryRuntimeHost {
   readonly #loadPluginExtensions?: PluginExtensionLoader;
   readonly #pluginHooks: PluginHookRunner;
   readonly #pluginStartedSessions = new Set<string>();
+  readonly #pluginInterruptedTurns = new Set<string>();
+  readonly #pluginTerminalHooks = new PluginTerminalHooks();
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #capabilities: RuntimeCapabilities;
   readonly #maxAttempts: number | null;
@@ -335,7 +337,12 @@ export class InMemoryRuntimeHost {
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
     this.#loadPluginExtensions = options.loadPluginExtensions;
-    this.#pluginHooks = new PluginHookRunner(runtimeDataRoot);
+    this.#pluginHooks = new PluginHookRunner(runtimeDataRoot, { validateToolInput: (name, input) => { this.#toolRegistry.resolve(name)?.decodeInput(input); }, callMcp: async (hook, input, context) => {
+      const pluginServer = `plugin_${hook.pluginId.replace(/\./g, '_')}_${hook.server}`;
+      const target = this.#toolRegistry.mcpHook(pluginServer, hook.tool!) ?? this.#toolRegistry.mcpHook(hook.server!, hook.tool!);
+      if (!target) throw new Error(`MCP hook tool ${hook.server}/${hook.tool} is not connected or exposed.`);
+      return target.call(input, { request: context.request, signal: context.signal, timeoutMs: hook.timeout * 1000 });
+    } });
     if (options.loadPluginExtensions) registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).commands ?? []);
     this.#taskWorkspaces = options.dataRoot ? new TaskWorkspaceManager(join(runtimeDataRoot, "workspaces")) : undefined;
     this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
@@ -610,6 +617,10 @@ export class InMemoryRuntimeHost {
         if (workspace?.mode === "worktree" && workspace.status === "ready") {
           throw new Error("This task still owns an independent workspace. Apply or review its changes, then discard the copy before deleting the task.");
         }
+        if ([...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === identity.sessionId)) throw new Error('An active Session cannot be deleted.');
+        await this.#pluginHooks.closeSession(identity.sessionId);
+        this.#pluginTerminalHooks.closeSession(identity.sessionId);
+        this.#pluginStartedSessions.delete(identity.sessionId);
         return { sessionId: identity.sessionId, deleted: this.#sessions.delete(identity.sessionId) };
       }
       case LIST_RUNTIME_SESSIONS_COMMAND:
@@ -738,6 +749,7 @@ export class InMemoryRuntimeHost {
       case SHUTDOWN_RUNTIME_COMMAND:
         this.#shuttingDown = true;
         for (const controller of this.#activeTurnControllers.values()) controller.abort();
+        await Promise.allSettled([...this.#pluginStartedSessions].filter(sessionId => ![...this.#activeTurnControllers.keys()].some(key => JSON.parse(key)[0] === sessionId)).map(sessionId => this.#pluginHooks.closeSession(sessionId)));
         return { accepted: true, activeTurns: this.#activeTurns.size };
       case STOP_RUNTIME_TURN_COMMAND: {
         const identity = runtimeTurnIdentitySchema.parse(command.payload);
@@ -758,6 +770,7 @@ export class InMemoryRuntimeHost {
           terminal: false,
           reason: "turn_not_active",
         };
+        this.#pluginInterruptedTurns.add(key);
         controller.abort();
         return {
           protocol: BUSH_RUNTIME_STOP_RECEIPT_PROTOCOL,
@@ -1011,23 +1024,28 @@ export class InMemoryRuntimeHost {
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
     let pluginExtensions: PluginExtensions = { hooks: [], agents: [] };
     let hookOrdinal = 0;
-    const hookIdentities = new Map<string, { ordinal: number }>();
+    const hookIdentities = new Map<string, { ordinal: number; round: number }>();
     const observeHook = (entry: PluginHookObservation) => {
       const hookCall = { protocol: 'bush.tool_call.v1' as const, id: entry.id, name: `plugin_hook.${entry.hook.pluginId}.${entry.hook.event}`,
-        argumentsText: JSON.stringify({ event: entry.hook.event, command: entry.hook.command, args: entry.hook.args }) };
-      if (entry.phase === 'running') hookIdentities.set(entry.id, { ordinal: hookOrdinal++ });
-      const ordinal = hookIdentities.get(entry.id)?.ordinal ?? 0;
+        argumentsText: JSON.stringify(entry.hook.definition ?? { event: entry.hook.event, type: entry.hook.type, command: entry.hook.command, args: entry.hook.args, server: entry.hook.server, tool: entry.hook.tool, input: entry.hook.input }) };
+      const first = !hookIdentities.has(entry.id);
+      if (first) hookIdentities.set(entry.id, { ordinal: hookOrdinal++, round: Math.max(1, round) });
+      const { ordinal, round: hookRound } = hookIdentities.get(entry.id)!;
       const payload = { toolCallId: entry.id, toolName: hookCall.name, ordinal };
+      // Background and SessionEnd hooks can finish after the turn stream closes.
+      // ExecutionStore remains authoritative; a late result must not reopen the turn.
+      const streamOpen = !this.#eventLog.isTerminal(identity.sessionId, identity.turnId);
+      if (first && streamOpen) this.#eventLog.append(identity, { kind: 'tool_queued', payload });
+      if (entry.phase === 'queued') return;
       if (entry.phase === 'running') {
-        this.#eventLog.append(identity, { kind: 'tool_queued', payload });
-        this.#eventLog.append(identity, { kind: 'tool_running', payload });
+        if (streamOpen) this.#eventLog.append(identity, { kind: 'tool_running', payload });
       } else if (hookIdentities.delete(entry.id)) {
         const cancelled = entry.phase === 'cancelled';
         const error = entry.error || cancelled ? { kind: 'tool' as const, code: cancelled ? 'plugin_hook_cancelled' : 'plugin_hook_failed', message: entry.error || 'Plugin hook cancelled.', details: { plugin: entry.hook.pluginId, event: entry.hook.event, output: entry.output ?? '' } } : undefined;
-        this.#toolExecutions.record(hookCall, { ...identity, round: Math.max(1, round), ordinal }, error
+        this.#toolExecutions.record(hookCall, { ...identity, round: hookRound, ordinal }, error
           ? { kind: cancelled ? 'cancelled' : 'failed', error, workspaceChanges: [] }
-          : { kind: 'returned', result: { plugin: entry.hook.pluginId, event: entry.hook.event, output: entry.output ?? '' }, workspaceChanges: [] });
-        this.#eventLog.append(identity, cancelled ? { kind: 'tool_cancelled', payload: { ...payload, reason: 'plugin_hook_cancelled' } } : error ? { kind: 'tool_failed', payload: { ...payload, error } } : { kind: 'tool_returned', payload });
+          : { kind: 'returned', result: { plugin: entry.hook.pluginId, event: entry.hook.event, output: entry.output ?? '', ...(entry.phase === 'skipped' ? { skipped: true } : {}), ...(entry.warning ? { warning: entry.warning } : {}) }, workspaceChanges: [] });
+        if (streamOpen) this.#eventLog.append(identity, cancelled ? { kind: 'tool_cancelled', payload: { ...payload, reason: 'plugin_hook_cancelled' } } : error ? { kind: 'tool_failed', payload: { ...payload, error } } : { kind: 'tool_returned', payload });
       }
     };
     const runHook = (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => this.#pluginHooks.run(pluginExtensions.hooks, event, { ...context, request }, observeHook);
@@ -1040,13 +1058,7 @@ export class InMemoryRuntimeHost {
       modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
       ...childPermissionRuntimeOptions(request, identity),
-      ...(this.#loadPluginExtensions ? { hooks: {
-        before: context => runHook('PreToolUse', { signal: context.signal, toolName: context.toolCall.name, toolCallId: context.toolCall.id, input: context.input }),
-        after: context => runHook(context.outcome.kind === 'returned' ? 'PostToolUse' : 'PostToolUseFailure', {
-          signal: context.signal, toolName: context.toolCall.name, toolCallId: context.toolCall.id, input: context.input,
-          ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : { error: context.outcome.error.message }),
-        }),
-      } satisfies import('./toolExecutionCoordinator.js').ToolExecutionHooks } : {}),
+      ...(this.#loadPluginExtensions ? { hooks: this.#pluginTerminalHooks.forTurn(request.sessionId, runHook) } : {}),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
@@ -1133,11 +1145,13 @@ export class InMemoryRuntimeHost {
           }
         : { assistantContentOffset: 0 };
     };
-    const beginContextCompaction = (
+    const beginContextCompaction = async (
       state: ContextCompactionState,
       pressure: ContextPressure,
     ) => {
       if (activeContextCompaction) return;
+      const hooks = await runHook('PreCompact', { signal: input.signal, trigger: 'auto' });
+      if (hooks.stopTurn !== undefined) return hooks.stopTurn;
       contextCompactionOrdinal += 1;
       const assistantAnchor = latestAssistantAnchor();
       activeContextCompaction = {
@@ -1251,6 +1265,8 @@ export class InMemoryRuntimeHost {
         cacheChain.snapshot(),
         activeContextCheckpoint,
       );
+      if (this.#pluginInterruptedTurns.delete(turnKey) && request.metadata.agentRole !== 'child') await runHook('Interrupt', {});
+      if (this.#shuttingDown) await this.#pluginHooks.closeSession(request.sessionId);
       if (workspace) {
         try { this.#publishWorkspace(workspace); }
         catch (error) {
@@ -1272,24 +1288,28 @@ export class InMemoryRuntimeHost {
       });
     try {
       if (this.#loadPluginExtensions) {
+        this.#pluginHooks.openSession(request.sessionId);
         pluginExtensions = await this.#loadPluginExtensions();
         if (input.nextRound === 1) {
           const child = request.metadata.agentRole === 'child';
           const initialHookMessages: string[] = [];
           if (!this.#pluginStartedSessions.has(request.sessionId)) {
             this.#pluginStartedSessions.add(request.sessionId);
-            initialHookMessages.push(...(await runHook(child ? 'SubagentStart' : 'SessionStart', { signal: input.signal })).messages);
+            const started = await runHook(child ? 'SubagentStart' : 'SessionStart', { signal: input.signal, source: priorSession?.turns.length ? 'resume' : 'startup' });
+            if (started.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: started.stopTurn } });
+            initialHookMessages.push(...started.messages);
           }
           if (!child) {
             const prompt = input.sessionCommit?.inputMessages.filter(item => item.message.role === 'user').map(item => item.message.content).join('\n') ?? [...messages].reverse().find(message => message.role === 'user')?.content ?? '';
             const result = await runHook('UserPromptSubmit', { signal: input.signal, prompt });
             if (result.blocked) return await finalize({ status: 'failed', reason: 'plugin_hook_blocked', details: { message: result.blocked } });
+            if (result.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: result.stopTurn } });
             initialHookMessages.push(...result.messages);
             if (pluginExtensions.agents.length && request.tools.some(tool => tool.name === 'subagent')) initialHookMessages.push("Installed plugin Agents are available via list_plugin_agents. Apply a role using subagent.agent_type with its exact plugin:agent id. Their instructions and allowed tools apply; CardBush's configured child model and permission policies apply.");
             if (pluginExtensions.commands?.length && request.tools.some(tool => tool.name === 'list_plugin_commands')) initialHookMessages.push('Installed plugin Commands are available via list_plugin_commands and run_plugin_command. They retain their own command identity and argument handling. User-only commands require an explicit slash invocation.');
           }
           for (const [index, content] of initialHookMessages.entries()) {
-            const message: ModelMessage = { role: 'user', name: 'plugin_hook_feedback', visibility: 'internal', content };
+            const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_start_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
           }
           const currentInput = input.sessionCommit?.inputMessages.map(item => item.message) ?? request.messages;
@@ -1312,30 +1332,14 @@ export class InMemoryRuntimeHost {
           }
         }
       }
-      // One optional reminder per Turn, outside both the Tool loop and provider retry loop.
-      // Append it as a durable fact before pressure measurement and checkpoint saving.
-      const logicReminder = !input.signal?.aborted ? await prepareLogicReminder({
-        memory: this.#logicMemory,
-        enabled: request.tools.some((tool) => tool.name === "consult_logic"),
-        nextRound: input.nextRound,
-        turnId: request.turnId,
-        session: priorSession,
-        currentMessages: input.sessionCommit
-          ? input.sessionCommit.inputMessages.map((entry) => entry.message) : messages,
-        generatedMessages: generatedMessages.map((entry) => entry.message),
-        messages,
-        supersededMessageIds: input.sessionCommit?.supersession?.messageIds,
-      }) : undefined;
-      if (logicReminder && !input.signal?.aborted) {
-        messages = [...messages, logicReminder];
-        generatedMessages.push({
-          messageId: `msg_logic_reminder_${request.turnId}`,
-          createdAt: this.#sessionNow(),
-          message: logicReminder,
-        });
-      }
       while (true) {
         round += 1;
+        for (const delivery of this.#pluginHooks.takeMessages(request.sessionId)) {
+          for (const [index, content] of delivery.messages.entries()) {
+            const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
+            messages.push(message); generatedMessages.push({ messageId: `msg_${delivery.id}_${index}`, createdAt: this.#sessionNow(), message });
+          }
+        }
         if (Number.isInteger(request.metadata.pluginAgentMaxTurns) && round > Number(request.metadata.pluginAgentMaxTurns)) return await finalize({ status: 'failed', reason: 'plugin_agent_turn_limit', details: { rounds: round - 1 } });
         let dispatchPressure: ContextPressure | undefined;
         if (input.signal?.aborted) return await stop();
@@ -1373,7 +1377,8 @@ export class InMemoryRuntimeHost {
           ) {
             this.#contextCompactionAuthorizations.set(turnKey, state);
             contextCompactionRequired = true;
-            beginContextCompaction(state, pressure);
+            const stopped = await beginContextCompaction(state, pressure);
+            if (stopped !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: stopped } });
             const noticeKey = contextCompactionStateKey(state);
             if (contextPressureNoticeKey !== noticeKey) {
               messages = [
@@ -1437,6 +1442,16 @@ export class InMemoryRuntimeHost {
         let dispatchMessages = messages;
         let dispatchProviderState = providerState;
         if (contextCompactionRequired) {
+          // Label source segments only in this maintenance request. Normal
+          // requests and the durable history retain their exact cache prefix.
+          dispatchMessages = [
+            ...this.#rebuildCompactedMessages(request.sessionId, request.turnId,
+              input.sessionCommit!, generatedMessages, activeContextCheckpoint, undefined,
+              this.#contextCompactionAuthorizations.get(turnKey), legacyCheckpointInput),
+            ...messages.filter(message => message.role === "user" &&
+              ["context_pressure", "context_compaction_correction"].includes(message.name ?? "")),
+          ];
+          dispatchProviderState = freshResponseChain();
           let maintenancePressure = await this.#measureContextPressure(
             request,
             dispatchMessages,
@@ -1835,6 +1850,16 @@ export class InMemoryRuntimeHost {
               generatedMessages,
               activeContextCheckpoint,
             );
+            const postCompact = await runHook('PostCompact', { signal: input.signal, trigger: 'auto' });
+            if (postCompact.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: postCompact.stopTurn } });
+            if (request.metadata.agentRole !== 'child') {
+              const compactStart = await runHook('SessionStart', { signal: input.signal, source: 'compact' });
+              for (const [index, content] of compactStart.messages.entries()) {
+                const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
+                messages.push(message); generatedMessages.push({ messageId: `msg_plugin_compact_${request.turnId}_${round}_${index}`, createdAt: this.#sessionNow(), message });
+              }
+              if (compactStart.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: compactStart.stopTurn } });
+            }
             const previousAssistantMessageId = [...generatedMessages]
               .reverse()
               .find((item) => item.message.role === "assistant")
@@ -1992,7 +2017,7 @@ export class InMemoryRuntimeHost {
           const activePlan = request.metadata.planEnabled === true
             ? this.#coordination.getPlan(request.sessionId)
             : undefined;
-          if (activePlan?.plan.active) {
+          if (activePlan?.plan.nodes.some(node => node.status === "pending" || node.status === "in_progress")) {
             if (unresolvedPlanContinuations >= 2) {
               return await finalize({
                 status: "failed",
@@ -2012,7 +2037,7 @@ export class InMemoryRuntimeHost {
               role: "user",
               name: "task_plan_continuation",
               visibility: "internal",
-              content: "The active task plan still has open nodes. Continue the work or update_task_plan with accurate terminal node states before finishing this Turn.",
+              content: "The active task plan still has actionable nodes. Continue the work or update_task_plan with accurate states. Steps that require user action or an external dependency may be waiting with a concrete waitingFor; preserve unfinished verification steps when handing off.",
             };
             messages = [...messages, planMessage];
             generatedMessages.push({
@@ -2049,16 +2074,19 @@ export class InMemoryRuntimeHost {
           const stopHooks = await runHook(request.metadata.agentRole === 'child' ? 'SubagentStop' : 'Stop', {
             signal: input.signal, lastAssistantMessage: completedRound.text, stopHookActive: pluginStopContinuations > 0,
           });
-          if (stopHooks.blocked || stopHooks.shouldContinue) {
-            if (pluginStopContinuations >= 2) return await finalize({ status: 'failed', reason: 'plugin_stop_hook_limit', details: { message: stopHooks.blocked ?? stopHooks.messages.join('\n') } });
+          if (stopHooks.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', finalMessageId: completedProjector.finalMessageId, details: { message: stopHooks.stopTurn } });
+          if (stopHooks.continueTurn !== undefined) {
             pluginStopContinuations++;
-            const message: ModelMessage = { role: 'user', name: 'plugin_stop_feedback', visibility: 'internal', content: [stopHooks.blocked, ...stopHooks.messages].filter(Boolean).join('\n') };
+            const submitted = request.metadata.agentRole === 'child' ? { messages: [] } : await runHook('UserPromptSubmit', { signal: input.signal, prompt: stopHooks.continueTurn });
+            if ('blocked' in submitted && submitted.blocked) return await finalize({ status: 'failed', reason: 'plugin_hook_blocked', details: { message: submitted.blocked } });
+            if ('stopTurn' in submitted && submitted.stopTurn !== undefined) return await finalize({ status: 'stopped', reason: 'plugin_hook_stopped', details: { message: submitted.stopTurn } });
+            const message: ModelMessage = { role: 'user', name: 'plugin_stop_feedback', visibility: 'internal', content: [stopHooks.continueTurn, ...submitted.messages].filter(Boolean).join('\n') };
             messages.push(message); generatedMessages.push({ messageId: `msg_plugin_stop_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
             continue;
           }
           return await finalize({
             status: "completed",
-            reason: "model_response_completed",
+            reason: activePlan?.plan.nodes.some(node => node.status === "waiting") ? "task_plan_waiting" : "model_response_completed",
             finalMessageId: completedProjector.finalMessageId,
             details: {
               finishReason: completedRound.finishReason ?? null,
@@ -2251,18 +2279,22 @@ export class InMemoryRuntimeHost {
     generatedMessages: GeneratedMessageFact[],
     activeContextCheckpoint?: TurnContextCheckpoint,
     maxSummaryTurns?: number,
+    compaction?: ContextCompactionState,
+    legacyCheckpointInput = false,
   ): ModelMessage[] {
+    let current = projectActiveTurnContext({
+      turnId: activeTurnId, inputMessages: checkpoint.inputMessages,
+      generatedMessages, checkpoint: activeContextCheckpoint,
+      includeResumeInstruction: true,
+    });
+    if (compaction) current = wrapContextSource(current, activeTurnId,
+      compaction.activeTurn ? (legacyCheckpointInput ? "active_turn.summary" : "active_summary") : "not_requested");
     return this.#sessions.rebuildActiveContext({
       sessionId,
       supersession: checkpoint.supersession,
       prefix: checkpoint.prefixMessages,
-      current: projectActiveTurnContext({
-        turnId: activeTurnId,
-        inputMessages: checkpoint.inputMessages,
-        generatedMessages,
-        checkpoint: activeContextCheckpoint,
-        includeResumeInstruction: true,
-      }),
+      current,
+      compactionTurnIds: compaction?.unsummarizedTurnIds,
       ...(maxSummaryTurns === undefined ? {} : { maxSummaryTurns }),
     }).messages;
   }

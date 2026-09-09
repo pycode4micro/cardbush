@@ -3,19 +3,21 @@ import { basename, extname, join, resolve, relative, isAbsolute } from 'node:pat
 import { load as yaml, JSON_SCHEMA } from 'js-yaml';
 import type { PluginAgent, PluginHook, PluginHookEvent, PluginCommand } from '@cardbush/bush-runtime' with { 'resolution-mode': 'import' };
 import type { PluginMarketPreview } from './pluginMarketplaceTypes';
+import type { PluginFormat } from './pluginManifest';
+import { createHash } from 'node:crypto';
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {};
-const hookEvents = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStart', 'SubagentStop']);
+const hookEvents = new Set(['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PostCompact', 'Stop', 'Interrupt', 'SubagentStart', 'SubagentStop']);
 
 /** Read original declarations at both preview and runtime; no executable content runs during inspection. */
-export async function readPluginExtensions(root: string, manifest: Json) {
+export async function readPluginExtensions(root: string, manifest: Json, options: { format?: PluginFormat } = {}) {
   const pluginId = String(manifest.name);
   const hooks: PluginHook[] = [], agents: PluginAgent[] = [], commands: PluginCommand[] = [], issues: PluginMarketPreview['issues'] = [], notes: string[] = [];
   const addIssue = (detail: string) => issues.push({ code: 'extension', detail });
   const hookSources: unknown[] = manifest.hooks === undefined ? [] : Array.isArray(manifest.hooks) ? [...manifest.hooks] : [manifest.hooks];
   const defaultHooks = './hooks/hooks.json';
-  if (await exists(join(root, defaultHooks)) && !hookSources.some(value => typeof value === 'string' && resolve(root, value) === join(root, defaultHooks))) hookSources.unshift(defaultHooks);
+  if ((manifest.hooks === undefined || options.format === 'claude') && await exists(join(root, defaultHooks)) && !hookSources.some(value => typeof value === 'string' && resolve(root, value) === join(root, defaultHooks))) hookSources.unshift(defaultHooks);
   for (const source of hookSources) {
     const config = typeof source === 'string' ? object(JSON.parse(await readFile(await pluginChild(root, source), 'utf8'))) : object(source);
     for (const [event, raw] of Object.entries(object(config.hooks ?? config))) {
@@ -24,19 +26,34 @@ export async function readPluginExtensions(root: string, manifest: Json) {
         const row = object(group), matcher = typeof row.matcher === 'string' ? row.matcher : '';
         if (matcher.length > 256 || Object.keys(row).some(key => !['matcher', 'hooks'].includes(key))) { addIssue(`hooks.${event}: unsupported matcher options`); continue; }
         if (!Array.isArray(row.hooks)) { addIssue(`hooks.${event}: missing handlers`); continue; }
-        try { if (matcher) new RegExp(matcher); } catch { addIssue(`hooks.${event}: invalid matcher`); continue; }
+        try { if (matcher && matcher !== '*' && !['Stop', 'Interrupt', 'UserPromptSubmit'].includes(event)) new RegExp(matcher); } catch { addIssue(`hooks.${event}: invalid matcher`); continue; }
         for (const candidate of row.hooks) {
           const hook = object(candidate);
-          if (!hookEvents.has(event) || hook.type !== 'command') { addIssue(`hooks.${event}: ${String(hook.type)} handler`); continue; }
-          const unsupported = Object.keys(hook).filter(key => !['type', 'command', 'args', 'shell', 'timeout', 'statusMessage', 'once'].includes(key) && hook[key] !== false);
+          if (!hookEvents.has(event) || !['command', 'mcp_tool', 'prompt', 'agent'].includes(String(hook.type))) { addIssue(`hooks.${event}: ${String(hook.type)} handler`); continue; }
+          const skipped = hook.type === 'prompt' || hook.type === 'agent';
+          const unsupported = Object.keys(hook).filter(key => !['type', 'command', 'commandWindows', 'args', 'shell', 'timeout', 'statusMessage', 'once', 'async', 'additionalContextLimit', 'server', 'tool', 'input', 'prompt', 'model'].includes(key) && hook[key] !== false);
           if (unsupported.length) { addIssue(`hooks.${event}: ${unsupported.join(', ')}`); continue; }
-          if (typeof hook.command !== 'string' || !hook.command.trim()) { addIssue(`hooks.${event}: missing command`); continue; }
+          if (hook.type === 'command' && (typeof hook.command !== 'string' || !hook.command.trim())) { addIssue(`hooks.${event}: missing command`); continue; }
+          if (hook.type === 'mcp_tool' && (!String(hook.server ?? '').trim() || !String(hook.tool ?? '').trim() || (hook.input !== undefined && (!hook.input || typeof hook.input !== 'object' || Array.isArray(hook.input))))) { addIssue(`hooks.${event}: invalid MCP handler`); continue; }
+          if (hook.type === 'mcp_tool' && (hook.async === true || event === 'SessionEnd')) { addIssue(`hooks.${event}: MCP hooks must be synchronous and cannot run at SessionEnd`); continue; }
+          if (hook.async !== undefined && typeof hook.async !== 'boolean') { addIssue(`hooks.${event}: async must be a boolean`); continue; }
+          if (hook.commandWindows !== undefined && typeof hook.commandWindows !== 'string') { addIssue(`hooks.${event}: invalid Windows command`); continue; }
+          if (hook.additionalContextLimit !== undefined && (!Number.isInteger(hook.additionalContextLimit) || Number(hook.additionalContextLimit) < 0)) { addIssue(`hooks.${event}: invalid additionalContextLimit`); continue; }
           if (hook.shell && !['bash', 'powershell', 'cmd'].includes(String(hook.shell))) { addIssue(`hooks.${event}: unsupported shell`); continue; }
           if (hook.args !== undefined && (!Array.isArray(hook.args) || hook.args.some(arg => typeof arg !== 'string'))) { addIssue(`hooks.${event}: invalid args`); continue; }
-          const timeout = hook.timeout === undefined ? 30 : Number(hook.timeout);
-          if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 600) { addIssue(`hooks.${event}: timeout must be 0–600 seconds`); continue; }
-          hooks.push({ id: `${pluginId}:${event}:${hooks.length}`, pluginId, root, event: event as PluginHookEvent, matcher,
-            command: hook.command, ...(hook.args !== undefined ? { args: hook.args as string[] } : {}),
+          const ending = event === 'SessionEnd' || event === 'Interrupt';
+          const timeout = hook.timeout === undefined ? ending ? 1 : 600 : Number(hook.timeout);
+          if (!Number.isFinite(timeout) || timeout <= 0 || (ending && (timeout < 1 || timeout > 3))) { addIssue(`hooks.${event}: invalid timeout${ending ? ' (1–3 seconds)' : ''}`); continue; }
+          const definition = { event, matcher, handler: hook };
+          const definitionHash = createHash('sha256').update(JSON.stringify(stableJson({ root: resolve(root), ...definition }))).digest('hex');
+          if (skipped) notes.push(`Hook ${event}: ${hook.type} handlers are parsed but skipped, matching OpenAI.`);
+          hooks.push({ id: `${pluginId}:${event}:${hooks.length}`, pluginId, root, dialect: options.format === 'claude' ? 'claude' : 'openai', event: event as PluginHookEvent, matcher,
+            type: hook.type as PluginHook['type'], command: typeof hook.command === 'string' ? hook.command : '',
+            ...(hook.commandWindows !== undefined ? { commandWindows: hook.commandWindows as string } : {}),
+            ...(hook.type === 'mcp_tool' ? { server: String(hook.server), tool: String(hook.tool), input: object(hook.input) } : {}),
+            async: hook.async === true && event !== 'SessionEnd', statusMessage: typeof hook.statusMessage === 'string' ? hook.statusMessage : undefined,
+            additionalContextLimit: hook.additionalContextLimit as number | undefined, definition, definitionHash,
+            ...(hook.args !== undefined ? { args: hook.args as string[] } : {}),
             ...(hook.shell ? { shell: hook.shell as PluginHook['shell'] } : {}), timeout, once: hook.once === true });
         }
       }
@@ -93,6 +110,12 @@ export async function readPluginExtensions(root: string, manifest: Json) {
   if (new Set(commands.map(command => command.id)).size !== commands.length) addIssue('commands: duplicate names');
   if (hooks.length > 100 || agents.length > 100 || commands.length > 100) addIssue('Plugin exceeds 100 Hooks, Agents or Commands.');
   return { hooks, agents, commands, issues, notes };
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stableJson(item)]));
+  return value;
 }
 
 function toolRules(value: unknown): string[] {

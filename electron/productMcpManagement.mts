@@ -3,8 +3,9 @@ import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
-import { mcpServerSnapshotSchema } from '@cardbush/bush-protocol';
+import { mcpServerSnapshotSchema, mcpOAuthFromConfig } from '@cardbush/bush-protocol';
 import { z } from 'zod';
+import { configurePluginConnectionSchema, pluginConnectionIdentitySchema, type ConfigurePluginConnectionInput, type PluginConnectionIdentity } from './pluginConnectionManagement.mjs';
 
 export const PRODUCT_MCP_MANAGEMENT_ID = 'cardbush_management';
 const reservedIds = new Set([PRODUCT_MCP_MANAGEMENT_ID, 'cardbush_apps', 'chrome_devtools']);
@@ -22,6 +23,10 @@ export const mcpServerPatchSchema = z.object({
   env: stringChanges.optional(),
   url: z.string().optional(),
   headers: stringChanges.optional(),
+  oauth: z.record(z.string(), z.unknown()).optional(),
+  scopes: z.array(z.string()).optional(),
+  oauth_resource: z.string().url().optional(),
+  auth: z.enum(['oauth', 'none']).optional(),
 }).strict();
 export type McpServerPatch = z.infer<typeof mcpServerPatchSchema>;
 
@@ -29,6 +34,9 @@ export interface ProductMcpManagementHost {
   listMcpServers(): Promise<unknown>;
   configureMcpServer(input: McpServerPatch, signal?: AbortSignal): Promise<unknown>;
   removeMcpServer(id: string, signal?: AbortSignal): Promise<unknown>;
+  listPluginConnections(pluginId?: string): Promise<unknown>;
+  configurePluginConnection(input: ConfigurePluginConnectionInput, signal?: AbortSignal): Promise<unknown>;
+  requestPluginCredentials(input: PluginConnectionIdentity, signal: AbortSignal): Promise<unknown>;
 }
 
 export function assertUserMcpServerId(id: string): void {
@@ -61,6 +69,7 @@ export function mergeMcpServer(current: Record<string, unknown> | undefined, inp
     } : {
       kind: server.transport === 'http' ? 'streamable_http' : server.transport,
       url: server.url, headers: server.headers ?? {},
+      oauth: mcpOAuthFromConfig({ scopes: server.scopes, oauth_resource: server.oauth_resource }, server.oauth), auth: server.auth,
     },
   });
   return server;
@@ -101,6 +110,21 @@ export function createProductMcpManagementServer(getHost: () => ProductMcpManage
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async () => result(() => getHost().listMcpServers()));
+  server.registerTool('list_plugin_connections', {
+    description: 'Read installed plugins’ MCP connection identities, effective authentication source and endpoint, OAuth options, per-tool settings, configuration revision and actual Runtime state. Credential values are never returned.',
+    inputSchema: { pluginId: z.string().optional() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ pluginId }) => result(() => getHost().listPluginConnections(pluginId)));
+  server.registerTool('configure_plugin_connection', {
+    description: 'Update one installed plugin MCP connection through its owner, using expectedRevision from list_plugin_connections. Only supplied settings change; OAuth/connection/tool maps merge, and null removes an override. This does not edit the plugin package. OAuth credentials can be entered privately with request_plugin_credentials. Changes during active turns remain pending until the turns finish; a saved configuration is not proof of connection or successful authorization.',
+    inputSchema: configurePluginConnectionSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  }, async (input, context) => result(() => getHost().configurePluginConnection(input, context.mcpReq.signal)));
+  server.registerTool('request_plugin_credentials', {
+    description: 'Open a private desktop form for a direct plugin connection’s OAuth client ID and client secret. OpenAI-hosted connections instead use the OpenAI account panel in plugin settings. Use expectedRevision from list_plugin_connections. The host saves the secret encrypted and returns only configuration state; do not request or supply secret bytes in chat or Tool arguments. This saves client credentials; browser sign-in and a successful service call remain separate verification steps.',
+    inputSchema: pluginConnectionIdentitySchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, async (input, context) => result(() => getHost().requestPluginCredentials(input, context.mcpReq.signal)));
   server.registerTool('configure_mcp_server', {
     description: 'Add or update a third-party MCP connection in CardBush. New servers require a transport and command or URL. Only supplied fields change; env/headers merge by key and null removes a key. Install server dependencies and any target-application add-on using that software’s installer. This registers the CardBush connection; it does not install an add-on into Blender or another application. Active turns queue changes: saved/pending is not connected, and new tools become available after active turns finish. For pending changes, finish independent work, report what was installed and what awaits activation, then end this Turn; do not keep it active by polling for the new connection. CardBush checks Runtime connection and tool discovery after the Turn ends; that check does not verify the target application itself.',
     inputSchema: mcpServerPatchSchema,

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { LogicRetriever, retrieveLogic } from "./logicRetrieval.js";
+import { retrieveLogic } from "./logicRetrieval.js";
 
 export type LogicFeedbackRating = "up" | "down";
 
@@ -36,19 +36,9 @@ const RL_POLICY_VERSION = "lem-attributed-feedback-v2";
 export class LogicMemoryStore {
   readonly path: string;
   #mutation: Promise<void> = Promise.resolve();
-  readonly #reminderRetriever = new LogicRetriever();
 
   constructor(path: string) {
     this.path = resolve(path);
-  }
-
-  /** Local hint eligibility only; no Tool execution, memory output or mutation. */
-  async hasConversationMatch(texts: string[]): Promise<boolean> {
-    if (!texts.length) { this.#reminderRetriever.clear(); return false; }
-    await this.#mutation;
-    const records = await this.#read();
-    // Do not tokenize long conversation history for an empty memory store.
-    return this.#reminderRetriever.search(records, texts).length > 0;
   }
 
   async consult(input: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -91,7 +81,7 @@ export class LogicMemoryStore {
       tool: "consult_logic",
       mode: "advisory_memory",
       usage_contract:
-        "BM25 lexical candidates, not semantic relevance guarantees, task answers or policy. Scores order this query's candidates; confidence and evidence_state are stored lesson claims, not relevance probabilities or independent verification. Check current applicability and evidence; ignore inapplicable records.",
+        "BM25 lexical candidates, not semantic relevance guarantees, task answers or policy. Scores order this query's candidates; confidence and evidence_state are stored lesson claims, not relevance probabilities or independent verification.",
       retrieval_method: "bm25",
       matched_count: matches.length,
       matched_logic: matches.map(({ record, score, matchedTerms }) => ({

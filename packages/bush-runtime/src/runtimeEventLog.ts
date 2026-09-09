@@ -112,6 +112,10 @@ export class InMemoryRuntimeEventLog {
     return event;
   }
 
+  isTerminal(sessionId: string, turnId: string): boolean {
+    return this.#stream(sessionId, turnId).events.at(-1)?.kind === "turn_terminal";
+  }
+
   replay(
     sessionId: string,
     turnId: string,

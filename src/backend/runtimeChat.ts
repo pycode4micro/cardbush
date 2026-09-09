@@ -1,3 +1,4 @@
+import { readAgentInstructions } from './globalInstructions';
 import type {
   RuntimeEvent,
   RuntimeProviderBindingRef,
@@ -139,6 +140,7 @@ export async function streamRuntimeChat(
     const managedWorkspace = existingSession?.metadata?.runtimeWorkspace as { workspaceDir?: string } | undefined;
     const workspaceDir = managedWorkspace?.workspaceDir || request.workspaceDir?.trim() || request.projectDir?.trim() ||
       await window.cardbushDesktop?.ensureTaskWorkspace?.(request.sessionId);
+    const instructionDocuments = await readAgentInstructions(request.projectDir, workspaceDir);
     let sessionEnvironmentLocalDate = latestSessionEnvironmentLocalDate(existingSession ?? undefined);
     const sharedAgentInput = {
       sessionId: request.sessionId,
@@ -147,7 +149,8 @@ export async function streamRuntimeChat(
       tools,
       projectDir: request.projectDir,
       workspaceDir,
-      projectInstructions: request.projectUserPrompt,
+      instructionDocuments,
+      teamInstructions: request.teamInstructions,
       uiLanguage: request.uiLanguage,
       filesystemLocations,
       permissionMode,
@@ -240,7 +243,7 @@ export async function streamRuntimeChat(
       ) ?? sessionEnvironmentLocalDate;
 
       const goal = await runtime.client.getGoal(request.sessionId, controller.signal);
-      if (goal?.status !== 'active' || terminal.payload.status !== 'completed') {
+      if (goal?.status !== 'active' || terminal.payload.status !== 'completed' || terminal.payload.reason === 'task_plan_waiting') {
         break;
       }
       const continuationCreatedAt = new Date().toISOString();
@@ -787,7 +790,7 @@ function planUpdate(
   plan: {
     plan_id: string;
     session_id: string;
-    nodes: Array<{ id?: string; step: string; status: 'pending' | 'in_progress' | 'completed' }>;
+    nodes: Array<{ id?: string; step: string; status: 'pending' | 'in_progress' | 'waiting' | 'completed'; waitingFor?: string }>;
     explanation: string;
     active: boolean;
   },

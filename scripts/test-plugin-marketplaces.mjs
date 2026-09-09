@@ -13,7 +13,7 @@ const claude = {name:'claude-example',version:'2.0.0',description:'Claude fixtur
 const nativeMarket={name:'native-market',interface:{displayName:'Native market'},plugins:[
  {name:native.name,source:{source:'local',path:'./plugins/native-example'},policy:{installation:'AVAILABLE',authentication:'ON_INSTALL'},category:'Tests'},
  {name:'unavailable',source:{source:'local',path:'./plugins/no'},policy:{installation:'NOT_AVAILABLE',authentication:'ON_INSTALL'},category:'Tests'},
- {name:'unsupported-npm',source:{source:'npm',package:'example'},policy:{installation:'AVAILABLE',authentication:'ON_INSTALL'},category:'Tests'},
+ {name:'unsupported-source',source:{source:'unknown'},policy:{installation:'AVAILABLE',authentication:'ON_INSTALL'},category:'Tests'},
 ]};
 const claudeMarket={name:'claude-market',owner:{name:'Fixture'},plugins:[
  {name:claude.name,source:'./plugins/claude-example',category:'Tests'},
@@ -94,15 +94,16 @@ try{
  assert.equal(adapted.format,'claude');assert.equal(adapted.issues.length,0);
  assert.equal(adapted.components.filter(item=>item.kind==='skill').length,2,'Claude custom skill paths add to the default skills directory');
  await service.install(adapted.token);
- const adaptedManifest=JSON.parse(await readFile(join(options.userPluginRoot,claude.name,'.codex-plugin/plugin.json'),'utf8'));
+ const adaptedManifest=JSON.parse(await readFile(join(options.userPluginRoot,claude.name,'.claude-plugin/plugin.json'),'utf8'));
  assert.equal(adaptedManifest.name,claude.name);
- assert.equal(adaptedManifest.mcpServers.echo.args[0],'${CARDBUSH_PLUGIN_ROOT}/server.js');
- assert.ok(await readFile(join(options.userPluginRoot,claude.name,'.cardbush-imported-skills/task/SKILL.md'),'utf8'));
- assert.equal((await loadEnabledProductPluginSkillRoots(roots,configPath)).length,2);
+ assert.equal(adaptedManifest.mcpServers,'.mcp.json','the original declaration remains unchanged');
+ assert.ok(await readFile(join(options.userPluginRoot,claude.name,'skill-pack/task/SKILL.md'),'utf8'));
+ assert.ok(!(await readdir(join(options.userPluginRoot,claude.name))).includes('.codex-plugin'),'no converted manifest is generated');
+ assert.equal((await loadEnabledProductPluginSkillRoots(roots,configPath)).length,3,'original skill roots are loaded without copied skill packages');
  const blocked=await service.preview(other.id,'hook-example');
- assert.ok(blocked.issues.some(issue=>issue.code==='extension'&&issue.detail.includes('hooks')));
- await assert.rejects(service.install(blocked.token),/not compatible/);
- assert.ok(!(await readdir(options.userPluginRoot)).includes('hook-example'));
+ assert.equal(blocked.issues.length,0,'prompt hooks are parsed and skipped under the OpenAI contract');
+ await service.install(blocked.token);
+ assert.ok((await readdir(options.userPluginRoot)).includes('hook-example'));
  // Same name from a second source is reviewable but cannot replace the first plugin.
  const conflictSource=await service.addGitHub('fixture/native@v1');
  const conflict=await service.preview(conflictSource.id,native.name);

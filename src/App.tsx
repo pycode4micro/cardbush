@@ -1,3 +1,4 @@
+import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
 import {
   ArrowLeft,
@@ -37,12 +38,10 @@ import {
   fetchBackendCapabilities,
   fetchBackendReadiness,
   fetchModelConfigs,
-  fetchProjectContext,
   fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
   saveModelConfigs,
-  saveProjectContext,
 } from './backend/api';
 import { useCardbushChat } from './hooks/useCardbushChat';
 import { showUiError } from './shared/showUiError';
@@ -342,9 +341,6 @@ function CardbushApp() {
   );
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
-  const [projectContexts, setProjectContexts] = useState<Record<string, string>>(
-    readProjectContexts,
-  );
   const [disabledSkillNames, setDisabledSkillNames] = useState<Set<string>>(
     readDisabledSkillNames,
   );
@@ -567,7 +563,6 @@ function CardbushApp() {
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     runtimeReady: runtimeStartup.phase === 'ready',
     language,
-    projectContexts,
     disabledSkillNames,
     standardImageInputEnabled: visualInputEnabled,
     browserPrivacyMode: browserPrivacyModeEnabled,
@@ -706,7 +701,6 @@ function CardbushApp() {
     (!onlyTalkMode && !chat.activeConversation
       ? fallbackProjectDir || undefined
       : undefined);
-  const activeContextProjectDir = activeConversationProjectDir || activeProjectDir;
   const activeProjectPathAliases = useMemo(
     () => conversationProjectPathAliases(chat.activeConversation),
     [chat.activeConversation],
@@ -1824,24 +1818,8 @@ function CardbushApp() {
       setRecentProjectDir(moved.nextPath);
       window.localStorage.setItem(recentProjectStorageKey, moved.nextPath);
     }
-    const previousContextKey = projectContextKey(moved.previousPath);
-    const nextContextKey = projectContextKey(moved.nextPath);
-    const savedContext = projectContexts[previousContextKey];
-    setProjectContexts((current) => {
-      if (!Object.prototype.hasOwnProperty.call(current, previousContextKey)) return current;
-      const next = { ...current, [nextContextKey]: current[previousContextKey] ?? '' };
-      delete next[previousContextKey];
-      persistProjectContexts(next);
-      return next;
-    });
-    if (savedContext !== undefined) {
-      void saveProjectContext({
-        projectDir: moved.nextPath,
-        userPrompt: savedContext,
-      }).catch(() => undefined);
-    }
     return null;
-  }, [chat, language, projectContexts, recentProjectDir]);
+  }, [chat, language, recentProjectDir]);
 
   const handleProjectAction = useCallback(
     async (action: ProjectAction, project: ProjectItem) => {
@@ -2233,61 +2211,6 @@ function CardbushApp() {
     return () => window.clearTimeout(preloadTimer);
   }, []);
 
-  useEffect(() => {
-    const projectDir = activeContextProjectDir?.trim();
-    if (!projectDir) {
-      return undefined;
-    }
-    const key = projectContextKey(projectDir);
-    if (Object.prototype.hasOwnProperty.call(projectContexts, key)) {
-      return undefined;
-    }
-    let cancelled = false;
-    fetchProjectContext(projectDir)
-      .then((context) => {
-        if (cancelled) {
-          return;
-        }
-        setProjectContexts((current) => {
-          const next = { ...current, [key]: context.userPrompt };
-          persistProjectContexts(next);
-          return next;
-        });
-      })
-      .catch(() => {
-        if (cancelled) {
-          return;
-        }
-        setProjectContexts((current) => ({ ...current, [key]: current[key] ?? '' }));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeContextProjectDir, projectContexts]);
-
-  const saveActiveProjectContext = useCallback(
-    async (value: string) => {
-      const projectDir = activeContextProjectDir?.trim();
-      if (!projectDir) {
-        throw new Error(language === 'zh' ? '请先打开一个项目' : 'Open a project first');
-      }
-      const key = projectContextKey(projectDir);
-      const saved = await saveProjectContext({
-        projectDir,
-        userPrompt: value,
-      })
-        .then((context) => context.userPrompt)
-        .catch(() => value);
-      setProjectContexts((current) => {
-        const next = { ...current, [key]: saved };
-        persistProjectContexts(next);
-        return next;
-      });
-      return saved;
-    },
-    [activeContextProjectDir, language],
-  );
-
   const toggleSkillEnabled = useCallback((skillName: string, enabled: boolean) => {
     setDisabledSkillNames((current) => {
       const next = new Set(current);
@@ -2387,6 +2310,9 @@ function CardbushApp() {
             onToggleSkill={toggleSkillEnabled}
             onReloadSkills={chat.reloadSkills}
             onLoadSkillDetail={chat.loadSkillDetail}
+            visualInputAvailable={visualInputAvailable}
+            visualInputEnabled={visualInputEnabledSetting}
+            onVisualInputEnabledChange={setVisualInputEnabled}
           />
         </Suspense>
       )}
@@ -2449,8 +2375,9 @@ function CardbushApp() {
           <section className="main-stage">
             {section === 'chat' ? (
               <ChatPanel
-                workspaceControls={<TaskWorkspaceBar key={chat.activeConversationId} sessionId={chat.activeConversationId}
-                  projectDir={activeConversationProjectDir || ''} language={language} busy={chat.sending || chat.stopping}
+                workspaceControls={<TaskWorkspaceBar key={`${chat.activeConversationId}:${activeProjectDir ?? ''}`} sessionId={chat.activeConversationId}
+                  projectDir={activeConversationProjectDir || (!chat.activeConversation ? activeProjectDir || '' : '')} language={language} busy={chat.sending || chat.stopping}
+                  gitAvailable={backendCapabilities.git}
                   revisionKey={chat.activeConversation?.updatedAt} onChanged={refreshBackendAndActiveSession} />}
                 language={language}
                 theme={theme}
@@ -2471,11 +2398,6 @@ function CardbushApp() {
                     : projectItems.filter((project) => !project.archived && !project.missing)
                 }
                 onWelcomeProjectChange={changeWelcomeProject}
-                projectContext={
-                  onlyTalkMode
-                    ? ''
-                    : projectContexts[projectContextKey(activeContextProjectDir)] ?? ''
-                }
                 messages={chat.activeMessages}
                 activeGoal={chat.activeGoal}
                 goalAvailable={chat.goalAvailable}
@@ -2486,8 +2408,6 @@ function CardbushApp() {
                 }
                 skills={chat.skills}
                 disabledSkillNames={disabledSkillNames}
-                visualInputAvailable={visualInputAvailable}
-                visualInputEnabled={visualInputEnabled}
                 contextSearchAvailable={backendCapabilities.sessionContextSearch}
                 subagentObservabilityAvailable={
                   backendCapabilities.subagentObservability &&
@@ -2529,7 +2449,6 @@ function CardbushApp() {
                 reasoningLevelAvailable={backendCapabilities.reasoningLevelSelection}
                 reasoningLevel={chat.reasoningLevel}
                 reasoningLevels={backendCapabilities.reasoningLevels}
-                gitAvailable={section === 'chat' && backendCapabilities.git}
                 onModelChange={chat.setSelectedModel}
                 onReferencePlanModeChange={chat.setReferencePlanMode}
                 onPermissionModeChange={chat.setPermissionMode}
@@ -2539,9 +2458,7 @@ function CardbushApp() {
                 onCreateConversation={() =>
                   createConversation(onlyTalkMode ? null : activeConversationProjectDir || undefined)
                 }
-                onSaveProjectContext={saveActiveProjectContext}
                 onToggleSkill={toggleSkillEnabled}
-                onVisualInputEnabledChange={setVisualInputEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
                 onRetryMessage={chat.retryFailedUserMessage}
@@ -3061,6 +2978,7 @@ function CardbushApp() {
         />
       )}
       <CopyToastHost language={language} />
+      <McpUserRequests language={language} />
     </div>
   );
 }
@@ -3367,27 +3285,6 @@ function stableProjectId(rootPath: string) {
   return `project-${rootPath.replaceAll('\\', '/').toLowerCase()}`;
 }
 
-function readProjectContexts() {
-  const raw = window.localStorage.getItem('cardbush_project_contexts');
-  if (!raw?.trim()) {
-    return {};
-  }
-  try {
-    const decoded = JSON.parse(raw) as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.entries(decoded)
-        .filter(([, value]) => typeof value === 'string')
-        .map(([key, value]) => [key, String(value)]),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function persistProjectContexts(value: Record<string, string>) {
-  window.localStorage.setItem('cardbush_project_contexts', JSON.stringify(value));
-}
-
 function readDisabledSkillNames() {
   const raw = window.localStorage.getItem('cardbush_disabled_skills');
   if (!raw?.trim()) {
@@ -3418,10 +3315,6 @@ function readVisualInputEnabled() {
 
 function persistVisualInputEnabled(value: boolean) {
   window.localStorage.setItem('cardbush_visual_input_enabled', value ? 'true' : 'false');
-}
-
-function projectContextKey(projectDir?: string) {
-  return projectDir?.trim().replace(/\\/g, '/').toLowerCase() ?? '';
 }
 
 function clampSidebarWidth(value: number) {

@@ -12,6 +12,8 @@ export interface CardbushPluginComponent {
   id: string;
   name: string;
   description: string;
+  hook?: { definitionHash: string; definition: Record<string, unknown>; executable: boolean };
+  mcp?: { transport?: string; url?: string; registeredAppId?: string; required?: boolean };
 }
 
 export interface CardbushPluginCatalogEntry {
@@ -31,6 +33,7 @@ export interface CardbushPluginCatalogEntry {
   manifestPath: string;
   source: "bundled" | "user";
   installation: "AVAILABLE" | "INSTALLED_BY_DEFAULT";
+  authentication?: 'ON_INSTALL' | 'ON_USE';
   /** Absolute, validated directories containing this plugin's Skill packages. */
   skillRoots?: string[];
   components: CardbushPluginComponent[];
@@ -124,6 +127,8 @@ export class CardbushAppsConfigStore {
 
   async #write(input: unknown): Promise<CardbushAppsConfigSnapshot> {
     const existing = await this.#read();
+    const expected = (input as { expectedRevision?: unknown })?.expectedRevision;
+    if (expected !== undefined && expected !== existing.revision) throw new Error('Plugin configuration changed; refresh before saving again.');
     const snapshot = decodeUpdate(input, existing);
     await mkdir(dirname(this.#path), { recursive: true });
     const temporary = `${this.#path}.${process.pid}.${crypto.randomUUID()}.tmp`;

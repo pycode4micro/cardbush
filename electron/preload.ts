@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
+import type { AgentInstructionDocument } from '@cardbush/bush-product-agent' with { 'resolution-mode': 'import' };
 import type { readTextPreviewResult } from './textPreview';
 
 type CardlingDesktopState = {
@@ -86,6 +87,15 @@ type ShadowWindowPayload = {
 };
 
 const desktopApi = {
+  mcpRequests: () => ipcRenderer.invoke('mcp:requests'),
+  answerMcpRequest: (id: string, answer: unknown) => ipcRenderer.invoke('mcp:answer', id, answer),
+  openMcpRequestUrl: (id: string) => ipcRenderer.invoke('mcp:open-request-url', id),
+  mcpConnectionAction: (serverId: string, action: string) => ipcRenderer.invoke('mcp:connection-action', serverId, action),
+  openAiAccountStatus: () => ipcRenderer.invoke('openai:account-status'),
+  openAiAccountAction: (action: string) => ipcRenderer.invoke('openai:account-action', action),
+  onOpenAiAccountChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('openai:account-changed', listener); return () => ipcRenderer.removeListener('openai:account-changed', listener); },
+  savePluginConnections: (input: unknown) => ipcRenderer.invoke('plugins:save-connections', input),
+  onMcpRequestsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('mcp:requests-changed', listener); return () => ipcRenderer.removeListener('mcp:requests-changed', listener); },
   runtime: {
     command: (message: unknown) =>
       ipcRenderer.invoke('bush-runtime:command', message) as Promise<unknown>,
@@ -131,6 +141,11 @@ const desktopApi = {
     ipcRenderer.on('chrome-connector:status', listener);
     return () => ipcRenderer.removeListener('chrome-connector:status', listener);
   },
+  readGlobalInstructions: () => ipcRenderer.invoke('instructions:read-global') as Promise<import('./globalInstructions').GlobalInstructionsSnapshot>,
+  readAgentInstructions: (projectDir?: string, workspaceDir?: string) =>
+    ipcRenderer.invoke('instructions:read-applicable', projectDir, workspaceDir) as Promise<AgentInstructionDocument[]>,
+  saveGlobalInstructions: (content: string, revision: string) =>
+    ipcRenderer.invoke('instructions:save-global', content, revision) as Promise<import('./globalInstructions').GlobalInstructionsSnapshot>,
   minimize: () => ipcRenderer.invoke('window:minimize'),
   toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
   closeToTray: () => ipcRenderer.invoke('window:close-to-tray'),
@@ -237,6 +252,7 @@ const desktopApi = {
   addLocalPluginMarket: () => ipcRenderer.invoke('plugins:market-add-local'),
   removePluginMarket: (id: string) => ipcRenderer.invoke('plugins:market-remove', id),
   pluginMarketCatalog: (id: string, refresh = false) => ipcRenderer.invoke('plugins:market-catalog', id, refresh),
+  pluginMarketPresentation: (id: string, name: string) => ipcRenderer.invoke('plugins:market-presentation', id, name),
   previewMarketPlugin: (sourceId: string, name: string) => ipcRenderer.invoke('plugins:market-preview', sourceId, name),
   installMarketPlugin: (token: string) => ipcRenderer.invoke('plugins:market-install', token),
   pickProjectDirectory: () =>
@@ -398,8 +414,8 @@ const desktopApi = {
     ipcRenderer.invoke('shell:open-path', targetPath) as Promise<string>,
   openFileInCardbush: (targetPath: string) =>
     ipcRenderer.invoke('shell:open-file-in-cardbush', targetPath) as Promise<string>,
-  showFileContextMenu: (targetPath: string) =>
-    ipcRenderer.invoke('shell:file-context-menu', targetPath) as Promise<string>,
+  showFileContextMenu: (targetPath: string, options?: import('./fileContextMenu').FileContextMenuOptions) =>
+    ipcRenderer.invoke('shell:file-context-menu', targetPath, options) as Promise<string>,
   openUiPreview: (target: string) =>
     ipcRenderer.invoke('shell:open-ui-preview', target) as Promise<void>,
   readTextPreview: (targetPath: string) =>

@@ -28,8 +28,6 @@ ${COMMUNICATION_INSTRUCTIONS}
 
 Use read_archived_tool_result only when a preceding Tool result explicitly supplies a tool-result:// locator; it is not a general file, Skill, temporary-object, or knowledge reader.
 
-LEM is advisory reasoning memory, not task facts or policy. Use consult_logic to check whether past corrections challenge an assumption or offer a useful check, not as a routine startup or completion step. You need not first feel uncertain to consult. Runtime may provide one optional developer reminder per Turn based on local lexical overlap; it neither confirms relevance nor requires a Tool call. Search with concrete terms from the decision; BM25 returns lexical candidates, so verify applicability and evidence, and ignore unrelated records. Use mode=list only when the user asks to inspect stored lessons. Use learn_logic after a valuable verified reasoning correction: retain its applicable conditions and reasoning, and keep task-specific commands or fixes in evidence instead of generalizing them into universal rules. Do not repeatedly learn the same facts to strengthen a lesson. Overall answer satisfaction is not evidence that a particular lesson helped. User thumbs are recorded by Runtime, so never fabricate or mirror user feedback with learn_logic.
-
 checkpoint_context is Runtime maintenance, not a task or memory Tool. Never decide to call it proactively. Call it only after an explicit internal user-role context_pressure instruction requires compaction, include every requested preceding Turn in the exact listed order, include an active-Turn checkpoint only when that instruction explicitly requests one, and call it alone. An active-Turn checkpoint must be cumulative through the exact requested message boundary and preserve the next action needed to continue without repeating completed side effects.
 
 For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. A subagent dispatch is asynchronous and returns a task ID immediately: after dispatch, continue useful independent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several independent workstreams as separate subagent calls when useful. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
@@ -44,13 +42,18 @@ export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing chi
 
 ${COMMUNICATION_INSTRUCTIONS}
 
-LEM lessons are advisory, not task facts or policy. Consult to check assumptions or useful past corrections, even when confident; an optional developer reminder neither confirms relevance nor requires a Tool call. Verify candidate applicability, and learn only a valuable verified reasoning correction within its applicable conditions. Never fabricate or mirror user thumbs, and do not routinely consult or repeatedly learn the same facts.
-
 ${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
 
 export const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 400_000;
+
+export interface AgentInstructionDocument {
+  path: string;
+  scope: "global" | "directory";
+  directory?: string;
+  content: string;
+}
 
 export interface ProductAgentTurnInput {
   requestId: string;
@@ -70,7 +73,8 @@ export interface ProductAgentTurnInput {
   tools: ToolDefinition[];
   projectDir?: string;
   workspaceDir?: string;
-  projectInstructions?: string;
+  instructionDocuments?: AgentInstructionDocument[];
+  teamInstructions?: string;
   files?: string[];
   images?: string[];
   attachments?: Array<{
@@ -116,6 +120,7 @@ function createBaseProductAgentTurnRequest(
     providerBinding: input.providerBinding,
     prefixMessages: [
       { role: "system", content: ROOT_AGENT_SYSTEM_PROMPT },
+      ...agentInstructionMessages(input),
       ...(context ? [{
         role: "developer" as const,
         name: "runtime_context",
@@ -181,6 +186,7 @@ function createBaseProductAgentTurnRequest(
       contextWindowTokens: input.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
       subagentChildPrefixMessages: [
         { role: "system", content: CHILD_AGENT_SYSTEM_PROMPT },
+        ...agentInstructionMessages(input),
         ...(languageFallback(input) ? [{
           role: "developer",
           name: "communication_context",
@@ -212,6 +218,7 @@ export function createProductAgentTurnRequest(
     ),
     prefixMessages: [
       { role: "system", content: ROOT_AGENT_SYSTEM_PROMPT },
+      ...agentInstructionMessages(input),
       ...(stableContext ? [{
         role: "developer" as const,
         name: "runtime_context",
@@ -240,12 +247,30 @@ export function createProductAgentTurnRequest(
   });
 }
 
+function agentInstructionMessages(input: ProductAgentTurnInput) {
+  return (input.instructionDocuments ?? []).filter(document => document.content.trim()).map(document => ({
+    role: "user" as const,
+    name: document.scope === "global" ? "global_instructions" : "directory_instructions",
+    content: [
+      document.scope === "global"
+        ? "# Global AGENTS.md instructions for all conversations"
+        : `# AGENTS.md instructions for ${document.directory}`,
+      `Source: ${document.path}`,
+      document.scope === "global"
+        ? "These user instructions apply across projects and projectless conversations."
+        : "These user instructions apply to this directory and its descendants. More specific directory instructions take precedence within their scope. Check for additional AGENTS.md files when working in deeper subdirectories.",
+      "",
+      "<INSTRUCTIONS>",
+      document.content,
+      "</INSTRUCTIONS>",
+    ].join("\n"),
+  }));
+}
+
 function runtimeContext(input: ProductAgentTurnInput, workspaceDir: string): string {
   const content = [
     workspaceDir ? `Workspace: ${workspaceDir}` : "",
-    input.projectInstructions?.trim()
-      ? `Project instructions:\n${input.projectInstructions.trim()}`
-      : "",
+    input.teamInstructions?.trim() ?? "",
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images:\n${input.images.join("\n")}` : "",
     input.filesystemLocations?.length
@@ -261,9 +286,7 @@ function runtimeContext(input: ProductAgentTurnInput, workspaceDir: string): str
 function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string): string {
   const content = [
     workspaceDir ? `Workspace: ${workspaceDir}` : "",
-    input.projectInstructions?.trim()
-      ? `Project instructions:\n${input.projectInstructions.trim()}`
-      : "",
+    input.teamInstructions?.trim() ?? "",
     input.filesystemLocations?.length
       ? `Filesystem locations:\n${[...input.filesystemLocations]
         .sort((left, right) =>

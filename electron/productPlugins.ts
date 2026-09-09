@@ -1,6 +1,6 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { readPluginExtensions } from './pluginExtensions';
+import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -38,13 +38,10 @@ export async function loadProductPluginCatalog(
     for (const entry of entries) {
       const pluginRoot = resolve(rootPath, entry.path);
       if (!inside(rootPath, pluginRoot)) continue;
-      const manifestPath = join(pluginRoot, '.codex-plugin', 'plugin.json');
-      const manifest = await readJson(manifestPath).catch(() => null);
-      if (!manifest) continue;
+      const resolved = await resolvePluginManifest(pluginRoot).catch(error => { if (error.code === 'ENOENT') return null; throw error; });
+      if (!resolved) continue;
       const plugin = await decodeManifest({
-        manifest,
-        manifestPath,
-        pluginRoot,
+        resolved,
         source: root.source,
         installation: root.source === 'user' ? 'INSTALLED_BY_DEFAULT' : entry.installation,
       });
@@ -115,60 +112,37 @@ async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string
       : plugin.installation === 'INSTALLED_BY_DEFAULT';
     const enabled = installed && (state ? state.enabled === true : installed);
     return enabled;
-  });
+  }).map(plugin => ({ ...plugin, config: objectOrEmpty(stored.get(plugin.id)?.config) }));
 }
 
 export async function loadEnabledProductPluginExtensions(roots: PluginRoot[], configPath: string) {
   const extensions = await Promise.all((await loadEnabledProductPlugins(roots, configPath)).map(async plugin => {
-    const root = dirname(dirname(plugin.manifestPath));
-    const value = await readPluginExtensions(root, await readJson(plugin.manifestPath));
+    const root = pluginRootForManifest(plugin.manifestPath);
+    const value = (await resolvePluginManifest(root)).extensions;
     if (value.issues.length) throw new Error(`Plugin ${plugin.id} has unsupported runtime components: ${value.issues.map(issue => issue.detail).join('; ')}`);
-    return value;
+    const trusted = new Set(Array.isArray(plugin.config.trustedHookHashes) ? plugin.config.trustedHookHashes.filter(item => typeof item === 'string') : []);
+    return { ...value, hooks: value.hooks.map(hook => ({ ...hook, trusted: Boolean(hook.definitionHash && trusted.has(hook.definitionHash)) })) };
   }));
   return { hooks: extensions.flatMap(value => value.hooks), agents: extensions.flatMap(value => value.agents), commands: extensions.flatMap(value => value.commands) };
 }
 
 /** External plugin MCP servers use their own namespace and explicit permission. */
-export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string) {
+export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string, standalone: Array<Record<string, unknown>> = []) {
+  const { resolvePluginMcpConnection } = await import('./pluginMcpConfiguration.mjs');
   const servers: Record<string, unknown>[] = [];
   for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
-    // These two integrations have product-owned launchers in Runtime Host.
     if (plugin.id === 'computer-use' || plugin.id === 'chrome') continue;
-    const root = dirname(dirname(plugin.manifestPath));
-    const manifest = await readJson(plugin.manifestPath);
-    const configured = manifest.mcpServers;
-    if (!configured) continue;
-    const config = typeof configured === 'string'
-      ? await readJson(safePluginPath(root, configured)) : object(configured, 'Invalid plugin MCP configuration.');
-    for (const [name, candidate] of Object.entries(objectOrEmpty(config.mcpServers ?? config))) {
-      const server = object(candidate, 'Plugin MCP server must be an object.');
-      const expand = (value: unknown) => string(value).replaceAll('${CARDBUSH_PLUGIN_ROOT}', root)
-        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (match, name, fallback) => (process.env[name] || fallback) ?? match);
-      const stringMap = (value: unknown) => Object.fromEntries(
-        Object.entries(objectOrEmpty(value)).map(([key, item]) => [key, expand(item)]),
-      );
-      const kind = string(server.type ?? server.transport) || (server.url ? 'http' : 'stdio');
-      if (!['stdio', 'http', 'streamable_http', 'sse'].includes(kind)) {
-        throw new Error(`Unsupported MCP transport in plugin ${plugin.id}: ${kind}`);
-      }
-      servers.push({
-        id: `plugin_${plugin.id.replaceAll('.', '_')}_${name}`,
-        transport: kind === 'stdio' ? {
-          kind, command: expand(server.command), args: stringArray(server.args).map(expand),
-          cwd: server.cwd ? resolve(root, expand(server.cwd)) : root,
-          env: stringMap(server.env),
-        } : {
-          kind: kind === 'http' ? 'streamable_http' : kind,
-          url: expand(server.url), headers: stringMap(server.headers),
-        },
-        defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
-        toolPolicies: {},
-      });
+    const root = pluginRootForManifest(plugin.manifestPath);
+    const { manifest, registeredApps } = await resolvePluginManifest(root);
+    const policies = objectOrEmpty(plugin.config.mcp_servers);
+    const declarations = objectOrEmpty(manifest.mcpServers);
+    for (const name of new Set([...Object.keys(declarations), ...Object.keys(registeredApps)])) {
+      const settings = objectOrEmpty(policies[name]);
+      const configured = resolvePluginMcpConnection(plugin.id, name, root, declarations, registeredApps, settings, standalone);
+      if (configured) servers.push(configured);
     }
   }
-  if (new Set(servers.map((server) => server.id)).size !== servers.length) {
-    throw new Error('Plugin MCP server IDs collide after namespacing.');
-  }
+  if (new Set(servers.map(server => server.id)).size !== servers.length) throw new Error('Plugin MCP server IDs collide after namespacing.');
   return servers;
 }
 
@@ -183,27 +157,24 @@ export async function installProductPlugin(
 
 /** Validate an acquired package before it is offered for installation. */
 export async function inspectProductPlugin(source: string): Promise<CardbushPluginCatalogEntry> {
-  const manifestPath = join(source, '.codex-plugin', 'plugin.json');
-  return decodeManifest({ manifest: await readJson(manifestPath), manifestPath, pluginRoot: source,
+  return decodeManifest({ resolved: await resolvePluginManifest(source),
     source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
 }
 
 async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string) {
   const source = resolve(sourcePath);
-  const manifestPath = join(source, '.codex-plugin', 'plugin.json');
-  const manifest = await readJson(manifestPath);
+  const resolved = await resolvePluginManifest(source);
+  const { manifest, manifestPath } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
   if (basename(source) !== id) {
     throw new Error(`Plugin folder ${basename(source)} must match manifest name ${id}.`);
   }
   await decodeManifest({
-    manifest,
-    manifestPath,
-    pluginRoot: source,
+    resolved,
     source: 'user',
     installation: 'INSTALLED_BY_DEFAULT',
   });
-  await validateRuntimeExtensions(source, manifest);
+  validateRuntimeExtensions(resolved);
   const targetRoot = resolve(userPluginRoot);
   const target = resolve(targetRoot, id);
   if (!inside(targetRoot, target)) throw new Error('Plugin destination escapes the user plugin root.');
@@ -220,10 +191,10 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
   try {
     await mkdir(dirname(temporary), { recursive: true });
     await cp(source, temporary, { recursive: true, errorOnExist: true });
-    await decodeManifest({ manifest: await readJson(join(temporary, '.codex-plugin', 'plugin.json')),
-      manifestPath: join(temporary, '.codex-plugin', 'plugin.json'), pluginRoot: temporary,
+    const staged = await resolvePluginManifest(temporary);
+    await decodeManifest({ resolved: staged,
       source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
-    await validateRuntimeExtensions(temporary, await readJson(join(temporary, '.codex-plugin', 'plugin.json')));
+    validateRuntimeExtensions(staged);
     let movedExisting = false;
     try { await rename(target, backup); movedExisting = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -238,7 +209,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
       }
       throw error;
     }
-    return { id, manifestPath: join(target, '.codex-plugin', 'plugin.json') };
+    return { id, manifestPath: join(target, relative(source, manifestPath)) };
   } finally {
     if (!preserveBackup) await rm(work, { recursive: true, force: true }).catch((error: unknown) => {
       // A running old plugin may still hold a Windows file handle. The committed
@@ -248,8 +219,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
   }
 }
 
-async function validateRuntimeExtensions(root: string, manifest: Record<string, unknown>) {
-  const { issues } = await readPluginExtensions(root, manifest);
+function validateRuntimeExtensions({ manifest, extensions: { issues } }: ResolvedPluginManifest) {
   if (issues.length) throw new Error(`Plugin ${manifest.name} has unsupported runtime components: ${issues.map(issue => issue.detail).join('; ')}`);
 }
 
@@ -282,13 +252,12 @@ async function marketplaceEntries(root: string): Promise<MarketplaceEntry[]> {
 }
 
 async function decodeManifest(input: {
-  manifest: Record<string, unknown>;
-  manifestPath: string;
-  pluginRoot: string;
+  resolved: ResolvedPluginManifest;
   source: 'bundled' | 'user';
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
 }): Promise<CardbushPluginCatalogEntry> {
-  const { manifest, manifestPath, pluginRoot, source, installation } = input;
+  const { source, installation, resolved } = input;
+  const { manifest, manifestPath, root: pluginRoot, skillRoots } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
   if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(id)) {
     throw new Error(`Invalid CardBush plugin name: ${id}`);
@@ -297,7 +266,6 @@ async function decodeManifest(input: {
   const author = objectOrEmpty(manifest.author);
   const logoPath = await assetPath(pluginRoot, interfaceMetadata.logo, true);
   const logoDarkPath = await assetPath(pluginRoot, interfaceMetadata.logoDark, true);
-  const skillRoots = await skillRootsFromManifest(manifest, pluginRoot);
   return {
     id,
     name: string(interfaceMetadata.displayName) || displayName(id),
@@ -315,29 +283,31 @@ async function decodeManifest(input: {
     manifestPath,
     source,
     installation,
+    authentication: resolved.authentication,
     skillRoots,
-    components: await componentsFromManifest(manifest, pluginRoot, skillRoots),
+    components: await componentsFromManifest(resolved),
   };
 }
 
 async function componentsFromManifest(
-  manifest: Record<string, unknown>,
-  pluginRoot: string,
-  skillRoots: string[],
+  { manifest, skillRoots, extensions, registeredApps }: ResolvedPluginManifest,
 ): Promise<CardbushPluginComponent[]> {
   const result: CardbushPluginComponent[] = [];
-  const extensions = await readPluginExtensions(pluginRoot, manifest);
   for (const command of extensions.commands) result.push({ kind: 'command', id: command.id, name: `/${command.id}`, description: command.description });
   for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description });
-  for (const hook of extensions.hooks) result.push({ kind: 'hook', id: hook.id, name: hook.event, description: hook.command });
+  for (const hook of extensions.hooks) result.push({ kind: 'hook', id: hook.id, name: hook.event,
+    description: hook.type === 'mcp_tool' ? `${hook.server}/${hook.tool}` : hook.type === 'prompt' || hook.type === 'agent' ? `${hook.type}: parsed but skipped` : hook.command,
+    hook: { definitionHash: hook.definitionHash!, definition: hook.definition!, executable: hook.type !== 'prompt' && hook.type !== 'agent' } });
   for (const root of skillRoots) {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries.filter((item) => item.isDirectory())) {
-      const skillPath = join(root, entry.name, 'SKILL.md');
+    const directories = entries.some(item => item.isFile() && item.name === 'SKILL.md') ? [root]
+      : entries.filter(item => item.isDirectory()).map(item => join(root, item.name));
+    for (const directory of directories) {
+      const skillPath = join(directory, 'SKILL.md');
       const content = await readFile(skillPath, 'utf8').catch(() => '');
       if (!content) continue;
       const metadata = frontmatter(content);
-      const id = string(metadata.name) || entry.name;
+      const id = string(metadata.name) || basename(directory);
       result.push({
         kind: 'skill',
         id,
@@ -346,51 +316,16 @@ async function componentsFromManifest(
       });
     }
   }
-  const mcp = manifest.mcpServers;
-  const mcpConfig: Record<string, unknown> = typeof mcp === 'string'
-    ? await readJson(safePluginPath(pluginRoot, mcp)).catch(() => ({} as Record<string, unknown>))
-    : objectOrEmpty(mcp);
-  const mcpServers = objectOrEmpty(mcpConfig.mcpServers ?? mcpConfig);
-  for (const id of Object.keys(mcpServers)) {
-    result.push({ kind: 'mcp', id, name: displayName(id), description: 'MCP service' });
-  }
-  const appsPath = string(manifest.apps);
-  if (appsPath) {
-    const appsConfig: Record<string, unknown> = await readJson(safePluginPath(pluginRoot, appsPath))
-      .catch(() => ({} as Record<string, unknown>));
-    const apps = Array.isArray(appsConfig.apps)
-      ? appsConfig.apps
-      : Object.entries(objectOrEmpty(appsConfig.apps ?? appsConfig)).map(([id, value]) => ({ id, ...objectOrEmpty(value) }));
-    for (const candidate of apps) {
-      const app = object(candidate, 'Plugin app must be an object.');
-      const id = requiredString(app.id ?? app.name, 'app.id');
-      result.push({
-        kind: 'app',
-        id,
-        name: string(app.displayName ?? app.name) || displayName(id),
-        description: string(app.description) || 'CardBush app integration',
-      });
-    }
+  const mcpServers = objectOrEmpty(manifest.mcpServers);
+  for (const id of new Set([...Object.keys(mcpServers), ...Object.keys(registeredApps)])) {
+    const bundled = Object.hasOwn(mcpServers, id), app = registeredApps[id];
+    const server = objectOrEmpty(mcpServers[id]);
+    result.push({ kind: bundled ? 'mcp' : 'app', id, name: displayName(id), description: bundled ? 'MCP service' : 'Registered MCP connection', mcp: {
+      ...(bundled ? { transport: string(server.type) || (server.url ? 'http' : 'stdio'), ...(server.url ? { url: string(server.url) } : {}) } : {}),
+      ...(app ? { registeredAppId: app.id, required: app.required } : {}),
+    } });
   }
   return result;
-}
-
-async function skillRootsFromManifest(
-  manifest: Record<string, unknown>,
-  pluginRoot: string,
-): Promise<string[]> {
-  const configured = string(manifest.skills);
-  if (!configured) return [];
-  const candidate = safePluginPath(pluginRoot, configured);
-  if (!(await stat(candidate).catch(() => null))?.isDirectory()) {
-    throw new Error(`Plugin Skill directory is missing: ${configured}`);
-  }
-  const resolvedRoot = await realpath(pluginRoot);
-  const resolvedCandidate = await realpath(candidate);
-  if (!inside(resolvedRoot, resolvedCandidate)) {
-    throw new Error(`Plugin Skill directory escapes its root: ${configured}`);
-  }
-  return [resolvedCandidate];
 }
 
 function frontmatter(content: string): Record<string, unknown> {

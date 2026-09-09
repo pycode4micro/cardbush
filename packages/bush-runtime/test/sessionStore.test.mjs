@@ -8,6 +8,28 @@ import {
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
+test('checkpoint source boundaries separate repeated user messages and internal inputs without changing normal context', () => {
+  const store = deterministicStore();
+  const inputs = [
+    { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: 'same internal context' },
+    { role: 'user', content: 'Can you do it?' },
+  ];
+  store.commitTurn('session_1', turn('first', 1, [...inputs, { role: 'assistant', content: 'First task facts.', toolCalls: [] }]));
+  const session = store.commitTurn('session_1', turn('second', 2, [...inputs, { role: 'assistant', content: 'Second task facts.', toolCalls: [] }]));
+  const normal = assembleContext({ session });
+  const before = structuredClone(session);
+  const maintenance = assembleContext({ session, compactionTurnIds: ['first', 'second'] });
+  const messages = maintenance.messages;
+  assert.match(messages[0].content, /edge="start" turn_id="first" target="summaries\[0\]"/);
+  assert.equal(messages[3].content, 'First task facts.');
+  assert.match(messages[4].content, /edge="end" turn_id="first"/);
+  assert.match(messages[5].content, /edge="start" turn_id="second" target="summaries\[1\]"/);
+  assert.equal(messages[8].content, 'Second task facts.');
+  assert.deepEqual(maintenance.sourceMessageIds, normal.sourceMessageIds);
+  assert.deepEqual(session, before);
+  assert.deepEqual(assembleContext({ session }), normal, 'maintenance never changes the next normal request');
+});
+
 test("commits ordered Turns atomically and assembles append-only context", () => {
   const store = deterministicStore();
   const first = turn("turn_1", 1, [

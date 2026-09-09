@@ -12,7 +12,7 @@ export const UPDATE_TASK_PLAN_TOOL = "update_task_plan" as const;
 export const UPDATE_GOAL_TOOL = "update_goal" as const;
 
 interface TaskPlanToolInput {
-  nodes: Array<{ id?: string; step: string; status: "pending" | "in_progress" | "completed" }>;
+  nodes: TaskPlan["nodes"];
   explanation: string;
   active: boolean;
   scopeChangeReason: string;
@@ -38,7 +38,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Create or update the current task plan with explicit nodes and statuses. Preserve returned node IDs on later updates; give a scopeChangeReason when removing a node.",
+          "Create or update the current task plan with explicit nodes and statuses. Preserve returned node IDs on later updates; give a scopeChangeReason when removing a node. Use waiting with a concrete waitingFor when a step needs user action or an external dependency; keep dependent verification steps as waiting too. Waiting is unfinished, not completed. active remains true while any step is unfinished. When every unfinished step is waiting, the Turn may end with a handoff; pending or in_progress steps still require continuation. Resume waiting steps explicitly when their dependency is resolved.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -55,7 +55,8 @@ export function registerCoordinationTools(
                 properties: {
                   id: { type: "string" },
                   step: { type: "string" },
-                  status: { enum: ["pending", "in_progress", "completed"] },
+                  status: { enum: ["pending", "in_progress", "waiting", "completed"] },
+                  waitingFor: { type: "string", minLength: 1, description: "Required for waiting: the concrete external dependency or user action needed to continue." },
                 },
               },
             },
@@ -145,13 +146,14 @@ function decodeTaskPlanInput(input: unknown): TaskPlanToolInput {
     nodes: object.nodes.map((candidate, index) => {
       const node = plainObject(candidate, `nodes[${index}]`);
       const status = requiredString(node.status, `nodes[${index}].status`);
-      if (!["pending", "in_progress", "completed"].includes(status)) {
+      if (!["pending", "in_progress", "waiting", "completed"].includes(status)) {
         throw new Error(`nodes[${index}].status is invalid.`);
       }
       return {
         ...(optionalString(node.id) ? { id: optionalString(node.id) } : {}),
         step: requiredString(node.step, `nodes[${index}].step`),
         status: status as TaskPlanToolInput["nodes"][number]["status"],
+        ...(node.waitingFor !== undefined ? { waitingFor: requiredString(node.waitingFor, `nodes[${index}].waitingFor`) } : {}),
       };
     }),
     explanation: stringValue(object.explanation, "explanation"),

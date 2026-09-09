@@ -183,7 +183,6 @@ export function useCardbushChat(
   requestContext: {
     runtimeReady?: boolean;
     language?: AppLanguage;
-    projectContexts?: Record<string, string>;
     disabledSkillNames?: Set<string>;
     disabledToolNames?: Set<string>;
     standardImageInputEnabled?: boolean;
@@ -2166,10 +2165,7 @@ export function useCardbushChat(
       }
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const projectUserPrompt = mergedRequestContextPrompt(
-        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
-        requestContext.teamModeEnabled === true,
-      );
+      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
       const userMessageId = `user-${crypto.randomUUID()}`;
       const submittedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
@@ -2237,7 +2233,7 @@ export function useCardbushChat(
           modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
           projectDir,
           workspaceDir,
-          projectUserPrompt,
+          teamInstructions,
           uiLanguage: languageRef.current,
           disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
           referencePlanMode,
@@ -2606,7 +2602,6 @@ export function useCardbushChat(
       requestContext.selectedTeamId,
       requestContext.selectedTeamName,
       requestContext.standardImageInputEnabled,
-      requestContext.projectContexts,
       referencePlanMode,
       permissionMode,
       persistPreparedConversation,
@@ -3133,10 +3128,7 @@ export function useCardbushChat(
       const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const projectUserPrompt = mergedRequestContextPrompt(
-        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
-        requestContext.teamModeEnabled === true,
-      );
+      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
       const controlTeamId = teamIdFromMessage(sourceUserMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
@@ -3159,7 +3151,7 @@ export function useCardbushChat(
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
             workspaceDir,
-            projectUserPrompt,
+            teamInstructions,
             uiLanguage: languageRef.current,
             disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
             referencePlanMode,
@@ -3201,7 +3193,6 @@ export function useCardbushChat(
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
-      requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
       referencePlanMode,
@@ -3309,10 +3300,7 @@ export function useCardbushChat(
       ];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const projectUserPrompt = mergedRequestContextPrompt(
-        projectDir ? requestContext.projectContexts?.[projectKey(projectDir)]?.trim() : '',
-        requestContext.teamModeEnabled === true,
-      );
+      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
       const controlTeamId = teamIdFromMessage(editSourceMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
@@ -3335,7 +3323,7 @@ export function useCardbushChat(
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
             projectDir,
             workspaceDir,
-            projectUserPrompt,
+            teamInstructions,
             uiLanguage: languageRef.current,
             disabledSkills: [...(requestContext.disabledSkillNames ?? [])],
             referencePlanMode,
@@ -3377,7 +3365,6 @@ export function useCardbushChat(
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
-      requestContext.projectContexts,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
       referencePlanMode,
@@ -4159,12 +4146,6 @@ function appendProjectPathAlias(
     ...withoutDuplicate,
     { from: from.trim(), to: to.trim(), movedAt: new Date().toISOString() },
   ];
-}
-
-function mergedRequestContextPrompt(projectPrompt: string | undefined, teamModeEnabled: boolean) {
-  return [projectPrompt?.trim() ?? '', teamModeEnabled ? teamModeContextPrompt() : '']
-    .filter(Boolean)
-    .join('\n\n');
 }
 
 function teamIdFromMessage(message?: ChatMessage) {

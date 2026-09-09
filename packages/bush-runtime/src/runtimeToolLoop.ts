@@ -68,7 +68,7 @@ export class RuntimeToolLoop {
   readonly #permissionSource?: RuntimeToolLoopOptions["permissionSource"];
   readonly #activeToolControllers = new Map<
     string,
-    { controller: AbortController; toolName: string }
+    { controller: AbortController; toolName: string; executedCall?: ToolCall }
   >();
 
   constructor(options: RuntimeToolLoopOptions) {
@@ -109,6 +109,8 @@ export class RuntimeToolLoop {
       permissions: this.#permissions,
       observer: {
         running: (toolCall, executionIdentity) => {
+          const active = this.#activeToolControllers.get(toolCall.id);
+          if (active) active.executedCall = toolCall;
           this.#eventLog.append(this.#identity, {
             kind: "tool_running",
             payload: toolIdentity(toolCall, executionIdentity),
@@ -206,12 +208,15 @@ export class RuntimeToolLoop {
         );
         // Snapshot before the next sequential Tool can remove or overwrite the source.
         // Keep the native Tool outcome untouched: image delivery is a separate observation.
-        imageObservations[ordinal] = outcome.kind === "returned"
+        imageObservations[ordinal] = outcome.kind === "returned" && outcome.hookFeedback === undefined
           ? await snapshotToolImages(outcome.result, toolCall.id, this.#modelImages, controller.signal)
           : [];
         renderedResults[ordinal] = outcome.kind === "returned"
-          ? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
-        this.#executionStore?.record(toolCall, executionIdentity, outcome, renderedResults[ordinal]);
+          ? outcome.hookFeedback ?? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
+        // Assistant messages retain the requested call; execution facts retain the
+        // arguments actually admitted and run after trusted PreToolUse rewrites.
+        const executedCall = this.#activeToolControllers.get(toolCall.id)?.executedCall ?? toolCall;
+        this.#executionStore?.record(executedCall, executionIdentity, outcome, renderedResults[ordinal]);
         this.#appendToolOutcome(toolCall, executionIdentity, outcome);
         return outcome;
       } finally {
@@ -290,7 +295,7 @@ export class RuntimeToolLoop {
     }
     const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages);
     const hookMessages: ModelMessage[] = outcomes.flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
-      role: 'user' as const, name: 'plugin_hook_feedback', visibility: 'internal' as const, content,
+      role: 'developer' as const, name: 'plugin_hook_feedback', content,
     })));
     return {
       messages: [...toolMessages, ...hookMessages, ...(imageFollowup ? [imageFollowup] : [])],

@@ -67,14 +67,8 @@ test("builds one stable explicit product Turn for desktop and transport callers"
     request.prefixMessages[0].content,
     /last-resort|prefer any purpose-built|use the direct read_file|chrome_devtools Tools as the primary route/i,
   );
-  assert.match(request.prefixMessages[0].content, /LEM is advisory reasoning memory/);
-  assert.match(request.prefixMessages[0].content, /User thumbs are recorded by Runtime/);
-  assert.match(request.prefixMessages[0].content, /BM25 returns lexical candidates/);
-  assert.match(request.prefixMessages[0].content, /need not first feel uncertain/);
-  assert.match(request.prefixMessages[0].content, /one optional developer reminder per Turn/);
-  assert.match(request.prefixMessages[0].content, /not as a routine startup or completion step/);
-  assert.match(request.prefixMessages[0].content, /keep task-specific commands or fixes in evidence/);
-  assert.match(request.metadata.subagentChildPrefixMessages[0].content, /Never fabricate or mirror user thumbs/);
+  assert.doesNotMatch(request.prefixMessages[0].content, /consult_logic|learn_logic|\bLEM\b/);
+  assert.doesNotMatch(request.metadata.subagentChildPrefixMessages[0].content, /consult_logic|learn_logic|\bLEM\b/);
   assert.equal(request.prefixMessages.length, 2);
   assert.equal(request.prefixMessages[1].name, "runtime_context");
   assert.doesNotMatch(request.prefixMessages[1].content, /Local date/);
@@ -126,7 +120,7 @@ test("keeps the stable prefix across a date epoch transition", () => {
     model: "fixture",
     tools: [],
     projectDir: "C:\\workspace",
-    projectInstructions: "Follow the project conventions.",
+    instructionDocuments: [{ path: "C:/CardBush/AGENTS.md", scope: "global", content: "Prefer concise, verified results." }],
     permissionMode: "task_free",
     planEnabled: true,
   });
@@ -155,7 +149,7 @@ test("product requests record date epochs once and omit empty dynamic context", 
       model: "fixture",
       tools,
       projectDir: "C:\\workspace",
-      projectInstructions: "Follow the project conventions.",
+      instructionDocuments: [{ path: "C:/CardBush/AGENTS.md", scope: "global", content: "Prefer concise, verified results." }],
       images,
       files,
       filesystemLocations: [

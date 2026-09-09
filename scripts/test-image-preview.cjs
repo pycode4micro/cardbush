@@ -16,13 +16,18 @@ app.whenReady().then(async () => {
     const code = ts.transpileModule(fs.readFileSync(path.join(root, 'src/features/chatMessages/ImagePreviewDialog.tsx'), 'utf8'), {
       compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
     }).outputText;
+    const shared = Object.fromEntries(['localPaths', 'showUiError', 'fileContextMenu'].map(name => [name, ts.transpileModule(fs.readFileSync(path.join(root, 'src/shared', name + '.ts'), 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    }).outputText]));
     const run = code => window.webContents.executeJavaScript(code, true);
     await run(`
       const React=require(${JSON.stringify(require.resolve('react'))});
       const {createRoot}=require(${JSON.stringify(require.resolve('react-dom/client'))});
       const sourceRequire=require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))});
+      const sharedSources=${JSON.stringify(shared)},sharedModules={};
+      function loadShared(name){if(sharedModules[name])return sharedModules[name].exports;const mod=sharedModules[name]={exports:{}};new Function('require','module','exports',sharedSources[name])(id=>loadShared(id.slice(2)),mod,mod.exports);return mod.exports;}
       const module={exports:{}};
-      new Function('require','module','exports',${JSON.stringify(code)})(sourceRequire,module,module.exports);
+      new Function('require','module','exports',${JSON.stringify(code)})(id=>id==='../../shared/fileContextMenu'?loadShared('fileContextMenu'):sourceRequire(id),module,module.exports);
       const {ImagePreviewDialog}=module.exports; const h=React.createElement;
       const image={src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#238797"/></svg>'),name:'很长的图片文件名'.repeat(20)+'.png'};
       window.closeCount=0;

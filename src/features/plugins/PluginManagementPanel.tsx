@@ -1,3 +1,5 @@
+import { PluginMcpSettings } from './PluginMcpSettings';
+import { OpenAiAccountPanel } from './OpenAiAccountPanel';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
@@ -265,7 +267,9 @@ export function PluginManagementPanel({
       <PluginDetail
         language={language}
         plugin={selectedPlugin}
+        onMcpSaved={() => void load()}
         busy={Boolean(busy)}
+        error={error}
         onBack={() => setPage({ kind: 'catalog' })}
         onReplace={replacePlugin}
         onPersist={(plugin, message) => configuration && void persist({
@@ -315,6 +319,7 @@ export function PluginManagementPanel({
 
   return (
     <div className="plugin-hub">
+      <OpenAiAccountPanel language={language} onChanged={() => void loadConnections()} />
       <div className="plugin-hub-toolbar">
         <div className="plugin-hub-tabs" role="tablist">
           <button className={tab === 'plugins' ? 'active' : ''} type="button" onClick={() => setTab('plugins')}>
@@ -668,7 +673,7 @@ function McpCatalogNotice({ language, loading, error }: { language: AppLanguage;
 
 function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
   const labels = {
-    connected: ['已连接', 'Connected'], pending: ['等待生效', 'Pending'], restarting: ['重新连接中', 'Reconnecting'],
+    auth_required: ['需要登录', 'Sign-in required'], configuration_required: ['需要配置', 'Configuration required'], connected: ['已连接', 'Connected'], pending: ['等待生效', 'Pending'], restarting: ['重新连接中', 'Reconnecting'],
     unavailable: ['连接异常', 'Unavailable'], disabled: ['已停用', 'Disabled'], unknown: ['连接待确认', 'Connection unconfirmed'],
   };
   return <span className={`plugin-connection-status ${item.state}`}>
@@ -677,10 +682,12 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: {
+function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved }: {
+  onMcpSaved: () => void;
   language: AppLanguage;
   plugin: CardbushAppPlugin;
   busy: boolean;
+  error: string;
   onBack: () => void;
   onReplace: (plugin: CardbushAppPlugin) => void;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
@@ -695,7 +702,10 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
       </header>
       {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <div key={prompt}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></div>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
-      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && <Check size={17} />}</div>)}</section>
+      {error && <p className="plugin-market-error" role="alert">{error}</p>}
+      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} />}
+      {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
+      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
       {plugin.id === 'computer-use' && plugin.installed && <section className="plugin-detail-section"><h3>{language === 'zh' ? '配置' : 'Settings'}</h3><label className="plugin-path-setting"><span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span><input value={String(plugin.config.screenshotDirectory ?? '')} placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Use the system temp directory when empty'} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, screenshotDirectory: event.currentTarget.value } })} /></label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.yieldToUser !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, yieldToUser: event.currentTarget.checked } })} />{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.restorePointer !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, restorePointer: event.currentTarget.checked } })} />{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowOpenApp !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowOpenApp: event.currentTarget.checked } })} />{language === 'zh' ? '允许启动应用' : 'Allow opening apps'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowWindowClose !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowWindowClose: event.currentTarget.checked } })} />{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</label><button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? '配置已保存' : 'Settings saved')}>{language === 'zh' ? '保存配置' : 'Save settings'}</button></section>}
       {plugin.id === 'chrome' && plugin.installed && (
         <ChromeConnectionSettings
@@ -709,6 +719,30 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
       <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3><Info label={language === 'zh' ? '功能' : 'Capabilities'} value={plugin.capabilities.join(', ')} /><Info label={language === 'zh' ? '开发者' : 'Developer'} value={plugin.developerName} /><Info label={language === 'zh' ? '类别' : 'Category'} value={plugin.category} /><Info label={language === 'zh' ? '版本' : 'Version'} value={plugin.version} /><Info label="Manifest" value={plugin.manifestPath} /></section>
     </div>
   );
+}
+
+export function PluginHookTrust({ plugin, language, busy, onPersist }: {
+  plugin: CardbushAppPlugin; language: AppLanguage; busy: boolean;
+  onPersist: (plugin: CardbushAppPlugin, message: string) => void;
+}) {
+  const hooks = plugin.components.filter(component => component.kind === 'hook' && component.hook);
+  if (!hooks.length) return null;
+  const zh = language === 'zh';
+  const trusted = new Set(Array.isArray(plugin.config.trustedHookHashes) ? plugin.config.trustedHookHashes.filter((value): value is string => typeof value === 'string') : []);
+  return <section className="plugin-detail-section plugin-hook-trust"><h3>{zh ? 'Hooks 审核' : 'Review hooks'}</h3>
+    <p>{zh ? '查看事件、命令或 MCP 调用后，信任需要运行的 Hook。安装和启用插件不会自动信任 Hooks；定义变更后需要重新审核。' : 'Review the event, command or MCP call before trusting a hook. Installing or enabling a plugin does not grant hook trust. Changed definitions need review again.'}</p>
+    {hooks.map(component => {
+      const hook = component.hook!, enabled = trusted.has(hook.definitionHash);
+      return <details key={component.id}><summary>{component.name} · {hook.executable ? enabled ? (zh ? '已信任' : 'Trusted') : (zh ? '待审核' : 'Needs review') : (zh ? '跳过执行' : 'Skipped')}</summary>
+        <pre>{JSON.stringify(hook.definition, null, 2)}</pre>
+        {hook.executable ? <button className="plugin-install-button" type="button" disabled={busy} onClick={() => {
+          const hashes = new Set(trusted); if (enabled) hashes.delete(hook.definitionHash); else hashes.add(hook.definitionHash);
+          onPersist({ ...plugin, config: { ...plugin.config, trustedHookHashes: [...hashes] } }, zh ? (enabled ? '已停用此 Hook' : '已信任当前 Hook 定义') : (enabled ? 'Hook disabled' : 'Current hook definition trusted'));
+        }}>{enabled ? (zh ? '撤销信任并停用' : 'Revoke trust and disable') : (zh ? '信任并允许运行' : 'Trust and allow execution')}</button>
+          : <p>{zh ? '与 OpenAI 一致，prompt 和 agent 类型的 Hook 仅解析，不执行。' : 'Like OpenAI, prompt and agent hook handlers are parsed but not executed.'}</p>}
+      </details>;
+    })}
+  </section>;
 }
 
 type ChromeConnectorStatus = NonNullable<Window['cardbushDesktop']> extends infer Desktop

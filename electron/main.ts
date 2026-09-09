@@ -1,3 +1,5 @@
+import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
+import { McpDesktopHost } from './mcpDesktopHost';
 import {
   app,
   BrowserWindow,
@@ -14,6 +16,7 @@ import {
   screen,
   session,
   shell,
+  safeStorage,
   webContents as electronWebContents,
   type NativeImage,
   type MenuItemConstructorOptions,
@@ -34,6 +37,7 @@ import { inspectProjectRoots } from './projectRoots';
 import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { sendToLiveRenderer } from './rendererDelivery';
 import { restoreEditorFocus } from './rendererFocus';
+import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
@@ -167,6 +171,10 @@ let productHostController: {
   listMcpServers: () => Promise<unknown>;
   configureMcpServer: (input: import('./productMcpManagement.mjs', { with: { 'resolution-mode': 'import' } }).McpServerPatch, signal?: AbortSignal) => Promise<unknown>;
   removeMcpServer: (id: string, signal?: AbortSignal) => Promise<unknown>;
+  listPluginConnections: (pluginId?: string) => Promise<unknown>;
+  configurePluginConnection: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
+  savePluginConnections: (input: unknown) => Promise<unknown>;
+  requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
 } | null = null;
 let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
@@ -1092,9 +1100,10 @@ async function openTargetExternally(value: string, previewTarget?: UiPreviewTarg
   await shell.openExternal(value);
 }
 
-function openFileWithChooser(targetPath: string) {
+async function openFileWithChooser(targetPath: string) {
   if (process.platform !== 'win32') {
-    void shell.openPath(targetPath);
+    const error = await shell.openPath(targetPath);
+    if (error) throw new Error(error);
     return;
   }
   const child = spawn(
@@ -1107,6 +1116,10 @@ function openFileWithChooser(targetPath: string) {
     },
   );
   child.unref();
+  await new Promise<void>((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
 }
 
 function createCardlingWindow() {
@@ -1964,6 +1977,23 @@ ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   return appendDebugLog(scope, payload);
 });
 
+let globalInstructionsStore: GlobalInstructionsStore | undefined;
+function getGlobalInstructionsStore() {
+  return globalInstructionsStore ??= new GlobalInstructionsStore(path.join(app.getPath('userData'), 'AGENTS.md'));
+}
+ipcMain.handle('instructions:read-global', (event) => {
+  assertRuntimeRendererSender(event.sender.id);
+  return getGlobalInstructionsStore().read();
+});
+ipcMain.handle('instructions:read-applicable', (event, projectDir?: string, workspaceDir?: string) => {
+  assertRuntimeRendererSender(event.sender.id);
+  return readAgentInstructionDocuments(getGlobalInstructionsStore(), projectDir, workspaceDir);
+});
+ipcMain.handle('instructions:save-global', (event, content: string, revision: string) => {
+  assertMainWindowSender(event.sender.id);
+  return getGlobalInstructionsStore().save(content, revision);
+});
+
 ipcMain.handle('app:runtime-startup-status', (event) => {
   assertMainWindowSender(event.sender.id);
   return { ...runtimeStartupStatus };
@@ -2290,6 +2320,75 @@ ipcMain.handle('plugins:install-local', async () => {
 });
 
 let pluginMarketplaceService: PluginMarketplaceService | undefined;
+let mcpDesktopHost: McpDesktopHost | undefined;
+let openAiAccountPromise: Promise<import('./openAiAccount.mjs', { with: { 'resolution-mode': 'import' } }).OpenAiAccount> | undefined;
+function openAiDesktop() {
+  return openAiAccountPromise ??= import('./openAiAccount.mjs').then(({ OpenAiAccount, OPENAI_ACCOUNT_CREDENTIAL_KEY }) => new OpenAiAccount({
+    read: () => mcpDesktop().handle('credentials.read', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY }, new AbortController().signal),
+    write: value => mcpDesktop().handle('credentials.write', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY, value }, new AbortController().signal),
+    fetch: (input, init) => net.fetch(String(input), init),
+    openUrl: url => shell.openExternal(url),
+    changed: () => {
+      const contents = mainWindow?.webContents;
+      try { if (contents && !contents.isDestroyed() && !contents.mainFrame.isDestroyed()) contents.send('openai:account-changed'); } catch { /* Restored views read the current state. */ }
+    },
+  }));
+}
+async function refreshOpenAiRuntime() {
+  if (!runtimeHostController) return;
+  const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+    command: { kind: 'runtime.openai_account_changed', payload: {} } }) as { ok?: boolean; error?: { message?: string } };
+  if (!response.ok) throw new Error(response.error?.message ?? 'OpenAI runtime refresh failed.');
+}
+ipcMain.handle('openai:account-status', async event => { assertMainWindowSender(event.sender.id); return (await openAiDesktop()).status(); });
+ipcMain.handle('openai:account-action', async (event, action: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (!['login', 'logout', 'cancel_login', 'reconnect', 'manage_apps'].includes(action)) throw new Error('Invalid OpenAI account action.');
+  const account = await openAiDesktop();
+  if (action === 'manage_apps') { await shell.openExternal('https://chatgpt.com/apps'); return account.status(); }
+    try {
+      if (action === 'cancel_login') account.cancelLogin();
+      if (action === 'login') await account.login();
+      if (action === 'logout') await account.logout();
+    } catch (error) {
+      // Login cancellation and failed persistence still invalidate the old account generation.
+      await refreshOpenAiRuntime().catch(() => {});
+      throw error;
+    }
+  await refreshOpenAiRuntime();
+  return account.status();
+});
+function mcpDesktop() {
+  return mcpDesktopHost ??= new McpDesktopHost({
+    path: path.join(app.getPath('userData'), 'mcp-oauth.bin'),
+    encrypt: value => { if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')) throw new Error('Secure credential storage is unavailable.'); return safeStorage.encryptString(value); },
+    decrypt: value => safeStorage.decryptString(value),
+    openUrl: url => shell.openExternal(url),
+    changed: () => {
+      const contents = mainWindow?.webContents;
+      try { if (contents && !contents.isDestroyed() && !contents.mainFrame.isDestroyed()) contents.send('mcp:requests-changed'); }
+      catch { /* A closed renderer restores pending requests on next mount. */ }
+    },
+  });
+}
+ipcMain.handle('mcp:requests', event => { assertMainWindowSender(event.sender.id); return mcpDesktop().requests(); });
+ipcMain.handle('mcp:answer', (event, id: string, answer: unknown) => { assertMainWindowSender(event.sender.id); return mcpDesktop().answer(String(id), answer); });
+ipcMain.handle('mcp:open-request-url', (event, id: string) => { assertMainWindowSender(event.sender.id); return mcpDesktop().openRequestUrl(String(id)); });
+ipcMain.handle('plugins:save-connections', async (event, input: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (!productHostController) throw new Error('Runtime is not ready.');
+  // Private renderer IPC: credential values never enter a Runtime command or tool journal.
+  return productHostController.savePluginConnections(input);
+});
+ipcMain.handle('mcp:connection-action', async (event, serverId: string, action: string) => {
+  assertMainWindowSender(event.sender.id);
+  if (!['login', 'logout', 'cancel_login', 'reconnect'].includes(action)) throw new Error('Invalid MCP connection action.');
+  if (!runtimeHostController) throw new Error('Runtime is not ready.');
+  const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+    command: { kind: `runtime.mcp_${action}`, payload: { serverId: String(serverId) } } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
+  if (!response.ok) throw new Error(response.error?.message ?? 'MCP connection action failed.');
+  return response.result;
+});
 function pluginMarkets() {
   return pluginMarketplaceService ??= new PluginMarketplaceService({
     dataRoot: path.join(app.getPath('userData'), 'plugin-marketplaces'),
@@ -2304,7 +2403,7 @@ ipcMain.handle('plugins:market-sources', async event => {
 });
 ipcMain.handle('plugins:market-add', async (event, source: string) => {
   assertMainWindowSender(event.sender.id);
-  return pluginMarkets().addGitHub(String(source ?? ''));
+  return pluginMarkets().addSource(String(source ?? ''));
 });
 ipcMain.handle('plugins:market-add-local', async event => {
   assertMainWindowSender(event.sender.id);
@@ -2327,6 +2426,10 @@ ipcMain.handle('plugins:market-preview', async (event, sourceId: string, name: s
 ipcMain.handle('plugins:market-install', async (event, token: string) => {
   assertMainWindowSender(event.sender.id);
   return pluginMarkets().install(String(token));
+});
+ipcMain.handle('plugins:market-presentation', async (event, sourceId: string, name: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().presentation(String(sourceId), String(name));
 });
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
@@ -2557,13 +2660,13 @@ ipcMain.handle('clipboard:show-inspector-context-menu', async (event, payload: {
   }
   if (localStats?.isFile()) {
     if (template.length > 0) template.push({ type: 'separator' });
-    template.push(
-      {
-        label: '复制文件',
-        click: () => void copyLocalFileToClipboard(localTarget),
-      },
-      { label: '复制文件路径', click: () => clipboard.writeText(localTarget) },
-    );
+    template.push(...buildFileContextMenu({ path: localTarget, exists: true, isFile: true }, {
+      openWith: () => openFileWithChooser(localTarget),
+      reveal: () => shell.showItemInFolder(localTarget),
+      copyFile: () => copyLocalFileToClipboard(localTarget),
+      copyPath: () => clipboard.writeText(localTarget),
+      onError: error => { if (mainWindow) void showWindowError(mainWindow, '文件操作失败', error instanceof Error ? error.message : String(error)); },
+    }));
   }
   if (template.length === 0) {
     return;
@@ -2695,41 +2798,27 @@ ipcMain.handle('shell:open-file-in-cardbush', async (event, targetPath: string) 
   return '';
 });
 
-ipcMain.handle('shell:file-context-menu', (event, targetPath: string) => {
+ipcMain.handle('shell:file-context-menu', async (event, targetPath: string, options: FileContextMenuOptions = {}) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
-  if (!sourceWindow || sourceWindow !== mainWindow) {
+  if (!sourceWindow || (sourceWindow !== mainWindow && !shadowWindows.has(event.sender.id))) {
     return 'File menu is only available from the main CardBush window.';
   }
-  const normalizedPath = normalizeShellPath(targetPath);
-  if (!normalizedPath) {
+  const normalizedPath = /^cardbush-file:/i.test(targetPath) ? localPathFromProtocolUrl(targetPath) : normalizeShellPath(targetPath);
+  const image = options.image && Number.isFinite(options.image.x) && Number.isFinite(options.image.y) ? options.image : undefined;
+  if ((!normalizedPath && !image) || (normalizedPath && !path.isAbsolute(normalizedPath))) {
     return 'Invalid path.';
   }
-  const fileExists = fs.existsSync(normalizedPath);
-  const menu = Menu.buildFromTemplate([
-    ...(!fileExists
-      ? [{ label: '文件不存在（无法打开）', enabled: false } as const, { type: 'separator' } as const]
-      : []),
-    {
-      label: '在 CardBush 中打开',
-      enabled: fileExists,
-      click: () => void openUiPreview(normalizedPath),
-    },
-    {
-      label: '打开方式...',
-      enabled: fileExists,
-      click: () => openFileWithChooser(normalizedPath),
-    },
-    { type: 'separator' },
-    {
-      label: '跳转到文件位置',
-      enabled: fileExists,
-      click: () => shell.showItemInFolder(normalizedPath),
-    },
-    {
-      label: '复制路径',
-      click: () => clipboard.writeText(normalizedPath),
-    },
-  ]);
+  const stats = normalizedPath ? await fs.promises.stat(normalizedPath).catch(() => null) : null;
+  if (sourceWindow.isDestroyed() || event.sender.isDestroyed()) return '';
+  const menu = Menu.buildFromTemplate(buildFileContextMenu({ path: normalizedPath, exists: Boolean(stats), isFile: stats?.isFile() === true, language: options.language }, {
+    open: () => openUiPreview(normalizedPath),
+    openWith: () => openFileWithChooser(normalizedPath),
+    reveal: () => shell.showItemInFolder(normalizedPath),
+    copyPath: () => clipboard.writeText(normalizedPath),
+    copyFile: () => copyLocalFileToClipboard(normalizedPath),
+    ...(image ? { copyImage: () => { if (!event.sender.isDestroyed()) event.sender.copyImageAt(Math.round(image.x), Math.round(image.y)); } } : {}),
+    onError: error => { void showWindowError(sourceWindow, options.language === 'en' ? 'File operation failed' : '文件操作失败', error instanceof Error ? error.message : String(error)); },
+  }));
   menu.popup({ window: sourceWindow });
   return '';
 });
@@ -3266,6 +3355,7 @@ async function initializeRuntimeHostWithinDeadline() {
       env: {
         ...process.env,
         CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
+        CARDBUSH_MCP_DESKTOP_BRIDGE: '1',
         CARDBUSH_MCP_MANAGEMENT_TOKEN: productMcpManagement!.token,
         CARDBUSH_RUNTIME_STATE_ROOT: path.join(
           app.getPath('userData'),
@@ -3315,6 +3405,11 @@ async function initializeRuntimeHostWithinDeadline() {
         CARDBUSH_APPS_CONFIG_PATH: productAppsConfigPath(),
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
+      onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+        if (operation === 'openai.access-token') return (await openAiDesktop()).access({
+          rejectedToken: typeof (payload as { rejectedToken?: unknown })?.rejectedToken === 'string' ? (payload as { rejectedToken: string }).rejectedToken : undefined, signal });
+        return mcpDesktop().handle(operation, payload, signal);
+      },
     }) as RuntimeHostController;
     runtimeHostController = controller;
     registerDesktopControlMonitor(controller);
@@ -3376,6 +3471,11 @@ async function initializeProductHost(controller: RuntimeHostController) {
     userPluginRoot,
     legacyModelConfigPaths: legacyBushserverModelConfigPaths(),
     runtimeBridge: controller,
+    credentials: {
+      read: (key: string) => mcpDesktop().handle('credentials.read', { key }, new AbortController().signal),
+      write: (key: string, value: unknown) => mcpDesktop().handle('credentials.write', { key, value }, new AbortController().signal),
+    },
+    requestClientCredentials: (input: Parameters<McpDesktopHost['requestClientCredentials']>[0], signal: AbortSignal) => mcpDesktop().requestClientCredentials(input, signal),
   }) as NonNullable<typeof productHostController>;
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
@@ -3813,6 +3913,7 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (hostShutdownPromise == null) {
     hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
+      await (await openAiAccountPromise)?.close();
       await productMcpManagement?.close();
       productMcpManagement = null;
       await modelPreviewService?.dispose();

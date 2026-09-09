@@ -152,6 +152,7 @@ export class RuntimeSessionCoordinator {
     prefix: ModelMessage[];
     current: ModelMessage[];
     maxSummaryTurns?: number;
+    compactionTurnIds?: string[];
     supersession?: SessionSupersession;
   }): ContextSnapshot {
     return assembleContext({
@@ -159,6 +160,7 @@ export class RuntimeSessionCoordinator {
       prefix: input.prefix,
       current: input.current,
       maxSummaryTurns: input.maxSummaryTurns,
+      compactionTurnIds: input.compactionTurnIds,
     });
   }
 

@@ -1,0 +1,29 @@
+.mcp-request-dialog { box-sizing: border-box; width: min(540px, calc(100vw - 40px)); max-height: 85vh; overflow: auto; padding: 24px; border: 1px solid var(--border, #454545); border-radius: 14px; color: var(--text, #eee); background: var(--panel, #1b1d1c); }
+.mcp-request-dialog *, .plugin-mcp-settings input, .plugin-mcp-settings select { box-sizing: border-box; }
+.mcp-request-dialog::backdrop { background: #0009; }
+.mcp-request-dialog h2 { font-size: 19px; margin: 0 0 8px; }
+.mcp-request-dialog p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-request-origin, .mcp-form-field small { opacity: .7; font-size: 12px; }
+.mcp-form-field, .mcp-request-url { display: grid; gap: 6px; margin: 16px 0; }
+.mcp-form-field input, .mcp-form-field select, .plugin-mcp-settings input, .plugin-mcp-settings select { min-width: 0; width: 100%; padding: 8px 10px; border: 1px solid var(--border, #454545); border-radius: 7px; background: var(--panel, #1b1d1c); color: inherit; }
+.mcp-request-dialog footer, .plugin-mcp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.mcp-request-dialog button, .plugin-mcp-actions button, .plugin-mcp-settings .mcp-fields button { border: 1px solid var(--border, #454545); border-radius: 7px; padding: 7px 12px; color: inherit; background: var(--panel-strong, #303431); cursor: pointer; }
+.mcp-request-url code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.plugin-mcp-service { padding: 16px; margin: 12px 0; border: 1px solid var(--border, #454545); border-radius: 10px; }
+.plugin-mcp-service header { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.plugin-mcp-service header input { width: auto; }
+.plugin-mcp-service .mcp-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 12px 0; }
+.plugin-mcp-service label { display: grid; align-content: start; gap: 6px; font-size: 13px; }
+.plugin-mcp-service header label { display: inline-flex; align-items: center; white-space: nowrap; }
+.plugin-mcp-service small { opacity: .7; overflow-wrap: anywhere; }
+.plugin-mcp-tool { display: grid; grid-template-columns: minmax(140px, 1fr) 130px; gap: 12px; align-items: center; margin: 8px 0; }
+.plugin-mcp-tool code { overflow-wrap: anywhere; }
+
+@media (max-width: 540px) { .plugin-mcp-service .mcp-fields { grid-template-columns: minmax(0, 1fr); } .plugin-mcp-service header { flex-wrap: wrap; } .plugin-mcp-tool { grid-template-columns: minmax(0, 1fr) 100px; } }
+.openai-account-panel { border: 1px solid var(--border-color, #344144); border-radius: 12px; padding: 16px 18px; margin-bottom: 18px; background: var(--bg-secondary, rgba(255,255,255,.025)); }
+.openai-account-panel header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.openai-account-panel header > [role=status] { margin-left: auto; font-size: 13px; }
+.openai-experimental { border: 1px solid currentColor; border-radius: 5px; padding: 1px 6px; font-size: 11px; opacity: .7; }
+.openai-account-panel p { font-size: 13px; line-height: 1.65; opacity: .85; margin: 12px 0; }
+.openai-account-panel details { margin-top: 12px; font-size: 12px; }
+.openai-account-panel .plugin-mcp-actions { justify-content: flex-start; flex-wrap: wrap; }

@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import type { AppLanguage } from '../../types';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 
 export type ImagePreviewSource = {
   src: string;
@@ -233,6 +234,7 @@ export function ImagePreviewDialog({
             }
           }}
           onDoubleClick={() => applyZoom(zoomRef.current === 1 ? 2 : 1)}
+          onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >
           <div
             className="image-preview-canvas"

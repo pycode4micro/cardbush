@@ -222,12 +222,13 @@ export function registerWorkspaceTools(
         workspaceRoot(context) ?? dirname(path),
         context.signal,
       );
-      if (execution.exitCode !== 0 && execution.exitCode !== 1) {
-        throw new Error(execution.stderr || `ripgrep exited with code ${execution.exitCode}.`);
-      }
+      const complete = !execution.timedOut && (execution.exitCode === 0 || execution.exitCode === 1);
       return {
-        matched: execution.exitCode === 0,
+        matched: execution.stdout.length > 0,
         output: execution.stdout,
+        complete,
+        exitCode: execution.exitCode,
+        ...(execution.stderr ? { warnings: execution.stderr } : {}),
       };
     },
   });
@@ -1362,6 +1363,12 @@ async function searchFileContentWithNode(
   signal?: AbortSignal,
 ): Promise<ProcessResult> {
   const files: string[] = [];
+  const warnings: string[] = [];
+  let warningCount = 0;
+  const warn = (error: unknown) => {
+    warningCount++;
+    if (warnings.length < 32) warnings.push(error instanceof Error ? error.message : String(error));
+  };
   const maximumFiles = 25_000;
   const maximumOutputBytes = 2 * 1024 * 1024;
   const visit = async (candidate: string): Promise<void> => {
@@ -1370,7 +1377,7 @@ async function searchFileContentWithNode(
     try {
       info = await lstat(candidate);
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) return;
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
       throw error;
     }
     if (info.isSymbolicLink()) return;
@@ -1386,7 +1393,7 @@ async function searchFileContentWithNode(
     try {
       entries = await readdir(candidate, { withFileTypes: true });
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) return;
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
       throw error;
     }
     for (const entry of entries) {
@@ -1419,7 +1426,7 @@ async function searchFileContentWithNode(
     try {
       bytes = await readFile(file);
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) continue;
+      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
       throw error;
     }
     // Match ripgrep's Unicode BOM behavior: UTF-16 padding is not binary content.
@@ -1445,11 +1452,10 @@ async function searchFileContentWithNode(
       const match = `${file}:${index + 1}:${column + 1}:${line}\n`;
       outputBytes += Buffer.byteLength(match);
       if (outputBytes > maximumOutputBytes) {
-        output.push(`[search output truncated at ${maximumOutputBytes} bytes]\n`);
         return {
-          exitCode: 0,
+          exitCode: 2,
           stdout: output.join(""),
-          stderr: "",
+          stderr: [...warnings, `Search output truncated at ${maximumOutputBytes} bytes; narrow path or globs.`].join("\n"),
           timedOut: false,
         };
       }
@@ -1457,9 +1463,9 @@ async function searchFileContentWithNode(
     }
   }
   return {
-    exitCode: output.length > 0 ? 0 : 1,
+    exitCode: warningCount ? 2 : output.length > 0 ? 0 : 1,
     stdout: output.join(""),
-    stderr: "",
+    stderr: warnings.join("\n") + (warningCount > warnings.length ? `\n${warningCount - warnings.length} additional file access errors.` : ""),
     timedOut: false,
   };
 }

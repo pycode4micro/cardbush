@@ -5,7 +5,15 @@ export const BUSH_TASK_PLAN_PROTOCOL = "bush.task_plan.v1" as const;
 export const taskNodeSchema = z.object({
   id: z.string().optional(),
   step: z.string().min(1),
-  status: z.enum(["pending", "in_progress", "completed"]),
+  status: z.enum(["pending", "in_progress", "waiting", "completed"]),
+  waitingFor: z.string().trim().min(1).optional(),
+}).superRefine((node, context) => {
+  if (node.status === "waiting" && !node.waitingFor) {
+    context.addIssue({ code: "custom", path: ["waitingFor"], message: "waiting nodes must state the external dependency or user action needed to continue" });
+  }
+  if (node.status !== "waiting" && node.waitingFor !== undefined) {
+    context.addIssue({ code: "custom", path: ["waitingFor"], message: "waitingFor applies only to waiting nodes" });
+  }
 });
 
 export const taskPlanSchema = z

@@ -102,6 +102,23 @@ try {
   );
   assert.notEqual(goalTurns[0].turnId, goalTurns[1].turnId);
 
+  let waitingTurns = 0;
+  const waitingRunner = new runtimeClientModule.GoalContinuationRunner({
+    client: {
+      async createGoal(input) { return goalState(input, 'active', 1); },
+      async getGoal(sessionId) { return goalState({ goalId: 'goal_waiting', sessionId, objective: 'finish' }, 'active', 1); },
+    },
+    async runTurn(request) {
+      assert.equal(++waitingTurns, 1, 'an external dependency must not trigger another automatic turn');
+      const event = terminalEvent(request, 'completed');
+      event.payload.reason = 'task_plan_waiting';
+      return event;
+    },
+  });
+  const handoff = await waitingRunner.run({ goalId: 'goal_waiting', objective: 'finish', initialTurn: sessionTurnRequest(), continuationPrompt: 'Continue.' });
+  assert.equal(handoff.goal.status, 'active', 'a handoff preserves the unfinished goal');
+  assert.equal(handoff.turns.length, 1);
+
   const projection = new runtimeClientModule.RuntimeTurnProjection();
   const eventKinds = [];
   let view = projection.snapshot();

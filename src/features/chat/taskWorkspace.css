@@ -11,3 +11,6 @@
 .task-workspace-details > summary { width: fit-content; color: var(--text-secondary, inherit); }
 .task-workspace-details[open] > summary { margin-bottom: 8px; }
 .task-workspace-details > summary.task-workspace-error { color: var(--error-color, #c55); }
+
+.task-workspace-branches { margin-top: 10px; }
+.task-workspace-branches > .git-branch-menu { max-width: 480px; margin-top: 8px; }

@@ -1,14 +1,27 @@
 import type { ModelRequest } from '@cardbush/bush-protocol';
 
-export const PLUGIN_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Stop', 'SubagentStart', 'SubagentStop'] as const;
+export const PLUGIN_HOOK_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'PostCompact', 'Stop', 'Interrupt', 'SubagentStart', 'SubagentStop'] as const;
 export type PluginHookEvent = typeof PLUGIN_HOOK_EVENTS[number];
 export interface PluginHook {
   id: string;
   pluginId: string;
   root: string;
+  dialect?: 'openai' | 'claude';
   event: PluginHookEvent;
   matcher: string;
+  type?: 'command' | 'mcp_tool' | 'prompt' | 'agent';
   command: string;
+  commandWindows?: string;
+  server?: string;
+  tool?: string;
+  input?: Record<string, unknown>;
+  async?: boolean;
+  statusMessage?: string;
+  additionalContextLimit?: number;
+  /** Desktop loaders always set this after checking the current definition hash. */
+  trusted?: boolean;
+  definitionHash?: string;
+  definition?: Record<string, unknown>;
   args?: string[];
   shell?: 'bash' | 'powershell' | 'cmd';
   timeout: number;
@@ -54,8 +67,22 @@ export interface PluginHookContext {
   prompt?: string;
   lastAssistantMessage?: string;
   stopHookActive?: boolean;
+  source?: 'startup' | 'resume' | 'clear' | 'compact';
+  trigger?: 'manual' | 'auto';
+  reason?: string;
 }
-export interface PluginHookResult { messages: string[]; blocked?: string; updatedInput?: unknown; ask?: string; shouldContinue?: boolean }
+export interface PluginHookResult {
+  messages: string[];
+  blocked?: string;
+  updatedInput?: unknown;
+  ask?: string;
+  stopTurn?: string;
+  continueTurn?: string;
+  permissionDecision?: 'allow' | 'deny';
+  /** A presentation replacement; the persisted native tool outcome remains authoritative. */
+  toolFeedback?: string;
+  rejectToolResult?: boolean;
+}
 
 // Claude aliases are only a naming adapter. Runtime retains tool exposure and permission checks.
 export const CLAUDE_TOOL_NAMES: Record<string, string[]> = {

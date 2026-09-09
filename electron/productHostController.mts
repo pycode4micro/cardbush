@@ -21,6 +21,9 @@ import {
 import type { ElectronRuntimeBridge } from '@cardbush/bush-runtime-electron';
 import { ElectronRuntimeTransport } from '@cardbush/bush-runtime-electron';
 import { loadProductPluginCatalog } from './productPlugins.js';
+import { PluginConnectionManager } from './pluginConnectionManagement.mjs';
+import type { McpCredentialStore } from '@cardbush/bush-mcp-client';
+import type { ClientCredentialsPrompt, ClientCredentialsAnswer } from './pluginConnectionManagement.mjs';
 import {
   assertUserMcpServerId,
   mergeMcpServer,
@@ -41,6 +44,7 @@ import {
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
+  mcpOAuthFromConfig,
   mcpSnapshotResultSchema,
 } from '@cardbush/bush-protocol';
 
@@ -53,6 +57,8 @@ export interface ElectronProductHostControllerOptions {
   userPluginRoot: string;
   legacyModelConfigPaths?: string[];
   runtimeBridge: ElectronRuntimeBridge;
+  credentials?: McpCredentialStore;
+  requestClientCredentials?: (input: ClientCredentialsPrompt, signal: AbortSignal) => Promise<ClientCredentialsAnswer>;
 }
 
 export class ElectronProductHostController {
@@ -67,6 +73,7 @@ export class ElectronProductHostController {
   readonly #legacyModelConfigPaths: string[];
   readonly #dataRoot: string;
   readonly #host: ProductHost;
+  readonly #pluginConnections: PluginConnectionManager;
   #legacyCredentialMigration?: Promise<void>;
 
   constructor(options: ElectronProductHostControllerOptions) {
@@ -88,6 +95,15 @@ export class ElectronProductHostController {
     });
     this.#mcp = new ProductMcpConfigStore(join(dataRoot, 'config', 'mcp-servers.json'));
     this.#subagents = new ProductSubagentConfigStore(join(dataRoot, 'config', 'subagents.json'));
+    this.#pluginConnections = new PluginConnectionManager({
+      apps: this.#apps, mcp: this.#mcp, credentials: options.credentials,
+      requestCredentials: options.requestClientCredentials,
+      refresh: () => this.refreshMcp(),
+      runtime: async () => {
+        const state = objectValue(await this.listMcpServers(), 'MCP management state');
+        return { runtime: state.runtime, ...(typeof state.runtimeError === 'string' ? { runtimeError: state.runtimeError } : {}) };
+      },
+    });
     this.#host = new ProductHost({
       get: async () => {
         const snapshot = await this.#models.read();
@@ -140,6 +156,8 @@ export class ElectronProductHostController {
         } : {
           kind: server.transport === 'http' ? 'streamable_http' : server.transport,
           url: server.url, headers: server.headers ?? {},
+          oauth: mcpOAuthFromConfig(server.oauth),
+          auth: server.auth === 'none' ? 'none' : 'oauth',
         },
         defaultToolPolicy: { permission: 'ask', parallelSafe: false, visibleToChild: true },
         toolPolicies: {},
@@ -168,6 +186,11 @@ export class ElectronProductHostController {
     });
     return this.#applyMcpConfiguration(config.revision);
   }
+
+  listPluginConnections(pluginId?: string) { return this.#pluginConnections.list(pluginId); }
+  configurePluginConnection(input: unknown, signal?: AbortSignal) { return this.#pluginConnections.configure(input, signal); }
+  savePluginConnections(input: unknown) { return this.#pluginConnections.save(input); }
+  requestPluginCredentials(input: unknown, signal: AbortSignal) { return this.#pluginConnections.requestCredentials(input, signal); }
 
   async removeMcpServer(id: string, signal?: AbortSignal): Promise<unknown> {
     assertUserMcpServerId(id);

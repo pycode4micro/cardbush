@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { importPluginManifest } from '../dist-electron/pluginManifestImport.js';
+import { resolvePluginManifest } from '../dist-electron/pluginManifest.js';
 import { installProductPlugin, loadProductPluginCatalog, loadEnabledProductPluginExtensions } from '../dist-electron/productPlugins.js';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionCoordinator, SubagentTaskStore, registerSubagentTool } from '../packages/bush-runtime/dist/index.js';
 import { PluginHookRunner } from '../packages/bush-runtime/dist/pluginHookRunner.js';
@@ -32,7 +32,7 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   await writeFile(join(source, 'hooks/run.cjs'), script);
   const hookMap = Object.fromEntries(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'].map(event => [event, [{ matcher: event.includes('Tool') ? 'Write' : '', hooks: [{ type: 'command', command: process.execPath, args: ['${CLAUDE_PLUGIN_ROOT}/hooks/run.cjs'], timeout: 5 }] }]]));
   await writeFile(join(source, 'hooks/hooks.json'), JSON.stringify({ hooks: hookMap }));
-  const adapted = await importPluginManifest(source, manifest);
+  const adapted = await resolvePluginManifest(source);
   assert.equal(adapted.issues.length, 0, JSON.stringify(adapted.issues));
   assert.ok(adapted.notes.some(note => note.includes('model inherits')));
   assert.equal(await present(join(workspace, 'hook-events.jsonl')), false, 'inspection never executes hooks');
@@ -43,6 +43,9 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   assert.equal(catalog[0].components.filter(value => value.kind === 'hook').length, 5);
   assert.equal(catalog[0].components.filter(value => value.kind === 'command').length, 1, 'commands keep their native component type');
   assert.equal(catalog[0].components.filter(value => value.kind === 'skill').length, 0, 'commands do not generate Skills');
+  assert.ok((await loadEnabledProductPluginExtensions(roots, configPath)).hooks.every(hook => hook.trusted === false), 'installation does not grant hook trust');
+  await writeFile(configPath, JSON.stringify({ serviceEnabled: true, plugins: [{ id: manifest.name, installed: true, enabled: true,
+    config: { trustedHookHashes: catalog[0].components.filter(component => component.hook).map(component => component.hook.definitionHash) } }] }));
   const extensions = await loadEnabledProductPluginExtensions(roots, configPath);
   assert.equal(extensions.agents[0].description, 'Review files carefully.\n');
   assert.equal(extensions.agents[0].root, join(installed, manifest.name));
@@ -72,7 +75,7 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   assert.ok(requests[0].messages.some(message => message.content.includes('fixture hook context SessionStart')));
   assert.ok(requests[1].messages.some(message => message.content.includes('fixture hook context PostToolUse')));
   const logs = (await readFile(join(workspace, 'hook-events.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.deepEqual(logs.map(value => value.hook_event_name), ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'Stop']);
+  assert.deepEqual(logs.map(value => value.hook_event_name), ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'UserPromptSubmit', 'Stop']);
   assert.equal(logs.at(-1).stop_hook_active, true);
 
   const runner = new PluginHookRunner(join(root, 'runtime'));
@@ -114,8 +117,10 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   assert.equal(unavailable.kind, 'failed');
 
   const slowHook = { ...extensions.hooks[0], event: 'PreToolUse', command: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], timeout: .12 };
-  const timed = await runner.run([slowHook], 'PreToolUse', { request });
-  assert.match(timed.blocked, /timed out/);
+  const timedObservations = [];
+  const timed = await runner.run([slowHook], 'PreToolUse', { request }, entry => timedObservations.push(entry));
+  assert.equal(timed.blocked, undefined, 'execution failures do not invent a policy denial');
+  assert.match(timedObservations.at(-1).error, /timed out/);
   const controller = new AbortController();
   const observations = [];
   const pending = runner.run([{ ...slowHook, timeout: 10 }], 'PreToolUse', { request, signal: controller.signal }, entry => observations.push(entry));
@@ -142,7 +147,10 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   assert.ok(stoppedEvents.some(event => event.kind === 'tool_cancelled' && event.payload.toolCallId === startedHook.payload.toolCallId), 'host closes cancelled hook status');
 
   await writeFile(join(source, 'hooks/hooks.json'), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'prompt', prompt: 'Unsupported native hook' }] }] } }));
-  await assert.rejects(installProductPlugin(source, installed), /unsupported runtime components/, 'local installation validates executable features too');
+  await installProductPlugin(source, installed);
+  const skipped = await resolvePluginManifest(join(installed, manifest.name));
+  assert.equal(skipped.extensions.hooks[0].type, 'prompt');
+  assert.ok(skipped.notes.some(note => note.includes('skipped')), 'prompt handlers are reported as skipped, matching OpenAI');
   console.log('Plugin extensions passed: import, discovery, Commands, real hook processes, lifecycle feedback, input reauthorization, denial, post-failure receipts, Agent restrictions, disable, timeout and stop.');
 } finally {
   assert.ok(root.startsWith(parent + sep + 'cardbush-plugin-extensions-'));

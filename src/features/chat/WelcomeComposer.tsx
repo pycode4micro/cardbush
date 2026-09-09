@@ -37,18 +37,12 @@ export function WelcomeComposer({
   reasoningLevelAvailable,
   reasoningLevel,
   reasoningLevels,
-  activeProjectDir,
   selectedProjectDir,
   availableProjects,
   onProjectChange,
-  projectContext,
   skills = [],
   disabledSkillNames,
-  visualInputAvailable,
-  visualInputEnabled,
-  gitAvailable,
   onToggleSkill,
-  onVisualInputEnabledChange,
   onModelChange,
   onReferencePlanModeChange,
   onPermissionModeChange,
@@ -56,7 +50,6 @@ export function WelcomeComposer({
   onReasoningLevelChange,
   onConfigureModels,
   onCreateConversation,
-  onSaveProjectContext,
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
@@ -84,18 +77,12 @@ export function WelcomeComposer({
   reasoningLevelAvailable: boolean;
   reasoningLevel: ReasoningLevel;
   reasoningLevels: ReasoningLevel[];
-  activeProjectDir?: string;
   selectedProjectDir: string;
   availableProjects: ProjectItem[];
   onProjectChange: (projectDir: string | null) => Promise<void>;
-  projectContext: string;
   skills?: SkillSummary[];
   disabledSkillNames: Set<string>;
-  visualInputAvailable: boolean;
-  visualInputEnabled: boolean;
-  gitAvailable: boolean;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
-  onVisualInputEnabledChange: (enabled: boolean) => void;
   onModelChange: (value: string) => void;
   onReferencePlanModeChange: (value: ReferencePlanMode) => void;
   onPermissionModeChange: (value: PermissionMode) => void;
@@ -103,7 +90,6 @@ export function WelcomeComposer({
   onReasoningLevelChange: (value: ReasoningLevel) => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
-  onSaveProjectContext: (value: string) => Promise<string>;
   onEditQueuedMessage: (item: QueuedChatMessage) => void;
   onGuideQueuedMessage: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage: (queuedId: string) => void;
@@ -140,16 +126,9 @@ export function WelcomeComposer({
       onReasoningLevelChange={onReasoningLevelChange}
       onConfigureModels={onConfigureModels}
       onCreateConversation={onCreateConversation}
-      activeProjectDir={activeProjectDir}
-      projectContext={projectContext}
       skills={skills}
       disabledSkillNames={disabledSkillNames}
-      visualInputAvailable={visualInputAvailable}
-      visualInputEnabled={visualInputEnabled}
-      gitAvailable={gitAvailable}
       onToggleSkill={onToggleSkill}
-      onVisualInputEnabledChange={onVisualInputEnabledChange}
-      onSaveProjectContext={onSaveProjectContext}
       onEditQueuedMessage={onEditQueuedMessage}
       onGuideQueuedMessage={onGuideQueuedMessage}
       onRemoveQueuedMessage={onRemoveQueuedMessage}

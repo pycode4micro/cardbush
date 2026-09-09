@@ -1,3 +1,4 @@
+import { GlobalInstructionsPanel } from './settings/GlobalInstructionsPanel';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
 import { DEFAULT_MAX_CONTEXT_TOKENS as defaultMaxContextTokens } from '@cardbush/bush-product-agent';
 import {
@@ -12,6 +13,7 @@ import {
   Cpu,
   Eye,
   EyeOff,
+  FileText,
   LoaderCircle,
   Monitor,
   PackageOpen,
@@ -116,6 +118,7 @@ type SettingsIconComponent = React.ComponentType<{ size?: number; className?: st
 
 const visibleSettingsSections: VisibleSettingsSection[] = [
   'profile',
+  'instructions',
   'runtime',
   'proxy',
   'mcp',
@@ -127,6 +130,7 @@ const visibleSettingsSections: VisibleSettingsSection[] = [
 
 const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
   profile: { zh: '个性化', en: 'Personalization' },
+  instructions: { zh: '全局约束', en: 'Global instructions' },
   runtime: { zh: '运行环境', en: 'Runtime' },
   proxy: { zh: '代理设置', en: 'Proxy' },
   mcp: { zh: '插件', en: 'Plugins' },
@@ -137,6 +141,7 @@ const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }>
 };
 
 const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
+  instructions: { zh: '通过一份 AGENTS.md 统一所有会话的偏好与约束。', en: 'Share preferences and instructions across conversations through one AGENTS.md file.' },
   profile: { zh: '查看累计使用量，并统一管理主题、语言、字体与引导方式。', en: 'Review cumulative usage and manage themes, language, typography, and guidance.' },
   runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
   proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
@@ -153,7 +158,7 @@ const settingsNavigationGroups: Array<{
 }> = [
   {
     label: { zh: '常规', en: 'General' },
-    sections: ['profile', 'runtime'],
+    sections: ['profile', 'instructions', 'runtime'],
   },
   {
     label: { zh: '智能与扩展', en: 'AI & extensions' },
@@ -171,6 +176,7 @@ const settingsNavigationGroups: Array<{
 
 const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
   profile: Palette,
+  instructions: FileText,
   runtime: Terminal,
   proxy: Monitor,
   mcp: McpLogoIcon,
@@ -238,6 +244,9 @@ export function SettingsView({
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
+  visualInputAvailable,
+  visualInputEnabled,
+  onVisualInputEnabledChange,
 }: {
   active: boolean;
   onReady: () => void;
@@ -266,6 +275,9 @@ export function SettingsView({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
+  visualInputAvailable: boolean;
+  visualInputEnabled: boolean;
+  onVisualInputEnabledChange: (enabled: boolean) => void;
 }) {
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
@@ -615,6 +627,7 @@ export function SettingsView({
         />
       );
     }
+    if (section === 'instructions') return <GlobalInstructionsPanel language={language} />;
     if (section === 'runtime') {
       return (
         <div className="settings-stack">
@@ -842,6 +855,9 @@ export function SettingsView({
           onMaxContextTokensChange={setMaxContextTokens}
           onMaxCompletionTokensChange={setMaxCompletionTokens}
           onShowApiKeyChange={setShowApiKey}
+          visualInputAvailable={visualInputAvailable}
+          visualInputEnabled={visualInputEnabled}
+          onVisualInputEnabledChange={onVisualInputEnabledChange}
           onAddModelConfig={addModelConfig}
           onResetModels={resetModels}
           onRemoveModelConfig={removeModelConfig}
@@ -1432,6 +1448,9 @@ function ModelsSettingsPanel({
   onMaxContextTokensChange,
   onMaxCompletionTokensChange,
   onShowApiKeyChange,
+  visualInputAvailable,
+  visualInputEnabled,
+  onVisualInputEnabledChange,
   onAddModelConfig,
   onResetModels,
   onRemoveModelConfig,
@@ -1459,6 +1478,9 @@ function ModelsSettingsPanel({
   onMaxContextTokensChange: (value: string) => void;
   onMaxCompletionTokensChange: (value: string) => void;
   onShowApiKeyChange: (value: boolean) => void;
+  visualInputAvailable: boolean;
+  visualInputEnabled: boolean;
+  onVisualInputEnabledChange: (enabled: boolean) => void;
   onAddModelConfig: (event?: FormEvent) => void;
   onResetModels: () => void;
   onRemoveModelConfig: (id: string) => void;
@@ -1569,6 +1591,17 @@ function ModelsSettingsPanel({
 
   return (
     <div className="settings-stack model-settings-stack">
+      <SettingsCard title={language === 'zh' ? '模型输入' : 'Model input'}>
+        <SettingsSwitch
+          title={language === 'zh' ? '视觉功能' : 'Vision input'}
+          subtitle={visualInputAvailable
+            ? (language === 'zh' ? '允许模型直接接收图片。请使用支持视觉输入的模型；关闭后仍可通过文件工具处理图片。' : 'Allow native image input with a vision-capable model. File tools remain available when disabled.')
+            : (language === 'zh' ? '当前运行环境未提供视觉输入。' : 'Vision input is unavailable in the current runtime.')}
+          checked={visualInputEnabled}
+          disabled={!visualInputAvailable}
+          onChange={onVisualInputEnabledChange}
+        />
+      </SettingsCard>
       <SettingsCard
         title={language === 'zh' ? '添加模型' : 'Add model'}
         subtitle={
@@ -2860,6 +2893,16 @@ function McpServersPanel({
               <div className="mcp-simple-row" key={server.id}>
                 <McpLogoIcon className="mcp-logo-icon" size={18} />
                 <strong>{server.name || server.id}</strong>
+                {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey)} onClick={() => {
+                  setBusyKey(server.id); setError('');
+                  void window.cardbushDesktop!.mcpConnectionAction(server.id, 'login').then(() => fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language))).finally(() => setBusyKey(''));
+                }}>{server.status === 'auth_required' ? (language === 'zh' ? '需要登录' : 'Sign-in required') : (language === 'zh' ? '登录' : 'Sign in')}</button>}
+                {server.transport !== 'stdio' && <button className="mcp-icon-button" type="button" disabled={Boolean(busyKey) && busyKey !== server.id} onClick={() => {
+                  const action = busyKey === server.id ? 'cancel_login' : 'logout';
+                  void window.cardbushDesktop!.mcpConnectionAction(server.id, action).then(() => fetchMcpServers()).then(value => setServers(value.servers)).catch(caught => setError(mcpErrorText(caught, language)));
+                }}>{busyKey === server.id ? (language === 'zh' ? '取消登录' : 'Cancel sign-in') : (language === 'zh' ? '退出登录' : 'Sign out')}</button>}
+
+
                 <button
                   className="mcp-icon-button"
                   type="button"

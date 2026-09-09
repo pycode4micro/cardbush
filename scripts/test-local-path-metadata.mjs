@@ -226,14 +226,21 @@ assert.match(electronMainSource, /getFileIcon\(normalizedPath/);
 const fileContextMenuHandler = electronMainSource.match(
   /ipcMain\.handle\('shell:file-context-menu',[\s\S]*?\n\}\);/,
 )?.[0] ?? '';
-assert.match(fileContextMenuHandler, /const fileExists = fs\.existsSync\(normalizedPath\)/);
-assert.match(fileContextMenuHandler, /文件不存在（无法打开）/);
-assert.match(fileContextMenuHandler, /label: '复制路径'/);
-assert.doesNotMatch(
-  fileContextMenuHandler,
-  /if \(!normalizedPath \|\| !fs\.existsSync\(normalizedPath\)\)/,
-  'Missing files must still open a context menu so their path can be copied',
-);
+assert.match(fileContextMenuHandler, /buildFileContextMenu/);
+const menuModule = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(process.cwd(), 'electron/fileContextMenu.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { module: menuModule, exports: menuModule.exports });
+let copiedPath = false;
+const noOp = () => {};
+const missingMenu = menuModule.exports.buildFileContextMenu({ path: absoluteDocument, exists: false, isFile: false }, {
+  open: noOp, openWith: noOp, reveal: noOp, copyFile: noOp, copyPath: () => { copiedPath = true; }, onError: error => { throw error; },
+});
+assert.equal(missingMenu.find(item => item.label === '在 CardBush 中打开').enabled, false);
+assert.equal(missingMenu.find(item => item.label === '复制文件').enabled, false);
+const copyPathItem = missingMenu.find(item => item.label === '复制路径');
+assert.equal(copyPathItem.enabled, true, 'Missing files retain path copying');
+copyPathItem.click(); await Promise.resolve(); assert.equal(copiedPath, true);
 
 console.log('local path metadata tests passed');
 

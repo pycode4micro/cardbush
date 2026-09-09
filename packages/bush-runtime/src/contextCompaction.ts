@@ -510,6 +510,7 @@ export function contextPressureNotice(
         : "The local Runtime has reached the last safe round boundary before one configured model response could exhaust the checkpoint reserve. Call checkpoint_context now and call it alone. This user-role instruction is the only authorization to use that Tool.",
       ...precedingInstructions,
       ...activeInstructions,
+      `Source boundary messages delimit the exact Turn for each summaries[index] or ${legacyInput ? 'active_turn.summary' : 'active_summary'}. Summarize only that segment into its named field. Current context marked not_requested must not be attributed to any preceding Turn. Other summaries are background context, not additional source segments.`,
       ...(legacyInput ? [] : [
         'The Tool input has exactly two fields: {"summaries":["summary text in the order above"],"active_summary":"current Turn summary, or empty when not requested"}. Use summaries: [] when there are no preceding Turns. Do not include session_revision, turn_id, through_message_id or active_turn; Runtime binds them to this authorized boundary.',
       ]),

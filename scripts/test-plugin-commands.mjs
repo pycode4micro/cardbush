@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { importPluginManifest } from '../dist-electron/pluginManifestImport.js';
+import { resolvePluginManifest } from '../dist-electron/pluginManifest.js';
 import { installProductPlugin, loadEnabledProductPluginExtensions, loadProductPluginCatalog, loadEnabledProductPluginSkillRoots } from '../dist-electron/productPlugins.js';
 import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionCoordinator, commandArguments } from '../packages/bush-runtime/dist/index.js';
 
@@ -19,7 +19,7 @@ try {
   await writeFile(join(source, 'commands/denied.md'), '---\n---\n!`printf sensitive-action`');
   await writeFile(join(source, 'commands/slow.md'), '---\n---\n!`sleep 10`');
   await writeFile(join(source, 'commands/restricted.md'), '---\ndisallowed-tools: Write\n---\nInspect without writing.');
-  const adapted = await importPluginManifest(source, { name: 'native-demo' });
+  const adapted = await resolvePluginManifest(source);
   assert.deepEqual(adapted.issues, []);
   assert.equal(adapted.manifest.commands, './commands');
   assert.equal(adapted.manifest.skills, undefined);

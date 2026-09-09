@@ -1,6 +1,7 @@
 import {
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
+  mcpOAuthFromConfig,
   type McpSnapshot,
   type McpSnapshotResult,
 } from '@cardbush/bush-protocol';
@@ -78,6 +79,8 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
             kind: server.transport === 'http' ? 'streamable_http' as const : server.transport,
             url: server.url ?? '',
             headers: server.headers ?? {},
+            oauth: mcpOAuthFromConfig({ scopes: server.raw.scopes, oauth_resource: server.raw.oauth_resource }, server.raw.oauth),
+            auth: server.raw.auth === 'none' ? 'none' as const : 'oauth' as const,
           },
       versionMode: 'auto',
       restartBackoffMs: 250,
@@ -93,6 +96,10 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
 
 function storedServer(server: McpServerConfig) {
   return {
+    ...(server.raw.oauth ? { oauth: server.raw.oauth } : {}),
+    ...(server.raw.scopes !== undefined ? { scopes: server.raw.scopes } : {}),
+    ...(server.raw.oauth_resource !== undefined ? { oauth_resource: server.raw.oauth_resource } : {}),
+    ...(server.raw.auth ? { auth: server.raw.auth } : {}),
     id: server.id,
     name: server.name,
     description: server.description,

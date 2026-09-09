@@ -60,10 +60,6 @@ import type {
 import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 import { AGENT_PROFILE_PROTOCOL } from '../types';
 import { standardImageInputToolDefaultName } from './toolVisibility';
-import {
-  readProductProjectContext,
-  saveProductProjectContext,
-} from './productProjectContext';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { contextWindowMetrics } from './contextWindowUsage';
@@ -156,7 +152,7 @@ export interface ChatStreamRequest {
   modelConfig?: ManagedModelConfig;
   projectDir?: string;
   workspaceDir?: string;
-  projectUserPrompt?: string;
+  teamInstructions?: string;
   allowedSkills?: string[];
   disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
@@ -241,7 +237,7 @@ export interface ControlStreamRequest {
   modelConfig?: ManagedModelConfig;
   projectDir?: string;
   workspaceDir?: string;
-  projectUserPrompt?: string;
+  teamInstructions?: string;
   allowedSkills?: string[];
   disabledSkills?: string[];
   referencePlanMode?: ReferencePlanMode;
@@ -508,11 +504,6 @@ export interface SubagentDispatchResult {
   reason?: string;
   supervisor?: SubagentSupervisorSnapshot;
   raw: Record<string, unknown>;
-}
-
-export interface ProjectContextResult {
-  projectDir: string;
-  userPrompt: string;
 }
 
 export interface MaintenanceClearResult {
@@ -865,6 +856,7 @@ export async function saveCardbushAppsConfiguration(
     await productHostValue({
       kind: 'apps.update',
       config: {
+        expectedRevision: configuration.revision,
         serviceEnabled: configuration.serviceEnabled,
         plugins: configuration.plugins.map((plugin) => ({
           id: plugin.id,
@@ -1021,7 +1013,7 @@ export async function saveMcpServerConfig(
   const candidate = mcpServerFromPayload(mcpServerRequestBody(input));
   const { servers, revision } = await readProductMcpConfiguration();
   const index = servers.findIndex((server) => server.id === normalized);
-  if (index >= 0) servers[index] = candidate;
+  if (index >= 0) { candidate.raw = { ...servers[index].raw, ...candidate.raw }; servers[index] = candidate; }
   else servers.push(candidate);
   const runtime = createDesktopRuntimeSession();
   try {
@@ -1032,7 +1024,7 @@ export async function saveMcpServerConfig(
     return {
       ...candidate,
       toolCount: connected?.tools.length ?? 0,
-      status: result.applicationState === 'pending' ? 'pending' : candidate.enabled ? 'connected' : 'disabled',
+      status: result.applicationState === 'pending' ? 'pending' : !candidate.enabled ? 'disabled' : connected?.health === 'ready' ? 'connected' : connected?.health ?? 'unavailable',
     };
   } finally {
     runtime.dispose();
@@ -1066,7 +1058,7 @@ export async function setMcpServerEnabled(
       toolCount:
         result.servers.find((server) => server.id === normalized)?.tools
           .length ?? 0,
-      status: result.applicationState === 'pending' ? 'pending' : enabled ? 'connected' : 'disabled',
+      status: mcpConnectionState(normalized, enabled, result, result.configurationRevision),
     };
   } finally {
     runtime.dispose();
@@ -1808,6 +1800,7 @@ function cardbushAppsConfigurationFromPayload(
       logoDarkPath: String(value.logoDarkPath ?? ''),
       manifestPath: String(value.manifestPath ?? ''),
       source: value.source === 'user' ? 'user' : 'bundled',
+      authentication: value.authentication === 'ON_INSTALL' ? 'ON_INSTALL' : 'ON_USE',
       installation: value.installation === 'INSTALLED_BY_DEFAULT'
         ? 'INSTALLED_BY_DEFAULT'
         : 'AVAILABLE',
@@ -1819,6 +1812,12 @@ function cardbushAppsConfigurationFromPayload(
           id: String(component.id ?? ''),
           name: String(component.name ?? component.id ?? ''),
           description: String(component.description ?? ''),
+          ...(component.mcp ? { mcp: { transport: optionalString(asRecord(component.mcp).transport), url: optionalString(asRecord(component.mcp).url), registeredAppId: optionalString(asRecord(component.mcp).registeredAppId), required: asRecord(component.mcp).required === true } } : {}),
+          ...(component.hook && typeof asRecord(component.hook).definitionHash === 'string' ? { hook: {
+            definitionHash: String(asRecord(component.hook).definitionHash),
+            definition: asRecord(asRecord(component.hook).definition),
+            executable: asRecord(component.hook).executable === true,
+          } } : {}),
         };
       }),
       installed: value.installed === true,
@@ -2477,26 +2476,6 @@ export async function fetchSkillDetail(
   const readSkill = window.cardbushDesktop?.readSkill;
   if (!readSkill) throw new Error('CardBush Skill catalog is unavailable.');
   return skillDetailFromPayload(await readSkill(normalized));
-}
-
-export async function fetchProjectContext(
-  projectDir: string,
-): Promise<ProjectContextResult> {
-  const normalized = projectDir.trim();
-  if (!normalized) {
-    return { projectDir: '', userPrompt: '' };
-  }
-  return readProductProjectContext(normalized);
-}
-
-export async function saveProjectContext({
-  projectDir,
-  userPrompt,
-}: {
-  projectDir: string;
-  userPrompt: string;
-}): Promise<ProjectContextResult> {
-  return saveProductProjectContext({ projectDir, userPrompt });
 }
 
 export async function fetchPendingInteraction(

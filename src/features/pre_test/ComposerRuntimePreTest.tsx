@@ -326,11 +326,8 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                   remainingTokens: 89_580,
                 }}
                 disabledSkillNames={new Set()}
-                visualInputAvailable
-                visualInputEnabled={false}
                 onConfigureModels={() => undefined}
                 onToggleSkill={() => undefined}
-                onVisualInputEnabledChange={() => undefined}
               />
             </>
           )}

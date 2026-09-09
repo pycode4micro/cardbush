@@ -17,9 +17,29 @@ import {
   RUN_RUNTIME_SESSION_TURN_COMMAND,
   SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND,
 } from "@cardbush/bush-protocol";
-import { InMemoryRuntimeHost, LogicMemoryStore, ToolRegistry } from "../dist/index.js";
+import { InMemoryRuntimeHost, LogicMemoryStore, ToolRegistry, CoordinationStore } from "../dist/index.js";
 
 const NOW = "2026-08-29T00:00:00.000Z";
+
+for (const actionable of [false, true]) test(`plan handoff ${actionable ? 'still continues actionable work' : 'retains waiting verification without forcing more execution'}`, async () => {
+  const coordination = new CoordinationStore();
+  coordination.setPlan({ sessionId: 'session_1', expectedRevision: 0, plan: {
+    protocol: 'bush.task_plan.v1', plan_id: 'waiting-plan', session_id: 'session_1', active: true, explanation: 'Await browser sign-in',
+    nodes: [{ id: 'verify', step: 'Verify calendar access', status: 'waiting', waitingFor: 'User completes sign-in' },
+      ...(actionable ? [{ id: 'docs', step: 'Read setup docs', status: 'pending' }] : [])],
+  } });
+  let calls = 0;
+  const host = new InMemoryRuntimeHost({ coordinationStore: coordination, provider: { async *stream(request) {
+    calls++; yield event(request.requestId, 0, 'text_delta', { delta: 'Sign in, then calendar access still needs verification.' });
+    yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
+  } } });
+  const request = sessionRequest('waiting', 'waiting', 'waiting-user', 'Configure the calendar');
+  request.metadata.planEnabled = true;
+  const terminal = await host.runSessionTurn(request);
+  assert.equal(terminal.payload.reason, actionable ? 'open_task_plan_not_resolved' : 'task_plan_waiting');
+  assert.equal(calls, actionable ? 3 : 1);
+  assert.equal(coordination.getPlan('session_1').plan.nodes[0].status, 'waiting');
+});
 
 test("detaching a UI stream keeps its Turn running and resumes from the cursor exactly once", async () => {
   let releaseModel;

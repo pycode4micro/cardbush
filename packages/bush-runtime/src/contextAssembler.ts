@@ -17,10 +17,20 @@ export interface AssembleContextInput {
   throughTurnSequence?: number;
   maxChars?: number;
   maxSummaryTurns?: number;
+  /** Request-only source boundaries for checkpoint generation; never persisted. */
+  compactionTurnIds?: string[];
 }
 
 export const ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME = "active_turn_checkpoint" as const;
 export const ACTIVE_TURN_RESUME_MESSAGE_NAME = "context_checkpoint_resume" as const;
+
+export function wrapContextSource(messages: ModelMessage[], turnId: string, target: string): ModelMessage[] {
+  const boundary = (edge: "start" | "end"): ModelMessage => ({
+    role: "user", name: "context_source_boundary", visibility: "internal",
+    content: `<context_source_boundary edge="${edge}" turn_id="${escapeAttribute(turnId)}" target="${escapeAttribute(target)}" />`,
+  });
+  return [boundary("start"), ...messages, boundary("end")];
+}
 
 interface CheckpointMessageFact {
   messageId: string;
@@ -130,7 +140,14 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
       }];
     }
     return [{ source, messages: source.map((message) => message.message) }];
-  });
+  }).map(({ source, messages }) => ({
+    source,
+    // Retired automatic LEM prompts stay in the journal for audit, but must not
+    // keep directing new Turns. Match only the old Runtime message identity.
+    messages: messages.filter((message) =>
+      !(message.role === "developer" && message.name === "lem_consult_reminder")
+    ),
+  }));
   const fixedChars = messageChars([...prefix, ...current]);
   const budget = Math.max(0, (input.maxChars ?? Number.MAX_SAFE_INTEGER) - fixedChars);
   const selectedTurns: typeof committedTurns = [];
@@ -142,7 +159,11 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     selectedTurns.unshift(turn);
     selectedChars += chars;
   }
-  const committed = selectedTurns.flatMap((turn) => turn.messages);
+  const committed = selectedTurns.flatMap(({ source, messages }) => {
+    const turnId = source[0]?.turnId;
+    const index = turnId === undefined ? -1 : (input.compactionTurnIds?.indexOf(turnId) ?? -1);
+    return index < 0 ? messages : wrapContextSource(messages, turnId!, `summaries[${index}]`);
+  });
   const sourceMessages = selectedTurns.flatMap((turn) => turn.source);
   const messages = [
     ...prefix,

@@ -1,16 +1,19 @@
+import { GitBranchMenu } from './GitBranchMenu';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorkspaceReview } from '@cardbush/bush-protocol';
 import { createDesktopRuntimeSession } from '../../runtime-client/ElectronRuntimeSession';
 import './taskWorkspace.css';
 
-export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisionKey, onChanged }: {
+export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, gitAvailable = false, revisionKey, onChanged }: {
   sessionId: string; projectDir: string; language: 'zh' | 'en'; busy: boolean; revisionKey?: string;
+  gitAvailable?: boolean;
   onChanged: () => Promise<void>;
 }) {
   const zh = language === 'zh';
   const [review, setReview] = useState<WorkspaceReview | null>(null);
   const [error, setError] = useState('');
   const [working, setWorking] = useState(false);
+  const [branchesOpen, setBranchesOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [supported, setSupported] = useState(false);
   const readSequence = useRef(0);
@@ -59,7 +62,7 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
     finally { runtime?.dispose(); setWorking(false); }
   }
 
-  if (!projectDir || (!supported && !error)) return null;
+  if (!projectDir || (!supported && !error && !gitAvailable)) return null;
   const workspace = review?.workspace;
   const disabled = busy || working || loading;
   const incomplete = review?.checkpoints.some(checkpoint => checkpoint.status === 'failed' || checkpoint.status === 'pending');
@@ -102,6 +105,12 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, revisi
         </details>}
       </>}
     </>}
+    {gitAvailable && (!workspace || (workspace.status === 'ready' && workspace.versioning !== 'none')) && (
+      <details className="task-workspace-branches" onToggle={(event) => setBranchesOpen(event.currentTarget.open)}>
+        <summary>{zh ? 'Git 分支' : 'Git branches'}</summary>
+        {branchesOpen && <GitBranchMenu key={workspace?.workspaceDir || projectDir} language={language} activeProjectDir={workspace?.workspaceDir || projectDir} disabled={disabled} onChanged={onChanged} />}
+      </details>
+    )}
     {(error || review?.error) && <p className="task-workspace-error" role="alert">{error || review?.error}</p>}
     {review?.runningTerminals && <p>{zh ? '工作区终端仍在运行。可继续对话；应用、撤回或丢弃副本前需停止终端。' : 'Workspace terminals are running. You can continue chatting; stop them before applying, reverting or discarding files.'}</p>}
     {review?.checkpoints.filter(checkpoint => checkpoint.status === 'failed' || checkpoint.status === 'pending').map(checkpoint =>

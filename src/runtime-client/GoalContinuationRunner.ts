@@ -39,7 +39,8 @@ export interface GoalContinuationRunnerOptions {
 
 /**
  * Runs one ordinary Session Turn at a time. Goal meaning is declared by the
- * model through update_goal; this runner only observes the typed Goal status.
+ * model through update_goal; this runner observes Goal status and explicit plan
+ * handoffs without completing or discarding an unfinished Goal.
  */
 export class GoalContinuationRunner {
   readonly #client: GoalContinuationRunnerOptions['client'];
@@ -82,7 +83,7 @@ export class GoalContinuationRunner {
       turns.push(result);
       await options.onTurnCompleted?.(result);
 
-      if (goal.status !== 'active' || terminal.payload.status !== 'completed') {
+      if (goal.status !== 'active' || terminal.payload.status !== 'completed' || terminal.payload.reason === 'task_plan_waiting') {
         return { goal, turns };
       }
       request = continuationRequest(request, continuationPrompt, this.#createId);

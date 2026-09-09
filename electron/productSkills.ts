@@ -174,16 +174,16 @@ async function loadProductSkills(
     const rootRealPath = await fs.promises.realpath(root).catch(() => null);
     if (!rootRealPath) continue;
     const entries = await fs.promises.readdir(rootRealPath, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const candidateDir = path.join(rootRealPath, entry.name);
+    const directories = entries.some(entry => entry.isFile() && entry.name === 'SKILL.md') ? [rootRealPath]
+      : entries.filter(entry => entry.isDirectory()).map(entry => path.join(rootRealPath, entry.name));
+    for (const candidateDir of directories) {
       const packageDir = await fs.promises.realpath(candidateDir).catch(() => null);
       if (!packageDir || escapes(rootRealPath, packageDir)) continue;
       const skillPath = path.join(packageDir, 'SKILL.md');
       const content = await fs.promises.readFile(skillPath, 'utf8').catch(() => null);
       if (content == null) continue;
       const metadata = parseFrontmatter(content);
-      const name = stringValue(metadata.name) || entry.name;
+      const name = stringValue(metadata.name) || path.basename(candidateDir);
       const logoPath = await resolveSkillLogo(packageDir, metadata.logo ?? metadata.icon);
       const logoDarkPath = await resolveSkillLogo(
         packageDir,

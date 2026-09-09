@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { basename } from '../../shared/localPaths';
+import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage } from '../../types';
 
 export function MediaInspectorPreview({ kind, source, path, language, onLoadingChange }: {
@@ -54,7 +55,8 @@ export function MediaInspectorPreview({ kind, source, path, language, onLoadingC
 
   const name = basename(path);
   return (
-    <div className="inspector-media-preview" ref={containerRef}>
+    <div className="inspector-media-preview" ref={containerRef}
+      onContextMenu={event => openFileContextMenu(event, path, { image: kind === 'image', language })}>
       {kind === 'image' ? (
         <img key={revision} src={source} alt={name} />
       ) : kind === 'video' ? (

@@ -576,7 +576,7 @@ export function ComposerRuntimeRail({
                       ) : (
                         <Clock3 size={13} />
                       )}
-                      <span>{node.step}</span>
+                      <span>{node.step}{node.status === 'waiting' && <small> — {language === 'zh' ? '等待：' : 'Waiting: '}{node.waitingFor}</small>}</span>
                     </li>
                   ))}
                 </ol>

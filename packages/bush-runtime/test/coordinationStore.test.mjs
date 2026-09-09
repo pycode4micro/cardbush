@@ -19,6 +19,23 @@ import {
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
+test('waiting plans preserve verification and its dependency across persistence and resume', () => {
+  const events = [];
+  const persistence = { load: () => structuredClone(events), append: event => events.push(structuredClone(event)) };
+  const store = new CoordinationStore({ persistence, now: () => NOW });
+  const waiting = plan([{ id: 'verify', step: 'Read a calendar', status: 'waiting', waitingFor: 'User completes OAuth sign-in' }]);
+  store.setPlan({ sessionId: 'session_1', expectedRevision: 0, plan: waiting });
+  const restored = new CoordinationStore({ persistence, now: () => NOW });
+  assert.equal(restored.getPlan('session_1').plan.active, true);
+  assert.deepEqual(restored.getPlan('session_1').plan.nodes, waiting.nodes);
+  assert.throws(() => restored.setPlan({ sessionId: 'session_1', expectedRevision: 1,
+    plan: plan([{ id: 'verify', step: 'Read a calendar', status: 'waiting' }]) }), /waitingFor/);
+  const resumed = restored.setPlan({ sessionId: 'session_1', expectedRevision: 1,
+    plan: plan([{ id: 'verify', step: 'Read a calendar', status: 'in_progress' }]) });
+  assert.equal(resumed.plan.nodes[0].id, 'verify');
+  assert.equal(resumed.plan.nodes[0].waitingFor, undefined);
+});
+
 test("assigns stable Plan node ids and requires explicit scope change for removal", () => {
   let node = 0;
   const store = new CoordinationStore({

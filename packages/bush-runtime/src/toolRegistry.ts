@@ -49,6 +49,12 @@ export interface ToolHandlerContext<TInput = unknown>
 }
 
 export interface ToolRegistration<TInput = unknown> {
+  /** Explicit MCP connection capability for trusted lifecycle hooks, never inferred from a tool name. */
+  mcpHook?: {
+    server: string;
+    tool: string;
+    call: (input: Record<string, unknown>, options: { signal?: AbortSignal; timeoutMs: number; request: ModelRequest }) => Promise<unknown>;
+  };
   definition: ToolDefinition;
   manifest: ActionManifestTemplate;
   decodeInput: (input: unknown) => TInput;
@@ -125,6 +131,10 @@ export class ToolRegistry {
     return this.#registrations.get(name);
   }
 
+  mcpHook(server: string, tool: string): AnyToolRegistration['mcpHook'] {
+    return [...this.#registrations.values()].find(registration => registration.mcpHook?.server === server && registration.mcpHook.tool === tool)?.mcpHook;
+  }
+
   renderModelResult(name: string, result: unknown): string | undefined {
     const render = this.#registrations.get(name)?.renderModelResult;
     if (!render) return undefined;
@@ -187,5 +197,6 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     executionChannel: candidate.executionChannel?.trim() || undefined,
     visibleToChild: candidate.visibleToChild ?? true,
     registrationOwner: candidate.registrationOwner?.trim() || undefined,
+    mcpHook: candidate.mcpHook,
   };
 }

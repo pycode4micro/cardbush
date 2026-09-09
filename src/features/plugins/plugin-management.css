@@ -287,6 +287,9 @@
 .plugin-logo.large { --logo-size: 66px; border-radius: 16px; }
 .plugin-logo.compact { --logo-size: 22px; border: 0; border-radius: 6px; }
 .plugin-logo img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.plugin-logo img.plugin-logo-dark { display: none; }
+.theme-dark .plugin-logo.has-dark-logo img.plugin-logo-light { display: none; }
+.theme-dark .plugin-logo.has-dark-logo img.plugin-logo-dark { display: block; }
 
 .skill-catalog-grid .skill-icon {
   width: 44px;
@@ -631,3 +634,6 @@
   .plugin-prompt-showcase { padding: 24px 16px; }
   .plugin-info-row { grid-template-columns: 110px minmax(0, 1fr); }
 }
+.plugin-hook-trust details { margin-top: 12px; }
+.plugin-hook-trust summary { cursor: pointer; }
+.plugin-hook-trust pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg-secondary, #111); border-radius: 6px; font-size: 12px; }

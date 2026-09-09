@@ -11,7 +11,7 @@ import {
   InMemoryRuntimeCapabilityStore,
 } from "@cardbush/bush-runtime";
 
-import { McpClientManager } from "../dist/index.js";
+import { McpClientManager, McpAuthenticationRequired } from "../dist/index.js";
 
 test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   const registry = new ToolRegistry();
@@ -443,7 +443,7 @@ test("does not rewrite or bound native MCP error content", async () => {
   await manager.close();
 });
 
-test("leaves request timeout ownership to MCP and keeps the connection active", async () => {
+test("keeps a server request timeout distinct from connection failure", async () => {
   const registry = new ToolRegistry();
   const timeout = Object.assign(new Error("Request timed out"), {
     code: "REQUEST_TIMEOUT",
@@ -468,7 +468,7 @@ test("leaves request timeout ownership to MCP and keeps the connection active", 
   assert.equal((await executeEcho(coordinator, "call_timeout")).kind, "failed");
   assert.equal(manager.snapshot().servers[0].health, "ready");
   assert.equal(client.closeCalls, 0);
-  assert.equal("timeout" in client.callOptions[0], false);
+  assert.equal(client.callOptions[0].timeout, 2_147_483_647);
   assert.equal("maxTotalTimeout" in client.callOptions[0], false);
   assert.equal((await executeEcho(coordinator, "call_after_timeout")).kind, "returned");
   assert.equal(client.calls.length, 2);
@@ -502,6 +502,23 @@ test("restarts only after the MCP connection actually closes", async () => {
   assert.ok(states.some((state) => state.health === "restarting"));
   assert.equal(states.at(-1).health, "ready");
   await manager.close();
+});
+
+test('authentication required during reconnect stops retries and reports an actionable state', async () => {
+  const first = fakeClient(successfulToolResult);
+  let connections = 0;
+  const manager = new McpClientManager({ registry: new ToolRegistry(),
+    createClient: () => ++connections === 1 ? first : fakeClient(successfulToolResult, { connect: () => { throw new McpAuthenticationRequired(); } }),
+    createTransport: () => ({}), wait: async () => undefined,
+  });
+  try {
+    await manager.apply(snapshot());
+    first.onclose();
+    await waitFor(() => manager.snapshot().servers[0].health === 'auth_required');
+    assert.equal(connections, 2);
+    assert.equal(manager.snapshot().servers[0].restartAttempts, 1);
+    assert.match(manager.snapshot().servers[0].lastError, /sign-in/);
+  } finally { await manager.close(); }
 });
 
 test("does not restart an MCP service when user cancellation is surfaced as an SDK timeout", async () => {
@@ -603,7 +620,7 @@ test('hot update reuses unchanged connections and rolls back failed additions', 
     assert.equal(clients.length, 2);
     assert.equal(clients[0].closeCalls, 0);
     await assert.rejects(manager.apply({ ...snapshot(), revision: 3, servers: [
-      ...snapshot().servers, ...snapshot(undefined, 'bad').servers,
+      ...snapshot().servers, ...snapshot(undefined, 'bad').servers.map(server => ({ ...server, required: true })),
     ] }), /fixture connection failed/);
     assert.ok(registry.resolve('mcp__server__echo_tool'));
     assert.ok(registry.resolve('mcp__second__echo_tool'));
