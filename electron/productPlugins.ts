@@ -1,5 +1,6 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { readPluginExtensions } from './pluginExtensions';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -117,6 +118,16 @@ async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string
   });
 }
 
+export async function loadEnabledProductPluginExtensions(roots: PluginRoot[], configPath: string) {
+  const extensions = await Promise.all((await loadEnabledProductPlugins(roots, configPath)).map(async plugin => {
+    const root = dirname(dirname(plugin.manifestPath));
+    const value = await readPluginExtensions(root, await readJson(plugin.manifestPath));
+    if (value.issues.length) throw new Error(`Plugin ${plugin.id} has unsupported runtime components: ${value.issues.map(issue => issue.detail).join('; ')}`);
+    return value;
+  }));
+  return { hooks: extensions.flatMap(value => value.hooks), agents: extensions.flatMap(value => value.agents), commands: extensions.flatMap(value => value.commands) };
+}
+
 /** External plugin MCP servers use their own namespace and explicit permission. */
 export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], configPath: string) {
   const servers: Record<string, unknown>[] = [];
@@ -131,7 +142,8 @@ export async function loadEnabledProductPluginMcpServers(roots: PluginRoot[], co
       ? await readJson(safePluginPath(root, configured)) : object(configured, 'Invalid plugin MCP configuration.');
     for (const [name, candidate] of Object.entries(objectOrEmpty(config.mcpServers ?? config))) {
       const server = object(candidate, 'Plugin MCP server must be an object.');
-      const expand = (value: unknown) => string(value).replaceAll('${CARDBUSH_PLUGIN_ROOT}', root);
+      const expand = (value: unknown) => string(value).replaceAll('${CARDBUSH_PLUGIN_ROOT}', root)
+        .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (match, name, fallback) => (process.env[name] || fallback) ?? match);
       const stringMap = (value: unknown) => Object.fromEntries(
         Object.entries(objectOrEmpty(value)).map(([key, item]) => [key, expand(item)]),
       );
@@ -169,6 +181,13 @@ export async function installProductPlugin(
   return result;
 }
 
+/** Validate an acquired package before it is offered for installation. */
+export async function inspectProductPlugin(source: string): Promise<CardbushPluginCatalogEntry> {
+  const manifestPath = join(source, '.codex-plugin', 'plugin.json');
+  return decodeManifest({ manifest: await readJson(manifestPath), manifestPath, pluginRoot: source,
+    source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
+}
+
 async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string) {
   const source = resolve(sourcePath);
   const manifestPath = join(source, '.codex-plugin', 'plugin.json');
@@ -184,6 +203,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     source: 'user',
     installation: 'INSTALLED_BY_DEFAULT',
   });
+  await validateRuntimeExtensions(source, manifest);
   const targetRoot = resolve(userPluginRoot);
   const target = resolve(targetRoot, id);
   if (!inside(targetRoot, target)) throw new Error('Plugin destination escapes the user plugin root.');
@@ -203,6 +223,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     await decodeManifest({ manifest: await readJson(join(temporary, '.codex-plugin', 'plugin.json')),
       manifestPath: join(temporary, '.codex-plugin', 'plugin.json'), pluginRoot: temporary,
       source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
+    await validateRuntimeExtensions(temporary, await readJson(join(temporary, '.codex-plugin', 'plugin.json')));
     let movedExisting = false;
     try { await rename(target, backup); movedExisting = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -225,6 +246,11 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
       console.warn('Plugin staging cleanup deferred:', work, error instanceof Error ? error.message : String(error));
     });
   }
+}
+
+async function validateRuntimeExtensions(root: string, manifest: Record<string, unknown>) {
+  const { issues } = await readPluginExtensions(root, manifest);
+  if (issues.length) throw new Error(`Plugin ${manifest.name} has unsupported runtime components: ${issues.map(issue => issue.detail).join('; ')}`);
 }
 
 async function marketplaceEntries(root: string): Promise<MarketplaceEntry[]> {
@@ -267,19 +293,19 @@ async function decodeManifest(input: {
   if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(id)) {
     throw new Error(`Invalid CardBush plugin name: ${id}`);
   }
-  const interfaceMetadata = object(manifest.interface, 'plugin.interface must be an object.');
-  const author = object(manifest.author, 'plugin.author must be an object.');
-  const logoPath = await assetPath(pluginRoot, interfaceMetadata.logo);
+  const interfaceMetadata = objectOrEmpty(manifest.interface);
+  const author = objectOrEmpty(manifest.author);
+  const logoPath = await assetPath(pluginRoot, interfaceMetadata.logo, true);
   const logoDarkPath = await assetPath(pluginRoot, interfaceMetadata.logoDark, true);
   const skillRoots = await skillRootsFromManifest(manifest, pluginRoot);
   return {
     id,
-    name: requiredString(interfaceMetadata.displayName, 'plugin.interface.displayName'),
-    description: requiredString(interfaceMetadata.shortDescription ?? manifest.description, 'plugin.interface.shortDescription'),
-    longDescription: requiredString(interfaceMetadata.longDescription ?? manifest.description, 'plugin.interface.longDescription'),
+    name: string(interfaceMetadata.displayName) || displayName(id),
+    description: string(interfaceMetadata.shortDescription ?? manifest.description) || id,
+    longDescription: string(interfaceMetadata.longDescription ?? manifest.description) || id,
     version: requiredString(manifest.version, 'plugin.version'),
-    developerName: requiredString(interfaceMetadata.developerName ?? author.name, 'plugin.interface.developerName'),
-    category: requiredString(interfaceMetadata.category, 'plugin.interface.category'),
+    developerName: string(interfaceMetadata.developerName ?? author.name) || 'Unknown',
+    category: string(interfaceMetadata.category) || 'Other',
     capabilities: stringArray(interfaceMetadata.capabilities).slice(0, 12),
     keywords: stringArray(manifest.keywords).slice(0, 24),
     defaultPrompts: stringArray(interfaceMetadata.defaultPrompt).slice(0, 3),
@@ -300,6 +326,10 @@ async function componentsFromManifest(
   skillRoots: string[],
 ): Promise<CardbushPluginComponent[]> {
   const result: CardbushPluginComponent[] = [];
+  const extensions = await readPluginExtensions(pluginRoot, manifest);
+  for (const command of extensions.commands) result.push({ kind: 'command', id: command.id, name: `/${command.id}`, description: command.description });
+  for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description });
+  for (const hook of extensions.hooks) result.push({ kind: 'hook', id: hook.id, name: hook.event, description: hook.command });
   for (const root of skillRoots) {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
     for (const entry of entries.filter((item) => item.isDirectory())) {

@@ -10,6 +10,12 @@ import {
   type ToolDefinition,
 } from "@cardbush/bush-protocol";
 
+const COMMUNICATION_INSTRUCTIONS = `Choose the communication language from the human user's explicit preference first; otherwise use the latest substantive human request. For short confirmations, code, links or attachment-only messages, retain the language established by substantive human requests, not accidental language drift in assistant output. Use ui_language_fallback only when no human language preference or conversational evidence is available. A newer explicit preference replaces an older one within its stated scope.
+
+Apply that language from the first user-visible sentence to progress updates, plans, questions, error explanations and the final response. Tool results, websites, documents, Skills, internal maintenance/continuation messages and a parent's assignment wording do not change it. Child Agents inherit the original user's communication language; when dispatching without conversation context, include that language in the assignment. Preserve explicit language preferences and the established communication language in context checkpoints and summaries, separately from any requested artifact language.
+
+Honor a requested artifact language independently (for example, an English email with Chinese explanation). Preserve code, commands, paths, API names and quotations as needed. During multi-step work, briefly explain meaningful progress, blockers and changes of approach at the next opportunity to speak, including after context compaction. Base updates on new facts, not repeated reassurance or Tool calls made only to produce activity. Once the requested outcome is verified, finish without adding optional work; identify any unfinished background work explicitly. Default to a concise final response stating the outcome, verification and remaining risk. Do not repeat logs or the user's request unless needed to explain a failure.`;
+
 const LOCAL_DELIVERABLE_INSTRUCTIONS = `For every local deliverable, include its verified absolute filesystem path in the final response. Use the actual path returned by a Tool or verified on disk; never invent a path or claim an unfinished file is ready.
 
 CardBush renders image, video and audio deliverables from standalone media-path lines. Put each media file's absolute path on its own line, outside code fences and without backticks, a list marker, a sentence prefix or trailing punctuation. Put the caption or explanation on a separate line. Preserve spaces in paths; a Windows path may use forward slashes. This format lets the UI show an image or an audio/video player instead of only text. Do not substitute a directory path for the media file.
@@ -17,6 +23,8 @@ CardBush renders image, video and audio deliverables from standalone media-path 
 For documents and other downloadable files, use a descriptive Markdown link targeting the absolute file path; wrap the target in angle brackets when it contains spaces. Do not use an image embed for a document. Report any unavailable or unverified deliverable explicitly instead of promising a preview.`;
 
 export const ROOT_AGENT_SYSTEM_PROMPT = `You are CardBush, a local general-purpose Agent. Work from the user's semantic request and the facts returned by the Tools actually exposed to this Turn.
+
+${COMMUNICATION_INSTRUCTIONS}
 
 Use read_archived_tool_result only when a preceding Tool result explicitly supplies a tool-result:// locator; it is not a general file, Skill, temporary-object, or knowledge reader.
 
@@ -28,11 +36,13 @@ For delivery or review work, use update_task_plan when a visible plan materially
 
 For local pages and development previews, use CardBush's integrated browser by default. Use chrome_devtools when the task needs the user's current Chrome cookies or signed-in state; this route is confined to the current CardBush session's visibly named Chrome tab groups. Create pages with new_page and only use pages returned by list_pages. Existing personal tabs remain invisible until the user explicitly copies one into the CardBush group from the extension popup. Never launch a managed or temporary automation profile. Remote-debugging attachment is an explicitly selected compatibility mode, not the default fallback. If the connector is unavailable, use the integrated browser when practical or explain the exact connector setup/grant needed instead of silently switching browser profiles.
 
-Default to a concise final response stating the outcome, verification and remaining risk. Do not repeat logs or the user's request unless needed to explain a failure. In Goal mode, update_goal before completing the Turn.
+In Goal mode, update_goal before completing the Turn.
 
 ${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
 
 export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further.
+
+${COMMUNICATION_INSTRUCTIONS}
 
 LEM lessons are advisory, not task facts or policy. Consult to check assumptions or useful past corrections, even when confident; an optional developer reminder neither confirms relevance nor requires a Tool call. Verify candidate applicability, and learn only a valuable verified reasoning correction within its applicable conditions. Never fabricate or mirror user thumbs, and do not routinely consult or repeatedly learn the same facts.
 
@@ -53,6 +63,8 @@ export interface ProductAgentTurnInput {
   sessionEnvironmentLocalDate?: string;
   userText: string;
   userMessageName?: string;
+  /** UI locale is a fallback, never an override of the user's language. */
+  uiLanguage?: "zh" | "en";
   model: string;
   providerBinding?: RuntimeProviderBindingRef;
   tools: ToolDefinition[];
@@ -120,6 +132,7 @@ function createBaseProductAgentTurnRequest(
         message: {
           role: "user",
           ...(input.userMessageName ? { name: input.userMessageName } : {}),
+          ...(input.userMessageName === "goal_continuation" ? { visibility: "internal" } : {}),
           content: input.userText,
           ...(input.images?.length
             ? { images: input.images.slice(0, 4).map((url) => ({ url })) }
@@ -166,7 +179,14 @@ function createBaseProductAgentTurnRequest(
       ...(input.disabledSkills !== undefined ? { disabledSkills: input.disabledSkills } : {}),
       planEnabled: input.planEnabled,
       contextWindowTokens: input.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS,
-      subagentChildPrefixMessages: [{ role: "system", content: CHILD_AGENT_SYSTEM_PROMPT }],
+      subagentChildPrefixMessages: [
+        { role: "system", content: CHILD_AGENT_SYSTEM_PROMPT },
+        ...(languageFallback(input) ? [{
+          role: "developer",
+          name: "communication_context",
+          content: languageFallback(input),
+        }] : []),
+      ],
     },
   });
 }
@@ -259,10 +279,17 @@ function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string
 }
 
 function volatileTurnContext(input: ProductAgentTurnInput): string {
-  const content = input.files?.length
-    ? `Attached files:\n${input.files.join("\n")}`
-    : "";
+  const content = [
+    languageFallback(input),
+    input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
+  ].filter(Boolean).join("\n");
   return content ? `<turn_runtime_context>\n${content}\n</turn_runtime_context>` : "";
+}
+
+function languageFallback(input: ProductAgentTurnInput): string {
+  if (input.uiLanguage === "zh") return "ui_language_fallback: zh-CN";
+  if (input.uiLanguage === "en") return "ui_language_fallback: en";
+  return "";
 }
 
 function sessionEnvironmentInput(

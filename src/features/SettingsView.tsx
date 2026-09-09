@@ -283,7 +283,7 @@ export function SettingsView({
   const [maxCompletionTokens, setMaxCompletionTokens] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [toast, setToast] = useState('');
-  const [pluginMcpOpen, setPluginMcpOpen] = useState(false);
+  const [pluginMcpTarget, setPluginMcpTarget] = useState<{ serverId?: string } | null>(null);
   const providerOptions = useMemo(
     () => collectProviderOptions(settings.managedModelConfigs),
     [settings.managedModelConfigs],
@@ -295,7 +295,7 @@ export function SettingsView({
 
   useEffect(() => {
     setSection(visibleSettingsSection(initialSection));
-    setPluginMcpOpen(false);
+    setPluginMcpTarget(null);
   }, [initialSection]);
 
   useEffect(() => {
@@ -852,13 +852,14 @@ export function SettingsView({
       );
     }
     if (section === 'mcp') {
-      return pluginMcpOpen ? (
+      return pluginMcpTarget ? (
         <div className="plugin-mcp-settings">
-          <button className="plugin-back" type="button" onClick={() => setPluginMcpOpen(false)}>
+          <button className="plugin-back" type="button" onClick={() => setPluginMcpTarget(null)}>
             <ArrowLeft size={17} />
             {language === 'zh' ? '返回插件' : 'Back to plugins'}
           </button>
           <McpServersPanel
+            initialServerId={pluginMcpTarget.serverId}
             language={language}
             capabilities={backendCapabilities}
             onNotify={notify}
@@ -873,7 +874,8 @@ export function SettingsView({
           onToggleSkill={onToggleSkill}
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
-          onOpenMcp={() => setPluginMcpOpen(true)}
+          onOpenMcp={(serverId) => setPluginMcpTarget({ serverId })}
+          onOpenNetwork={() => setSection('proxy')}
           onNotify={notify}
         />
       );
@@ -2604,23 +2606,26 @@ const emptyMcpDraft: McpServerDraft = {
 };
 
 function McpServersPanel({
+  initialServerId,
   language,
   capabilities,
   onNotify,
 }: {
+  initialServerId?: string;
   language: AppLanguage;
   capabilities: BackendCapabilities;
   onNotify: (message: string) => void;
 }) {
   const [servers, setServers] = useState<McpServerConfig[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(initialServerId ?? '');
   const [draft, setDraft] = useState<McpServerDraft>(emptyMcpDraft);
   const [editorOpen, setEditorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [error, setError] = useState('');
   const [validation, setValidation] = useState<McpServerValidationResult | null>(null);
-  const selectedIdRef = useRef('');
+  const selectedIdRef = useRef(initialServerId ?? '');
+  const initialEditorPending = useRef(true);
 
   const selectServerId = useCallback((serverId: string) => {
     selectedIdRef.current = serverId;
@@ -2634,9 +2639,7 @@ function McpServersPanel({
       const result = await fetchMcpServers();
       setServers(result.servers);
       const currentId = selectedIdRef.current;
-      const selected =
-        result.servers.find((server) => server.id === currentId) ??
-        result.servers[0];
+      const selected = result.servers.find((server) => server.id === currentId && !mcpServerIsFromPlugin(server));
       if (selected) {
         if (selected.id !== currentId) {
           selectServerId(selected.id);
@@ -2645,6 +2648,11 @@ function McpServersPanel({
       } else if (currentId) {
         selectServerId('');
         setDraft(emptyMcpDraft);
+        setError(language === 'zh' ? '该 MCP 服务已被移除，请刷新插件列表。' : 'This MCP server was removed. Refresh the plugin catalog.');
+      }
+      if (initialEditorPending.current) {
+        initialEditorPending.current = false;
+        setEditorOpen(!currentId || Boolean(selected));
       }
     } catch (caught) {
       setError(mcpErrorText(caught, language));

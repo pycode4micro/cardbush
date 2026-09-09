@@ -13,6 +13,7 @@ import {
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { ToolRegistry } from "./toolRegistry.js";
+import { pluginAgentTools, type PluginAgent } from './pluginExtensions.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
 export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
@@ -20,6 +21,7 @@ export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
 interface SubagentInput {
   prompt: string;
   inheritContext: boolean;
+  agentType?: string;
 }
 
 interface AwaitSubagentsInput {
@@ -58,8 +60,15 @@ export function registerSubagentTool(
     }) => void;
     awaitAsyncResults?: AwaitAsyncSubagentResults;
     permissionPolicy?: SubagentPermissionPolicy;
+    loadPluginAgents?: () => Promise<PluginAgent[]>;
   } = {},
 ): void {
+  if (options.loadPluginAgents && !registry.resolve('list_plugin_agents')) registry.register({
+    definition: { name: 'list_plugin_agents', description: 'List enabled plugin Agent roles. Use the exact id as subagent.agent_type to apply its instructions and tool restrictions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    manifest: { effect_kind: 'observation', operation: 'agent.list_profiles', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
+    decodeInput: () => ({}), parallelSafe: true,
+    execute: async () => (await options.loadPluginAgents!()).map(({ id, description, tools, disallowedTools, maxTurns }) => ({ id, description, tools, disallowedTools, maxTurns, model: 'inherit' })),
+  });
   if (registry.resolve(SUBAGENT_TOOL)) return;
   const createTaskId = options.createTaskId ?? (() => `subagent_task_${randomUUID()}`);
   const createRequestId = options.createRequestId ?? (() => `subagent_request_${randomUUID()}`);
@@ -79,6 +88,7 @@ export function registerSubagentTool(
         properties: {
           prompt: { type: "string", minLength: 1 },
           inherit_context: { type: "boolean", default: true },
+          ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_plugin_agents. Its role and tool restrictions apply to the child.' } } : {}),
         },
       },
     },
@@ -99,16 +109,8 @@ export function registerSubagentTool(
       const childSessionId = createSessionId();
       const childTurnId = createTurnId();
       const inherited = inheritedChildMessages(context, context.input.inheritContext);
-      tasks.start({
-        taskId,
-        parentSessionId: context.sessionId,
-        parentTurnId: context.turnId,
-        childSessionId,
-        childTurnId,
-        prompt: context.input.prompt,
-        inheritContext: context.input.inheritContext,
-        inheritedMessageCount: inherited.length,
-      });
+      const profile = context.input.agentType ? (await options.loadPluginAgents?.())?.find(agent => agent.id === context.input.agentType) : undefined;
+      if (context.input.agentType && !profile) throw new Error('The requested plugin Agent is not installed and enabled.');
 
       const childRequest = buildChildTurnRequest({
         context,
@@ -121,9 +123,16 @@ export function registerSubagentTool(
         },
         prompt: context.input.prompt,
         inherited,
-        metadata: { subagentTaskId: taskId },
+        metadata: { subagentTaskId: taskId, ...(profile ? { pluginAgentId: profile.id, pluginAgentMaxTurns: profile.maxTurns } : {}) },
+        ...(profile ? {
+          additionalPrefixMessages: [{ role: 'developer' as const, name: 'plugin_agent_role', content: `Plugin Agent: ${profile.id}\nPlugin directory: ${profile.root}\n${profile.prompt}\n\nUse CardBush tool names; CardBush's configured child model and permission policies apply.` }],
+          allowedToolNames: pluginAgentTools(profile, context.turn.request.tools.map(tool => tool.name)),
+        } : {}),
         permissionPolicy: options.permissionPolicy,
       });
+
+      tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
+        childSessionId, childTurnId, prompt: context.input.prompt, inheritContext: context.input.inheritContext, inheritedMessageCount: inherited.length });
 
       const completion = finishTask({
         runChild,
@@ -275,7 +284,7 @@ function decodeInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => key !== "prompt" && key !== "inherit_context",
+    (key) => key !== "prompt" && key !== "inherit_context" && key !== 'agent_type',
   );
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   const prompt = typeof object.prompt === "string" ? object.prompt.trim() : "";
@@ -283,7 +292,8 @@ function decodeInput(input: unknown): SubagentInput {
   if (object.inherit_context !== undefined && typeof object.inherit_context !== "boolean") {
     throw new Error("inherit_context must be a boolean.");
   }
-  return { prompt, inheritContext: object.inherit_context !== false };
+  if (object.agent_type !== undefined && (typeof object.agent_type !== 'string' || !object.agent_type.trim())) throw new Error('agent_type must be a non-empty string.');
+  return { prompt, inheritContext: object.inherit_context !== false, agentType: object.agent_type as string | undefined };
 }
 
 function decodeAwaitInput(input: unknown): AwaitSubagentsInput {

@@ -115,6 +115,10 @@ import { registerExtendedBuiltins } from "./extendedBuiltins.js";
 import { LogicMemoryStore } from "./logicMemory.js";
 import { prepareLogicReminder } from "./logicReminder.js";
 import { ModelImageStore } from "./modelImageStore.js";
+import { randomUUID } from 'node:crypto';
+import { PluginHookRunner, type PluginHookObservation } from './pluginHookRunner.js';
+import { registerPluginCommandTools, parsePluginCommandInvocation } from './pluginCommandTools.js';
+import type { PluginExtensionLoader, PluginExtensions, PluginHookEvent, PluginHookContext } from './pluginExtensions.js';
 import {
   registerSubagentTool,
   type JoinedSubagentResult,
@@ -191,6 +195,7 @@ export interface InMemoryRuntimeHostOptions {
   teamSnapshotStore?: TeamSnapshotStore;
   durableSubagentTasks?: boolean;
   subagentPermissionPolicy?: SubagentPermissionPolicy;
+  loadPluginExtensions?: PluginExtensionLoader;
   settleOrphanedTurns?: boolean;
   workspaceObservationStore?: WorkspaceObservationStore;
   registerDefaultWorkspaceTools?: boolean;
@@ -269,6 +274,9 @@ type SettledAgentGuidance = JoinedSubagentResult;
 
 export class InMemoryRuntimeHost {
   readonly #provider: ModelProvider;
+  readonly #loadPluginExtensions?: PluginExtensionLoader;
+  readonly #pluginHooks: PluginHookRunner;
+  readonly #pluginStartedSessions = new Set<string>();
   readonly #eventLog: InMemoryRuntimeEventLog;
   readonly #capabilities: RuntimeCapabilities;
   readonly #maxAttempts: number | null;
@@ -326,6 +334,9 @@ export class InMemoryRuntimeHost {
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
     );
+    this.#loadPluginExtensions = options.loadPluginExtensions;
+    this.#pluginHooks = new PluginHookRunner(runtimeDataRoot);
+    if (options.loadPluginExtensions) registerPluginCommandTools(this.#toolRegistry, async () => (await options.loadPluginExtensions!()).commands ?? []);
     this.#taskWorkspaces = options.dataRoot ? new TaskWorkspaceManager(join(runtimeDataRoot, "workspaces")) : undefined;
     this.#logicMemory = new LogicMemoryStore(join(runtimeDataRoot, "lem", "logic.json"));
     this.#modelImages = new ModelImageStore(runtimeDataRoot);
@@ -387,6 +398,7 @@ export class InMemoryRuntimeHost {
           return this.#joinPendingAgentGuidance(key, taskIds);
         },
         permissionPolicy: subagentPermissionPolicy,
+        ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
       },
     );
     this.#teams = options.teamSnapshotStore ?? new TeamSnapshotStore({
@@ -997,6 +1009,28 @@ export class InMemoryRuntimeHost {
   }): Promise<RuntimeEvent> {
     const { request, identity } = input;
     const turnKey = JSON.stringify([request.sessionId, request.turnId]);
+    let pluginExtensions: PluginExtensions = { hooks: [], agents: [] };
+    let hookOrdinal = 0;
+    const hookIdentities = new Map<string, { ordinal: number }>();
+    const observeHook = (entry: PluginHookObservation) => {
+      const hookCall = { protocol: 'bush.tool_call.v1' as const, id: entry.id, name: `plugin_hook.${entry.hook.pluginId}.${entry.hook.event}`,
+        argumentsText: JSON.stringify({ event: entry.hook.event, command: entry.hook.command, args: entry.hook.args }) };
+      if (entry.phase === 'running') hookIdentities.set(entry.id, { ordinal: hookOrdinal++ });
+      const ordinal = hookIdentities.get(entry.id)?.ordinal ?? 0;
+      const payload = { toolCallId: entry.id, toolName: hookCall.name, ordinal };
+      if (entry.phase === 'running') {
+        this.#eventLog.append(identity, { kind: 'tool_queued', payload });
+        this.#eventLog.append(identity, { kind: 'tool_running', payload });
+      } else if (hookIdentities.delete(entry.id)) {
+        const cancelled = entry.phase === 'cancelled';
+        const error = entry.error || cancelled ? { kind: 'tool' as const, code: cancelled ? 'plugin_hook_cancelled' : 'plugin_hook_failed', message: entry.error || 'Plugin hook cancelled.', details: { plugin: entry.hook.pluginId, event: entry.hook.event, output: entry.output ?? '' } } : undefined;
+        this.#toolExecutions.record(hookCall, { ...identity, round: Math.max(1, round), ordinal }, error
+          ? { kind: cancelled ? 'cancelled' : 'failed', error, workspaceChanges: [] }
+          : { kind: 'returned', result: { plugin: entry.hook.pluginId, event: entry.hook.event, output: entry.output ?? '' }, workspaceChanges: [] });
+        this.#eventLog.append(identity, cancelled ? { kind: 'tool_cancelled', payload: { ...payload, reason: 'plugin_hook_cancelled' } } : error ? { kind: 'tool_failed', payload: { ...payload, error } } : { kind: 'tool_returned', payload });
+      }
+    };
+    const runHook = (event: PluginHookEvent, context: Omit<PluginHookContext, 'request'>) => this.#pluginHooks.run(pluginExtensions.hooks, event, { ...context, request }, observeHook);
     const toolLoop = new RuntimeToolLoop({
       eventLog: this.#eventLog,
       identity,
@@ -1006,6 +1040,13 @@ export class InMemoryRuntimeHost {
       modelImages: this.#modelImages,
       capabilities: this.#capabilityGrants,
       ...childPermissionRuntimeOptions(request, identity),
+      ...(this.#loadPluginExtensions ? { hooks: {
+        before: context => runHook('PreToolUse', { signal: context.signal, toolName: context.toolCall.name, toolCallId: context.toolCall.id, input: context.input }),
+        after: context => runHook(context.outcome.kind === 'returned' ? 'PostToolUse' : 'PostToolUseFailure', {
+          signal: context.signal, toolName: context.toolCall.name, toolCallId: context.toolCall.id, input: context.input,
+          ...(context.outcome.kind === 'returned' ? { output: context.outcome.result } : { error: context.outcome.error.message }),
+        }),
+      } satisfies import('./toolExecutionCoordinator.js').ToolExecutionHooks } : {}),
     });
     this.#toolLoops.add(toolLoop);
     let messages: ModelMessage[] = [...input.messages];
@@ -1013,6 +1054,7 @@ export class InMemoryRuntimeHost {
     let unresolvedPlanContinuations = 0;
     let emptyStopRetries = 0;
     let outputLimitContinuations = 0;
+    let pluginStopContinuations = input.sessionCommit?.generatedMessages.filter(message => message.messageId.startsWith(`msg_plugin_stop_${request.turnId}_`)).length ?? 0;
     for (const message of input.nextRound > 1 ? [...input.messages].reverse() : []) {
       if (message.role === "tool" || message.role === "user") break;
       if (message.role === "developer" && message.name === "output_limit_continuation") {
@@ -1229,6 +1271,47 @@ export class InMemoryRuntimeHost {
         details: {},
       });
     try {
+      if (this.#loadPluginExtensions) {
+        pluginExtensions = await this.#loadPluginExtensions();
+        if (input.nextRound === 1) {
+          const child = request.metadata.agentRole === 'child';
+          const initialHookMessages: string[] = [];
+          if (!this.#pluginStartedSessions.has(request.sessionId)) {
+            this.#pluginStartedSessions.add(request.sessionId);
+            initialHookMessages.push(...(await runHook(child ? 'SubagentStart' : 'SessionStart', { signal: input.signal })).messages);
+          }
+          if (!child) {
+            const prompt = input.sessionCommit?.inputMessages.filter(item => item.message.role === 'user').map(item => item.message.content).join('\n') ?? [...messages].reverse().find(message => message.role === 'user')?.content ?? '';
+            const result = await runHook('UserPromptSubmit', { signal: input.signal, prompt });
+            if (result.blocked) return await finalize({ status: 'failed', reason: 'plugin_hook_blocked', details: { message: result.blocked } });
+            initialHookMessages.push(...result.messages);
+            if (pluginExtensions.agents.length && request.tools.some(tool => tool.name === 'subagent')) initialHookMessages.push("Installed plugin Agents are available via list_plugin_agents. Apply a role using subagent.agent_type with its exact plugin:agent id. Their instructions and allowed tools apply; CardBush's configured child model and permission policies apply.");
+            if (pluginExtensions.commands?.length && request.tools.some(tool => tool.name === 'list_plugin_commands')) initialHookMessages.push('Installed plugin Commands are available via list_plugin_commands and run_plugin_command. They retain their own command identity and argument handling. User-only commands require an explicit slash invocation.');
+          }
+          for (const [index, content] of initialHookMessages.entries()) {
+            const message: ModelMessage = { role: 'user', name: 'plugin_hook_feedback', visibility: 'internal', content };
+            messages.push(message); generatedMessages.push({ messageId: `msg_plugin_start_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
+          }
+          const currentInput = input.sessionCommit?.inputMessages.map(item => item.message) ?? request.messages;
+          const userMessage = [...currentInput].reverse().find(message => message.role === 'user');
+          const invocation = !child && userMessage ? parsePluginCommandInvocation(userMessage.content) : undefined;
+          if (invocation && request.metadata.pluginCommandCompletedTurn !== request.turnId && !generatedMessages.some(message => message.messageId === `msg_plugin_command_${request.turnId}`)) {
+            const call = { protocol: 'bush.tool_call.v1' as const, id: `plugin_command_${randomUUID()}`, name: 'run_plugin_command', argumentsText: JSON.stringify(invocation) };
+            request.metadata.pluginCommandUserCallId = call.id;
+            request.metadata.pluginCommandUserId = invocation.command;
+            const commandMessage: ModelMessage = { role: 'assistant', content: '', toolCalls: [call] };
+            messages.push(commandMessage);
+            generatedMessages.push({ messageId: `msg_plugin_command_${request.turnId}`, createdAt: this.#sessionNow(), message: commandMessage });
+            const commandRound = await toolLoop.execute([call], { round: 1, assistantMessageId: `msg_plugin_command_${request.turnId}`, signal: input.signal, request, contextMessages: messages });
+            for (const [index, message] of commandRound.messages.entries()) {
+              messages.push(message); generatedMessages.push({ messageId: `msg_plugin_command_result_${request.turnId}_${index}`, createdAt: this.#sessionNow(), message });
+            }
+            delete request.metadata.pluginCommandUserCallId;
+            delete request.metadata.pluginCommandUserId;
+            request.metadata.pluginCommandCompletedTurn = request.turnId;
+          }
+        }
+      }
       // One optional reminder per Turn, outside both the Tool loop and provider retry loop.
       // Append it as a durable fact before pressure measurement and checkpoint saving.
       const logicReminder = !input.signal?.aborted ? await prepareLogicReminder({
@@ -1253,6 +1336,7 @@ export class InMemoryRuntimeHost {
       }
       while (true) {
         round += 1;
+        if (Number.isInteger(request.metadata.pluginAgentMaxTurns) && round > Number(request.metadata.pluginAgentMaxTurns)) return await finalize({ status: 'failed', reason: 'plugin_agent_turn_limit', details: { rounds: round - 1 } });
         let dispatchPressure: ContextPressure | undefined;
         if (input.signal?.aborted) return await stop();
         const readyAtRoundBoundary = this.#takeSettledAgentGuidance(turnKey);
@@ -1961,6 +2045,16 @@ export class InMemoryRuntimeHost {
               finalMessageId: completedProjector.finalMessageId,
               details: { rounds: round, recoveryAttempts: emptyStopRetries },
             });
+          }
+          const stopHooks = await runHook(request.metadata.agentRole === 'child' ? 'SubagentStop' : 'Stop', {
+            signal: input.signal, lastAssistantMessage: completedRound.text, stopHookActive: pluginStopContinuations > 0,
+          });
+          if (stopHooks.blocked || stopHooks.shouldContinue) {
+            if (pluginStopContinuations >= 2) return await finalize({ status: 'failed', reason: 'plugin_stop_hook_limit', details: { message: stopHooks.blocked ?? stopHooks.messages.join('\n') } });
+            pluginStopContinuations++;
+            const message: ModelMessage = { role: 'user', name: 'plugin_stop_feedback', visibility: 'internal', content: [stopHooks.blocked, ...stopHooks.messages].filter(Boolean).join('\n') };
+            messages.push(message); generatedMessages.push({ messageId: `msg_plugin_stop_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+            continue;
           }
           return await finalize({
             status: "completed",

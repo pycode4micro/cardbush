@@ -33,6 +33,8 @@ import type {
 import { inspectProjectRoots } from './projectRoots';
 import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { sendToLiveRenderer } from './rendererDelivery';
+import { restoreEditorFocus } from './rendererFocus';
+import { PluginMarketplaceService } from './pluginMarketplaces';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
@@ -48,6 +50,7 @@ import {
 import {
   installProductPlugin,
   loadEnabledProductPluginSkillRootEntries,
+  loadEnabledProductPluginExtensions,
   type PluginRoot,
 } from './productPlugins';
 import {
@@ -1881,6 +1884,20 @@ ipcMain.handle('window:close-to-tray', () => {
 
 ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
 
+ipcMain.handle('window:restore-editor-focus', (event, state?: { documentFocused?: boolean }) => {
+  const target = mainWindow?.webContents === event.sender
+    ? mainWindow : shadowWindows.get(event.sender.id)?.window ?? null;
+  const wasFocused = !event.sender.isDestroyed() && event.sender.isFocused();
+  const restored = restoreEditorFocus(event, target);
+  if (!wasFocused || state?.documentFocused === false || !restored) {
+    appendDebugLog('input-focus', {
+      stage: 'editor-pointer-focus', windowId: target?.id,
+      documentFocused: state?.documentFocused === true, wasFocused, restored,
+    });
+  }
+  return restored;
+});
+
 ipcMain.handle('shadow:open-window', (event, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
     throw new Error('Only the main CardBush window can open Shadow.');
@@ -2254,6 +2271,11 @@ ipcMain.handle('skills:read', async (_, skillName: string) => {
   return readProductSkill(await activeProductSkillRoots(), String(skillName ?? ''));
 });
 
+ipcMain.handle('plugins:commands', async event => {
+  assertMainWindowSender(event.sender.id);
+  const { commands } = await loadEnabledProductPluginExtensions(productPluginRoots(), productAppsConfigPath());
+  return commands.filter(command => command.userInvocable).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint }));
+});
 ipcMain.handle('plugins:install-local', async () => {
   const options: OpenDialogOptions = {
     title: 'Install CardBush plugin',
@@ -2265,6 +2287,46 @@ ipcMain.handle('plugins:install-local', async () => {
   const sourcePath = result.canceled ? '' : result.filePaths[0] ?? '';
   if (!sourcePath) return null;
   return installProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
+});
+
+let pluginMarketplaceService: PluginMarketplaceService | undefined;
+function pluginMarkets() {
+  return pluginMarketplaceService ??= new PluginMarketplaceService({
+    dataRoot: path.join(app.getPath('userData'), 'plugin-marketplaces'),
+    userPluginRoot: path.join(app.getPath('userData'), 'plugins'),
+    bundledPluginRoot: path.join(app.getAppPath(), 'assets', 'plugins'),
+    fetch: (input, init) => net.fetch(String(input), init),
+  });
+}
+ipcMain.handle('plugins:market-sources', async event => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().sources();
+});
+ipcMain.handle('plugins:market-add', async (event, source: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().addGitHub(String(source ?? ''));
+});
+ipcMain.handle('plugins:market-add-local', async event => {
+  assertMainWindowSender(event.sender.id);
+  const result = await dialog.showOpenDialog(mainWindow!, { title: 'Choose plugin marketplace root', properties: ['openDirectory'] });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return pluginMarkets().addLocal(result.filePaths[0]);
+});
+ipcMain.handle('plugins:market-remove', async (event, id: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().remove(String(id));
+});
+ipcMain.handle('plugins:market-catalog', async (event, id: string, refresh: boolean) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().catalog(String(id), refresh === true);
+});
+ipcMain.handle('plugins:market-preview', async (event, sourceId: string, name: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().preview(String(sourceId), String(name));
+});
+ipcMain.handle('plugins:market-install', async (event, token: string) => {
+  assertMainWindowSender(event.sender.id);
+  return pluginMarkets().install(String(token));
 });
 
 ipcMain.handle('dialog:pick-project-directory', async () => {
@@ -2894,6 +2956,7 @@ app.whenReady().then(async () => {
     await runPackagedApplicationSmoke();
     return;
   }
+  await applyProxySettings({ mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' });
   createWindow();
   createTray();
   appendDebugLog('startup', {
@@ -2901,12 +2964,6 @@ app.whenReady().then(async () => {
     elapsedMs: Date.now() - desktopStartupStartedAt,
     packaged: cardbushRuntimeIsPackaged,
   });
-  void applyProxySettings({
-    mode: 'none',
-    httpProxy: '',
-    httpsProxy: '',
-    noProxy: '',
-  }).catch(() => undefined);
   void ensureLegacyProductSkillsMigrated();
   void startRuntimeServices();
   setImmediate(() => {

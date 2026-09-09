@@ -1,3 +1,4 @@
+import { restoreNativeEditorFocus } from '../../shared/editorFocus';
 import {
   ArrowRight,
   ArrowUp,
@@ -420,6 +421,21 @@ export function Composer({
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; description: string; argumentHint: string }>>([]);
+  useEffect(() => {
+    const desktop = window.cardbushDesktop;
+    if (!desktop?.pluginCommands) return;
+    let active = true, generation = 0;
+    const refresh = () => {
+      const revision = ++generation;
+      void desktop.pluginCommands().then(commands => { if (active && revision === generation) setPluginCommands(commands); })
+        .catch(() => { if (active && revision === generation) setPluginCommands([]); });
+    };
+    refresh();
+    const unsubscribe = desktop.onCapabilityCatalogChanged?.(refresh);
+    window.addEventListener('focus', refresh);
+    return () => { active = false; unsubscribe?.(); window.removeEventListener('focus', refresh); };
+  }, []);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
   const [fileDragActive, setFileDragActive] = useState(false);
@@ -896,6 +912,10 @@ export function Composer({
           searchText: '/new 新会话 new conversation',
         },
       ];
+      commands.push(...pluginCommands.map(command => ({
+        id: `/${command.id}`, title: `/${command.id}`, subtitle: [command.argumentHint, command.description].filter(Boolean).join(' · '),
+        icon: <FileCode2 size={16} />, value: `/${command.id} `, searchText: `${command.id} ${command.description} command 命令`,
+      })));
       return goalAvailable
         ? commands
         : commands.filter((command) => command.id !== '/goal');
@@ -904,6 +924,7 @@ export function Composer({
       goalAvailable,
       language,
       onCreateConversation,
+      pluginCommands,
     ],
   );
 
@@ -911,7 +932,7 @@ export function Composer({
     if (!commandState) {
       return [];
     }
-    return rankComposerCommandItems(slashCommands, commandState.query).slice(0, 4);
+    return rankComposerCommandItems(slashCommands, commandState.query).slice(0, 50);
   }, [commandState, slashCommands]);
 
   useEffect(() => {
@@ -1242,6 +1263,7 @@ export function Composer({
         )}
         <textarea
           ref={textareaRef}
+          onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
           autoFocus={autoFocus}
           value={composerInputValue}
           onChange={(event) => {
@@ -2696,5 +2718,3 @@ function ToolChip({
     </button>
   );
 }
-
-

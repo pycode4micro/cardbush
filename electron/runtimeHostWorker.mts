@@ -50,6 +50,7 @@ import {
 import {
   loadEnabledProductPluginSkillRoots,
   loadEnabledProductPluginMcpServers,
+  loadEnabledProductPluginExtensions,
   type PluginRoot,
 } from './productPlugins.js';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -236,7 +237,10 @@ async function executeRuntimeCommand(
     const operation = mcpUpdate.then(async () => {
       const source = mcpSnapshotSchema.parse(command.payload);
       // A late UI read must not overwrite a newer saved configuration.
-      if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) return mcp.snapshot();
+      if (source.snapshotId === effectiveMcp?.snapshotId && source.revision < sourceMcpRevision) {
+        const current = mcp.snapshot();
+        return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
+      }
       const pluginServers = await loadEnabledProductPluginMcpServers(
         pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '',
       );
@@ -249,13 +253,15 @@ async function executeRuntimeCommand(
       effectiveMcp = { ...combined, revision };
       effectiveMcpContent = content;
       sourceMcpRevision = source.revision;
-      return mcp.apply(effectiveMcp);
+      const result = await mcp.apply(effectiveMcp);
+      return { ...result, configurationRevision: sourceMcpRevision };
     });
     mcpUpdate = operation.catch(() => undefined);
     return operation;
   }
   if (command.kind === GET_RUNTIME_MCP_SNAPSHOT_COMMAND) {
-    return mcp.snapshot() ?? null;
+    const current = mcp.snapshot();
+    return current ? { ...current, configurationRevision: sourceMcpRevision } : null;
   }
   return host.sendCommand(command, signal);
 }
@@ -619,6 +625,7 @@ host = new InMemoryRuntimeHost({
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
+  loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
   settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,

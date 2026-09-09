@@ -1,4 +1,6 @@
+import { configuredMcpServerId } from './mcpConfigurationFact';
 import type {
+  AppLanguage,
   AssistantRevision,
   BackendCapabilities,
   ChatAttachment,
@@ -78,11 +80,11 @@ import { streamRuntimeChat, streamRuntimeTurnEvents } from './runtimeChat';
 import {
   CARDBUSH_APPS_MCP_SERVER_ID,
   readProductMcpConfiguration,
-  readProductMcpServers,
   replaceProductMcpServers,
   synchronizeProductMcpSnapshot,
   validateProductMcpServer,
 } from './productMcp';
+import { mcpConnectionState, type McpConnectionOverview } from './mcpConnectionOverview';
 import {
   readProductAgentProfiles,
   readProductTeams,
@@ -146,6 +148,7 @@ export interface ExperimentalGoal {
 }
 
 export interface ChatStreamRequest {
+  uiLanguage?: AppLanguage;
   sessionId: string;
   userInput: string;
   submittedAt?: string;
@@ -232,6 +235,7 @@ export interface TurnEventStreamRequest extends ChatStreamEventHandlers {
 }
 
 export interface ControlStreamRequest {
+  uiLanguage?: AppLanguage;
   sessionId: string;
   model: string;
   modelConfig?: ManagedModelConfig;
@@ -885,14 +889,41 @@ export async function saveCardbushAppsConfiguration(
   return saved;
 }
 
+/** Catalog reads never apply configuration or restart MCP hosts. */
+export async function fetchMcpConnectionOverview(): Promise<McpConnectionOverview> {
+  const [configuration, snapshot] = await Promise.all([
+    readProductMcpConfiguration(),
+    readMcpRuntimeSnapshot(),
+  ]);
+  return {
+    revision: configuration.revision,
+    servers: configuration.servers.map(({ id, name, description, enabled, transport }) =>
+      ({ id, name, description, enabled, transport })),
+    snapshot,
+  };
+}
+
+async function readMcpRuntimeSnapshot() {
+  try {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      return await runtime.client.getMcpSnapshot(AbortSignal.timeout(5_000));
+    } finally {
+      runtime.dispose();
+    }
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchMcpServers(): Promise<McpServersResult> {
   const runtime = createDesktopRuntimeSession();
   try {
-    const apps = await fetchCardbushAppsConfiguration();
-    const servers = await readProductMcpServers();
-    const result = await synchronizeProductMcpSnapshot(runtime.client).catch(
-      () => runtime.client.getMcpSnapshot().catch(() => null),
-    );
+    const [apps, { servers, revision }, result] = await Promise.all([
+      fetchCardbushAppsConfiguration(),
+      readProductMcpConfiguration(),
+      runtime.client.getMcpSnapshot(AbortSignal.timeout(5_000)).catch(() => null),
+    ]);
     const toolCounts = new Map(
       result?.servers.map((server) => [server.id, server.tools.length]) ?? [],
     );
@@ -907,9 +938,8 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
           transport: 'stdio' as const,
           args: [],
           toolCount: bundledApps?.tools.length ?? 0,
-          lastError: result?.applicationError,
-          status: result?.applicationState === 'pending' ? 'pending' : result?.applicationState === 'failed' ? 'unavailable' :
-            apps.serviceEnabled ? (bundledApps ? 'connected' : 'unavailable') : 'disabled',
+          lastError: result?.applicationError ?? bundledApps?.lastError,
+          status: mcpConnectionState('cardbush_apps', apps.serviceEnabled, result),
           raw: {
             source: 'cardbush_builtin_plugin',
             bundled: true,
@@ -921,12 +951,8 @@ export async function fetchMcpServers(): Promise<McpServersResult> {
         ...servers.map((server) => ({
           ...server,
           toolCount: toolCounts.get(server.id) ?? 0,
-          lastError: result?.applicationError,
-          status: result?.applicationState === 'pending' ? 'pending' : result?.applicationState === 'failed' ? 'unavailable' : result
-            ? server.enabled
-              ? 'connected'
-              : 'disabled'
-            : 'unavailable',
+          lastError: result?.applicationError ?? result?.servers.find(item => item.id === server.id)?.lastError,
+          status: mcpConnectionState(server.id, server.enabled, result, revision),
         })),
       ],
       protocolVersions: ['2025-11-25', '2025-06-18'],
@@ -1463,6 +1489,7 @@ function runtimeHistoryToolExecution(
   record: RuntimeToolExecutionRecord | RuntimeToolExecutionSummary,
 ): ChatToolExecution {
   const hasNativeResult = 'result' in record && record.result !== undefined;
+  const mcpServerId = configuredMcpServerId(record.toolCall);
   const artifacts = record.outcome === 'returned' && hasNativeResult
     ? toolArtifactsFromPayload({ result: record.result })
     : [];
@@ -1487,6 +1514,7 @@ function runtimeHistoryToolExecution(
     ...(artifacts.length > 0 ? { artifacts } : {}),
     metadata: {
       actionManifest: record.actionManifest,
+      ...(mcpServerId ? { mcpServerId } : {}),
       ...(hasNativeResult
         ? { nativeResult: record.result }
         : 'resultAvailable' in record
@@ -1785,7 +1813,7 @@ function cardbushAppsConfigurationFromPayload(
         : 'AVAILABLE',
       components: arrayFrom(value.components).map((candidate) => {
         const component = asRecord(candidate);
-        const kind = component.kind === 'skill' || component.kind === 'app' ? component.kind : 'mcp';
+        const kind = component.kind === 'skill' || component.kind === 'app' || component.kind === 'agent' || component.kind === 'hook' || component.kind === 'command' ? component.kind : 'mcp';
         return {
           kind,
           id: String(component.id ?? ''),

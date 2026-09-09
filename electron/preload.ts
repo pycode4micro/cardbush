@@ -171,6 +171,8 @@ const desktopApi = {
     ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
   showErrorDialog: (error: { title: string; message: string }) =>
     ipcRenderer.invoke('app:show-error', error) as Promise<void>,
+  restoreEditorFocus: (state: { documentFocused: boolean }) =>
+    ipcRenderer.invoke('window:restore-editor-focus', state) as Promise<boolean>,
   wallpaperAccent: () =>
     ipcRenderer.invoke('appearance:wallpaper-accent') as Promise<{
       r: number;
@@ -229,6 +231,14 @@ const desktopApi = {
     id: string;
     manifestPath: string;
   } | null>,
+  pluginCommands: () => ipcRenderer.invoke('plugins:commands'),
+  pluginMarketSources: () => ipcRenderer.invoke('plugins:market-sources'),
+  addPluginMarket: (source: string) => ipcRenderer.invoke('plugins:market-add', source),
+  addLocalPluginMarket: () => ipcRenderer.invoke('plugins:market-add-local'),
+  removePluginMarket: (id: string) => ipcRenderer.invoke('plugins:market-remove', id),
+  pluginMarketCatalog: (id: string, refresh = false) => ipcRenderer.invoke('plugins:market-catalog', id, refresh),
+  previewMarketPlugin: (sourceId: string, name: string) => ipcRenderer.invoke('plugins:market-preview', sourceId, name),
+  installMarketPlugin: (token: string) => ipcRenderer.invoke('plugins:market-install', token),
   pickProjectDirectory: () =>
     ipcRenderer.invoke('dialog:pick-project-directory') as Promise<string | null>,
   pickFont: () => ipcRenderer.invoke('dialog:pick-font') as Promise<string | null>,

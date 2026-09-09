@@ -57,6 +57,7 @@ async function run() {
     await controller.start();
     const initial = await host.refreshMcp();
     assert.equal(initial.applicationState, 'applied');
+    assert.equal(initial.configurationRevision, 1);
     assert.deepEqual(initial.servers.map(s => s.id), ['cardbush_management'], 'management remains available when Apps plugins are disabled');
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), {
       requestInit: { headers: { Authorization: `Bearer ${endpoint.token}` } },
@@ -80,6 +81,12 @@ async function run() {
     const status = JSON.parse(added.content[0].text);
     assert.equal(status.saved, true);
     assert.equal(status.runtime.applicationState, 'applied');
+    assert.equal(status.runtime.configurationRevision, 2);
+    const observed = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: 'observe-mcp',
+      command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
+    assert.equal(observed.ok, true);
+    assert.equal(observed.result.configurationRevision, 2);
+    assert.equal(observed.result.revision, status.runtime.revision, 'read-only observation preserves runtime revision');
     assert.equal(status.runtime.servers.find(s => s.id === 'worker_echo').tools[0].runtimeName, 'mcp__worker_echo__echo');
     const catalog = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: 'catalog',
       command: { kind: 'runtime.get_tool_catalog', payload: {} } });

@@ -10,14 +10,19 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Server,
   Settings,
+  Store,
 } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   fetchCardbushAppsConfiguration,
+  fetchMcpConnectionOverview,
   saveCardbushAppsConfiguration,
 } from '../../backend/api';
+import type { McpConnectionOverview } from '../../backend/mcpConnectionOverview';
+import { pluginMcpConnections, type PluginMcpConnection } from './pluginConnections';
 import { fileUrl } from '../../shared/localPaths';
 import type {
   AppLanguage,
@@ -27,11 +32,13 @@ import type {
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
+import { PluginMarketplacePanel } from './PluginMarketplacePanel';
 import './plugin-management.css';
 
 type Page =
   | { kind: 'catalog' }
-  | { kind: 'manage' }
+  | { kind: 'manage'; tab?: ManageTab }
+  | { kind: 'marketplace' }
   | { kind: 'plugin'; pluginId: string }
   | { kind: 'skill'; skillName: string };
 
@@ -46,6 +53,7 @@ export function PluginManagementPanel({
   onReloadSkills,
   onLoadSkillDetail,
   onOpenMcp,
+  onOpenNetwork,
   onNotify,
 }: {
   language: AppLanguage;
@@ -55,7 +63,8 @@ export function PluginManagementPanel({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
-  onOpenMcp: () => void;
+  onOpenMcp: (serverId?: string) => void;
+  onOpenNetwork?: () => void;
   onNotify: (message: string) => void;
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills'>(initialTab);
@@ -67,6 +76,10 @@ export function PluginManagementPanel({
   const [busy, setBusy] = useState('load');
   const [error, setError] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [mcpOverview, setMcpOverview] = useState<McpConnectionOverview | null>(null);
+  const [mcpError, setMcpError] = useState('');
+  const [mcpLoading, setMcpLoading] = useState(true);
+  const mcpLoadRevision = useRef(0);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const dirtyPluginIds = useRef(new Set<string>());
   const skillLoadRevision = useRef(0);
@@ -119,9 +132,30 @@ export function PluginManagementPanel({
     };
   }, [addOpen]);
 
+  const loadConnections = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const revision = ++mcpLoadRevision.current;
+    const current = () => revision === mcpLoadRevision.current && isCurrent();
+    setMcpLoading(true);
+    try {
+      const result = await fetchMcpConnectionOverview();
+      if (current()) {
+        setMcpOverview(result);
+        setMcpError('');
+      }
+    } catch (caught) {
+      if (current()) {
+        setMcpError(errorMessage(caught));
+        setMcpOverview(value => value ? { ...value, snapshot: null } : null);
+      }
+    } finally {
+      if (revision === mcpLoadRevision.current) setMcpLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setBusy('load');
     setError('');
+    void loadConnections();
     try {
       const [apps, loadedSkills] = await Promise.all([
         fetchCardbushAppsConfiguration(),
@@ -134,13 +168,15 @@ export function PluginManagementPanel({
     } finally {
       setBusy('');
     }
-  }, [onReloadSkills]);
+  }, [onReloadSkills, loadConnections]);
 
   useEffect(() => {
     void load();
+    return () => { mcpLoadRevision.current += 1; };
   }, [load]);
 
   useCapabilityCatalogRefresh(useCallback(async (isCurrent: () => boolean) => {
+    void loadConnections(isCurrent);
     const apps = await fetchCardbushAppsConfiguration();
     if (isCurrent()) setConfiguration((current) => ({
       ...apps,
@@ -150,7 +186,7 @@ export function PluginManagementPanel({
     if (page.kind === 'skill') {
       await loadSkillDetail(page.skillName, isCurrent);
     }
-  }, [page, loadSkillDetail]));
+  }, [page, loadSkillDetail, loadConnections]));
 
   const persist = useCallback(async (
     next: CardbushAppsConfiguration,
@@ -163,6 +199,7 @@ export function PluginManagementPanel({
       const saved = await saveCardbushAppsConfiguration(next);
       dirtyPluginIds.current.clear();
       setConfiguration(saved);
+      void loadConnections();
       setLocalSkills(await onReloadSkills());
       onNotify(message);
     } catch (caught) {
@@ -170,7 +207,7 @@ export function PluginManagementPanel({
     } finally {
       setBusy('');
     }
-  }, [onNotify, onReloadSkills]);
+  }, [onNotify, onReloadSkills, loadConnections]);
 
   const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
     dirtyPluginIds.current.add(plugin.id);
@@ -186,6 +223,10 @@ export function PluginManagementPanel({
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const plugins = configuration?.plugins ?? [];
+  const connections = pluginMcpConnections(plugins, mcpOverview, configuration?.serviceEnabled ?? true);
+  const filteredConnections = connections.filter(item => !normalizedQuery || [
+    item.id, item.name, item.description, item.plugin?.name ?? '', 'MCP',
+  ].join(' ').toLocaleLowerCase().includes(normalizedQuery));
   const filteredPlugins = useMemo(() => plugins.filter((plugin) => !normalizedQuery || [
     plugin.name,
     plugin.description,
@@ -203,6 +244,22 @@ export function PluginManagementPanel({
   const selectedPlugin = page.kind === 'plugin'
     ? plugins.find((plugin) => plugin.id === page.pluginId)
     : undefined;
+  if (page.kind === 'marketplace') {
+    return <PluginMarketplacePanel language={language}
+      onOpenNetwork={onOpenNetwork}
+      onBack={() => setPage({ kind: 'catalog' })}
+      onOpenBundled={pluginId => setPage({ kind: 'plugin', pluginId })}
+      onNotify={onNotify}
+      onInstalled={async id => {
+        const latest = await fetchCardbushAppsConfiguration();
+        if (!latest.plugins.some(plugin => plugin.id === id)) throw new Error(language === 'zh' ? '已安装文件，插件目录尚未刷新。' : 'Files installed; plugin catalog has not refreshed yet.');
+        const saved = await saveCardbushAppsConfiguration({ ...latest,
+          plugins: latest.plugins.map(plugin => plugin.id === id ? { ...plugin, installed: true, enabled: true } : plugin) });
+        setConfiguration(saved);
+        setLocalSkills(await onReloadSkills());
+        void loadConnections();
+      }} />;
+  }
   if (selectedPlugin) {
     return (
       <PluginDetail
@@ -238,9 +295,15 @@ export function PluginManagementPanel({
     return (
       <PluginManagementList
         language={language}
+        initialTab={page.tab}
         configuration={configuration}
         query={query}
         plugins={filteredPlugins}
+        connections={filteredConnections}
+        mcpLoading={mcpLoading}
+        mcpError={mcpError}
+        onOpenMcp={onOpenMcp}
+        onRefreshMcp={() => void loadConnections()}
         busy={Boolean(busy)}
         onQuery={setQuery}
         onBack={() => setPage({ kind: 'catalog' })}
@@ -260,8 +323,12 @@ export function PluginManagementPanel({
           <button className={tab === 'skills' ? 'active' : ''} type="button" onClick={() => setTab('skills')}>
             {language === 'zh' ? '技能' : 'Skills'}
           </button>
+          <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>
         </div>
         <div className="plugin-hub-actions">
+          <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
+            <Server size={17} /><span>{language === 'zh' ? 'MCP 服务' : 'MCP servers'}</span>
+          </button>
           <button type="button" title={language === 'zh' ? '刷新' : 'Refresh'} onClick={() => void load()}>
             {busy === 'load' ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}
           </button>
@@ -274,6 +341,9 @@ export function PluginManagementPanel({
             </button>
             {addOpen && (
               <div className="plugin-add-menu">
+                <button type="button" onClick={() => { setAddOpen(false); setPage({ kind: 'marketplace' }); }}>
+                  <Store size={15} /><span><strong>{language === 'zh' ? '从市场安装插件' : 'Install from marketplace'}</strong><small>{language === 'zh' ? '浏览 GitHub 和本地插件市场' : 'Browse GitHub and local plugin marketplaces'}</small></span>
+                </button>
                 <button type="button" onClick={() => {
                   setAddOpen(false);
                   void window.cardbushDesktop?.installLocalPlugin().then((installed) => {
@@ -305,6 +375,10 @@ export function PluginManagementPanel({
           language={language}
           configuration={configuration}
           plugins={filteredPlugins}
+          connections={filteredConnections}
+          mcpLoading={mcpLoading}
+          mcpError={mcpError}
+          onOpenMcp={onOpenMcp}
           query={query}
           busy={Boolean(busy)}
           onQuery={setQuery}
@@ -331,10 +405,14 @@ export function PluginManagementPanel({
   );
 }
 
-function PluginCatalog({ language, configuration, plugins, query, busy, onQuery, onOpen, onInstall }: {
+function PluginCatalog({ language, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, query, busy, onQuery, onOpen, onInstall }: {
   language: AppLanguage;
   configuration: CardbushAppsConfiguration | null;
   plugins: CardbushAppPlugin[];
+  connections: PluginMcpConnection[];
+  mcpLoading: boolean;
+  mcpError: string;
+  onOpenMcp: (serverId?: string) => void;
   query: string;
   busy: boolean;
   onQuery: (value: string) => void;
@@ -344,16 +422,27 @@ function PluginCatalog({ language, configuration, plugins, query, busy, onQuery,
   const [scope, setScope] = useState<'public' | 'personal'>('public');
   const scopedPlugins = plugins.filter((plugin) =>
     scope === 'public' ? plugin.source === 'bundled' : plugin.source === 'user');
-  const installed = scopedPlugins.filter((plugin) => plugin.installed);
+  const installed = plugins.filter((plugin) => plugin.installed);
+  const standalone = connections.filter(item => !item.plugin);
   return (
     <div className="plugin-catalog-page">
       <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件' : 'Plugins'}</h2><p>{language === 'zh' ? '在你常用的工具中使用 CardBush' : 'Use CardBush with the tools you rely on'}</p></header>
-      <SearchField language={language} value={query} onChange={onQuery} kind="plugins" />
+      <SearchField language={language} value={query} onChange={onQuery} kind="integrations" />
       <section className="plugin-installed-section">
-        <div className="plugin-section-title"><h3>{language === 'zh' ? '已安装' : 'Installed'}</h3><span>{installed.length}</span></div>
-        <div className="plugin-installed-icons">
-          {installed.map((plugin) => <button type="button" key={plugin.id} title={plugin.name} onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span>{plugin.name}</span></button>)}
-          {!installed.length && <small>{language === 'zh' ? '暂无已安装插件' : 'No installed plugins'}</small>}
+        <div className="plugin-section-title"><h3>{language === 'zh' ? '已添加' : 'Added'}</h3><span>{installed.length + standalone.length}</span></div>
+        <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError} />
+        <div className="plugin-added-grid">
+          {installed.map((plugin) => <button className="plugin-added-card" type="button" key={plugin.id} onClick={() => onOpen(plugin)}>
+            <PluginLogo plugin={plugin} />
+            <span className="plugin-added-copy"><strong>{plugin.name}</strong><small>{language === 'zh' ? '插件' : 'Plugin'} · {plugin.enabled && configuration?.serviceEnabled ? (language === 'zh' ? '已启用' : 'Enabled') : (language === 'zh' ? '已停用' : 'Disabled')}</small></span>
+            <ChevronRight size={16} />
+          </button>)}
+          {standalone.map(item => <button className="plugin-added-card" type="button" key={`mcp:${item.id}`} onClick={() => onOpenMcp(item.id)}>
+            <span className="plugin-logo"><Server size={23} /></span>
+            <span className="plugin-added-copy"><strong>{item.name}</strong><small>{language === 'zh' ? '独立 MCP 服务' : 'Standalone MCP'}</small><McpConnectionBadge item={item} language={language} /></span>
+            <ChevronRight size={16} />
+          </button>)}
+          {!installed.length && !standalone.length && !mcpLoading && !mcpError && <small>{query.trim() ? (language === 'zh' ? '没有匹配的项目' : 'No matching items') : (language === 'zh' ? '暂无已添加项目' : 'Nothing added yet')}</small>}
         </div>
         <div className="plugin-scope-tabs" role="tablist">
           <button className={scope === 'public' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'public'} onClick={() => setScope('public')}>{language === 'zh' ? '公开' : 'Public'}</button>
@@ -361,7 +450,7 @@ function PluginCatalog({ language, configuration, plugins, query, busy, onQuery,
         </div>
       </section>
       <section className="plugin-featured-section">
-        <div className="plugin-section-title"><h3>{language === 'zh' ? 'CardBush 精选' : 'CardBush featured'}</h3></div>
+        <div className="plugin-section-title"><h3>{scope === 'personal' ? (language === 'zh' ? '个人插件' : 'Personal plugins') : (language === 'zh' ? 'CardBush 精选' : 'CardBush featured')}</h3></div>
         <div className="plugin-featured-grid">
           {scopedPlugins.map((plugin) => (
             <article key={plugin.id}>
@@ -492,10 +581,16 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
   );
 }
 
-function PluginManagementList({ language, configuration, plugins, query, busy, onQuery, onBack, onOpen, onPersist }: {
+function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onBack, onOpen, onPersist }: {
   language: AppLanguage;
+  initialTab?: ManageTab;
   configuration: CardbushAppsConfiguration | null;
   plugins: CardbushAppPlugin[];
+  connections: PluginMcpConnection[];
+  mcpLoading: boolean;
+  mcpError: string;
+  onOpenMcp: (serverId?: string) => void;
+  onRefreshMcp: () => void;
   query: string;
   busy: boolean;
   onQuery: (value: string) => void;
@@ -503,10 +598,10 @@ function PluginManagementList({ language, configuration, plugins, query, busy, o
   onOpen: (plugin: CardbushAppPlugin) => void;
   onPersist: (configuration: CardbushAppsConfiguration, message: string) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<ManageTab>('plugins');
+  const [activeTab, setActiveTab] = useState<ManageTab>(initialTab ?? 'plugins');
   const installed = plugins.filter((plugin) => plugin.installed);
   const appCount = installed.reduce((sum, plugin) => sum + plugin.components.filter((item) => item.kind === 'app').length, 0);
-  const mcpCount = installed.reduce((sum, plugin) => sum + plugin.components.filter((item) => item.kind === 'mcp').length, 0);
+  const mcpCount = connections.length;
   const components = installed.flatMap((plugin) => plugin.components
     .filter((component) => component.kind === (activeTab === 'apps' ? 'app' : 'mcp'))
     .map((component) => ({ plugin, component })));
@@ -530,6 +625,11 @@ function PluginManagementList({ language, configuration, plugins, query, busy, o
         <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>MCP <em>{mcpCount}</em></button>
       </div>
       <SearchField language={language} value={query} onChange={onQuery} kind={activeTab === 'plugins' ? 'plugins' : activeTab} />
+      {activeTab === 'mcp' && <>
+        <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError} />
+        <button className="plugin-back" type="button" onClick={() => onOpenMcp()}><Plus size={16} />{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</button>
+        <button className="plugin-back" type="button" disabled={mcpLoading} onClick={onRefreshMcp}><RefreshCw size={16} />{language === 'zh' ? '刷新状态' : 'Refresh status'}</button>
+      </>}
       <div className="plugin-manage-list">
         {activeTab === 'plugins' && installed.map((plugin) => (
           <article key={plugin.id}>
@@ -537,7 +637,7 @@ function PluginManagementList({ language, configuration, plugins, query, busy, o
             <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration} onClick={() => togglePlugin(plugin)}><span /></button>
           </article>
         ))}
-        {activeTab !== 'plugins' && components.map(({ plugin, component }) => (
+        {activeTab === 'apps' && components.map(({ plugin, component }) => (
           <article key={`${plugin.id}:${component.kind}:${component.id}`}>
             <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}>
               <PluginLogo plugin={plugin} />
@@ -546,12 +646,35 @@ function PluginManagementList({ language, configuration, plugins, query, busy, o
             <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration} onClick={() => togglePlugin(plugin)}><span /></button>
           </article>
         ))}
-        {((activeTab === 'plugins' && installed.length === 0) || (activeTab !== 'plugins' && components.length === 0)) && (
+        {activeTab === 'mcp' && connections.map(item => <article key={`${item.plugin?.id ?? 'standalone'}:${item.id}`}>
+          <button className="plugin-featured-main" type="button" onClick={() => item.plugin ? onOpen(item.plugin) : onOpenMcp(item.id)}>
+            {item.plugin ? <PluginLogo plugin={item.plugin} /> : <span className="plugin-logo"><Server size={23} /></span>}
+            <span><strong>{item.name}</strong><small>{item.plugin ? (language === 'zh' ? `由 ${item.plugin.name} 管理` : `Managed by ${item.plugin.name}`) : (language === 'zh' ? '独立 MCP 服务' : 'Standalone MCP')}</small><McpConnectionBadge item={item} language={language} /></span>
+            <ChevronRight size={16} className="plugin-row-chevron" />
+          </button>
+        </article>)}
+        {((activeTab === 'plugins' && installed.length === 0) || (activeTab === 'apps' && components.length === 0) || (activeTab === 'mcp' && connections.length === 0 && !mcpLoading && !mcpError)) && (
           <p className="plugin-manage-empty">{language === 'zh' ? '没有匹配的已安装项目' : 'No matching installed items'}</p>
         )}
       </div>
     </div>
   );
+}
+
+function McpCatalogNotice({ language, loading, error }: { language: AppLanguage; loading: boolean; error: string }) {
+  if (error) return <p className="plugin-hub-error" role="alert">{language === 'zh' ? 'MCP 列表读取失败，请刷新重试：' : 'MCP list unavailable. Refresh to retry: '}{error}</p>;
+  return loading ? <p className="plugin-mcp-loading" role="status">{language === 'zh' ? '正在读取 MCP 服务状态…' : 'Reading MCP server status…'}</p> : null;
+}
+
+function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; language: AppLanguage }) {
+  const labels = {
+    connected: ['已连接', 'Connected'], pending: ['等待生效', 'Pending'], restarting: ['重新连接中', 'Reconnecting'],
+    unavailable: ['连接异常', 'Unavailable'], disabled: ['已停用', 'Disabled'], unknown: ['连接待确认', 'Connection unconfirmed'],
+  };
+  return <span className={`plugin-connection-status ${item.state}`}>
+    <i aria-hidden="true" />{labels[item.state][language === 'zh' ? 0 : 1]}
+    {item.state === 'connected' && item.toolCount !== undefined && ` · ${item.toolCount} ${language === 'zh' ? '个工具' : 'tools'}`}
+  </span>;
 }
 
 function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: {
@@ -572,7 +695,7 @@ function PluginDetail({ language, plugin, busy, onBack, onReplace, onPersist }: 
       </header>
       {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <div key={prompt}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></div>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
-      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : 'A'}</span><div><strong>{component.name}</strong><small>{component.description}</small></div>{plugin.installed && <Check size={17} />}</div>)}</section>
+      <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && <Check size={17} />}</div>)}</section>
       {plugin.id === 'computer-use' && plugin.installed && <section className="plugin-detail-section"><h3>{language === 'zh' ? '配置' : 'Settings'}</h3><label className="plugin-path-setting"><span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span><input value={String(plugin.config.screenshotDirectory ?? '')} placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Use the system temp directory when empty'} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, screenshotDirectory: event.currentTarget.value } })} /></label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.yieldToUser !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, yieldToUser: event.currentTarget.checked } })} />{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.restorePointer !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, restorePointer: event.currentTarget.checked } })} />{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowOpenApp !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowOpenApp: event.currentTarget.checked } })} />{language === 'zh' ? '允许启动应用' : 'Allow opening apps'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowWindowClose !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowWindowClose: event.currentTarget.checked } })} />{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</label><button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? '配置已保存' : 'Settings saved')}>{language === 'zh' ? '保存配置' : 'Save settings'}</button></section>}
       {plugin.id === 'chrome' && plugin.installed && (
         <ChromeConnectionSettings
@@ -722,9 +845,10 @@ function PluginLogo({ plugin, large = false, compact = false }: { plugin: Cardbu
   return <span className={`plugin-logo${large ? ' large' : ''}${compact ? ' compact' : ''}`} style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{source ? <img src={source} alt="" /> : <PackagePlus size={large ? 28 : 20} />}</span>;
 }
 
-function SearchField({ language, value, onChange, kind }: { language: AppLanguage; value: string; onChange: (value: string) => void; kind: 'plugins' | 'skills' | 'apps' | 'mcp' }) {
-  const chineseKind = kind === 'plugins' ? '插件' : kind === 'skills' ? '技能' : kind === 'apps' ? '应用' : 'MCP';
-  return <label className="plugin-search"><Search size={18} /><input value={value} onChange={(event) => onChange(event.currentTarget.value)} placeholder={language === 'zh' ? `搜索${chineseKind}` : `Search ${kind}`} /></label>;
+function SearchField({ language, value, onChange, kind }: { language: AppLanguage; value: string; onChange: (value: string) => void; kind: 'plugins' | 'skills' | 'apps' | 'mcp' | 'integrations' }) {
+  const chineseKind = kind === 'integrations' ? '插件或 MCP' : kind === 'plugins' ? '插件' : kind === 'skills' ? '技能' : kind === 'apps' ? '应用' : 'MCP';
+  const label = language === 'zh' ? `搜索${chineseKind}` : kind === 'integrations' ? 'Search plugins or MCP' : `Search ${kind}`;
+  return <label className="plugin-search"><Search size={18} /><input aria-label={label} value={value} onChange={(event) => onChange(event.currentTarget.value)} placeholder={label} /></label>;
 }
 
 function Info({ label, value }: { label: string; value: string }) {

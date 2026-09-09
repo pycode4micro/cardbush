@@ -14,6 +14,13 @@ import type { PermissionResolver, ToolPermissionRequest, ToolRegistry } from "./
 import type { ToolHandlerContext } from "./toolRegistry.js";
 import { BUSH_TOOL_CALL_PROTOCOL } from "@cardbush/bush-protocol";
 import { settleAtAbort } from "./abortSettlement.js";
+import type { PluginHookResult } from './pluginExtensions.js';
+import { pluginCommandDeniesTool } from './pluginCommandTools.js';
+
+export interface ToolExecutionHooks {
+  before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
+  after: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal; outcome: ToolExecutionOutcome }) => Promise<PluginHookResult>;
+}
 
 export interface ToolExecutionIdentity {
   requestId: string;
@@ -28,7 +35,7 @@ export interface ToolExecutionObserver {
   running?: (toolCall: ToolCall, identity: ToolExecutionIdentity) => void;
 }
 
-export type ToolExecutionOutcome =
+export type ToolExecutionOutcome = { hookMessages?: string[] } & (
   | {
       kind: "returned";
       result: unknown;
@@ -40,7 +47,7 @@ export type ToolExecutionOutcome =
       error: RuntimeToolError;
       workspaceChanges: WorkspaceChange[];
       actionManifest?: ActionManifest;
-    };
+    });
 
 export interface ToolExecutionCoordinatorOptions {
   registry: ToolRegistry;
@@ -48,6 +55,7 @@ export interface ToolExecutionCoordinatorOptions {
   observer?: ToolExecutionObserver;
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
+  hooks?: ToolExecutionHooks;
 }
 
 export interface RuntimeCapabilityStore {
@@ -61,6 +69,7 @@ export class ToolExecutionCoordinator {
   readonly #observer: ToolExecutionObserver;
   readonly #capabilities?: RuntimeCapabilityStore;
   readonly #capabilitySessionId?: string;
+  readonly #hooks?: ToolExecutionHooks;
 
   constructor(options: ToolExecutionCoordinatorOptions) {
     this.#registry = options.registry;
@@ -68,6 +77,7 @@ export class ToolExecutionCoordinator {
     this.#observer = options.observer ?? {};
     this.#capabilities = options.capabilities;
     this.#capabilitySessionId = options.capabilitySessionId?.trim() || undefined;
+    this.#hooks = options.hooks;
   }
 
   async execute(
@@ -107,9 +117,20 @@ export class ToolExecutionCoordinator {
     }
 
     let input: unknown;
+    let hookResult: PluginHookResult = { messages: [] };
     try {
       input = registration.decodeInput(parsedArguments);
+      if (this.#hooks) {
+        hookResult = await this.#hooks.before({ toolCall, input: parsedArguments, turn, signal });
+        if (hookResult.blocked) return { ...failedResult('plugin_hook_blocked', hookResult.blocked, undefined, {}, 'permission'), hookMessages: hookResult.messages };
+        if (hookResult.updatedInput !== undefined) {
+          parsedArguments = hookResult.updatedInput;
+          input = registration.decodeInput(parsedArguments);
+          toolCall = { ...toolCall, argumentsText: JSON.stringify(parsedArguments) };
+        }
+      }
     } catch (error) {
+      if (signal?.aborted || isAbortError(error)) return cancelledResult('plugin_hook_cancelled');
       return failedResult(
         "tool_arguments_schema_invalid",
         errorMessage(error),
@@ -124,7 +145,19 @@ export class ToolExecutionCoordinator {
       manifest_id: manifestId(identity, toolCall.id),
       ...registration.manifest,
     };
+    if (pluginCommandDeniesTool(turn?.request, toolCall.name)) return failedResult('plugin_command_tool_disallowed', `Tool ${toolCall.name} is disabled by the active plugin Command.`, actionManifest, {}, 'permission');
     let capabilityIds: string[] = [];
+    if (hookResult.ask) {
+      try {
+        const answer = await this.#permissions.request({ toolCallId: toolCall.id, reason: hookResult.ask,
+          actions: ['plugin_hook.confirm_tool'], targets: [], capabilityIds: [] }, signal);
+        if (answer.decision === 'cancel') return cancelledResult('plugin_hook_permission_cancelled', actionManifest);
+        if (answer.decision === 'deny') return failedResult('plugin_hook_permission_rejected', hookResult.ask, actionManifest, {}, 'permission');
+      } catch (error) {
+        if (signal?.aborted || isAbortError(error)) return cancelledResult('plugin_hook_permission_cancelled', actionManifest);
+        return failedResult('plugin_hook_permission_failed', errorMessage(error), actionManifest, {}, 'permission');
+      }
+    }
     if (registration.authorize) {
       let admission;
       try {
@@ -262,13 +295,20 @@ export class ToolExecutionCoordinator {
       if (isAbortError(error)) {
         return cancelledResult("tool_execution_cancelled", actionManifest);
       }
-      return failedResult(
+      const failed = failedResult(
         errorCode(error, "tool_execution_exception"),
         errorMessage(error),
         actionManifest,
         errorDetails(error),
         "tool",
       );
+      if (this.#hooks) {
+        try {
+          const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome: failed });
+          failed.hookMessages = [...hookResult.messages, ...post.messages];
+        } catch (postError) { failed.hookMessages = [...hookResult.messages, `Plugin hook failed after tool failure: ${errorMessage(postError)}`]; }
+      }
+      return failed;
     }
 
     let stableResult: unknown;
@@ -288,12 +328,19 @@ export class ToolExecutionCoordinator {
       );
     }
 
-    return {
+    const outcome: ToolExecutionOutcome = {
       kind: "returned",
       result: stableResult,
       workspaceChanges: stableWorkspaceChanges,
       actionManifest,
     };
+    if (this.#hooks) {
+      try {
+        const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome });
+        outcome.hookMessages = [...hookResult.messages, ...post.messages];
+      } catch (postError) { outcome.hookMessages = [...hookResult.messages, `Plugin hook failed after tool execution; the tool's completed result remains valid: ${errorMessage(postError)}`]; }
+    }
+    return outcome;
   }
 }
 

@@ -103,6 +103,10 @@ import {
   writeToolExecutionDisclosure,
 } from '../tools/toolExecutionDisclosure';
 import { formatCompactDuration } from './assistantTurnTiming';
+import { turnActivityExecutions } from './assistantRunActivity';
+import { AssistantActivityDetails } from './AssistantActivityDetails';
+import { mcpActivations } from './mcpActivation';
+import { McpActivationStatus } from './McpActivationStatus';
 import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
 
 type GuidanceDeliveryState = 'pending' | 'queued' | 'failed' | 'sent';
@@ -954,7 +958,8 @@ function MessageBubbleView({
             preserveTerminalExecutionRecord,
         )
       : allToolExecutions;
-  const assistantProgressExecutions = toolExecutions;
+  const assistantProgressExecutions = turnActivityExecutions(message);
+  const activations = mcpActivations(assistantProgressExecutions);
   const showAssistantProgress =
     message.role === 'assistant' &&
     !stoppedAssistantRound &&
@@ -1084,6 +1089,8 @@ function MessageBubbleView({
     <>
       <div className={`message-row assistant${isActiveAssistantTurn ? ' streaming' : ''}`}>
         <div className="assistant-bubble">
+          {activations.map(target => <McpActivationStatus key={target.serverId}
+            target={target} isActive={isActiveAssistantTurn} language={language} />)}
           {showAssistantProgress && isActiveAssistantTurn && (
             <AssistantRunHeader
               executions={assistantProgressExecutions}
@@ -1862,6 +1869,7 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
     <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
       <span className="assistant-run-label">{label}</span>
       <div className="assistant-run-divider" />
+      {isActive && <AssistantActivityDetails executions={executions} language={language} />}
     </div>
   );
 });

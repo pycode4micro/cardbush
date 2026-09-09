@@ -402,7 +402,7 @@ export interface CardbushAppPlugin {
   source: 'bundled' | 'user';
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
   components: Array<{
-    kind: 'skill' | 'mcp' | 'app';
+    kind: 'skill' | 'mcp' | 'app' | 'agent' | 'hook' | 'command';
     id: string;
     name: string;
     description: string;

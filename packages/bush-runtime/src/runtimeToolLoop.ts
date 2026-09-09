@@ -16,6 +16,7 @@ import {
   type ToolExecutionIdentity,
   type ToolExecutionOutcome,
   type RuntimeCapabilityStore,
+  type ToolExecutionHooks,
 } from "./toolExecutionCoordinator.js";
 import type { ToolRegistry } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
@@ -30,6 +31,7 @@ export interface RuntimeToolLoopOptions {
   modelImages?: ModelImageStore;
   capabilities?: RuntimeCapabilityStore;
   capabilitySessionId?: string;
+  hooks?: ToolExecutionHooks;
   permissionEventIdentity?: RuntimeEventIdentity;
   permissionSource?: {
     sourceSessionId: string;
@@ -121,6 +123,7 @@ export class RuntimeToolLoop {
       },
       capabilities: options.capabilities,
       capabilitySessionId: options.capabilitySessionId,
+      hooks: options.hooks,
     });
     this.#executionStore = options.executionStore;
   }
@@ -216,7 +219,10 @@ export class RuntimeToolLoop {
         detachAbort();
       }
     };
-    const outcomes = await executeByChannel(
+    // Commands can activate turn-scoped restrictions across execution channels.
+    const outcomes = toolCalls.some(call => call.name === 'run_plugin_command')
+      ? await executeSequentially(toolCalls, executeOne)
+      : await executeByChannel(
       toolCalls,
       executeOne,
       (toolCall) => this.#registry.executionChannel(toolCall.name),
@@ -283,8 +289,11 @@ export class RuntimeToolLoop {
       });
     }
     const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages);
+    const hookMessages: ModelMessage[] = outcomes.flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
+      role: 'user' as const, name: 'plugin_hook_feedback', visibility: 'internal' as const, content,
+    })));
     return {
-      messages: [...toolMessages, ...(imageFollowup ? [imageFollowup] : [])],
+      messages: [...toolMessages, ...hookMessages, ...(imageFollowup ? [imageFollowup] : [])],
     };
   }
 
@@ -579,6 +588,12 @@ function forwardAbort(
   if (signal.aborted) abort();
   else signal.addEventListener("abort", abort, { once: true });
   return () => signal.removeEventListener("abort", abort);
+}
+
+async function executeSequentially<TInput, TOutput>(values: TInput[], execute: (value: TInput, index: number) => Promise<TOutput>): Promise<TOutput[]> {
+  const results: TOutput[] = [];
+  for (const [index, value] of values.entries()) results.push(await execute(value, index));
+  return results;
 }
 
 async function executeByChannel<TInput, TOutput>(

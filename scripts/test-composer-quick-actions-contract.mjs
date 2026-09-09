@@ -96,7 +96,7 @@ assert.match(
   /\^\\\/\(\?:model\|goal\|skill\|new\)\(\?:\\s\|\$\)/,
   'slash commands must not be parsed as POSIX file attachments',
 );
-assert.doesNotMatch(slashBlock, /title:\s*['"`]\//);
+assert.doesNotMatch(slashBlock.split('commands.push')[0], /title:\s*['"`]\//, 'built-in quick actions retain their descriptive labels');
 assert.doesNotMatch(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
 assert.doesNotMatch(source, /mentionMatch|mentionCommands|输入 @|Type @/);
 assert.match(

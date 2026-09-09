@@ -38,6 +38,7 @@ import type {
   TurnEventStreamRequest,
 } from './api';
 import { synchronizeProductMcpSnapshot } from './productMcp';
+import { configuredMcpServerId } from './mcpConfigurationFact';
 import { synchronizeProductTeamSnapshot } from './productTeams';
 import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
@@ -147,6 +148,7 @@ export async function streamRuntimeChat(
       projectDir: request.projectDir,
       workspaceDir,
       projectInstructions: request.projectUserPrompt,
+      uiLanguage: request.uiLanguage,
       filesystemLocations,
       permissionMode,
       subagentPermissionRouting: request.subagentPermissionRouting ?? subagentConfig.permissionRouting,
@@ -761,6 +763,7 @@ function toolRecord(
   event: Extract<RuntimeEvent, { kind: 'tool_returned' | 'tool_failed' }>,
 ): ChatToolExecution {
   const returned = record.outcome === 'returned';
+  const mcpServerId = configuredMcpServerId(record.toolCall);
   const artifacts = returned
     ? toolArtifactsFromPayload({ result: record.result })
     : [];
@@ -773,6 +776,7 @@ function toolRecord(
     metadata: {
       actionManifest: record.actionManifest,
       nativeResult: record.result,
+      ...(mcpServerId ? { mcpServerId } : {}),
       workspaceChanges: record.workspaceChanges,
       error: record.error,
     },

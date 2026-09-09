@@ -1,4 +1,5 @@
 export {};
+import type { PluginMarketSource, PluginMarketCatalog, PluginMarketPreview } from '../../electron/pluginMarketplaceTypes';
 
 import type {
   CardlingDesktopAction,
@@ -113,6 +114,7 @@ declare global {
       ) => () => void;
       writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
+      restoreEditorFocus?: (state: { documentFocused: boolean }) => Promise<boolean>;
       wallpaperAccent: () => Promise<{
         r: number;
         g: number;
@@ -126,6 +128,14 @@ declare global {
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
       installLocalPlugin: () => Promise<{ id: string; manifestPath: string } | null>;
+      pluginCommands: () => Promise<Array<{ id: string; description: string; argumentHint: string }>>;
+      pluginMarketSources: () => Promise<PluginMarketSource[]>;
+      addPluginMarket: (source: string) => Promise<PluginMarketSource>;
+      addLocalPluginMarket: () => Promise<PluginMarketSource | null>;
+      removePluginMarket: (id: string) => Promise<void>;
+      pluginMarketCatalog: (id: string, refresh?: boolean) => Promise<PluginMarketCatalog>;
+      previewMarketPlugin: (sourceId: string, name: string) => Promise<PluginMarketPreview>;
+      installMarketPlugin: (token: string) => Promise<{ id: string; manifestPath: string }>;
       setProxy: (proxy: {
         mode: 'none' | 'system' | 'manual';
         httpProxy: string;

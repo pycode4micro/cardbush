@@ -1,5 +1,6 @@
 export * from "./cacheChainTracker.js";
 export * from "./childTurn.js";
+export * from "./pluginExtensions.js";
 export * from "./contextAssembler.js";
 export * from "./contextCompaction.js";
 export * from "./coordinationStore.js";
@@ -37,5 +38,6 @@ export * from "./toolCallAccumulator.js";
 export * from "./toolExecutionCoordinator.js";
 export * from "./toolExecutionStore.js";
 export * from "./toolRegistry.js";
+export * from './pluginCommandTools.js';
 export * from "./workspaceTools.js";
 export * from "./taskWorkspace.js";

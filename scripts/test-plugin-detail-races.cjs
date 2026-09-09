@@ -18,14 +18,19 @@ app.whenReady().then(async()=>{
  const h=React.createElement;window.reads=[];window.listeners=new Set();
  window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)}};
  const skills=['alpha','beta'].map(name=>({name,description:name+' summary'}));
- const api={fetchCardbushAppsConfiguration:async()=>({serviceEnabled:true,plugins:[]})};
+ const api={fetchCardbushAppsConfiguration:async()=>({serviceEnabled:true,plugins:[]}),fetchMcpConnectionOverview:async()=>({revision:1,servers:[],snapshot:null})};
  const load=(source)=>{const module={exports:{}};new Function('require','module','exports',source)(name=>{
  if(name.endsWith('.css'))return{};if(name==='../../backend/api')return api;
  if(name==='../../shared/localPaths')return{fileUrl:value=>value};
  if(name==='../skills/SkillIcon')return{SkillIcon:()=>null};
  if(name==='../../hooks/useCapabilityCatalogRefresh')return refresh;
+ if(name==='../../backend/mcpConnectionOverview')return mcpOverview;
+ if(name==='./pluginConnections')return connections;
+ if(name==='./PluginMarketplacePanel')return{PluginMarketplacePanel:()=>null};
  return nativeRequire(name);},module,module.exports);return module.exports;};
  const refresh=load(${JSON.stringify(compile('src/hooks/useCapabilityCatalogRefresh.ts'))});
+ const mcpOverview=load(${JSON.stringify(compile('src/backend/mcpConnectionOverview.ts'))});
+ const connections=load(${JSON.stringify(compile('src/features/plugins/pluginConnections.ts'))});
  const {PluginManagementPanel}=load(${JSON.stringify(compile('src/features/plugins/PluginManagementPanel.tsx'))});
  const props={language:'en',initialTab:'skills',skills,disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>skills,
  onLoadSkillDetail:name=>new Promise((resolve,reject)=>reads.push({name,resolve,reject})),onOpenMcp:()=>{},onNotify:()=>{}};

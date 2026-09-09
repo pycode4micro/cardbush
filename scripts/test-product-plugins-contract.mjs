@@ -178,6 +178,6 @@ assert.match(managementSource, /来自 \$\{plugin\}/);
 assert.doesNotMatch(managementSource, /'插件' : 'Plugins'\}<ChevronRight[^>]*\/>\{plugin\.name\}/);
 
 const managementStyles = readFileSync(resolve('src', 'features', 'plugins', 'plugin-management.css'), 'utf8');
-assert.match(managementStyles, /\.plugin-installed-icons button:hover > span:not\(\.plugin-logo\)/);
-assert.match(managementStyles, /opacity: 0/);
+assert.match(managementStyles, /\.plugin-added-copy strong/);
+assert.doesNotMatch(managementStyles, /\.plugin-installed-icons/);
 assert.match(managementStyles, /\.skill-plugin-group/);

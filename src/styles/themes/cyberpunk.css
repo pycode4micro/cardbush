@@ -188,6 +188,11 @@
   color: var(--cyber-yellow);
 }
 
+.app.theme-cyberpunk .conversation-row.active .conversation-running-indicator {
+  color: #050607;
+  --sidebar-running-low-opacity: 0.75;
+}
+
 .app.theme-cyberpunk .conversation-running-indicator span {
   border-radius: 0;
 }

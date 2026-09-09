@@ -5,7 +5,7 @@ import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
-export type CardbushPluginComponentKind = "skill" | "mcp" | "app";
+export type CardbushPluginComponentKind = "skill" | "mcp" | "app" | 'agent' | 'hook' | 'command';
 
 export interface CardbushPluginComponent {
   kind: CardbushPluginComponentKind;
