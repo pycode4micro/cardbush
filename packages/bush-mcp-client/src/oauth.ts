@@ -34,7 +34,8 @@ function validateClientConfiguration(options: NonNullable<Exclude<McpServerSnaps
 export class McpOAuthCoordinator {
   readonly #sessions = new Map<string, AbortController>();
   readonly #credentials = new Map<string, Promise<CredentialState>>();
-  constructor(private readonly store: McpCredentialStore, private readonly openUrl: (url: string) => Promise<void>) {}
+  constructor(private readonly store: McpCredentialStore, private readonly openUrl: (url: string) => Promise<void>,
+    private readonly fetchForServer: (server: McpServerSnapshot) => typeof fetch = () => fetch) {}
 
   async #clientSecret(server: McpServerSnapshot): Promise<string | undefined> {
     if (server.transport.kind === 'stdio') throw new Error('OAuth requires an HTTP MCP service.');
@@ -142,7 +143,7 @@ export class McpOAuthCoordinator {
       if (!address || typeof address === 'string') throw new Error('OAuth callback listener failed.');
       callback.port = String(address.port);
       const provider = this.provider(server, { redirectUrl: callback.toString(), state });
-      const fetchFn: typeof fetch = (input, init) => fetch(input, { ...init, signal: AbortSignal.any([abort, ...(init?.signal ? [init.signal] : [])]) });
+      const fetchFn: typeof fetch = (input, init) => this.fetchForServer(server)(input, { ...init, signal: AbortSignal.any([abort, ...(init?.signal ? [init.signal] : [])]) });
       const authOptions = { serverUrl: server.transport.url, scope: options.scopes?.join(' '), fetchFn };
       if (await auth(provider, authOptions) === 'AUTHORIZED') return;
       const returned = await completed;

@@ -32,6 +32,9 @@ const fact = { ...execution('configure', 'completed'), name: 'mcp__cardbush_mana
 const [target] = mcpActivations([fact]);
 assert.equal(target.revision, 2);
 assert.equal(mcpActivationState(target, initial), 'pending', 'old ready connection cannot verify queued configuration');
+assert.equal(mcpActivationState(target, { ...initial, pendingServerIds: ['other'] }), 'connected', 'an independently published service does not wait for an unrelated connection');
+assert.equal(mcpActivationState(target, { ...initial, servers: [{ id: 'blender', updateState: 'connecting', health: 'auth_required', tools: [] }] }), 'pending', 'the previous sign-in state does not override a new connection attempt');
+assert.equal(mcpActivationState(target, { ...initial, servers: [{ id: 'blender', updateState: 'waiting_for_catalog', health: 'unavailable', tools: [] }] }), 'failed', 'a background failure is observable before catalog publication');
 const applied = { ...initial, applicationState: 'applied', revision: 2, pendingRevision: undefined };
 assert.equal(mcpActivationState(target, applied), 'connected');
 assert.equal(mcpActivationState(target, { ...applied, servers: [] }), 'unknown', 'applied alone is not connected');

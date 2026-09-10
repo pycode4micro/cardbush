@@ -11,7 +11,7 @@ const profile = (name, id) => ({ name, inputSchema: { type: 'object', properties
   type: 'object', properties: { result: { type: 'object', properties: { email: { type: 'string' } }, required: ['email'] } }, required: ['result'] },
   _meta: { connector_id: id }, annotations: { readOnlyHint: true, destructiveHint: false } });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-function fixture() {
+function fixture(catalog, rawReply) {
   const calls = []; let generation = 0, authenticated = true;
   const token = async () => { if (!authenticated) throw new OpenAiAuthError(); return { accessToken: 'PRIVATE_OPENAI_TOKEN', generation }; };
   const fetch = async (url, init) => {
@@ -22,15 +22,80 @@ function fixture() {
     if (!('id' in message)) return new Response(null, { status: 202 });
     let result;
     if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
-    else if (message.method === 'tools/list') result = { tools: [profile('gmail_profile', 'gmail-app'), profile('other_profile', 'other-app'),
+    else if (message.method === 'tools/list') result = catalog ? catalog(message.params) : { tools: [profile('gmail_profile', 'gmail-app'), profile('other_profile', 'other-app'),
       { ...profile('app_only', 'gmail-app'), _meta: { connector_id: 'gmail-app', ui: { visibility: ['app'] } } }] };
-    else if (message.method === 'tools/call') { calls.push(message.params.name); result = { content: [{ type: 'text', text: 'ORIGINAL_REPLY' }], structuredContent: { email: 'private@example.invalid' } }; }
+    else if (message.method === 'tools/call') { calls.push(message.params.name); result = rawReply ?? { content: [{ type: 'text', text: 'ORIGINAL_REPLY' }], structuredContent: { result: { email: 'private@example.invalid' } } }; }
     else throw Error(`Unexpected method ${message.method}`);
     return json({ jsonrpc: '2.0', id: message.id, result });
   };
   return { token, fetch, calls, signOut: () => { authenticated = false; generation++; }, nextAccount: () => { generation++; } };
 }
 const snapshot = (server, revision = 1) => ({ protocol: 'bush.mcp_snapshot.v2', snapshotId: 'fixture', revision, servers: [server] });
+
+test('empty hosted output declarations are compatible while their raw form and native results remain available', async t => {
+  const raw = { ...profile('read_design', 'gmail-app'), outputSchema: {} };
+  const f = fixture(() => ({ tools: [raw, { ...profile('unrelated', 'other-app'), outputSchema: { type: 'array' } }] }));
+  const registry = new ToolRegistry(); let client;
+  const manager = new McpClientManager({ registry, createClient: () => (client = new Client({ name: 'test', version: '1' })),
+    createTransport: server => createOpenAiTransport(server, f.token, f.fetch) });
+  t.after(() => manager.close());
+  const result = await manager.apply(snapshot(config()));
+  assert.equal(result.servers[0].health, 'ready');
+  assert.deepEqual(result.servers[0].tools.map(tool => tool.remoteName), ['read_design']);
+  const declared = (await client.listTools()).tools[0];
+  assert.equal(declared.outputSchema, undefined);
+  assert.deepEqual(declared._meta['cardbush/originalOutputSchema'], {});
+  assert.equal(declared._meta['cardbush/outputSchemaNormalization'], 'empty_schema_omitted');
+  assert.deepEqual(raw.outputSchema, {}, 'the upstream declaration is not mutated');
+  const called = await client.callTool({ name: 'read_design', arguments: {} });
+  assert.deepEqual(called.structuredContent, { result: { email: 'private@example.invalid' } });
+  assert.deepEqual(called.content, [{ type: 'text', text: 'ORIGINAL_REPLY' }]);
+  await assert.rejects(client.callTool({ name: 'unrelated', arguments: {} }), /does not belong/);
+});
+
+test('hosted application discovery follows later pages even when its first scoped page is empty', async t => {
+  const pages = [];
+  const f = fixture(params => {
+    pages.push(params?.cursor);
+    return params?.cursor === 'page-2'
+      ? { tools: [profile('gmail_profile', 'gmail-app')] }
+      : { tools: [profile('other_profile', 'other-app')], nextCursor: 'page-2' };
+  });
+  const manager = new McpClientManager({ registry: new ToolRegistry(), createTransport: server => createOpenAiTransport(server, f.token, f.fetch) });
+  t.after(() => manager.close());
+  const result = await manager.apply(snapshot(config()));
+  assert.equal(result.servers[0].health, 'ready');
+  assert.deepEqual(pages, [undefined, 'page-2']);
+  assert.deepEqual(result.servers[0].tools.map(tool => tool.remoteName), ['gmail_profile']);
+});
+
+test('nonempty invalid hosted schemas still fail validation instead of being discarded', async t => {
+  const f = fixture(() => ({ tools: [{ ...profile('bad_schema', 'gmail-app'), outputSchema: { type: 'array', items: { type: 'string' } } }] }));
+  const manager = new McpClientManager({ registry: new ToolRegistry(), createTransport: server => createOpenAiTransport(server, f.token, f.fetch) });
+  t.after(() => manager.close());
+  await assert.rejects(manager.apply(snapshot(config())), /Invalid result for tools\/list/);
+});
+
+test('opaque pagination cursors retain callable tools from every scoped page', async t => {
+  const pages = [];
+  const f = fixture(params => {
+    pages.push(params?.cursor);
+    return params?.cursor === undefined
+      ? { tools: [profile('first_profile', 'gmail-app')], nextCursor: '' }
+      : { tools: [profile('last_profile', 'gmail-app')] };
+  });
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, createTransport: server => createOpenAiTransport(server, f.token, f.fetch) });
+  t.after(() => manager.close());
+  const result = await manager.apply(snapshot(config()));
+  assert.equal(result.servers[0].health, 'ready');
+  assert.deepEqual(pages, [undefined, '']);
+  for (const tool of result.servers[0].tools) {
+    await registry.resolve(tool.runtimeName).execute({ requestId: 'r', sessionId: 's', turnId: 't', capabilityIds: [], input: {},
+      toolCall: { id: 'c', name: tool.runtimeName } });
+  }
+  assert.deepEqual(f.calls, ['first_profile', 'last_profile']);
+});
 
 test('native OpenAI transport uses the ordinary registry, approval and output validation with exact app scoping', async t => {
   const f = fixture(), registry = new ToolRegistry(); let client;
@@ -49,7 +114,7 @@ test('native OpenAI transport uses the ordinary registry, approval and output va
   const result = await registration.execute({ requestId: 'r', sessionId: 's', turnId: 't', capabilityIds: [], input: {}, toolCall: { id: 'c', name: registration.definition.name } });
   assert.equal(result.isError, undefined); assert.equal(result.structuredContent.result.email, 'private@example.invalid');
   assert.equal(result.content[0].text, 'ORIGINAL_REPLY');
-  assert.equal(result._meta['cardbush/outputNormalization'], 'validated_declared_result_envelope');
+  assert.equal(result._meta?.['cardbush/outputNormalization'], undefined);
   assert.deepEqual(f.calls, ['gmail_profile']);
   assert.doesNotMatch(JSON.stringify(manager.snapshot()), /PRIVATE_OPENAI_TOKEN|private@example/);
   f.nextAccount();

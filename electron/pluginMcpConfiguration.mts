@@ -55,6 +55,7 @@ export function pluginMcpServer(pluginId: string, name: string, root: string, de
     parallelSafe: item.parallel_safe === true, visibleToChild: item.visible_to_child !== false });
   return {
     id: `plugin_${pluginId.replaceAll('.', '_')}_${name}`,
+    pluginId,
     transport: kind === 'stdio' ? { kind, command: expand(server.command), args: (strings(server.args) ?? []).map(expand), cwd: server.cwd ? resolve(root, expand(server.cwd)) : root, env: stringMap(server.env) }
       : { kind: kind === 'sse' ? 'sse' : 'streamable_http', url: expand(server.url), headers,
         ...(helper ? { headersHelper: { command: expand(typeof helper === 'string' ? helper : helperOptions.command), cwd: helperOptions.cwd ? resolve(root, expand(helperOptions.cwd)) : root, env: { ...stringMap(server.env), ...stringMap(helperOptions.env) } } } : {}),

@@ -5,7 +5,8 @@ import vm from 'node:vm';
 
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import { fileMemoReference, parseFileMemoReference } from '@cardbush/bush-protocol';
 import remarkGfm from 'remark-gfm';
 import ts from 'typescript';
 
@@ -310,4 +311,17 @@ assert.match(
   'compact headings must not add a decorative rail beside ordinary sections',
 );
 
-console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links)`);
+const memoReference = fileMemoReference({ sessionId: '会话', turnId: 'turn', toolCallId: 'memo' });
+for (const content of [`[文件](${memoReference})`, `![图片](${memoReference})`, `[文件][memo]\n\n[memo]: ${memoReference}`]) {
+  const references = [];
+  renderToStaticMarkup(createElement(ReactMarkdown, {
+    remarkPlugins: [remarkGfm, remarkAutolinkBoundaries],
+    urlTransform: url => parseFileMemoReference(url) ? url : defaultUrlTransform(url),
+    components: {
+      a: ({ href }) => { references.push(href); return null; },
+      img: ({ src }) => { references.push(src); return null; },
+    },
+  }, normalizeMarkdownContentForDisplay(content)));
+  assert.deepEqual(references, [memoReference], 'Markdown parsing must preserve the exact tool-returned reference');
+}
+console.log(`markdown format tests passed (${cases.length} formatting, ${linkCases.length} rendered links, 3 memo references)`);

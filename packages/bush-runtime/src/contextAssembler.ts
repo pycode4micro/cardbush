@@ -17,20 +17,17 @@ export interface AssembleContextInput {
   throughTurnSequence?: number;
   maxChars?: number;
   maxSummaryTurns?: number;
-  /** Request-only source boundaries for checkpoint generation; never persisted. */
-  compactionTurnIds?: string[];
+}
+
+export interface ContextTurnSource {
+  turnId: string;
+  messages: ModelMessage[];
 }
 
 export const ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME = "active_turn_checkpoint" as const;
 export const ACTIVE_TURN_RESUME_MESSAGE_NAME = "context_checkpoint_resume" as const;
 
-export function wrapContextSource(messages: ModelMessage[], turnId: string, target: string): ModelMessage[] {
-  const boundary = (edge: "start" | "end"): ModelMessage => ({
-    role: "user", name: "context_source_boundary", visibility: "internal",
-    content: `<context_source_boundary edge="${edge}" turn_id="${escapeAttribute(turnId)}" target="${escapeAttribute(target)}" />`,
-  });
-  return [boundary("start"), ...messages, boundary("end")];
-}
+
 
 interface CheckpointMessageFact {
   messageId: string;
@@ -63,7 +60,9 @@ export function projectActiveTurnContext(input: {
     ...inputs,
     activeTurnCheckpointMessage(input.turnId, input.checkpoint),
   ];
-  if (input.includeResumeInstruction) projected.push(activeTurnResumeMessage());
+  // Legacy checkpoints already sent this message. Keep it at the same position
+  // in committed history and after recovery; new checkpoints use stable rules.
+  if (input.checkpoint.projectionVersion !== "stable_v1") projected.push(activeTurnResumeMessage());
   projected.push(
     ...input.generatedMessages.slice(boundaryIndex + 1).map((item) => item.message),
   );
@@ -90,6 +89,14 @@ export function activeTurnResumeMessage(): ModelMessage {
 }
 
 export function assembleContext(input: AssembleContextInput): ContextSnapshot {
+  return assembleContextProjection(input).context;
+}
+
+/** Derive source ownership from the same projection used for normal requests. */
+export function assembleContextProjection(input: AssembleContextInput): {
+  context: ContextSnapshot;
+  turns: ContextTurnSource[];
+} {
   const prefix = (input.prefix ?? []).map((message) => modelMessageSchema.parse(message));
   const current = (input.current ?? []).map((message) => modelMessageSchema.parse(message));
   const lastSequence = input.session.turns.at(-1)?.turnSequence ?? 0;
@@ -119,6 +126,7 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     if (turn.contextSummary && source.length === turn.messages.length) {
       if (!visibleSummaryIds.has(turn.turnId)) return [];
       return [{
+        turnId: turn.turnId,
         source,
         messages: [{
           role: "user" as const,
@@ -130,6 +138,7 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     }
     if (turn.contextCheckpoint && source.length === turn.messages.length) {
       return [{
+        turnId: turn.turnId,
         source,
         messages: projectActiveTurnContext({
           turnId: turn.turnId,
@@ -139,8 +148,9 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
         }),
       }];
     }
-    return [{ source, messages: source.map((message) => message.message) }];
-  }).map(({ source, messages }) => ({
+    return [{ turnId: turn.turnId, source, messages: source.map((message) => message.message) }];
+  }).map(({ turnId, source, messages }) => ({
+    turnId,
     source,
     // Retired automatic LEM prompts stay in the journal for audit, but must not
     // keep directing new Turns. Match only the old Runtime message identity.
@@ -159,11 +169,7 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     selectedTurns.unshift(turn);
     selectedChars += chars;
   }
-  const committed = selectedTurns.flatMap(({ source, messages }) => {
-    const turnId = source[0]?.turnId;
-    const index = turnId === undefined ? -1 : (input.compactionTurnIds?.indexOf(turnId) ?? -1);
-    return index < 0 ? messages : wrapContextSource(messages, turnId!, `summaries[${index}]`);
-  });
+  const committed = selectedTurns.flatMap(({ messages }) => messages);
   const sourceMessages = selectedTurns.flatMap((turn) => turn.source);
   const messages = [
     ...prefix,
@@ -171,7 +177,7 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     ...current,
   ];
   validateConversation(messages);
-  return contextSnapshotSchema.parse({
+  const context = contextSnapshotSchema.parse({
     protocol: BUSH_CONTEXT_SNAPSHOT_PROTOCOL,
     sessionId: input.session.sessionId,
     sessionRevision: input.session.revision,
@@ -182,6 +188,7 @@ export function assembleContext(input: AssembleContextInput): ContextSnapshot {
     truncated:
       omittedSummaryCount > 0 || selectedTurns.length < committedTurns.length,
   });
+  return { context, turns: selectedTurns.map(({ turnId, messages }) => ({ turnId, messages })) };
 }
 
 function escapeAttribute(value: string): string {

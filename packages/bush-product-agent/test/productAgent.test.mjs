@@ -135,6 +135,22 @@ test("keeps the stable prefix across a date epoch transition", () => {
   assert.equal(second.inputMessages[0].message.name, "session_environment_update");
 });
 
+test("visual inputs carry ordered source facts without injecting data URLs or changing stable instructions", () => {
+  const sources = ['\\\\nas\\共享\\中文 图.png', 'C:\\images\\one.png', 'data:image/png;base64,TEST_BYTES', 'https://example.test/image.png', 'C:\\images\\omitted.png'];
+  const create = images => createProductAgentTurnRequest({ requestId: 'r', sessionId: 's', turnId: 't', messageId: 'u',
+    createdAt: '2026-09-10T00:00:00Z', localDate: '2026-09-10', sessionEnvironmentLocalDate: '2026-09-10',
+    userText: '看看这些图片', model: 'fixture', tools: [], images, permissionMode: 'task_free', planEnabled: true });
+  const request = create(sources);
+  assert.deepEqual(request.inputMessages.at(-1).message.images.map(image => image.url), sources.slice(0, 4));
+  const context = request.inputMessages.map(item => item.message.content).join('\n');
+  assert.ok(context.includes('1. ' + JSON.stringify(sources[0])));
+  assert.ok(context.includes('2. ' + JSON.stringify(sources[1])));
+  assert.match(context, /3\. Inline image; no local file path was supplied/);
+  assert.ok(context.includes('4. ' + JSON.stringify(sources[3])));
+  assert.doesNotMatch(context, /TEST_BYTES|omitted\.png/);
+  assert.deepEqual(request.prefixMessages, create([]).prefixMessages);
+});
+
 test("product requests record date epochs once and omit empty dynamic context", () => {
   const create = ({ turnId, localDate, previousLocalDate, files, images, tools = [] }) =>
     createProductAgentTurnRequest({
@@ -189,12 +205,12 @@ test("product requests record date epochs once and omit empty dynamic context", 
     localDate: "2026-08-29",
     effectiveAt: "2026-08-29T00:00:00Z",
   });
-  assert.deepEqual(first.inputMessages[1].message.images, [
+  assert.deepEqual(first.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\one.png" },
   ]);
-  assert.equal(second.inputMessages.length, 1);
-  assert.equal(second.inputMessages[0].message.name, undefined);
-  assert.deepEqual(second.inputMessages[0].message.images, [
+  assert.equal(second.inputMessages.length, 2);
+  assert.equal(second.inputMessages.at(-1).message.name, undefined);
+  assert.deepEqual(second.inputMessages.at(-1).message.images, [
     { url: "C:\\images\\two.png" },
   ]);
   assert.equal(first.metadata.sessionEnvironmentLocalDate, "2026-08-29");

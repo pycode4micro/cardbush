@@ -44,13 +44,13 @@ export function McpActivationStatus({ target, isActive, language }: {
     return () => { disposed = true; controller.abort(); clearTimeout(timer); runtime?.dispose(); };
   }, [isActive, target.serverId, target.snapshotId, target.revision, refresh]);
   const labels = language === 'zh' ? {
-    pending: '配置已保存，等待活动任务结束后连接',
+    pending: '配置已保存，正在后台连接或等待工具生效',
     connected: '已连接，工具列表已获取',
     failed: '连接未就绪，请查看 MCP 设置',
     superseded: '此配置已有后续更新，请查看 MCP 设置',
     unknown: '尚未确认连接状态',
   } : {
-    pending: 'Configuration saved; connection waits for active tasks to finish',
+    pending: 'Configuration saved; connecting in the background or awaiting tool activation',
     connected: 'Connected; tool list received',
     failed: 'Connection not ready; check MCP settings',
     superseded: 'Configuration has changed; check MCP settings',

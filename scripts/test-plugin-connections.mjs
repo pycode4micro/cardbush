@@ -12,6 +12,18 @@ assert.equal(mcpConnectionState('blender', true, snapshot, 2), 'connected', 'run
 assert.equal(mcpConnectionState('blender', true, snapshot, 3), 'unknown', 'older connection cannot confirm a newly saved config');
 assert.equal(mcpConnectionState('missing', true, snapshot, 2), 'unknown');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, applicationState: 'pending', pendingRevision: 3_000_004, configurationRevision: 3 }, 3), 'pending');
+assert.equal(mcpConnectionState('blender', true, { ...snapshot, applicationState: 'pending', applicationPhase: 'connecting' }, 2), 'restarting', 'transport discovery is connecting, not waiting for active tasks');
+const scopedPending = { ...snapshot, applicationState: 'pending', applicationPhase: 'connecting', pendingServerIds: ['new-plugin'] };
+assert.equal(mcpConnectionState('blender', true, scopedPending, 2), 'connected', 'unrelated connection attempts do not hide healthy servers');
+assert.equal(mcpConnectionState('new-plugin', true, scopedPending, 2), 'restarting');
+assert.equal(mcpConnectionState('blender', true, { ...scopedPending, applicationState: 'failed' }, 2), 'connected', 'failed additions preserve unaffected connections');
+for (const [updateState, health, expected] of [
+  ['queued', 'unavailable', 'restarting'], ['connecting', 'ready', 'restarting'],
+  ['waiting_for_catalog', 'ready', 'pending'], ['waiting_for_catalog', 'auth_required', 'auth_required'],
+  ['failed', 'ready', 'unavailable'],
+]) {
+  assert.equal(mcpConnectionState('blender', true, { ...scopedPending, servers: [{ id: 'blender', updateState, health, tools: [] }] }, 2), expected);
+}
 assert.equal(mcpConnectionState('blender', false, { ...snapshot, applicationState: 'pending' }, 2), 'pending', 'queued disable is not applied yet');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, applicationState: 'failed' }, 2), 'unavailable');
 assert.equal(mcpConnectionState('blender', true, { ...snapshot, servers: [{ id: 'blender', health: 'unavailable', tools: [] }] }, 2), 'unavailable');

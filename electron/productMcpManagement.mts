@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
-import { mcpServerSnapshotSchema, mcpOAuthFromConfig } from '@cardbush/bush-protocol';
+import { mcpServerSnapshotSchema, mcpOAuthFromConfig, pluginProxySchema } from '@cardbush/bush-protocol';
 import { z } from 'zod';
 import { configurePluginConnectionSchema, pluginConnectionIdentitySchema, type ConfigurePluginConnectionInput, type PluginConnectionIdentity } from './pluginConnectionManagement.mjs';
 
@@ -16,6 +16,7 @@ export const mcpServerPatchSchema = z.object({
   name: z.string().optional(),
   description: z.string().optional(),
   enabled: z.boolean().optional(),
+  proxy: pluginProxySchema.nullable().optional(),
   transport: z.enum(['stdio', 'http', 'streamable_http', 'sse']).optional(),
   command: z.string().optional(),
   args: z.array(z.string()).optional(),
@@ -52,6 +53,7 @@ export function mergeMcpServer(current: Record<string, unknown> | undefined, inp
   const server: Record<string, unknown> = {
     name: patch.id, description: '', enabled: true, ...current, ...patch,
   };
+  if (patch.proxy === null) delete server.proxy;
   for (const key of ['env', 'headers'] as const) {
     if (!patch[key]) continue;
     const values = { ...asRecord(current?.[key]) };

@@ -28,6 +28,8 @@ window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',des
 window.fixtureOverview.snapshot.servers.push({id:'chrome_devtools',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__chrome_devtools__tool'+i}))});
 window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];window.externalUrls=[];window.externalOpenFails=false;
 window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},openExternal:async url=>{if(externalOpenFails)throw Error('fixture browser unavailable');externalUrls.push(url)}};
+window.localInstalls=[];window.localNotifications=[];
+window.cardbushDesktop.installLocalPlugin=kind=>new Promise((resolve,reject)=>{localInstalls.push(kind);window.finishLocalInstall=resolve;window.failLocalInstall=reject});
 window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;window.deferCancelledAccount=false;
 window.publishAccount=state=>{accountStatus={state,experimental:true};for(const fn of accountListeners)fn()};
 Object.assign(window.cardbushDesktop,{
@@ -72,7 +74,7 @@ Object.assign(window.cardbushDesktop,{
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
 const skill={name:'compat:manual',displayName:'手动审查',description:'检查当前修改',defaultPrompt:'请审查当前修改并说明依据。',invocationMode:'manual',path:'fixture/skills/manual/SKILL.md',source:'plugin',sourceId:'compat',sourceLabel:'Compatibility',content:'Review evidence.',packageDir:'fixture',routingHidden:true,requires:[],conflictsWith:[],companionTools:[],blockedTools:[],requiredReads:[],conditionalReads:[],resourceQuickRefs:[]};
-const props={language:'zh',initialTab:'plugins',skills:[skill],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[skill],onLoadSkillDetail:async()=>skill,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:()=>{}};
+const props={language:'zh',initialTab:'plugins',skills:[skill],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[skill],onLoadSkillDetail:async()=>skill,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:message=>localNotifications.push(message)};
 function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');window.showComposer=()=>setComposer(true);return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props}/>}</main><McpUserRequests language="zh"/></div>}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
@@ -86,9 +88,11 @@ try {
     load(id){
       if(id==='\0plugin-fixture.tsx')return source;
       if(id==='\0plugin-fixture-api')return `
-        export async function fetchCardbushAppsConfiguration(){return window.fixtureApps;}
-        export async function saveCardbushAppsConfiguration(value){if(window.marketSaveFails)throw Error('fixture activation failed');window.fixtureApps=value;return value;}
-        export async function fetchMcpConnectionOverview(){window.fixtureReads++;if(window.fixtureFailure)throw Error('fixture offline');return window.fixtureOverview;}
+        export async function fetchCardbushAppsConfiguration(){const value=structuredClone(window.fixtureApps);if(window.deferNextAppsRead){window.deferNextAppsRead=false;await new Promise(resolve=>window.releaseAppsRead=resolve);}return value;}
+        export async function saveCardbushAppsConfiguration(value){if(window.marketSaveFails)throw Error('fixture activation failed');window.fixtureApps={...value,revision:value.revision+1};return window.fixtureApps;}
+        export async function fetchMcpConnectionOverview(){window.fixtureReads++;if(window.fixtureFailure)throw Error('fixture offline');const value=structuredClone(window.fixtureOverview);if(window.fixtureReadDelay)await new Promise(resolve=>setTimeout(resolve,window.fixtureReadDelay));return value;}
+        export async function setMcpServerProxy(id,proxy){if(window.proxySaveFails)throw Error('fixture proxy save failed');window.fixtureOverview={...window.fixtureOverview,servers:window.fixtureOverview.servers.map(item=>item.id===id?{...item,proxy}:item)};}
+        export async function resetMcpServerProxies(){if(window.proxySaveFails)throw Error('fixture proxy save failed');window.fixtureOverview={...window.fixtureOverview,servers:window.fixtureOverview.servers.map(item=>({...item,proxy:undefined}))};}
       `;
     },
   }],build:{outDir:directory,emptyOutDir:true,minify:false,lib:{entry:resolve('__plugin_connections_fixture__.tsx'),formats:['iife'],name:'PluginFixture'}}});

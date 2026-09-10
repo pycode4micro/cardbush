@@ -4,7 +4,6 @@
 import { startOpenAiLogin, openAiAccess, readOpenAiJson } from '@cardbush/bush-mcp-client';
 import { OPENAI_HOSTED_PROTOCOL } from '@cardbush/bush-protocol';
 import { Client, ProtocolError, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { createOpenAiResultNormalizer } from './openai-hosted-result.mjs';
 
 export const OPENAI_PROBE_PROTOCOL = OPENAI_HOSTED_PROTOCOL;
 const record = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -46,7 +45,7 @@ export async function probeOpenAiHostedTools(tokens, { appId, resourceName, fetc
   const endpoint = new URL(OPENAI_PROBE_PROTOCOL.mcpEndpoint);
   const account = accountRoutingHint(tokens);
   const facts = { transport: 'direct_https_mcp', usesCodexProcess: false, usesCodexCredentialFiles: false, catalogReady: false, appCount: 0, targetToolCount: 0, readonlyCallSucceeded: false };
-  let phase = 'mcp_initialize', selectedTool, normalizeResult;
+  let phase = 'mcp_initialize', selectedTool;
   const callRequestIds = new Set();
   const client = new Client({ name: 'cardbush_connector_probe', version: '0.1.0' });
   const transport = new StreamableHTTPClientTransport(endpoint, { fetch: async (url, init) => {
@@ -68,19 +67,13 @@ export async function probeOpenAiHostedTools(tokens, { appId, resourceName, fetc
   try {
     signal.throwIfAborted(); await client.connect(transport);
     onProgress({ stage: 'mcp_connected' });
-    // Keep the raw structure as a fact, then adapt the OpenAI envelope for SDK validation.
+    // Record structural diagnostics while forwarding the original result unchanged.
     const receive = transport.onmessage;
     transport.onmessage = (message, extra) => {
       if (callRequestIds.delete(message.id) && message.result) {
         facts.wireToolReply = resultStructure(message.result, selectedTool?.outputSchema);
         onProgress({ stage: 'readonly_wire_result', ...facts.wireToolReply });
-        const adapted = normalizeResult?.(message.result);
-        if (adapted?.normalized) {
-          facts.outputNormalization = 'validated_declared_result_envelope';
-          onProgress({ stage: 'output_envelope_normalized', fullSchemaValidated: true });
-          receive?.({ ...message, result: adapted.result }, extra);
-          return;
-        }
+
       }
       receive?.(message, extra);
     };
@@ -107,7 +100,6 @@ export async function probeOpenAiHostedTools(tokens, { appId, resourceName, fetc
       throw new Error('This probe only permits read-only tools with no required arguments.');
     }
     selectedTool = tool;
-    normalizeResult = createOpenAiResultNormalizer(tool);
     phase = 'readonly_tool_call';
     onProgress({ stage: 'readonly_tool_selected', hasOutputSchema: Boolean(tool.outputSchema) });
     const result = await client.callTool({ name: tool.name, arguments: {} }, { signal, timeout: 60_000 });

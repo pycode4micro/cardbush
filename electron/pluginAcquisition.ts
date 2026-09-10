@@ -126,9 +126,9 @@ async function npmCommand(): Promise<[string, string[]]> {
   throw new Error('npm is required to download registry plugins. Install Node.js with npm.');
 }
 
-export async function runAcquisitionCommand(command: string, args: string[], cwd: string): Promise<string> {
+export async function runAcquisitionCommand(command: string, args: string[], cwd: string, networkEnv: NodeJS.ProcessEnv = {}): Promise<string> {
   return new Promise((fulfill, reject) => {
-    const child = spawn(command, args, { cwd, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0',
+    const child = spawn(command, args, { cwd, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...networkEnv, GIT_TERMINAL_PROMPT: '0',
       GCM_INTERACTIVE: 'Never', SSH_ASKPASS_REQUIRE: 'never', npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' } });
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
     let bytes = 0, settled = false;

@@ -144,7 +144,7 @@ declare global {
       listSkills: () => Promise<unknown[]>;
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
-      installLocalPlugin: () => Promise<{ id: string; manifestPath: string } | null>;
+      installLocalPlugin: (kind?: 'directory' | 'zip') => Promise<{ id: string; manifestPath: string } | null>;
       pluginCommands: () => Promise<Array<{ id: string; description: string; argumentHint: string; kind?: 'command' | 'skill' }>>;
       pluginMarketSources: () => Promise<PluginMarketSource[]>;
       addPluginMarket: (source: string) => Promise<PluginMarketSource>;

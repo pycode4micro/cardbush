@@ -30,8 +30,9 @@ async function run() {
   const { OPENAI_HOSTED_PROTOCOL } = await import('@cardbush/bush-protocol');
   const wrapper = join(root, 'fixture-worker.mjs'), observations = join(root, 'requests.txt');
   // Intercept only inside this isolated test worker; production still uses the fixed HTTPS endpoint.
-  writeFileSync(wrapper, `import assert from 'node:assert/strict'; import { appendFileSync } from 'node:fs'; import { net } from 'electron';
-    net.fetch = async (url, init) => {
+  writeFileSync(wrapper, `import assert from 'node:assert/strict'; import { appendFileSync } from 'node:fs';
+    import { ProxyFetchPool } from ${JSON.stringify(pathToFileURL(resolve('dist-electron/proxyFetch.mjs')).href)};
+    ProxyFetchPool.prototype.forEndpoint = () => async (url, init) => {
       assert.equal(String(url), ${JSON.stringify(OPENAI_HOSTED_PROTOCOL.mcpEndpoint)});
       const headers=new Headers(init.headers); assert.match(headers.get('authorization'), /^Bearer PRIVATE_WORKER_/);
       assert.equal(init.redirect,'error'); assert.equal(init.credentials,'omit');
@@ -61,12 +62,23 @@ async function run() {
   const controller = new RuntimeUtilityProcessController({ modulePath: wrapper, env: { ...env, CARDBUSH_RUNTIME_STATE_ROOT: join(root, 'runtime'),
     CARDBUSH_APPS_CONFIG_PATH: join(root, 'apps.json'), CARDBUSH_RUNTIME_SKILL_ROOTS: '[]', CARDBUSH_RUNTIME_PLUGIN_ROOTS: '[]', CARDBUSH_MCP_DESKTOP_BRIDGE: '1' },
     onMcpHostRequest: (operation, payload, signal) => {
+      if (operation === 'network.configuration') return Promise.resolve({ default: { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }, plugins: {} });
+      if (operation === 'network.route') return Promise.resolve('');
       if (operation === 'openai.access-token') { tokenRequests++; return account.access({ ...payload, signal }); }
       return desktop.handle(operation, payload, signal);
     } });
   const command = async (kind, payload = {}) => {
     const response = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind, payload } });
-    assert.equal(response.ok, true, JSON.stringify(response)); assert.doesNotMatch(JSON.stringify(response), /PRIVATE_WORKER_|PRIVATE_REFRESH/); return response.result;
+    assert.equal(response.ok, true, JSON.stringify(response)); assert.doesNotMatch(JSON.stringify(response), /PRIVATE_WORKER_|PRIVATE_REFRESH/);
+    let result = response.result;
+    const until = Date.now() + 8000;
+    while (result?.applicationState === 'pending') {
+      assert.ok(Date.now() < until, 'Hosted MCP connection should settle');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const state = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
+      assert.equal(state.ok, true, JSON.stringify(state)); result = state.result;
+    }
+    return result;
   };
   const snapshot = { protocol: 'bush.mcp_snapshot.v2', snapshotId: 'openai-fixture', revision: 1, servers: [{ id: 'hosted', versionMode: 'legacy',
     transport: { kind: 'streamable_http', url: OPENAI_HOSTED_PROTOCOL.mcpEndpoint, auth: 'openai', openaiAppId: 'expected-app' } }] };

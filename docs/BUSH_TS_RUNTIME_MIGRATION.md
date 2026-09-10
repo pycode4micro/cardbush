@@ -89,6 +89,16 @@ Turn in that Session. A stopped Turn therefore remains an ordinary append-only
 prefix; edit/regenerate inherits the same snapshot but truthfully reports the
 edited prefix as a break.
 
+Context checkpoint preparation appends its source index and pressure notice to
+the actual request instead of inserting boundaries into preceding Turns. Source
+ranges and short first/last locators are derived from the ordinary context
+projection and checked against the outgoing messages; they are not a second
+history store. Summary count, order, revision, and active-message authorization
+remain runtime-owned. Preparation and correction retries preserve the existing
+prefix; applying the completed summary starts a new prefix. The existing
+emergency projection may still shorten an already oversized maintenance request
+when the original input cannot fit, and Cache Chain reports that change honestly.
+
 The Utility Process enables file-backed recovery only when
 `CARDBUSH_RUNTIME_STATE_ROOT` is an absolute directory. Choosing the production
 state root remains a CardBush product-host responsibility; the Runtime does not
@@ -258,6 +268,17 @@ fallback membership, Profile instructions, disabled Tools, Skills, trusted
 Hooks/Guards, and child-visible Tool allowlists. Runtime does not infer any of
 these from the task or member prose, and configuration cannot change while a
 Turn is active.
+
+The product sorts and deduplicates effective Tool names before producing a Team
+snapshot. Runtime receipts expose a `contentHash` (SHA-256 of the schema-normalized
+Teams, excluding snapshot identity); the product compares this receipt before
+allocating a revision. Identical content reuses the accepted revision, including
+after a renderer restart or a lost apply response. Changed content advances past
+the accepted revision, and synchronization/configuration saves are serialized
+across the renderer's per-Turn clients. Only the successful revision floor is
+persisted locally; the effective catalog and its receipt remain Runtime facts.
+An older host without a content hash gets a newer revision conservatively.
+Runtime still rejects conflicting identities and changes during active Turns.
 
 `subagent` and `team_delegate` share one child-Turn builder and the same durable
 Session, Provider, Tool, permission, and task-journal path. Explicit assignments

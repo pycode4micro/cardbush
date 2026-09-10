@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
+import { safePackagePath } from './pluginPackagePaths';
 
 import type {
   CardbushPluginCatalogEntry,
@@ -164,11 +165,8 @@ export async function inspectProductPlugin(source: string): Promise<CardbushPlug
 async function installProductPluginTransaction(sourcePath: string, userPluginRoot: string) {
   const source = resolve(sourcePath);
   const resolved = await resolvePluginManifest(source);
-  const { manifest, manifestPath } = resolved;
+  const { manifest } = resolved;
   const id = requiredString(manifest.name, 'plugin.name');
-  if (basename(source) !== id) {
-    throw new Error(`Plugin folder ${basename(source)} must match manifest name ${id}.`);
-  }
   await decodeManifest({
     resolved,
     source: 'user',
@@ -195,6 +193,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
     await decodeManifest({ resolved: staged,
       source: 'user', installation: 'INSTALLED_BY_DEFAULT' });
     validateRuntimeExtensions(staged);
+    if (staged.manifest.name !== id) throw new Error('Plugin manifest name changed during installation. Try again.');
     let movedExisting = false;
     try { await rename(target, backup); movedExisting = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -209,7 +208,7 @@ async function installProductPluginTransaction(sourcePath: string, userPluginRoo
       }
       throw error;
     }
-    return { id, manifestPath: join(target, relative(source, manifestPath)) };
+    return { id, manifestPath: join(target, relative(temporary, staged.manifestPath)) };
   } finally {
     if (!preserveBackup) await rm(work, { recursive: true, force: true }).catch((error: unknown) => {
       // A running old plugin may still hold a Windows file handle. The committed
@@ -262,6 +261,7 @@ async function decodeManifest(input: {
   if (!/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(id)) {
     throw new Error(`Invalid CardBush plugin name: ${id}`);
   }
+  safePackagePath(id);
   const interfaceMetadata = objectOrEmpty(manifest.interface);
   const author = objectOrEmpty(manifest.author);
   const logoPath = await assetPath(pluginRoot, interfaceMetadata.logo, true);

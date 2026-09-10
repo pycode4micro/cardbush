@@ -19,7 +19,7 @@ test("applies an MCP 2.x snapshot and executes a namespaced Tool", async () => {
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
 
   const runtimeName = "mcp__chrome_devtools__echo_tool";
@@ -91,7 +91,7 @@ test("binds default MCP permission to one exact server Tool resource", async () 
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot());
   let requested;
@@ -140,7 +140,7 @@ test("bound MCP grants preserve once/session scope and exact native results", as
     const native = { content: [{ type: "text", text: "native failure" }], isError: true };
     const fake = fakeClient(native);
     const manager = new McpClientManager({ registry,
-      createClient: () => fake, createTransport: () => ({}) });
+      createClient: () => fake, createTransport: () => ({ async send() {} }) });
     await manager.apply(snapshot());
     let prompts = 0;
     const coordinator = new ToolExecutionCoordinator({
@@ -171,7 +171,7 @@ test("lets an all_free Turn execute a default-ask MCP Tool without another promp
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot());
   let permissionRequests = 0;
@@ -206,7 +206,7 @@ test("keeps default-ask MCP permission for task_free and user_free Turns", async
       const manager = new McpClientManager({
         registry,
         createClient: () => fake,
-        createTransport: () => ({}),
+        createTransport: () => ({ async send() {} }),
       });
       await manager.apply(snapshot());
       let requested;
@@ -249,7 +249,7 @@ test("preserves a standard successful MCP response exactly", async () => {
   const manager = new McpClientManager({
     registry,
     createClient: () => fakeClient({ content: [{ type: "text", text: "untrusted" }] }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -296,7 +296,7 @@ test("preserves adversarial standard MCP fields without deriving Runtime semanti
   const manager = new McpClientManager({
     registry,
     createClient: () => fakeClient(native),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -318,7 +318,7 @@ test("rejects non-JSON MCP extensions instead of silently deleting them", async 
       content: [{ type: "text", text: "visible" }],
       nonJsonExtension: undefined,
     }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -351,7 +351,7 @@ test("preserves opaque structured MCP content without interpreting it", async ()
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -378,7 +378,7 @@ test("does not impose a private schema on bundled MCP structured content", async
         success: true,
       },
     }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -404,7 +404,7 @@ test("preserves an MCP isError response as native tool output", async () => {
       }],
       isError: true,
     }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -428,7 +428,7 @@ test("does not rewrite or bound native MCP error content", async () => {
       content: [{ type: "text", text: `${invocation}\n${actionable}` }],
       isError: true,
     }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -457,7 +457,7 @@ test("keeps a server request timeout distinct from connection failure", async ()
   const manager = new McpClientManager({
     registry,
     createClient: () => client,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -484,7 +484,7 @@ test("restarts only after the MCP connection actually closes", async () => {
   const manager = new McpClientManager({
     registry,
     createClient: () => clients.shift(),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
     wait: async () => undefined,
     onServiceStateChange: (state) => states.push(state),
   });
@@ -509,7 +509,7 @@ test('authentication required during reconnect stops retries and reports an acti
   let connections = 0;
   const manager = new McpClientManager({ registry: new ToolRegistry(),
     createClient: () => ++connections === 1 ? first : fakeClient(successfulToolResult, { connect: () => { throw new McpAuthenticationRequired(); } }),
-    createTransport: () => ({}), wait: async () => undefined,
+    createTransport: () => ({ async send() {} }), wait: async () => undefined,
   });
   try {
     await manager.apply(snapshot());
@@ -534,7 +534,7 @@ test("does not restart an MCP service when user cancellation is surfaced as an S
   const manager = new McpClientManager({
     registry,
     createClient: () => client,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -577,13 +577,14 @@ test("queues snapshot mutation during a Turn and rejects conflicting revision re
     registry,
     canApply: () => canApply,
     createClient: () => fakeClient({ content: [] }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot());
 
   canApply = false;
   const pending = await manager.apply({ ...snapshot(), revision: 2 });
   assert.equal(pending.applicationState, 'pending');
+  assert.equal(pending.applicationPhase, 'waiting_for_idle');
   assert.equal(pending.revision, 1);
   assert.equal(pending.pendingRevision, 2);
   assert.ok(registry.resolve("mcp__server__echo_tool"));
@@ -610,7 +611,7 @@ test('hot update reuses unchanged connections and rolls back failed additions', 
       } });
       clients.push(client);
       return client;
-    }, createTransport: () => ({}),
+    }, createTransport: () => ({ async send() {} }),
   });
   try {
     await manager.apply(snapshot());
@@ -637,7 +638,7 @@ test('coalesces busy updates and does not resurrect pending connections after cl
   let idle = false;
   let connected = 0;
   const manager = new McpClientManager({ registry: new ToolRegistry(), canApply: () => idle,
-    createClient: () => { connected++; return fakeClient({ content: [] }); }, createTransport: () => ({}),
+    createClient: () => { connected++; return fakeClient({ content: [] }); }, createTransport: () => ({ async send() {} }),
   });
   await Promise.all([manager.apply(snapshot()), manager.apply({ ...snapshot(), revision: 2, servers: [] })]);
   assert.equal(connected, 0);
@@ -647,10 +648,11 @@ test('coalesces busy updates and does not resurrect pending connections after cl
   assert.equal(connected, 0);
   idle = false;
   await manager.apply({ ...snapshot(), revision: 3 });
+  const startedBeforeClose = connected;
   await manager.close();
   idle = true;
   await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(connected, 0);
+  assert.equal(connected, startedBeforeClose, 'close never schedules another background connection');
   assert.equal(manager.snapshot(), undefined);
 });
 
@@ -664,7 +666,7 @@ test('defers commit if a turn starts while an MCP connection is opening', async 
     createClient: () => {
       const client = fakeClient({ content: [] }, { connect: () => waiting });
       clients.push(client); return client;
-    }, createTransport: () => ({}),
+    }, createTransport: () => ({ async send() {} }),
   });
   const update = manager.apply(snapshot());
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -672,10 +674,11 @@ test('defers commit if a turn starts while an MCP connection is opening', async 
   release();
   assert.equal((await update).applicationState, 'pending');
   assert.equal(registry.resolve('mcp__server__echo_tool'), undefined);
-  assert.equal(clients[0].closeCalls, 1);
+  assert.equal(clients[0].closeCalls, 0, 'keep a completed transport until the active turn finishes');
   idle = true;
   await new Promise(resolve => setTimeout(resolve, 350));
   assert.ok(registry.resolve('mcp__server__echo_tool'));
+  assert.equal(clients.length, 1, 'publishing after the turn does not repeat initialization');
   await manager.close();
 });
 
@@ -684,7 +687,7 @@ test("synthesizes a conservative Action Manifest for a standard MCP Tool", async
   const manager = new McpClientManager({
     registry,
     createClient: () => fakeClient({ content: [] }, { includeManifest: false }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot());
   const registered = registry.resolve("mcp__server__echo_tool");
@@ -698,7 +701,7 @@ test("does not import server-declared private Action Manifest semantics", async 
   const standard = new McpClientManager({
     registry: standardRegistry,
     createClient: () => fakeClient({ content: [] }),
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await standard.apply(snapshot());
   assert.equal(
@@ -714,7 +717,7 @@ test("does not disclose CardBush session identity to ordinary MCP tools", async 
   const manager = new McpClientManager({
     registry,
     createClient: () => fake,
-    createTransport: () => ({}),
+    createTransport: () => ({ async send() {} }),
   });
   await manager.apply(snapshot({ permission: "allow" }));
   const coordinator = new ToolExecutionCoordinator({
@@ -726,6 +729,41 @@ test("does not disclose CardBush session identity to ordinary MCP tools", async 
   assert.equal(fake.calls[0]._meta.cardbush_turn_id, undefined);
   assert.equal(fake.calls[0]._meta.cardbush_request_id, undefined);
   assert.equal(fake.calls[0]._meta.cardbush_session_title, undefined);
+});
+
+test('publishes transport discovery separately from waiting for active turns', async t => {
+  let release, entered;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const fake = fakeClient(successfulToolResult, { connect: async () => { entered(); await waiting; } });
+  const manager = new McpClientManager({ registry: new ToolRegistry(), createClient: () => fake, createTransport: () => ({ async send() {} }) });
+  t.after(() => manager.close());
+  const update = manager.apply(snapshot());
+  await started;
+  assert.equal(manager.snapshot().applicationState, 'pending');
+  assert.equal(manager.snapshot().applicationPhase, 'connecting');
+  release();
+  const result = await update;
+  assert.equal(result.applicationState, 'applied');
+  assert.equal(result.applicationPhase, undefined);
+});
+
+test('catalog cursor cycles fail without publishing a partial tool set and a later refresh can recover', async t => {
+  let cycle = true;
+  const fake = fakeClient(successfulToolResult);
+  const original = fake.listTools.bind(fake);
+  fake.listTools = async () => ({ ...await original(), ...(cycle ? { nextCursor: 'same' } : {}) });
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, createClient: () => fake, createTransport: () => ({ async send() {} }) });
+  t.after(() => manager.close());
+  const first = await manager.apply(snapshot());
+  assert.equal(first.servers[0].health, 'unavailable');
+  assert.match(first.servers[0].lastError, /repeated a pagination cursor/);
+  assert.equal(registry.definitions().length, 0);
+  cycle = false;
+  const recovered = await manager.refresh('server', { ...snapshot(), revision: 2 });
+  assert.equal(recovered.servers[0].health, 'ready');
+  assert.equal(registry.definitions().length, 1);
 });
 
 function snapshot(policy, serverId = "server") {

@@ -81,6 +81,12 @@ export class ToolExecutionStore {
       .map((record) => structuredClone(record));
   }
 
+  /** Filter before cloning: a small tool-owned index must not copy unrelated logs. */
+  listByTool(sessionId: string, toolName: string): ToolExecutionRecord[] {
+    return this.#load(sessionId).filter(record => record.toolCall.name === toolName)
+      .map(record => structuredClone(record));
+  }
+
   listTurnSummaries(sessionId: string, turnId: string): ToolExecutionSummary[] {
     return this.#load(sessionId)
       .filter((record) => record.turnId === turnId)

@@ -53,21 +53,40 @@ async function run() {
     bundledPluginRoot: join(root, 'plugins'), userPluginRoot: join(root, 'user-plugins'), runtimeBridge: controller,
   });
   const client = new Client({ name: 'worker-management-test', version: '1.0.0' });
+  let observation = 0;
+  const observe = async () => {
+    const response = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: `observe-${++observation}`,
+      command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
+    assert.equal(response.ok, true); return response.result;
+  };
+  const applied = async () => {
+    for (let i = 0; i < 200; i++) {
+      const current = await observe();
+      if (current.applicationState === 'applied') return current;
+      assert.notEqual(current.applicationState, 'failed', current.applicationError);
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.fail('background MCP update did not finish');
+  };
+  const gate = join(root, 'allow-connect');
   try {
     await controller.start();
     const initial = await host.refreshMcp();
-    assert.equal(initial.applicationState, 'applied');
+    assert.equal(initial.applicationState, 'pending');
     assert.equal(initial.configurationRevision, 1);
     assert.deepEqual(initial.servers.map(s => s.id), ['cardbush_management'], 'management remains available when Apps plugins are disabled');
+    await applied();
     await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url), {
       requestInit: { headers: { Authorization: `Bearer ${endpoint.token}` } },
     }));
     const fixture = join(root, 'echo.mjs');
     writeFileSync(fixture, `
+      import { existsSync } from 'node:fs';
       import { createRequire } from 'node:module';
       const require = createRequire(${JSON.stringify(resolve('package.json'))});
       const { McpServer } = require('@modelcontextprotocol/server');
       const { serveStdio } = require('@modelcontextprotocol/server/stdio');
+      while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 25));
       await serveStdio(() => {
         const server = new McpServer({ name: 'worker-echo', version: '1.0.0' });
         server.registerTool('echo', { inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'worker connected' }] }));
@@ -80,14 +99,20 @@ async function run() {
     assert.notEqual(added.isError, true, JSON.stringify(added));
     const status = JSON.parse(added.content[0].text);
     assert.equal(status.saved, true);
-    assert.equal(status.runtime.applicationState, 'applied');
+    assert.equal(status.runtime.applicationState, 'pending', 'configuration returns while the stdio child is deliberately blocked');
     assert.equal(status.runtime.configurationRevision, 2);
+    const reconnected = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: 'reconnect-existing',
+      command: { kind: 'runtime.mcp_reconnect', payload: { serverId: 'cardbush_management' } } });
+    assert.equal(reconnected.ok, true, 'another connection request is accepted before the blocked child is released');
+    assert.equal(reconnected.result.applicationState, 'pending');
+    writeFileSync(gate, 'ready');
+    const settled = await applied();
     const observed = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: 'observe-mcp',
       command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
     assert.equal(observed.ok, true);
     assert.equal(observed.result.configurationRevision, 2);
-    assert.equal(observed.result.revision, status.runtime.revision, 'read-only observation preserves runtime revision');
-    assert.equal(status.runtime.servers.find(s => s.id === 'worker_echo').tools[0].runtimeName, 'mcp__worker_echo__echo');
+    assert.equal(observed.result.revision, settled.revision, 'read-only observation preserves runtime revision');
+    assert.equal(settled.servers.find(s => s.id === 'worker_echo').tools[0].runtimeName, 'mcp__worker_echo__echo');
     const catalog = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: 'catalog',
       command: { kind: 'runtime.get_tool_catalog', payload: {} } });
     assert.equal(catalog.ok, true, JSON.stringify(catalog));
@@ -95,6 +120,7 @@ async function run() {
     assert.ok(catalog.result.some(tool => tool.name === 'mcp__cardbush_management__configure_mcp_server'));
     console.log('Real Electron worker passed: management MCP -> Product Host -> persistent config -> Runtime worker -> discovered stdio tool.');
   } finally {
+    writeFileSync(gate, 'ready');
     clearTimeout(deadline);
     await client.close();
     await host.shutdown();

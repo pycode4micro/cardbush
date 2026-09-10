@@ -45,13 +45,26 @@ module.exports = async function testChatToolPackages({ run, until, pause, theme 
   assert.deepEqual(await run("[...firstPackage.querySelectorAll('[data-execution-id]')].map(node => node.dataset.executionId)"),
     Array.from({ length: 100 }, (_, index) => `package-tool-${index + 1}`));
   assert.equal(await run("Boolean(firstPackage.querySelector('.tool-change-block'))"), true, 'diff review remains accessible inside the package');
+  assert.equal(await run("firstPackage.querySelectorAll('.tool-execution-row').length"), 100, 'an opened package shows compact execution rows');
+  assert.equal(await run("firstPackage.querySelectorAll('.tool-execution-row-content, .tool-execution-output, .tool-output-actions').length"), 0, 'rows do not eagerly render outputs or repeated action bars');
+  assert.ok(await run("[...firstPackage.querySelectorAll('.tool-execution-row')].every(row => row.getBoundingClientRect().height <= 32)"), 'each closed execution occupies one line');
+  await run("firstPackage.querySelector('[data-execution-id=package-tool-1] .tool-execution-row').click()");
+  await until("firstPackage.querySelector('.tool-execution-output')?.textContent === 'result-1'", 'clicking a row reveals its exact output');
+  await run("firstPackage.querySelector('[data-execution-id=package-tool-3] .tool-execution-row').click()");
+  await until("firstPackage.querySelector('.tool-execution-output')?.textContent === 'result-3'", 'a different row replaces the open detail');
+  assert.equal(await run("firstPackage.querySelectorAll('.tool-execution-row-content').length"), 1);
+  assert.equal(await run("firstPackage.querySelector('[data-execution-id=package-tool-1] .tool-execution-row').getAttribute('aria-expanded')"), 'false');
   await run(`
     appendPackageTool(101, { name: 'runtime_context_compaction', metadata: { runtimeMaintenance: 'context_compaction', attempt: 1 } });
     renderPackages();
   `);
   await until("firstPackage.querySelectorAll('[data-execution-id]').length === 101", 'appending preserves an explicitly expanded package');
   assert.equal(await run("document.querySelectorAll('.message-row.streaming .tool-execution-block').length"), 1);
-  assert.equal(await run("Boolean(firstPackage.querySelector('.runtime-context-compaction-detail'))"), true, 'maintenance retains its factual details inside the shared package');
+  assert.equal(await run("Boolean(firstPackage.querySelector('.runtime-context-compaction-detail'))"), false, 'maintenance also starts as a compact row');
+  assert.equal(await run("firstPackage.querySelector('.tool-execution-output')?.textContent"), 'result-3', 'new executions cannot switch the selected detail');
+  await run("firstPackage.querySelector('[data-execution-id=package-tool-101] .tool-execution-row').click()");
+  await until("Boolean(firstPackage.querySelector('.runtime-context-compaction-detail'))", 'maintenance details remain available on demand');
+  assert.equal(await run("firstPackage.querySelectorAll('[data-execution-id]').length"), 101, 'detail views do not duplicate execution identities');
   await run(`
     firstPackage.querySelector('.tool-execution-summary').click();
     packageState = views.appendAssistantDelta(packageState, packageSession, 'package-placeholder', 'New assistant narration starts here.', {

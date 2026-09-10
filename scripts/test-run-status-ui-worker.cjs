@@ -27,7 +27,7 @@ app.whenReady().then(async () => {
     const text = await read('document.body.innerText');
     assert.match(text, /工具执行中 1 项/);
     assert.match(text, /1 个最近报告仍在运行/);
-    assert.match(text, /等待活动任务结束后连接/);
+    assert.match(text, /正在后台连接或等待工具生效/);
     assert.ok(await read('document.documentElement.scrollWidth <= window.innerWidth'), 'status text must wrap inside a narrow conversation');
     await new Promise(resolve => setTimeout(resolve, 150));
     writeFileSync(resolve('tmp/run-status-active.png'), (await window.webContents.capturePage()).toPNG());
@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
     writeFileSync(resolve('tmp/run-status-connected.png'), (await window.webContents.capturePage()).toPNG());
     // A queued retry must be cancelled on unmount.
     await read('window.renderFixture(true)');
-    await until('document.body.innerText.includes("等待活动任务结束后连接")');
+    await until('document.body.innerText.includes("正在后台连接或等待工具生效")');
     await read('window.fixtureSnapshot = () => ({protocol:"bush.mcp_snapshot_result.v1",snapshotId:"fixture",revision:1,pendingRevision:2,applicationState:"pending",servers:[]}); window.renderFixture(false)');
     await until('window.checks === 3');
     await read('window.unmountFixture()');

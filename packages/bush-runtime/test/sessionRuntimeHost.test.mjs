@@ -448,6 +448,51 @@ test("records assistant thumbs as Turn feedback without crediting retrieved LEM 
   assert.equal(stored.feedback_events[0].scope, "turn");
 });
 
+test('summary preparation and validation retries preserve the prefix until the checkpoint is applied', async () => {
+  const requests = [];
+  let attempts = 0;
+  const host = new InMemoryRuntimeHost({ provider: {
+    async countInputTokens(request) {
+      return { inputTokens: request.messages.some(message => message.name === 'turn_context_summary') ? 100
+        : request.turnId === 'third' ? 8600 : 1000, source: 'provider' };
+    },
+    async *stream(request) {
+      requests.push(structuredClone(request));
+      if (request.messages.some(message => message.name === 'context_pressure')) {
+        attempts++;
+        yield event(request.requestId, 0, 'tool_call_delta', { index: 0, toolCallId: `checkpoint_${attempts}`, nameDelta: 'checkpoint_context',
+          argumentsDelta: JSON.stringify({ summaries: attempts === 1 ? ['missing a summary'] : ['First facts.', 'Second facts.'], active_summary: '' }) });
+        yield event(request.requestId, 1, 'response_completed', { finishReason: 'tool_calls' });
+        return;
+      }
+      yield event(request.requestId, 0, 'text_delta', { delta: `${request.turnId} complete` });
+      yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
+    },
+  } });
+  for (const id of ['first', 'second', 'third']) {
+    const request = sessionRequest(`request_${id}`, id, `user_${id}`, 'Continue');
+    request.maxOutputTokens = 1000;
+    request.metadata = { contextWindowTokens: 10000 };
+    assert.equal((await host.runSessionTurn(request)).payload.status, 'completed');
+  }
+  assert.equal(requests.length, 5);
+  for (const index of [2, 3]) {
+    assert.deepEqual(requests[index].messages.slice(0, requests[index - 1].messages.length), requests[index - 1].messages);
+    assert.equal(requests[index].messages.some(message => message.name === 'context_source_boundary'), false);
+  }
+  const notice = requests[2].messages.at(-1);
+  assert.equal(notice.name, 'context_pressure');
+  const sources = notice.content.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line));
+  assert.deepEqual(sources.map(source => [source.target, source.startMessage, source.endMessageExclusive]),
+    [['summaries[0]', 1, 3], ['summaries[1]', 3, 5], ['not_requested', 5, 6]]);
+  const observations = host.events('session_1', 'third').filter(event => event.kind === 'cache_chain_observed').map(event => event.payload);
+  assert.deepEqual(observations.map(observation => observation.frozenPrefixBreak), [false, false, true]);
+  assert.equal(observations[0].sharedPrefixMessages, requests[1].messages.length);
+  const session = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'session_1' } });
+  assert.deepEqual(session.turns.slice(0, 2).map(turn => turn.contextSummary), ['First facts.', 'Second facts.']);
+  assert.ok(session.turns.every(turn => turn.messages.every(item => item.message.name !== 'context_pressure')));
+});
+
 test("forces atomic context compaction and resumes the same active Turn", async () => {
   const observedRequests = [];
   let call = 0;
@@ -643,7 +688,7 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
     provider: {
       async countInputTokens(request) {
         if (request.messages.some((message) =>
-          message.name === "context_checkpoint_resume")) {
+          message.role === "assistant" && message.content.includes("<active_turn_checkpoint"))) {
           return { inputTokens: 180, source: "provider" };
         }
         if (request.messages.some((message) => message.name === "context_pressure")) {
@@ -730,7 +775,6 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
       ["system", undefined],
       ["user", undefined],
       ["assistant", undefined],
-      ["developer", "context_checkpoint_resume"],
     ],
   );
   assert.match(continued.messages[2].content, /active_turn_checkpoint/);
@@ -834,7 +878,7 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
         const hasPressure = request.messages.some((message) =>
           message.name === "context_pressure");
         const hasResume = request.messages.some((message) =>
-          message.name === "context_checkpoint_resume");
+          message.role === "assistant" && message.content.includes("<active_turn_checkpoint"));
         const inputTokens = hasResume
           ? 1_000
           : toolResultChars > 0
@@ -1070,7 +1114,7 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
   assert.match(checkpoints[0].content, /Checkpoint two is cumulative/);
   assert.doesNotMatch(checkpoints[0].content, /Checkpoint one:/);
   assert.equal(finalRequest.messages.filter((message) =>
-    message.name === "context_checkpoint_resume").length, 1);
+    message.name === "context_checkpoint_resume").length, 0);
   assert.equal(finalRequest.messages.some((message) => message.role === "tool"), false);
   const snapshot = await host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
@@ -1740,7 +1784,7 @@ for (const recover of [true, false]) {
       dataRoot: root, toolRegistry: registry,
       provider: {
         async countInputTokens(request) {
-          if (request.messages.some(m => m.name === "context_checkpoint_resume")) return { inputTokens: 100, source: "provider" };
+          if (request.messages.some(m => m.role === "assistant" && m.content.includes("<active_turn_checkpoint"))) return { inputTokens: 100, source: "provider" };
           if (request.messages.some(m => m.name === "context_pressure")) return { inputTokens: 2900, source: "provider" };
           return { inputTokens: request.messages.some(m => m.role === "tool") ? 2860 : 100, source: "provider" };
         },
@@ -1758,8 +1802,8 @@ for (const recover of [true, false]) {
               index: 0, toolCallId: `checkpoint_${maintenance}`, nameDelta: "checkpoint_context", argumentsDelta: JSON.stringify(args),
             });
             yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
-          } else if (request.messages.some(m => m.name === "context_checkpoint_resume")) {
-            assert.match(request.messages.find(m => m.name === "context_checkpoint_resume").role, /developer/);
+          } else if (request.messages.some(m => m.role === "assistant" && m.content.includes("<active_turn_checkpoint"))) {
+            assert.equal(request.messages.some(m => m.name === "context_checkpoint_resume"), false);
             assert.equal(request.messages.some(m => m.role === "tool"), false);
             yield event(request.requestId, 1, "text_delta", { delta: "Finished without repeating the observation." });
             yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   BUSH_TEAM_SNAPSHOT_RESULT_PROTOCOL,
+  serializeTeamSnapshotContent,
   teamSnapshotSchema,
   type TeamDefinition,
   type TeamSnapshot,
@@ -38,6 +39,7 @@ export class TeamSnapshotStore {
       protocol: BUSH_TEAM_SNAPSHOT_RESULT_PROTOCOL,
       snapshotId: snapshot.snapshotId,
       revision: snapshot.revision,
+      contentHash: createHash("sha256").update(serializeTeamSnapshotContent(snapshot)).digest("hex"),
       teamCount: snapshot.teams.length,
       memberCount: snapshot.teams.reduce((count, team) => count + team.members.length, 0),
     };

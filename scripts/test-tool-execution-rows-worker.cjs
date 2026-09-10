@@ -1,0 +1,70 @@
+const assert = require('node:assert/strict');
+const { join, resolve } = require('node:path');
+const { writeFileSync } = require('node:fs');
+const { app, BrowserWindow } = require('electron');
+const directory = resolve(process.argv[2]);
+app.disableHardwareAcceleration(); app.setPath('userData', join(directory, 'profile'));
+const pause = () => new Promise(resolve => setTimeout(resolve, 90));
+app.whenReady().then(async () => {
+  const window = new BrowserWindow({show:false,width:780,height:640,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});
+  window.webContents.on('console-message', event => { if(event.level==='error')console.error('Renderer:',event.message); });
+  const run = code => window.webContents.executeJavaScript(code);
+  const until = async code => { const end=Date.now()+5000; while(!await run(code)){if(Date.now()>end)throw Error('Timed out: '+code+'; '+await run('JSON.stringify({body:document.body.innerText,requests:requests.length,executions})')); await pause();} };
+  try {
+    await window.loadFile(join(directory,'index.html'));
+    const url = window.webContents.getURL(); let navigations=0;
+    window.webContents.on('will-navigate',()=>navigations++);
+    await until('Boolean(document.querySelector(".tool-execution-summary"))');
+    for (const theme of ['theme-dark','theme-cyberpunk']) {
+      await run(`theme=${JSON.stringify(theme)};renderFixture();`); await pause();
+      if(await run('document.querySelector(".tool-execution-summary").getAttribute("aria-expanded")==="false"'))
+        await run('document.querySelector(".tool-execution-summary").click()');
+      await until('document.querySelectorAll(".tool-execution-row").length===3');
+      assert.equal(await run('document.querySelectorAll(".tool-execution-output,.tool-output-actions").length'),0);
+      assert.equal(await run('requests.length'),0,'opening a package cannot fetch hidden native results');
+      assert.ok(await run('[...document.querySelectorAll(".tool-execution-row")].every(row=>row.offsetHeight<=32)'));
+      assert.ok(await run('document.documentElement.scrollWidth<=innerWidth'));
+      await pause(); writeFileSync(resolve('tmp/tool-rows-'+theme+'.png'),(await window.webContents.capturePage()).toPNG());
+      await run('document.querySelector("[data-execution-id=shell] .tool-execution-row").click()');
+      await until('Boolean(document.querySelector(".tool-execution-output"))');
+      assert.equal(await run('document.querySelector(".tool-execution-input")'),null,'identical tool-name summaries are not repeated');
+      await pause(); writeFileSync(resolve('tmp/tool-rows-detail-'+theme+'.png'),(await window.webContents.capturePage()).toPNG());
+      await run('document.querySelector("[data-execution-id=search] .tool-execution-row").click()'); await pause();
+      assert.equal(await run('document.querySelectorAll(".tool-execution-row-content").length'),1);
+      assert.ok(await run('document.querySelector(".tool-execution-output").textContent===executions[1].output'),'complete output, including Unicode and line endings, survives disclosure');
+      await run('document.querySelector("[aria-label=复制输出]").click()'); await pause();
+      assert.ok(await run('copied.at(-1)===executions[1].output'));
+      await run('document.querySelector("[aria-label=换行]").click()'); await pause();
+      assert.ok(await run('document.querySelector(".tool-execution-output").classList.contains("wrapped")'));
+      await run('active=false; executions=executions.map(e=>e.id==="running"?{...e,state:"cancelled"}:e);renderFixture();'); await pause();
+      assert.equal(await run('document.querySelectorAll(".tool-execution-row-content").length'),1,'completion cannot collapse the detail the user opened');
+      await run('document.querySelector("[data-execution-id=search] .tool-execution-row").click()'); await pause();
+    }
+    await run('messageId="deferred";executions=[{...executions[0],id:"deferred",output:"",metadata:{nativeResultDeferred:true}}];renderFixture();'); await pause();
+    await run('document.querySelector(".tool-execution-summary").click()'); await pause();
+    assert.equal(await run('requests.length'),0);
+    await run('document.querySelector(".tool-execution-row").click()');
+    await until('requests.length===1');
+    await run('requests[0].reject(Error("Fixture load failure"))');
+    await until('document.body.textContent.includes("暂时无法读取执行详情")');
+    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'已执行','a detail-fetch error is not an execution failure');
+    await run('document.querySelector(".tool-execution-detail-status button").click()');
+    await until('requests.length===2');
+    await run('document.querySelector(".tool-execution-row").click(); requests[1].resolve([{...executions[0],output:"Recovered output",metadata:{}}]);'); await pause();
+    assert.equal(await run('document.querySelector(".tool-execution-row-content")'),null,'a late result cannot reopen a closed row');
+    await run('document.querySelector(".tool-execution-row").click()');
+    await until('document.querySelector(".tool-execution-output")?.textContent==="Recovered output"');
+    assert.equal(await run('requests.length'),2,'loaded facts are reused');
+    await run('messageId="failure";executions=[{...executions[0],id:"failure",state:"failed",summary:"Permission denied",metadata:{error:{message:"Permission denied"}}}];renderFixture();'); await pause();
+    await run('document.querySelector(".tool-execution-summary").click()'); await pause();
+    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'失败');
+    await run('document.querySelector(".tool-execution-row").click()'); await pause();
+    assert.equal(await run('document.querySelector(".tool-execution-error").textContent'),'Permission denied');
+    assert.equal(await run('document.querySelector(".tool-execution-input")'),null,'the error message is not repeated as a command');
+    await run('active=true;executions=[{...executions[0],state:"awaiting_permission",summary:"访问项目文件",metadata:{}}];renderFixture();'); await pause();
+    assert.equal(await run('document.querySelector(".tool-execution-row-status").textContent'),'等待授权');
+    assert.ok(await run('document.querySelector(".tool-execution-row").classList.contains("waiting")'));
+    assert.equal(window.webContents.getURL(),url); assert.equal(navigations,0);
+    console.log('Tool rows UI passed: both themes, compact rows, one detail, exact output/copy, wrap, completion, lazy hydration, retry, late results, zero navigation.');
+  } finally { window.destroy(); }
+}).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1);});

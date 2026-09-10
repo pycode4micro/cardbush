@@ -247,7 +247,7 @@ const desktopApi = {
   },
   readSkill: (skillName: string) =>
     ipcRenderer.invoke('skills:read', skillName) as Promise<unknown>,
-  installLocalPlugin: () => ipcRenderer.invoke('plugins:install-local') as Promise<{
+  installLocalPlugin: (kind: 'directory' | 'zip' = 'directory') => ipcRenderer.invoke('plugins:install-local', kind) as Promise<{
     id: string;
     manifestPath: string;
   } | null>,

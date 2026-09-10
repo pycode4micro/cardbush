@@ -26,7 +26,7 @@
 
 同时创建实际图标 `assets/logo.svg` 和 `skills/example-helper/SKILL.md`。后者至少具有 `name`、`description` 的 YAML frontmatter 和具体任务指令。替换示例 ID、作者和描述为实际信息，不使用不存在的图标路径。
 
-- 当前 name 校验为 `^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`；本地安装还要求包目录名与 name 相同。新包建议使用小写连字符命名。
+- 当前 name 校验为 `^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$`，并拒绝 Windows 保留路径名。插件身份和安装目录由清单 name 决定，来源文件夹或 ZIP 名称可以带版本号，无需改名。新包建议使用小写连字符命名。
 - 根清单提供身份信息，固定 `skills/` 和 `mcp.json` 提供标准能力；`extensions.com.openai` 提供展示信息与 Hooks。内联 OpenAI 对象存在时，完整替代 `.codex-plugin/plugin.json` 的扩展设置；否则使用该旧文件作扩展回退。扩展不能覆盖根清单身份，也不能改变标准 Skills/MCP 的发现位置。
 - 标准 `mcp.json` 声明 `$schema: https://agent-plugins.org/schemas/1.0.0/mcp.schema.json`，在 `mcpServers` 中配置服务，每项显式指定 `type: stdio` 或 `type: streamable-http`。
 - 旧 `.codex-plugin/plugin.json` 独立包继续支持相对 Skill 路径、内联或文件形式的 `mcpServers`。`author`、展示信息和图标可选；填写图标路径时文件必须存在。OpenAI 注册的 `apps` 可解析为应用别名和 ID，默认使用 CardBush 独立登录的 OpenAI 账户，也可在插件详情选择包内 MCP、已有服务或服务商地址；不能仅凭注册 ID 宣称已连接。
@@ -46,7 +46,7 @@
 
 ## 现有安装与状态接口
 
-本地安装界面调用 `window.cardbushDesktop.installLocalPlugin()`，通过 `plugins:install-local` IPC 打开目录选择器，再由 `installProductPlugin(sourcePath, userPluginRoot)` 校验并复制。它不是接受任意路径参数的公开模型工具；不能凭空向它传入 sourcePath。
+本地安装界面调用 `window.cardbushDesktop.installLocalPlugin('directory' | 'zip')`，通过 `plugins:install-local` IPC 打开对应选择器；省略参数时保留目录选择。`installLocalProductPlugin` 为 ZIP 提供限量解压和临时目录清理，并识别根目录或单一外层目录中的插件清单，然后复用 `installProductPlugin` 的校验、复制和安装事务。存在多个候选插件时明确报错，不自行猜选。它不是接受任意路径参数的公开模型工具；不能凭空向它传入 sourcePath。
 
 插件页支持自定义 Git 和本地市场。市场入口优先 `.agents/plugins/marketplace.json`，兼容 `.claude-plugin/marketplace.json` 和内置 `marketplace.json`。仓库地址支持 `owner/repo@ref`、HTTP(S)、SSH URL 和 SCP 形式的 SSH 地址；URL 可用 `#ref` 指定分支、标签或提交。Git URL 使用本机 Git 及其认证配置；不会弹出交互登录窗口。GitHub 简写保留公开 HTTP 下载链。相对包路径从市场根目录解析。
 

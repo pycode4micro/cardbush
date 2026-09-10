@@ -39,6 +39,8 @@ import { sendToLiveRenderer } from './rendererDelivery';
 import { restoreEditorFocus } from './rendererFocus';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
+import { runAcquisitionCommand } from './pluginAcquisition';
+import { installLocalProductPlugin, localPluginInstallDialog } from './localPluginInstall';
 import { renameProjectDirectory } from './projectDirectories';
 import { isOfficePreviewPath, renderOfficePreview } from './officePreview';
 import { localFileSystemPathFromProtocolUrl } from './localFileProtocol';
@@ -52,7 +54,6 @@ import {
   type ProductSkillRoot,
 } from './productSkills';
 import {
-  installProductPlugin,
   loadEnabledProductPluginSkillRootEntries,
   loadEnabledProductPluginExtensions,
   type PluginRoot,
@@ -2169,6 +2170,8 @@ ipcMain.handle(
     },
   ) => {
     await applyProxySettings(proxy);
+    // Async MCP scheduling replaces only connections whose effective route changed.
+    await productHostController?.refreshMcp();
   },
 );
 
@@ -2308,20 +2311,24 @@ ipcMain.handle('plugins:commands', async event => {
   const { commands, skills } = await loadEnabledProductPluginExtensions(productPluginRoots(), productAppsConfigPath());
   return [...commands, ...skills].filter(command => command.userInvocable).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' }));
 });
-ipcMain.handle('plugins:install-local', async () => {
-  const options: OpenDialogOptions = {
-    title: 'Install CardBush plugin',
-    properties: ['openDirectory'],
-  };
+ipcMain.handle('plugins:install-local', async (event, kind: unknown = 'directory') => {
+  assertMainWindowSender(event.sender.id);
+  const options = localPluginInstallDialog(kind);
   const result = mainWindow
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options);
   const sourcePath = result.canceled ? '' : result.filePaths[0] ?? '';
   if (!sourcePath) return null;
-  return installProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
+  return installLocalProductPlugin(sourcePath, path.join(app.getPath('userData'), 'plugins'));
 });
 
 let pluginMarketplaceService: PluginMarketplaceService | undefined;
+let pluginNetworkPromise: Promise<import('./pluginNetwork.mjs', { with: { 'resolution-mode': 'import' } }).PluginNetwork> | undefined;
+function pluginNetworking() {
+  return pluginNetworkPromise ??= import('./pluginNetwork.mjs').then(({ PluginNetwork }) =>
+    new PluginNetwork(productAppsConfigPath(), partition => session.fromPartition(partition)));
+}
+const pluginFetch: typeof fetch = async (input, init) => (await pluginNetworking()).fetch(input, init);
 let mcpDesktopHost: McpDesktopHost | undefined;
 let openAiAccountPromise: Promise<import('./openAiAccount.mjs', { with: { 'resolution-mode': 'import' } }).OpenAiAccount> | undefined;
 function notifyAccountsChanged() {
@@ -2332,7 +2339,7 @@ function openAiDesktop() {
   return openAiAccountPromise ??= import('./openAiAccount.mjs').then(({ OpenAiAccount, OPENAI_ACCOUNT_CREDENTIAL_KEY }) => new OpenAiAccount({
     read: () => mcpDesktop().handle('credentials.read', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY }, new AbortController().signal),
     write: value => mcpDesktop().handle('credentials.write', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY, value }, new AbortController().signal),
-    fetch: (input, init) => net.fetch(String(input), init),
+    fetch: pluginFetch,
     openUrl: url => shell.openExternal(url),
     changed: notifyAccountsChanged,
   }));
@@ -2419,7 +2426,11 @@ function pluginMarkets() {
     dataRoot: path.join(app.getPath('userData'), 'plugin-marketplaces'),
     userPluginRoot: path.join(app.getPath('userData'), 'plugins'),
     bundledPluginRoot: path.join(app.getAppPath(), 'assets', 'plugins'),
-    fetch: (input, init) => net.fetch(String(input), init),
+    fetch: pluginFetch,
+    runAcquisition: async (command, args, cwd) => {
+      const env = await (await pluginNetworking()).environment();
+      return runAcquisitionCommand(command, command === 'git' ? ['-c', `http.proxy=${env.HTTPS_PROXY}`, ...args] : args, cwd, env);
+    },
   });
 }
 ipcMain.handle('plugins:market-sources', async event => {
@@ -3438,6 +3449,8 @@ async function initializeRuntimeHostWithinDeadline() {
       },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+        if (operation === 'network.configuration') return (await pluginNetworking()).configuration();
+        if (operation === 'network.route') return (await pluginNetworking()).endpoint(payload);
         if (operation === 'automation.changed') { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'automation:changed'); return; }
         if (operation === 'automation.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
@@ -3959,6 +3972,7 @@ app.on('before-quit', (event) => {
   if (hostShutdownPromise == null) {
     hostShutdownPromise = (productHostController?.shutdown() ?? Promise.resolve()).finally(async () => {
       await (await openAiAccountPromise)?.close();
+      await (await pluginNetworkPromise)?.close();
       await productMcpManagement?.close();
       productMcpManagement = null;
       await modelPreviewService?.dispose();
@@ -4276,6 +4290,7 @@ async function applyProxySettings(proxy: {
   httpsProxy: string;
   noProxy: string;
 }) {
+  (await pluginNetworking()).setModel(proxy);
   if (proxy.mode === 'system') {
     await session.defaultSession.setProxy({ mode: 'system' });
     return;

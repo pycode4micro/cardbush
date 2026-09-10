@@ -1,3 +1,4 @@
+import { projectMcpDiscoveryResult } from "./mcpToolDiscovery.js";
 import {
   type ModelMessage,
   type ModelRequest,
@@ -55,7 +56,7 @@ const MODEL_IMAGE_INPUT_ESTIMATED_TOKENS = 1_024;
 
 interface ModelToolResult {
   content: string;
-  format: "json" | "text";
+  format: "json" | "text" | "mcp_discovery";
 }
 
 export class RuntimeToolLoop {
@@ -244,6 +245,10 @@ export class RuntimeToolLoop {
     const modelResults = nativeResults.map((result, ordinal): ModelToolResult => {
       const name = toolCalls[ordinal]!.name;
       const text = renderedResults[ordinal];
+      const outcome = outcomes[ordinal];
+      if (name === "mcp_search" && outcome?.kind === "returned" && outcome.hookFeedback === undefined) {
+        return { content: serializeNativeToolResult(result), format: "mcp_discovery" };
+      }
       return text === undefined
         ? { content: serializeNativeToolResult(modelFacingNativeToolResult(result, name)), format: "json" }
         : { content: text, format: "text" };
@@ -406,8 +411,13 @@ function projectNativeToolResult(
   sessionId: string,
   turnId: string,
   toolCallId: string,
-  maxChars = DEFAULT_TOOL_RESULT_MAX_CHARS,
+  maxChars?: number,
 ): string {
+  if (result.format === 'mcp_discovery') {
+    const projected = projectMcpDiscoveryResult(result.content, maxChars);
+    if (projected !== undefined) return projected;
+  }
+  maxChars ??= DEFAULT_TOOL_RESULT_MAX_CHARS;
   const serialized = result.content;
   if (serialized.length <= maxChars) return serialized;
   const locator = `tool-result://${encodeURIComponent(sessionId)}/${encodeURIComponent(turnId)}/${encodeURIComponent(toolCallId)}`;

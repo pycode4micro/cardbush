@@ -36,6 +36,7 @@ import {
   setRuntimePlanRequestSchema,
   subagentTaskSchema,
   teamSnapshotSchema,
+  teamSnapshotResultSchema,
   toolExecutionRecordSchema,
   toolExecutionSummarySchema,
   turnToolExecutionsRequestSchema,
@@ -628,6 +629,16 @@ test("Team snapshots keep Profile constraints and one fallback member explicit",
     ...snapshot,
     teams: [{ ...snapshot.teams[0], members: [snapshot.teams[0].members[0], snapshot.teams[0].members[0]] }],
   }));
+});
+
+test("Team content receipts accept legacy hosts and validate new content hashes", () => {
+  const legacy = {
+    protocol: "bush.team_snapshot_result.v1", snapshotId: "teams", revision: 1,
+    teamCount: 1, memberCount: 1,
+  };
+  assert.deepEqual(teamSnapshotResultSchema.parse(legacy), legacy);
+  assert.equal(teamSnapshotResultSchema.parse({ ...legacy, contentHash: "a".repeat(64) }).contentHash, "a".repeat(64));
+  assert.throws(() => teamSnapshotResultSchema.parse({ ...legacy, contentHash: "not-a-hash" }));
 });
 
 test("provider binding commands validate secrets but return only opaque references", () => {

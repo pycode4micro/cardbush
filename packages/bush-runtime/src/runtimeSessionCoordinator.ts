@@ -17,6 +17,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
   assembleContext,
+  assembleContextProjection,
   projectActiveTurnContext,
   type AssembleContextInput,
 } from "./contextAssembler.js";
@@ -123,6 +124,10 @@ export class RuntimeSessionCoordinator {
     };
   }
 
+  contextSourceTurns(sessionId: string) {
+    return assembleContextProjection({ session: this.#contextSession(sessionId) }).turns;
+  }
+
   summarizeContext(input: {
     sessionId: string;
     activeTurnId: string;
@@ -152,7 +157,6 @@ export class RuntimeSessionCoordinator {
     prefix: ModelMessage[];
     current: ModelMessage[];
     maxSummaryTurns?: number;
-    compactionTurnIds?: string[];
     supersession?: SessionSupersession;
   }): ContextSnapshot {
     return assembleContext({
@@ -160,7 +164,6 @@ export class RuntimeSessionCoordinator {
       prefix: input.prefix,
       current: input.current,
       maxSummaryTurns: input.maxSummaryTurns,
-      compactionTurnIds: input.compactionTurnIds,
     });
   }
 

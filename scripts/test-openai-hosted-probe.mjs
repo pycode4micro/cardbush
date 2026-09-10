@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { Agent, createServer, request } from 'node:http';
 import test from 'node:test';
 import { OPENAI_PROBE_PROTOCOL, OpenAiProbeError, OpenAiProbeProtocolError, startOpenAiProbeLogin, probeOpenAiHostedTools } from './lib/openai-hosted-probe.mjs';
-import { createOpenAiResultNormalizer } from './lib/openai-hosted-result.mjs';
 
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
@@ -192,35 +191,18 @@ test('wire success and local schema rejection remain distinct without logging pr
   assert.equal((await probeOpenAiHostedTools({ access_token: 'fixture-bearer' }, { fetch: valid.fetch, appId: 'gmail-id', resourceName: 'gmail.get_profile' })).readonlyCallSucceeded, true);
 });
 
-test('OpenAI result envelope adaptation validates the full schema, preserves raw data and never weakens other contracts', async () => {
+test('missing envelopes remain protocol errors and are never synthesized by the probe', async () => {
   const tool = profileTool('gmail-id', 'profile', { outputSchema: {
-    type: 'object', properties: { result: { $ref: '#/$defs/Profile' } }, required: ['result'], additionalProperties: false,
-    $defs: { Profile: { type: 'object', properties: { email: { type: 'string', format: 'email' } }, required: ['email'], additionalProperties: false } },
+    type: 'object', properties: { result: { type: 'object' } }, required: ['result'],
   } });
-  const normalize = createOpenAiResultNormalizer(tool);
-  const raw = Object.freeze({ content: [{ type: 'text', text: 'fixture-private-profile' }], structuredContent: Object.freeze({ email: 'private@example.invalid' }), _meta: { original: true } });
-  const adapted = normalize(raw);
-  assert.equal(adapted.normalized, true);
-  assert.equal(adapted.result.structuredContent.result, raw.structuredContent);
-  assert.equal(adapted.result.content, raw.content);
-  assert.equal(adapted.result._meta, raw._meta);
-  assert.equal(Object.hasOwn(raw.structuredContent, 'result'), false);
-  assert.equal(normalize(adapted.result).result, adapted.result, 'already valid envelopes are not changed');
-  for (const invalid of [
-    { ...raw, structuredContent: { email: 123 } },
-    { ...raw, structuredContent: { email: 'not-an-email' } },
-    { ...raw, structuredContent: { email: 'private@example.invalid', undeclared: true } },
-    { ...raw, structuredContent: { result: { email: 123 } } },
-    { ...raw, structuredContent: undefined },
-    { ...raw, isError: true },
-  ]) assert.equal(normalize(invalid).result, invalid);
-  const multiField = { ...tool, outputSchema: { ...tool.outputSchema, properties: { ...tool.outputSchema.properties, meta: {} } } };
-  assert.equal(createOpenAiResultNormalizer(multiField)(raw).normalized, false);
+  const raw = { content: [{ type: 'text', text: 'original-private-content' }], structuredContent: { email: 'private@example.invalid' } };
   const fixture = hostedFixture({ first: { tools: [tool] } }, raw);
-  const facts = await probeOpenAiHostedTools({ access_token: 'fixture-bearer' }, { fetch: fixture.fetch, appId: 'gmail-id', resourceName: 'gmail.get_profile' });
-  assert.equal(facts.readonlyCallSucceeded, true);
-  assert.equal(facts.outputNormalization, 'validated_declared_result_envelope');
-  assert.deepEqual(facts.wireToolReply.requiredFieldsMissing, ['result']);
-  assert.doesNotMatch(JSON.stringify(facts), /private@example|fixture-private/);
+  await assert.rejects(probeOpenAiHostedTools({ access_token: 'fixture-bearer' }, { fetch: fixture.fetch, appId: 'gmail-id', resourceName: 'gmail.get_profile' }), error => {
+    assert.ok(error instanceof OpenAiProbeProtocolError);
+    assert.equal(error.diagnostics.facts.outputNormalization, undefined);
+    assert.deepEqual(error.diagnostics.facts.wireToolReply.requiredFieldsMissing, ['result']);
+    assert.doesNotMatch(JSON.stringify(error.diagnostics), /private@example|original-private/);
+    return true;
+  });
   assert.equal(fixture.calls.length, 1);
 });

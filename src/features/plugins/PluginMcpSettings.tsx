@@ -29,7 +29,12 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts 
   const refresh = useCallback(async () => {
     const revision = ++readRevision.current;
     const value = await fetchMcpConnectionOverview();
-    if (revision === readRevision.current) setOverview(value);
+    if (revision === readRevision.current) {
+      setOverview(value);
+      if (authorizationRef.current && mcpConnectionState(authorizationRef.current, true, value.snapshot, value.revision) === 'connected') {
+        authorizationRef.current = ''; setAuthorizationTarget('');
+      }
+    }
     return value;
   }, []);
   const setAuthorization = (id: string) => { authorizationRef.current = id; setAuthorizationTarget(id); };
@@ -196,10 +201,10 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts 
       const ready = !modified && !needsAccount && !missingBinding && connectionState === 'connected';
       const waitingForAuthorization = hosted && authorizationTarget === id;
       const cancelling = busy === `${id}:cancel`;
-      const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled') : pending ? (zh ? '等待任务结束后生效' : 'Pending until tasks finish')
+      const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled') : pending ? (actual?.updateState === 'waiting_for_catalog' ? (zh ? '等待工具生效' : 'Awaiting tool activation') : (zh ? '等待任务结束后生效' : 'Pending until tasks finish'))
         : needsAccount ? (zh ? '登录账户后连接' : 'Sign in above to connect') : ready ? (zh ? '已连接' : 'Connected')
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (zh ? '连接中…' : 'Connecting…')
-            : connectionState === 'auth_required' ? (zh ? '需要登录' : 'Sign-in required') : connectionState === 'configuration_required' ? (hosted ? (zh ? '尚未连接' : 'Not connected') : (zh ? '需要配置' : 'Configuration required'))
+            : connectionState === 'unavailable' ? (zh ? '连接失败' : 'Connection failed') : connectionState === 'auth_required' ? (zh ? '需要登录' : 'Sign-in required') : connectionState === 'configuration_required' ? (hosted ? (zh ? '尚未连接' : 'Not connected') : (zh ? '需要配置' : 'Configuration required'))
               : missingBinding ? (zh ? '绑定的服务不可用' : 'Bound service unavailable') : needsConnection ? (zh ? '需要配置' : 'Configuration required') : (zh ? '未连接' : 'Disconnected');
       const tools = [...new Set([...(actual?.tools.map(tool => tool.remoteName) ?? []), ...Object.keys(record(settings.tools))])];
       const transport = bound ? binding?.transport : component.mcp?.transport;
@@ -280,7 +285,7 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts 
         <div className="plugin-mcp-actions">{hosted && authorizationUrl && <button type="button" disabled={Boolean(busy) || dirty || needsAccount} onClick={() => void authorizeApp(id, authorizationUrl)}>{zh ? '在 OpenAI 授权此应用' : 'Authorize this app through OpenAI'}</button>}
           {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'login')}>{signingIn ? (zh ? '等待浏览器登录…' : 'Waiting for sign-in…') : (zh ? '登录 / 重新授权' : 'Sign in / authorize')}</button>}
           {signingIn ? <button type="button" onClick={() => void window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login').catch(caught => setError(String(caught)))}>{zh ? '取消登录' : 'Cancel sign-in'}</button>
-            : <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'reconnect')}>{hosted ? (zh ? '检查授权与连接' : 'Check authorization and connection') : (zh ? '重新连接' : 'Reconnect')}</button>}
+            : <button type="button" disabled={Boolean(busy) || dirty || unavailable || pending || connectionState === 'restarting'} onClick={() => void action(id, 'reconnect')}>{hosted ? (zh ? '检查授权与连接' : 'Check authorization and connection') : (zh ? '重新连接' : 'Reconnect')}</button>}
           {network && !hosted && <button type="button" disabled={Boolean(busy) || dirty || unavailable} onClick={() => void action(id, 'logout')}>{zh ? '退出登录' : 'Sign out'}</button>}</div></details>
       </div>;
     })}

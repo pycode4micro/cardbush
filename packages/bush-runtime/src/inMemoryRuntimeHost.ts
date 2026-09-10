@@ -1,3 +1,5 @@
+import { registerFileMemoTools, resolveFileMemo } from "./fileMemo.js";
+import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
@@ -97,6 +99,7 @@ import {
   contextCheckpointFailure,
   contextToolIngressTokenBudget,
   contextPressureNotice,
+  locateContextCompactionSources,
   estimateContextPressure,
   projectContextCompactionMaintenanceMessages,
   registerContextCompactionTool,
@@ -106,7 +109,7 @@ import {
   type ContextCompactionState,
   type ContextPressure,
 } from "./contextCompaction.js";
-import { projectActiveTurnContext, wrapContextSource } from "./contextAssembler.js";
+import { projectActiveTurnContext } from "./contextAssembler.js";
 
 import { CoordinationStore } from "./coordinationStore.js";
 import { registerCoordinationTools } from "./coordinationTools.js";
@@ -206,6 +209,7 @@ export interface InMemoryRuntimeHostOptions {
   durableSubagentTasks?: boolean;
   subagentPermissionPolicy?: SubagentPermissionPolicy;
   loadPluginExtensions?: PluginExtensionLoader;
+  pluginNetwork?: (pluginId: string) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   automation?: AutomationScheduler;
   settleOrphanedTurns?: boolean;
   workspaceObservationStore?: WorkspaceObservationStore;
@@ -351,6 +355,7 @@ export class InMemoryRuntimeHost {
     this.#toolRegistry = options.toolRegistry ?? new ToolRegistry();
     registerMcpDiscovery(this.#toolRegistry);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
+    registerFileMemoTools(this.#toolRegistry, this.#toolExecutions);
     registerInteractionTools(this.#toolRegistry);
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
@@ -370,6 +375,7 @@ export class InMemoryRuntimeHost {
     });
     this.#automation = options.automation;
     this.#pluginHooks = new PluginHookRunner(runtimeDataRoot, {
+      network: options.pluginNetwork,
       evaluate: async (hook, prompt, context) => {
         const id = randomUUID(), parent = context.request;
         const tools = hook.type === 'agent' ? parent.tools.filter(tool => ['read_file', 'search_file_content'].includes(tool.name)) : [];
@@ -594,6 +600,7 @@ export class InMemoryRuntimeHost {
         STOP_RUNTIME_TURN_COMMAND,
         CANCEL_RUNTIME_TOOL_COMMAND,
         GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+        RESOLVE_FILE_MEMO_COMMAND,
         LIST_RUNTIME_TURN_TOOL_EXECUTIONS_COMMAND,
         LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
         GET_RUNTIME_TOOL_CATALOG_COMMAND,
@@ -774,6 +781,11 @@ export class InMemoryRuntimeHost {
           runtimeSessionTurnRequestSchema.parse(command.payload),
           { signal },
         );
+      case RESOLVE_FILE_MEMO_COMMAND: {
+        const reference = (command.payload as { reference?: unknown })?.reference;
+        if (typeof reference !== "string") throw new Error("File memo reference is required.");
+        return resolveFileMemo(this.#toolExecutions, reference);
+      }
       case GET_RUNTIME_TOOL_EXECUTION_COMMAND: {
         const identity = toolExecutionIdentitySchema.parse(command.payload);
         return this.#toolExecutions.get(
@@ -1544,7 +1556,15 @@ export class InMemoryRuntimeHost {
             if (contextPressureNoticeKey !== noticeKey) {
               messages = [
                 ...messages,
-                contextPressureNotice(state, pressure, legacyCheckpointInput),
+                contextPressureNotice(state, pressure, legacyCheckpointInput, locateContextCompactionSources({
+                  messages, prefixMessageCount: input.sessionCommit.prefixMessages.length,
+                  turns: this.#sessions.contextSourceTurns(request.sessionId),
+                  activeTurnId: request.turnId,
+                  activeMessages: projectActiveTurnContext({ turnId: request.turnId,
+                    inputMessages: input.sessionCommit.inputMessages, generatedMessages,
+                    checkpoint: activeContextCheckpoint, includeResumeInstruction: true }),
+                  state, legacyInput: legacyCheckpointInput,
+                })),
               ];
               contextPressureNoticeKey = noticeKey;
             }
@@ -1603,16 +1623,8 @@ export class InMemoryRuntimeHost {
         let dispatchMessages = messages;
         let dispatchProviderState = providerState;
         if (contextCompactionRequired) {
-          // Label source segments only in this maintenance request. Normal
-          // requests and the durable history retain their exact cache prefix.
-          dispatchMessages = [
-            ...this.#rebuildCompactedMessages(request.sessionId, request.turnId,
-              input.sessionCommit!, generatedMessages, activeContextCheckpoint, undefined,
-              this.#contextCompactionAuthorizations.get(turnKey), legacyCheckpointInput),
-            ...messages.filter(message => message.role === "user" &&
-              ["context_pressure", "context_compaction_correction"].includes(message.name ?? "")),
-          ];
-          dispatchProviderState = freshResponseChain();
+          // The source index is appended in context_pressure. Keep the exact
+          // existing prefix until a checkpoint has actually been committed.
           let maintenancePressure = await this.#measureContextPressure(
             request,
             dispatchMessages,
@@ -1996,6 +2008,7 @@ export class InMemoryRuntimeHost {
             });
             if (checkpoint.activeTurn) {
               activeContextCheckpoint = {
+                projectionVersion: "stable_v1",
                 throughMessageId: checkpoint.activeTurn.throughMessageId,
                 summary: checkpoint.activeTurn.summary,
                 inputMessageCount: input.sessionCommit!.inputMessages.length,
@@ -2445,22 +2458,17 @@ export class InMemoryRuntimeHost {
     generatedMessages: GeneratedMessageFact[],
     activeContextCheckpoint?: TurnContextCheckpoint,
     maxSummaryTurns?: number,
-    compaction?: ContextCompactionState,
-    legacyCheckpointInput = false,
   ): ModelMessage[] {
-    let current = projectActiveTurnContext({
+    const current = projectActiveTurnContext({
       turnId: activeTurnId, inputMessages: checkpoint.inputMessages,
       generatedMessages, checkpoint: activeContextCheckpoint,
       includeResumeInstruction: true,
     });
-    if (compaction) current = wrapContextSource(current, activeTurnId,
-      compaction.activeTurn ? (legacyCheckpointInput ? "active_turn.summary" : "active_summary") : "not_requested");
     return this.#sessions.rebuildActiveContext({
       sessionId,
       supersession: checkpoint.supersession,
       prefix: checkpoint.prefixMessages,
       current,
-      compactionTurnIds: compaction?.unsummarizedTurnIds,
       ...(maxSummaryTurns === undefined ? {} : { maxSummaryTurns }),
     }).messages;
   }

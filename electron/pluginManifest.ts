@@ -7,10 +7,24 @@ export type PluginFormat = 'agent-plugins' | 'openai' | 'claude';
 const pluginSchema = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
 const mcpSchema = 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json';
 const componentKeys = ['skills', 'mcpServers', 'hooks', 'agents', 'commands', 'lspServers', 'dependencies', 'apps', 'userConfig', 'channels', 'experimental', 'themes', 'monitors', 'workflows', 'outputStyles'];
+const manifestFiles = { portable: 'plugin.json', openai: '.codex-plugin/plugin.json', claude: '.claude-plugin/plugin.json' };
+
+/** Unwrap packaging folders without guessing which plugin in a repository to install. */
+export async function findPluginPackageRoot(root: string): Promise<string> {
+  while (true) {
+    if ((await Promise.all(Object.values(manifestFiles).map(file => exists(join(root, file))))).some(Boolean)) return root;
+    const children = (await readdir(root, { withFileTypes: true }))
+      .filter(entry => entry.name !== '__MACOSX' && entry.name !== '.DS_Store' && !entry.name.startsWith('._'));
+    if (children.length !== 1 || !children[0].isDirectory()) {
+      throw new Error('未找到唯一的插件根目录。请选择包含插件清单的文件夹，或仅包含一个插件的 ZIP 文件。');
+    }
+    root = join(root, children[0].name);
+  }
+}
 
 /** One read model for preview, installation and execution. Never rewrites the package. */
 export async function resolvePluginManifest(root: string) {
-  const portable = await jsonIfPresent(join(root, 'plugin.json'));
+  const portable = await jsonIfPresent(join(root, manifestFiles.portable));
   if (portable?.$schema && String(portable.$schema).startsWith('https://agent-plugins.org/') && portable.$schema !== pluginSchema) {
     throw new Error(`Unsupported Agent Plugins schema: ${portable.$schema}`);
   }
@@ -19,13 +33,13 @@ export async function resolvePluginManifest(root: string) {
   const entry = object(receipt?.entry);
   const inline = object(portable?.extensions)['com.openai'];
   // An inline OpenAI object completely replaces the compatibility overlay.
-  const native = recognized && isObject(inline) ? null : await jsonIfPresent(join(root, '.codex-plugin', 'plugin.json'));
-  const claude = recognized || native ? null : await jsonIfPresent(join(root, '.claude-plugin', 'plugin.json'));
+  const native = recognized && isObject(inline) ? null : await jsonIfPresent(join(root, manifestFiles.openai));
+  const claude = recognized || native ? null : await jsonIfPresent(join(root, manifestFiles.claude));
   const entryOnly = !recognized && !native && !claude && entry.strict === false && typeof entry.name === 'string';
   if (!recognized && !native && !claude && !entryOnly) throw Object.assign(new Error('No supported plugin.json, .codex-plugin/plugin.json or .claude-plugin/plugin.json was found.'), { code: 'ENOENT' });
   const format: PluginFormat = recognized ? 'agent-plugins' : native ? 'openai' : 'claude';
-  const manifestPath = recognized ? join(root, 'plugin.json') : native ? join(root, '.codex-plugin', 'plugin.json')
-    : claude ? join(root, '.claude-plugin', 'plugin.json') : join(root, '.cardbush-marketplace.json');
+  const manifestPath = recognized ? join(root, manifestFiles.portable) : native ? join(root, manifestFiles.openai)
+    : claude ? join(root, manifestFiles.claude) : join(root, '.cardbush-marketplace.json');
   const overlay = recognized ? object(isObject(inline) ? inline : native) : native ?? claude ?? { name: entry.name };
   const manifest: Json = recognized ? { ...portable, interface: overlay.interface, hooks: overlay.hooks, apps: overlay.apps }
     : { ...overlay };

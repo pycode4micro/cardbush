@@ -1,5 +1,8 @@
 import {
   BUSH_TEAM_SNAPSHOT_PROTOCOL,
+  serializeTeamSnapshotContent,
+  teamSnapshotSchema,
+  type TeamSnapshot,
   type TeamSnapshotResult,
   type ToolDefinition,
 } from '@cardbush/bush-protocol';
@@ -11,6 +14,15 @@ const teamsKey = 'cardbush_product_teams_v1';
 const profilesKey = 'cardbush_product_agent_profiles_v1';
 const revisionKey = 'cardbush_product_team_revision_v1';
 const snapshotId = 'cardbush-product-teams';
+type TeamSnapshotClient = Pick<ProtocolRuntimeClient, 'getTeamSnapshot' | 'applyTeamSnapshot'>;
+
+// Per-turn clients share one Runtime team store; revision selection and apply must be serialized.
+let pendingUpdate: Promise<unknown> = Promise.resolve();
+function serializeUpdate<T>(update: () => Promise<T>): Promise<T> {
+  const task = pendingUpdate.then(update);
+  pendingUpdate = task.catch(() => {});
+  return task;
+}
 
 const bundledGeneralProfile: AgentProfileDefinition = {
   protocol: 'bush.agent_profile.v1',
@@ -48,49 +60,42 @@ export function readProductAgentProfiles(): AgentProfileDefinition[] {
 }
 
 export async function synchronizeProductTeamSnapshot(
-  client: Pick<ProtocolRuntimeClient, 'applyTeamSnapshot'>,
+  client: TeamSnapshotClient,
   tools: ToolDefinition[],
 ): Promise<TeamSnapshotResult> {
-  return client.applyTeamSnapshot(snapshot(
-    readProductTeams(),
-    readProductAgentProfiles(),
-    tools,
-    readRevision(),
-  ));
+  return serializeUpdate(() => applySnapshot(client, snapshot(
+    readProductTeams(), readProductAgentProfiles(), tools,
+  )));
 }
 
 export async function replaceProductTeamConfiguration(
-  client: Pick<ProtocolRuntimeClient, 'applyTeamSnapshot'>,
+  client: TeamSnapshotClient,
   input: {
     teams: TeamDefinition[];
     profiles: AgentProfileDefinition[];
     tools: ToolDefinition[];
   },
 ): Promise<TeamSnapshotResult> {
-  const previous = new Map([
-    [teamsKey, window.localStorage.getItem(teamsKey)],
-    [profilesKey, window.localStorage.getItem(profilesKey)],
-    [revisionKey, window.localStorage.getItem(revisionKey)],
-  ]);
-  const revision = readRevision() + 1;
-  window.localStorage.setItem(teamsKey, JSON.stringify(input.teams));
-  window.localStorage.setItem(profilesKey, JSON.stringify(input.profiles));
-  window.localStorage.setItem(revisionKey, String(revision));
-  try {
-    return await client.applyTeamSnapshot(snapshot(
-      input.teams,
-      input.profiles,
-      input.tools,
-      revision,
-    ));
-  } catch (error) {
-    for (const [key, value] of previous) restore(key, value);
-    throw error;
-  }
+  return serializeUpdate(async () => {
+    const next = snapshot(input.teams, input.profiles, input.tools);
+    const previous = new Map([
+      [teamsKey, window.localStorage.getItem(teamsKey)],
+      [profilesKey, window.localStorage.getItem(profilesKey)],
+      [revisionKey, window.localStorage.getItem(revisionKey)],
+    ]);
+    try {
+      window.localStorage.setItem(teamsKey, JSON.stringify(input.teams));
+      window.localStorage.setItem(profilesKey, JSON.stringify(input.profiles));
+      return await applySnapshot(client, next);
+    } catch (error) {
+      for (const [key, value] of previous) restore(key, value);
+      throw error;
+    }
+  });
 }
 
 export async function resetProductTeamConfiguration(
-  client: Pick<ProtocolRuntimeClient, 'applyTeamSnapshot'>,
+  client: TeamSnapshotClient,
   tools: ToolDefinition[],
 ): Promise<TeamSnapshotResult> {
   return replaceProductTeamConfiguration(client, {
@@ -104,14 +109,13 @@ function snapshot(
   teams: TeamDefinition[],
   profiles: AgentProfileDefinition[],
   tools: ToolDefinition[],
-  revision: number,
-) {
+): TeamSnapshot {
   const profilesById = new Map(profiles.map((profile) => [profile.id, profile]));
-  const toolNames = tools.map((tool) => tool.name);
-  return {
+  const toolNames = [...new Set(tools.map((tool) => tool.name))].sort();
+  return teamSnapshotSchema.parse({
     protocol: BUSH_TEAM_SNAPSHOT_PROTOCOL,
     snapshotId,
-    revision,
+    revision: 1,
     teams: teams.map((team) => ({
       teamId: team.id,
       name: team.name,
@@ -146,7 +150,29 @@ function snapshot(
         };
       }),
     })),
-  };
+  });
+}
+
+async function applySnapshot(client: TeamSnapshotClient, next: TeamSnapshot): Promise<TeamSnapshotResult> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serializeTeamSnapshotContent(next)));
+  const contentHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  const applied = await client.getTeamSnapshot();
+  const current = applied?.snapshotId === snapshotId ? applied : null;
+  let result: TeamSnapshotResult;
+  if (current?.contentHash === contentHash) {
+    // The Runtime is authoritative, including after a renderer restart or a lost apply response.
+    result = current;
+  } else {
+    const revision = current ? Math.max(readRevision(), current.revision) + 1 : readRevision();
+    if (!Number.isSafeInteger(revision)) throw new Error('Team snapshot revision exceeds the supported range.');
+    result = await client.applyTeamSnapshot({ ...next, revision });
+  }
+  // Persist only the successful revision floor; never keep a second copy of the effective catalog.
+  const revision = Math.max(readRevision(), result.revision);
+  if (window.localStorage.getItem(revisionKey) !== String(revision)) {
+    window.localStorage.setItem(revisionKey, String(revision));
+  }
+  return result;
 }
 
 function readArrayOrDefault(key: string, fallback: unknown[]): unknown[] {
@@ -162,7 +188,7 @@ function readArrayOrDefault(key: string, fallback: unknown[]): unknown[] {
 
 function readRevision() {
   const value = Number(window.localStorage.getItem(revisionKey));
-  return Number.isInteger(value) && value > 0 ? value : 1;
+  return Number.isSafeInteger(value) && value > 0 ? value : 1;
 }
 
 function restore(key: string, value: string | null) {

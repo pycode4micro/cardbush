@@ -84,7 +84,8 @@ test('replacing an MCP connection during approval prevents executing the capture
   registry.replaceOwned('docs', [mcp({ execute: () => { executed++; return {}; }, authorize: () => ({ kind: 'ask', request: { reason: 'Read docs', actions: ['read'], targets: [], capabilityIds: [] } }) })]);
   const request = modelRequest(registry);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { registry.replaceOwned('docs', [mcp()]); return { decision: 'allow', grantedCapabilityIds: [] }; } } });
-  await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const searched = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  synchronizeMcpDiscovery(registry, request, searchMessages(searched.result));
   assert.equal((await call(coordinator, request, 'mcp_call', { name: toolName, arguments: {} })).error.code, 'tool_definition_changed');
   assert.equal(executed, 0);
 });

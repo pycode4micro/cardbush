@@ -2,6 +2,7 @@ import {
   BUSH_MCP_SNAPSHOT_PROTOCOL,
   mcpSnapshotSchema,
   mcpOAuthFromConfig,
+  pluginProxySchema,
   type McpSnapshot,
   type McpSnapshotResult,
 } from '@cardbush/bush-protocol';
@@ -95,7 +96,9 @@ function snapshot(servers: McpServerConfig[], revision: number): McpSnapshot {
 }
 
 function storedServer(server: McpServerConfig) {
+  const { source: _source, ...stored } = server.raw;
   return {
+    ...stored,
     ...(server.raw.oauth ? { oauth: server.raw.oauth } : {}),
     ...(server.raw.scopes !== undefined ? { scopes: server.raw.scopes } : {}),
     ...(server.raw.oauth_resource !== undefined ? { oauth_resource: server.raw.oauth_resource } : {}),
@@ -111,6 +114,7 @@ function storedServer(server: McpServerConfig) {
     env: server.env,
     url: server.url,
     headers: server.headers,
+    proxy: server.proxy,
   };
 }
 
@@ -132,6 +136,7 @@ function serverFromStored(value: unknown): McpServerConfig | null {
     env: stringRecord(record.env),
     url: optionalString(record.url),
     headers: stringRecord(record.headers),
+    proxy: record.proxy == null ? undefined : pluginProxySchema.parse(record.proxy),
     raw: { ...record, source: 'cardbush_product' },
   };
 }

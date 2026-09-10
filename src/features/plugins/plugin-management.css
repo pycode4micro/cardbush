@@ -639,3 +639,34 @@
 .plugin-hook-trust details { margin-top: 12px; }
 .plugin-hook-trust summary { cursor: pointer; }
 .plugin-hook-trust pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg-secondary, #111); border-radius: 6px; font-size: 12px; }
+.plugin-proxy-settings { display: grid; gap: 14px; max-width: 640px; padding: 12px 0; }
+.plugin-proxy-mode, .plugin-proxy-fields label { display: grid; gap: 7px; font-size: 13px; }
+.plugin-proxy-mode { max-width: 300px; }
+.plugin-proxy-settings select, .plugin-proxy-settings input { width: 100%; min-height: 36px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--bg-input, var(--bg)); box-sizing: border-box; }
+.plugin-proxy-help { margin: 0; font-size: 12px; color: var(--text-mid); line-height: 1.65; }
+.plugin-proxy-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.plugin-proxy-fields label:last-child { grid-column: 1 / -1; }
+.plugin-proxy-settings > button { justify-self: start; }
+.plugin-proxy-section > summary { cursor: pointer; font-size: 13px; color: var(--text-mid); }
+.plugin-proxy-dialog { width: min(640px, calc(100vw - 48px)); box-sizing: border-box; padding: 22px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+.plugin-proxy-dialog::backdrop { background: #0009; }
+.plugin-proxy-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plugin-proxy-dialog h3 { margin: 0; }
+.plugin-proxy-list { margin-top: 22px; }
+.plugin-proxy-reset { margin-left: auto; padding: 4px 0; border: 0; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; cursor: pointer; }
+.plugin-proxy-reset:hover { color: var(--text); }
+.plugin-proxy-reset:disabled { opacity: .5; cursor: default; }
+.plugin-proxy-list .plugin-search { margin-bottom: 10px; }
+.plugin-proxy-row { display: grid; max-width: none; grid-template-columns: minmax(140px, 1fr) minmax(160px, 250px) 72px; gap: 10px 16px; align-items: center; border-bottom: 1px solid var(--border); padding: 14px 0; }
+.plugin-proxy-row-name { display: grid; gap: 4px; min-width: 0; }
+.plugin-proxy-row-name strong { font-size: 13px; overflow-wrap: anywhere; }
+.plugin-proxy-row-name small { font-size: 11px; color: var(--text-mid); }
+.plugin-proxy-row .plugin-proxy-mode { grid-column: 2; grid-row: 1; max-width: none; }
+.plugin-proxy-row .plugin-proxy-mode > span { display: none; }
+.plugin-proxy-row > button { grid-column: 3; grid-row: 1; justify-self: end; }
+.plugin-proxy-row .plugin-proxy-fields, .plugin-proxy-row .plugin-market-error { grid-column: 1 / -1; }
+@media (max-width: 640px) {
+  .plugin-proxy-row { grid-template-columns: minmax(0, 1fr) minmax(140px, 215px); gap: 10px; }
+  .plugin-proxy-row > button { grid-row: auto; grid-column: 2; }
+}
+@media (max-width: 640px) { .plugin-proxy-fields { grid-template-columns: 1fr; } }

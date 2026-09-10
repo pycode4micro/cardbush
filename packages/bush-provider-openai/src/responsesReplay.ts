@@ -1,14 +1,17 @@
 import type { Response, ResponseInputItem } from "openai/resources/responses/responses";
 import type { ModelMessage, ModelReplayData, ModelRequest } from "@cardbush/bush-protocol";
 import { modelReplayMatches } from "@cardbush/bush-runtime";
+import { responseToolName } from "./responsesToolNames.js";
 
 const REPLAY_FORMAT = "openai.responses.output.v1";
+export type ResponsesToolSearchMode = "native" | "function";
 
-/** Store output items only, never a whole response, transport, or credentials. */
-export function responsesReplayData(response: Response): ModelReplayData | undefined {
-  if (!Array.isArray(response.output) || response.output.length === 0) return undefined;
-  if (!response.output.every(isReplayItem)) return undefined;
-  return { format: REPLAY_FORMAT, data: { items: structuredClone(response.output) } };
+/** Store output items and their projection mode, never transport or credentials. */
+export function responsesReplayData(response: Response, toolSearchMode?: ResponsesToolSearchMode): ModelReplayData | undefined {
+  const items = Array.isArray(response.output) && response.output.every(isReplayItem) ? response.output : [];
+  if (!items.length && !toolSearchMode) return undefined;
+  return { format: REPLAY_FORMAT, data: { items: structuredClone(items),
+    ...(toolSearchMode ? { toolSearchMode } : {}) } };
 }
 
 export function replayResponsesOutput(
@@ -26,20 +29,46 @@ export function replayResponsesOutput(
     .flatMap((item) => item.content)
     .map((part) => part.type === "output_text" ? part.text : part.refusal)
     .join("");
-  const calls = items.filter((item) => item.type === "function_call")
-    .map((item) => [item.call_id, item.name, item.arguments]);
+  const calls = items.flatMap((item) => item.type === "function_call"
+    ? [[item.call_id, item.name, item.arguments]]
+    : isClientToolSearchCall(item) ? [[item.call_id, "mcp_search", clientToolSearchArguments(item)]] : []);
   if (text !== message.content || JSON.stringify(calls) !== JSON.stringify(
-    message.toolCalls.map((call) => [call.id, call.name, call.argumentsText]),
+    message.toolCalls.map((call) => [call.id, responseToolName(call.name), call.argumentsText]),
   )) return undefined;
   return structuredClone(items) as ResponseInputItem[];
 }
 
+/** The mode is bound to the same immutable output as the rest of provider replay. */
+export function replayToolSearchMode(message: Extract<ModelMessage, { role: "assistant" }>,
+  request: Pick<ModelRequest, "model" | "providerBinding">): ResponsesToolSearchMode | undefined {
+  if (message.providerReplay?.format !== REPLAY_FORMAT || !modelReplayMatches(message, request)) return undefined;
+  const mode = message.providerReplay?.data.toolSearchMode;
+  if (mode === "native" || mode === "function") return mode;
+  return replayResponsesOutput(message, request)?.some(isClientToolSearchCall) ? "native" : undefined;
+}
+
+export function isClientToolSearchCall(value: unknown): value is Extract<Response["output"][number], { type: "tool_search_call" }> & { call_id: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return item.type === "tool_search_call" && item.execution === "client" && item.status === "completed" &&
+    typeof item.call_id === "string" && item.call_id.length > 0 &&
+    !!item.arguments && typeof item.arguments === "object" && !Array.isArray(item.arguments);
+}
+
+export function clientToolSearchArguments(item: { arguments: unknown }): string {
+  const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => [key, canonical(child)])) : value;
+  return JSON.stringify(canonical(item.arguments));
+}
+
 type ReplayItem = Extract<Response["output"][number],
-  { type: "message" | "reasoning" | "function_call" }>;
+  { type: "message" | "reasoning" | "function_call" | "tool_search_call" }>;
 
 function isReplayItem(value: unknown): value is ReplayItem {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const item = value as Record<string, unknown>;
+  if (item.type === "tool_search_call") return isClientToolSearchCall(item);
   if (item.type === "reasoning") {
     return typeof item.id === "string" && Array.isArray(item.summary);
   }

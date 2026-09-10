@@ -7162,24 +7162,135 @@ body.right-inspector-resizing .right-inspector-resizer {
   display: grid;
   gap: 0;
   padding: 0;
-  margin-top: 4px;
+  margin-top: 2px;
   max-width: 100%;
   overflow: hidden;
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
 }
 
 .tool-execution-detail {
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  padding: 9px 12px 11px;
-  border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+  padding: 0;
 }
 
-.tool-execution-detail:first-child {
-  border-top: 0;
+.tool-execution-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 400;
+  text-align: left;
+}
+
+.tool-execution-row:hover,
+.tool-execution-row:focus-visible {
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.tool-execution-row:focus-visible {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+
+.tool-execution-row > svg,
+.tool-execution-row > .tool-logo,
+.tool-execution-row-status,
+.tool-execution-row-duration {
+  flex: 0 0 auto;
+}
+
+.tool-execution-row > .tool-logo {
+  color: inherit;
+}
+
+.tool-execution-row-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-execution-row-duration {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-execution-row.failed {
+  color: var(--danger);
+}
+
+.tool-execution-row.waiting {
+  color: #c9922e;
+}
+
+.tool-execution-row > svg:last-child {
+  opacity: 0.45;
+  transition: transform 140ms ease;
+}
+
+.tool-execution-row > svg.expanded {
+  transform: rotate(180deg);
+}
+
+.tool-execution-row-content {
+  margin: 2px 0 8px 20px;
+  padding: 8px 10px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tool-execution-detail-status,
+.tool-execution-detail-status button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.tool-execution-detail-status button {
+  padding: 2px 4px;
+  background: transparent;
+}
+
+.tool-execution-detail-status button:hover {
+  color: var(--text);
+}
+
+.tool-execution-detail .tool-execution-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-execution-detail .tool-execution-input {
+  margin: 0 0 6px;
+  padding: 0;
+  max-height: 120px;
+  overflow: auto;
+  color: var(--text-mid);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: 12px/1.5 Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tool-execution-detail header {
@@ -7711,27 +7822,20 @@ body.right-inspector-resizing .right-inspector-resizer {
 .tool-execution-output {
   width: 100%;
   max-width: 100%;
-  max-height: 86px;
-  margin: 8px 0 0;
-  padding: 8px 9px;
-  overflow: hidden;
+  max-height: 360px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
   color: var(--text-soft);
-  background: color-mix(in srgb, var(--surface) 30%, transparent);
+  background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   font-family: Consolas, "Courier New", monospace;
   font-size: 12px;
   line-height: 1.45;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
-  scrollbar-width: thin;
-}
-
-.tool-execution-output.expanded {
-  max-height: 420px;
-  overflow: auto;
-  padding-right: 4px;
   scrollbar-width: thin;
 }
 
@@ -7744,8 +7848,10 @@ body.right-inspector-resizing .right-inspector-resizer {
 .tool-output-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 4px;
   align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 4px;
 }
 
 .tool-output-toggle {
@@ -7753,16 +7859,16 @@ body.right-inspector-resizing .right-inspector-resizer {
   gap: 4px;
   align-items: center;
   width: fit-content;
-  margin-top: 6px;
-  padding: 0;
+  padding: 3px;
   color: var(--text-soft);
   background: transparent;
   font-size: 11.5px;
-  font-weight: 800;
+  border-radius: 3px;
 }
 
 .tool-output-toggle:hover {
   color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 .user-edit-card {
@@ -19138,3 +19244,7 @@ body.change-review-resizing {
 .global-instructions-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .model-context-controls input { font-variant-numeric: tabular-nums; padding: 0 7px; appearance: textfield; -moz-appearance: textfield; }
 .model-context-controls input::-webkit-inner-spin-button, .model-context-controls input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+.file-memo-reference { max-width: 100%; }
+.file-memo-reference > img, .file-memo-reference > video, .file-memo-reference > audio { max-width: 100%; }
+.file-memo-reference > small { color: var(--text-secondary, currentColor); }

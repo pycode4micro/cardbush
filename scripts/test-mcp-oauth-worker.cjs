@@ -64,6 +64,8 @@ async function run() {
     env: { ...env, CARDBUSH_RUNTIME_STATE_ROOT: join(root, 'runtime'), CARDBUSH_APPS_CONFIG_PATH: appsConfig,
       CARDBUSH_RUNTIME_SKILL_ROOTS: '[]', CARDBUSH_RUNTIME_PLUGIN_ROOTS: '[]', CARDBUSH_MCP_DESKTOP_BRIDGE: '1' },
     onMcpHostRequest: (operation, payload, signal) => {
+      if (operation === 'network.configuration') return Promise.resolve({ default: { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' }, plugins: {} });
+      if (operation === 'network.route') return Promise.resolve('');
       const pending = desktop.handle(operation, payload, signal);
       if (operation === 'authentication') {
         consents.push(payload);
@@ -77,7 +79,15 @@ async function run() {
     const response = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind, payload } });
     assert.equal(response.ok, true, JSON.stringify(response));
     assert.ok(!JSON.stringify(response).includes('fixture-access'), 'runtime public responses never carry credentials');
-    return response.result;
+    let result = response.result;
+    const until = Date.now() + 8000;
+    while (result?.applicationState === 'pending') {
+      assert.ok(Date.now() < until, 'MCP connection should settle');
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const state = await controller.command({ protocol: 'bush.runtime_ipc.v1', type: 'command', operationId: randomUUID(), command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
+      assert.equal(state.ok, true, JSON.stringify(state)); result = state.result;
+    }
+    return result;
   };
   const apply = () => command('runtime.apply_mcp_snapshot', { protocol: 'bush.mcp_snapshot.v2', snapshotId: 'oauth-worker', revision: 1,
     servers: [{ id: 'fixture', versionMode: 'legacy', transport: { kind: 'streamable_http', url: fixture.url + '/mcp' } }] });

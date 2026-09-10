@@ -75,6 +75,8 @@ export const teamSnapshotResultSchema = z.object({
   protocol: z.literal(BUSH_TEAM_SNAPSHOT_RESULT_PROTOCOL),
   snapshotId: z.string().min(1),
   revision: z.number().int().positive(),
+  // Optional for older Runtime hosts. SHA-256 of serializeTeamSnapshotContent.
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   teamCount: z.number().int().nonnegative(),
   memberCount: z.number().int().nonnegative(),
 });
@@ -83,3 +85,8 @@ export type TeamMember = z.infer<typeof teamMemberSchema>;
 export type TeamDefinition = z.infer<typeof teamDefinitionSchema>;
 export type TeamSnapshot = z.infer<typeof teamSnapshotSchema>;
 export type TeamSnapshotResult = z.infer<typeof teamSnapshotResultSchema>;
+
+/** Serialize the effective, schema-normalized content independently of its revision. */
+export function serializeTeamSnapshotContent(snapshot: TeamSnapshot): string {
+  return JSON.stringify(teamSnapshotSchema.parse(snapshot).teams);
+}

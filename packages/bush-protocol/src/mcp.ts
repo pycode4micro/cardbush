@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { actionManifestTemplateSchema } from "./tool.js";
 import { OPENAI_HOSTED_PROTOCOL } from './openai.js';
+import { networkProxySchema } from './proxy.js';
 
 export const BUSH_MCP_SNAPSHOT_PROTOCOL = "bush.mcp_snapshot.v2" as const;
 export const BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL =
@@ -85,6 +86,8 @@ export const mcpToolPolicySchema = z.object({
 
 export const mcpServerSnapshotSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  pluginId: z.string().min(1).optional(),
+  networkProxy: networkProxySchema.optional(),
   transport: mcpTransportConfigSchema,
   versionMode: z.enum(["auto", "legacy", "modern"]).default("auto"),
   restartBackoffMs: z.number().int().min(0).max(60_000).default(250),
@@ -123,7 +126,10 @@ export const mcpSnapshotResultSchema = z.object({
   // Optional product configuration revision; runtime revisions also track plugin changes.
   configurationRevision: z.number().int().positive().optional(),
   applicationState: z.enum(["applied", "pending", "failed"]).optional(),
+  applicationPhase: z.enum(["waiting_for_idle", "connecting"]).optional(),
   pendingRevision: z.number().int().positive().optional(),
+  // Services affected by an uncommitted update; absent on older runtimes.
+  pendingServerIds: z.array(z.string().min(1)).optional(),
   applicationError: z.string().optional(),
   servers: z.array(z.object({
     id: z.string().min(1),
@@ -131,6 +137,8 @@ export const mcpSnapshotResultSchema = z.object({
     health: z.enum(["ready", "restarting", "unavailable", "auth_required", "configuration_required"]).default("ready"),
     restartAttempts: z.number().int().nonnegative().default(0),
     lastError: z.string().optional(),
+    // Background connection progress; tools still describe the currently published catalog.
+    updateState: z.enum(['queued', 'connecting', 'waiting_for_catalog', 'failed']).optional(),
     tools: z.array(z.object({
       remoteName: z.string().min(1),
       runtimeName: z.string().min(1),

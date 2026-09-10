@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useId,
   useState,
   useRef,
   type RefObject,
@@ -51,7 +52,6 @@ import {
   writeToolExecutionDisclosure,
 } from './toolExecutionDisclosure';
 import { toolChangeReportFromExecutions, type ConversationChangeReport } from './toolChangeReports';
-import { compactToolOutput, toolDisplayOutput, toolOutputNeedsCollapse } from './toolOutput';
 import { asRecord } from './toolPayload';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
 import { GoalUpdateNotice } from './GoalUpdateNotice';
@@ -87,6 +87,8 @@ export function ToolExecutionBlock({
   const [expanded, setExpanded] = useState(() =>
     defaultToolExecutionExpanded(active, storedDisclosure()),
   );
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null);
+  const [changeDetailsRequested, setChangeDetailsRequested] = useState(false);
   const [hydratedExecutions, setHydratedExecutions] = useState<
     Map<string, ChatToolExecution>
   >(() => new Map());
@@ -136,6 +138,10 @@ export function ToolExecutionBlock({
   useEffect(() => {
     setExpanded(defaultToolExecutionExpanded(active, storedDisclosure()));
   }, [active, disclosureId]);
+  useEffect(() => {
+    setSelectedExecutionId(null);
+    setChangeDetailsRequested(false);
+  }, [disclosureId]);
 
   const deferredExecutionKey = executions
     .filter(hasDeferredExecutionDetails)
@@ -156,11 +162,13 @@ export function ToolExecutionBlock({
     hasDeferredExecutionDetails(execution) &&
     !hydratedExecutions.has(execution.id));
   const requestDeferredDetails = useCallback(() => {
+    setChangeDetailsRequested(true);
     setExpanded(true);
   }, []);
   useEffect(() => {
     if (
       !expanded ||
+      (!selectedExecutionId && !changeDetailsRequested) ||
       !deferredDetailRequestKey ||
       deferredDetailStatus ||
       detailRequestsInFlightRef.current.has(deferredDetailRequestKey)
@@ -204,6 +212,8 @@ export function ToolExecutionBlock({
     deferredExecutionKey,
     detailRetryRevision,
     expanded,
+    selectedExecutionId,
+    changeDetailsRequested,
   ]);
   const retryDeferredDetails = useCallback(() => {
     if (!deferredDetailRequestKey) return;
@@ -281,7 +291,7 @@ export function ToolExecutionBlock({
       ? `历史执行记录 · ${runSummary}`
       : `Execution history · ${runSummary}`
     : runSummary;
-  const summary = historySummary;
+  const summary = runSummary;
   const logoExecution = renderedExecutions[0];
 
   return (
@@ -293,6 +303,7 @@ export function ToolExecutionBlock({
         className="tool-execution-summary"
         type="button"
         aria-expanded={expanded}
+        title={historySummary}
         onClick={toggleExpanded}
       >
         <ToolLogo name={logoExecution?.name ?? ''} size={16} />
@@ -301,17 +312,15 @@ export function ToolExecutionBlock({
       </button>
       {expanded && (
         <div className="tool-execution-details">
-          {renderedExecutions.map((execution) => isContextCompactionPresentationExecution(execution) ? (
-            <RuntimeContextCompactionDetail
+          {renderedExecutions.map((execution) => (
+            <ToolExecutionRow
               key={execution.id}
               execution={execution}
-              active={active}
-              language={language}
-            />
-          ) : (
-            <ToolExecutionDetail
-              key={execution.id}
-              execution={execution}
+              expanded={selectedExecutionId === execution.id}
+              onToggle={() => setSelectedExecutionId(current => current === execution.id ? null : execution.id)}
+              detailsDeferred={hasDeferredExecutionDetails(execution) && !hydratedExecutions.has(execution.id)}
+              detailsStatus={deferredDetailStatus}
+              onRetryDetails={retryDeferredDetails}
               message={message}
               language={language}
               active={active}
@@ -399,10 +408,12 @@ function RuntimeContextCompactionDetail({
   execution,
   active,
   language,
+  embedded = false,
 }: {
   execution: ChatToolExecution;
   active: boolean;
   language: AppLanguage;
+  embedded?: boolean;
 }) {
   const metadata = execution.metadata;
   const running = active && isToolRunning(execution);
@@ -449,14 +460,14 @@ function RuntimeContextCompactionDetail({
     : '';
 
   return (
-    <section className="tool-execution-detail runtime-context-compaction-detail" data-execution-id={execution.id}>
-      <header>
+    <section className={`${embedded ? '' : 'tool-execution-detail '}runtime-context-compaction-detail`} data-execution-id={embedded ? undefined : execution.id}>
+      {!embedded && <header>
         <ToolLogo name={execution.name} size={16} />
         <strong>{language === 'zh' ? '上下文维护' : 'Context maintenance'}</strong>
         <span className={failed ? 'failed' : cancelled ? 'warning' : ''}>
           {duration ? `${status} · ${duration}` : status}
         </span>
-      </header>
+      </header>}
       <p>
         {scope
           ? language === 'zh'
@@ -737,6 +748,69 @@ function stringArray(value: unknown) {
     : [];
 }
 
+function ToolExecutionRow({
+  execution, message, language, active, expanded, onToggle, onOpenScene,
+  detailsDeferred, detailsStatus, onRetryDetails,
+}: {
+  execution: ChatToolExecution;
+  message: ChatMessage;
+  language: AppLanguage;
+  active: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpenScene: (scene: CardlingScene) => void;
+  detailsDeferred: boolean;
+  detailsStatus?: 'loading' | 'loaded' | 'failed';
+  onRetryDetails: () => void;
+}) {
+  const rowRef = useRef<HTMLElement>(null);
+  const detailId = useId();
+  const failed = isToolFailedInContext(execution, active);
+  const interrupted = !active && isToolRunning(execution);
+  const waiting = active && execution.state === 'awaiting_permission';
+  const status = active && activeToolStatusLabel(execution, language) ||
+    (isToolCancelled(execution) || interrupted
+      ? language === 'zh' ? '已中止' : 'Stopped'
+      : failed ? language === 'zh' ? '失败' : 'Failed'
+        : language === 'zh' ? '已执行' : 'Executed');
+  const name = isContextCompactionPresentationExecution(execution)
+    ? language === 'zh' ? '上下文压缩' : 'Context compaction'
+    : displayToolName(execution.name);
+  const summary = execution.summary.trim();
+  const label = !summary || summary === execution.name || summary === name ? name : summary;
+  const duration = formatDuration(execution.durationMs);
+  return (
+    <section ref={rowRef} className={`tool-execution-detail ${expanded ? 'expanded' : ''}`} data-execution-id={execution.id}>
+      <button className={`tool-execution-row ${failed ? 'failed' : waiting ? 'waiting' : ''}`}
+        type="button" aria-expanded={expanded} aria-controls={expanded ? detailId : undefined}
+        title={`${name}${label !== name ? `\n${label}` : ''}`}
+        onClick={() => preserveScrollPositionForToggle(rowRef.current, onToggle)}>
+        <ToolLogo name={execution.name} size={14} />
+        <span className="tool-execution-row-status">{status}</span>
+        <span className="tool-execution-row-label">{label}</span>
+        {duration && <span className="tool-execution-row-duration">{duration}</span>}
+        <ChevronDown size={13} className={expanded ? 'expanded' : ''} />
+      </button>
+      {expanded && (
+        <div id={detailId} className="tool-execution-row-content">
+          {detailsDeferred ? (
+            <div className="tool-execution-detail-status" role="status">
+              {detailsStatus === 'failed' || detailsStatus === 'loaded' ? <>
+                <span>{language === 'zh' ? '暂时无法读取执行详情' : 'Execution details are unavailable'}</span>
+                <button type="button" onClick={onRetryDetails}><RefreshCw size={13} />{language === 'zh' ? '重试' : 'Retry'}</button>
+              </> : <><LoaderCircle size={13} /><span>{language === 'zh' ? '正在读取详情…' : 'Loading details…'}</span></>}
+            </div>
+          ) : isContextCompactionPresentationExecution(execution) ? (
+            <RuntimeContextCompactionDetail execution={execution} active={active} language={language} embedded />
+          ) : (
+            <ToolExecutionDetail execution={execution} message={message} language={language} active={active} onOpenScene={onOpenScene} />
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ToolExecutionDetail({
   execution,
   message,
@@ -750,13 +824,14 @@ function ToolExecutionDetail({
   active: boolean;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
-  const [outputExpanded, setOutputExpanded] = useState(false);
   const [outputWrapped, setOutputWrapped] = useState(false);
   const scene = cardlingSceneFromToolExecution(execution, message);
-  const duration = formatDuration(execution.durationMs);
   const summary = execution.summary.trim();
+  const hasSummary = summary && summary !== execution.name && summary !== displayToolName(execution.name);
+  const error = asRecord(execution.metadata.error);
+  const failureMessage = typeof error.message === 'string' ? error.message : '';
   const goalUpdate = goalToolUpdateFromExecution(execution);
-  const output = toolDisplayOutput(execution);
+  const output = execution.output;
   const childExecutions = subagentChildToolExecutions(execution);
   const runtimeInfo = runtimeProfileInfoFromExecution(execution);
   const hookDecision = toolHookDecisionFromExecution(execution);
@@ -764,35 +839,10 @@ function ToolExecutionDetail({
   const auditSignals = subagentAuditSignalsFromExecution(execution);
   const workerInfo = workerProfileInfoFromExecution(execution);
   const dispatchPlan = planDispatchInfoFromExecution(execution);
-  const failed = isToolFailedInContext(execution, active);
-  const cancelled = isToolCancelled(execution);
-  const activeStatus = active ? activeToolStatusLabel(execution, language) : undefined;
-  const shouldCollapseOutput = toolOutputNeedsCollapse(output);
-  const visibleOutput =
-    shouldCollapseOutput && !outputExpanded ? compactToolOutput(output) : output;
-  const status = activeStatus
-      ? activeStatus
-      : cancelled
-        ? language === 'zh'
-          ? '已取消'
-          : 'Cancelled'
-        : failed
-          ? language === 'zh'
-            ? '失败'
-            : 'Failed'
-          : language === 'zh'
-            ? '完成'
-            : 'Done';
   return (
-    <section className="tool-execution-detail" data-execution-id={execution.id}>
-      <header>
-        <ToolLogo name={execution.name} size={16} />
-        <strong>{displayToolName(execution.name)}</strong>
-        <span className={failed ? 'failed' : ''}>
-          {duration ? `${status} · ${duration}` : status}
-        </span>
-      </header>
-      {summary && !goalUpdate && <code>$ {summary}</code>}
+    <div className="tool-execution-body">
+      {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
+      {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
       {execution.state === 'completed' && (execution.name.startsWith('mcp__') || execution.name === 'mcp_call') && <McpAppPanel sessionId={message.conversationId ?? ''} turnId={execution.turnId ?? message.turnId ?? ''} toolCallId={execution.id} language={language} />}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
@@ -832,59 +882,34 @@ function ToolExecutionDetail({
         language={language}
       />
       {output.trim() && !goalUpdate && (
-        <>
-          <pre
-            className={`tool-execution-output ${outputExpanded ? 'expanded' : ''} ${
-              outputWrapped ? 'wrapped' : ''
-            }`}
-          >
-            {visibleOutput}
-          </pre>
+        <div className="tool-execution-output-panel">
           <div className="tool-output-actions">
-            {shouldCollapseOutput && (
-              <button
-                className="tool-output-toggle"
-                type="button"
-                onClick={() => setOutputExpanded((value) => !value)}
-              >
-                {outputExpanded
-                  ? language === 'zh'
-                    ? '收起输出'
-                    : 'Collapse output'
-                  : language === 'zh'
-                    ? '展开完整输出'
-                    : 'Expand full output'}
-              </button>
-            )}
             <button
               className="tool-output-toggle"
               type="button"
+              title={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
+              aria-label={outputWrapped ? (language === 'zh' ? '取消换行' : 'No wrap') : (language === 'zh' ? '换行' : 'Wrap')}
               aria-pressed={outputWrapped}
-              onClick={() => setOutputWrapped((value) => !value)}
+              onClick={() => setOutputWrapped(value => !value)}
             >
-              <WrapText size={13} />
-              <span>
-                {outputWrapped
-                  ? language === 'zh'
-                    ? '取消换行'
-                    : 'No wrap'
-                  : language === 'zh'
-                    ? '换行'
-                    : 'Wrap'}
-              </span>
+              <WrapText size={14} />
             </button>
             <button
               className="tool-output-toggle"
               type="button"
+              title={language === 'zh' ? '复制输出' : 'Copy output'}
+              aria-label={language === 'zh' ? '复制输出' : 'Copy output'}
               onClick={() => void copyText(output).catch(() => undefined)}
             >
-              <Clipboard size={13} />
-              <span>{language === 'zh' ? '复制输出' : 'Copy output'}</span>
+              <Clipboard size={14} />
             </button>
           </div>
-        </>
+          <pre className={`tool-execution-output ${outputWrapped ? 'wrapped' : ''}`} tabIndex={0}>
+            {output}
+          </pre>
+        </div>
       )}
-    </section>
+    </div>
   );
 }
 

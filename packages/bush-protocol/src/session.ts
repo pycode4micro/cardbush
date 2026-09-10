@@ -55,6 +55,7 @@ export const turnContextCheckpointSchema = z.object({
   throughMessageId: z.string().min(1),
   summary: z.string().min(1),
   inputMessageCount: z.number().int().positive(),
+  projectionVersion: z.literal("stable_v1").optional(),
 });
 
 export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
@@ -258,3 +259,5 @@ export const assembleRuntimeSessionContextRequestSchema = z.object({
   maxChars: z.number().int().positive().optional(),
   maxSummaryTurns: z.number().int().nonnegative().optional(),
 });
+
+export const CHECKPOINT_CONTINUATION_INSTRUCTIONS = "An active_turn_checkpoint is an intermediate factual summary for its named Turn, not a final answer. Continue the latest user request from its unresolved work and exact next action. Preserve completed operations and do not repeat external side effects. Historical checkpoints and continuation instructions belong to their original Turns; later user requests determine the current task. If the current request is complete, return its final answer.";

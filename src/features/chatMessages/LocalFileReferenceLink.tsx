@@ -24,14 +24,18 @@ export function LocalFileReferenceLink({
   path,
   children,
   unavailableLabel,
+  knownFileName,
 }: {
   path: string;
   children?: ReactNode;
   unavailableLabel?: ReactNode;
+  /** A caller that just resolved a native file can reuse that observation. */
+  knownFileName?: string;
 }) {
   const [inspection, setInspection] = useState<LocalReferenceInspection | null>(null);
-  const inspectionComplete = inspection?.path === path;
-  const metadata = inspectionComplete ? inspection.metadata : null;
+  const inspectionComplete = knownFileName !== undefined || inspection?.path === path;
+  const metadata = knownFileName !== undefined ? { path, name: knownFileName, kind: 'file' as const }
+    : inspection?.path === path ? inspection.metadata : null;
   const directoryLike = metadata?.kind === 'folder';
   const applicationLike = metadata?.kind === 'application';
   const pathLabel = basename(path);
@@ -41,6 +45,7 @@ export function LocalFileReferenceLink({
     : children || metadata?.name || pathLabel;
 
   useEffect(() => {
+    if (knownFileName !== undefined) return;
     let active = true;
     const inspect = window.cardbushDesktop?.inspectLocalReference;
     if (!inspect) {
@@ -59,7 +64,7 @@ export function LocalFileReferenceLink({
     return () => {
       active = false;
     };
-  }, [path]);
+  }, [path, knownFileName]);
 
   if (!inspectionComplete || !metadata) {
     return (

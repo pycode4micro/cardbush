@@ -34,9 +34,12 @@ export function mcpActivations(executions: ChatToolExecution[]): McpActivation[]
 export function mcpActivationState(target: McpActivation, snapshot: McpSnapshotResult | null): McpActivationState {
   if (!snapshot || snapshot.snapshotId !== target.snapshotId) return 'unknown';
   if (Math.max(snapshot.revision, snapshot.pendingRevision ?? 0) > target.revision) return 'superseded';
-  if (snapshot.applicationState === 'failed') return 'failed';
   if (snapshot.revision < target.revision && snapshot.pendingRevision !== target.revision) return 'unknown';
-  if (snapshot.applicationState === 'pending') return 'pending';
   const server = snapshot.servers.find(item => item.id === target.serverId);
+  if (server?.updateState === 'failed') return 'failed';
+  if (server?.updateState) return server.updateState === 'waiting_for_catalog' && server.health !== 'ready' && server.health !== 'restarting' ? 'failed' : 'pending';
+  const affected = snapshot.pendingServerIds === undefined || snapshot.pendingServerIds.includes(target.serverId);
+  if (snapshot.applicationState === 'failed' && affected) return 'failed';
+  if (snapshot.applicationState === 'pending' && affected) return 'pending';
   return server?.health === 'ready' ? 'connected' : server?.health === 'unavailable' ? 'failed' : 'unknown';
 }

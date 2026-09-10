@@ -1,4 +1,5 @@
 import type {
+  PluginProxySettings,
   ReasoningEffort,
   RuntimePermissionRequest,
 } from '@cardbush/bush-protocol';
@@ -184,6 +185,7 @@ export interface ManagedModelConfig {
 }
 
 export interface McpServerConfig {
+  proxy?: PluginProxySettings;
   id: string;
   name: string;
   description: string;
@@ -414,6 +416,7 @@ export interface CardbushAppPlugin {
   installed: boolean;
   enabled: boolean;
   config: {
+    proxy?: PluginProxySettings;
     screenshotDirectory?: string;
     allowOpenApp?: boolean;
     allowWindowClose?: boolean;
@@ -428,6 +431,7 @@ export interface CardbushAppsConfiguration {
   protocol: string;
   revision: number;
   serviceEnabled: boolean;
+  proxy?: PluginProxySettings;
   plugins: CardbushAppPlugin[];
 }
 

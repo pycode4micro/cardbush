@@ -45,3 +45,4 @@ export * from "./workspaceTools.js";
 export * from "./taskWorkspace.js";
 export * from './automationScheduler.js';
 export { McpAppsHost, MCP_APPS_COMMAND } from './mcpAppsHost.js';
+export * from './fileMemo.js';

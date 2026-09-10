@@ -125,6 +125,17 @@ async function run() {
     );
     assert.equal(capabilityResponse.type, 'command_response');
     assert.equal(capabilityResponse.ok, true);
+    let mcpObservation = 0;
+    const waitForMcp = () => within((async () => {
+      while (true) {
+        const response = await controller.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId: `mcp-observation-${++mcpObservation}`,
+          command: { kind: 'runtime.get_mcp_snapshot', payload: {} } });
+        assert.equal(response.ok, true);
+        assert.notEqual(response.result?.applicationState, 'failed', response.result?.applicationError);
+        if (response.result?.applicationState === 'applied') return response.result;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    })(), 30_000, 'background MCP publication');
     const mcpResponse = await within(
       controller.command({
         protocol: BUSH_RUNTIME_IPC_PROTOCOL,
@@ -144,6 +155,7 @@ async function run() {
       'bundled MCP plugin startup',
     );
     assert.equal(mcpResponse.ok, true);
+    mcpResponse.result = await waitForMcp();
     assert.deepEqual(
       mcpResponse.result.servers.map((server) => server.id),
       ['cardbush_apps', 'chrome_devtools'],
@@ -164,12 +176,16 @@ async function run() {
     changedApps.plugins.find(plugin => plugin.id === 'chrome').enabled = false;
     // External edits need not know the host's revision bookkeeping.
     writeFileSync(appsConfigPath, JSON.stringify(changedApps));
-    const hotApply = operationId => controller.command({
-      protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId,
-      command: { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {
-        protocol: BUSH_MCP_SNAPSHOT_PROTOCOL, snapshotId: 'utility-bundled-plugins', revision: 1, servers: [],
-      } },
-    });
+    const hotApply = async operationId => {
+      const response = await controller.command({
+        protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command', operationId,
+        command: { kind: APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND, payload: {
+          protocol: BUSH_MCP_SNAPSHOT_PROTOCOL, snapshotId: 'utility-bundled-plugins', revision: 1, servers: [],
+        } },
+      });
+      assert.equal(response.ok, true);
+      return { ...response, result: await waitForMcp() };
+    };
     const disabledChrome = await hotApply('hot_disable_chrome');
     assert.equal(disabledChrome.ok, true);
     assert.deepEqual(disabledChrome.result.servers.map(server => server.id), ['cardbush_apps']);

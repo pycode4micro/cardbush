@@ -1,11 +1,13 @@
+import { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
+export { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { createHash } from "node:crypto";
 import { McpInteractiveCalls, ScopedMcpClient, type McpElicitationHandler } from './elicitation.js';
 import { McpOAuthCoordinator, McpAuthenticationRequired, McpOAuthConfigurationRequired, credentialKey } from './oauth.js';
 import { mcpHeaderFetch } from './headerHelper.js';
-import { createOpenAiTransport, scopeOpenAiClient, attachOpenAiResultAdapter, type OpenAiTokenProvider } from './openaiHosted.js';
+import { createOpenAiTransport, scopeOpenAiClient, attachOpenAiCatalogAdapter, type OpenAiTokenProvider } from './openaiHosted.js';
 import { OpenAiAuthError } from './openaiAuth.js';
 export * from './openaiAuth.js';
-export { createOpenAiResultNormalizer, createOpenAiTransport, type OpenAiTokenProvider } from './openaiHosted.js';
+export { createOpenAiTransport, type OpenAiTokenProvider } from './openaiHosted.js';
 export { McpOAuthCoordinator, credentialKey, McpAuthenticationRequired, McpOAuthConfigurationRequired, type McpCredentialStore, type CredentialState } from './oauth.js';
 export type { McpElicitationHandler } from './elicitation.js';
 export { validateMcpFormResponse } from './elicitation.js';
@@ -47,6 +49,7 @@ interface ConnectedServer {
   restartPromise?: Promise<void>;
   authorization?: Promise<void>;
   authorizationAbort?: AbortController;
+  recoveryAbort?: AbortController;
   pendingClient?: Client;
   pendingTransport?: Transport;
   retired: boolean;
@@ -58,7 +61,16 @@ interface ConnectedServer {
   }>;
 }
 
+interface ConnectionUpdate {
+  config: McpServerSnapshot;
+  controller: AbortController;
+  state: 'queued' | 'connecting' | 'waiting_for_catalog' | 'failed';
+  connection?: ConnectedServer;
+  error?: string;
+}
+
 export interface McpClientManagerOptions {
+  network?: (server: McpServerSnapshot, signal?: AbortSignal) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   closeOAuthOnClose?: boolean;
   openai?: { getToken: OpenAiTokenProvider; fetch?: typeof fetch };
   oauth?: McpOAuthCoordinator;
@@ -70,6 +82,7 @@ export interface McpClientManagerOptions {
   createTransport?: (server: McpServerSnapshot) => Transport;
   wait?: (milliseconds: number) => Promise<void>;
   closeTimeoutMs?: number;
+  maxConcurrentConnections?: number;
   onServiceStateChange?: (state: {
     serverId: string;
     health: "ready" | "restarting" | "unavailable" | "auth_required" | "configuration_required";
@@ -94,32 +107,40 @@ export class McpClientManager {
   readonly #registry: ToolRegistry;
   readonly #canApply: () => boolean;
   readonly #createClient: (server: McpServerSnapshot) => Client;
-  readonly #createTransport: (server: McpServerSnapshot) => Transport;
+  readonly #createTransport: (server: McpServerSnapshot, signal?: AbortSignal) => Transport | Promise<Transport>;
   readonly #wait: (milliseconds: number) => Promise<void>;
   readonly #closeTimeoutMs: number;
+  readonly #maxConcurrentConnections: number;
   readonly #onServiceStateChange?: McpClientManagerOptions["onServiceStateChange"];
   readonly #onServerStderr?: McpClientManagerOptions["onServerStderr"];
   readonly #onAuthenticationRequired?: McpClientManagerOptions['onAuthenticationRequired'];
   #connections: ConnectedServer[] = [];
   #snapshot?: McpSnapshot;
-  #result?: McpSnapshotResult;
   #pending?: McpSnapshot;
   #applicationError?: string;
   #retryTimer?: ReturnType<typeof setTimeout>;
-  #queue: Promise<unknown> = Promise.resolve();
+  readonly #updates = new Map<string, ConnectionUpdate>();
+  readonly #running = new Set<Promise<void>>();
+  readonly #cleanup = new Set<Promise<void>>();
+  readonly #observers = new Set<() => void>();
+  #pumpScheduled = false;
+  #atomicUpdate = false;
   #closed = false;
-  readonly #forceReconnect = new Set<string>();
 
   refresh(serverId: string, snapshot: McpSnapshot): Promise<McpSnapshotResult> {
     return this.refreshServers([serverId], snapshot);
   }
 
   refreshServers(serverIds: string[], snapshot: McpSnapshot): Promise<McpSnapshotResult> {
-    serverIds.forEach(id => this.#forceReconnect.add(id));
-    return this.apply(snapshot);
+    return this.#applyAndWait(snapshot, serverIds);
   }
 
   async invalidateOpenAiConnections(): Promise<void> {
+    for (const [id, update] of [...this.#updates]) {
+      if (update.config.transport.kind === 'stdio' || update.config.transport.auth !== 'openai') continue;
+      this.#discardUpdate(id, update);
+      this.#updates.set(id, { config: update.config, controller: new AbortController(), state: 'failed', error: 'OpenAI account changed; reconnect this application.' });
+    }
     await Promise.all(this.#connections.filter(item => item.config.transport.kind !== 'stdio' && item.config.transport.auth === 'openai').map(async connection => {
       connection.health = 'auth_required'; connection.lastError = 'OpenAI account changed; reconnect after current tasks finish.';
       connection.authorizationAbort?.abort();
@@ -157,142 +178,209 @@ export class McpClientManager {
       if (server.transport.kind !== 'stdio' && server.transport.auth === 'openai') scopeOpenAiClient(client, server.transport.openaiAppId!);
       return client;
     };
-    this.#createTransport = options.createTransport ?? (server => server.transport.kind !== 'stdio' && server.transport.auth === 'openai'
-      ? createOpenAiTransport(server, this.#openai?.getToken, this.#openai?.fetch) : createTransport(server,
-      server.transport.kind !== 'stdio' && server.transport.auth !== 'none' && !Object.keys(server.transport.headers).some(key => key.toLowerCase() === 'authorization')
-        ? this.#oauth?.provider(server) : undefined));
+    this.#createTransport = options.createTransport ?? (async (server, signal) => {
+      const network = await options.network?.(server, signal);
+      signal?.throwIfAborted();
+      return server.transport.kind !== 'stdio' && server.transport.auth === 'openai'
+        ? createOpenAiTransport(server, this.#openai?.getToken, network?.fetch ?? this.#openai?.fetch)
+        : createTransport(server, server.transport.kind !== 'stdio' && server.transport.auth !== 'none' && !Object.keys(server.transport.headers).some(key => key.toLowerCase() === 'authorization')
+          ? this.#oauth?.provider(server) : undefined, network);
+    });
     this.#wait = options.wait ?? delay;
     this.#closeTimeoutMs = options.closeTimeoutMs ?? 1_000;
+    this.#maxConcurrentConnections = options.maxConcurrentConnections ?? 4;
+    if (!Number.isSafeInteger(this.#maxConcurrentConnections) || this.#maxConcurrentConnections < 1) {
+      throw new Error('maxConcurrentConnections must be a positive integer.');
+    }
     this.#onServiceStateChange = options.onServiceStateChange;
     this.#onServerStderr = options.onServerStderr;
   }
 
   snapshot(): McpSnapshotResult | undefined {
-    const result = this.#result ?? (this.#pending ? {
-      protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
-      snapshotId: this.#pending.snapshotId,
-      revision: this.#pending.revision,
-      servers: [],
-    } : undefined);
-    if (!result) return undefined;
+    const desired = this.#pending ?? this.#snapshot;
+    if (!desired) return undefined;
+    const removed = this.#connections.filter(c => !desired.servers.some(s => s.id === c.config.id));
+    const ids = [...desired.servers.map(s => s.id), ...removed.map(c => c.config.id)];
+    const pendingServerIds = [...this.#updates].filter(([, update]) => update.state !== 'failed' || this.#applicationError).map(([id]) => id).concat(removed.map(c => c.config.id));
+    const connecting = [...this.#updates.values()].some(update => update.state === 'queued' || update.state === 'connecting');
     return structuredClone({
-      ...result,
-      applicationState: this.#pending ? (this.#applicationError ? "failed" : "pending") : "applied",
-      ...(this.#pending ? { pendingRevision: this.#pending.revision } : {}),
+      protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
+      snapshotId: desired.snapshotId,
+      revision: this.#snapshot?.snapshotId === desired.snapshotId ? this.#snapshot.revision : desired.revision,
+      applicationState: this.#pending ? (this.#applicationError ? 'failed' : 'pending') : 'applied',
+      ...(this.#pending ? { pendingRevision: desired.revision, pendingServerIds,
+        ...(!this.#applicationError ? { applicationPhase: connecting ? 'connecting' : 'waiting_for_idle' } : {}),
+      } : {}),
       ...(this.#applicationError ? { applicationError: this.#applicationError } : {}),
-      servers: result.servers.map((server) => {
-        const connection = this.#connections.find((item) => item.config.id === server.id);
-        return connection
-          ? {
-              ...server,
-              health: connection.health,
-              restartAttempts: connection.restartAttempts,
-              ...(connection.lastError ? { lastError: connection.lastError } : {}),
-            }
-          : server;
+      servers: ids.map(id => {
+        const current = this.#connections.find(c => c.config.id === id);
+        const update = this.#updates.get(id);
+        const lastError = update?.error ?? update?.connection?.lastError ?? (!update ? current?.lastError : undefined);
+        return {
+          id,
+          negotiatedProtocolVersion: current?.client.getNegotiatedProtocolVersion() ?? undefined,
+          health: update?.state === 'failed' ? 'unavailable' : update?.connection?.health ?? current?.health ?? 'unavailable',
+          restartAttempts: current?.restartAttempts ?? 0,
+          ...(update ? { updateState: update.state } : removed.some(c => c.config.id === id) ? { updateState: 'waiting_for_catalog' } : {}),
+          ...(lastError ? { lastError } : {}),
+          // Only published tools belong to the active catalog, including while a replacement connects.
+          tools: current?.tools.map(tool => ({ remoteName: tool.remote.name, runtimeName: tool.runtimeName })) ?? [],
+        };
       }),
-    });
+    }) as McpSnapshotResult;
   }
 
-  apply(input: unknown): Promise<McpSnapshotResult> {
+  /** Accept a configuration immediately; connection work and publication continue in the background. */
+  submit(input: unknown, reconnectServerIds: readonly string[] = []): McpSnapshotResult {
+    if (this.#closed) throw new Error('MCP manager is closed.');
     const snapshot = mcpSnapshotSchema.parse(input);
-    const operation = this.#queue.then(() => this.#apply(snapshot));
-    this.#queue = operation.catch(() => undefined);
-    return operation;
-  }
-
-  async #apply(snapshot: McpSnapshot): Promise<McpSnapshotResult> {
-    if (this.#closed) throw new Error("MCP manager is closed.");
     const latest = this.#pending ?? this.#snapshot;
-    if (latest?.snapshotId === snapshot.snapshotId && snapshot.revision < latest.revision) {
-      throw new Error("MCP snapshot revision cannot move backwards.");
-    }
-    if (latest?.snapshotId === snapshot.snapshotId && snapshot.revision === latest.revision &&
-        fingerprint(snapshot) !== fingerprint(latest)) {
-      throw new Error("MCP snapshot identity was reused with different content.");
-    }
-    if (this.#snapshot?.snapshotId === snapshot.snapshotId) {
-      if (snapshot.revision < this.#snapshot.revision) {
-        throw new Error("MCP snapshot revision cannot move backwards.");
+    if (latest?.snapshotId === snapshot.snapshotId) {
+      if (snapshot.revision < latest.revision) throw new Error('MCP snapshot revision cannot move backwards.');
+      if (snapshot.revision === latest.revision && fingerprint(snapshot) !== fingerprint(latest)) {
+        throw new Error('MCP snapshot identity was reused with different content.');
       }
-      if (snapshot.revision === this.#snapshot.revision) {
-        if (fingerprint(snapshot) !== fingerprint(this.#snapshot)) {
-          throw new Error("MCP snapshot identity was reused with different content.");
-        }
+      if (snapshot.revision === latest.revision && !reconnectServerIds.length) {
+        this.#queuePump();
         return this.snapshot()!;
       }
     }
-
+    const reconnect = new Set(reconnectServerIds);
+    const retryFailedTransaction = Boolean(this.#applicationError);
     this.#pending = snapshot;
     this.#applicationError = undefined;
-    if (!this.#canApply()) {
-      this.#scheduleRetry();
-      return this.snapshot()!;
-    }
-
-    const next: ConnectedServer[] = [];
-    const created: ConnectedServer[] = [];
-    try {
-      for (const server of snapshot.servers) {
-        const reusable = this.#connections.find((connection) =>
-          connection.config.id === server.id && !connection.retired && !this.#forceReconnect.has(server.id) &&
-          connection.health === "ready" && JSON.stringify(connection.config) === JSON.stringify(server),
-        );
-        const connection = reusable ?? await this.#connect(server);
-        next.push(connection);
-        if (!reusable) created.push(connection);
+    for (const [id, update] of this.#updates) {
+      const config = snapshot.servers.find(server => server.id === id);
+      if (!config || JSON.stringify(config) !== JSON.stringify(update.config) || reconnect.has(id) || (retryFailedTransaction && update.state === 'failed')) {
+        this.#discardUpdate(id, update);
       }
-      // A new turn may have started while the transports were connecting.
-      if (this.#closed || !this.#canApply()) {
-        await this.#retireConnections(created);
-        this.#scheduleRetry();
-        return this.snapshot()!;
-      }
-      const registrations = next.flatMap((connection) =>
-        connection.tools.map((tool) => this.#registration(connection, tool)),
-      );
-      this.#registry.replaceOwned("runtime_mcp", registrations);
-    } catch (error) {
-      await this.#retireConnections(created);
-      this.#applicationError = errorMessage(error);
-      this.#scheduleRetry(5_000);
-      throw error;
     }
-
-    const previous = this.#connections;
-    this.#connections = next;
-    this.#snapshot = snapshot;
-    this.#pending = undefined;
-    this.#forceReconnect.clear();
-    this.#applicationError = undefined;
-    clearTimeout(this.#retryTimer);
-    this.#retryTimer = undefined;
-    this.#result = {
-      protocol: BUSH_MCP_SNAPSHOT_RESULT_PROTOCOL,
-      snapshotId: snapshot.snapshotId,
-      revision: snapshot.revision,
-      servers: next.map((connection) => ({
-        id: connection.config.id,
-        negotiatedProtocolVersion:
-          connection.client.getNegotiatedProtocolVersion() ?? undefined,
-        health: connection.health,
-        restartAttempts: connection.restartAttempts,
-        tools: connection.tools.map((tool) => ({
-          remoteName: tool.remote.name,
-          runtimeName: tool.runtimeName,
-        })),
-      })),
-    };
-    await this.#retireConnections(previous.filter((connection) => !next.includes(connection)));
+    for (const config of snapshot.servers) {
+      if (this.#updates.has(config.id)) continue;
+      const current = this.#connections.find(c => c.config.id === config.id && !c.retired);
+      if (!reconnect.has(config.id) && current && JSON.stringify(current.config) === JSON.stringify(config)) continue;
+      this.#updates.set(config.id, { config, controller: new AbortController(), state: 'queued' });
+    }
+    // Required changes retain the existing transaction guarantee. Ordinary optional services publish independently.
+    this.#atomicUpdate = [...this.#updates.values()].some(update => update.config.required) ||
+      this.#connections.some(c => c.config.required && !snapshot.servers.some(s => s.id === c.config.id));
+    this.#queuePump();
+    this.#notifyObservers();
     return this.snapshot()!;
   }
 
-  #scheduleRetry(delayMs = 250): void {
-    if (this.#closed || this.#retryTimer) return;
-    this.#retryTimer = setTimeout(() => {
+  /** Internal callers that need the catalog (for example an isolated agent) can explicitly await readiness. */
+  apply(input: unknown): Promise<McpSnapshotResult> {
+    return this.#applyAndWait(input);
+  }
+
+  async #applyAndWait(input: unknown, reconnectServerIds: readonly string[] = []): Promise<McpSnapshotResult> {
+    this.submit(input, reconnectServerIds);
+    while (!this.#closed) {
+      if (this.#applicationError) {
+        const error = this.#applicationError;
+        await this.#drainCleanup();
+        throw new Error(error);
+      }
+      if (!this.#pending || !this.#canApply()) break;
+      await new Promise<void>(resolve => this.#observers.add(resolve));
+    }
+    await this.#drainCleanup();
+    return this.snapshot()!;
+  }
+
+  #notifyObservers(): void {
+    const observers = [...this.#observers];
+    this.#observers.clear();
+    observers.forEach(resolve => resolve());
+  }
+
+  #queuePump(): void {
+    if (this.#closed || this.#pumpScheduled) return;
+    this.#pumpScheduled = true;
+    queueMicrotask(() => { this.#pumpScheduled = false; this.#pump(); });
+  }
+
+  #pump(): void {
+    if (this.#closed || !this.#pending || this.#applicationError) { this.#notifyObservers(); return; }
+    this.#publishAvailable();
+    if (!this.#applicationError) {
+      for (const update of this.#updates.values()) {
+        if (this.#running.size >= this.#maxConcurrentConnections) break;
+        if (update.state !== 'queued') continue;
+        update.state = 'connecting';
+        const work = this.#connect(update.config, update.controller.signal).then(connection => {
+          if (this.#closed || this.#updates.get(update.config.id) !== update) {
+            this.#trackCleanup(this.#retireConnections([connection]));
+            return;
+          }
+          update.connection = connection;
+          update.state = 'waiting_for_catalog';
+        }, error => {
+          if (this.#closed || this.#updates.get(update.config.id) !== update) return;
+          if (update.config.required) this.#failUpdate(error);
+          else { update.state = 'failed'; update.error = errorMessage(error); }
+        }).finally(() => { this.#running.delete(work); this.#pump(); });
+        this.#running.add(work);
+      }
+    }
+    this.#notifyObservers();
+  }
+
+  #publishAvailable(): void {
+    const desired = this.#pending;
+    if (!desired || this.#applicationError) return;
+    if (!this.#canApply()) { this.#schedulePublication(); return; }
+    if (this.#atomicUpdate && [...this.#updates.values()].some(update => !update.connection && update.state !== 'failed')) return;
+    const next = desired.servers.flatMap(server => {
+      const update = this.#updates.get(server.id);
+      if (update?.state === 'failed') return [];
+      const connection = update?.connection ?? this.#connections.find(c => c.config.id === server.id);
+      return connection ? [connection] : [];
+    });
+    try {
+      if (next.length !== this.#connections.length || next.some((connection, index) => connection !== this.#connections[index])) {
+        this.#registry.replaceOwned('runtime_mcp', next.flatMap(connection => connection.tools.map(tool => this.#registration(connection, tool))));
+      }
+    } catch (error) { this.#failUpdate(error); return; }
+    const previous = this.#connections;
+    this.#connections = next;
+    for (const [id, update] of this.#updates) if (update.connection && next.includes(update.connection)) this.#updates.delete(id);
+    this.#trackCleanup(this.#retireConnections(previous.filter(connection => !next.includes(connection))));
+    if ([...this.#updates.values()].every(update => update.state === 'failed')) {
+      this.#snapshot = desired;
+      this.#pending = undefined;
+      clearTimeout(this.#retryTimer);
       this.#retryTimer = undefined;
-      if (this.#pending && !this.#closed) void this.apply(this.#pending).catch(() => undefined);
-    }, delayMs);
+    }
+  }
+
+  #failUpdate(error: unknown): void {
+    this.#applicationError = errorMessage(error);
+    for (const [id, update] of [...this.#updates]) {
+      this.#discardUpdate(id, update);
+      this.#updates.set(id, { config: update.config, controller: new AbortController(), state: 'failed', error: this.#applicationError });
+    }
+  }
+
+  #discardUpdate(id: string, update: ConnectionUpdate): void {
+    this.#updates.delete(id);
+    update.controller.abort(new Error('MCP connection update was superseded or cancelled.'));
+    if (update.connection) this.#trackCleanup(this.#retireConnections([update.connection]));
+  }
+
+  #trackCleanup(work: Promise<void>): void {
+    const settled = work.catch(() => undefined).finally(() => this.#cleanup.delete(settled));
+    this.#cleanup.add(settled);
+  }
+
+  async #drainCleanup(): Promise<void> {
+    while (this.#cleanup.size) await Promise.all(this.#cleanup);
+  }
+
+  #schedulePublication(): void {
+    if (this.#closed || this.#retryTimer) return;
+    this.#retryTimer = setTimeout(() => { this.#retryTimer = undefined; this.#pump(); }, 250);
     this.#retryTimer.unref?.();
   }
 
@@ -321,25 +409,36 @@ export class McpClientManager {
     if (this.#options.closeOAuthOnClose !== false) this.#oauth?.close();
     this.#closed = true;
     clearTimeout(this.#retryTimer);
-    await this.#queue;
+    for (const [id, update] of [...this.#updates]) this.#discardUpdate(id, update);
+    this.#notifyObservers();
     const current = this.#connections;
     this.#connections = [];
     this.#snapshot = undefined;
-    this.#result = undefined;
     this.#pending = undefined;
     this.#registry.removeOwned("runtime_mcp");
+    await Promise.all(this.#running);
+    await this.#drainCleanup();
     await this.#retireConnections(current);
   }
 
-  async #connect(config: McpServerSnapshot): Promise<ConnectedServer> {
+  async #connect(config: McpServerSnapshot, signal?: AbortSignal): Promise<ConnectedServer> {
+    const transport = await abortable(Promise.resolve(this.#createTransport(config, signal)), signal);
+    signal?.throwIfAborted();
     const client = this.#createClient(config);
     this.#interactive.prepare(client);
-    const transport = this.#createTransport(config);
     drainTransportStderr(transport, config.id, this.#onServerStderr);
+    let closedDuringStartup = false;
     try {
-      await client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000 });
-      if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai') attachOpenAiResultAdapter(client, transport);
-      const listed = await client.listTools();
+      const connecting = client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000, signal });
+      void connecting.then(() => {
+        // Defensive cleanup for transports that finish starting after cancellation and close.
+        if (signal?.aborted && closedDuringStartup) this.#trackCleanup(closeConnection(client, transport, this.#closeTimeoutMs));
+      }, () => undefined);
+      await abortable(connecting, signal);
+      if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai') attachOpenAiCatalogAdapter(transport, config.transport.openaiAppId!);
+      attachMcpResultFallback(client, transport);
+      const listed = await abortable(listToolCatalog(client, config.startupTimeoutMs, signal), signal);
+      signal?.throwIfAborted();
       if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai' && !listed.tools.length) throw new McpOAuthConfigurationRequired('This application is not available in the signed-in OpenAI account. Connect it in ChatGPT Apps, then reconnect.');
       const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
       const tools = listed.tools
@@ -371,6 +470,8 @@ export class McpClientManager {
       return connection;
     } catch (error) {
       await closeConnection(client, transport, this.#closeTimeoutMs);
+      closedDuringStartup = true;
+      signal?.throwIfAborted();
       const authentication = authenticationFailure(error);
       // Keep sign-in/configuration failures visible and recoverable even for required services.
       if (!config.required || authentication) return { config, client, transport, tools: [], health: authentication?.health ?? 'unavailable',
@@ -497,7 +598,8 @@ export class McpClientManager {
               errorMessage(error),
               {
                 resource,
-                sdkCode: mcpErrorCode(error),
+                sdkCode: error instanceof McpResultValidationError ? error.sdkCode : mcpErrorCode(error),
+                ...(error instanceof McpResultValidationError ? { rawResult: error.rawResult, resultValidationFailed: true } : {}),
               },
             );
           }
@@ -616,18 +718,19 @@ export class McpClientManager {
       this.#publishServiceState(connection, "cardbush_supervisor");
       const client = this.#createClient(connection.config);
       this.#interactive.prepare(client);
-      const transport = this.#createTransport(connection.config);
-      drainTransportStderr(
-        transport,
-        connection.config.id,
-        this.#onServerStderr,
-      );
-      connection.pendingClient = client;
-      connection.pendingTransport = transport;
+      const recovery = new AbortController();
+      connection.recoveryAbort = recovery;
+      let transport: Transport | undefined;
       try {
+        transport = await abortable(Promise.resolve(this.#createTransport(connection.config, recovery.signal)), recovery.signal);
+        if (connection.retired) { await closeConnection(client, transport, this.#closeTimeoutMs); return; }
+        drainTransportStderr(transport, connection.config.id, this.#onServerStderr);
+        connection.pendingClient = client;
+        connection.pendingTransport = transport;
         await client.connect(transport, { timeout: connection.config.startupTimeoutMs ?? 15_000 });
-        if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') attachOpenAiResultAdapter(client, transport);
-        const listed = await client.listTools();
+        if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') attachOpenAiCatalogAdapter(transport, connection.config.transport.openaiAppId!);
+        attachMcpResultFallback(client, transport);
+        const listed = await listToolCatalog(client, connection.config.startupTimeoutMs);
         const byName = new Map(listed.tools.map((remote) => [remote.name, remote]));
         const missing = connection.tools.filter((tool) => !byName.has(tool.remote.name));
         if (missing.length > 0) {
@@ -660,12 +763,16 @@ export class McpClientManager {
       } catch (error) {
         connection.pendingClient = undefined;
         connection.pendingTransport = undefined;
+        if (connection.retired) { await settleWithin(client.close(), this.#closeTimeoutMs); return; }
         const authentication = authenticationFailure(error);
         connection.health = authentication?.health ?? "unavailable";
         connection.lastError = authentication?.error.message ?? errorMessage(error);
         this.#publishServiceState(connection, "cardbush_supervisor");
-        await closeConnection(client, transport, this.#closeTimeoutMs);
+        if (transport) await closeConnection(client, transport, this.#closeTimeoutMs);
+        else await settleWithin(client.close(), this.#closeTimeoutMs);
         if (authentication) { connection.restartPromise = undefined; return; }
+      } finally {
+        if (connection.recoveryAbort === recovery) connection.recoveryAbort = undefined;
       }
     }
   }
@@ -673,6 +780,7 @@ export class McpClientManager {
   async #retireConnections(connections: ConnectedServer[]): Promise<void> {
     connections.forEach((connection) => {
       connection.retired = true;
+      connection.recoveryAbort?.abort();
       connection.authorizationAbort?.abort();
     });
     await Promise.allSettled(
@@ -769,21 +877,22 @@ function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls): Cl
   );
 }
 
-export function createTransport(server: McpServerSnapshot, authProvider?: OAuthClientProvider): Transport {
+export function createTransport(server: McpServerSnapshot, authProvider?: OAuthClientProvider, network?: { fetch: typeof fetch; env: Record<string, string> }): Transport {
   const transport = server.transport;
   if (transport.kind === "stdio") {
     return new StdioClientTransport({
       command: transport.command,
       args: transport.args,
       cwd: transport.cwd,
-      env: Object.keys(transport.env).length > 0 ? transport.env : undefined,
+      env: network ? { ...transport.env, ...network.env } : Object.keys(transport.env).length > 0 ? transport.env : undefined,
       stderr: "pipe",
     });
   }
   const requestInit = Object.keys(transport.headers).length > 0
     ? { headers: transport.headers }
     : undefined;
-  const fetchWithHeaders = transport.headersHelper ? mcpHeaderFetch(transport.url, transport.headersHelper) : undefined;
+  const fetchWithHeaders = transport.headersHelper ? mcpHeaderFetch(transport.url,
+    { ...transport.headersHelper, env: { ...transport.headersHelper.env, ...network?.env } }, network?.fetch) : network?.fetch;
   if (transport.kind === "sse") {
     return new SSEClientTransport(new URL(transport.url), { requestInit, authProvider, fetch: fetchWithHeaders });
   }
@@ -934,6 +1043,36 @@ async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promi
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+async function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  let onAbort!: () => void;
+  try {
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      onAbort = () => reject(abortErrorFromSignal(signal, 'MCP connection was cancelled.'));
+      if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
+    })]);
+  } finally { signal.removeEventListener('abort', onAbort); }
+}
+
+async function listToolCatalog(client: Client, timeoutMs = 60_000, signal?: AbortSignal): Promise<{ tools: McpTool[] }> {
+  const tools: McpTool[] = [];
+  const cursors = new Set<string>();
+  const deadline = Date.now() + timeoutMs;
+  let cursor: string | undefined;
+  do {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('MCP tool catalog discovery timed out.');
+    const page = await client.listTools(cursor === undefined ? undefined : { cursor }, { timeout: remaining, signal });
+    tools.push(...page.tools);
+    cursor = page.nextCursor;
+    if (cursor !== undefined) {
+      if (cursors.has(cursor)) throw new Error('MCP tool catalog repeated a pagination cursor.');
+      cursors.add(cursor);
+    }
+  } while (cursor !== undefined);
+  return { tools };
 }
 
 function delay(milliseconds: number): Promise<void> {

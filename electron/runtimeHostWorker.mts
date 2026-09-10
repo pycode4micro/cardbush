@@ -13,6 +13,7 @@ import {
   runtimeProviderBindingIdentitySchema,
   runtimeIpcOutboundMessageSchema,
   mcpSnapshotSchema,
+  pluginProxyEnvironment, type McpServerSnapshot, type NetworkProxySettings,
   type RuntimeIpcOutboundMessage,
   type RuntimeProtocolError,
   AUTOMATION_COMMAND, runtimeSessionTurnRequestSchema, type RuntimeProviderBindingRef,
@@ -37,7 +38,7 @@ import {
   AutomationScheduler,
 } from '@cardbush/bush-runtime';
 import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
-import { net } from 'electron';
+import { ProxyFetchPool } from './proxyFetch.mjs';
 import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import {
@@ -69,10 +70,20 @@ if (!parentPort) {
 
 const operations = new Map<string, AbortController>();
 const mcpHost = new McpHostBridge(message => parentPort.postMessage(message));
+const pluginFetches = new ProxyFetchPool();
+async function pluginNetwork(server: Pick<McpServerSnapshot, 'networkProxy' | 'pluginId'> & { id?: string }, signal?: AbortSignal) {
+  let config = server.networkProxy;
+  if (!config) {
+    const all = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
+    config = all.plugins[server.pluginId ?? ''] ?? all.servers?.[server.id ?? ''] ?? all.default;
+  }
+  const endpoint = await mcpHost.request<string>('network.route', config, signal);
+  return { fetch: pluginFetches.forEndpoint(endpoint), env: pluginProxyEnvironment(endpoint) };
+}
 const mcpOAuth = new McpOAuthCoordinator({
   read: key => mcpHost.request<CredentialState | undefined>('credentials.read', { key }),
   write: (key, value) => mcpHost.request<void>('credentials.write', { key, value }),
-}, url => mcpHost.request<void>('open-url', { url }));
+}, url => mcpHost.request<void>('open-url', { url }), server => async (input, init) => (await pluginNetwork(server, init?.signal ?? undefined)).fetch(input, init));
 const subscriptions = new Map<string, AbortController>();
 let host: InMemoryRuntimeHost;
 let providers: OpenAIResponsesProviderRegistry;
@@ -242,6 +253,7 @@ async function executeRuntimeCommand(
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     await mcp.close();
+    await pluginFetches.close();
     return { accepted: true, drained: !host.hasActiveTurns() };
   }
   if (command.kind === UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND) {
@@ -264,13 +276,19 @@ async function executeRuntimeCommand(
       const combined = mcpSnapshotSchema.parse(withBundledAppsServer({
         ...source, servers: [...source.servers, ...pluginServers],
       }));
+      if (process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1') {
+        const network = await mcpHost.request<{ default: NetworkProxySettings; plugins: Record<string, NetworkProxySettings>; servers?: Record<string, NetworkProxySettings> }>('network.configuration', {}, signal);
+        combined.servers = combined.servers.map(server => ({
+          ...server, networkProxy: server.id === 'cardbush_management' ? { mode: 'none', httpProxy: '', httpsProxy: '', noProxy: '' } : network.plugins[server.pluginId ?? ''] ?? network.servers?.[server.id] ?? network.default,
+        }));
+      }
       const content = JSON.stringify({ snapshotId: combined.snapshotId, servers: combined.servers });
       const revision = effectiveMcp && content === effectiveMcpContent
         ? effectiveMcp.revision : Math.max(combined.revision, (effectiveMcp?.revision ?? 0) + 1);
       effectiveMcp = { ...combined, revision };
       effectiveMcpContent = content;
       sourceMcpRevision = source.revision;
-      const result = await mcp.apply(effectiveMcp);
+      const result = mcp.submit(effectiveMcp);
       return { ...result, configurationRevision: sourceMcpRevision };
     });
     mcpUpdate = operation.catch(() => undefined);
@@ -286,7 +304,7 @@ async function executeRuntimeCommand(
       if (!effectiveMcp) return null;
       const ids = effectiveMcp.servers.filter(server => server.transport.kind !== 'stdio' && server.transport.auth === 'openai').map(server => server.id);
       effectiveMcp = { ...effectiveMcp, revision: effectiveMcp.revision + 1 };
-      return { ...await mcp.refreshServers(ids, effectiveMcp), configurationRevision: sourceMcpRevision };
+      return { ...mcp.submit(effectiveMcp, ids), configurationRevision: sourceMcpRevision };
     });
     mcpUpdate = operation.catch(() => undefined); return operation;
   }
@@ -305,7 +323,7 @@ async function executeRuntimeCommand(
       const current = effectiveMcp?.servers.find(item => item.id === id);
       if (!current || JSON.stringify(current.transport) !== JSON.stringify(server.transport)) throw new Error('This MCP connection changed during sign-in. Use the latest saved connection.');
       effectiveMcp = { ...effectiveMcp!, revision: effectiveMcp!.revision + 1 };
-      return { ...await mcp.refresh(id, effectiveMcp), configurationRevision: sourceMcpRevision };
+      return { ...mcp.submit(effectiveMcp, [id]), configurationRevision: sourceMcpRevision };
     });
     mcpUpdate = operation.catch(() => undefined);
     return operation;
@@ -355,6 +373,7 @@ function withBundledAppsServer(input: unknown): unknown {
   if (appsEntry) {
     bundled.push({
       id: 'cardbush_apps',
+      pluginId: 'computer-use',
       transport: {
         kind: 'stdio',
         command: process.execPath,
@@ -383,6 +402,7 @@ function withBundledAppsServer(input: unknown): unknown {
     const remoteDebugging = appsConfig.chromeConnectionMode === 'remote_debugging';
     bundled.push({
       id: 'chrome_devtools',
+      pluginId: 'chrome',
       transport: {
         kind: 'stdio',
         command: process.execPath,
@@ -689,6 +709,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
   provider: providers,
   toolRegistry,
@@ -747,10 +768,10 @@ host = new InMemoryRuntimeHost({
 });
 mcp = new McpClientManager({
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? {
+    network: pluginNetwork,
     oauth: mcpOAuth,
     openai: {
       getToken: input => mcpHost.request('openai.access-token', { rejectedToken: input.rejectedToken }, input.signal),
-      fetch: (input, init) => net.fetch(String(input), init),
     },
     onElicitation: (({ signal: _signal, ...input }, signal) => mcpHost.request('elicitation', input, signal)) as import('@cardbush/bush-mcp-client').McpElicitationHandler,
     onAuthenticationRequired: async (input, signal) => (await mcpHost.request<{ action: string }>('authentication', input, signal)).action === 'accept',

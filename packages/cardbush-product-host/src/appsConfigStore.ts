@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
+import { defaultPluginProxy, pluginProxySchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
@@ -61,6 +62,7 @@ export interface CardbushAppsConfigSnapshot {
   protocol: typeof CARDBUSH_APPS_CONFIG_PROTOCOL;
   revision: number;
   serviceEnabled: boolean;
+  proxy: PluginProxySettings;
   plugins: CardbushAppPluginConfig[];
 }
 
@@ -160,6 +162,7 @@ export function defaultCardbushAppsConfig(
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: 1,
     serviceEnabled: true,
+    proxy: defaultPluginProxy(),
     plugins: catalog.map((entry) => ({
       ...entry,
       installed: entry.installation === "INSTALLED_BY_DEFAULT",
@@ -186,6 +189,7 @@ function decodeUpdate(
   return {
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: existing.revision + 1,
+    proxy: pluginProxySchema.parse(value.proxy ?? existing.proxy),
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
     plugins: existing.plugins.map((plugin) => {
       const candidate = candidates.get(plugin.id);
@@ -216,6 +220,7 @@ function decodeSnapshot(
   return {
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: positiveInteger(value.revision, "revision"),
+    proxy: pluginProxySchema.parse(value.proxy ?? defaultPluginProxy()),
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
     plugins: catalog.map((entry) => {
       const state = stored.get(entry.id);
@@ -250,12 +255,14 @@ function defaultConfig(id: string): Record<string, unknown> {
 
 function decodeConfig(id: string, input: unknown): Record<string, unknown> {
   const config = record(input ?? {}, "plugin.config must be an object.");
+  const network = config.proxy === undefined ? {} : { proxy: pluginProxySchema.parse(config.proxy) };
   if (id === "computer-use") {
     const screenshotDirectory = optionalString(config.screenshotDirectory) ?? "";
     if (screenshotDirectory && !isAbsolute(screenshotDirectory)) {
       throw new Error("computer-use screenshotDirectory must be an absolute path or empty.");
     }
     return {
+      ...network,
       screenshotDirectory,
       allowOpenApp: boolean(config.allowOpenApp, "computer-use.allowOpenApp"),
       allowWindowClose: boolean(config.allowWindowClose, "computer-use.allowWindowClose"),
@@ -278,12 +285,13 @@ function decodeConfig(id: string, input: unknown): Record<string, unknown> {
     // to the extension connector, which preserves the user's current profile
     // without relying on DevToolsActivePort.
     return {
+      ...network,
       connectionMode: connectionMode === "remote_debugging"
         ? "remote_debugging"
         : "connector",
     } satisfies ChromePluginConfig;
   }
-  return structuredClone(config);
+  return { ...structuredClone(config), ...network };
 }
 
 function normalizePluginId(value: string): string {

@@ -5,10 +5,11 @@ import {
   SessionStore,
   assembleContext,
 } from "../dist/index.js";
+import { assembleContextProjection } from "../dist/contextAssembler.js";
 
 const NOW = "2026-08-29T00:00:00.000Z";
 
-test('checkpoint source boundaries separate repeated user messages and internal inputs without changing normal context', () => {
+test('source ownership separates repeated user messages without inserting into normal context', () => {
   const store = deterministicStore();
   const inputs = [
     { role: 'user', name: 'turn_runtime_context', visibility: 'internal', content: 'same internal context' },
@@ -18,16 +19,14 @@ test('checkpoint source boundaries separate repeated user messages and internal 
   const session = store.commitTurn('session_1', turn('second', 2, [...inputs, { role: 'assistant', content: 'Second task facts.', toolCalls: [] }]));
   const normal = assembleContext({ session });
   const before = structuredClone(session);
-  const maintenance = assembleContext({ session, compactionTurnIds: ['first', 'second'] });
-  const messages = maintenance.messages;
-  assert.match(messages[0].content, /edge="start" turn_id="first" target="summaries\[0\]"/);
-  assert.equal(messages[3].content, 'First task facts.');
-  assert.match(messages[4].content, /edge="end" turn_id="first"/);
-  assert.match(messages[5].content, /edge="start" turn_id="second" target="summaries\[1\]"/);
-  assert.equal(messages[8].content, 'Second task facts.');
-  assert.deepEqual(maintenance.sourceMessageIds, normal.sourceMessageIds);
+  const projection = assembleContextProjection({ session });
+  assert.deepEqual(projection.context, normal);
+  assert.deepEqual(projection.turns.map(turn => [turn.turnId, turn.messages.length]), [['first', 3], ['second', 3]]);
+  assert.equal(projection.turns[0].messages.at(-1).content, 'First task facts.');
+  assert.equal(projection.turns[1].messages.at(-1).content, 'Second task facts.');
+  assert.deepEqual(projection.turns.flatMap(turn => turn.messages), normal.messages);
   assert.deepEqual(session, before);
-  assert.deepEqual(assembleContext({ session }), normal, 'maintenance never changes the next normal request');
+  assert.deepEqual(assembleContext({ session }), normal, 'deriving ownership never changes the next request');
 });
 
 test("commits ordered Turns atomically and assembles append-only context", () => {
@@ -130,6 +129,7 @@ test("projects a partial active-Turn checkpoint while retaining raw Tool history
     { role: "assistant", content: "finished after checkpoint", toolCalls: [] },
   ]);
   candidate.contextCheckpoint = {
+    projectionVersion: "stable_v1",
     throughMessageId: "turn_1_message_2",
     summary: "The requested file was inspected successfully; report the verified result next.",
     inputMessageCount: 1,
@@ -170,6 +170,7 @@ test("rejects active-Turn checkpoints outside generated message boundaries", () 
     { role: "assistant", content: "done", toolCalls: [] },
   ]);
   candidate.contextCheckpoint = {
+    projectionVersion: "stable_v1",
     throughMessageId: "turn_1_message_0",
     summary: "invalid boundary",
     inputMessageCount: 1,

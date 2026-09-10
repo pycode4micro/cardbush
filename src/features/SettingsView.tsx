@@ -732,11 +732,11 @@ export function SettingsView({
     if (section === 'proxy') {
       return (
         <SettingsCard
-          title={language === 'zh' ? '代理设置' : 'Proxy settings'}
+          title={language === 'zh' ? '模型代理' : 'Model proxy'}
           subtitle={
             language === 'zh'
-              ? '配置 cardbush 发起网络请求时使用的代理方式；默认直连，不继承环境代理。'
-              : 'Configure how cardbush network requests use proxy settings; direct connection is the default.'
+              ? '配置模型请求的代理。插件默认跟随此设置，也可在插件页独立配置。'
+              : 'Configure the model proxy. Plugins follow this by default and can be configured separately on the Plugins page.'
           }
         >
           <SettingsRadio
@@ -745,8 +745,8 @@ export function SettingsView({
             title={language === 'zh' ? '不使用代理' : 'No proxy'}
             subtitle={
               language === 'zh'
-                ? '默认直连。代理仅用于模型提供商和远程 MCP 等外部网络请求，内嵌 Runtime 不经过代理。'
-                : 'Direct connection by default. Proxies only affect external provider and remote MCP traffic; the embedded Runtime does not use them.'
+                ? '模型请求直接连接，不继承环境代理。'
+                : 'Model requests connect directly without inheriting environment proxies.'
             }
             checked={settings.proxy.mode === 'none'}
             onChange={() => updateProxy({ mode: 'none' })}
@@ -891,7 +891,6 @@ export function SettingsView({
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onOpenMcp={(serverId) => setPluginMcpTarget({ serverId })}
-          onOpenNetwork={() => setSection('proxy')}
           onNotify={notify}
         />
       );

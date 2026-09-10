@@ -1,7 +1,6 @@
 import OpenAI from "openai";
 import { createHash } from "node:crypto";
 import type {
-  FunctionTool,
   Response,
   ResponseCreateParamsStreaming,
   ResponseInput,
@@ -23,7 +22,12 @@ import type {
 } from "@cardbush/bush-runtime";
 import { readLocalModelImage } from "@cardbush/bush-runtime";
 import { providerFailureEvent } from "./providerFailure.js";
-import { replayResponsesOutput, responsesReplayData } from "./responsesReplay.js";
+import { isClientToolSearchCall, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
+import { ResponseToolCalls, ResponseToolCallError } from "./responsesToolCalls.js";
+import { ResponseText, ResponseTextError } from "./responsesText.js";
+import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
+import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, isToolSearchUnsupported, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
+import { responseToolAliases, responseToolName } from "./responsesToolNames.js";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -42,15 +46,18 @@ export interface OpenAIResponsesProviderConfig {
 
 export interface ResponseCreateProjectionOptions {
   disableProviderState?: boolean;
+  toolSearchMode?: ResponsesToolSearchMode;
 }
 
 interface ResponsesProjection {
   request: ModelRequest;
   params: ResponseCreateParamsStreaming;
   usesProviderState: boolean;
+  toolSearchMode: ResponsesToolSearchMode;
 }
 
 const INPUT_TOKEN_COUNT_CAPABILITY = "input_token_count";
+const TOOL_SEARCH_TOKEN_COUNT_CAPABILITY = "input_token_count.client_tool_search";
 const UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES = new Set([404, 405, 501]);
 
 export interface ResponseNormalizationState {
@@ -58,7 +65,11 @@ export interface ResponseNormalizationState {
   sequence: number;
   started: boolean;
   terminal?: boolean;
-  toolArguments?: Map<number, string>;
+  toolSearchMode?: ResponsesToolSearchMode;
+  toolAliases?: Map<string, string>;
+  toolCalls?: ResponseToolCalls;
+  text?: ResponseText;
+  outputIndex?: ResponseOutputIndex;
 }
 
 type EventBaseKeys = "protocol" | "requestId" | "sequence" | "createdAt";
@@ -76,114 +87,73 @@ export function normalizeResponseStreamEvent(
   const events: ModelEvent[] = [];
   const createdAt = responseEventTimestamp(event);
   const append = (payload: ModelEventPayload): void => {
-    events.push({
-      protocol: BUSH_MODEL_EVENT_PROTOCOL,
-      requestId: state.requestId,
-      sequence: state.sequence++,
-      createdAt,
-      ...payload,
-    } as ModelEvent);
+    events.push({ protocol: BUSH_MODEL_EVENT_PROTOCOL, requestId: state.requestId,
+      sequence: state.sequence++, createdAt, ...payload } as ModelEvent);
   };
-  const start = (providerResponseId?: string): void => {
-    if (state.started) return;
-    state.started = true;
-    append({ kind: "response_started", providerResponseId });
-  };
-
-  if (event.type === "response.created") {
-    start(responseContinuationId(event.response));
-    return events;
-  }
   const response = responseFromEvent(event);
-  start(response ? responseContinuationId(response) : undefined);
-
-  switch (event.type) {
-    case "response.output_text.delta":
-    case "response.refusal.delta":
-      if (event.delta) append({ kind: "text_delta", delta: event.delta });
-      break;
-    case "response.reasoning_text.delta":
-    case "response.reasoning_summary_text.delta":
-      if (event.delta) append({ kind: "reasoning_delta", delta: event.delta });
-      break;
-    case "response.output_item.added":
-      if (event.item.type === "function_call") {
-        append({
-          kind: "tool_call_delta",
-          index: event.output_index,
-          toolCallId: event.item.call_id,
-          nameDelta: event.item.name,
-        });
+  if (!state.started) {
+    state.started = true;
+    append({ kind: "response_started", providerResponseId: response ? responseContinuationId(response) : undefined });
+  }
+  const outputIndex = state.outputIndex ??= new ResponseOutputIndex();
+  const toolCalls = state.toolCalls ??= new ResponseToolCalls(outputIndex);
+  const text = state.text ??= new ResponseText(outputIndex);
+  try {
+    switch (event.type) {
+      case "response.output_text.delta":
+      case "response.output_text.done":
+      case "response.refusal.delta":
+      case "response.refusal.done":
+      case "response.reasoning_text.delta":
+      case "response.reasoning_text.done":
+      case "response.reasoning_summary_text.delta":
+      case "response.reasoning_summary_text.done":
+        text.event(event, append);
+        break;
+      case "response.output_item.added":
+      case "response.output_item.done":
+        toolCalls.item({ ...event.item }, event.output_index, event.type === "response.output_item.done", state.toolSearchMode, state.toolAliases, append);
+        text.item(event.item, event.output_index, event.type === "response.output_item.done", append);
+        break;
+      case "response.function_call_arguments.delta":
+      case "response.function_call_arguments.done":
+        toolCalls.arguments(event, state.toolAliases, append);
+        break;
+      case "response.completed":
+      case "response.incomplete": {
+        if (event.type === "response.completed") {
+          const indices = toolCalls.snapshotIndices(event.response.output.map(item => ({ ...item })));
+          for (const [position, item] of event.response.output.entries()) {
+            toolCalls.item({ ...item }, indices[position]!, true, state.toolSearchMode, state.toolAliases, append);
+            text.item(item, position, true, append, true);
+          }
+          toolCalls.finish();
+        } else {
+          // Runtime owns output-limit continuation and discards this entire call
+          // batch. Preserve its prose without promoting truncated calls to ready.
+          for (const [position, item] of event.response.output.entries()) text.item(item, position, true, append, true);
+        }
+        appendResponseUsage(event.response, append);
+        append({ kind: "response_completed",
+          finishReason: event.type === "response.incomplete" ? incompleteFinishReason(event.response)
+            : toolCalls.hasCalls ? "tool_calls" : responseFinishReason(event.response),
+          providerReplay: responsesReplayData(event.response, state.toolSearchMode) });
+        state.terminal = true;
+        break;
       }
-      break;
-    case "response.function_call_arguments.delta": {
-      const toolArguments = state.toolArguments ??= new Map<number, string>();
-      toolArguments.set(
-        event.output_index,
-        `${toolArguments.get(event.output_index) ?? ""}${event.delta}`,
-      );
-      if (event.delta) {
-        append({
-          kind: "tool_call_delta",
-          index: event.output_index,
-          argumentsDelta: event.delta,
-        });
-      }
-      break;
+      case "response.failed":
+        append(responseFailurePayload(event.response));
+        state.terminal = true;
+        break;
+      case "error":
+        append({ kind: "response_failed", code: event.code || "provider_response_error", message: event.message, retryable: false });
+        state.terminal = true;
+        break;
     }
-    case "response.function_call_arguments.done": {
-      const toolArguments = state.toolArguments ??= new Map<number, string>();
-      const streamed = toolArguments.get(event.output_index) ?? "";
-      const remaining = event.arguments.startsWith(streamed)
-        ? event.arguments.slice(streamed.length)
-        : streamed
-          ? ""
-          : event.arguments;
-      if (remaining) {
-        append({
-          kind: "tool_call_delta",
-          index: event.output_index,
-          toolCallId: event.item_id,
-          nameDelta: streamed ? undefined : event.name,
-          argumentsDelta: remaining,
-        });
-      }
-      toolArguments.set(event.output_index, event.arguments);
-      break;
-    }
-    case "response.completed":
-      appendResponseUsage(event.response, append);
-      append({
-        kind: "response_completed",
-        finishReason: responseFinishReason(event.response),
-        providerReplay: responsesReplayData(event.response),
-      });
-      state.terminal = true;
-      break;
-    case "response.incomplete":
-      appendResponseUsage(event.response, append);
-      append({
-        kind: "response_completed",
-        finishReason: incompleteFinishReason(event.response),
-        providerReplay: responsesReplayData(event.response),
-      });
-      state.terminal = true;
-      break;
-    case "response.failed":
-      append(responseFailurePayload(event.response));
-      state.terminal = true;
-      break;
-    case "error":
-      append({
-        kind: "response_failed",
-        code: event.code || "provider_response_error",
-        message: event.message,
-        retryable: false,
-      });
-      state.terminal = true;
-      break;
-    default:
-      break;
+  } catch (error) {
+    if (!(error instanceof ResponseToolCallError) && !(error instanceof ResponseTextError) && !(error instanceof ResponseOutputIdentityError)) throw error;
+    append({ kind: "response_failed", code: error.code, message: error.message, retryable: false });
+    state.terminal = true;
   }
   return events;
 }
@@ -223,7 +193,7 @@ function appendResponseUsage(
 }
 
 function responseFinishReason(response: Response): string {
-  return response.output.some((item) => item.type === "function_call")
+  return response.output.some((item) => item.type === "function_call" || isClientToolSearchCall(item))
     ? "tool_calls"
     : "stop";
 }
@@ -251,6 +221,7 @@ export function toResponsesCreateParams(
   const providerState = options.disableProviderState
     ? undefined
     : request.providerState;
+  const toolSearchMode = options.toolSearchMode ?? historicalToolSearchMode(request) ?? "function";
   const inputMessageOffset = providerState?.previousResponseId
     ? providerState.inputMessageOffset!
     : 0;
@@ -261,8 +232,8 @@ export function toResponsesCreateParams(
   }
   return {
     model: request.model,
-    input: toResponseInput(request.messages.slice(inputMessageOffset), request),
-    tools: toResponseTools(request),
+    input: toResponseInput(request, inputMessageOffset, toolSearchMode),
+    tools: responseTools(request, toolSearchMode),
     max_output_tokens: request.maxOutputTokens,
     temperature: request.temperature,
     top_p: request.topP,
@@ -291,14 +262,19 @@ export function toResponsesInputTokenCountParams(
   };
 }
 
-function toResponseInput(messages: ModelMessage[], request: ModelRequest): ResponseInput {
-  return messages.flatMap((message, index) => toResponseInputItems(message, index, request));
+function toResponseInput(request: ModelRequest, offset: number, mode: ResponsesToolSearchMode): ResponseInput {
+  const projectDiscovery = discoveryInputProjection(request);
+  return request.messages.flatMap((message, index) => {
+    const items = projectDiscovery(index, toResponseInputItems(message, index, request, mode));
+    return index < offset ? [] : items;
+  });
 }
 
 function toResponseInputItems(
   message: ModelMessage,
   messageIndex: number,
   request: ModelRequest,
+  mode: ResponsesToolSearchMode,
 ): ResponseInputItem[] {
   if (message.role === "tool") {
     return [{
@@ -322,10 +298,13 @@ function toResponseInputItems(
     if (message.content) {
       items.push({ type: "message", role: "assistant", content: message.content });
     }
-    items.push(...message.toolCalls.map((call) => ({
+    items.push(...message.toolCalls.map((call): ResponseInputItem => mode === "native" && call.name === "mcp_search" ? {
+      type: "tool_search_call", call_id: call.id, execution: "client", status: "completed",
+      arguments: JSON.parse(call.argumentsText),
+    } : ({
       type: "function_call" as const,
       call_id: call.id,
-      name: call.name,
+      name: responseToolName(call.name),
       arguments: call.argumentsText,
     })));
     return items;
@@ -364,17 +343,6 @@ function reasoningItemId(message: Extract<ModelMessage, { role: "assistant" }>, 
     message.toolCalls.map((call) => call.id),
   ]);
   return `rs_${createHash("sha256").update(identity).digest("hex").slice(0, 24)}`;
-}
-
-function toResponseTools(request: ModelRequest): FunctionTool[] | undefined {
-  if (!request.tools.length) return undefined;
-  return request.tools.map((tool) => ({
-    type: "function",
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.inputSchema,
-    strict: false,
-  }));
 }
 
 export async function resolveLocalImageInputs(request: ModelRequest): Promise<ModelRequest> {
@@ -424,23 +392,29 @@ export class OpenAIResponsesProvider implements ModelProvider {
     if (this.#readCapability(request.model, INPUT_TOKEN_COUNT_CAPABILITY) === "unsupported") {
       return undefined;
     }
+    const projection = await this.#project(request);
+    if (projection.toolSearchMode === "native" &&
+      this.#readCapability(request.model, TOOL_SEARCH_TOKEN_COUNT_CAPABILITY) === "unsupported") return undefined;
     try {
-      const projection = await this.#project(request);
       const result = await this.#client.responses.inputTokens.count(
-        toResponsesInputTokenCountParams(projection.params),
-        { signal: options.signal },
-      );
+        toResponsesInputTokenCountParams(projection.params), { signal: options.signal });
       this.#observeCapability(
         request.model,
         INPUT_TOKEN_COUNT_CAPABILITY,
         "supported",
         "provider_count_succeeded",
       );
+      if (projection.toolSearchMode === "native") this.#observeCapability(request.model,
+        TOOL_SEARCH_TOKEN_COUNT_CAPABILITY, "supported", "native_tool_search_count_succeeded");
       return {
         inputTokens: result.input_tokens,
         source: "provider",
       };
     } catch (error) {
+      if (projection.toolSearchMode === "native" && isToolSearchUnsupported(error)) {
+        this.#observeCapability(request.model, TOOL_SEARCH_TOKEN_COUNT_CAPABILITY, "unsupported", "native_tool_search_count_rejected");
+        return undefined;
+      }
       const status = providerHttpStatus(error);
       if (status !== undefined && UNSUPPORTED_INPUT_TOKEN_COUNT_STATUSES.has(status)) {
         this.#observeCapability(
@@ -465,14 +439,23 @@ export class OpenAIResponsesProvider implements ModelProvider {
       started: false,
     };
     try {
-      const projection = await this.#project(request);
+      const initialProjection = await this.#project(request);
+      // Only an explicit pre-stream protocol rejection can retry with portable tools.
+      // Once any response is accepted, never replay it under another protocol.
+      const { result: stream, projection } = await this.#withToolSearchFallback(request, initialProjection,
+        params => this.#client.responses.create(params, { signal: options.signal }));
       const resolvedRequest = projection.request;
       const activeProviderState = projection.usesProviderState;
-      const stream = await this.#client.responses.create(
-        projection.params,
-        { signal: options.signal },
-      );
+      if (hasMcpDiscovery(resolvedRequest)) state.toolSearchMode = projection.toolSearchMode;
+      state.toolAliases = responseToolAliases(resolvedRequest);
       for await (const providerEvent of stream) {
+        if (projection.toolSearchMode === "native") {
+          const response = responseFromEvent(providerEvent);
+          if (response?.tools?.some(tool => tool.type === "tool_search" && tool.execution === "client") ||
+            (providerEvent.type === "response.output_item.done" && isClientToolSearchCall(providerEvent.item))) {
+            this.#observeCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY, "supported", "client_tool_search_observed");
+          }
+        }
         if (
           activeProviderState &&
           providerEvent.type === "response.created" &&
@@ -497,7 +480,14 @@ export class OpenAIResponsesProvider implements ModelProvider {
           );
         }
         for (const event of normalizeResponseStreamEvent(providerEvent, state)) {
+          if (options.signal?.aborted) {
+            yield providerFailureEvent(request.requestId, state.sequence++, undefined, true);
+            return;
+          }
           yield event;
+          // Completion is authoritative. Closing the iterator here also avoids
+          // a late socket failure turning an already completed response into failure.
+          if (event.kind === "response_completed" || event.kind === "response_failed") return;
         }
       }
       if (!state.terminal) {
@@ -522,7 +512,20 @@ export class OpenAIResponsesProvider implements ModelProvider {
     }
   }
 
-  async #project(request: ModelRequest): Promise<ResponsesProjection> {
+  async #withToolSearchFallback<T>(request: ModelRequest, projection: ResponsesProjection,
+    operation: (params: ResponseCreateParamsStreaming) => Promise<T>): Promise<{ result: T; projection: ResponsesProjection }> {
+    try {
+      return { result: await operation(projection.params), projection };
+    } catch (error) {
+      if (projection.toolSearchMode !== "native" || !isToolSearchUnsupported(error)) throw error;
+      this.#observeCapability(request.model, TOOL_SEARCH_CAPABILITY, "unsupported", "client_tool_search_rejected");
+      if (historicalToolSearchMode(request) !== undefined || request.providerState?.previousResponseId) throw error;
+      const fallback = await this.#project(request, "function");
+      return { result: await operation(fallback.params), projection: fallback };
+    }
+  }
+
+  async #project(request: ModelRequest, mode?: ResponsesToolSearchMode): Promise<ResponsesProjection> {
     const resolvedRequest = await resolveLocalImageInputs(request);
     const continuation = this.#readCapability(
       resolvedRequest.model,
@@ -535,12 +538,18 @@ export class OpenAIResponsesProvider implements ModelProvider {
       resolvedRequest.providerState &&
       (!hasPreviousResponse || continuation === "supported"),
     );
+    const toolSearchMode = mode ?? (hasMcpDiscovery(resolvedRequest)
+      ? historicalToolSearchMode(resolvedRequest) ??
+        (this.#readCapability(resolvedRequest.model, TOOL_SEARCH_CAPABILITY) === "unsupported" ? "function" : "native")
+      : "function");
     return {
       request: resolvedRequest,
       params: toResponsesCreateParams(resolvedRequest, {
         disableProviderState: !usesProviderState,
+        toolSearchMode,
       }),
       usesProviderState,
+      toolSearchMode,
     };
   }
 

@@ -329,8 +329,9 @@ test("recovers a compacted active Session Turn without replaying its completed T
     "turn_recovery",
   );
   assert.match(durableCheckpoint.sessionCommit.activeContextCheckpoint.summary, /completed successfully/);
+  assert.equal(durableCheckpoint.sessionCommit.activeContextCheckpoint.projectionVersion, "stable_v1");
   assert.equal(durableCheckpoint.request.messages.some((message) =>
-    message.name === "context_checkpoint_resume"), true);
+    message.name === "context_checkpoint_resume"), false);
   assert.deepEqual(
     durableCheckpoint.request.messages.slice(1),
     projectActiveTurnContext({
@@ -377,7 +378,7 @@ test("recovers a compacted active Session Turn without replaying its completed T
 
   assert.equal(terminal.payload.status, "completed");
   assert.equal(resumedProvider.requests[0].messages.some((message) =>
-    message.name === "context_checkpoint_resume"), true);
+    message.name === "context_checkpoint_resume"), false);
   assert.equal(resumedProvider.requests[0].messages.some((message) =>
     message.role === "tool" && message.toolCallId === "call_before_recovery_checkpoint"), false);
   const committed = secondStore.snapshot("session_recovery").turns[0];

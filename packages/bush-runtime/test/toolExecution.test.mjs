@@ -493,6 +493,33 @@ test("archives only the model projection while retaining the complete native res
   assert.ok(projected.preview.length < projected.originalChars);
 });
 
+test("large raw MCP validation failures remain retrievable through the existing archive", async () => {
+  const raw = { content: [{ type: 'text', text: '原始返回😀'.repeat(6000) }], structuredContent: null };
+  let executions = 0;
+  const registry = registryWithExecution({ execute: () => {
+    executions++;
+    throw Object.assign(new Error('Client validation failed; server-side success is unknown.'), {
+      code: 'mcp_protocol_error', details: { rawResult: raw, resultValidationFailed: true },
+    });
+  } });
+  const provider = providerWithRounds([toolRound(), [
+    event(0, 'tool_call_delta', { index: 0, toolCallId: 'read_failure', nameDelta: 'read_archived_tool_result',
+      argumentsDelta: JSON.stringify({ locator: 'tool-result://session_tools/turn_tools/call_fixture', offset: 16500, max_chars: 500 }) }),
+    event(1, 'response_completed', { finishReason: 'tool_calls' }),
+  ], answerRound('Server execution and client parsing remain distinct.')]);
+  const host = createHost(provider, registry);
+  await host.runModelTurn({ ...request(), tools: registry.definitions() });
+  const get = toolCallId => host.sendCommand({ kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
+    payload: { sessionId: 'session_tools', turnId: 'turn_tools', toolCallId } });
+  const record = await get('call_fixture'), archive = await get('read_failure');
+  assert.equal(record.outcome, 'failed');
+  assert.deepEqual(record.error.details.rawResult, raw);
+  assert.equal(record.result, undefined);
+  assert.equal(JSON.parse(provider.requests[1].messages.at(-1).content).archived, true);
+  assert.equal(archive.result.text, JSON.stringify({ runtimeError: record.error }).slice(16500, 17000));
+  assert.equal(executions, 1);
+});
+
 test("tool-owned text reaches the model literally while native execution data stays intact", async () => {
   const source = "const re = /\\.(mp3|flac)$/;\r\nconst path = 'C:\\\\中文😀';\n";
   const native = { content: source, semantic_success: false };

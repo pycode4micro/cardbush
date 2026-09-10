@@ -16,6 +16,7 @@ export interface PluginHookObservation {
   warning?: string;
 }
 export interface PluginHookRunnerOptions {
+  network?: (pluginId: string) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   evaluate?: (hook: PluginHook, prompt: string, context: PluginHookContext) => Promise<unknown>;
   onEvent?: (event: PluginHookEvent, context: PluginHookContext) => Promise<void>;
   activateAgent?: (hook: PluginHook, prompt: string, context: PluginHookContext) => Promise<void>;
@@ -126,7 +127,8 @@ export class PluginHookRunner {
         })]));
         const timeout = AbortSignal.timeout(Math.min(hook.timeout * 1000, 2_147_483_647));
         const signal = context.signal ? AbortSignal.any([context.signal, timeout]) : timeout;
-        const response = await fetch(hook.url!, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: serialized, signal, redirect: 'manual' });
+        const send = (await this.options.network?.(hook.pluginId))?.fetch ?? fetch;
+        const response = await send(hook.url!, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: serialized, signal, redirect: 'manual' });
         if (!response.ok) { await response.body?.cancel(); throw new Error(`HTTP Hook failed (${response.status}).`); }
         const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0;
         if (reader) try {
@@ -144,7 +146,7 @@ export class PluginHookRunner {
       } else {
         const pluginData = join(this.dataRoot, 'plugin-data', createHash('sha256').update(hook.pluginId).digest('hex').slice(0, 24));
         await mkdir(pluginData, { recursive: true });
-        const env = { ...process.env, PLUGIN_ROOT: hook.root, PLUGIN_DATA: pluginData, CLAUDE_PLUGIN_ROOT: hook.root, CODEX_PLUGIN_ROOT: hook.root,
+        const env = { ...process.env, ...(await this.options.network?.(hook.pluginId))?.env, PLUGIN_ROOT: hook.root, PLUGIN_DATA: pluginData, CLAUDE_PLUGIN_ROOT: hook.root, CODEX_PLUGIN_ROOT: hook.root,
           CARDBUSH_PLUGIN_ROOT: hook.root, CLAUDE_PROJECT_DIR: cwd, CLAUDE_PLUGIN_DATA: pluginData };
         output = await executePluginProcess({ ...hook, command: process.platform === 'win32' && hook.commandWindows ? hook.commandWindows : hook.command }, serialized, cwd, env, context.signal, 8 * 1024 * 1024);
         recordedOutput = output.stdout;

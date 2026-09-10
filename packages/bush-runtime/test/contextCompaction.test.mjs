@@ -6,6 +6,7 @@ import {
   ContextCheckpointInputError,
   contextCheckpointFailure,
   contextPressureNotice,
+  locateContextCompactionSources,
   registerContextCompactionTool,
 } from "../dist/contextCompaction.js";
 import { ToolRegistry } from "../dist/toolRegistry.js";
@@ -156,6 +157,44 @@ const legacyDraft = () => ({
   session_revision: 3,
   summaries: [{ turn_id: "prior_a", summary: "Prior A facts." }, { turn_id: "prior_b", summary: "Prior B facts." }],
   active_turn: { turn_id: "current_turn", through_message_id: "msg_tool_current_71_0_long_runtime_boundary", summary: "Tool completed." },
+});
+
+test('appended source index locates repeated prompts and transient maintenance messages without rewriting history', () => {
+  const user = { role: 'user', content: 'Continue' };
+  const turns = ['prior_a', 'prior_b'].map(turnId => ({ turnId, messages: [user,
+    { role: 'assistant', content: `Verified ${turnId}`, toolCalls: [] }] }));
+  const active = [user, { role: 'assistant', content: '', toolCalls: [{ id: 'c', name: 'read', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'c', content: 'LARGE_PRIVATE_TOOL_BODY'.repeat(1000) }];
+  const messages = [{ role: 'system', content: 'stable' }, ...turns.flatMap(turn => turn.messages),
+    active[0], { role: 'user', name: 'context_compaction_correction', visibility: 'internal', content: 'Retry with summary strings.' }, ...active.slice(1)];
+  const original = structuredClone(messages);
+  const input = { messages, prefixMessageCount: 1, turns, activeTurnId: 'current_turn', activeMessages: active, state: authorization() };
+  const sources = locateContextCompactionSources(input);
+  assert.deepEqual(sources.map(source => [source.target, source.startMessage, source.endMessageExclusive]),
+    [['summaries[0]', 1, 3], ['summaries[1]', 3, 5], ['active_summary', 5, 9]]);
+  assert.equal(sources[0].last.excerpt, 'Verified prior_a');
+  assert.equal(sources[1].last.excerpt, 'Verified prior_b');
+  assert.deepEqual(sources[2].last, { role: 'tool', toolCallId: 'c' });
+  const notice = contextPressureNotice(input.state, pressure(), false, sources);
+  assert.doesNotMatch(notice.content, /LARGE_PRIVATE_TOOL_BODY|context_source_boundary/);
+  assert.match(notice.content, /zero-based/);
+  assert.deepEqual(messages, original);
+  assert.deepEqual([...messages, notice].slice(0, messages.length), original);
+  assert.throws(() => locateContextCompactionSources({ ...input, messages: messages.filter((_, index) => index !== 2) }), /source is missing/);
+  assert.throws(() => locateContextCompactionSources({ ...input, state: { ...input.state, unsummarizedTurnIds: ['prior_b', 'prior_a'] } }), /source order/);
+  assert.throws(() => locateContextCompactionSources({ ...input, activeTurnId: 'different_turn' }), /identity/);
+});
+
+test('source index accounts for omitted older summaries and keeps unrequested current input separate', () => {
+  const current = { role: 'user', content: 'Current task' };
+  const turns = [
+    { turnId: 'old', messages: [{ role: 'user', name: 'turn_context_summary', content: 'Old summarized facts' }] },
+    { turnId: 'prior_a', messages: [{ role: 'user', content: 'New preceding task' }] },
+  ];
+  const sources = locateContextCompactionSources({ messages: [...turns[1].messages, current], prefixMessageCount: 0,
+    turns, activeTurnId: 'current_turn', activeMessages: [current], state: { revision: 3, totalTurns: 2, unsummarizedTurnIds: ['prior_a'] } });
+  assert.deepEqual(sources.map(source => [source.target, source.startMessage, source.endMessageExclusive]),
+    [['summaries[0]', 0, 1], ['not_requested', 1, 2]]);
 });
 
 test("binds summary text to runtime-owned revision, Turn order and active boundary", () => {

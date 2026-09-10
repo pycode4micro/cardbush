@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, lstat, realpath, writeFile, rm, rename } from 'node:fs/promises';
 import { dirname, join, resolve, relative, isAbsolute, basename } from 'node:path';
 import JSZip from 'jszip';
-import type { Readable } from 'node:stream';
+import { extractPluginArchive, pluginArchiveLimits } from './pluginArchives';
+export { extractPluginArchive } from './pluginArchives';
 import { installProductPlugin, inspectProductPlugin } from './productPlugins';
 import { resolvePluginManifest } from './pluginManifest';
 import { safePackagePath as safeRelative, withinPackage as within } from './pluginPackagePaths';
@@ -17,9 +18,8 @@ type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: str
 type Prepared = { sourceId: string; root: string; stage: string; preview: PluginMarketPreview; expiresAt: number };
 const reserved = new Set(['computer-use', 'chrome']);
 const idPattern = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/;
-const maxArchiveBytes = 32 * 1024 * 1024;
-const maxExpandedBytes = 64 * 1024 * 1024;
-const maxFileBytes = 16 * 1024 * 1024;
+const maxArchiveBytes = pluginArchiveLimits.compressedBytes;
+const maxExpandedBytes = pluginArchiveLimits.expandedBytes;
 
 /** OpenAI-format catalog acquisition is separate from the installed plugin catalog. */
 export class PluginMarketplaceService {
@@ -413,38 +413,6 @@ function string(value: unknown) { return typeof value === 'string' ? value.trim(
 function object(value: unknown): Json { return value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}; }
 function missing(error: unknown) { return (error as NodeJS.ErrnoException)?.code === 'ENOENT'; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
-
-export async function extractPluginArchive(archive: Buffer, pluginPath: string, destination: string) {
-  const zip = await JSZip.loadAsync(archive);
-  const entries = Object.values(zip.files);
-  const roots = new Set(entries.map(file => file.name.split('/')[0]));
-  if (roots.size !== 1) throw new Error('Expected a GitHub repository archive.');
-  const prefix = `${[...roots][0]}/${pluginPath ? safeRelative(pluginPath) + '/' : ''}`;
-  const selected = entries.filter(file => !file.dir && (file.unsafeOriginalName ?? file.name).startsWith(prefix));
-  if (!selected.length || selected.length > 2000) throw new Error('Plugin folder is missing or exceeds the 2000 file limit.');
-  let total = 0; const written = new Set<string>();
-  for (const file of selected) {
-    const original = file.unsafeOriginalName ?? file.name;
-    const name = safeRelative(original.slice(prefix.length));
-    if (original !== file.name || written.has(name.toLowerCase())) throw new Error('Archive contains conflicting or unsafe paths.');
-    written.add(name.toLowerCase());
-    const mode = Number(file.unixPermissions ?? 0);
-    if ((mode & 0o170000) === 0o120000) throw new Error('Plugin archives cannot contain symbolic links.');
-    const data = await new Promise<Buffer>((fulfill, reject) => {
-      const chunks: Buffer[] = []; let size = 0;
-      const stream = file.nodeStream('nodebuffer') as Readable;
-      stream.on('data', (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > maxFileBytes || total + size > maxExpandedBytes) { stream.destroy(); reject(new Error('Expanded plugin exceeds the size limit.')); return; }
-        chunks.push(chunk);
-      }).on('error', reject).on('end', () => fulfill(Buffer.concat(chunks)));
-    });
-    total += data.length;
-    const target = within(destination, name);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, data, { flag: 'wx', mode: mode & 0o111 ? 0o755 : 0o644 });
-  }
-}
 
 async function portableTree(root: string) {
   let count = 0, size = 0;

@@ -857,6 +857,7 @@ export async function saveCardbushAppsConfiguration(
       kind: 'apps.update',
       config: {
         expectedRevision: configuration.revision,
+        proxy: configuration.proxy,
         serviceEnabled: configuration.serviceEnabled,
         plugins: configuration.plugins.map((plugin) => ({
           id: plugin.id,
@@ -889,8 +890,8 @@ export async function fetchMcpConnectionOverview(): Promise<McpConnectionOvervie
   ]);
   return {
     revision: configuration.revision,
-    servers: configuration.servers.map(({ id, name, description, enabled, transport }) =>
-      ({ id, name, description, enabled, transport })),
+    servers: configuration.servers.map(({ id, name, description, enabled, transport, proxy }) =>
+      ({ id, name, description, enabled, transport, proxy })),
     snapshot,
   };
 }
@@ -1024,7 +1025,7 @@ export async function saveMcpServerConfig(
     return {
       ...candidate,
       toolCount: connected?.tools.length ?? 0,
-      status: result.applicationState === 'pending' ? 'pending' : !candidate.enabled ? 'disabled' : connected?.health === 'ready' ? 'connected' : connected?.health ?? 'unavailable',
+      status: mcpConnectionState(candidate.id, candidate.enabled, result, result.configurationRevision),
     };
   } finally {
     runtime.dispose();
@@ -1063,6 +1064,24 @@ export async function setMcpServerEnabled(
   } finally {
     runtime.dispose();
   }
+}
+
+export async function setMcpServerProxy(serverId: string, proxy?: import('@cardbush/bush-protocol').PluginProxySettings): Promise<void> {
+  const { servers, revision } = await readProductMcpConfiguration();
+  const index = servers.findIndex(server => server.id === serverId);
+  if (index < 0) throw new Error(localizedClientMessage('MCP 服务不存在', 'MCP server does not exist'));
+  servers[index] = { ...servers[index], proxy: proxy === undefined ? undefined : pluginProxySchema.parse(proxy) };
+  const runtime = createDesktopRuntimeSession();
+  try { await replaceProductMcpServers(runtime.client, servers, revision); }
+  finally { runtime.dispose(); }
+}
+
+export async function resetMcpServerProxies(): Promise<void> {
+  const { servers, revision } = await readProductMcpConfiguration();
+  if (!servers.some(server => server.proxy !== undefined)) return;
+  const runtime = createDesktopRuntimeSession();
+  try { await replaceProductMcpServers(runtime.client, servers.map(server => ({ ...server, proxy: undefined })), revision); }
+  finally { runtime.dispose(); }
 }
 
 export async function deleteMcpServerConfig(
@@ -1829,6 +1848,7 @@ function cardbushAppsConfigurationFromPayload(
     protocol: String(payload.protocol ?? ''),
     revision: finiteNumber(payload.revision),
     serviceEnabled: payload.serviceEnabled === true,
+    proxy: pluginProxySchema.parse(payload.proxy ?? defaultPluginProxy()),
     plugins,
   };
 }
@@ -2971,3 +2991,4 @@ function asRecord(value: unknown) {
     ? (value as Record<string, unknown>)
     : {};
 }
+import { defaultPluginProxy, pluginProxySchema } from '@cardbush/bush-protocol';

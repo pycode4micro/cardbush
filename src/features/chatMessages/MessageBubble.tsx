@@ -77,6 +77,8 @@ import {
   type ProjectPathAlias,
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
+import { FileMemoReference } from './FileMemoReference';
+import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
   readAssistantFeedback,
@@ -337,11 +339,13 @@ const LazyMarkdownContent = lazy(async () => {
         [remarkLocalFileReferences, { workspaceRoot }],
       ]}
       urlTransform={(url) => {
+        if (parseFileMemoReference(url)) return url;
         const reference = markdownLocalFileReference(url, workspaceRoot);
         return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
       }}
       components={{
         a: ({ href, children, ...props }) => {
+          if (href && parseFileMemoReference(href)) return <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>;
           const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
           if (localPath) {
             return (
@@ -380,6 +384,7 @@ const LazyMarkdownContent = lazy(async () => {
           );
         },
         img: ({ src, alt, ...props }) => {
+          if (src && parseFileMemoReference(src)) return <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>;
           const reference = markdownLocalFileReference(src, workspaceRoot);
           const resolvedPath = reference
             ? remapProjectPath(reference.path, pathAliases)
