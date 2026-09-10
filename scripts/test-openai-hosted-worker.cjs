@@ -26,6 +26,7 @@ async function run() {
   const { RuntimeUtilityProcessController } = await import('../dist-electron/runtimeHostController.mjs');
   const { McpDesktopHost } = await import('../dist-electron/mcpDesktopHost.js');
   const { OpenAiAccount, OPENAI_ACCOUNT_CREDENTIAL_KEY } = await import('../dist-electron/openAiAccount.mjs');
+  const { AccountManager, openAiAccountSummary } = await import('../dist-electron/accountManager.mjs');
   const { OPENAI_HOSTED_PROTOCOL } = await import('@cardbush/bush-protocol');
   const wrapper = join(root, 'fixture-worker.mjs'), observations = join(root, 'requests.txt');
   // Intercept only inside this isolated test worker; production still uses the fixed HTTPS endpoint.
@@ -52,6 +53,9 @@ async function run() {
       result: Promise.resolve({ access_token: 'PRIVATE_WORKER_' + ++loginNumber, refresh_token: 'PRIVATE_REFRESH', expires_in: 3600 }), close: async () => {} }),
   };
   let account = new OpenAiAccount(options);
+  const accounts = new AccountManager([{ providerId: 'openai', list: async () => [openAiAccountSummary(await account.status())],
+    action: async (_id, action) => { if (action === 'login') await account.login(); else if (action === 'logout') await account.logout(); else if (action === 'cancel_login') account.cancelLogin(); },
+  }]);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('CARDBUSH_')));
   writeFileSync(join(root, 'apps.json'), JSON.stringify({ serviceEnabled: false, plugins: [] }));
   const controller = new RuntimeUtilityProcessController({ modulePath: wrapper, env: { ...env, CARDBUSH_RUNTIME_STATE_ROOT: join(root, 'runtime'),
@@ -69,7 +73,9 @@ async function run() {
   try {
     assert.equal((await command('runtime.apply_mcp_snapshot', snapshot)).servers[0].health, 'auth_required');
     assert.equal(browserOpens, 0); assert.ok(tokenRequests > 0);
-    await account.login();
+    await accounts.action({ providerId: 'openai', accountId: 'openai:default', action: 'login' });
+    assert.equal((await accounts.snapshot()).accounts[0].state, 'signed_in');
+    assert.doesNotMatch(JSON.stringify(await accounts.snapshot()), /PRIVATE_WORKER_|PRIVATE_REFRESH/);
     assert.equal((await command('runtime.openai_account_changed')).servers[0].health, 'ready');
     const tools = await command('runtime.get_tool_catalog');
     assert.ok(tools.some(tool => tool.name === 'mcp__hosted__read_profile'));
@@ -79,9 +85,10 @@ async function run() {
     await account.login(); await command('runtime.openai_account_changed');
     assert.equal(readFileSync(observations, 'utf8').split('\n').filter(value => value === 'initialize').length, before + 1, 'account replacement opens a new MCP session');
     controller.stop(); await account.close(); account = new OpenAiAccount(options);
+    assert.equal((await accounts.snapshot()).accounts[0].state, 'signed_in', 'registry restores through the existing encrypted account adapter');
     assert.equal((await command('runtime.apply_mcp_snapshot', snapshot)).servers[0].health, 'ready');
     assert.equal(browserOpens, 2, 'worker/account restart restores encrypted credentials without another browser');
-    await account.logout();
+    await accounts.action({ providerId: 'openai', accountId: 'openai:default', action: 'logout' });
     assert.equal((await command('runtime.openai_account_changed')).servers[0].health, 'auth_required');
     assert.ok(!(await command('runtime.get_tool_catalog')).some(tool => tool.name === 'mcp__hosted__read_profile'));
     assert.doesNotMatch(safeStorage.decryptString(readFileSync(vault)), /PRIVATE_WORKER_|PRIVATE_REFRESH/);

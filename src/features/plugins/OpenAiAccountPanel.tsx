@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import type { OpenAiAccountStatus } from '@cardbush/bush-protocol';
 import './mcp-integration.css';
 
-export function OpenAiAccountPanel({ language, onChanged, onStatusChange }: {
+export function OpenAiAccountPanel({ language, onChanged, onStatusChange, onManageAccounts, navigationDisabled }: {
   language: 'zh' | 'en'; onChanged?: () => void; onStatusChange?: (status: OpenAiAccountStatus | undefined) => void;
+  onManageAccounts?: () => void; navigationDisabled?: boolean;
 }) {
   const zh = language === 'zh';
   const desktop = window.cardbushDesktop;
@@ -31,6 +32,10 @@ export function OpenAiAccountPanel({ language, onChanged, onStatusChange }: {
     catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
     finally { if (action !== 'cancel_login') setBusy(''); void desktop.openAiAccountStatus().then(setStatus).catch(() => {}); }
   };
+  if (onManageAccounts) return <section className="openai-account-panel" aria-label={zh ? 'OpenAI 账户' : 'OpenAI account'}><header>
+    <div className="openai-account-identity"><strong>{zh ? 'OpenAI 账户' : 'OpenAI account'}</strong><span role="status" data-connected={connected}>{status ? labels[status.state] : (zh ? '读取中…' : 'Loading…')}</span></div>
+    <button type="button" disabled={navigationDisabled} onClick={onManageAccounts}>{zh ? '管理账号' : 'Manage accounts'}</button>
+  </header>{navigationDisabled && <p className="openai-account-hint">{zh ? '请先保存连接修改或等待当前操作完成。' : 'Save connection changes or finish the current operation before leaving.'}</p>}</section>;
   return <section className="openai-account-panel" aria-label={zh ? 'OpenAI 账户' : 'OpenAI account'}>
     <header><div className="openai-account-identity"><strong>{zh ? 'OpenAI 账户' : 'OpenAI account'}</strong><span role="status" data-connected={connected}>{status ? labels[status.state] : (zh ? '读取中…' : 'Loading…')}</span></div>
       {signingIn ? <button type="button" onClick={() => void action('cancel_login')}>{zh ? '取消 OpenAI 登录' : 'Cancel OpenAI sign-in'}</button>

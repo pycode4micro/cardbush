@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Download, FolderOpen, LoaderCircle, Plus, RefreshCw, 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PluginMarketCatalog, PluginMarketPreview, PluginMarketSource } from '../../../electron/pluginMarketplaceTypes';
 import type { AppLanguage } from '../../types';
+import { marketError, marketRetryAt, networkError } from './pluginMarketErrors';
 
 export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInstalled, onNotify, onOpenNetwork }: {
   language: AppLanguage;
@@ -22,11 +23,25 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const [sourceInput, setSourceInput] = useState('');
   const [busy, setBusy] = useState('catalog');
   const [error, setError] = useState('');
+  const [retryPreview, setRetryPreview] = useState<{ sourceId: string; name: string } | null>(null);
+  const [clock, setClock] = useState(Date.now);
   const [installedId, setInstalledId] = useState('');
   const [activated, setActivated] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const generation = useRef(0);
   const selectedSource = sources.find(source => source.id === sourceId);
+  const retryAt = marketRetryAt(error || catalog?.error || '');
+  const now = Math.max(clock, Date.now());
+  const retrySeconds = Math.max(0, Math.ceil(((retryAt ?? now) - now) / 1000));
+
+  useEffect(() => {
+    if (retryAt === undefined || retryAt <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const time = Date.now(); setClock(time);
+      if (time >= retryAt) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
 
   useEffect(() => {
     let active = true;
@@ -41,7 +56,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   const loadCatalog = useCallback(async (refresh = false) => {
     if (!bridge?.pluginMarketCatalog) return;
     const revision = ++generation.current;
-    setBusy('catalog'); setError(''); setPreview(null); if (!refresh) setCatalog(null);
+    setBusy('catalog'); setError(''); setRetryPreview(null); setPreview(null); if (!refresh) setCatalog(null);
     try {
       const value = await bridge.pluginMarketCatalog(sourceId, refresh);
       if (revision === generation.current) setCatalog(value);
@@ -52,7 +67,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
 
   const addSource = async (local = false) => {
     if (!bridge || busy) return;
-    setBusy('source'); setError('');
+    setBusy('source'); setError(''); setRetryPreview(null);
     try {
       const source = local ? await bridge.addLocalPluginMarket() : await bridge.addPluginMarket(sourceInput);
       if (!source) return;
@@ -63,7 +78,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
   };
   const removeSource = async () => {
     if (!bridge || !selectedSource || selectedSource.builtin || busy) return;
-    setBusy('source'); setError('');
+    setBusy('source'); setError(''); setRetryPreview(null);
     try {
       await bridge.removePluginMarket(sourceId);
       setSources(await bridge.pluginMarketSources()); setSourceId('builtin');
@@ -75,11 +90,16 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     if (catalog?.source.builtin) { onOpenBundled(name); return; }
     if (!bridge || busy) return;
     const revision = ++generation.current;
-    setBusy(`preview:${name}`); setError(''); setPreview(null); setInstalledId(''); setActivated(false);
+    setBusy(`preview:${name}`); setError(''); setRetryPreview(null); setPreview(null); setInstalledId(''); setActivated(false);
     try {
       const detail = await bridge.previewMarketPlugin(sourceId, name);
       if (revision === generation.current) setPreview(detail);
-    } catch (caught) { if (revision === generation.current) setError(message(caught)); }
+    } catch (caught) {
+      if (revision === generation.current) {
+        setError(message(caught));
+        if (marketRetryAt(message(caught)) !== undefined || /HTTP 429\b/.test(message(caught))) setRetryPreview({ sourceId, name });
+      }
+    }
     finally { if (revision === generation.current) setBusy(''); }
   };
   const install = async () => {
@@ -107,7 +127,10 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
     <header className="plugin-market-heading"><div><h2>{preview ? preview.name : (zh ? '插件市场' : 'Plugin marketplaces')}</h2>
       <p>{preview ? preview.description : (zh ? '从自定义市场安装插件，为任务添加技能、工具和自动化。' : 'Install skills, tools and automations from custom plugin marketplaces.')}</p></div>
       {!preview && <button className="plugin-install-button" type="button" disabled={Boolean(busy)} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen}><Plus size={16} />{zh ? '添加来源' : 'Add source'}</button>}</header>
-    {error && <div className="plugin-market-error" role="alert"><p>{marketError(error, zh)}</p>
+    {error && <div className="plugin-market-error" role="alert"><p>{marketError(error, zh, now)}</p>
+      {retryPreview?.sourceId === sourceId && <button className="plugin-back" type="button" disabled={Boolean(busy) || retrySeconds > 0} onClick={() => void openPlugin(retryPreview.name)}>
+        <RefreshCw size={15} />{retrySeconds > 0 ? (zh ? `${retrySeconds} 秒后可重试` : `Retry in ${retrySeconds}s`) : (zh ? '重试获取插件' : 'Retry download')}
+      </button>}
       {networkError(error) && onOpenNetwork && <button className="plugin-back" type="button" onClick={onOpenNetwork}><Settings size={15} />{zh ? '代理设置' : 'Proxy settings'}</button>}
       <details><summary>{zh ? '错误详情' : 'Error details'}</summary><code>{error}</code></details></div>}
     {preview ? <div className="plugin-market-detail">
@@ -120,7 +143,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
       {preview.components.map((component, index) => <div className="plugin-component-row" key={`${component.kind}:${index}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'agent' ? 'A' : component.kind === 'hook' ? 'H' : 'M'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div></div>)}
       {!preview.components.length && <p>{zh ? '未发现可加载的能力。' : 'No loadable capabilities found.'}</p>}
       {preview.components.some(component => component.kind === 'command') && <p className="plugin-market-hint">{zh ? 'Commands 原生加载，启用后可在输入框通过 /插件名:命令名 调用。参数和动态上下文由宿主处理，执行遵循当前权限设置。' : 'Commands load natively. Invoke /plugin:command from the composer; the host handles arguments and dynamic context under the current permissions.'}</p>}
-      {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? '支持 command、MCP 工具和后台 command Hooks。安装后需在插件详情中审核并信任具体定义，Hooks 才会运行；后台结果会在后续安全位置交给模型。' : 'Command, MCP tool and background command hooks are supported. Review and trust individual definitions in plugin details after installation; background context is delivered at a later safe point.'}</p>}
+      {preview.components.some(component => component.kind === 'hook') && <p className="plugin-market-hint">{zh ? 'Hooks 可运行命令和 MCP 工具；Claude 格式还支持 HTTP、提示词评估和只读 Agent 验证。安装后需在插件详情中审核并信任具体定义。' : 'Hooks run commands and MCP tools. Claude plugins also support HTTP, prompt evaluation and read-only Agent verification. Review and trust each definition after installation.'}</p>}
       {preview.notes?.length ? <div className="plugin-market-notes"><strong>{zh ? '适配说明' : 'Adaptation notes'}</strong><ul>{preview.notes.map((note, index) => <li key={index}>{adaptationNote(note, zh)}</li>)}</ul></div> : null}
       {preview.requirements.length > 0 && <p className="plugin-market-hint">{zh ? '需要本机可运行：' : 'Requires local executables: '}{preview.requirements.join(', ')}</p>}
       {preview.issues.length > 0 ? <div className="plugin-market-issues" role="status"><strong>{zh ? '当前暂不能完整加载' : 'Not fully supported yet'}</strong><ul>{preview.issues.map((issue, index) => <li key={index}>{issueText(issue.code, zh)}{issue.detail && `：${issue.detail}`}</li>)}</ul></div>
@@ -146,7 +169,7 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
         <button className="plugin-back plugin-market-icon-button" type="button" disabled={Boolean(busy)} title={zh ? '刷新市场' : 'Refresh marketplace'} aria-label={zh ? '刷新市场' : 'Refresh marketplace'} onClick={() => void loadCatalog(true)}><RefreshCw size={16} className={busy === 'catalog' ? 'spin' : undefined} /><span className="sr-only">{zh ? '刷新市场' : 'Refresh marketplace'}</span></button>
         {selectedSource && !selectedSource.builtin && <button className="plugin-back" type="button" title={zh ? '移除来源，保留已安装插件' : 'Remove source; keep installed plugins'} disabled={Boolean(busy)} onClick={() => void removeSource()}><Trash2 size={16} /></button>}
       </div><label className="plugin-search"><Search size={18} /><input aria-label={zh ? '搜索市场插件' : 'Search marketplace plugins'} placeholder={zh ? '搜索插件名称或功能' : 'Search plugins or capabilities'} value={query} onChange={event => setQuery(event.currentTarget.value)} /></label></div>
-      {catalog?.cached && <p className="plugin-market-hint" role="status">{zh ? '当前显示缓存目录，刷新未成功：' : 'Showing cached catalog; refresh failed: '}{catalog.error}</p>}
+      {catalog?.cached && <p className="plugin-market-hint" role="status">{zh ? '当前显示缓存目录，刷新未成功：' : 'Showing cached catalog; refresh failed: '}{marketError(catalog.error ?? '', zh, now)}</p>}
       {busy && busy !== 'source' && <p className="plugin-market-progress" role="status"><LoaderCircle className="spin" size={16} />{busy.startsWith('preview:') ? (zh ? '正在获取插件并检查兼容性…' : 'Downloading plugin and checking compatibility…') : (zh ? '正在读取市场…' : 'Loading marketplace…')}</p>}
       {catalog && <div className="plugin-section-title"><h3>{catalog.source.builtin ? (zh ? 'CardBush 精选' : 'CardBush featured') : catalog.displayName}</h3><span>{zh ? `${entries.length} 个插件` : `${entries.length} plugins`}</span></div>}
       <div className="plugin-market-grid">
@@ -158,11 +181,6 @@ export function PluginMarketplacePanel({ language, onBack, onOpenBundled, onInst
 }
 
 function message(value: unknown) { return value instanceof Error ? value.message : String(value); }
-function networkError(value: string) { return /ERR_(CONNECTION|NETWORK|PROXY|TUNNEL|NAME)|ECONNRESET|fetch failed|timed? ?out|timeout/i.test(value); }
-function marketError(value: string, zh: boolean) {
-  if (networkError(value)) return zh ? '暂时无法连接市场。请重试，或检查代理设置；使用代理访问 GitHub 时，需要在 CardBush 中选择对应的代理方式。' : 'Cannot reach the marketplace. Retry or check CardBush proxy settings for GitHub access.';
-  return value.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, '');
-}
 function adaptationNote(note: string, zh: boolean) {
   if (!zh) return note;
   if (note.startsWith('Command ') && note.includes('model inherits')) return `${note.split(':')[0]}：模型沿用当前会话配置。`;

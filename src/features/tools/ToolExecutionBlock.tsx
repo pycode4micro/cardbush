@@ -32,6 +32,7 @@ import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { PlanningAssessmentNotice, planningAssessmentFromExecution } from './PlanningAssessmentNotice';
 import { SubagentAuditSignalsPanel, subagentAuditSignalsFromExecution } from './SubagentAuditSignalsPanel';
 import { SubagentChildTools, subagentChildToolExecutions } from './SubagentChildTools';
+import { McpAppPanel } from './McpAppPanel';
 import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
@@ -792,6 +793,7 @@ function ToolExecutionDetail({
         </span>
       </header>
       {summary && !goalUpdate && <code>$ {summary}</code>}
+      {execution.state === 'completed' && (execution.name.startsWith('mcp__') || execution.name === 'mcp_call') && <McpAppPanel sessionId={message.conversationId ?? ''} turnId={execution.turnId ?? message.turnId ?? ''} toolCallId={execution.id} language={language} />}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
       <WorkerProfileBadge info={workerInfo} />

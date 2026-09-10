@@ -1,5 +1,6 @@
 import {
   Archive,
+  CalendarClock,
   CircleAlert,
   CircleCheck,
   ChevronDown,
@@ -783,6 +784,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             ])
           }
         />
+        <NavRow active={section === 'automations'} icon={<CalendarClock size={14}/>} label={t('automations')} onClick={() => onSectionChange('automations')} />
       </nav>
 
       <div className="sidebar-scroll">
@@ -2089,5 +2091,4 @@ function formatChangeTimestamp(value: string | undefined, language: AppLanguage)
     minute: '2-digit',
   }).format(date);
 }
-
 

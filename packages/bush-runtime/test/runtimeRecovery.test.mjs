@@ -690,12 +690,15 @@ function persistedEventLog(persistence) {
 }
 
 async function waitForEvent(eventLog, kind) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  // Disk-backed checkpoints need I/O time under parallel test load; event-loop
+  // iteration counts can expire in a few milliseconds before that I/O settles.
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
     const event = eventLog
       .replay("session_recovery", "turn_recovery")
       .find((candidate) => candidate.kind === kind);
     if (event) return event;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Timed out waiting for ${kind}.`);
 }

@@ -38,6 +38,7 @@ export class SubagentTaskStore {
     childTurnId: string;
     prompt: string;
     inheritContext: boolean;
+    background?: boolean;
     inheritedMessageCount: number;
     origin?: "subagent" | "team";
     teamId?: string;

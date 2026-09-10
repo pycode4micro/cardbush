@@ -37,12 +37,15 @@ test('native OpenAI transport uses the ordinary registry, approval and output va
   const manager = new McpClientManager({ registry, createClient: () => (client = new Client({ name: 'test', version: '1' })),
     createTransport: server => createOpenAiTransport(server, f.token, f.fetch) }); t.after(() => manager.close());
   const state = await manager.apply(snapshot(config()));
-  assert.deepEqual(state.servers[0].tools.map(tool => tool.remoteName), ['gmail_profile']);
+  assert.deepEqual(state.servers[0].tools.map(tool => tool.remoteName), ['gmail_profile', 'app_only']);
+  assert.equal(registry.resolve('mcp__plugin_mail_gmail__app_only').mcpHook.modelVisible, false);
+  assert.equal(registry.resolve('mcp__plugin_mail_gmail__app_only').mcpHook.appCallable, true);
   assert.equal(state.servers[0].health, 'ready');
   const registration = registry.resolve('mcp__plugin_mail_gmail__gmail_profile');
   assert.ok(registration); assert.equal(registration.authorize({}).kind, 'ask');
   assert.equal(registry.resolve('mcp__plugin_mail_gmail__other_profile'), undefined);
   await assert.rejects(client.callTool({ name: 'other_profile', arguments: {} }), /does not belong/);
+  await assert.rejects(client.readResource({ uri: 'ui://another-app/private' }), /does not belong/);
   const result = await registration.execute({ requestId: 'r', sessionId: 's', turnId: 't', capabilityIds: [], input: {}, toolCall: { id: 'c', name: registration.definition.name } });
   assert.equal(result.isError, undefined); assert.equal(result.structuredContent.result.email, 'private@example.invalid');
   assert.equal(result.content[0].text, 'ORIGINAL_REPLY');

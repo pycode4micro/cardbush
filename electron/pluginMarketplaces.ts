@@ -10,6 +10,7 @@ import { gitSource, gitRef, npmSource, withGitSnapshot, gitCatalogFile, gitPlugi
 import type { PluginMarketCatalog, PluginMarketEntry, PluginMarketPreview, PluginMarketSource } from './pluginMarketplaceTypes';
 import { readPluginPresentation } from './pluginPresentation';
 import { pluginChild } from './pluginExtensions';
+import { PluginMarketDownloads, MarketplaceRateLimitError } from './pluginMarketDownloads';
 
 type Json = Record<string, unknown>;
 type StoredCatalog = { view: PluginMarketCatalog; entries: Json[]; revision: string };
@@ -25,6 +26,9 @@ export class PluginMarketplaceService {
   private readonly catalogs = new Map<string, StoredCatalog>();
   private readonly prepared = new Map<string, Prepared>();
   private readonly presentations = new Map<string, ReturnType<typeof readPluginPresentation>>();
+  private readonly previewRequests = new Map<string, Promise<PluginMarketPreview>>();
+  private readonly catalogRequests = new Map<string, Promise<PluginMarketCatalog>>();
+  private readonly downloads: PluginMarketDownloads;
   private mutation: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: {
     dataRoot: string;
@@ -32,7 +36,7 @@ export class PluginMarketplaceService {
     bundledPluginRoot: string;
     fetch: typeof fetch;
     runAcquisition?: AcquisitionCommand;
-  }) {}
+  }) { this.downloads = new PluginMarketDownloads(options.fetch); }
 
   async sources(): Promise<PluginMarketSource[]> {
     let saved: PluginMarketSource[] = [];
@@ -83,7 +87,18 @@ export class PluginMarketplaceService {
     });
   }
 
-  async catalog(id: string, refresh = false): Promise<PluginMarketCatalog> {
+  catalog(id: string, refresh = false): Promise<PluginMarketCatalog> {
+    // An explicit refresh must not join a concurrent read that can return old memory data.
+    const key = JSON.stringify([id, refresh]);
+    const pending = this.catalogRequests.get(key);
+    if (pending) return pending;
+    const request = this.loadCatalog(id, refresh);
+    this.catalogRequests.set(key, request);
+    void request.then(() => this.catalogRequests.delete(key), () => this.catalogRequests.delete(key));
+    return request;
+  }
+
+  private async loadCatalog(id: string, refresh: boolean): Promise<PluginMarketCatalog> {
     const source = await this.source(id);
     const memory = this.catalogs.get(id);
     if (memory && !refresh) return memory.view;
@@ -102,7 +117,13 @@ export class PluginMarketplaceService {
   }
 
   preview(sourceId: string, name: string): Promise<PluginMarketPreview> {
-    return this.serial(() => this.prepare(sourceId, name));
+    const key = JSON.stringify([sourceId, name]);
+    const pending = this.previewRequests.get(key);
+    if (pending) return pending;
+    const request = this.serial(() => this.prepare(sourceId, name));
+    this.previewRequests.set(key, request);
+    void request.then(() => this.previewRequests.delete(key), () => this.previewRequests.delete(key));
+    return request;
   }
 
   async presentation(sourceId: string, name: string) {
@@ -129,7 +150,7 @@ export class PluginMarketplaceService {
           return readPluginPresentation(async file => {
             const path = [origin.path, safeRelative(file)].filter(Boolean).join('/');
             if (file.endsWith('.json')) return Buffer.from(await this.catalogFile(origin.repo, revision, path));
-            return this.bytes(rawUrl(origin.repo, revision, path), 512 * 1024);
+            return this.bytes(rawUrl(origin.repo, revision, path), 512 * 1024, 15_000, true);
           });
         }
         if (origin.kind === 'git') return withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot,
@@ -176,8 +197,10 @@ export class PluginMarketplaceService {
         revision = 'local';
       } else if (origin.kind === 'github') {
         revision = origin.sameRepository ? catalog.revision : await this.commit(origin.repo, origin.ref);
-        const archive = await this.bytes(`https://codeload.github.com/${origin.repo}/zip/${revision}`, maxArchiveBytes, 60_000);
-        await extractPluginArchive(archive, origin.path, root);
+        const archiveUrl = `https://codeload.github.com/${origin.repo.toLowerCase()}/zip/${revision}`;
+        const archive = await this.bytes(archiveUrl, maxArchiveBytes, 60_000, true);
+        try { await extractPluginArchive(archive, origin.path, root); }
+        catch (error) { this.downloads.invalidate(archiveUrl); throw error; }
         sourceLabel = `https://github.com/${origin.repo}`;
       } else if (origin.kind === 'git') {
         await withGitSnapshot(origin.url, origin.sameRepository ? catalog.revision : origin.ref, this.options.dataRoot, async (repository, sha, run) => {
@@ -286,11 +309,11 @@ export class PluginMarketplaceService {
   }
 
   private async catalogFile(repo: string, revision: string, file: string): Promise<string> {
-    try { return (await this.bytes(rawUrl(repo, revision, file), 2 * 1024 * 1024)).toString('utf8'); }
+    try { return (await this.bytes(rawUrl(repo, revision, file), 2 * 1024 * 1024, 15_000, true)).toString('utf8'); }
     catch (error) {
-      if (missing(error)) throw error;
+      if (missing(error) || error instanceof MarketplaceRateLimitError) throw error;
       // Some networks block raw.githubusercontent.com while GitHub's API works.
-      const payload = object(JSON.parse((await this.bytes(`https://api.github.com/repos/${repo}/contents/${file}?ref=${revision}`, 3 * 1024 * 1024)).toString('utf8')));
+      const payload = object(JSON.parse((await this.bytes(`https://api.github.com/repos/${repo}/contents/${file}?ref=${revision}`, 3 * 1024 * 1024, 15_000, true)).toString('utf8')));
       if (payload.encoding !== 'base64' || typeof payload.content !== 'string') throw new Error('Invalid marketplace content returned by GitHub.');
       const bytes = Buffer.from(payload.content, 'base64');
       if (bytes.length > 2 * 1024 * 1024) throw new Error('Marketplace catalog exceeds the size limit.');
@@ -298,38 +321,8 @@ export class PluginMarketplaceService {
     }
   }
 
-  private async bytes(url: string, limit: number, timeout = 15_000): Promise<Buffer> {
-    for (let attempt = 0; ; attempt++) {
-      try { return await this.download(url, limit, timeout); }
-      catch (error) {
-        if (attempt === 0 && /ERR_CONNECTION_RESET|ECONNRESET|ERR_NETWORK_CHANGED|HTTP 50[234]/.test(errorText(error))) continue;
-        if (missing(error)) throw error;
-        throw new Error(`${new URL(url).hostname}: ${errorText(error)}`);
-      }
-    }
-  }
-
-  private async download(url: string, limit: number, timeout: number): Promise<Buffer> {
-    const response = await this.options.fetch(url, { signal: AbortSignal.timeout(timeout),
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CardBush-Plugin-Marketplace' } });
-    if (response.status === 404) throw Object.assign(new Error('Source not found or not publicly accessible.'), { code: 'ENOENT' });
-    if (!response.ok) throw new Error(`Marketplace download failed (HTTP ${response.status}).`);
-    if (Number(response.headers.get('content-length')) > limit) {
-      await response.body?.cancel();
-      throw new Error('Marketplace download exceeds the size limit.');
-    }
-    if (!response.body) throw new Error('Empty marketplace response.');
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = []; let size = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read(); if (done) break;
-        size += value.length;
-        if (size > limit) throw new Error('Marketplace download exceeds the size limit.');
-        chunks.push(value);
-      }
-    } finally { await reader.cancel().catch(() => undefined); }
-    return Buffer.concat(chunks);
+  private bytes(url: string, limit: number, timeout = 15_000, immutable = false): Promise<Buffer> {
+    return this.downloads.bytes(url, limit, timeout, immutable);
   }
 
   private async source(id: string) {

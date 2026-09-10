@@ -16,3 +16,5 @@ export * from "./team.js";
 export * from "./tool.js";
 export * from "./turn.js";
 export * from "./workspace.js";
+export * from './automation.js';
+export * from './accounts.js';

@@ -28,7 +28,8 @@ try {
   assert.equal(resolved.manifest.name, manifest.name);
   assert.equal(resolved.manifest.version, '0.0.0');
   assert.equal(resolved.manifest.interface.displayName, 'Portable demo');
-  assert.deepEqual(resolved.extensions, { hooks: [], agents: [], commands: [], issues: [], notes: [] });
+  assert.deepEqual({ ...resolved.extensions, skills: [] }, { hooks: [], agents: [], commands: [], skills: [], issues: [], notes: [] });
+  assert.equal(resolved.extensions.skills[0].id, 'portable-demo:hello');
   assert.equal(resolved.manifest.mcpServers.docs.type, 'streamable_http');
   assert.deepEqual(resolved.skillRoots, [join(source, 'skills')]);
   assert.equal(await readFile(join(source, 'plugin.json'), 'utf8'), before, 'resolution is read-only');
@@ -38,8 +39,10 @@ try {
   const catalog = await loadProductPluginCatalog(roots);
   assert.deepEqual(catalog[0].components.map(item => item.kind).sort(), ['mcp', 'skill']);
   assert.equal((await loadEnabledProductPluginMcpServers(roots, config))[0].transport.kind, 'streamable_http');
-  assert.equal((await listProductSkills(await loadEnabledProductPluginSkillRoots(roots, config)))[0].name, 'hello');
-  assert.deepEqual(await loadEnabledProductPluginExtensions(roots, config), { agents: [], commands: [], hooks: [] });
+  assert.equal((await listProductSkills(await loadEnabledProductPluginSkillRoots(roots, config)))[0].name, 'portable-demo:hello');
+  const loaded = await loadEnabledProductPluginExtensions(roots, config);
+  assert.deepEqual({ ...loaded, skills: [] }, { agents: [], commands: [], hooks: [], skills: [] });
+  assert.equal(loaded.skills[0].id, 'portable-demo:hello');
   // Without an inline OpenAI object, the overlay supplies settings but never identity/components.
   delete manifest.extensions;
   await save(join(source, 'plugin.json'), manifest);

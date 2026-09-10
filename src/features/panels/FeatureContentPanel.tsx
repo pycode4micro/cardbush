@@ -24,6 +24,7 @@ import type {
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
+import { AutomationPanel } from '../automations/AutomationPanel';
 
 const LazyTeamPanel = lazy(async () => {
   const module = await import('../TeamPanel');
@@ -57,6 +58,7 @@ export function FeatureContentPanel({
   onCreateConversation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
+  if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} />;
   if (section === 'search') {
     return (
       <SearchPanel
@@ -394,7 +396,6 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
 
 
 

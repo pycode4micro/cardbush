@@ -1,0 +1,28 @@
+.automation-panel { max-width: 1100px; margin: 0 auto; padding: 28px; width: 100%; min-width: 0; box-sizing: border-box; overflow-y: auto; color: var(--text); font-family: var(--app-font-family, inherit); }
+.automation-heading, .automation-card header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.automation-heading h1 { display: flex; align-items: center; gap: 10px; font-size: 25px; margin: 0 0 10px; }
+.automation-heading p, .automation-runtime-note, .automation-hint { color: var(--text-mid); font-size: 13px; line-height: 1.7; }
+.automation-runtime-note { padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; margin: 20px 0; }
+.automation-panel input, .automation-panel textarea, .automation-panel select { box-sizing: border-box; min-width: 0; width: 100%; color: inherit; font: inherit; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 9px 12px; }
+.automation-panel textarea { resize: vertical; }
+.automation-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.automation-actions button { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; background: var(--surface); color: inherit; cursor: pointer; font: inherit; font-size: 13px; }
+.automation-actions button:disabled { opacity: .45; cursor: default; }
+.automation-panel button.primary-button { background: var(--accent); color: var(--accent-text, #111); }
+.automation-form, .automation-card { border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 16px 0; background: var(--surface); }
+.automation-form h2, .automation-card h2 { font-size: 17px; margin: 0 0 12px; overflow-wrap: anywhere; }
+.automation-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.automation-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 14px 0; }
+.automation-form label { display: grid; gap: 7px; font-size: 13px; }
+.automation-search { margin: 8px 0; }
+.automation-empty { display: grid; justify-items: center; text-align: center; padding: 48px 20px; color: var(--text-mid); }
+.automation-state { font-size: 12px; border: 1px solid var(--border); border-radius: 18px; padding: 4px 10px; }
+.automation-state[data-state=running], .automation-state[data-state=queued] { color: var(--accent); }
+.automation-prompt { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; }
+.automation-card details { margin-top: 16px; font-size: 13px; }
+.automation-card summary { cursor: pointer; color: var(--text-mid); }
+.automation-card ol { list-style: none; padding: 0; }
+.automation-card li { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--border); }
+.automation-card li span { color: var(--text-mid); }
+.automation-error { color: var(--danger, #f06b79); overflow-wrap: anywhere; }
+@media (max-width: 640px) { .automation-panel { padding: 18px; } .automation-fields { grid-template-columns: minmax(0, 1fr); } .automation-form, .automation-card { padding: 16px; } .automation-actions { justify-content: flex-start; } }

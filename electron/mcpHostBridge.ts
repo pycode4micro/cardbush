@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 const protocol = 'cardbush.mcp_host.v1';
-export type McpHostOperation = 'credentials.read' | 'credentials.write' | 'open-url' | 'elicitation' | 'authentication' | 'openai.access-token';
+export type McpHostOperation = 'credentials.read' | 'credentials.write' | 'open-url' | 'elicitation' | 'authentication' | 'openai.access-token' | 'automation.prepare-model' | 'automation.changed';
 type Request = { protocol: typeof protocol; type: 'request'; id: string; operation: McpHostOperation; payload: unknown };
 type Response = { protocol: typeof protocol; type: 'response'; id: string; result?: unknown; error?: string; errorCode?: 'mcp_auth_required' };
 type Cancel = { protocol: typeof protocol; type: 'cancel'; id: string };

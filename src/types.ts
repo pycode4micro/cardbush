@@ -3,7 +3,7 @@ import type {
   RuntimePermissionRequest,
 } from '@cardbush/bush-protocol';
 
-export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team';
+export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team' | 'automations';
 export type SettingsSection =
   | 'instructions'
   | 'profile'
@@ -718,6 +718,9 @@ export interface InteractionReplyAnswer {
 
 export interface SkillSummary {
   name: string;
+  displayName?: string;
+  defaultPrompt?: string;
+  invocationMode?: 'manual' | 'model' | 'both' | 'disabled';
   description: string;
   descriptionZh?: string;
   path: string;

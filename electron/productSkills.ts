@@ -3,6 +3,9 @@ import path from 'node:path';
 
 export interface ProductSkillSummary {
   name: string;
+  displayName?: string;
+  defaultPrompt?: string;
+  invocationMode?: 'manual' | 'model' | 'both' | 'disabled';
   description: string;
   descriptionZh: string;
   path: string;
@@ -183,8 +186,11 @@ async function loadProductSkills(
       const content = await fs.promises.readFile(skillPath, 'utf8').catch(() => null);
       if (content == null) continue;
       const metadata = parseFrontmatter(content);
-      const name = stringValue(metadata.name) || path.basename(candidateDir);
-      const logoPath = await resolveSkillLogo(packageDir, metadata.logo ?? metadata.icon);
+      const { readPluginSkill, skillPluginIdentity } = await import('@cardbush/bush-runtime');
+      const plugin = await skillPluginIdentity(skillPath);
+      const declaration = await readPluginSkill(skillPath, plugin?.id, plugin?.root);
+      const name = declaration.command.id;
+      const logoPath = await resolveSkillLogo(packageDir, declaration.presentation.icon_small ?? declaration.presentation.icon_large ?? metadata.logo ?? metadata.icon);
       const logoDarkPath = await resolveSkillLogo(
         packageDir,
         metadata.logo_dark ?? metadata.icon_dark,
@@ -192,7 +198,10 @@ async function loadProductSkills(
       );
       skills.set(name, {
         name,
-        description: stringValue(metadata.description),
+        displayName: stringValue(declaration.presentation.display_name) || name,
+        defaultPrompt: stringValue(declaration.presentation.default_prompt),
+        invocationMode: declaration.command.disableModelInvocation ? declaration.command.userInvocable ? 'manual' : 'disabled' : declaration.command.userInvocable ? 'both' : 'model',
+        description: declaration.command.description,
         descriptionZh: stringValue(metadata.description_zh),
         path: skillPath,
         logoPath,
@@ -203,7 +212,7 @@ async function loadProductSkills(
         packageDir,
         content,
         version: optionalString(metadata.version),
-        routingHidden: metadata.routing_hidden === true,
+        routingHidden: metadata.routing_hidden === true || declaration.command.disableModelInvocation,
         requires: stringArray(metadata.requires),
         conflictsWith: stringArray(metadata.conflicts_with),
         minServerVersion: optionalString(metadata.min_server_version),

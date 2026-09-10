@@ -121,9 +121,9 @@ export async function loadEnabledProductPluginExtensions(roots: PluginRoot[], co
     const value = (await resolvePluginManifest(root)).extensions;
     if (value.issues.length) throw new Error(`Plugin ${plugin.id} has unsupported runtime components: ${value.issues.map(issue => issue.detail).join('; ')}`);
     const trusted = new Set(Array.isArray(plugin.config.trustedHookHashes) ? plugin.config.trustedHookHashes.filter(item => typeof item === 'string') : []);
-    return { ...value, hooks: value.hooks.map(hook => ({ ...hook, trusted: Boolean(hook.definitionHash && trusted.has(hook.definitionHash)) })) };
+    return { ...value, agents: value.agents.map(agent => ({ ...agent, trusted: Boolean(agent.definitionHash && trusted.has(agent.definitionHash)) })), hooks: value.hooks.map(hook => ({ ...hook, trusted: Boolean(hook.definitionHash && trusted.has(hook.definitionHash)) })) };
   }));
-  return { hooks: extensions.flatMap(value => value.hooks), agents: extensions.flatMap(value => value.agents), commands: extensions.flatMap(value => value.commands) };
+  return { hooks: extensions.flatMap(value => value.hooks), agents: extensions.flatMap(value => value.agents), commands: extensions.flatMap(value => value.commands), skills: extensions.flatMap(value => value.skills) };
 }
 
 /** External plugin MCP servers use their own namespace and explicit permission. */
@@ -294,10 +294,11 @@ async function componentsFromManifest(
 ): Promise<CardbushPluginComponent[]> {
   const result: CardbushPluginComponent[] = [];
   for (const command of extensions.commands) result.push({ kind: 'command', id: command.id, name: `/${command.id}`, description: command.description });
-  for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description });
+  for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description,
+    ...(agent.mcpServers?.some(server => typeof server !== 'string') ? { hook: { definitionHash: agent.definitionHash!, definition: { agent: agent.id, mcpServers: agent.mcpServers }, executable: true } } : {}) });
   for (const hook of extensions.hooks) result.push({ kind: 'hook', id: hook.id, name: hook.event,
-    description: hook.type === 'mcp_tool' ? `${hook.server}/${hook.tool}` : hook.type === 'prompt' || hook.type === 'agent' ? `${hook.type}: parsed but skipped` : hook.command,
-    hook: { definitionHash: hook.definitionHash!, definition: hook.definition!, executable: hook.type !== 'prompt' && hook.type !== 'agent' } });
+    description: hook.type === 'mcp_tool' ? `${hook.server}/${hook.tool}` : hook.type === 'http' ? hook.url! : hook.type === 'prompt' || hook.type === 'agent' ? `${hook.type}: ${hook.dialect === 'claude' ? hook.prompt : 'parsed but skipped'}` : hook.command,
+    hook: { definitionHash: hook.definitionHash!, definition: hook.definition!, executable: hook.dialect === 'claude' || (hook.type !== 'prompt' && hook.type !== 'agent') } });
   for (const root of skillRoots) {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
     const directories = entries.some(item => item.isFile() && item.name === 'SKILL.md') ? [root]

@@ -5,8 +5,8 @@ import { OpenAiAuthError, OpenAiHttpError } from './openaiAuth.js';
 
 export type OpenAiTokenProvider = (request: { rejectedToken?: string; signal?: AbortSignal }) => Promise<OpenAiAccess>;
 export function openAiToolVisible(tool: Tool, appId: string): boolean {
-  const ui = tool._meta?.ui as { visibility?: unknown } | undefined;
-  return tool._meta?.connector_id === appId && (!Array.isArray(ui?.visibility) || ui.visibility.includes('model'));
+  // App-only tools stay connected for the iframe; the runtime controls model visibility.
+  return tool._meta?.connector_id === appId;
 }
 /** Restore the declared envelope only when the entire original schema validates. */
 export function createOpenAiResultNormalizer(tool: Pick<Tool, 'outputSchema'>, validator = new AjvJsonSchemaValidator()) {
@@ -81,6 +81,15 @@ export function scopeOpenAiClient(client: Client, appId: string): void {
     const cached = normalizers.get(client)!;
     if (!cached.has(params.name)) cached.set(params.name, createOpenAiResultNormalizer(tool));
     return call(params, { ...options, toolDefinition: tool });
+  };
+  const readResource = client.readResource.bind(client);
+  client.readResource = async (params, options) => {
+    const permitted = [...allowed.values()].some(tool => {
+      const ui = tool._meta?.ui as { resourceUri?: string } | undefined;
+      return params.uri === ui?.resourceUri || params.uri === tool._meta?.['openai/outputTemplate'];
+    });
+    if (!permitted) throw new Error('This UI resource does not belong to the selected OpenAI application.');
+    return readResource(params, options);
   };
   normalizers.set(client, new Map());
 }

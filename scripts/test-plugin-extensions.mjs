@@ -111,7 +111,7 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   assert.ok(child.prefixMessages.some(message => message.content.includes('Inspect the evidence')));
 
   await writeFile(configPath, JSON.stringify({ serviceEnabled: true, plugins: [{ id: manifest.name, installed: true, enabled: false }] }));
-  assert.deepEqual(await loader(), { agents: [], hooks: [], commands: [] }, 'disabling a plugin removes all capabilities');
+  assert.deepEqual(await loader(), { agents: [], hooks: [], commands: [], skills: [] }, 'disabling a plugin removes all capabilities');
   const unavailable = await agentCoordinator.execute({ protocol: 'bush.tool_call.v1', id: 'disabled-agent', name: 'subagent', argumentsText: JSON.stringify({ prompt: 'Review', agent_type: 'extensions-demo:reviewer' }) }, identity, undefined,
     { request: { ...request, tools: agentRegistry.definitions() }, contextMessages: [] });
   assert.equal(unavailable.kind, 'failed');
@@ -150,7 +150,7 @@ else if(value.hook_event_name==='SessionStart'||value.hook_event_name==='UserPro
   await installProductPlugin(source, installed);
   const skipped = await resolvePluginManifest(join(installed, manifest.name));
   assert.equal(skipped.extensions.hooks[0].type, 'prompt');
-  assert.ok(skipped.notes.some(note => note.includes('skipped')), 'prompt handlers are reported as skipped, matching OpenAI');
+  assert.ok(!skipped.notes.some(note => note.includes('skipped')), 'Claude prompt handlers are executable; OpenAI keeps its own dialect');
   console.log('Plugin extensions passed: import, discovery, Commands, real hook processes, lifecycle feedback, input reauthorization, denial, post-failure receipts, Agent restrictions, disable, timeout and stop.');
 } finally {
   assert.ok(root.startsWith(parent + sep + 'cardbush-plugin-extensions-'));

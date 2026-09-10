@@ -20,7 +20,7 @@
 .plugin-mcp-status { font-size: 12px; opacity: .7; }
 .plugin-mcp-status[data-ready=true], .openai-account-identity [data-connected=true] { opacity: 1; color: var(--success, #65c59b); }
 .plugin-mcp-status::before, .openai-account-identity [role=status]::before { content: ''; display: inline-block; width: 5px; height: 5px; margin-right: 6px; border-radius: 50%; background: currentColor; vertical-align: middle; }
-.plugin-mcp-primary-actions { flex-shrink: 0; }
+.plugin-mcp-primary-actions { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 8px; }
 .plugin-mcp-settings .mcp-primary-action, .openai-account-panel .mcp-primary-action { background: var(--panel-strong, #303431); border-color: var(--text-secondary, #80908a); }
 .plugin-mcp-settings button:disabled, .openai-account-panel button:disabled { opacity: .45; cursor: default; }
 .plugin-mcp-advanced { margin-top: 10px; font-size: 12px; }

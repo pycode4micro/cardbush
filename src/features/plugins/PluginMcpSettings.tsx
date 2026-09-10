@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { openAiAppAuthorizationUrl, usesOpenAiHostedConnection, type OpenAiAccountStatus } from '@cardbush/bush-protocol';
 import { OpenAiAccountPanel } from './OpenAiAccountPanel';
 import { fetchCardbushAppsConfiguration, fetchMcpConnectionOverview } from '../../backend/api';
 import { mcpConnectionState, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
 import type { CardbushAppPlugin } from '../../types';
+import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import './mcp-integration.css';
 
 type Json = Record<string, unknown>;
-export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: CardbushAppPlugin; language: 'zh' | 'en'; onSaved: () => void }) {
+export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts }: { plugin: CardbushAppPlugin; language: 'zh' | 'en'; onSaved: () => void; onManageAccounts?: () => void }) {
   const zh = language === 'zh';
   const [draft, setDraft] = useState<Json>(() => record(plugin.config.mcp_servers));
   const [overview, setOverview] = useState<McpConnectionOverview | null>(null);
@@ -18,12 +19,43 @@ export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: Cardb
   const [openAiStatus, setOpenAiStatus] = useState<OpenAiAccountStatus>();
   const [advancedOpen, setAdvancedOpen] = useState<Set<string>>(() => new Set());
   const actionInFlight = useRef(false);
+  const actionRevision = useRef(0);
+  const readRevision = useRef(0);
+  const authorizationRef = useRef('');
+  const changingConnection = useRef(false);
   const [secrets, setSecrets] = useState<Record<string, string | null>>({});
   const remote = JSON.stringify(record(plugin.config.mcp_servers));
   const baseline = useRef(remote);
-  const refresh = async () => { const value = await fetchMcpConnectionOverview(); setOverview(value); return value; };
-  useEffect(() => { void refresh().catch(caught => setError(String(caught))); }, [plugin.id]);
-  useEffect(() => { baseline.current = remote; setDraft(JSON.parse(remote)); setSecrets({}); setError(''); setAuthorizationTarget(''); setAdvancedOpen(new Set()); }, [plugin.id]);
+  const refresh = useCallback(async () => {
+    const revision = ++readRevision.current;
+    const value = await fetchMcpConnectionOverview();
+    if (revision === readRevision.current) setOverview(value);
+    return value;
+  }, []);
+  const setAuthorization = (id: string) => { authorizationRef.current = id; setAuthorizationTarget(id); };
+  useEffect(() => {
+    baseline.current = remote; setDraft(JSON.parse(remote)); setSecrets({}); setError(''); setSavedMessage('');
+    setAuthorization(''); setAdvancedOpen(new Set()); setOverview(null); setBusy(''); actionInFlight.current = false; changingConnection.current = false;
+    const revision = ++actionRevision.current;
+    void refresh().catch(caught => { if (revision === actionRevision.current) setError(String(caught)); });
+    return () => { actionRevision.current++; readRevision.current++; authorizationRef.current = ''; };
+  }, [plugin.id, refresh]);
+  useCapabilityCatalogRefresh(useCallback(async () => { await refresh(); }, [refresh]));
+  // Snapshot reads do not reconnect or open authorization pages. Pending changes
+  // can finish inside the worker without a catalog event reaching this panel.
+  const observing = overview?.snapshot?.applicationState === 'pending' || overview?.snapshot?.servers.some(server => server.health === 'restarting');
+  useEffect(() => {
+    if (!observing) return;
+    let disposed = false;
+    let timer = 0;
+    const check = async () => {
+      try { if (document.visibilityState !== 'hidden') await refresh(); }
+      catch { /* Keep the last observation until the next read or manual refresh. */ }
+      if (!disposed) timer = window.setTimeout(() => void check(), 2_000);
+    };
+    timer = window.setTimeout(() => void check(), 2_000);
+    return () => { disposed = true; window.clearTimeout(timer); };
+  }, [observing, refresh]);
   useEffect(() => {
     if (baseline.current === remote) return;
     if (JSON.stringify(draft) !== baseline.current || Object.keys(secrets).length > 0) {
@@ -52,36 +84,89 @@ export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: Cardb
   const action = async (id: string, action: 'login' | 'logout' | 'reconnect') => {
     if (actionInFlight.current) return;
     actionInFlight.current = true;
+    const revision = ++actionRevision.current;
     setBusy(`${id}:${action}`); setError(''); setSavedMessage('');
     let succeeded = false;
     try { await window.cardbushDesktop!.mcpConnectionAction(id, action); succeeded = true; }
-    catch (caught) { setError(String(caught)); }
+    catch (caught) { if (revision === actionRevision.current) setError(String(caught)); }
     finally {
+      if (revision !== actionRevision.current) return;
       try {
         const value = await refresh();
-        if (succeeded && action === 'reconnect' && mcpConnectionState(id, true, value.snapshot, value.revision) === 'connected') {
-          setAuthorizationTarget(current => current === id ? '' : current);
+        if (revision === actionRevision.current && succeeded && action === 'reconnect' && mcpConnectionState(id, true, value.snapshot, value.revision) === 'connected' && authorizationRef.current === id) {
+          setAuthorization('');
         }
-      } catch (caught) { setError(current => current || String(caught)); }
-      actionInFlight.current = false;
-      setBusy('');
+      } catch (caught) { if (revision === actionRevision.current) setError(current => current || String(caught)); }
+      if (revision === actionRevision.current) { actionInFlight.current = false; setBusy(''); }
     }
   };
   const authorizeApp = async (id: string, url: string) => {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
+    const revision = ++actionRevision.current;
     setBusy(`${id}:authorize`); setError(''); setSavedMessage('');
-    try { await window.cardbushDesktop!.openExternal(url); setAuthorizationTarget(id); }
-    catch (caught) { setError(String(caught)); }
-    finally { setBusy(''); }
+    try { await window.cardbushDesktop!.openExternal(url); if (revision === actionRevision.current) setAuthorization(id); }
+    catch (caught) { if (revision === actionRevision.current) setError(String(caught)); }
+    finally { if (revision === actionRevision.current) { actionInFlight.current = false; setBusy(''); } }
+  };
+  const setConnectionEnabled = async (componentId: string, enabled: boolean) => {
+    const id = `plugin_${plugin.id.replaceAll('.', '_')}_${componentId}`;
+    if (changingConnection.current || busy === 'save' || (busy && !busy.startsWith(`${id}:`))) return;
+    changingConnection.current = true;
+    const revision = ++actionRevision.current;
+    actionInFlight.current = true;
+    if (authorizationRef.current === id) setAuthorization('');
+    readRevision.current++; // Earlier connection checks cannot restore a cancelled attempt.
+    setBusy(`${id}:${enabled ? 'enable' : 'cancel'}`); setError(''); setSavedMessage('');
+    try {
+      let cancellationError = '';
+      if (!enabled) {
+        try { await window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login'); }
+        catch (caught) { cancellationError = String(caught); }
+      }
+      const latest = await fetchCardbushAppsConfiguration();
+      if (revision !== actionRevision.current) return;
+      const current = latest.plugins.find(item => item.id === plugin.id);
+      if (!current) throw new Error(zh ? '插件已移除，请刷新插件列表。' : 'This plugin was removed. Refresh the plugin list.');
+      // Persist only this switch, using the latest configuration. Unrelated
+      // drafts and private credential input must never be saved by cancellation.
+      const connections = record(current.config.mcp_servers);
+      const settings = record(connections[componentId]);
+      const required = (settings.required ?? current.components.find(component => component.id === componentId)?.mcp?.required) === true;
+      const patch = { enabled, ...(!enabled && required ? { required: false } : {}) };
+      const saved = await window.cardbushDesktop!.savePluginConnections({ pluginId: plugin.id, expectedRevision: latest.revision,
+        connections: { ...connections, [componentId]: { ...record(connections[componentId]), ...patch } } });
+      if (revision !== actionRevision.current) return;
+      const prior = record(JSON.parse(baseline.current));
+      // A retained draft still belongs to its original baseline. Do not silently
+      // rebase it onto concurrent edits and let a later save overwrite them.
+      baseline.current = JSON.stringify(dirty ? { ...prior, [componentId]: { ...record(prior[componentId]), ...patch } } : saved.connections);
+      setDraft(draft => {
+        const next = { ...saved.connections };
+        for (const [name, value] of Object.entries(draft)) if (JSON.stringify(value) !== JSON.stringify(prior[name])) next[name] = value;
+        next[componentId] = { ...record(next[componentId]), ...patch };
+        return next;
+      });
+      onSaved();
+      setSavedMessage(enabled ? (zh ? '连接已启用。' : 'Connection enabled.') : (zh ? '已取消连接并停用此服务。需要时可重新启用。' : 'Connection cancelled and this service disabled. You can enable it again later.'));
+      if (saved.applicationError || saved.runtimeError || cancellationError) setError(saved.applicationError || saved.runtimeError || cancellationError);
+      await refresh();
+    } catch (caught) { if (revision === actionRevision.current) setError(String(caught)); }
+    finally { if (revision === actionRevision.current) { changingConnection.current = false; actionInFlight.current = false; setBusy(''); } }
   };
   useEffect(() => {
     if (!authorizationTarget || busy || dirty || openAiStatus?.state !== 'signed_in') return;
     const component = services.find(item => `plugin_${plugin.id.replaceAll('.', '_')}_${item.id}` === authorizationTarget);
     if (!component || !usesOpenAiHostedConnection(component.mcp?.registeredAppId, record(draft[component.id]))) return;
     // Only a user-started authorization gets a reconnect on return; no background polling.
-    const onFocus = () => { if (document.visibilityState !== 'hidden') void action(authorizationTarget, 'reconnect'); };
+    const onFocus = () => { if (authorizationRef.current === authorizationTarget && document.visibilityState !== 'hidden') void action(authorizationTarget, 'reconnect'); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, [authorizationTarget, busy, dirty, openAiStatus?.state, plugin.id, draft]);
+  useEffect(() => {
+    if (authorizationTarget && !busy && !dirty && openAiStatus?.state === 'signed_in' &&
+        mcpConnectionState(authorizationTarget, true, overview?.snapshot ?? null, overview?.revision) === 'connected') setAuthorization('');
+  }, [authorizationTarget, busy, dirty, openAiStatus?.state, overview]);
   if (!services.length || ['chrome', 'computer-use'].includes(plugin.id)) return null;
   const toggleAdvanced = (id: string, open: boolean) => setAdvancedOpen(current => {
     if (current.has(id) === open) return current;
@@ -90,7 +175,7 @@ export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: Cardb
   const stored = record(JSON.parse(baseline.current));
   return <section className="plugin-detail-section plugin-mcp-settings"><div className="plugin-mcp-heading"><h3>{zh ? '应用连接' : 'App connections'}</h3>
     <button type="button" className="mcp-quiet-action" disabled={Boolean(busy)} onClick={() => void refresh().catch(caught => setError(String(caught)))}>{zh ? '刷新连接状态' : 'Refresh status'}</button></div>
-    {services.some(component => component.mcp?.registeredAppId) && <OpenAiAccountPanel language={language} onChanged={() => void refresh().catch(() => {})} onStatusChange={setOpenAiStatus} />}
+    {services.some(component => component.mcp?.registeredAppId) && <OpenAiAccountPanel language={language} onChanged={() => void refresh().catch(() => {})} onStatusChange={setOpenAiStatus} onManageAccounts={onManageAccounts} navigationDisabled={dirty || Boolean(busy)} />}
     {services.map(component => {
       const settings = record(draft[component.id]), connection = record(settings.connection), oauth = record(settings.oauth);
       const id = `plugin_${plugin.id.replaceAll('.', '_')}_${component.id}`;
@@ -110,6 +195,7 @@ export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: Cardb
       const modified = JSON.stringify(settings) !== JSON.stringify(record(stored[component.id])) || Object.hasOwn(secrets, component.id);
       const ready = !modified && !needsAccount && !missingBinding && connectionState === 'connected';
       const waitingForAuthorization = hosted && authorizationTarget === id;
+      const cancelling = busy === `${id}:cancel`;
       const status = modified ? (zh ? '有未保存修改' : 'Unsaved changes') : !enabled ? (zh ? '已停用' : 'Disabled') : pending ? (zh ? '等待任务结束后生效' : 'Pending until tasks finish')
         : needsAccount ? (zh ? '登录账户后连接' : 'Sign in above to connect') : ready ? (zh ? '已连接' : 'Connected')
           : busy === `${id}:reconnect` || connectionState === 'restarting' ? (zh ? '连接中…' : 'Connecting…')
@@ -123,16 +209,22 @@ export function PluginMcpSettings({ plugin, language, onSaved }: { plugin: Cardb
       const needsSetup = !hosted && (missingBinding || needsConnection || connectionState === 'configuration_required');
       const openHostedAuthorization = !waitingForAuthorization && connectionState !== 'unavailable' && Boolean(authorizationUrl);
       return <div className="plugin-mcp-service" key={component.id}><header><div className="plugin-mcp-identity"><strong>{component.name}</strong><span className="plugin-mcp-status" data-ready={ready}>{status}</span></div>
-        {!ready && enabled && !needsAccount && <div className="plugin-mcp-primary-actions">
-          {signingIn ? <button type="button" onClick={() => void window.cardbushDesktop!.mcpConnectionAction(id, 'cancel_login').catch(caught => setError(String(caught)))}>{zh ? '取消登录' : 'Cancel sign-in'}</button>
-            : <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || connectionState === 'restarting'} onClick={() => {
+        {plugin.enabled && !ready && <div className="plugin-mcp-primary-actions">
+          {!enabled ? <button type="button" disabled={Boolean(busy)} onClick={() => void setConnectionEnabled(component.id, true)}>{zh ? '重新启用' : 'Enable again'}</button>
+            : <>{!needsAccount && !signingIn && <button type="button" className="mcp-primary-action" disabled={Boolean(busy) || dirty || pending || connectionState === 'restarting'} onClick={() => {
               if (hosted && openHostedAuthorization) void authorizeApp(id, authorizationUrl!);
               else if (needsSetup) toggleAdvanced(id, true);
               else void action(id, !hosted && network && connectionState === 'auth_required' ? 'login' : 'reconnect');
             }}>{hosted ? (waitingForAuthorization ? (zh ? '检查连接' : 'Check connection') : connectionState === 'unavailable' ? (zh ? '重试连接' : 'Retry') : (zh ? '连接' : 'Connect'))
               : needsSetup ? (zh ? '配置连接' : 'Set up') : connectionState === 'auth_required' ? (zh ? '登录' : 'Sign in') : (zh ? '连接' : 'Connect')}</button>}
+              <button type="button" disabled={cancelling || busy === 'save' || Boolean(busy && !busy.startsWith(`${id}:`))}
+                onClick={() => void setConnectionEnabled(component.id, false)}>{cancelling ? (zh ? '正在取消…' : 'Cancelling…') : (zh ? '取消连接' : 'Cancel connection')}</button></>}
         </div>}</header>
         {waitingForAuthorization && <p role="status" className="plugin-mcp-hint">{zh ? '请在浏览器完成授权，返回后会自动检查连接。' : 'Finish authorization in your browser. We’ll check the connection when you return.'}</p>}
+        {pending && <p className="plugin-mcp-hint">{!enabled
+          ? (zh ? '已保存停用设置；正在运行的任务仍可能使用旧连接，任务结束后会移除。' : 'Disabling is saved. Running tasks may still use the previous connection until they finish.')
+          : (zh ? '连接配置正在等待运行中的任务结束，可先取消不需要的连接。状态会自动更新。' : 'Connection settings are waiting for running tasks to finish. You can cancel unwanted connections; status updates automatically.')}</p>}
+        {!ready && enabled && required && <p className="plugin-mcp-hint">{zh ? '取消后将停用此连接，依赖它的功能将不可用。' : 'Cancelling disables this connection and features that depend on it.'}</p>}
         <details className="plugin-mcp-advanced" open={advancedOpen.has(id)} onToggle={event => toggleAdvanced(id, event.currentTarget.open)}><summary>{zh ? '高级设置' : 'Advanced settings'}</summary>
         <div className="plugin-mcp-options">
         <label><input type="checkbox" checked={settings.enabled !== false} onChange={event => change(component.id, { enabled: event.target.checked })} />{zh ? '启用' : 'Enabled'}</label>

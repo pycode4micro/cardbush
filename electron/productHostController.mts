@@ -141,6 +141,12 @@ export class ElectronProductHostController {
     await this.#ensureLegacyModelCredentials();
     return this.#host.execute(command);
   }
+  async resolveAutomationModel(modelId: string) {
+    await this.#ensureLegacyModelCredentials();
+    const config = await this.#models.read();
+    if (!config.models.some(model => model.id === modelId)) throw new Error('The automation model was removed. Send a message in the target conversation with an available model.');
+    return this.#resolveModel(modelId);
+  }
 
   async refreshMcp(): Promise<unknown> {
     const config = await this.#mcp.read();

@@ -390,7 +390,7 @@ export function Composer({
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
-  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; description: string; argumentHint: string }>>([]);
+  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; description: string; argumentHint: string; kind?: 'command' | 'skill' }>>([]);
   useEffect(() => {
     const desktop = window.cardbushDesktop;
     if (!desktop?.pluginCommands) return;
@@ -875,7 +875,7 @@ export function Composer({
           searchText: '/new 新会话 new conversation',
         },
       ];
-      commands.push(...pluginCommands.map(command => ({
+      commands.push(...pluginCommands.filter(command => command.kind !== 'skill' || (!disabledSkillNames.has(command.id) && !disabledSkillNames.has(command.id.split(':').at(-1)!))).map(command => ({
         id: `/${command.id}`, title: `/${command.id}`, subtitle: [command.argumentHint, command.description].filter(Boolean).join(' · '),
         icon: <FileCode2 size={16} />, value: `/${command.id} `, searchText: `${command.id} ${command.description} command 命令`,
       })));
@@ -888,6 +888,7 @@ export function Composer({
       language,
       onCreateConversation,
       pluginCommands,
+      disabledSkillNames,
     ],
   );
 

@@ -17,14 +17,19 @@ const compiled = ts.transpileModule(fs.readFileSync('electron/runtimeHostControl
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const module = { exports: {} };
-new Function('require','exports','module',compiled)(name => name === 'electron' ? fakeElectron : name === '@cardbush/bush-protocol' ? protocolExports : require(name), module.exports, module);
+const bridge = { exports: {} };
+new Function('require', 'exports', 'module', ts.transpileModule(fs.readFileSync('electron/mcpHostBridge.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText)(require, bridge.exports, bridge);
+new Function('require','exports','module',compiled)(name => name === 'electron' ? fakeElectron : name === '@cardbush/bush-protocol' ? protocolExports : name === './mcpHostBridge.js' ? bridge.exports : require(name), module.exports, module);
 const { RuntimeUtilityProcessController } = module.exports;
 const protocol = 'bush.runtime_ipc.v1';
 const readyMessage = {protocol,type:'ready',capabilities:{
   protocol:'bush.runtime_capabilities.v1',hostId:'test',runtimeVersion:'test',
   eventProtocol:'bush.runtime_event.v1',supportedEvents:[],supportedCommands:[],features:[],
 }};
-const controller = new RuntimeUtilityProcessController({ modulePath: 'unused-test-fixture' });
+let readyNotifications = 0;
+const controller = new RuntimeUtilityProcessController({ modulePath: 'unused-test-fixture', onReady: () => readyNotifications++ });
 const firstReady = controller.start();
 children[0].emit('message', readyMessage);
 await firstReady;
@@ -36,6 +41,8 @@ await stoppedResult;
 const nextReady = controller.start();
 children[1].emit('message', readyMessage);
 await nextReady;
+children[0].emit('message', readyMessage);
+assert.equal(readyNotifications, 2, 'a restarted worker notifies once; stale worker messages cannot restart automations');
 const command = controller.command({protocol,type:'command',operationId:'new',command:{kind:'test',payload:{}}});
 await new Promise(resolve=>setImmediate(resolve));
 children[0].emit('error','crashed','old-process',{});

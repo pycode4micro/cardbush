@@ -1,5 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
+import { readPluginSkill, skillPluginIdentity } from './pluginSkills.js';
 
 import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
 
@@ -9,6 +10,8 @@ interface SkillCard {
   descriptionZh: string;
   packageDir: string;
   mainResource: string;
+  invocation?: string;
+  unqualifiedName?: string;
 }
 
 export type SkillRootProvider = () => string[] | Promise<string[]>;
@@ -29,7 +32,7 @@ function searchRegistration(
   return {
     definition: {
       name: "search_skills",
-      description: "Search the installed Skill catalog by natural-language capability description. Returns each Skill's exact local SKILL.md mainResource; use read_file to read that resource before following the Skill.",
+      description: "Search installed Skills by capability. Plugin Skills include an invocation id: use run_skill with that id to enforce policies, parameters and dependencies. Other Skills provide a local SKILL.md mainResource to read before following them.",
       inputSchema: {
         type: "object",
         properties: {
@@ -60,7 +63,7 @@ function searchRegistration(
       const disabled = new Set(Array.isArray(context.turn?.request.metadata.disabledSkills)
         ? context.turn.request.metadata.disabledSkills : []);
       const skills = (await loadCards(activeRoots)).filter((skill) =>
-        (allowed === undefined || allowed.has(skill.name)) && !disabled.has(skill.name),
+        (allowed === undefined || allowed.has(skill.name) || allowed.has(skill.unqualifiedName!)) && !disabled.has(skill.name) && !disabled.has(skill.unqualifiedName!),
       );
       const matches = skills
         .map((skill) => ({ ...skill, score: score(skill, terms) }))
@@ -88,18 +91,21 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
     const directories = entries.some(entry => entry.isFile() && entry.name === 'SKILL.md') ? [root]
       : entries.filter(entry => entry.isDirectory()).map(entry => join(root, entry.name));
     for (const packageDir of directories) {
-      let content;
+      let parsed, plugin;
       try {
-        content = await readFile(join(packageDir, "SKILL.md"), "utf8");
+        plugin = await skillPluginIdentity(join(packageDir, 'SKILL.md'));
+        parsed = await readPluginSkill(join(packageDir, 'SKILL.md'), plugin?.id, plugin?.root);
       } catch {
         continue;
       }
-      const frontmatter = parseFrontmatter(content);
-      const name = frontmatter.name || basename(packageDir);
+      if (parsed.command.disableModelInvocation || parsed.issues.length) continue;
+      const name = parsed.command.id;
       byName.set(name, {
         name,
-        description: frontmatter.description || "",
-        descriptionZh: frontmatter.description_zh || "",
+        description: parsed.command.description,
+        descriptionZh: String(parsed.metadata.description_zh || ''),
+        unqualifiedName: parsed.command.name,
+        ...(plugin ? { invocation: parsed.command.id } : {}),
         packageDir,
         mainResource: join(packageDir, "SKILL.md"),
       });
@@ -108,18 +114,6 @@ async function loadCards(roots: string[]): Promise<SkillCard[]> {
   return [...byName.values()];
 }
 
-function parseFrontmatter(content: string): Record<string, string> {
-  if (!content.startsWith("---")) return {};
-  const end = content.indexOf("\n---", 3);
-  if (end < 0) return {};
-  const result: Record<string, string> = {};
-  for (const line of content.slice(3, end).split(/\r?\n/)) {
-    const match = line.match(/^([A-Za-z0-9_]+):\s*(.*)$/);
-    if (!match) continue;
-    result[match[1]] = unquote(match[2].trim());
-  }
-  return result;
-}
 
 function score(skill: SkillCard, terms: string[]): number {
   if (terms.length === 0) return 0;
@@ -162,13 +156,6 @@ function normalize(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase();
 }
 
-function unquote(value: string) {
-  if ((value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1).replace(/\\"/g, '"');
-  }
-  return value;
-}
 
 function manifest(operation: string) {
   return {

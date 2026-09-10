@@ -903,6 +903,11 @@ function turn(registry, workspaceDir, metadata) {
 
 function temporaryRoot(t) {
   const root = mkdtempSync(join(tmpdir(), "cardbush-workspace-tools-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.ok(parse(root).base.startsWith('cardbush-workspace-tools-'));
+    // Windows can briefly retain a stopped shell's working-directory handle.
+    rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
   return root;
 }

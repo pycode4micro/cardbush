@@ -15,6 +15,7 @@ import {
   mcpSnapshotSchema,
   type RuntimeIpcOutboundMessage,
   type RuntimeProtocolError,
+  AUTOMATION_COMMAND, runtimeSessionTurnRequestSchema, type RuntimeProviderBindingRef,
 } from '@cardbush/bush-protocol';
 import {
   FileRuntimeCheckpointStore,
@@ -33,9 +34,11 @@ import {
   ToolRegistry,
   type ModelProvider,
   type SubagentPermissionPolicy,
+  AutomationScheduler,
 } from '@cardbush/bush-runtime';
 import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
 import { net } from 'electron';
+import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import {
   decodeProductSubagentConfig,
@@ -223,11 +226,17 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
+  if (command.kind === AUTOMATION_COMMAND) {
+    if (!automation) throw new Error('Persistent automation storage is unavailable.');
+    return automation.manage(command.payload);
+  }
+  if (command.kind === 'runtime.automation_start') { automation?.start(); return { started: Boolean(automation) }; }
   if (command.kind === SHUTDOWN_RUNTIME_COMMAND) {
     for (const controller of operations.values()) {
       if (controller.signal !== signal) controller.abort();
     }
     await host.sendCommand(command, signal);
+    await automation?.close();
     const deadline = Date.now() + 5_000;
     while (host.hasActiveTurns() && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -624,6 +633,39 @@ providers = new OpenAIResponsesProviderRegistry({
 const toolRegistry = new ToolRegistry();
 const skillRoots = skillRootsFromEnvironment();
 const pluginRoots = pluginRootsFromEnvironment();
+const automation = runtimeStateRoot ? new AutomationScheduler({
+  path: join(runtimeStateRoot, 'scheduler', 'automations.json'),
+  canRun: sessionId => !host.hasActiveSession(sessionId),
+  changed: () => { void mcpHost.request('automation.changed', {}).catch(() => {}); },
+  onError: error => process.stderr.write(`${JSON.stringify({ code: 'automation_error', message: errorMessage(error) })}\n`),
+  run: async (job, run, context, signal) => {
+    signal.throwIfAborted();
+    const session = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: job.sessionId } }, signal);
+    if (!session) throw new Error('The target conversation was removed.');
+    if (job.plugin) {
+      const extensions = await loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '');
+      if (!extensions.hooks.some(hook => hook.id === job.plugin!.hookId && hook.definitionHash === job.plugin!.definitionHash && hook.trusted === true)) throw new Error('The originating plugin hook is disabled, changed, or no longer trusted.');
+    }
+    const selected = await mcpHost.request<{ model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number }>('automation.prepare-model', { modelId: context.providerBinding?.bindingId ?? context.model }, signal);
+    signal.throwIfAborted();
+    const allowed = new Set(context.tools.map(tool => tool.name));
+    const request = runtimeSessionTurnRequestSchema.parse({ ...context,
+      protocol: 'bush.session_turn_request.v1', sessionId: job.sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
+      model: selected.model, providerBinding: selected.binding,
+      maxOutputTokens: selected.maxOutputTokens ?? context.maxOutputTokens,
+      tools: toolRegistry.definitions().filter(tool => allowed.has(tool.name)),
+      prefixMessages: [...context.prefixMessages, { role: 'developer', name: 'automation_context', content:
+        `This turn was activated by the saved automation ${JSON.stringify(job.name)}. Trigger: ${run.reason}. Current time: ${new Date().toISOString()}. Time zone: ${job.timeZone}. Execute its saved prompt in this conversation. Do not infer a request to create further automations. Existing permissions still apply.` }],
+      inputMessages: [{ messageId: `message_${run.id}`, createdAt: new Date().toISOString(), message: { role: 'user', name: 'automation_prompt', content: job.prompt } }],
+      sessionMetadata: {},
+      metadata: { ...context.metadata, automationRunId: run.id, automationId: job.id,
+        ...(selected.maxContextTokens ? { maxContextTokens: selected.maxContextTokens } : {}) },
+    });
+    const result = await host.runSessionTurn(request, { signal });
+    if (result.kind !== 'turn_terminal') throw new Error('Automation did not produce a terminal result.');
+    return { status: result.payload.status, reason: result.payload.reason };
+  },
+}) : undefined;
 if (skillRoots.length > 0 || pluginRoots.length > 0) {
   registerSkillTools(toolRegistry, async () => {
     try {
@@ -647,6 +689,7 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
 }
 
 host = new InMemoryRuntimeHost({
+  automation,
   provider: providers,
   toolRegistry,
   dataRoot: runtimeStateRoot,
@@ -668,8 +711,17 @@ host = new InMemoryRuntimeHost({
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
   loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
+  openAgentMcpScope: (agent, request, signal) => openPluginAgentMcp(mcp, agent, request, signal),
+  requestBackgroundPermission: async (input, signal) => {
+    const result = await mcpHost.request<{ action: string; content?: { allow?: boolean } }>('elicitation', {
+      serverId: 'cardbush_background_agent', sessionId: input.sessionId, turnId: input.turnId, toolCallId: input.toolCallId,
+      params: { mode: 'form', message: `${input.reason}\n${input.targets.map(target => target.value).join('\n')}`, requestedSchema: { type: 'object', properties: { allow: { type: 'boolean', title: '允许后台 Agent 执行本次操作 / Allow this background Agent action', default: false } }, required: ['allow'] } },
+    }, signal);
+    return result.action === 'accept' && result.content?.allow === true;
+  },
   settleOrphanedTurns: Boolean(runtimeStateRoot),
   additionalSupportedCommands: [
+    AUTOMATION_COMMAND,
     UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
     REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
     APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,

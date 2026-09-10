@@ -92,9 +92,14 @@ const desktopApi = {
   openMcpRequestUrl: (id: string) => ipcRenderer.invoke('mcp:open-request-url', id),
   mcpConnectionAction: (serverId: string, action: string) => ipcRenderer.invoke('mcp:connection-action', serverId, action),
   openAiAccountStatus: () => ipcRenderer.invoke('openai:account-status'),
+  accountsSnapshot: () => ipcRenderer.invoke('accounts:snapshot'),
+  accountsAction: (input: import('@cardbush/bush-protocol', { with: { 'resolution-mode': 'import' } }).AccountCommand) => ipcRenderer.invoke('accounts:action', input),
+  onAccountsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('accounts:changed', listener); return () => ipcRenderer.removeListener('accounts:changed', listener); },
   openAiAccountAction: (action: string) => ipcRenderer.invoke('openai:account-action', action),
   onOpenAiAccountChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('openai:account-changed', listener); return () => ipcRenderer.removeListener('openai:account-changed', listener); },
   savePluginConnections: (input: unknown) => ipcRenderer.invoke('plugins:save-connections', input),
+  automationCommand: (input: unknown) => ipcRenderer.invoke('automation:command', input),
+  onAutomationChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('automation:changed', listener); return () => ipcRenderer.removeListener('automation:changed', listener); },
   onMcpRequestsChanged: (callback: () => void) => { const listener = () => callback(); ipcRenderer.on('mcp:requests-changed', listener); return () => ipcRenderer.removeListener('mcp:requests-changed', listener); },
   runtime: {
     command: (message: unknown) =>

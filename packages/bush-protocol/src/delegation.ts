@@ -23,6 +23,7 @@ export const subagentTaskSchema = z.object({
   childTurnId: z.string().min(1),
   prompt: z.string().min(1),
   inheritContext: z.boolean(),
+  background: z.boolean().optional(),
   inheritedMessageCount: z.number().int().nonnegative(),
   origin: z.enum(["subagent", "team"]).optional(),
   teamId: z.string().min(1).optional(),

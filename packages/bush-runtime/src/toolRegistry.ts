@@ -49,11 +49,21 @@ export interface ToolHandlerContext<TInput = unknown>
 }
 
 export interface ToolRegistration<TInput = unknown> {
+  /** Private registrations are absent from host catalogs and usable only by this session. */
+  sessionScope?: string;
+  /** A dispatcher leaves lifecycle Hooks to the selected tool. */
+  delegatesToolExecution?: boolean;
   /** Explicit MCP connection capability for trusted lifecycle hooks, never inferred from a tool name. */
   mcpHook?: {
     server: string;
     tool: string;
+    modelVisible?: boolean;
+    appCallable?: boolean;
     call: (input: Record<string, unknown>, options: { signal?: AbortSignal; timeoutMs: number; request: ModelRequest }) => Promise<unknown>;
+  };
+  mcpApp?: {
+    resourceUri: string;
+    readResource: (uri: string, signal?: AbortSignal) => Promise<unknown>;
   };
   definition: ToolDefinition;
   manifest: ActionManifestTemplate;
@@ -131,8 +141,9 @@ export class ToolRegistry {
     return this.#registrations.get(name);
   }
 
-  mcpHook(server: string, tool: string): AnyToolRegistration['mcpHook'] {
-    return [...this.#registrations.values()].find(registration => registration.mcpHook?.server === server && registration.mcpHook.tool === tool)?.mcpHook;
+  mcpHook(server: string, tool: string, sessionId?: string): AnyToolRegistration['mcpHook'] {
+    const candidates = [...this.#registrations.values()].filter(registration => (!registration.sessionScope || registration.sessionScope === sessionId) && registration.mcpHook?.server === server && registration.mcpHook.tool === tool);
+    return (candidates.find(registration => registration.sessionScope === sessionId) ?? candidates[0])?.mcpHook;
   }
 
   renderModelResult(name: string, result: unknown): string | undefined {
@@ -148,13 +159,13 @@ export class ToolRegistry {
   }
 
   definitions(): ToolDefinition[] {
-    return [...this.#registrations.values()].map(({ definition }) =>
+    return [...this.#registrations.values()].filter(registration => !registration.sessionScope).map(({ definition }) =>
       structuredClone(definition),
     );
   }
 
   catalog(): ToolCatalogEntry[] {
-    return [...this.#registrations.values()].map((registration) =>
+    return [...this.#registrations.values()].filter(registration => !registration.sessionScope).map((registration) =>
       structuredClone({
         definition: registration.definition,
         manifest: registration.manifest,
@@ -172,6 +183,7 @@ export class ToolRegistry {
 
   childDefinitions(): ToolDefinition[] {
     return [...this.#registrations.values()]
+      .filter(registration => !registration.sessionScope)
       .filter((registration) => registration.visibleToChild)
       .map(({ definition }) => structuredClone(definition));
   }
@@ -198,5 +210,8 @@ function normalizeRegistration<TInput>(candidate: ToolRegistration<TInput>): Any
     visibleToChild: candidate.visibleToChild ?? true,
     registrationOwner: candidate.registrationOwner?.trim() || undefined,
     mcpHook: candidate.mcpHook,
+    mcpApp: candidate.mcpApp,
+    sessionScope: candidate.sessionScope,
+    delegatesToolExecution: candidate.delegatesToolExecution,
   };
 }

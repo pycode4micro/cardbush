@@ -25,6 +25,7 @@ import {
 } from '@cardbush/bush-protocol';
 
 export interface RuntimeHostControllerOptions {
+  onReady?: () => void;
   onMcpHostRequest?: (operation: McpHostOperation, payload: unknown, signal: AbortSignal) => Promise<unknown>;
   modulePath: string;
   env?: NodeJS.ProcessEnv;
@@ -119,6 +120,7 @@ export class RuntimeUtilityProcessController {
         if (message.type === 'ready') {
           clearStartupTimeout();
           resolve(message);
+          this.#options.onReady?.();
           return;
         }
         if (message.type === 'command_response') {

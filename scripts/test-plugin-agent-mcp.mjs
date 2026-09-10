@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { resolve, join, sep } from 'node:path';
+import { McpClientManager } from '../packages/bush-mcp-client/dist/index.js';
+import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, McpAppsHost } from '../packages/bush-runtime/dist/index.js';
+import { openPluginAgentMcp } from '../dist-electron/pluginAgentMcp.mjs';
+const parent = resolve('tmp'); await mkdir(parent, { recursive: true });
+const root = await mkdtemp(join(parent, 'agent-mcp-')); let closes = 0; const leases = [];
+const registry = new ToolRegistry(), manager = new McpClientManager({ registry, oauth: { close: () => { closes++; } } });
+const file = join(root, 'server.mjs');
+await writeFile(file, `import { McpServer, fromJsonSchema } from '@modelcontextprotocol/server';import { serveStdio } from '@modelcontextprotocol/server/stdio';
+await serveStdio(()=>{const server=new McpServer({name:'agent-ui-fixture',version:'1'});
+server.registerTool('show',{description:'Show UI',inputSchema:fromJsonSchema({type:'object',properties:{value:{type:'number'}},required:['value']}),_meta:{ui:{resourceUri:'ui://fixture'}}},async input=>({content:[{type:'text',text:'Ready'}],structuredContent:{value:input.value},_meta:{private:'UI only'}}));
+server.registerResource('view','ui://fixture',{mimeType:'text/html;profile=mcp-app'},async uri=>({contents:[{uri:uri.href,mimeType:'text/html;profile=mcp-app',text:'<h1>Native MCP interface</h1>'}]}));return server;});`);
+const agent = { id: 'demo-plugin:reviewer', pluginId: 'demo-plugin', root, name: 'reviewer', description: 'Test', prompt: 'Test', trusted: true, mcpServers: [{ local: { command: process.execPath, args: [file], env: { FIXTURE_PROJECT: '${CLAUDE_PROJECT_DIR}' } } }] };
+const request = sessionId => ({ protocol: 'bush.session_turn_request.v1', sessionId, turnId: 't', requestId: 'r', model: 'm', tools: [], inputMessages: [], metadata: { projectDir: root } });
+try {
+  const [first, second] = await Promise.all([openPluginAgentMcp(manager, agent, request('one')), openPluginAgentMcp(manager, agent, request('two'))]); leases.push(first, second);
+  assert.equal(first.registrations.length, 1); assert.equal(second.registrations.length, 1);
+  const registration = first.registrations[0], other = second.registrations[0];
+  assert.notEqual(registration.definition.name, other.definition.name, 'each Agent has independent exposed tool names');
+  assert.equal(registration.mcpHook.server, other.mcpHook.server, 'OAuth identity is stable across Agent instances');
+  assert.match(registration.definition.name, /__scope_[a-f0-9]{16}__/);
+  assert.equal(registry.definitions().length, 0, 'the parent never receives the local catalog');
+  const local = new ToolRegistry(); local.register(registration);
+  const coordinator = new ToolExecutionCoordinator({ registry: local, permissions: { request: async input => ({ decision: 'allow_once', grantedCapabilityIds: input.capabilityIds }) } });
+  const req = { protocol: 'bush.model_request.v1', sessionId: 'one', turnId: 't', requestId: 'r', model: 'm', tools: local.definitions(), messages: [], permissionMode: 'task_free', metadata: {} };
+  const call = { protocol: 'bush.tool_call.v1', id: 'show', name: registration.definition.name, argumentsText: '{"value":42}' }, identity = { ...req, round: 1, ordinal: 0 };
+  const outcome = await coordinator.execute(call, identity, undefined, { request: req, contextMessages: [] });
+  assert.equal(outcome.kind, 'returned', JSON.stringify(outcome)); assert.equal(outcome.result.structuredContent.value, 42);
+  assert.doesNotMatch(registration.renderModelResult(outcome.result), /UI only|_meta/);
+  const store = new ToolExecutionStore(); store.record(call, identity, outcome);
+  const apps = new McpAppsHost(join(root, 'apps'), local, store); await apps.remember(req);
+  const view = await apps.command({ action: 'open', sessionId: 'one', turnId: 't', toolCallId: 'show' });
+  assert.match(view.html, /Native MCP interface/); assert.equal(view.result._meta.private, 'UI only'); apps.close();
+  await first.close(); assert.equal(closes, 0, 'closing an Agent cannot close shared OAuth');
+  await assert.rejects(registration.mcpApp.readResource('ui://fixture'), /no longer connected/);
+  assert.ok((await other.mcpApp.readResource('ui://fixture')).contents.length, 'a sibling connection remains live');
+  console.log('Agent MCP / Apps integration passed: two real stdio servers, stable identity, unique tool names, independent cleanup, approval, native resources and model metadata isolation.');
+} finally {
+  await Promise.allSettled(leases.map(lease => lease.close())); await manager.close();
+  assert.ok(root.startsWith(parent + sep + 'agent-mcp-')); await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}

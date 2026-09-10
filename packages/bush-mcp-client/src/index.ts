@@ -59,6 +59,7 @@ interface ConnectedServer {
 }
 
 export interface McpClientManagerOptions {
+  closeOAuthOnClose?: boolean;
   openai?: { getToken: OpenAiTokenProvider; fetch?: typeof fetch };
   oauth?: McpOAuthCoordinator;
   onElicitation?: McpElicitationHandler;
@@ -86,6 +87,7 @@ export interface McpClientManagerOptions {
  * from a Tool name or description.
  */
 export class McpClientManager {
+  readonly #options: McpClientManagerOptions;
   readonly #openai?: McpClientManagerOptions['openai'];
   readonly #oauth?: McpOAuthCoordinator;
   readonly #interactive: McpInteractiveCalls;
@@ -143,6 +145,7 @@ export class McpClientManager {
   }
 
   constructor(options: McpClientManagerOptions) {
+    this.#options = options;
     this.#openai = options.openai;
     this.#oauth = options.oauth;
     this.#onAuthenticationRequired = options.onAuthenticationRequired;
@@ -293,8 +296,29 @@ export class McpClientManager {
     this.#retryTimer.unref?.();
   }
 
+  fork(registry: ToolRegistry): McpClientManager {
+    return new McpClientManager({ ...this.#options, registry, canApply: () => true, closeOAuthOnClose: false });
+  }
+
+  /** Agent startup may require authentication before a server can disclose any tools. */
+  async prepareAgentScope(request: import('@cardbush/bush-protocol').RuntimeSessionTurnRequest, signal?: AbortSignal): Promise<void> {
+    const reconnect: string[] = [];
+    for (const connection of this.#connections) {
+      if (connection.health === 'configuration_required') throw new McpOAuthConfigurationRequired(connection.lastError);
+      if (connection.health === 'auth_required' && !connection.tools.length) {
+        if (request.metadata.pluginAgentDontAsk || request.metadata.pluginAgentPermissionMode === 'dontAsk') throw new McpAuthenticationRequired();
+        await this.#authenticate(connection, { sessionId: request.sessionId, turnId: request.turnId, signal,
+          toolCall: { protocol: 'bush.tool_call.v1', id: `agent-mcp-setup-${connection.config.id}`, name: 'agent_mcp_connect', argumentsText: '{}' } });
+        reconnect.push(connection.config.id);
+      }
+    }
+    if (reconnect.length && this.#snapshot) await this.refreshServers(reconnect, { ...this.#snapshot, revision: this.#snapshot.revision + 1 });
+    const unavailable = this.#connections.find(connection => connection.config.required && connection.health !== 'ready');
+    if (unavailable) throw new Error(`Agent MCP ${unavailable.config.id}: ${unavailable.lastError || unavailable.health}`);
+  }
+
   async close(): Promise<void> {
-    this.#oauth?.close();
+    if (this.#options.closeOAuthOnClose !== false) this.#oauth?.close();
     this.#closed = true;
     clearTimeout(this.#retryTimer);
     await this.#queue;
@@ -360,11 +384,16 @@ export class McpClientManager {
     tool: ConnectedServer["tools"][number],
   ): ToolRegistration<Record<string, unknown>> {
     const resource = `mcp://${connection.config.id}/tools/${encodeURIComponent(tool.remote.name)}`;
+    const meta = tool.remote._meta ?? {};
+    const ui = meta.ui as { resourceUri?: string; visibility?: string[] } | undefined;
+    const resourceUri = ui?.resourceUri ?? meta['openai/outputTemplate'];
     return {
       registrationOwner: "runtime_mcp",
       mcpHook: {
         server: connection.config.id,
         tool: tool.remote.name,
+        modelVisible: !ui?.visibility || ui.visibility.includes('model'),
+        appCallable: ui ? !ui.visibility || ui.visibility.includes('app') : meta['openai/outputTemplate'] ? meta['openai/widgetAccessible'] === true : true,
         call: async (input, options) => {
           if (connection.retired || connection.health !== 'ready') throw new Error(`MCP service ${connection.config.id} is not connected.`);
           try { return await this.#interactive.run(connection.client, { serverId: connection.config.id, sessionId: options.request.sessionId, turnId: options.request.turnId, signal: options.signal },
@@ -378,6 +407,19 @@ export class McpClientManager {
         name: tool.runtimeName,
         description: tool.remote.description ?? "",
         inputSchema: jsonObject(tool.remote.inputSchema),
+      },
+      ...(typeof resourceUri === 'string' && resourceUri.startsWith('ui://') ? { mcpApp: {
+        resourceUri,
+        readResource: async (uri: string, signal?: AbortSignal) => {
+          if (connection.retired || connection.health !== 'ready') throw new Error('MCP UI service is no longer connected.');
+          return connection.client.readResource({ uri }, { signal, timeout: 30_000 });
+        },
+      } } : {}),
+      // UI-only metadata remains in native execution records, never in model context.
+      renderModelResult: result => {
+        if (!result || typeof result !== 'object') return undefined;
+        const { _meta, ...modelResult } = result as Record<string, unknown>;
+        return JSON.stringify(modelResult);
       },
       manifest: tool.manifest,
       parallelSafe: tool.policy.parallelSafe,
@@ -500,7 +542,7 @@ export class McpClientManager {
     return failure;
   }
 
-  async #authenticate(connection: ConnectedServer, context: ToolHandlerContext<Record<string, unknown>>) {
+  async #authenticate(connection: ConnectedServer, context: Pick<ToolHandlerContext<Record<string, unknown>>, 'sessionId' | 'turnId' | 'toolCall' | 'signal'>) {
     // Reauthentication changes the shared account and requires fresh app-scoped sessions.
     // The account settings own that transition; never resume an old session after login.
     if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') throw new OpenAiAuthError();
@@ -717,6 +759,7 @@ function createClient(server: McpServerSnapshot, calls: McpInteractiveCalls): Cl
   return new ScopedMcpClient(
     { name: "cardbush-runtime", version: "0.1.0" },
     {
+      capabilities: { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app', 'text/html+skybridge'] } } },
       versionNegotiation: {
         mode: server.versionMode === "modern"
           ? { pin: "2026-07-28" }

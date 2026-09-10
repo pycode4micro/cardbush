@@ -188,9 +188,7 @@ export class RuntimeSessionCoordinator {
     const request = runtimeSessionTurnRequestSchema.parse(candidate);
     const activeTurnId = this.#activeSessions.get(request.sessionId);
     if (activeTurnId) {
-      throw new Error(
-        `Session ${request.sessionId} already has active Turn ${activeTurnId}.`,
-      );
+      throw Object.assign(new Error(`Session ${request.sessionId} already has active Turn ${activeTurnId}.`), { code: 'runtime_session_busy' });
     }
     const session = this.#store.ensureSession(request.sessionId, request.sessionMetadata);
     if (session.turns.some((turn) => turn.turnId === request.turnId)) {

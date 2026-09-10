@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type { ToolAdmissionContext, ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
 import { decodeLogicLearnInput, LogicMemoryStore } from "./logicMemory.js";
 import { ModelImageStore } from "./modelImageStore.js";
 import { renderTextFields } from "./toolResultText.js";
+import type { AutomationScheduler } from './automationScheduler.js';
 
 export interface ExtendedBuiltinOptions {
   dataRoot?: string;
@@ -14,6 +14,7 @@ export interface ExtendedBuiltinOptions {
   readToolResultText?: (locator: string) => string;
   logicMemory?: LogicMemoryStore;
   modelImages?: ModelImageStore;
+  automation?: AutomationScheduler;
 }
 
 export function registerExtendedBuiltins(registry: ToolRegistry, options: ExtendedBuiltinOptions = {}): void {
@@ -21,7 +22,7 @@ export function registerExtendedBuiltins(registry: ToolRegistry, options: Extend
   registerLogic(registry, options.logicMemory ?? new LogicMemoryStore(join(dataRoot, "lem", "logic.json")));
   registerArchivedToolResult(registry, options.readToolResult, options.readToolResultText);
   registerImageInput(registry, options.modelImages ?? new ModelImageStore(dataRoot));
-  registerSchedule(registry, dataRoot);
+  registerSchedule(registry, options.automation);
   registerParallel(registry);
 }
 
@@ -221,27 +222,26 @@ function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
   });
 }
 
-function registerSchedule(registry: ToolRegistry, dataRoot: string) {
-  const store = new JsonStore(join(dataRoot, "scheduler", "jobs.json"));
+function registerSchedule(registry: ToolRegistry, scheduler?: AutomationScheduler) {
   registry.register<Record<string, unknown>>({
-    definition: { name: "schedule_task", description: "Create, list, or cancel delayed delivery records for already prepared text or files. This does not run open-ended background work.", inputSchema: { type: "object", additionalProperties: true } },
-    manifest: manifest("schedule.manage", true, "session"), visibleToChild: true,
+    definition: { name: "schedule_task", description: "Manage persistent automations in this conversation: create, list, update, pause, resume, delete, run now, or stop. UI and this tool share the same scheduler. A saved prompt runs as a new turn at a time, repeating interval, or matching hook event while CardBush is open. Missed times coalesce into one run; busy conversations wait. Only create or change future work when the user requests it. Runs inherit the conversation's tool permissions; they do not bypass approval. Use an ISO timestamp with UTC offset. Event-triggered runs never recursively trigger more automations.", inputSchema: { type: "object", additionalProperties: false, required: ['action'], properties: {
+      action: { type: 'string', enum: ['create', 'list', 'update', 'pause', 'resume', 'delete', 'run', 'stop', 'cancel'] },
+      job_id: { type: 'string' }, expected_revision: { type: 'integer', minimum: 1 }, name: { type: 'string' }, prompt: { type: 'string' }, time_zone: { type: 'string' },
+      trigger: { oneOf: [
+        { type: 'object', additionalProperties: false, required: ['kind', 'at'], properties: { kind: { const: 'once' }, at: { type: 'string' } } },
+        { type: 'object', additionalProperties: false, required: ['kind', 'at', 'seconds'], properties: { kind: { const: 'interval' }, at: { type: 'string' }, seconds: { type: 'integer', minimum: 60 } } },
+        { type: 'object', additionalProperties: false, required: ['kind', 'event'], properties: { kind: { const: 'event' }, event: { enum: ['Stop', 'PostToolUse', 'PostToolUseFailure'] }, tool: { type: 'string', description: 'Exact runtime tool name, or blank for all tools.' }, cooldownSeconds: { type: 'integer', minimum: 60 } } },
+      ] },
+    } } },
+    manifest: manifest("schedule.manage", true, "session"), visibleToChild: false,
     decodeInput: object,
     execute: async (context) => {
-      const action = text(context.input.action) || "create";
-      const jobs = await store.read();
-      if (action === "list") return success(context, { jobs }, [store.path], ["scheduled_delivery"]);
-      if (action === "cancel") {
-        const id = requiredText(context.input.job_id, "job_id");
-        const job = jobs.find((item) => item.job_id === id);
-        if (job) { job.status = "cancelled"; job.updated_at = new Date().toISOString(); await store.write(jobs); }
-        return success(context, job ?? { status: "not_found", job_id: id }, [store.path], ["scheduled_delivery"]);
-      }
-      const dueAt = requiredText(context.input.due_at ?? context.input.run_at, "due_at");
-      if (!Number.isFinite(Date.parse(dueAt))) throw new Error("due_at must be an ISO date-time.");
-      const job = { job_id: `schedule_${randomUUID()}`, status: "scheduled", due_at: new Date(dueAt).toISOString(), text: text(context.input.text), deliverables: Array.isArray(context.input.deliverables) ? context.input.deliverables : [], created_at: new Date().toISOString(), execution: "external_scheduler_required" };
-      jobs.push(job); await store.write(jobs);
-      return success(context, job, [store.path], ["scheduled_delivery"]);
+      if (!scheduler) throw new Error('This runtime has no active automation scheduler.');
+      if (context.turn?.request.metadata.agentRole === 'child') throw new Error('Child agents cannot schedule future work.');
+      const action = text(context.input.action);
+      return scheduler.manage({ action: action === 'cancel' ? 'pause' : action, id: context.input.job_id, expectedRevision: context.input.expected_revision,
+        ...(['create', 'update'].includes(action) ? { definition: { name: context.input.name, prompt: context.input.prompt, trigger: context.input.trigger,
+          timeZone: context.input.time_zone, sessionId: context.sessionId } } : {}) }, context.sessionId);
     },
   });
 }
@@ -315,12 +315,6 @@ function registerParallel(registry: ToolRegistry) {
       }, [], ["tool_results"]);
     },
   });
-}
-
-class JsonStore {
-  constructor(readonly path: string) {}
-  async read(): Promise<Array<Record<string, any>>> { try { const value = JSON.parse(await readFile(this.path, "utf8")); return Array.isArray(value) ? value : []; } catch { return []; } }
-  async write(value: unknown) { await mkdir(dirname(this.path), { recursive: true }); const temp = `${this.path}.tmp-${randomUUID()}`; await writeFile(temp, JSON.stringify(value, null, 2), "utf8"); await rename(temp, this.path).catch(async () => { await rm(this.path, { force: true }); await rename(temp, this.path); }); }
 }
 
 function manifest(operation: string, mutating: boolean, scope: string) { return { effect_kind: mutating ? "local_state" : "observation", operation, risk: mutating ? "medium" : "low", owner: "runtime", dispatch_scope: scope, mutating }; }

@@ -1,0 +1,38 @@
+.accounts-page { max-width: 1080px; color: var(--text); min-width: 0; margin: 0 auto; }
+.accounts-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 24px; }
+.accounts-heading h2 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; }
+.accounts-heading p, .account-description, .account-provider-card p { margin: 0; color: var(--text-mid); font-size: 13px; line-height: 1.7; }
+.accounts-search { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text-soft); background: var(--surface); }
+.accounts-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.accounts-section-title { display: flex; align-items: baseline; gap: 12px; margin: 28px 0 14px; }
+.accounts-section-title h3 { margin: 0; font-size: 15px; }
+.accounts-section-title > span { font-size: 12px; color: var(--text-soft); }
+.account-connection-card, .account-provider-card { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); min-width: 0; }
+.accounts-connections { display: grid; gap: 14px; }
+.account-connection-card header, .account-provider-card header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.account-provider-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text-mid); flex-shrink: 0; }
+.account-identity { display: flex; flex: 1; align-items: center; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.account-identity strong { font-size: 16px; overflow-wrap: anywhere; }
+.account-state { font-size: 12px; color: var(--text-soft); }
+.account-state[data-state=signed_in] { color: var(--success, #64b996); }
+.account-state[data-state=signing_in], .account-state[data-state=reauth_required] { color: var(--accent); }
+.account-primary-actions { margin-left: auto; }
+.account-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 12px; min-height: 35px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-strong, var(--surface)); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.account-primary { font-weight: 600; border-color: var(--text-soft); }
+.account-button:disabled { opacity: .5; cursor: default; }
+.account-button:focus-visible, .account-doc-link:focus-visible, .accounts-page summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.account-description { margin-top: 14px; }
+.account-options { border-top: 1px solid var(--border); margin-top: 17px; padding-top: 13px; }
+.accounts-page summary { font-size: 12px; color: var(--text-mid); cursor: pointer; }
+.account-options summary span { margin-left: 12px; color: var(--text-soft); font-size: 11px; }
+.account-options p, .account-provider-card details p { color: var(--text-mid); font-size: 12px; line-height: 1.75; margin: 12px 0; overflow-wrap: anywhere; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.account-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.account-provider-card h4 { margin: 0; flex: 1; font-size: 14px; }
+.account-provider-card > p { margin: 13px 0; font-size: 12px; }
+.account-doc-link { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; }
+.accounts-footer { display: flex; align-items: flex-start; gap: 8px; color: var(--text-soft); font-size: 12px; line-height: 1.7; margin: 23px 0; }
+.accounts-footer svg { flex-shrink: 0; margin-top: 2px; }
+.accounts-error { color: var(--danger, #dd6478); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.accounts-empty { color: var(--text-mid); font-size: 13px; }
+@media (max-width: 620px) { .account-provider-grid { grid-template-columns: minmax(0,1fr); } .account-connection-card, .account-provider-card { padding: 16px; } .accounts-heading h2 { font-size: 26px; } }

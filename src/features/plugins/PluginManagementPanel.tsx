@@ -1,5 +1,5 @@
 import { PluginMcpSettings } from './PluginMcpSettings';
-import { OpenAiAccountPanel } from './OpenAiAccountPanel';
+import { AccountsPanel } from '../accounts/AccountsPanel';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
@@ -15,6 +15,7 @@ import {
   Server,
   Settings,
   Store,
+  UserRound,
 } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -41,6 +42,7 @@ type Page =
   | { kind: 'catalog' }
   | { kind: 'manage'; tab?: ManageTab }
   | { kind: 'marketplace' }
+  | { kind: 'accounts'; pluginId: string }
   | { kind: 'plugin'; pluginId: string }
   | { kind: 'skill'; skillName: string };
 
@@ -69,7 +71,7 @@ export function PluginManagementPanel({
   onOpenNetwork?: () => void;
   onNotify: (message: string) => void;
 }) {
-  const [tab, setTab] = useState<'plugins' | 'skills'>(initialTab);
+  const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
   const [page, setPage] = useState<Page>({ kind: 'catalog' });
   const [configuration, setConfiguration] = useState<CardbushAppsConfiguration | null>(null);
   const [localSkills, setLocalSkills] = useState(skills);
@@ -172,6 +174,8 @@ export function PluginManagementPanel({
     }
   }, [onReloadSkills, loadConnections]);
 
+  useEffect(() => window.cardbushDesktop?.onAccountsChanged?.(() => { void loadConnections(); }), [loadConnections]);
+
   useEffect(() => {
     void load();
     return () => { mcpLoadRevision.current += 1; };
@@ -238,6 +242,7 @@ export function PluginManagementPanel({
   ].join(' ').toLocaleLowerCase().includes(normalizedQuery)), [normalizedQuery, plugins]);
   const filteredSkills = useMemo(() => localSkills.filter((skill) => !normalizedQuery || [
     skill.name,
+    skill.displayName ?? '',
     skill.description,
     skill.descriptionZh ?? '',
     skill.sourceLabel ?? '',
@@ -246,6 +251,7 @@ export function PluginManagementPanel({
   const selectedPlugin = page.kind === 'plugin'
     ? plugins.find((plugin) => plugin.id === page.pluginId)
     : undefined;
+  if (page.kind === 'accounts') return <AccountsPanel language={language} onBack={() => setPage({ kind: 'plugin', pluginId: page.pluginId })}/>;
   if (page.kind === 'marketplace') {
     return <PluginMarketplacePanel language={language}
       onOpenNetwork={onOpenNetwork}
@@ -268,6 +274,7 @@ export function PluginManagementPanel({
         language={language}
         plugin={selectedPlugin}
         onMcpSaved={() => void load()}
+        onManageAccounts={() => setPage({ kind: 'accounts', pluginId: selectedPlugin.id })}
         busy={Boolean(busy)}
         error={error}
         onBack={() => setPage({ kind: 'catalog' })}
@@ -319,7 +326,6 @@ export function PluginManagementPanel({
 
   return (
     <div className="plugin-hub">
-      <OpenAiAccountPanel language={language} onChanged={() => void loadConnections()} />
       <div className="plugin-hub-toolbar">
         <div className="plugin-hub-tabs" role="tablist">
           <button className={tab === 'plugins' ? 'active' : ''} type="button" onClick={() => setTab('plugins')}>
@@ -329,8 +335,9 @@ export function PluginManagementPanel({
             {language === 'zh' ? '技能' : 'Skills'}
           </button>
           <button type="button" onClick={() => setPage({ kind: 'marketplace' })}><Store size={16} />{language === 'zh' ? '市场' : 'Marketplace'}</button>
+          <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>
         </div>
-        <div className="plugin-hub-actions">
+        {tab !== 'accounts' && <div className="plugin-hub-actions">
           <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
             <Server size={17} /><span>{language === 'zh' ? 'MCP 服务' : 'MCP servers'}</span>
           </button>
@@ -371,11 +378,11 @@ export function PluginManagementPanel({
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </div>
 
-      {error && <p className="plugin-hub-error">{error}</p>}
-      {tab === 'plugins' ? (
+      {tab !== 'accounts' && error && <p className="plugin-hub-error">{error}</p>}
+      {tab === 'accounts' ? <AccountsPanel language={language}/> : tab === 'plugins' ? (
         <PluginCatalog
           language={language}
           configuration={configuration}
@@ -577,7 +584,7 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
       <button className="plugin-featured-main" type="button" onClick={() => onOpen(skill)}>
         <SkillIcon skill={skill} />
         <span>
-          <span className="skill-card-title"><strong>{skill.name}</strong>{source && <em>{source}</em>}</span>
+          <span className="skill-card-title"><strong>{skill.displayName || skill.name}</strong>{source && <em>{source}</em>}</span>
           <small>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</small>
         </span>
       </button>
@@ -682,8 +689,9 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved }: {
+function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts }: {
   onMcpSaved: () => void;
+  onManageAccounts: () => void;
   language: AppLanguage;
   plugin: CardbushAppPlugin;
   busy: boolean;
@@ -703,7 +711,7 @@ function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPers
       {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <div key={prompt}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></div>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
-      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} />}
+      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} />}
       {plugin.installed && <PluginHookTrust plugin={plugin} language={language} busy={busy} onPersist={onPersist} />}
       <section className="plugin-detail-section"><h3>{language === 'zh' ? `组成 ${plugin.components.length}` : `Components ${plugin.components.length}`}</h3>{plugin.components.map((component) => <div className="plugin-component-row" key={`${component.kind}-${component.id}`}><span className={`plugin-component-kind ${component.kind}`}>{component.kind === 'command' ? '/' : component.kind === 'skill' ? 'S' : component.kind === 'mcp' ? 'M' : component.kind === 'hook' ? 'H' : 'A'}</span><div><strong>{component.name}<span className="plugin-market-kind">{component.kind}</span></strong><small>{component.description}</small></div>{plugin.installed && component.kind !== 'mcp' && component.kind !== 'app' && <Check size={17} />}</div>)}</section>
       {plugin.id === 'computer-use' && plugin.installed && <section className="plugin-detail-section"><h3>{language === 'zh' ? '配置' : 'Settings'}</h3><label className="plugin-path-setting"><span>{language === 'zh' ? '截图保存目录' : 'Screenshot directory'}</span><input value={String(plugin.config.screenshotDirectory ?? '')} placeholder={language === 'zh' ? '留空时使用系统临时目录' : 'Use the system temp directory when empty'} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, screenshotDirectory: event.currentTarget.value } })} /></label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.yieldToUser !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, yieldToUser: event.currentTarget.checked } })} />{language === 'zh' ? '用户输入优先（检测到操作时主动让行）' : 'Yield when user input is detected'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.restorePointer !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, restorePointer: event.currentTarget.checked } })} />{language === 'zh' ? '鼠标操作后恢复原位置' : 'Restore pointer after mouse actions'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowOpenApp !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowOpenApp: event.currentTarget.checked } })} />{language === 'zh' ? '允许启动应用' : 'Allow opening apps'}</label><label className="plugin-check-setting"><input type="checkbox" checked={plugin.config.allowWindowClose !== false} onChange={(event) => onReplace({ ...plugin, config: { ...plugin.config, allowWindowClose: event.currentTarget.checked } })} />{language === 'zh' ? '允许关闭窗口' : 'Allow closing windows'}</label><button className="plugin-install-button" type="button" onClick={() => onPersist(plugin, language === 'zh' ? '配置已保存' : 'Settings saved')}>{language === 'zh' ? '保存配置' : 'Save settings'}</button></section>}
@@ -725,19 +733,19 @@ export function PluginHookTrust({ plugin, language, busy, onPersist }: {
   plugin: CardbushAppPlugin; language: AppLanguage; busy: boolean;
   onPersist: (plugin: CardbushAppPlugin, message: string) => void;
 }) {
-  const hooks = plugin.components.filter(component => component.kind === 'hook' && component.hook);
+  const hooks = plugin.components.filter(component => component.hook);
   if (!hooks.length) return null;
   const zh = language === 'zh';
   const trusted = new Set(Array.isArray(plugin.config.trustedHookHashes) ? plugin.config.trustedHookHashes.filter((value): value is string => typeof value === 'string') : []);
-  return <section className="plugin-detail-section plugin-hook-trust"><h3>{zh ? 'Hooks 审核' : 'Review hooks'}</h3>
-    <p>{zh ? '查看事件、命令或 MCP 调用后，信任需要运行的 Hook。安装和启用插件不会自动信任 Hooks；定义变更后需要重新审核。' : 'Review the event, command or MCP call before trusting a hook. Installing or enabling a plugin does not grant hook trust. Changed definitions need review again.'}</p>
+  return <section className="plugin-detail-section plugin-hook-trust"><h3>{zh ? '自动执行审核' : 'Review automatic execution'}</h3>
+    <p>{zh ? '查看 Hooks 和 Agent 局部 MCP 声明，信任需要运行的定义。安装和启用插件不会自动授予信任；定义变更后需要重新审核。' : 'Review Hooks and Agent-local MCP declarations before trusting them. Installing a plugin does not grant trust. Changed definitions need review again.'}</p>
     {hooks.map(component => {
       const hook = component.hook!, enabled = trusted.has(hook.definitionHash);
       return <details key={component.id}><summary>{component.name} · {hook.executable ? enabled ? (zh ? '已信任' : 'Trusted') : (zh ? '待审核' : 'Needs review') : (zh ? '跳过执行' : 'Skipped')}</summary>
         <pre>{JSON.stringify(hook.definition, null, 2)}</pre>
         {hook.executable ? <button className="plugin-install-button" type="button" disabled={busy} onClick={() => {
           const hashes = new Set(trusted); if (enabled) hashes.delete(hook.definitionHash); else hashes.add(hook.definitionHash);
-          onPersist({ ...plugin, config: { ...plugin.config, trustedHookHashes: [...hashes] } }, zh ? (enabled ? '已停用此 Hook' : '已信任当前 Hook 定义') : (enabled ? 'Hook disabled' : 'Current hook definition trusted'));
+          onPersist({ ...plugin, config: { ...plugin.config, trustedHookHashes: [...hashes] } }, zh ? (enabled ? '已撤销此定义的信任' : '已信任当前定义') : (enabled ? 'Definition trust revoked' : 'Current definition trusted'));
         }}>{enabled ? (zh ? '撤销信任并停用' : 'Revoke trust and disable') : (zh ? '信任并允许运行' : 'Trust and allow execution')}</button>
           : <p>{zh ? '与 OpenAI 一致，prompt 和 agent 类型的 Hook 仅解析，不执行。' : 'Like OpenAI, prompt and agent hook handlers are parsed but not executed.'}</p>}
       </details>;
@@ -856,7 +864,9 @@ function SkillDetailPage({ language, skill, loading, error, enabled, onBack, onT
     <button className="plugin-back" type="button" onClick={onBack}><ArrowLeft size={17} />{language === 'zh' ? '返回技能' : 'Back to skills'}</button>
     {error && <p className="plugin-hub-error" role="alert">{error}</p>}
     {loading ? <div className="plugin-detail-loading"><LoaderCircle className="spin" />{language === 'zh' ? '正在加载技能' : 'Loading skill'}</div> : skill ? <>
-      <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh ?? skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>
+      <header className="plugin-detail-hero"><SkillIcon skill={skill} /><div><h2>{skill.displayName || skill.name}</h2><p>{language === 'zh' ? skill.descriptionZh || skill.description : skill.description}</p></div><button className={`plugin-switch ${enabled ? 'on' : ''}`} type="button" onClick={() => onToggle(!enabled)}><span /></button></header>
+      {skill.invocationMode && <p>{language === 'zh' ? ({ manual: '仅手动调用', model: '仅由模型调用', both: '支持手动和模型调用', disabled: '已禁止调用' })[skill.invocationMode] : ({ manual: 'Manual invocation only', model: 'Model invocation only', both: 'Manual and model invocation', disabled: 'Invocation disabled' })[skill.invocationMode]}{['manual', 'both'].includes(skill.invocationMode) && <> · <code>{skill.name.includes(':') ? `/${skill.name}` : `$${skill.name}`}</code></>}</p>}
+      {skill.defaultPrompt && <section className="plugin-detail-section"><h3>{language === 'zh' ? '使用示例' : 'Suggested prompt'}</h3><p>{skill.defaultPrompt}</p></section>}
       <section className="plugin-detail-section plugin-info"><h3>{language === 'zh' ? '信息' : 'Information'}</h3>{'version' in skill && <Info label={language === 'zh' ? '版本' : 'Version'} value={skill.version || '—'} />}<Info label={language === 'zh' ? '来源' : 'Source'} value={skillSourceText(language, skill) || '—'} /><Info label={language === 'zh' ? '位置' : 'Location'} value={skill.path} /></section>
       {'content' in skill && <section className="plugin-detail-section"><h3>SKILL.md</h3><pre className="plugin-skill-source">{skill.content}</pre></section>}
     </> : null}

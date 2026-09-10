@@ -18,11 +18,12 @@ import {
   type RuntimeCapabilityStore,
   type ToolExecutionHooks,
 } from "./toolExecutionCoordinator.js";
-import type { ToolRegistry } from "./toolRegistry.js";
+import type { ToolRegistry, PermissionResolver } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
 import { ModelImageInputError, ModelImageStore } from "./modelImageStore.js";
 
 export interface RuntimeToolLoopOptions {
+  externalPermissions?: PermissionResolver;
   eventLog: InMemoryRuntimeEventLog;
   identity: RuntimeEventIdentity;
   registry: ToolRegistry;
@@ -45,6 +46,7 @@ export interface RuntimeToolLoopOptions {
 
 export interface RuntimeToolRoundResult {
   messages: ModelMessage[];
+  hookStopTurn?: string;
 }
 
 const DEFAULT_TOOL_RESULT_MAX_CHARS = 16_000;
@@ -106,7 +108,7 @@ export class RuntimeToolLoop {
     });
     this.#coordinator = new ToolExecutionCoordinator({
       registry: options.registry,
-      permissions: this.#permissions,
+      permissions: options.externalPermissions ?? this.#permissions,
       observer: {
         running: (toolCall, executionIdentity) => {
           const active = this.#activeToolControllers.get(toolCall.id);
@@ -179,10 +181,12 @@ export class RuntimeToolLoop {
     const toolMessages: ModelMessage[] = [];
     const imageObservations: ToolImageObservation[][] = [];
     const renderedResults: Array<string | undefined> = [];
+    let hookStopTurn: string | undefined;
     const executeOne = async (toolCall: ToolCall, ordinal: number) => {
       const executionIdentity = this.#executionIdentity(input, ordinal);
       const controller = new AbortController();
       const detachAbort = forwardAbort(input.signal, controller);
+      if (hookStopTurn) controller.abort(new DOMException(hookStopTurn, 'AbortError'));
       if (this.#activeToolControllers.has(toolCall.id)) {
         detachAbort();
         throw new Error(`Tool call ${toolCall.id} is already active.`);
@@ -206,6 +210,7 @@ export class RuntimeToolLoop {
             ? { request: input.request, contextMessages: input.contextMessages }
             : undefined,
         );
+        hookStopTurn ??= outcome.hookStopTurn;
         // Snapshot before the next sequential Tool can remove or overwrite the source.
         // Keep the native Tool outcome untouched: image delivery is a separate observation.
         imageObservations[ordinal] = outcome.kind === "returned" && outcome.hookFeedback === undefined
@@ -225,7 +230,7 @@ export class RuntimeToolLoop {
       }
     };
     // Commands can activate turn-scoped restrictions across execution channels.
-    const outcomes = toolCalls.some(call => call.name === 'run_plugin_command')
+    const outcomes = toolCalls.some(call => call.name === 'run_plugin_command' || call.name === 'run_skill')
       ? await executeSequentially(toolCalls, executeOne)
       : await executeByChannel(
       toolCalls,
@@ -299,6 +304,7 @@ export class RuntimeToolLoop {
     })));
     return {
       messages: [...toolMessages, ...hookMessages, ...(imageFollowup ? [imageFollowup] : [])],
+      hookStopTurn: outcomes.find(outcome => outcome.hookStopTurn)?.hookStopTurn,
     };
   }
 

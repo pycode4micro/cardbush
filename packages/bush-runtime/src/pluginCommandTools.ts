@@ -2,18 +2,24 @@ import { dirname } from 'node:path';
 import type { ModelRequest } from '@cardbush/bush-protocol';
 import { CLAUDE_TOOL_NAMES, type PluginCommand } from './pluginExtensions.js';
 import { bashExecutable, executePluginProcess } from './pluginHookRunner.js';
-import type { ToolRegistry, ToolAdmissionDecision } from './toolRegistry.js';
+import type { ToolRegistry, ToolAdmissionDecision, ToolHandlerContext } from './toolRegistry.js';
 
 interface CommandInput { command: string; arguments: string; prepared?: CommandPlan }
 interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; script?: string; admissionScript?: string }> }
 
 export function parsePluginCommandInvocation(text: string) {
-  const match = text.trimStart().match(/^\/([A-Za-z0-9_.-]+:[A-Za-z0-9_-]+)(?:\s+([\s\S]*))?$/);
+  const match = text.trimStart().match(/^(?:\/|\$)([A-Za-z0-9_.-]+(?::[A-Za-z0-9_-]+)?)(?:\s+([\s\S]*))?$/);
   return match ? { command: match[1]!, arguments: match[2] ?? '' } : undefined;
 }
 
 /** Commands retain their own identity and invocation lifecycle; no Skill files are generated. */
-export function registerPluginCommandTools(registry: ToolRegistry, load: () => Promise<PluginCommand[]>) {
+export function registerPluginCommandTools(registry: ToolRegistry, load: () => Promise<PluginCommand[]>, options: {
+  skill?: boolean;
+  onInvoke?: (command: PluginCommand, context: ToolHandlerContext<unknown>) => Promise<void>;
+  fork?: (command: PluginCommand, prompt: string, context: ToolHandlerContext<unknown>) => Promise<string>;
+} = {}) {
+  const toolName = options.skill ? 'run_skill' : 'run_plugin_command';
+  if (!options.skill)
   registry.register({
     definition: { name: 'list_plugin_commands', description: 'List installed plugin Commands and their argument hints. Invoke a model-callable command with run_plugin_command; user-only commands require the user to send the shown slash command.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
     manifest: { effect_kind: 'observation', operation: 'plugins.commands.list', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false },
@@ -21,7 +27,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
     execute: async () => (await load()).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, userInvocable: command.userInvocable, modelInvocable: !command.disableModelInvocation })),
   });
   registry.register<CommandInput>({
-    definition: { name: 'run_plugin_command', description: 'Invoke an installed plugin Command by its exact plugin:command id and argument string. The host expands its parameters and executes declared dynamic context after permission checks. Follow the returned command instructions in this turn.',
+    definition: { name: toolName, description: `Invoke an installed plugin ${options.skill ? 'Skill' : 'Command'} by its exact plugin:name id and argument string. The host enforces invocation policy, checks dependencies, expands parameters and executes declared dynamic context after permission checks. Follow the returned instructions.`,
       inputSchema: { type: 'object', properties: { command: { type: 'string' }, arguments: { type: 'string', default: '' } }, required: ['command'], additionalProperties: false } },
     manifest: { effect_kind: 'filesystem_change', operation: 'plugins.commands.invoke', risk: 'medium', owner: 'runtime', dispatch_scope: 'parent_session', mutating: true },
     executionChannel: 'runtime:default', parallelSafe: false,
@@ -35,6 +41,10 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       if (!command) return deny('plugin_command_unavailable', '命令不存在或所属插件已停用。');
       const userInvoked = context.turn?.request.metadata.pluginCommandUserCallId === context.toolCall.id && context.turn.request.metadata.pluginCommandUserId === command.id;
       if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : '此命令只能由用户通过 /命令名 调用。');
+      const disabled = stringArray(context.turn?.request.metadata.disabledSkills), allowed = context.turn?.request.metadata.allowedSkills;
+      if (options.skill && (disabled.includes(command.name) || disabled.includes(command.id) || (Array.isArray(allowed) && !allowed.includes(command.name) && !allowed.includes(command.id)))) return deny('plugin_skill_disabled', '此技能已停用或不在当前任务允许的技能范围内。');
+      const missing = (command.dependencyServers ?? []).filter(server => !context.turn?.request.tools.some(tool => registry.resolve(tool.name)?.mcpHook?.server === server));
+      if (missing.length) return deny('plugin_skill_dependency_unavailable', `请先连接技能依赖的 MCP 服务：${missing.join(', ')}。`);
       const plan = await prepareCommand(command, context.input.arguments, context.turn?.request);
       context.input.prepared = plan;
       const asks: Array<Extract<ToolAdmissionDecision, { kind: 'ask' }>['request']> = [];
@@ -59,7 +69,7 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
       const plan = context.input.prepared;
       if (!plan) throw new Error('Command preparation is missing.');
       const command = plan.command;
-      if (context.turn) context.turn.request.metadata.pluginCommandDisallowedTools = [...new Set([
+      if (context.turn && !command.context) context.turn.request.metadata.pluginCommandDisallowedTools = [...new Set([
         ...stringArray(context.turn.request.metadata.pluginCommandDisallowedTools), ...command.disallowedTools ?? [],
       ])];
       const contextResults: Array<{ command: string; stdout: string; stderr: string; exitCode: number }> = [];
@@ -73,6 +83,12 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
         prompt += result.stdout.slice(0, 24000);
       }
       if (!/\$(?:ARGUMENTS\b|\d+\b)/.test(command.prompt) && !command.arguments.some(name => command.prompt.includes(`$${name}`)) && plan.arguments.trim()) prompt += `\n\nArguments: ${plan.arguments}`;
+      await options.onInvoke?.(command, context);
+      if (command.context === 'fork') {
+        if (!options.fork) throw new Error('Isolated Skill/Command execution is unavailable.');
+        const result = await options.fork(command, prompt, context);
+        return { command: command.id, source: command.path, contextResults, instructions: `Isolated ${command.kind ?? 'command'} ${command.id}:\n${result}` };
+      }
       return { command: command.id, source: command.path, arguments: plan.arguments, contextResults,
         instructions: `Run command /${command.id} in the current task. Command resources: ${dirname(command.path)}. Plugin root: ${command.root}.\nUse CardBush tools and the current model. Host permission rules apply.\n${command.allowedTools?.length ? `Declared tool preapprovals: ${command.allowedTools.join(', ')}. These do not override CardBush permissions.\n` : ''}${prompt}` };
     },
@@ -102,7 +118,7 @@ export function commandArguments(text: string): string[] {
 }
 function values(plan: CommandPlan): Record<string, string> {
   return { ARGUMENTS: plan.arguments, CLAUDE_PLUGIN_ROOT: plan.command.root, CODEX_PLUGIN_ROOT: plan.command.root, CARDBUSH_PLUGIN_ROOT: plan.command.root,
-    CLAUDE_PROJECT_DIR: plan.cwd, ...Object.fromEntries(plan.command.arguments.map((name, index) => [name, plan.tokens[index] ?? ''])) };
+    CLAUDE_PROJECT_DIR: plan.cwd, CLAUDE_SKILL_DIR: dirname(plan.command.path), ...Object.fromEntries(plan.command.arguments.map((name, index) => [name, plan.tokens[index] ?? ''])) };
 }
 function substitute(text: string, plan: CommandPlan) {
   const variables = values(plan);

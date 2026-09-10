@@ -175,6 +175,7 @@ let productHostController: {
   configurePluginConnection: (input: unknown, signal?: AbortSignal) => Promise<unknown>;
   savePluginConnections: (input: unknown) => Promise<unknown>;
   requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
+  resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
 } | null = null;
 let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
@@ -812,6 +813,7 @@ function backgroundForMainWindowTheme(theme: AppThemeMode) {
 }
 
 function installMainWindowNavigationGuard(target: BrowserWindow) {
+  installSandboxFrameNavigationGuard(target.webContents);
   target.webContents.setWindowOpenHandler(({ url }) => {
     if (sendUiPreviewToInspector(target, url)) {
       return { action: 'deny' };
@@ -2303,8 +2305,8 @@ ipcMain.handle('skills:read', async (_, skillName: string) => {
 
 ipcMain.handle('plugins:commands', async event => {
   assertMainWindowSender(event.sender.id);
-  const { commands } = await loadEnabledProductPluginExtensions(productPluginRoots(), productAppsConfigPath());
-  return commands.filter(command => command.userInvocable).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint }));
+  const { commands, skills } = await loadEnabledProductPluginExtensions(productPluginRoots(), productAppsConfigPath());
+  return [...commands, ...skills].filter(command => command.userInvocable).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' }));
 });
 ipcMain.handle('plugins:install-local', async () => {
   const options: OpenDialogOptions = {
@@ -2322,16 +2324,17 @@ ipcMain.handle('plugins:install-local', async () => {
 let pluginMarketplaceService: PluginMarketplaceService | undefined;
 let mcpDesktopHost: McpDesktopHost | undefined;
 let openAiAccountPromise: Promise<import('./openAiAccount.mjs', { with: { 'resolution-mode': 'import' } }).OpenAiAccount> | undefined;
+function notifyAccountsChanged() {
+  const contents = mainWindow?.webContents;
+  try { if (contents && !contents.isDestroyed() && !contents.mainFrame.isDestroyed()) { contents.send('openai:account-changed'); contents.send('accounts:changed'); } } catch { /* Restored views read the current state. */ }
+}
 function openAiDesktop() {
   return openAiAccountPromise ??= import('./openAiAccount.mjs').then(({ OpenAiAccount, OPENAI_ACCOUNT_CREDENTIAL_KEY }) => new OpenAiAccount({
     read: () => mcpDesktop().handle('credentials.read', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY }, new AbortController().signal),
     write: value => mcpDesktop().handle('credentials.write', { key: OPENAI_ACCOUNT_CREDENTIAL_KEY, value }, new AbortController().signal),
     fetch: (input, init) => net.fetch(String(input), init),
     openUrl: url => shell.openExternal(url),
-    changed: () => {
-      const contents = mainWindow?.webContents;
-      try { if (contents && !contents.isDestroyed() && !contents.mainFrame.isDestroyed()) contents.send('openai:account-changed'); } catch { /* Restored views read the current state. */ }
-    },
+    changed: notifyAccountsChanged,
   }));
 }
 async function refreshOpenAiRuntime() {
@@ -2343,6 +2346,9 @@ async function refreshOpenAiRuntime() {
 ipcMain.handle('openai:account-status', async event => { assertMainWindowSender(event.sender.id); return (await openAiDesktop()).status(); });
 ipcMain.handle('openai:account-action', async (event, action: string) => {
   assertMainWindowSender(event.sender.id);
+  return performOpenAiAccountAction(action);
+});
+async function performOpenAiAccountAction(action: string) {
   if (!['login', 'logout', 'cancel_login', 'reconnect', 'manage_apps'].includes(action)) throw new Error('Invalid OpenAI account action.');
   const account = await openAiDesktop();
   if (action === 'manage_apps') { await shell.openExternal('https://chatgpt.com/apps'); return account.status(); }
@@ -2353,11 +2359,22 @@ ipcMain.handle('openai:account-action', async (event, action: string) => {
     } catch (error) {
       // Login cancellation and failed persistence still invalidate the old account generation.
       await refreshOpenAiRuntime().catch(() => {});
+      notifyAccountsChanged();
       throw error;
     }
   await refreshOpenAiRuntime();
+  notifyAccountsChanged();
   return account.status();
-});
+}
+let accountManagerPromise: Promise<import('./accountManager.mjs', { with: { 'resolution-mode': 'import' } }).AccountManager> | undefined;
+function accountsDesktop() {
+  return accountManagerPromise ??= import('./accountManager.mjs').then(({ AccountManager, openAiAccountSummary }) => new AccountManager([{ providerId: 'openai',
+    list: async () => [openAiAccountSummary(await (await openAiDesktop()).status())],
+    action: async (_accountId, action) => { await performOpenAiAccountAction(action); },
+  }]));
+}
+ipcMain.handle('accounts:snapshot', async event => { assertMainWindowSender(event.sender.id); return (await accountsDesktop()).snapshot(); });
+ipcMain.handle('accounts:action', async (event, input: unknown) => { assertMainWindowSender(event.sender.id); return (await accountsDesktop()).action(input); });
 function mcpDesktop() {
   return mcpDesktopHost ??= new McpDesktopHost({
     path: path.join(app.getPath('userData'), 'mcp-oauth.bin'),
@@ -2387,6 +2404,14 @@ ipcMain.handle('mcp:connection-action', async (event, serverId: string, action: 
   const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
     command: { kind: `runtime.mcp_${action}`, payload: { serverId: String(serverId) } } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
   if (!response.ok) throw new Error(response.error?.message ?? 'MCP connection action failed.');
+  return response.result;
+});
+ipcMain.handle('automation:command', async (event, input: unknown) => {
+  assertMainWindowSender(event.sender.id);
+  if (!runtimeHostController) throw new Error('Runtime is not ready.');
+  const response = await runtimeHostController.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(),
+    command: { kind: 'runtime.automation', payload: input } }) as { ok?: boolean; result?: unknown; error?: { message: string } };
+  if (!response.ok) throw new Error(response.error?.message ?? 'Automation action failed.');
   return response.result;
 });
 function pluginMarkets() {
@@ -3349,6 +3374,7 @@ async function initializeRuntimeHostWithinDeadline() {
       path.join(__dirname, 'runtimeHostController.mjs'),
     ).href;
     const controllerModule = await import(controllerModuleUrl);
+    let runtimeWorkerReadySeen = false;
     const controller = new controllerModule.RuntimeUtilityProcessController({
       modulePath: path.join(__dirname, 'runtimeHostWorker.mjs'),
       startupTimeoutMs: 12_000,
@@ -3404,8 +3430,19 @@ async function initializeRuntimeHostWithinDeadline() {
         ),
         CARDBUSH_APPS_CONFIG_PATH: productAppsConfigPath(),
       },
+      onReady: () => {
+        // The initial boot is owned by initializeProductHost; later worker
+        // generations must restore the MCP catalog and restart the timer too.
+        if (runtimeWorkerReadySeen) startRuntimeAutomations(controller);
+        runtimeWorkerReadySeen = true;
+      },
       onStderr: (text: string) => console.error('[bush-runtime]', text.trimEnd()),
       onMcpHostRequest: async (operation: Parameters<McpDesktopHost['handle']>[0], payload: unknown, signal: AbortSignal) => {
+        if (operation === 'automation.changed') { for (const window of BrowserWindow.getAllWindows()) sendToLiveRenderer(window, 'automation:changed'); return; }
+        if (operation === 'automation.prepare-model') {
+          if (!productHostController) throw new Error('Product Host is not ready.');
+          return productHostController.resolveAutomationModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
+        }
         if (operation === 'openai.access-token') return (await openAiDesktop()).access({
           rejectedToken: typeof (payload as { rejectedToken?: unknown })?.rejectedToken === 'string' ? (payload as { rejectedToken: string }).rejectedToken : undefined, signal });
         return mcpDesktop().handle(operation, payload, signal);
@@ -3452,6 +3489,13 @@ function withRuntimeStartupTimeout<T>(operation: Promise<T>, timeoutMs: number):
   });
 }
 
+function startRuntimeAutomations(controller: RuntimeHostController) {
+  if (!productHostController) return;
+  void productHostController.refreshMcp().catch((error: unknown) => console.warn('[automation-startup]', error))
+    .then(() => controller.command({ protocol: bushRuntimeIpcProtocol, type: 'command', operationId: randomUUID(), command: { kind: 'runtime.automation_start', payload: {} } }))
+    .catch((error: unknown) => console.warn('[automation-startup]', error));
+}
+
 async function initializeProductHost(controller: RuntimeHostController) {
   const moduleUrl = pathToFileURL(
     path.join(__dirname, 'productHostController.mjs'),
@@ -3477,6 +3521,7 @@ async function initializeProductHost(controller: RuntimeHostController) {
     },
     requestClientCredentials: (input: Parameters<McpDesktopHost['requestClientCredentials']>[0], signal: AbortSignal) => mcpDesktop().requestClientCredentials(input, signal),
   }) as NonNullable<typeof productHostController>;
+  startRuntimeAutomations(controller);
   disposeCapabilityCatalogWatcher?.();
   disposeCapabilityCatalogWatcher = watchCapabilityCatalog([
     ...productSkillRoots(),
@@ -5378,3 +5423,4 @@ function trimTerminalOutput(value: string) {
   }
   return value.slice(value.length - maxLength);
 }
+import { installSandboxFrameNavigationGuard } from './sandboxFrameGuard';

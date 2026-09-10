@@ -15,6 +15,7 @@ import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
 import {Composer} from '${local('src/features/composer/Composer.tsx')}';
 import {McpUserRequests} from '${local('src/features/plugins/McpUserRequests.tsx')}';
+import {accountProviders,openAiAccountSummary} from '${local('electron/accountManager.mts')}';
 import '${local('src/styles/app.css')}';
 import '${local('src/styles/themes/cyberpunk.css')}';
 const plugin=(id,name,component,source='bundled')=>({id,name,source,description:name+' tools',longDescription:'',category:'Tools',keywords:[],capabilities:[],defaultPrompts:[],config:{},installed:true,enabled:true,brandColor:'#74d2f7',components:[{kind:'mcp',id:component,name,description:'MCP service'}]});
@@ -27,31 +28,37 @@ window.fixtureOverview={revision:2,servers:[{id:'blender',name:'Blender MCP',des
 window.fixtureOverview.snapshot.servers.push({id:'chrome_devtools',health:'ready',tools:Array.from({length:15},(_,i)=>({remoteName:'tool'+i,runtimeName:'mcp__chrome_devtools__tool'+i}))});
 window.fixtureReads=0;window.fixtureFailure=false;window.listeners=new Set();window.opened=[];window.externalUrls=[];window.externalOpenFails=false;
 window.cardbushDesktop={onCapabilityCatalogChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},openExternal:async url=>{if(externalOpenFails)throw Error('fixture browser unavailable');externalUrls.push(url)}};
-window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;
+window.accountStatus={state:'signed_out',experimental:true};window.accountListeners=new Set();window.accountActions=[];window.accountFailure=false;window.deferCancelledAccount=false;
 window.publishAccount=state=>{accountStatus={state,experimental:true};for(const fn of accountListeners)fn()};
 Object.assign(window.cardbushDesktop,{
  openAiAccountStatus:async()=>structuredClone(accountStatus),
  onOpenAiAccountChanged:fn=>{accountListeners.add(fn);return()=>accountListeners.delete(fn)},
  openAiAccountAction:async action=>{accountActions.push(action);if(accountFailure)throw Error('OpenAI fixture unavailable');
-  if(action==='login'){publishAccount('signing_in');await new Promise(resolve=>{window.finishOpenAiLogin=resolve});}
-  if(action==='cancel_login'){publishAccount('signed_out');window.finishOpenAiLogin?.();}
+  if(action==='login'){publishAccount('signing_in');await new Promise((resolve,reject)=>{window.finishOpenAiLogin=resolve;window.failOpenAiLogin=()=>reject(Error('late account failure'))});}
+  if(action==='cancel_login'){publishAccount('signed_out');if(!deferCancelledAccount)window.finishOpenAiLogin?.();}
   if(action==='logout')publishAccount('signed_out');return structuredClone(accountStatus);},
+});
+Object.assign(window.cardbushDesktop,{
+ accountsSnapshot:async()=>({providers:accountProviders,accounts:[openAiAccountSummary(accountStatus)],errors:[]}),
+ onAccountsChanged:fn=>{accountListeners.add(fn);return()=>accountListeners.delete(fn)},
+ accountsAction:async command=>{if(command.providerId!=='openai'||command.accountId!=='openai:default')throw Error('Wrong account');await window.cardbushDesktop.openAiAccountAction(command.action);return window.cardbushDesktop.accountsSnapshot()},
 });
 window.fixtureCommands=[{id:'native-demo:review',description:'原生命令审查',argumentHint:'[file] [mode]'}];window.sentCommands=[];
 window.cardbushDesktop.pluginCommands=async()=>fixtureCommands;
-window.mcpRequests=[];window.mcpAnswers=[];window.mcpListeners=new Set();window.authCalls=[];window.authUrls=[];window.fixtureLoginError=false;
+window.mcpRequests=[];window.mcpAnswers=[];window.mcpListeners=new Set();window.authCalls=[];window.authUrls=[];window.fixtureLoginError=false;window.fixtureReconnectWait=false;
 Object.assign(window.cardbushDesktop,{
  savePluginConnections:async({pluginId,expectedRevision,connections,secrets})=>{if(window.marketSaveFails)throw Error('fixture activation failed');if(expectedRevision!==fixtureApps.revision)throw Error('revision conflict');const saved=structuredClone(connections);for(const [name,secret] of Object.entries(secrets??{})){saved[name]??={};saved[name].oauth??={};if(secret===null)delete saved[name].oauth.clientSecretRef;else saved[name].oauth.clientSecretRef='a'.repeat(64);}fixtureApps={...fixtureApps,revision:fixtureApps.revision+1,plugins:fixtureApps.plugins.map(item=>item.id===pluginId?{...item,config:{...item.config,mcp_servers:saved}}:item)};return{saved:true,configurationRevision:fixtureApps.revision,connections:saved}},
  mcpRequests:async()=>window.mcpRequests,
  onMcpRequestsChanged:fn=>{mcpListeners.add(fn);return()=>mcpListeners.delete(fn)},
  answerMcpRequest:async(id,answer)=>{mcpAnswers.push({id,answer});window.mcpRequests=window.mcpRequests.filter(item=>item.id!==id);for(const fn of mcpListeners)fn();return true},
  openMcpRequestUrl:async id=>authUrls.push(id),
- mcpConnectionAction:async(id,action)=>{authCalls.push({id,action});if(action==='login'&&fixtureLoginError){fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,servers:fixtureOverview.snapshot.servers.map(server=>server.id===id?{...server,health:'configuration_required',lastError:'Client ID placeholder'}:server)}};throw Error('Client ID placeholder');}if(action==='login')return new Promise(resolve=>{window.finishLogin=resolve});if(action==='cancel_login')window.finishLogin?.();return{}},
+ mcpConnectionAction:async(id,action)=>{authCalls.push({id,action});if(action==='reconnect'&&fixtureReconnectWait)return new Promise((resolve,reject)=>{window.finishReconnect=resolve;window.failReconnect=()=>reject(Error('late cancelled reconnect failure'))});if(action==='login'&&fixtureLoginError){fixtureOverview={...fixtureOverview,snapshot:{...fixtureOverview.snapshot,servers:fixtureOverview.snapshot.servers.map(server=>server.id===id?{...server,health:'configuration_required',lastError:'Client ID placeholder'}:server)}};throw Error('Client ID placeholder');}if(action==='login')return new Promise(resolve=>{window.finishLogin=resolve});if(action==='cancel_login')window.finishLogin?.();return{}},
  pluginMarketPresentation:async()=>({displayName:'',description:'',logo:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect width="36" height="36" rx="8" fill="teal"/></svg>'),logoDark:''}),
 });
 window.showMcpRequests=value=>{window.mcpRequests=value;for(const fn of mcpListeners)fn()};
 window.marketSources=[{id:'builtin',kind:'local',location:'bundled',builtin:true}];
 window.marketInstalls=0;window.marketSaveFails=false;window.marketSlow=false;window.marketCached=false;window.marketAddFails=false;
+window.marketRateLimitUntil=0;window.marketPreviewReads=0;
 Object.assign(window.cardbushDesktop,{
  pluginMarketSources:async()=>marketSources,
  addPluginMarket:async value=>{if(marketAddFails)throw Error("Error invoking remote method 'plugins:market-add': Error: net::ERR_CONNECTION_RESET");const source={id:'remote',kind:'github',location:value,ref:'HEAD'};marketSources.push(source);return source},
@@ -60,11 +67,12 @@ Object.assign(window.cardbushDesktop,{
  {name:'claude-example',description:'Claude Skills 与 MCP',category:'Tools',available:true},
  {name:'hook-example',description:'依赖 Hooks 的插件',category:'Tools',available:true},
  {name:'unavailable',description:'发布者未开放安装',category:'Tools',available:false,unavailableReason:'policy'}]}),
- previewMarketPlugin:async(id,name)=>{const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
+ previewMarketPlugin:async(id,name)=>{marketPreviewReads++;if(marketRateLimitUntil>Date.now())throw Error("Error invoking remote method 'plugins:market-preview': Error: codeload.github.com: Marketplace requests are temporarily rate limited (HTTP 429). [market-rate-limit:"+marketRateLimitUntil+"]");const value={token:'token-'+name,id:name,name,description:'示例插件',version:'1.0.0',developerName:'Fixture',source:'https://github.com/fixture/plugins',revision:'a'.repeat(40),format:'claude',components:[{kind:'skill',name:'Example',description:'示例技能'},{kind:'mcp',name:'Echo',description:'MCP service'}],requirements:['node'],issues:name==='hook-example'?[{code:'components',detail:'hooks'}]:[],updating:false};if(marketSlow)return new Promise(resolve=>{window.finishMarketPreview=()=>resolve(value)});return value},
  installMarketPlugin:async token=>{marketInstalls++;fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
-const props={language:'zh',initialTab:'plugins',skills:[],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[],onLoadSkillDetail:async()=>null,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:()=>{}};
+const skill={name:'compat:manual',displayName:'手动审查',description:'检查当前修改',defaultPrompt:'请审查当前修改并说明依据。',invocationMode:'manual',path:'fixture/skills/manual/SKILL.md',source:'plugin',sourceId:'compat',sourceLabel:'Compatibility',content:'Review evidence.',packageDir:'fixture',routingHidden:true,requires:[],conflictsWith:[],companionTools:[],blockedTools:[],requiredReads:[],conditionalReads:[],resourceQuickRefs:[]};
+const props={language:'zh',initialTab:'plugins',skills:[skill],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[skill],onLoadSkillDetail:async()=>skill,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:()=>{}};
 function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');window.showComposer=()=>setComposer(true);return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props}/>}</main><McpUserRequests language="zh"/></div>}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;

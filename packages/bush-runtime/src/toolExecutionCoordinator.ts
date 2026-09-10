@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { mcpToolWasDiscovered } from './mcpToolDiscovery.js';
 import {
   BUSH_ACTION_MANIFEST_PROTOCOL,
   type ActionManifest,
@@ -36,7 +37,7 @@ export interface ToolExecutionObserver {
   running?: (toolCall: ToolCall, identity: ToolExecutionIdentity) => void;
 }
 
-export type ToolExecutionOutcome = { hookMessages?: string[]; hookFeedback?: string; rejectToolResult?: boolean } & (
+export type ToolExecutionOutcome = { hookMessages?: string[]; hookFeedback?: string; hookStopTurn?: string; rejectToolResult?: boolean } & (
   | {
       kind: "returned";
       result: unknown;
@@ -89,7 +90,7 @@ export class ToolExecutionCoordinator {
   ): Promise<ToolExecutionOutcome> {
     if (
       turn &&
-      !turn.request.tools.some((definition) => definition.name === toolCall.name)
+      (!turn.request.tools.some((definition) => definition.name === toolCall.name) || !mcpToolWasDiscovered(this.#registry, turn.request, toolCall.name))
     ) {
       return failedResult(
         "tool_not_exposed",
@@ -97,6 +98,8 @@ export class ToolExecutionCoordinator {
       );
     }
     const registration = this.#registry.resolve(toolCall.name);
+    if (registration?.sessionScope && registration.sessionScope !== identity.sessionId) return failedResult('tool_not_exposed', 'This tool belongs to another Agent session.');
+    if (registration?.mcpHook?.modelVisible === false && turn?.request.metadata.mcpAppInvocation !== true) return failedResult('tool_not_exposed', 'This MCP tool is available only to its app interface.');
     if (!registration) {
       return failedResult(
         "tool_not_registered",
@@ -104,6 +107,7 @@ export class ToolExecutionCoordinator {
       );
     }
 
+    const hooks = registration.delegatesToolExecution ? undefined : this.#hooks;
     let parsedArguments: unknown;
     try {
       parsedArguments = JSON.parse(toolCall.argumentsText);
@@ -121,9 +125,9 @@ export class ToolExecutionCoordinator {
     let hookResult: PluginHookResult = { messages: [] };
     try {
       input = registration.decodeInput(parsedArguments);
-      if (this.#hooks) {
-        hookResult = await this.#hooks.before({ toolCall, input: parsedArguments, turn, signal });
-        if (hookResult.blocked) return { ...failedResult('plugin_hook_blocked', hookResult.blocked, undefined, {}, 'permission'), hookMessages: hookResult.messages };
+      if (hooks) {
+        hookResult = await hooks.before({ toolCall, input: parsedArguments, turn, signal });
+        if (hookResult.blocked) return { ...failedResult('plugin_hook_blocked', hookResult.blocked, undefined, {}, 'permission'), hookMessages: hookResult.messages, hookStopTurn: hookResult.stopTurn };
         if (hookResult.updatedInput !== undefined) {
           parsedArguments = hookResult.updatedInput;
           input = registration.decodeInput(parsedArguments);
@@ -206,9 +210,10 @@ export class ToolExecutionCoordinator {
         } else if (this.#capabilities?.hasAll(capabilitySessionId, grantKeys)) {
           capabilityIds = [...admission.request.capabilityIds];
         } else {
+          if (turn?.request.metadata.pluginAgentDontAsk === true) return failedResult('plugin_agent_permission_denied', 'This Agent is configured to deny requests that need additional permission.', actionManifest, {}, 'permission');
           let answer: Pick<RuntimePermissionAnswer, 'decision' | 'grantedCapabilityIds'>;
           try {
-            const hookPermission = await this.#hooks?.permission?.({ toolCall, input: parsedArguments, reason: admission.request.reason, signal });
+            const hookPermission = await hooks?.permission?.({ toolCall, input: parsedArguments, reason: admission.request.reason, signal });
             if (hookPermission) hookResult.messages.push(...hookPermission.messages);
             if (hookPermission?.permissionDecision === 'deny') return failedResult('plugin_hook_permission_rejected', hookPermission.blocked ?? 'Permission denied by a trusted hook.', actionManifest, {}, 'permission');
             answer = hookPermission?.permissionDecision === 'allow'
@@ -257,9 +262,13 @@ export class ToolExecutionCoordinator {
     if (signal?.aborted) {
       return cancelledResult("turn_cancelled", actionManifest);
     }
+    if (registration.mcpHook && this.#registry.resolve(toolCall.name) !== registration) {
+      return failedResult('tool_definition_changed', 'The MCP connection changed while awaiting execution. Discover the current tool and try again.', actionManifest);
+    }
     this.#observer.running?.(toolCall, identity);
     let nativeResult: unknown;
     const nestedHookMessages: string[] = [], nestedHookFeedback: string[] = [];
+    let nestedHookStopTurn: string | undefined;
     const workspaceChanges: WorkspaceChange[] = [];
     try {
       let nestedOrdinal = 0;
@@ -275,6 +284,7 @@ export class ToolExecutionCoordinator {
           signal,
           turn,
           invokeTool: async (name, input) => {
+            if (nestedHookStopTurn) throw Object.assign(new Error(nestedHookStopTurn), { code: 'plugin_hook_blocked' });
             const nested = await this.execute({
               protocol: BUSH_TOOL_CALL_PROTOCOL,
               id: `${toolCall.id}:child:${nestedOrdinal}`,
@@ -285,6 +295,7 @@ export class ToolExecutionCoordinator {
               ordinal: identity.ordinal * 1000 + (++nestedOrdinal),
             }, signal, turn);
             nestedHookMessages.push(...(nested.hookMessages ?? []));
+            nestedHookStopTurn ??= nested.hookStopTurn;
             if (nested.kind === "returned") {
               if (nested.rejectToolResult) throw Object.assign(new Error(nested.hookFeedback), { code: 'plugin_hook_result_blocked' });
               if (nested.hookFeedback !== undefined) nestedHookFeedback.push(nested.hookFeedback);
@@ -311,10 +322,13 @@ export class ToolExecutionCoordinator {
         errorDetails(error),
         "tool",
       );
-      if (this.#hooks) {
+      failed.hookStopTurn = nestedHookStopTurn;
+      failed.hookMessages = nestedHookMessages;
+      if (hooks) {
         try {
-          const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome: failed });
+          const post = await hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome: failed });
           failed.hookMessages = [...hookResult.messages, ...nestedHookMessages, ...post.messages];
+          failed.hookStopTurn = post.stopTurn ?? nestedHookStopTurn;
         } catch (postError) { failed.hookMessages = [...hookResult.messages, ...nestedHookMessages, `Plugin hook failed after tool failure: ${errorMessage(postError)}`]; }
       }
       return failed;
@@ -342,13 +356,17 @@ export class ToolExecutionCoordinator {
       result: stableResult,
       workspaceChanges: stableWorkspaceChanges,
       actionManifest,
+      hookStopTurn: nestedHookStopTurn,
+      ...(nestedHookMessages.length ? { hookMessages: nestedHookMessages } : {}),
+      ...(nestedHookFeedback.length ? { hookFeedback: nestedHookFeedback.join('\n') } : {}),
     };
-    if (this.#hooks) {
+    if (hooks) {
       try {
-        const post = await this.#hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome });
+        const post = await hooks.after({ toolCall, input: parsedArguments, turn, signal, outcome });
         outcome.hookMessages = [...hookResult.messages, ...nestedHookMessages, ...post.messages];
         outcome.hookFeedback = post.toolFeedback ?? (nestedHookFeedback.length ? nestedHookFeedback.join('\n') : undefined);
         outcome.rejectToolResult = post.rejectToolResult;
+        outcome.hookStopTurn = post.stopTurn ?? nestedHookStopTurn;
       } catch (postError) { outcome.hookMessages = [...hookResult.messages, `Plugin hook failed after tool execution; the tool's completed result remains valid: ${errorMessage(postError)}`]; }
     }
     return outcome;

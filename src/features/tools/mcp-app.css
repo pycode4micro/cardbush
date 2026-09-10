@@ -1,0 +1,8 @@
+.mcp-app-panel { margin: 12px 0; min-width: 0; }
+.mcp-app-panel > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
+.mcp-app-panel iframe { display: block; width: 100%; border: 1px solid var(--border-color, #445057); border-radius: 10px; background: #fff; }
+.mcp-app-panel.fullscreen { position: fixed; inset: 24px; z-index: 1200; display: flex; flex-direction: column; padding: 16px; background: var(--bg-primary, #101719); border: 1px solid #65737a; border-radius: 14px; box-shadow: 0 10px 50px #0008; }
+.mcp-app-panel.fullscreen iframe { flex: 1; min-height: 0; }
+.mcp-app-confirm { padding: 12px; margin-bottom: 8px; border: 1px solid #997734; border-radius: 8px; }
+.mcp-app-confirm p, .mcp-app-confirm code { display: block; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-app-confirm button { margin: 8px 8px 0 0; }

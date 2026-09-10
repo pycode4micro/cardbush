@@ -4,6 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CLAUDE_TOOL_NAMES, type PluginHook, type PluginHookContext, type PluginHookEvent, type PluginHookResult } from './pluginExtensions.js';
 import { executePluginProcess } from './pluginHookProcess.js';
 import { interpretHookOutput, mergeHookResults } from './pluginHookOutput.js';
+import { settleAtAbort } from './abortSettlement.js';
 export { executePluginProcess, bashExecutable } from './pluginHookProcess.js';
 
 export interface PluginHookObservation {
@@ -15,6 +16,9 @@ export interface PluginHookObservation {
   warning?: string;
 }
 export interface PluginHookRunnerOptions {
+  evaluate?: (hook: PluginHook, prompt: string, context: PluginHookContext) => Promise<unknown>;
+  onEvent?: (event: PluginHookEvent, context: PluginHookContext) => Promise<void>;
+  activateAgent?: (hook: PluginHook, prompt: string, context: PluginHookContext) => Promise<void>;
   callMcp?: (hook: PluginHook, input: Record<string, unknown>, context: PluginHookContext) => Promise<unknown>;
   validateToolInput?: (toolName: string, input: unknown) => void;
 }
@@ -46,6 +50,7 @@ export class PluginHookRunner {
   async close() { await Promise.allSettled([...this.sessions.keys()].map(id => this.closeSession(id))); }
 
   async run(hooks: PluginHook[], event: PluginHookEvent, context: PluginHookContext, observe?: Observer): Promise<PluginHookResult> {
+    await this.options.onEvent?.(event, context);
     const sessionId = context.request.sessionId;
     let session = this.sessions.get(sessionId);
     if (!session) {
@@ -55,10 +60,12 @@ export class PluginHookRunner {
     if (session.closed && event !== 'SessionEnd' && event !== 'Interrupt') return { messages: [] };
     session.hooks = hooks; session.context = context; session.observe = observe;
     const invocations: Promise<PluginHookResult>[] = [];
-    for (const hook of hooks) {
-      if (hook.event !== event || !matches(hook, context)) continue;
+    for (const original of hooks) {
+      const hook = original.scope?.kind === 'skill' && original.event === 'Stop' && event === 'SubagentStop' ? { ...original, event } : original;
+      const scopedStop = hook.scope?.kind === 'skill' && hook.event === 'Stop' && event === 'SubagentStop';
+      if ((!scopedStop && hook.event !== event) || !matches(hook, context)) continue;
       const id = `plugin_hook_${randomUUID()}`;
-      if (hook.trusted === false || hook.type === 'prompt' || hook.type === 'agent') {
+      if (hook.trusted === false || ((hook.type === 'prompt' || hook.type === 'agent') && hook.dialect !== 'claude')) {
         observe?.({ id, hook, phase: 'skipped', warning: hook.trusted === false ? 'Hook definition needs review and trust in plugin settings.' : `${hook.type} hooks are parsed but not executed.` });
         continue;
       }
@@ -99,7 +106,34 @@ export class PluginHookRunner {
       const serialized = JSON.stringify(payload);
       if (Buffer.byteLength(serialized) > 2 * 1024 * 1024) throw new Error('Hook input exceeds 2 MiB.');
       let output: { stdout: string; stderr: string; exitCode: number };
-      if (hook.type === 'mcp_tool') {
+      if (hook.type === 'prompt' || hook.type === 'agent') {
+        if (!this.options.evaluate) throw new Error('Model hook evaluation is unavailable.');
+        const timeout = AbortSignal.timeout(Math.min(hook.timeout * 1000, 2_147_483_647));
+        const signal = context.signal ? AbortSignal.any([context.signal, timeout]) : timeout;
+        const prompt = hook.prompt!.includes('$ARGUMENTS') ? hook.prompt!.replaceAll('$ARGUMENTS', serialized) : `${hook.prompt}\n\nEvent input:\n${serialized}`;
+        const decision = await settleAtAbort(this.options.evaluate(hook, prompt, { ...context, signal }), signal, 'Model Hook evaluation timed out or was cancelled.');
+        signal.throwIfAborted();
+        recordedOutput = JSON.stringify(decision);
+        const result = modelHookDecision(hook, decision);
+        observe?.({ id, hook, phase: 'completed', output: recordedOutput });
+        return result;
+      } else if (hook.type === 'http') {
+        const allowed = new Set(hook.allowedEnvVars ?? []);
+        const headers = Object.fromEntries(Object.entries(hook.headers ?? {}).map(([key, value]) => [key, value.replace(/\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)/g, (_, a, b) => {
+          const name = a ?? b;
+          if (!allowed.has(name) || process.env[name] === undefined) throw new Error(`HTTP Hook environment variable ${name} is not configured or allowed.`);
+          return process.env[name]!;
+        })]));
+        const timeout = AbortSignal.timeout(Math.min(hook.timeout * 1000, 2_147_483_647));
+        const signal = context.signal ? AbortSignal.any([context.signal, timeout]) : timeout;
+        const response = await fetch(hook.url!, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: serialized, signal, redirect: 'manual' });
+        if (!response.ok) { await response.body?.cancel(); throw new Error(`HTTP Hook failed (${response.status}).`); }
+        const reader = response.body?.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+        if (reader) try {
+          for (;;) { const { done, value } = await reader.read(); if (done) break; size += value.length; if (size > 8 * 1024 * 1024) throw new Error('HTTP Hook output exceeds 8 MiB.'); chunks.push(value); }
+        } finally { await reader.cancel().catch(() => {}); }
+        output = { stdout: Buffer.concat(chunks).toString('utf8'), stderr: '', exitCode: 0 }; recordedOutput = output.stdout;
+      } else if (hook.type === 'mcp_tool') {
         if (!this.options.callMcp) throw new Error('MCP hook execution is unavailable.');
         const result = await this.options.callMcp(hook, object(expandHookInput(hook.input ?? {}, payload)), context);
         recordedOutput = JSON.stringify(result);
@@ -118,6 +152,12 @@ export class PluginHookRunner {
       const result = await interpretHookOutput(hook, context, output, this.dataRoot);
       if (result.updatedInput !== undefined && context.toolName) this.options.validateToolInput?.(context.toolName, result.updatedInput);
       const parsed = output.stdout.trim().startsWith('{') ? object(JSON.parse(output.stdout)) : {};
+      const activation = object(object(parsed.cardbush).activateAgent);
+      if (output.exitCode === 0 && activation.prompt !== undefined) {
+        if (typeof activation.prompt !== 'string' || !activation.prompt.trim() || activation.prompt.length > 32000) throw new Error('cardbush.activateAgent.prompt must be non-empty text, at most 32000 characters.');
+        if (!this.options.activateAgent) throw new Error('Agent activation is unavailable in this runtime.');
+        await this.options.activateAgent(hook, activation.prompt, context);
+      }
       observe?.({ id, hook, phase: 'completed', output: recordedOutput, warning: typeof parsed.systemMessage === 'string' ? parsed.systemMessage : undefined });
       return result;
     } catch (error) {
@@ -128,6 +168,19 @@ export class PluginHookRunner {
       return { messages: [] };
     }
   }
+}
+
+export function modelHookDecision(hook: PluginHook, input: unknown): PluginHookResult {
+  const value = object(input);
+  if (typeof value.ok !== 'boolean' || (value.ok === false && (typeof value.reason !== 'string' || !value.reason.trim())) || (value.impossible !== undefined && typeof value.impossible !== 'boolean')) throw new Error('Model Hook must return {ok:boolean, reason?:string, impossible?:boolean}.');
+  if (value.ok) return { messages: [] };
+  const reason = `${hook.pluginId}: ${String(value.reason).slice(0, 10000)}`;
+  const continueOnBlock = hook.type === 'agent' || hook.continueOnBlock;
+  if (hook.event === 'Stop' || hook.event === 'SubagentStop') return hook.type === 'prompt' && value.impossible === true ? { messages: [] } : { messages: [], continueTurn: reason };
+  if (hook.event === 'PreToolUse') return { messages: [], blocked: reason, ...(!continueOnBlock ? { stopTurn: reason } : {}) };
+  if (hook.event === 'PermissionRequest') return { messages: [], permissionDecision: 'deny', blocked: reason };
+  if (hook.event === 'PostToolUse' || hook.event === 'PostToolUseFailure') return { messages: [], toolFeedback: reason, rejectToolResult: true, ...(hook.event === 'PostToolUse' && !continueOnBlock ? { stopTurn: reason } : {}) };
+  return { messages: [], blocked: reason, stopTurn: reason };
 }
 
 function matches(hook: PluginHook, context: PluginHookContext) {

@@ -69,7 +69,8 @@ try{
  assert.equal((await fallback.catalog(fallbackSource.id)).entries.length,3);
  assert.equal(rawAttempts,2,'network retries are bounded');
  assert.deepEqual(await loadProductPluginCatalog([{path:options.userPluginRoot,source:'user'}]),[]);
- const preview=await service.preview(source.id,native.name);
+ const [preview,duplicatePreview]=await Promise.all([service.preview(source.id,native.name),service.preview(source.id,native.name)]);
+ assert.equal(preview.token,duplicatePreview.token,'simultaneous previews share one staged snapshot');
  assert.equal(preview.format,'openai');assert.equal(preview.revision,sha);assert.equal(preview.issues.length,0);
  assert.equal(preview.components.filter(item=>item.kind==='skill').length,1);
  assert.equal(preview.components.filter(item=>item.kind==='mcp').length,1);
@@ -103,12 +104,29 @@ try{
  const blocked=await service.preview(other.id,'hook-example');
  assert.equal(blocked.issues.length,0,'prompt hooks are parsed and skipped under the OpenAI contract');
  await service.install(blocked.token);
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/claude/zip/${sha}`).length,1,'different plugins in the same repository reuse the immutable archive');
  assert.ok((await readdir(options.userPluginRoot)).includes('hook-example'));
  // Same name from a second source is reviewable but cannot replace the first plugin.
  const conflictSource=await service.addGitHub('fixture/native@v1');
  const conflict=await service.preview(conflictSource.id,native.name);
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${sha}`).length,1,'the same commit is reused across source aliases and repeat previews');
  assert.ok(conflict.issues.some(issue=>issue.code==='collision'));
  await assert.rejects(service.install(conflict.token),/not compatible/);
+ currentSha=newerSha;
+ await Promise.all([service.catalog(source.id),service.catalog(source.id,true)]);
+ assert.equal((await service.preview(source.id,native.name)).revision,newerSha);
+ assert.equal(requests.filter(url=>url===`https://codeload.github.com/fixture/native/zip/${newerSha}`).length,1,'refreshing to a new commit downloads a distinct snapshot');
+ currentSha=sha;
+ // Rate limiting is not a connectivity failure: do not fan out to another endpoint.
+ let limitedReads=0;
+ const limited=new PluginMarketplaceService({...options,dataRoot:join(root,'limited'),fetch:async input=>{
+  if(String(input).includes('/commits/'))return Response.json({sha});
+  limitedReads++;assert.ok(String(input).includes('raw.githubusercontent.com'));
+  return new Response('',{status:429,headers:{'Retry-After':'120'}});
+ }});
+ await assert.rejects(limited.addGitHub('fixture/native'),/market-rate-limit:/);
+ await assert.rejects(limited.addGitHub('fixture/native'),/market-rate-limit:/);
+ assert.equal(limitedReads,1,'cooldown covers repeated operations without Contents API fallback');
  // Persisted catalog remains available offline, clearly marked stale.
  offline=true;
  const restarted=new PluginMarketplaceService(options);

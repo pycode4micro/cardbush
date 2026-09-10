@@ -1477,6 +1477,44 @@ export function useCardbushChat(
     beginHistoryLoading,
   ]);
 
+  // Notifications can arrive while the previous read is in flight, or after a
+  // short turn has already finished. Preserve both updates and committed history.
+  const automationHistoryRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    if (!window.cardbushDesktop?.automationCommand) return;
+    let disposed = false, reading = false, dirty = false, timer = 0;
+    const refresh = async () => {
+      if (disposed) return;
+      if (reading) { dirty = true; return; }
+      reading = true; dirty = false;
+      try {
+        const state = await window.cardbushDesktop!.automationCommand({ action: 'list' }) as import('@cardbush/bush-protocol').AutomationOverview;
+        if (disposed) return;
+        let refreshHistory = false;
+        for (const job of state.jobs) {
+          const run = job.runs.at(-1);
+          if (run?.status === 'running') subscribeGoalTurn(job.sessionId, run.turnId);
+          if (!run || run.status === 'running' || run.status === 'queued' || job.sessionId !== activeConversationId ||
+              controllersRef.current[job.sessionId] || goalTurnControllersRef.current[job.sessionId]) continue;
+          const key = `${run.id}:${run.status}`;
+          if (automationHistoryRef.current.get(job.id) !== key) refreshHistory = true;
+        }
+        if (refreshHistory) {
+          await refreshActiveSession({ silent: true });
+          if (!disposed) for (const job of state.jobs) {
+            const run = job.runs.at(-1);
+            if (job.sessionId === activeConversationId && run && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
+          }
+        } else await reloadConversations();
+      } catch { /* Startup and reconnect are retried on the next notification or focus. */ }
+      finally { reading = false; if (dirty && !disposed) update(); }
+    };
+    const update = () => { dirty = true; window.clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 100); };
+    const unsubscribe = window.cardbushDesktop.onAutomationChanged?.(update);
+    window.addEventListener('focus', update); update();
+    return () => { disposed = true; window.clearTimeout(timer); unsubscribe?.(); window.removeEventListener('focus', update); };
+  }, [activeConversationId, refreshActiveSession, subscribeGoalTurn, reloadConversations]);
+
   useEffect(() => {
     const sessionId = activeConversationId.trim();
     if (!sessionId) {
@@ -2661,6 +2699,20 @@ export function useCardbushChat(
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const { sessionId, text, resolve, reject } = (event as CustomEvent).detail;
+      const conversation = conversationsRef.current.find(item => item.id === sessionId);
+      if (!conversation || typeof text !== 'string' || !text.trim() || text.length > 32_000) { reject(new Error('The conversation is unavailable.')); return; }
+      if (sendingSessionsRef.current.has(sessionId)) { reject(new Error('Wait for the current task to finish.')); return; }
+      // This event is dispatched only after confirmation in the host UI, outside the sandbox.
+      void sendMessageRef.current(text, conversation).catch(reject);
+      resolve();
+    };
+    window.addEventListener('cardbush:mcp-app-message', listener);
+    return () => window.removeEventListener('cardbush:mcp-app-message', listener);
+  }, []);
 
   const runControlAssistantStream = useCallback(
     async ({
