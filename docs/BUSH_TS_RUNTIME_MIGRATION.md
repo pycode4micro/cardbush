@@ -80,8 +80,13 @@ blocks automatic resume instead of re-dispatching a possibly completed effect.
 The renderer-facing recovery inspection exposes only status, cursor, round, and
 event identifiers; raw checkpoint messages remain inside the Runtime process.
 
-Cache Chain observation compares the real provider request structure and ordered
-message hashes. It reports append-only prefix continuity and exact break position,
+Cache Chain observation has two views: `cache_chain_observed` compares the
+provider-independent ModelRequest, while `provider_input_observed` fingerprints
+the full Responses input after native replay, tool discovery and deduplication.
+The latter also records parameter changes and whether transport uses a full
+request or continuation; continuation IDs are not part of the input fingerprint.
+Providers without projection reporting remain explicitly unobserved at that layer.
+These views report structural prefix continuity and the first changed item,
 but never classifies a task, Tool name, programming language, or output prose. The
 Python reference's name-based Cache heuristics are intentionally not migrated.
 The final hash-only snapshot is stored with each committed Turn and seeds the next
@@ -95,9 +100,80 @@ ranges and short first/last locators are derived from the ordinary context
 projection and checked against the outgoing messages; they are not a second
 history store. Summary count, order, revision, and active-message authorization
 remain runtime-owned. Preparation and correction retries preserve the existing
-prefix; applying the completed summary starts a new prefix. The existing
-emergency projection may still shorten an already oversized maintenance request
-when the original input cannot fit, and Cache Chain reports that change honestly.
+prefix. Applying a checkpoint retains the real assistant reasoning/replay,
+`checkpoint_context` call, and its tool receipt. An `exchange_v1` checkpoint
+references those canonical message IDs and the preceding Turns it covers; it
+does not create another user summary. Active, committed and recovered contexts
+use that same projection. Legacy text-only checkpoints remain readable because
+their missing original model output cannot be reconstructed.
+
+Legacy summaries can themselves be explicit compaction sources. There is no
+automatic last-N-summary pruning: an irreducible oversized context fails visibly.
+The emergency maintenance projection can shorten large tool results to durable
+receipts, but preserves assistant reasoning and opaque provider replay. All such
+input changes remain observable, including changes required by schema replacement.
+
+Normal dispatch, maintenance dispatch and Tool ingress share the context budget
+calculation. For window C, configured normal output O, maintenance output
+M = min(16,384, O), and bounded safety reserve S, the proactive input trigger is
+min(floor(0.95 * (C - O)), C - O - M - S). A 400,000-token window with 128,000
+normal output therefore triggers at 253,568 input tokens, with S = 2,048. Normal
+requests keep the configured output limit. Maintenance starts with M and may
+double it on truncation, bounded by O and three generation attempts per
+maintenance job for truncation/format failures. Transport failures retain the
+existing Provider retry policy.
+The complete maintenance request is measured again before dispatch. Exact
+provider counts do not pay an additional estimation reserve. Tool ingress uses
+the completed response's actual input/output usage when available and reserves
+the following maintenance request, not another full normal output allowance.
+
+Maintenance freezes its source context. An incomplete or rejected checkpoint
+never appends partial prose, reasoning or arguments to that conversation. Raw
+provider events remain in `model_maintenance_response` journal entries; bounded
+corrections append after the fixed maintenance notice. If the full request cannot
+fit even after durable Tool-result receipts, a transaction stages complete
+source fragments and asks the model to consolidate their real checkpoint
+exchanges. Parallel Tool calls and all matching receipts remain indivisible.
+Only the final checkpoint replaces the source projection, using the existing
+atomic `exchange_v1` commit. Cancellation or any failed fragment leaves the
+original source and checkpoint pointer intact. An indivisible oversized source,
+oversized consolidation or the 64-node transaction limit fails visibly.
+
+Structured provider context-limit rejections, including input-count endpoint
+rejections, enter bounded context recovery even below the local estimated
+trigger. Authentication, quota and generic bad requests are not reclassified by
+error prose. A rejected maintenance request must partition before another model
+call; exhausted context recovery cannot fall through to transport retries even
+if an adapter sets `retryable: true`. A previous above-limit response does not
+authorize a known oversized request. Ordinary output continuation has its own persisted counter, which
+maintenance does not reset. Recovery restarts maintenance from the canonical
+source and restores retry counts/output budgets; it may regenerate staged
+summaries, but never replays completed external Tools. Incoming guidance and
+other asynchronous messages are appended after maintenance commits.
+
+Fallback pressure estimation counts the wire input once, excluding duplicated
+Runtime replay storage. It remains an estimate, not an API tokenizer count.
+Each successful usage observation is bound to its actual dispatch projection,
+including protocol fallback, and an explicitly versioned local estimate. On an
+unchanged prefix, pressure uses measured prefix tokens plus the estimated suffix.
+Only that suffix receives an upward density correction and 10% + 32 tokens of
+headroom; an unchanged request uses its exact prior input count. A low-density
+prefix never discounts new content. New usage replaces the basis instead of
+ratcheting a global multiplier upward. Exact provider counting takes precedence.
+Compaction, edits, tool-schema replacement, provider/capability changes and
+estimator-version changes invalidate calibration. Full contexts are compared even
+when transport sends only a continuation delta. Legacy usage without projection
+evidence cannot lower the estimate. Providers without a wire estimator use an
+explicit canonical Runtime fallback; it cannot calibrate a native projection.
+Projection hashes and numeric estimates are accounting metadata, never additional
+model messages. Required reasoning is preserved and counted; there is no model-name
+branch that assumes reasoning is free. Structural continuity never guarantees a
+server-side cache hit.
+
+Changing only the output allowance preserves input-count calibration when both
+Runtime and Provider fingerprints identify the same input shape. All actual
+request parameters, including that output change, remain visible in cache
+diagnostics. Legacy fingerprints without this evidence stay strict.
 
 The Utility Process enables file-backed recovery only when
 `CARDBUSH_RUNTIME_STATE_ROOT` is an absolute directory. Choosing the production

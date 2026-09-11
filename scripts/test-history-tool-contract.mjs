@@ -1042,7 +1042,7 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /guidanceBoundaryRound \? \([\s\S]*?assistantBody[\s\S]*?\) : finalAssistantRound/,
+  /guidanceBoundaryRound \? \([\s\S]*?assistantBody[\s\S]*?\) : showFinalAnswer/,
   'Turn-guidance interruption segments must stay visible instead of entering the processed disclosure',
 );
 assert.match(
@@ -1052,8 +1052,8 @@ assert.match(
 );
 assert.match(
   bubbleSource,
-  /finalAssistantRound \? \([\s\S]*?<AssistantRunHeader[\s\S]*?\{finalAnswerBody\}/,
-  'The terminal turn must keep the processed header and final answer in chat',
+  /showFinalAnswer \? \([\s\S]*?<AssistantRunHeader[\s\S]*?<MessageToolOutputs[\s\S]*?\{showFinalAnswer && finalAnswerBody\}/,
+  'The terminal turn must keep the processed header, delivered results and final explanation in that order',
 );
 assert.match(bubbleSource, /status === 'completed'/);
 assert.doesNotMatch(bubbleSource, /status === 'complete'/);

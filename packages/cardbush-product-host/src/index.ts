@@ -17,6 +17,7 @@ export {
   CARDBUSH_APPS_CONFIG_PROTOCOL,
   CardbushAppsConfigStore,
   defaultCardbushAppsConfig,
+  readCardbushSearchResultLimit,
 } from "./appsConfigStore.js";
 export type {
   CardbushAppPluginConfig,

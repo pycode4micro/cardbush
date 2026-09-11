@@ -37,12 +37,13 @@ addEventListener('message',e=>{if(e.data?.fixtureReport)fixtureReports[e.data.fi
 addEventListener('cardbush:mcp-app-message',e=>{window.followup=e.detail.text;e.detail.resolve()});
 window.cardbushDesktop={openExternal:async()=>{},preparePluginUiNetwork:async()=>{operations.push({action:'prepare-network'})}};
 const view={token:'opaque-host-token',html:${JSON.stringify(html)},meta:{'openai/widgetPrefersBorder':false},tool:{name:'save',inputSchema:{type:'object'}},input:{original:true},result:{content:[],structuredContent:{value:1},_meta:{uiOnly:true}}};
-window.staleOpens=0;window.deferOpen=false;window.extraOutput=false;window.failedResult=false;window.legacyOnly=false;
+window.staleOpens=0;window.deferOpen=false;window.extraOutput=false;window.failedResult=false;window.legacyOnly=false;window.mediaOnly=false;window.fixtureImage=null;window.fixtureContent=null;window.fixtureArtifacts=null;window.fixtureAttachments=[];window.memoStatus='available';
 // A controllable transport: the worker decides when runtime replies arrive.
 // The actual runtime queue and cancellation are tested in mcpAppsHost.test.mjs.
 window.overlapMode=false;window.overlapCalls=[];window.overlapAnswers=[];window.overlapPermission=null;window.deferStatus=false;window.releaseStatus=null;
 window.fixtureCommand=async input=>{
 operations.push(input);
+if(input.reference)return{status:memoStatus,memo:{protocol:'bush.file_memo.v1',id:'file_'+'a'.repeat(32),reference:input.reference,file:{path:fixtureImage.path,name:fixtureImage.name,size:10,mtimeMs:1},note:{purpose:'Generated file',points:[]}}};
 if(input.action==='describe')return{interfaces:input.toolCallIds.map(id=>({sessionId:'s',turnId:'t',toolCallId:id,source:'mcp__demo__save',resourceUri:'ui://fixture',title:id==='old'?'较早结果':id==='new'?'新增结果':'交互预览',...(failedResult?{resultError:{text:'MCP error -32602: Invalid arguments. Expected doc, document or email; received instagram_post.',truncated:false}}:{})}))};
 if(input.action==='observe')return{};
 if(input.action==='open'){if(staleOpens>0){staleOpens--;throw Object.assign(Error('The plugin connection changed'),{fact:{code:'mcp_app_connection_changed'}})}const result={...view,token:'opaque-host-token-'+operations.length,...(legacyOnly?{html:'<meta name="color-scheme" content="light"><div style="height:420px">Legacy preview</div><script>window.openai.notifyIntrinsicHeight(420)</script>'}:{})};if(deferOpen)await new Promise(resolve=>window.releaseOpen=resolve);return result;}
@@ -56,15 +57,18 @@ if(input.action==='close'){if(awaiting?.token===input.token){awaiting.reject(Err
 const no=async()=>{};
 const execution={id:'tool',name:'mcp_call',state:'completed',turnId:'t',summary:'Fixture',output:'Native result',createdAt:'2026-09-10T00:00:00Z',metadata:{}};
 const image={id:'image',name:'result.png',path:'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=',type:'image',display:'inline'};
+window.cardbushDesktop.readImageDataUrl=async()=>image.path;
+window.cardbushDesktop.inspectPath=async path=>({path,name:'apple.png',kind:'file'});
 const file={id:'doc',name:'report.pdf',path:'C:/fixture/report.pdf',type:'document',display:'attachment',size:1234};
+// A historical execution: rendering must not require the removed tool to be registered.
 const files={...execution,id:'files',name:'present_artifact',artifacts:[image,file]};
 const edit={...execution,id:'edit',name:'workspace.write',metadata:{workspaceChanges:[{path:'C:/fixture/style.css',additions:12,deletions:2}]}};
 const root=createRoot(document.getElementById('root'));
-window.renderFixture=active=>{const executions=[{...execution,id:'old'},execution,files,edit,...(extraOutput?[{...execution,id:'new'}]:[])];root.render(<div className="app theme-dark" style={{overflow:'auto'}}><main style={{padding:24,maxWidth:800,margin:'auto'}}><div className={active ? "message-list-item streaming" : "message-list-item"}><MessageBubble message={{id:'message',conversationId:'s',turnId:'t',role:'assistant',content:'界面与文件结果',status:active?'streaming':'completed',createdAt:'2026-09-10T00:00:00Z',toolExecutions:active?executions:[],loopHistory:active?[]:[{id:'earlier',role:'assistant',content:'Earlier tool output',createdAt:'2026-09-10T00:00:00Z',toolExecutions:executions}],metadata:{}}} language="zh" sending={active} activeTurnId={active?'t':''} activeAssistantMessageId={active?'message':''} onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/></div></main></div>)};
+window.renderFixture=active=>{const executions=mediaOnly?[{...files,artifacts:fixtureArtifacts??[fixtureImage]}]:[{...execution,id:'old'},execution,files,edit,...(extraOutput?[{...execution,id:'new'}]:[])];root.render(<div className="app theme-dark" style={{overflow:'auto'}}><main style={{padding:24,maxWidth:800,margin:'auto'}}><div className={active ? "message-list-item streaming" : "message-list-item"}><MessageBubble message={{id:'message',conversationId:'s',turnId:'t',role:'assistant',content:fixtureContent??(mediaOnly?'图片已生成，预览在上方。点击可查看完整图片。':'界面与文件结果'),attachments:fixtureAttachments,status:active?'streaming':'completed',createdAt:'2026-09-10T00:00:00Z',toolExecutions:active?executions:[],loopHistory:active?[]:[{id:'earlier',role:'assistant',content:'Earlier tool output',createdAt:'2026-09-10T00:00:00Z',toolExecutions:executions}],metadata:{}}} language="zh" sending={active} activeTurnId={active?'t':''} activeAssistantMessageId={active?'message':''} onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/></div></main></div>)};
 window.clearFixture=()=>root.render(null);window.renderFixture(true);`;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{
-    name: 'mcp-app-fixture', enforce: 'pre', resolveId(id, importer) { if (id.endsWith('__mcp_app_fixture__.tsx')) return '\0mcp-app-fixture.tsx'; if (id.includes('runtime-client/ElectronRuntimeSession') && importer?.endsWith('McpAppPanel.tsx')) return '\0runtime-fixture'; },
+    name: 'mcp-app-fixture', enforce: 'pre', resolveId(id, importer) { if (id.endsWith('__mcp_app_fixture__.tsx')) return '\0mcp-app-fixture.tsx'; if (id.includes('runtime-client/ElectronRuntimeSession') && /(?:McpAppPanel\.tsx|fileMemo\.ts)$/.test(importer??'')) return '\0runtime-fixture'; },
     load(id) { if (id === '\0mcp-app-fixture.tsx') return source; if (id === '\0runtime-fixture') return 'export function createDesktopRuntimeSession(){return{dispose(){},client:{command:async({payload},decode)=>decode(await window.fixtureCommand(payload))}}}'; },
   }], build: { outDir: directory, emptyOutDir: true, minify: false, lib: { entry: resolve('__mcp_app_fixture__.tsx'), formats: ['es'] } } });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(item => item.output), entry = outputs.find(item => item.type === 'chunk' && item.isEntry);

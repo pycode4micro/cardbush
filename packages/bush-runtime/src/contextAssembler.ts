@@ -17,6 +17,7 @@ export interface AssembleContextInput {
   throughTurnSequence?: number;
   maxChars?: number;
   maxSummaryTurns?: number;
+  coveredTurnIds?: string[];
 }
 
 export interface ContextTurnSource {
@@ -56,6 +57,21 @@ export function projectActiveTurnContext(input: {
       `Active Turn checkpoint boundary ${input.checkpoint.throughMessageId} does not exist.`,
     );
   }
+  if (input.checkpoint.projectionVersion === "exchange_v1") {
+    const [assistantId, receiptId] = input.checkpoint.exchangeMessageIds;
+    const assistantIndex = input.generatedMessages.findIndex(item => item.messageId === assistantId);
+    const assistant = input.generatedMessages[assistantIndex]?.message;
+    const receipt = input.generatedMessages[assistantIndex + 1];
+    if (assistantIndex < 0 || assistantIndex + 1 !== boundaryIndex ||
+      assistant?.role !== "assistant" || assistant.toolCalls.length !== 1 ||
+      assistant.toolCalls[0]!.name !== "checkpoint_context" ||
+      receipt?.messageId !== receiptId || receipt.message.role !== "tool" ||
+      receipt.message.toolCallId !== assistant.toolCalls[0]!.id) {
+      throw new Error("Context checkpoint must reference its complete canonical assistant/tool exchange.");
+    }
+    return [...inputs, assistant, receipt.message,
+      ...input.generatedMessages.slice(boundaryIndex + 1).map(item => item.message)];
+  }
   const projected: ModelMessage[] = [
     ...inputs,
     activeTurnCheckpointMessage(input.turnId, input.checkpoint),
@@ -71,12 +87,16 @@ export function projectActiveTurnContext(input: {
 
 export function activeTurnCheckpointMessage(
   turnId: string,
-  checkpoint: TurnContextCheckpoint,
+  checkpoint: Exclude<TurnContextCheckpoint, { projectionVersion: "exchange_v1" }>,
 ): ModelMessage {
   return {
-    role: "assistant",
+    // Legacy journals contain summary text without the original model output.
+    // This explicit compatibility view cannot reconstruct missing reasoning;
+    // new checkpoints exclusively reference their genuine call and receipt.
+    role: "user",
+    name: ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME,
+    visibility: "internal",
     content: `<${ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME} turn_id="${escapeAttribute(turnId)}" through_message_id="${escapeAttribute(checkpoint.throughMessageId)}">\n${checkpoint.summary}\n</${ACTIVE_TURN_CHECKPOINT_MESSAGE_NAME}>`,
-    toolCalls: [],
   };
 }
 
@@ -84,7 +104,7 @@ export function activeTurnResumeMessage(): ModelMessage {
   return {
     role: "developer",
     name: ACTIVE_TURN_RESUME_MESSAGE_NAME,
-    content: "The preceding assistant message is an intermediate factual checkpoint for the active Turn, not a final answer. Continue the original user request from its unresolved work and exact next action. Do not repeat completed writes, Tool operations, or external side effects. If the requested work is already complete, return the final user-facing answer.",
+    content: "The preceding checkpoint is an intermediate factual summary for the active Turn, not a final answer. Continue the original user request from its unresolved work and exact next action. Do not repeat completed writes, Tool operations, or external side effects. If the requested work is already complete, return the final user-facing answer.",
   };
 }
 
@@ -111,8 +131,15 @@ export function assembleContextProjection(input: AssembleContextInput): {
       turn,
       source: turn.messages.filter((message) => !superseded.has(message.messageId)),
     }));
+  const covered = new Set(input.coveredTurnIds ?? []);
+  for (const { turn, source } of eligibleTurns) {
+    if (source.length === turn.messages.length &&
+      turn.contextCheckpoint?.projectionVersion === "exchange_v1") {
+      for (const id of turn.contextCheckpoint.coveredTurnIds) covered.add(id);
+    }
+  }
   const summarized = eligibleTurns.filter(({ turn, source }) =>
-    turn.contextSummary && source.length === turn.messages.length,
+    !covered.has(turn.turnId) && turn.contextSummary && source.length === turn.messages.length,
   );
   const visibleSummaryIds = input.maxSummaryTurns === undefined
     ? new Set(summarized.map(({ turn }) => turn.turnId))
@@ -123,6 +150,7 @@ export function assembleContextProjection(input: AssembleContextInput): {
       );
   const omittedSummaryCount = summarized.length - visibleSummaryIds.size;
   const committedTurns = eligibleTurns.flatMap(({ turn, source }) => {
+    if (!source.length || covered.has(turn.turnId)) return [];
     if (turn.contextSummary && source.length === turn.messages.length) {
       if (!visibleSummaryIds.has(turn.turnId)) return [];
       return [{

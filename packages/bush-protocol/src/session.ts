@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { cacheChainStateSchema } from "./cacheChain.js";
+import { cacheChainStateSchema, providerInputProjectionSchema } from "./cacheChain.js";
 import { modelMessageSchema, modelRequestSchema } from "./model.js";
 import { workspaceSetupSchema } from "./workspace.js";
 
@@ -37,7 +37,16 @@ export const sessionUsageSchema = z.object({
   lastRequestInputTokens: z.number().int().nonnegative().optional(),
   lastRequestOutputTokens: z.number().int().nonnegative().optional(),
   lastRequestCachedInputTokens: z.number().int().nonnegative().optional(),
+  lastRequestInputBasis: z.object({
+    requestShapeDigest: z.string().min(1),
+    inputShapeDigest: z.string().min(1).optional(),
+    messageCount: z.number().int().nonnegative(),
+    messagePrefixDigest: z.string().min(1),
+    projection: providerInputProjectionSchema.optional(),
+  }).optional(),
 });
+
+export type SessionUsage = z.infer<typeof sessionUsageSchema>;
 
 export const sessionMessageSchema = z.object({
   messageId: z.string().min(1),
@@ -51,12 +60,24 @@ export const sessionMessageSchema = z.object({
 
 export type SessionMessage = z.infer<typeof sessionMessageSchema>;
 
-export const turnContextCheckpointSchema = z.object({
+const legacyTurnContextCheckpointSchema = z.object({
   throughMessageId: z.string().min(1),
   summary: z.string().min(1),
   inputMessageCount: z.number().int().positive(),
   projectionVersion: z.literal("stable_v1").optional(),
 });
+
+export const turnContextCheckpointSchema = z.union([
+  legacyTurnContextCheckpointSchema,
+  z.object({
+    projectionVersion: z.literal("exchange_v1"),
+    throughMessageId: z.string().min(1),
+    inputMessageCount: z.number().int().positive(),
+    // References into the canonical Turn journal, never a second message copy.
+    exchangeMessageIds: z.tuple([z.string().min(1), z.string().min(1)]),
+    coveredTurnIds: z.array(z.string().min(1)),
+  }),
+]);
 
 export type TurnContextCheckpoint = z.infer<typeof turnContextCheckpointSchema>;
 
@@ -228,6 +249,9 @@ export const runtimeSessionCommitCheckpointSchema = z.object({
   generatedMessages: z.array(runtimeSessionCheckpointMessageSchema).default([]),
   usage: sessionUsageSchema.default({}),
   activeContextCheckpoint: turnContextCheckpointSchema.optional(),
+  // Execution retry state survives semantic compaction without being injected
+  // into the conversation or inferred from discarded continuation messages.
+  outputLimitContinuations: z.number().int().nonnegative().max(2).optional(),
   supersession: sessionSupersessionSchema.optional(),
 });
 
@@ -260,4 +284,4 @@ export const assembleRuntimeSessionContextRequestSchema = z.object({
   maxSummaryTurns: z.number().int().nonnegative().optional(),
 });
 
-export const CHECKPOINT_CONTINUATION_INSTRUCTIONS = "An active_turn_checkpoint is an intermediate factual summary for its named Turn, not a final answer. Continue the latest user request from its unresolved work and exact next action. Preserve completed operations and do not repeat external side effects. Historical checkpoints and continuation instructions belong to their original Turns; later user requests determine the current task. If the current request is complete, return its final answer.";
+export const CHECKPOINT_CONTINUATION_INSTRUCTIONS = "A checkpoint_context call and its receipt preserve intermediate context, not a final answer. Its summaries replace only the covered history; legacy active_turn_checkpoint has the same purpose. Continue the latest user request from its unresolved work and exact next action. Preserve completed operations and do not repeat external side effects. Historical checkpoints and continuation instructions belong to their original Turns; later user requests determine the current task. If the current request is complete, return its final answer.";

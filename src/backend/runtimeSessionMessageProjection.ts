@@ -60,6 +60,10 @@ export function projectRuntimeTurnMessages(
   turn: RuntimeCommittedTurn,
   sessionId: string,
 ): ChatMessage[] {
+  // The model journal retains the real checkpoint exchange. The existing
+  // compaction event supplies its UI; do not render its reasoning as a reply.
+  turn = { ...turn, messages: turn.messages.filter(message =>
+    message.metadata?.runtimeMaintenance !== 'context_compaction') };
   let assistantSegmentIndex = 0;
   let segmentStartedAt = turn.createdAt;
   const lastAssistantIndex = findLastAssistantIndex(turn.messages);

@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { cacheChainObservationPayloadSchema } from "./cacheChain.js";
+import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
 import { toolErrorKindSchema } from "./tool.js";
-import { modelFailureDiagnosticsSchema } from "./model.js";
+import { modelEventSchema, modelFailureDiagnosticsSchema } from "./model.js";
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -60,7 +60,9 @@ export const runtimeEventKindSchema = z.enum([
   "permission_expired",
   "permission_cancelled",
   "cache_chain_observed",
+  "provider_input_observed",
   "model_request_usage",
+  "model_maintenance_response",
   "context_compaction_started",
   "context_compaction_retrying",
   "context_compaction_completed",
@@ -285,6 +287,10 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
     payload: cacheChainObservationPayloadSchema,
   }),
   runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("provider_input_observed"),
+    payload: providerInputObservationSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
     kind: z.literal("model_request_usage"),
     payload: z.object({
       round: z.number().int().positive(),
@@ -298,16 +304,44 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       preflightInputTokens: z.number().int().nonnegative().optional(),
       preflightMeasurement: z.enum(["provider", "fallback_estimate"]).optional(),
       usableInputTokens: z.number().int().positive().optional(),
+      inputCalibration: z.object({
+        inputTokens: z.number().int().nonnegative(),
+        prefixInputTokens: z.number().int().nonnegative(),
+        suffixEstimateTokens: z.number().int().nonnegative(),
+        suffixScale: z.number().finite().min(1),
+        safetyTokens: z.number().int().nonnegative(),
+      }).optional(),
+    }),
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal("model_maintenance_response"),
+    payload: z.object({
+      compactionId: z.string().min(1),
+      jobId: z.string().min(1),
+      round: z.number().int().positive(),
+      attempt: z.number().int().positive(),
+      maxOutputTokens: z.number().int().positive(),
+      sourceRanges: z.array(z.object({ turnId: z.string().min(1),
+        startMessage: z.number().int().nonnegative(), endMessageExclusive: z.number().int().nonnegative() })),
+      // Execution facts, including partial arguments and provider replay, are
+      // archived here instead of becoming unfinished conversation messages.
+      events: z.array(modelEventSchema),
     }),
   }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("context_compaction_started"),
     payload: contextCompactionIdentitySchema.extend({
-      thresholdRatio: z.number().positive(),
+      thresholdRatio: z.number().nonnegative(),
       triggerRatio: z.number().nonnegative(),
       estimatedInputTokens: z.number().int().nonnegative(),
       usableInputTokens: z.number().int().positive(),
       measurement: z.enum(["provider", "fallback_estimate"]),
+      compactionTriggerTokens: z.number().int().nonnegative().optional(),
+      compactionOutputTokens: z.number().int().positive().optional(),
+      normalOutputTokens: z.number().int().positive().optional(),
+      safetyTokens: z.number().int().nonnegative().optional(),
+      trigger: z.enum(["budget", "provider_context_limit"]).optional(),
+      countFailure: z.object({ code: z.string(), message: z.string(), status: z.number().int().optional() }).optional(),
       precedingTurnCount: z.number().int().nonnegative(),
       activeTurnIncluded: z.boolean(),
       activeThroughMessageId: z.string().min(1).optional(),
@@ -350,6 +384,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       maxAttempts: z.number().int().positive().nullable(),
       nextRetryMs: z.number().int().nonnegative(),
       code: z.string().min(1),
+      causeCode: z.string().min(1).optional(),
       message: z.string(),
       status: z.number().int().optional(),
       providerRequestId: z.string().optional(),

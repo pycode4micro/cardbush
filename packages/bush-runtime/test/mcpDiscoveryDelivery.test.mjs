@@ -22,17 +22,24 @@ function fixture() {
   return { registry, request, search };
 }
 
-test('long descriptions keep every search hit visible and only complete delivered schemas become callable', async () => {
+test('search keeps long descriptions compact and only an explicitly loaded schema becomes callable', async () => {
   const { registry, request, search } = fixture();
   const result = await search({ query: 'image generator', limit: 10 });
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), false, 'search execution alone does not imply delivery');
   const content = projectMcpDiscoveryResult(JSON.stringify(result));
   const view = JSON.parse(content);
-  assert.deepEqual(view.catalog.map(tool => tool.name), result.matches.map(tool => tool.name));
+  assert.equal(view.action, 'search');
+  assert.equal(view.catalog, undefined, 'one catalog, without duplicate entries');
   assert.ok(view.matches.some(tool => tool.name === 'mcp__seedream__generate'));
-  assert.ok(view.unloaded.includes('mcp__fixture__aaa_long'));
+  assert.ok(view.matches.every(tool => tool.inputSchema === undefined && tool.description.length <= 512));
+  assert.equal(view.matches.find(tool => tool.name === 'mcp__fixture__aaa_long').descriptionTruncated, true);
   const messages = [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] },
     { role: 'tool', toolCallId: 'search', content }];
+  synchronizeMcpDiscovery(registry, request, messages);
+  assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), false, 'a search receipt cannot authorize a call');
+  const full = await search({ action: 'load', query: 'mcp__seedream__generate' });
+  messages.push({ role: 'assistant', content: '', toolCalls: [{ id: 'load', name: 'mcp_search', argumentsText: '{"action":"load","query":"mcp__seedream__generate"}' }] },
+    { role: 'tool', toolCallId: 'load', content: projectMcpDiscoveryResult(JSON.stringify(full)) });
   synchronizeMcpDiscovery(registry, request, messages);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), true);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__fixture__aaa_long'), false);
@@ -46,10 +53,46 @@ test('exact names rank before description mentions; pagination and isolated larg
   const first = await search({ query: '*', limit: 2 });
   const second = await search({ query: '*', limit: 2, offset: first.next_offset });
   assert.equal(new Set([...first.matches, ...second.matches].map(tool => tool.name)).size, 4);
-  const isolated = await search({ query: 'mcp__fixture__aaa_long', limit: 1, reload: true });
+  const isolated = await search({ action: 'load', query: 'mcp__fixture__aaa_long' });
   const view = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(isolated)));
   assert.deepEqual(view.matches[0], isolated.matches[0]);
   assert.ok(view.matches[0].description.length > 16_000);
+  assert.equal(view.catalog, undefined);
+  assert.deepEqual(await search({ query: 'mcp__fixture__aaa_long', reload: true }), isolated, 'old exact reload calls remain decodable');
+  await assert.rejects(() => search({ action: 'load', query: 'image generator' }), /exact name/);
+  await assert.rejects(() => search({ action: 'load', query: '*', server: 'fixture' }), /exact name/);
+  assert.throws(() => search({ action: 'unexpected', query: '*' }), /action/);
+  assert.throws(() => search({ action: 'load', query: 'generate', offset: 1 }), /offset/);
+});
+
+test('loads use exact identities and preserve current visibility across duplicate server tool names', async () => {
+  const { registry, request, search } = fixture();
+  registry.register({ definition: { name: 'mcp__other__generate', description: 'Another image tool', inputSchema: { type: 'object' } },
+    manifest, decodeInput: value => value, execute: () => ({}), mcpHook: { server: 'other', tool: 'generate', call: async () => ({}) } });
+  request.tools = registry.definitions();
+  await assert.rejects(() => search({ action: 'load', query: 'generate' }), /ambiguous/);
+  assert.equal((await search({ action: 'load', query: 'generate', server: 'seedream' })).matches[0].name, 'mcp__seedream__generate');
+  assert.equal((await search({ action: 'load', query: 'mcp__other__generate' })).matches[0].name, 'mcp__other__generate');
+  registry.resolve('mcp__other__generate').sessionScope = 'different-session';
+  await assert.rejects(() => search({ action: 'load', query: 'mcp__other__generate' }), /unavailable/);
+  request.tools = request.tools.filter(tool => tool.name !== 'mcp__seedream__generate');
+  await assert.rejects(() => search({ action: 'load', query: 'mcp__seedream__generate' }), /unavailable/);
+});
+
+test('a load constrained by context is archived intact and cannot make an unseen schema callable', async () => {
+  const { registry, request } = fixture();
+  const store = new ToolExecutionStore();
+  const loop = new RuntimeToolLoop({ registry, executionStore: store, eventLog: new InMemoryRuntimeEventLog(),
+    identity: { requestId: 'r', sessionId: 's', turnId: 't' } });
+  const call = { protocol: 'bush.tool_call.v1', id: 'load', name: 'mcp_search', argumentsText: JSON.stringify({ action: 'load', query: 'mcp__fixture__aaa_long' }) };
+  const result = await loop.execute([call], { round: 1, assistantMessageId: 'a', request, contextMessages: [], modelContextIngressBudgetTokens: 250 });
+  const receipt = JSON.parse(result.messages[0].content);
+  assert.equal(receipt.archived, true); assert.match(receipt.locator, /^tool-result:/);
+  const raw = store.get('s', 't', 'load').result;
+  assert.equal(raw.action, 'load'); assert.equal(raw.matches[0].description.length, 'image generator '.repeat(5000).length);
+  assert.ok(raw.matches[0].inputSchema);
+  synchronizeMcpDiscovery(registry, request, [{ role: 'assistant', content: '', toolCalls: [call] }, ...result.messages]);
+  assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__fixture__aaa_long'), false);
 });
 
 test('adversarial sizes never produce partial definitions or hide hit identities', () => {
@@ -85,14 +128,16 @@ test('trusted Hook feedback cannot be bypassed by the structured discovery proje
 test('discovery carries presentation capabilities and declared UI through compact and truncated results', async () => {
   const { registry, request, search } = fixture();
   registry.resolve('mcp__seedream__generate').mcpApp = { resourceUri: 'ui://generate', readResource: async () => { throw Error('Search must not load UI'); } };
-  const result = await search({ query: 'mcp__seedream__generate' });
-  assert.equal(result.hostCapabilities.files.presentationTool, 'present_artifact');
+  const result = await search({ action: 'load', query: 'mcp__seedream__generate' });
+  assert.deepEqual(result.hostCapabilities.interfaces, {
+    mcpApps: true, openAiBridge: true, presentation: 'conversation', statusTool: 'mcp_app_status',
+  });
+  assert.equal(result.hostCapabilities.files, undefined);
   const projected = projectMcpDiscoveryResult(JSON.stringify(result));
   synchronizeMcpDiscovery(registry, request, [{ role: 'assistant', content: '', toolCalls: [{ id: 'c', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'c', content: projected }]);
   const compact = await search({ query: 'mcp__seedream__generate' });
-  assert.equal(compact.matches[0].loaded, true); assert.equal(compact.matches[0].interface.state, 'declared');
-  assert.equal(compact.matches[0].revision, result.matches[0].revision);
-  const limited = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(result), 0));
-  assert.equal(limited.matches.length, 0); assert.equal(limited.catalog[0].interface.resourceUri, 'ui://generate');
-  assert.deepEqual(limited.hostCapabilities, result.hostCapabilities);
+  assert.equal(compact.matches[0].loaded, true);
+  assert.equal(compact.matches[0].inputSchema, undefined);
+  assert.equal(JSON.parse(projected).matches[0].interface.resourceUri, 'ui://generate');
+  assert.equal(projectMcpDiscoveryResult(JSON.stringify(result), 0), undefined, 'a full load that does not fit uses the ordinary archive');
 });

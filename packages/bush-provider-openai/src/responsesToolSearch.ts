@@ -32,7 +32,7 @@ export function responseTools(request: ModelRequest, mode: ResponsesToolSearchMo
   return request.tools.flatMap((tool): Tool[] => {
     if (mode === "native" && tool.name === "mcp_search") return [{
       type: "tool_search", execution: "client", parameters: tool.inputSchema,
-      description: "Find MCP tools by capability, server or exact name. Loaded tools can be called directly and reused across turns. Search again when a definition changes or leaves context. Search does not execute tools or grant permission.",
+      description: "Discover MCP tools progressively. action=search (default) returns names and short descriptions without loading schemas. action=load with query set to an exact name reads one full schema. Only then can the tool be called directly and reused across turns. Load again if its definition changes or leaves context. Use server to narrow searches and next_offset to page. Neither action executes the discovered tool or grants permission.",
     }];
     if (mode === "native" && tool.name === "mcp_call") return [];
     return [responseFunctionTool(tool)];
@@ -65,6 +65,9 @@ export function discoveryInputProjection(request: ModelRequest) {
       // Keep compact references, paging and errors visible without duplicating schemas.
       const receipt = result ? JSON.stringify({ ...result.output, matches: result.output.matches.map(match => {
         if (!match || typeof match !== "object") return match;
+        // Summary names must remain the Runtime's exact lookup identities,
+        // including names too long for native function declarations.
+        if ((result.output as { action?: string }).action === 'search') return match;
         const { description: _description, inputSchema: _schema, ...reference } = match as Record<string, unknown>;
         return { ...reference, ...(typeof reference.name === "string" ? { name: responseToolName(reference.name) } : {}) };
       }) }) : message.content;

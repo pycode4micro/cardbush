@@ -97,6 +97,10 @@ export class OpenAIResponsesProviderRegistry implements ModelProvider {
     };
   }
 
+  async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number | undefined> {
+    return this.#resolve(request)?.estimateInputTokens?.(request, options);
+  }
+
   async countInputTokens(
     request: ModelRequest,
     options: ModelStreamOptions = {},

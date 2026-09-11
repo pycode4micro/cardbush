@@ -96,8 +96,10 @@ test("Stop interrupts a long backoff immediately and prevents another request", 
   });
   context.after(() => host.sendCommand({ kind: STOP_RUNTIME_TURN_COMMAND, payload: { sessionId: request.sessionId, turnId: request.turnId } }));
   const running = host.runModelTurn(request);
-  for (let index = 0; index < 100 && !host.events(request.sessionId, request.turnId).some(item => item.kind === "provider_retry"); index += 1) {
-    await new Promise(resolve => setImmediate(resolve));
+  // Wait for the fact under test. A fixed number of event-loop ticks can
+  // expire before startup I/O settles when other test workers are running.
+  for await (const item of host.openEventStream({ sessionId: request.sessionId, turnId: request.turnId, signal: context.signal })) {
+    if (item.kind === "provider_retry") break;
   }
   assert.ok(host.events(request.sessionId, request.turnId).some(item => item.kind === "provider_retry"));
   const start = Date.now();

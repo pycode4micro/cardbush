@@ -28,6 +28,7 @@ import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOut
 import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, isToolSearchUnsupported, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
 import { responseToolAliases, responseToolName } from "./responsesToolNames.js";
 import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
+import { responsesInputFingerprint } from "./responsesInputFingerprint.js";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -382,6 +383,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
     this.#capabilityScope = config.capabilityScope ?? openAIResponsesCapabilityScope(config);
   }
 
+  async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
+    options.signal?.throwIfAborted();
+    const projection = await this.#project({ ...request, providerState: undefined });
+    options.signal?.throwIfAborted();
+    const fingerprint = responsesInputFingerprint(projection.params, projection.params, request.providerBinding);
+    options.onInputProjection?.(fingerprint);
+    return fingerprint.tokenEstimate!.tokens;
+  }
+
   async countInputTokens(
     request: ModelRequest,
     options: ModelStreamOptions = {},
@@ -440,7 +450,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
       // Only an explicit pre-stream protocol rejection can retry with portable tools.
       // Once any response is accepted, never replay it under another protocol.
       const { result: stream, projection } = await this.#withToolSearchFallback(request, initialProjection,
-        params => this.#client.responses.create(params, { signal: options.signal }));
+        (params, activeProjection) => {
+          if (options.onInputProjection) {
+            const full = toResponsesCreateParams(activeProjection.request, {
+              disableProviderState: true, toolSearchMode: activeProjection.toolSearchMode,
+            });
+            options.onInputProjection(responsesInputFingerprint(full, params, request.providerBinding));
+          }
+          return this.#client.responses.create(params, { signal: options.signal });
+        });
       const resolvedRequest = projection.request;
       const activeProviderState = projection.usesProviderState;
       if (hasMcpDiscovery(resolvedRequest)) state.toolSearchMode = projection.toolSearchMode;
@@ -510,15 +528,15 @@ export class OpenAIResponsesProvider implements ModelProvider {
   }
 
   async #withToolSearchFallback<T>(request: ModelRequest, projection: ResponsesProjection,
-    operation: (params: ResponseCreateParamsStreaming) => Promise<T>): Promise<{ result: T; projection: ResponsesProjection }> {
+    operation: (params: ResponseCreateParamsStreaming, projection: ResponsesProjection) => Promise<T>): Promise<{ result: T; projection: ResponsesProjection }> {
     try {
-      return { result: await operation(projection.params), projection };
+      return { result: await operation(projection.params, projection), projection };
     } catch (error) {
       if (projection.toolSearchMode !== "native" || !isToolSearchUnsupported(error)) throw error;
       this.#observeCapability(request.model, TOOL_SEARCH_CAPABILITY, "unsupported", "client_tool_search_rejected");
       if (historicalToolSearchMode(request) !== undefined || request.providerState?.previousResponseId) throw error;
       const fallback = await this.#project(request, "function");
-      return { result: await operation(fallback.params), projection: fallback };
+      return { result: await operation(fallback.params, fallback), projection: fallback };
     }
   }
 

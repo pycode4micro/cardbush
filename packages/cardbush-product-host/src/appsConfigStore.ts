@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { replaceFile, withConfigFileLock } from "./atomicFiles.js";
-import { defaultPluginProxy, pluginProxySchema, type PluginProxySettings } from '@cardbush/bush-protocol';
+import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, pluginProxySchema, searchResultLimitSchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
@@ -63,6 +63,7 @@ export interface CardbushAppsConfigSnapshot {
   revision: number;
   serviceEnabled: boolean;
   proxy: PluginProxySettings;
+  searchResultLimit: number;
   plugins: CardbushAppPluginConfig[];
 }
 
@@ -163,6 +164,7 @@ export function defaultCardbushAppsConfig(
     revision: 1,
     serviceEnabled: true,
     proxy: defaultPluginProxy(),
+    searchResultLimit: DEFAULT_SEARCH_RESULT_LIMIT,
     plugins: catalog.map((entry) => ({
       ...entry,
       installed: entry.installation === "INSTALLED_BY_DEFAULT",
@@ -190,6 +192,7 @@ function decodeUpdate(
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: existing.revision + 1,
     proxy: pluginProxySchema.parse(value.proxy ?? existing.proxy),
+    searchResultLimit: searchResultLimitSchema.parse(value.searchResultLimit === undefined ? existing.searchResultLimit : value.searchResultLimit),
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
     plugins: existing.plugins.map((plugin) => {
       const candidate = candidates.get(plugin.id);
@@ -221,6 +224,7 @@ function decodeSnapshot(
     protocol: CARDBUSH_APPS_CONFIG_PROTOCOL,
     revision: positiveInteger(value.revision, "revision"),
     proxy: pluginProxySchema.parse(value.proxy ?? defaultPluginProxy()),
+    searchResultLimit: searchResultLimitSchema.default(DEFAULT_SEARCH_RESULT_LIMIT).parse(value.searchResultLimit),
     serviceEnabled: boolean(value.serviceEnabled, "serviceEnabled"),
     plugins: catalog.map((entry) => {
       const state = stored.get(entry.id);
@@ -235,6 +239,22 @@ function decodeSnapshot(
       };
     }),
   };
+}
+
+/** Read the same persisted default without rescanning the plugin catalog on each search. */
+export async function readCardbushSearchResultLimit(path?: string): Promise<number> {
+  if (!path) return DEFAULT_SEARCH_RESULT_LIMIT;
+  let text: string;
+  try { text = await readFile(path, 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return DEFAULT_SEARCH_RESULT_LIMIT;
+    throw error;
+  }
+  const value = record(JSON.parse(text), 'Stored CardBush Apps configuration must be an object.');
+  if (value.protocol !== CARDBUSH_APPS_CONFIG_PROTOCOL || !Array.isArray(value.plugins)) {
+    throw new Error('Stored CardBush Apps configuration has an unsupported schema.');
+  }
+  return searchResultLimitSchema.default(DEFAULT_SEARCH_RESULT_LIMIT).parse(value.searchResultLimit);
 }
 
 function defaultConfig(id: string): Record<string, unknown> {

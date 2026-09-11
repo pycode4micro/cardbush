@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
 import type { FileMemoResolution } from '@cardbush/bush-protocol';
 import { fetchFileMemo } from '../../backend/fileMemo';
 import { fileUrl, isImagePath, isVideoPath, isAudioPath } from '../../shared/localPaths';
@@ -6,11 +6,13 @@ import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { showUiError } from '../../shared/showUiError';
 import { openInspector } from '../inspector/inspectorEvents';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
+import { mediaPresentationKey, PresentedMediaContext } from './mediaPresentation';
 
 export function FileMemoReference({ reference, children, inline = false, language = 'zh', load = fetchFileMemo }: {
   reference: string; children?: ReactNode; inline?: boolean; language?: 'zh' | 'en';
   load?: typeof fetchFileMemo;
 }) {
+  const presentedMedia = useContext(PresentedMediaContext);
   const [state, setState] = useState<{ reference: string; result?: FileMemoResolution; error?: string }>();
   const [failedMedia, setFailedMedia] = useState<string>();
   useEffect(() => {
@@ -40,7 +42,7 @@ export function FileMemoReference({ reference, children, inline = false, languag
     {label} · {language === 'zh' ? '文件不可访问' : 'File unavailable'}
   </span>;
   const mediaKey = JSON.stringify([reference, memo.file.size, memo.file.mtimeMs]);
-  const media = inline && status === 'available' && failedMedia !== mediaKey;
+  const media = inline && status === 'available' && failedMedia !== mediaKey && !presentedMedia.has(mediaPresentationKey(path));
   const source = fileUrl(path);
   return <span className="file-memo-reference" title={`${language === 'zh' ? '模型备注' : 'Model note'}: ${memo.note.purpose}`}>
     {media && isImagePath(path) ? <img src={source} alt={typeof children === 'string' ? children : memo.file.name}

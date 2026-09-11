@@ -20,3 +20,4 @@ export * from './automation.js';
 export * from './accounts.js';
 export * from './fileMemo.js';
 export * from './proxy.js';
+export * from './search.js';

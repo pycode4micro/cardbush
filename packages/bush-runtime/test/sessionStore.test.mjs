@@ -140,7 +140,7 @@ test("projects a partial active-Turn checkpoint while retaining raw Tool history
   const projected = assembleContext({ session: committed });
   assert.deepEqual(projected.messages.map((message) => message.role), [
     "user",
-    "assistant",
+    "user",
     "assistant",
   ]);
   assert.match(projected.messages[1].content, /active_turn_checkpoint/);

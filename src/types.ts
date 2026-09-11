@@ -432,6 +432,7 @@ export interface CardbushAppsConfiguration {
   revision: number;
   serviceEnabled: boolean;
   proxy?: PluginProxySettings;
+  searchResultLimit?: number;
   plugins: CardbushAppPlugin[];
 }
 

@@ -1,6 +1,8 @@
 import { readdir } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import { searchLimitParameter, searchResultLimitSchema } from '@cardbush/bush-protocol';
 import { readPluginSkill, skillPluginIdentity } from './pluginSkills.js';
+import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
 
 import type { ToolRegistration, ToolRegistry } from "./toolRegistry.js";
 
@@ -19,25 +21,27 @@ export type SkillRootProvider = () => string[] | Promise<string[]>;
 export function registerSkillTools(
   registry: ToolRegistry,
   roots: string[] | SkillRootProvider,
+  loadSearchResultLimit?: SearchResultLimitProvider,
 ): void {
   const provider = typeof roots === "function"
     ? async () => normalizeRoots(await roots())
     : async () => normalizeRoots(roots);
-  registry.register(searchRegistration(provider));
+  registry.register(searchRegistration(provider, loadSearchResultLimit));
 }
 
 function searchRegistration(
   roots: SkillRootProvider,
-): ToolRegistration<{ query: string; limit: number }> {
+  loadSearchResultLimit?: SearchResultLimitProvider,
+): ToolRegistration<{ query: string; limit?: number }> {
   return {
     definition: {
       name: "search_skills",
-      description: "Search installed Skills by capability. Plugin Skills include an invocation id: use run_skill with that id to enforce policies, parameters and dependencies. Other Skills provide a local SKILL.md mainResource to read before following them.",
+      description: "Search installed Skills by capability. Returns names, short descriptions and local SKILL.md paths in mainResource. Read the selected file with read_file for full instructions. Plugin Skills also include an invocation id: use run_skill with that id to apply policies, parameters and dependencies; reading the file alone does not invoke them.",
       inputSchema: {
         type: "object",
         properties: {
           query: { type: "string", minLength: 1 },
-          limit: { type: "integer", minimum: 1, maximum: 20, default: 8 },
+          limit: { ...searchLimitParameter },
         },
         required: ["query"],
         additionalProperties: false,
@@ -49,11 +53,12 @@ function searchRegistration(
     decodeInput: (value) => {
       const input = object(value);
       const query = String(input.query ?? "").trim();
-      const limit = Math.min(20, Math.max(1, Number(input.limit) || 8));
+      const limit = searchResultLimitSchema.optional().parse(input.limit);
       if (!query) throw new Error("query is required.");
       return { query, limit };
     },
     execute: async (context) => {
+      const limit = await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const activeRoots = await roots();
       const terms = tokens(context.input.query);
       const configured = context.turn?.request.metadata.allowedSkills;
@@ -69,7 +74,14 @@ function searchRegistration(
         .map((skill) => ({ ...skill, score: score(skill, terms) }))
         .filter((skill) => skill.score > 0)
         .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-        .slice(0, context.input.limit);
+        .slice(0, limit)
+        .map(skill => ({
+          name: skill.name,
+          description: skill.description.slice(0, 512),
+          ...(skill.description.length > 512 ? { descriptionTruncated: true } : {}),
+          mainResource: skill.mainResource,
+          ...(skill.invocation ? { invocation: skill.invocation } : {}),
+        }));
       return { matches };
     },
   };

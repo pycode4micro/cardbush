@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
+import { searchLimitParameter, searchResultLimitSchema, toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
 import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
+import { resolveSearchResultLimit, type SearchResultLimitProvider } from './searchResultLimit.js';
 
 export const MCP_DISCOVERY_PROTOCOL = 'bush.mcp_discovery.v1';
 
@@ -11,6 +12,11 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
   let result: any;
   try { result = JSON.parse(text); } catch { return undefined; }
   if (result?.protocol !== MCP_DISCOVERY_PROTOCOL || !Array.isArray(result.matches)) return undefined;
+  // New search receipts are already compact; an explicit load is one complete
+  // definition. Oversized receipts use the ordinary immutable result archive.
+  if (result.action === 'search' || result.action === 'load') {
+    return text.length <= (maxChars ?? (result.action === 'load' ? 128_000 : 16_000)) ? text : undefined;
+  }
   const catalog = result.matches.map((item: any) => ({ name: item.name, server: item.server, tool: item.tool,
     revision: item.revision, ...(item.interface ? { interface: item.interface } : {}), ...(typeof item.description === 'string' ? { summary: item.description.slice(0, 160) } : {}) }));
   const output = { protocol: result.protocol, sessionId: result.sessionId, catalog, ...(result.hostCapabilities ? { hostCapabilities: result.hostCapabilities } : {}),
@@ -168,19 +174,25 @@ export function modelToolDefinitions(registry: ToolRegistry, request: ModelReque
   return tools;
 }
 
-export function registerMcpDiscovery(registry: ToolRegistry): void {
+export function registerMcpDiscovery(registry: ToolRegistry, loadSearchResultLimit?: SearchResultLimitProvider): void {
   const manifest = { effect_kind: 'observation' as const, operation: 'mcp.search', risk: 'low' as const, owner: 'runtime', dispatch_scope: 'parent_session' as const, mutating: false };
-  registry.register<{ query: string; server?: string; limit: number; offset: number; reload: boolean }>({
-    definition: { name: 'mcp_search', description: 'Find MCP tools by capability, server or exact name. Returns schemas for new/changed tools; unchanged tools already visible in this conversation return compact references. Reuse loaded tools with mcp_call across turns. Set reload to true for full schemas. The result includes a compact catalog; unloaded lists definitions that did not fit. Load one with its exact name, reload=true and limit=1. Use next_offset for more matches. Legacy archived results can be read with read_archived_tool_result. Search does not execute tools or grant permission.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, server: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 10, default: 5 }, reload: { type: 'boolean', default: false }, offset: { type: 'integer', minimum: 0, default: 0 } }, required: ['query'], additionalProperties: false } },
+  registry.register<{ action: 'search' | 'load'; query: string; server?: string; limit?: number; offset: number }>({
+    definition: { name: 'mcp_search', description: 'Discover MCP tools progressively. action=search (default) returns names and short descriptions, without schemas; use server to narrow results and next_offset to page. action=load reads one complete schema: set query to the exact name from search. Load before calling a tool; reuse a schema already visible in context with mcp_call. Load again if it changes or leaves context. Oversized results remain available through read_archived_tool_result. Neither action executes the discovered tool or grants permission.', inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['search', 'load'], default: 'search' }, query: { type: 'string', minLength: 1 }, server: { type: 'string' }, limit: { ...searchLimitParameter }, offset: { type: 'integer', minimum: 0, default: 0 } }, required: ['query'], additionalProperties: false } },
     manifest, parallelSafe: true,
     decodeInput: input => {
       const value = input as Record<string, unknown>;
       if (!value || typeof value.query !== 'string' || !value.query.trim() || (value.server !== undefined && typeof value.server !== 'string') || (value.reload !== undefined && typeof value.reload !== 'boolean')) throw new Error('MCP search needs a non-empty query, optional server and boolean reload.');
+      // Decode old in-flight calls without advertising a second loading API.
+      const action = value.action ?? (value.reload === true ? 'load' : 'search');
+      if (action !== 'search' && action !== 'load') throw new Error('action must be search or load.');
+      if (value.reload === true && action !== 'load') throw new Error('reload cannot be combined with action=search.');
       if (value.offset !== undefined && (!Number.isSafeInteger(value.offset) || Number(value.offset) < 0)) throw new Error('offset must be a nonnegative integer.');
-      return { query: value.query.trim(), server: value.server as string | undefined, limit: Math.min(10, Math.max(1, Number(value.limit) || 5)), offset: Number(value.offset) || 0, reload: value.reload === true };
+      if (action === 'load' && Number(value.offset)) throw new Error('action=load reads one exact name and does not accept a page offset.');
+      return { action, query: value.query.trim(), server: value.server as string | undefined, limit: searchResultLimitSchema.optional().parse(value.limit), offset: Number(value.offset) || 0 };
     },
-    execute: context => {
+    execute: async context => {
       if (!context.turn) throw new Error('MCP discovery requires a task.');
+      const limit = context.input.action === 'load' ? 1 : await resolveSearchResultLimit(context.input.limit, loadSearchResultLimit);
       const request = context.turn.request;
       const visible = new Set(request.tools.map(tool => tool.name));
       const terms = [...new Set(context.input.query.toLocaleLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [])];
@@ -189,24 +201,38 @@ export function registerMcpDiscovery(registry: ToolRegistry): void {
         if (!definition) return [];
         const mcp = registry.resolve(tool.name)!.mcpHook!;
         if (context.input.server && mcp.server !== context.input.server) return [];
+        if (context.input.action === 'load') return [definition.name, mcp.tool].includes(context.input.query)
+          ? [{ definition, server: mcp.server, tool: mcp.tool, score: definition.name === context.input.query ? 2 : 1 }] : [];
         const text = [mcp.server, mcp.tool, definition.name, definition.description].join(' ').toLocaleLowerCase();
         const exact = [mcp.tool, definition.name].some(name => name.toLocaleLowerCase() === context.input.query.toLocaleLowerCase());
         const score = (exact ? terms.length + 1 : 0) + terms.reduce((sum, term) => sum + (text.includes(term) ? 1 : 0), 0);
         return score || context.input.server || context.input.query === '*' ? [{ definition, server: mcp.server, tool: mcp.tool, score }] : [];
       }).sort((a, b) => b.score - a.score || a.definition.name.localeCompare(b.definition.name));
       const loaded = loadedTools(registry, request);
-      const matches = candidates.slice(context.input.offset, context.input.offset + context.input.limit).map(candidate => {
+      if (context.input.action === 'load' && (candidates.length === 0 || (candidates.length > 1 && candidates[0]!.score !== 2))) {
+        throw new Error(candidates.length ? 'Tool name is ambiguous; use the exact qualified name returned by search.' : 'Tool not found or unavailable. Search for its current exact name.');
+      }
+      const page = context.input.action === 'load' ? candidates.slice(0, 1) : candidates.slice(context.input.offset, context.input.offset + limit);
+      const matches = page.map(candidate => {
         const version = revision(registry, candidate.definition);
+        if (context.input.action !== 'load') return {
+          name: candidate.definition.name, description: candidate.definition.description.slice(0, 512),
+          ...(candidate.definition.description.length > 512 ? { descriptionTruncated: true } : {}),
+          server: candidate.server, tool: candidate.tool,
+          ...(loaded.get(candidate.definition.name) === version ? { loaded: true } : {}),
+        };
         const app = registry.resolve(candidate.definition.name)?.mcpApp;
         const reference = { name: candidate.definition.name, server: candidate.server, tool: candidate.tool, revision: version,
           declarationSource: 'server', ...(app ? { interface: { resourceUri: app.resourceUri, state: 'declared' } } : {}) };
-        const alreadyLoaded = loaded.get(candidate.definition.name) === version;
-        return !context.input.reload && alreadyLoaded ? { ...reference, loaded: true } : { ...candidate.definition, ...reference };
+        return { ...candidate.definition, ...reference };
       });
       remember(registry, request, loaded);
       const next = context.input.offset + matches.length;
-      return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, hostCapabilities: MCP_HOST_CAPABILITIES, matches, total: candidates.length,
-        more: candidates.length > next, ...(candidates.length > next ? { next_offset: next } : {}) };
+      return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, action: context.input.action,
+        ...(context.input.action === 'load' ? { hostCapabilities: MCP_HOST_CAPABILITIES } : {}),
+        matches, total: context.input.action === 'load' ? 1 : candidates.length,
+        more: context.input.action !== 'load' && candidates.length > next,
+        ...(context.input.action !== 'load' && candidates.length > next ? { next_offset: next } : {}) };
     },
   });
   registry.register<{ name: string; arguments: Record<string, unknown> }>({
@@ -221,7 +247,7 @@ export function registerMcpDiscovery(registry: ToolRegistry): void {
       const mcp = registry.resolve(context.input.name)?.mcpHook;
       if (!context.turn || !mcp || !available(registry, context.turn.request, context.input.name) ||
         !mcpToolWasDiscovered(registry, { ...context.turn.request, metadata: { ...context.turn.request.metadata, mcpToolDiscovery: true } }, context.input.name)) {
-        throw Object.assign(new Error('Load the current schema with mcp_search first. It may have changed, become unavailable, or left context after compaction.'), { code: 'mcp_discovery_required' });
+        throw Object.assign(new Error('Load the current schema with mcp_search action=load and query set to its exact name. It may have changed, become unavailable, or left context after compaction.'), { code: 'mcp_discovery_required' });
       }
       return { mcp: { server: mcp.server, tool: mcp.tool, name: context.input.name }, result: await context.invokeTool(context.input.name, context.input.arguments) };
     },

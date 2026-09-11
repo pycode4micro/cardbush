@@ -10,6 +10,7 @@ import {
   type RuntimeSessionCommitCheckpoint,
   type RuntimeSessionTurnRequest,
   type SessionSnapshot,
+  type SessionUsage,
   type SessionSupersession,
   type TurnContextCheckpoint,
 } from "@cardbush/bush-protocol";
@@ -27,18 +28,10 @@ export interface GeneratedMessageFact {
   messageId: string;
   createdAt: string;
   message: ModelMessage;
+  metadata?: Record<string, unknown>;
 }
 
-export interface SessionUsageFact {
-  model?: string;
-  contextWindowTokens?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedInputTokens?: number;
-  lastRequestInputTokens?: number;
-  lastRequestOutputTokens?: number;
-  lastRequestCachedInputTokens?: number;
-}
+export type SessionUsageFact = SessionUsage;
 
 export type TurnTerminalPayload = Extract<
   RuntimeEvent,
@@ -111,21 +104,20 @@ export class RuntimeSessionCoordinator {
     totalTurns: number;
   } {
     const session = this.#contextSession(sessionId);
-    const superseded = new Set(session.supersededMessageIds);
+    const visible = new Set(assembleContextProjection({ session }).turns.map(turn => turn.turnId));
     return {
       revision: session.revision,
       unsummarizedTurnIds: session.turns
         .filter((turn) =>
-          !turn.contextSummary &&
-          turn.messages.some((message) => !superseded.has(message.messageId)),
+          visible.has(turn.turnId),
         )
         .map((turn) => turn.turnId),
       totalTurns: session.turns.length,
     };
   }
 
-  contextSourceTurns(sessionId: string) {
-    return assembleContextProjection({ session: this.#contextSession(sessionId) }).turns;
+  contextSourceTurns(sessionId: string, coveredTurnIds?: string[]) {
+    return assembleContextProjection({ session: this.#contextSession(sessionId), coveredTurnIds }).turns;
   }
 
   summarizeContext(input: {
@@ -156,14 +148,14 @@ export class RuntimeSessionCoordinator {
     sessionId: string;
     prefix: ModelMessage[];
     current: ModelMessage[];
-    maxSummaryTurns?: number;
+    coveredTurnIds?: string[];
     supersession?: SessionSupersession;
   }): ContextSnapshot {
     return assembleContext({
       session: this.#contextSession(input.sessionId, input.supersession),
       prefix: input.prefix,
       current: input.current,
-      maxSummaryTurns: input.maxSummaryTurns,
+      coveredTurnIds: input.coveredTurnIds,
     });
   }
 
@@ -283,6 +275,7 @@ export class RuntimeSessionCoordinator {
           messageIndex: inputMessages.length + index,
           createdAt: item.createdAt,
           message: item.message,
+          ...(item.metadata ? { metadata: item.metadata } : {}),
         }));
         this.#store.commitTurn(request.sessionId, {
           turnId: request.turnId,

@@ -28,17 +28,17 @@ test("uses one enforced output limit for pressure and Provider dispatch", () => 
 test("reserves the next checkpoint before a response can cross the hard boundary", () => {
   const safe = pressure({ estimatedPromptTokens: 185_000 });
   const lastSafeBoundary = pressure({
-    estimatedPromptTokens: 191_000,
+    estimatedPromptTokens: 205_568,
     reservedOutputTokens: 32_000,
     usableInputTokens: 224_000,
-    ratio: 191_000 / 224_000,
+    ratio: 205_568 / 224_000,
   });
 
   assert.equal(requiresContextCompactionBeforeRound(safe), false);
   assert.equal(
     requiresContextCompactionBeforeRound(lastSafeBoundary),
     true,
-    "a large configured response must trigger before the nominal 95% line",
+    "reserve the independent maintenance allowance before the nominal 95% line",
   );
   assert.equal(contextToolIngressTokenBudget({
     pressure: safe,
@@ -121,9 +121,8 @@ test("slims only an emergency checkpoint request without mutating legacy history
   });
 
   assert.deepEqual(messages, canonical, "the append-only source must remain exact");
-  assert.equal(projection.omittedReasoningMessages, 1);
   assert.ok(projection.compactedToolResults > 0);
-  assert.equal(projection.messages[0].reasoningContent, undefined);
+  assert.deepEqual(projection.messages[0], canonical[0], "reasoning remains attached to the actual assistant/tool exchange");
   const receipts = projection.messages
     .filter((message) => message.role === "tool")
     .map((message) => JSON.parse(message.content))

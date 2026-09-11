@@ -88,17 +88,17 @@ test("does not replay stale provider output after message edits or model/binding
   assert.equal(changed.find((item) => item.role === "assistant").content, "Edited answer.");
 });
 
-test("maintenance projection drops opaque replay with hidden reasoning without mutating history", async () => {
+test("maintenance projection retains required reasoning and opaque replay without mutating history", async () => {
   const assistant = await assistantFrom();
   const projected = projectContextCompactionMaintenanceMessages({
     messages: [assistant], sessionId: "s", turnId: "t",
     pressure: { estimatedPromptTokens: 1000, usableInputTokens: 900, fallbackScale: 1 },
   });
-  assert.equal(projected.messages[0].providerReplay, undefined);
-  assert.equal(projected.messages[0].reasoningContent, undefined);
+  assert.deepEqual(projected.messages[0], assistant);
+  assert.equal(projected.removedChars, 0);
   assert.deepEqual(assistant.providerReplay.data.items, outputs);
   assert.equal(JSON.stringify(toResponsesCreateParams({ ...baseRequest, messages: projected.messages }).input)
-    .includes("opaque-provider-reasoning"), false);
+    .includes("opaque-provider-reasoning"), true);
 });
 
 test("durable Session replay survives a Runtime restart and remains usable in the next Turn", async (t) => {

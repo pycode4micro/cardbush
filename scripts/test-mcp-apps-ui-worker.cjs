@@ -21,6 +21,7 @@ app.whenReady().then(async () => {
     await read('window.originalFrame=document.querySelector("iframe"); renderFixture(false)');
     await until('document.body.innerText.includes("report.pdf")');
     assert.equal(await read('document.querySelector("iframe") === originalFrame'), true, 'completion keeps the active interface mounted');
+    assert.equal(await read('!!(document.querySelector(".message-tool-outputs").compareDocumentPosition(document.querySelector(".assistant-final-answer")) & Node.DOCUMENT_POSITION_FOLLOWING)'), true, 'delivered results precede their final explanation');
     assert.equal(await read('operations.filter(x=>x.action==="open").length'), 1);
     assert.equal(await read('operations.find(x=>x.action==="open").toolCallId'), 'tool', 'only the latest result auto-opens');
     assert.equal(await read('operations.findIndex(x=>x.action==="prepare-network") < operations.findIndex(x=>x.action==="open")'), true);
@@ -138,7 +139,9 @@ app.whenReady().then(async () => {
     assert.equal(await read('document.querySelector("iframe")'), null, 'a server-declared tool error does not open an empty result widget');
     assert.equal(await read('operations.filter(x=>x.action==="open").length'), await read('beforeToolError'));
     assert.equal(await read('document.querySelector(".mcp-app-error details").open'), false);
+    await read('document.querySelector(".mcp-app-tool-error").scrollIntoView({block:"center"})');
     await read('document.querySelector(".mcp-app-error summary").click()');
+    await until('document.querySelector(".mcp-app-error details").open && document.querySelector(".mcp-app-error pre").innerText.includes("instagram_post")');
     assert.equal(await read('document.querySelector(".mcp-app-error pre").innerText.includes("instagram_post")'), true);
     await read('document.querySelector(".mcp-app-tool-error").scrollIntoView({block:"center"})'); win.webContents.invalidate();
     await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
@@ -187,7 +190,61 @@ app.whenReady().then(async () => {
     await read('overlapCalls[4].resolve({structuredContent:{current:true}})');
     await until('!!fixtureReports.called');
     assert.deepEqual(await read('fixtureReports.called'), { structuredContent: { current: true } });
-    console.log('MCP Apps UI passed: latest output/selection, file-summary ordering, loading/recovery, top-layer expansion/Esc, retained iframe state, intrinsic/legacy sizing, host context, theme/canvas, sandbox/CSP, overlapping requests, correlated results and permission races.');
+    await read('clearFixture()'); await until('!document.querySelector(".mcp-app-panel")');
+    for (const [name, width, height, windowWidth] of [['square',2048,2048,880],['wide',2048,768,430],['portrait',768,2048,430]]) {
+      await win.setContentSize(windowWidth, 720);
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><linearGradient id="bg"><stop stop-color="#183b45"/><stop offset="1" stop-color="#a5d4bf"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><circle cx="${width*.54}" cy="${height*.43}" r="${Math.min(width,height)*.23}" fill="#f2bd77"/><path d="M0 ${height} L${width*.35} ${height*.48} L${width*.62} ${height*.72} L${width} ${height*.4} V${height}Z" fill="#234d4f"/></svg>`;
+      const artifact = { id: `layout-${name}`, name: `${name}.svg`, path: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`, type: 'image', display: 'inline' };
+      await read(`mediaOnly=true;fixtureImage=${JSON.stringify(artifact)};renderFixture(false)`);
+      await until(`document.querySelector('.message-tool-artifact img')?.naturalWidth === ${width}`);
+      const layout = await read(`(()=>{const image=document.querySelector('.message-tool-artifact img').getBoundingClientRect(),card=document.querySelector('.message-tool-artifact').getBoundingClientRect(),outputs=document.querySelector('.message-tool-outputs').getBoundingClientRect(),answer=document.querySelector('.assistant-final-answer').getBoundingClientRect();return{width:image.width,height:image.height,cardWidth:card.width,left:card.left-outputs.left,available:outputs.width,answerTop:answer.top,bottom:card.bottom,caption:!!document.querySelector('.message-tool-artifact figcaption')}})()`);
+      assert.ok(layout.width > 0 && layout.width <= Math.min(560,layout.available)+1 && layout.height <= 321, `${name} fits a compact responsive preview`);
+      assert.ok(Math.abs(layout.width/layout.height-width/height) < .02, `${name} retains its aspect ratio`);
+      assert.ok(Math.abs(layout.cardWidth-layout.width) <= 1 && Math.abs(layout.left) <= 1, `${name} does not create a full-width empty frame`);
+      assert.ok(layout.answerTop >= layout.bottom, `${name} appears before the explanation`);
+      assert.equal(layout.caption, false, 'rendered media keeps file information in existing preview and context-menu actions');
+      if (name === 'square') {
+        await read('document.querySelector(".message-tool-artifact-preview").click()');
+        await until('!!document.querySelector(".image-preview-dialog")');
+        await read('document.querySelector(".image-preview-close").click()');
+        await until('!document.querySelector(".image-preview-dialog")');
+      }
+      await read('document.querySelector(".message-tool-outputs").scrollIntoView({block:"start"})');
+      await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      win.webContents.invalidate(); writeFileSync(resolve(`tmp/tool-output-layout-${name}.png`), (await win.webContents.capturePage()).toPNG());
+    }
+    await read(`fixtureImage={id:'unavailable',name:'unavailable.png',path:'data:image/png;base64,bm90YW5pbWFnZQ==',type:'image',display:'inline'};renderFixture(false)`);
+    await until('document.querySelector(".message-tool-artifact figcaption")?.textContent.includes("unavailable.png")');
+    assert.equal(await read('document.querySelector(".message-tool-artifact img")'), null, 'failed media retains a file fallback without an empty preview');
+    const deliveredImage = {id:'apple',name:'apple.png',path:'C:\\\\fixture\\\\apple.png',type:'image',display:'inline'};
+    const answer = '苹果图片已生成完毕。\n\nC:/fixture/apple.png\n\n尺寸与格式说明。';
+    await read(`fixtureImage=${JSON.stringify(deliveredImage)};fixtureContent=${JSON.stringify(answer)};renderFixture(true)`);
+    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth===1');
+    await read('window.retainedMedia=document.querySelector(".message-tool-artifact img");renderFixture(false)');
+    await until('!!document.querySelector(".assistant-final-answer .local-file-reference")');
+    assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'a standalone path references the already presented image');
+    assert.equal(await read('document.querySelector(".message-tool-artifact img")===retainedMedia'),true,'completion does not remount the primary media');
+    assert.match(await read('document.querySelector(".assistant-final-answer").textContent'),/苹果图片已生成完毕[\s\S]*apple.png[\s\S]*尺寸与格式说明/,'authored prose and the file reference retain their order');
+    for(const content of ['![苹果](<C:/fixture/apple.png>)','![苹果](file:///C:/fixture/apple.png)','![苹果](cardbush-memo:s/t/call)']) {
+      await read(`fixtureContent=${JSON.stringify(content)};renderFixture(false)`);
+      await until('!!document.querySelector(".assistant-final-answer .local-file-reference")&&document.querySelector(".assistant-final-answer").textContent.includes("苹果")');
+      if(content.includes('cardbush-memo:'))await until('!!document.querySelector(".file-memo-reference .local-file-reference")');
+      assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'Markdown and resolved memo references do not create a second image');
+    }
+    await read(`fixtureContent='C:/elsewhere/apple.png';renderFixture(false)`);
+    await until('!!document.querySelector(".assistant-final-answer .message-image-preview")');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),1,'same filename in another directory remains a different image');
+    await read(`fixtureContent='C:/fixture/apple.png';fixtureArtifacts=[];renderFixture(false)`);
+    await until('!!document.querySelector(".assistant-final-answer .message-image-preview")&&!document.querySelector(".message-tool-artifact")');
+    await read('fixtureArtifacts=[{...fixtureImage,display:"attachment"}];renderFixture(false)');
+    await until('!!document.querySelector(".message-tool-artifact figcaption")&&!!document.querySelector(".assistant-final-answer .message-image-preview")');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),0,'an attachment-only card does not suppress a requested inline image');
+    await read('fixtureContent="已完成";fixtureArtifacts=[fixtureImage,{...fixtureImage,id:"same-file",path:"file:///C:/fixture/apple.png"}];fixtureAttachments=[{...fixtureImage,path:"c:/fixture/apple.png"}];renderFixture(false)');
+    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth===1&&!!document.querySelector(".assistant-final-answer .local-file-reference")');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact").length'),1,'multiple delivery records for the same file share one preview');
+    assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'a detached attachment shares the same per-turn presentation');
+    console.log('Media deduplication UI passed: historical bare path, Markdown, file memo, attachments, file URL aliases, distinct files, missing primary previews and retained streaming media.');
+    console.log('MCP Apps UI passed: chronological final outputs, compact media/aspect ratio/narrow layouts and fallback, latest output/selection, file-summary ordering, loading/recovery, top-layer expansion/Esc, retained iframe state, intrinsic/legacy sizing, host context, theme/canvas, sandbox/CSP, overlapping requests, correlated results and permission races.');
     clearTimeout(deadline); win.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); win.destroy(); app.exit(1); }
 });

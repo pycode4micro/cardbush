@@ -91,6 +91,20 @@ try {
   await until(() => !registry.resolve(name), 'disabled plugin tools removed');
   await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: true, enabled: true, config: {} }] });
   await until(() => registry.resolve(name), 'enabled plugin reconnects');
+  const connectionBeforeSearchEdit = registry.resolve(name), changesBeforeSearchEdit = changes;
+  await store.write({ ...await store.read(), searchResultLimit: 13 });
+  await until(async () => { if (changes <= changesBeforeSearchEdit) return false; await updates; return true; }, 'search preference observed');
+  assert.equal(registry.resolve(name), connectionBeforeSearchEdit, 'search preferences preserve the existing MCP registration and connection');
+  assert.equal((await execute()).content[0].text, 'second');
+  idle = false;
+  await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: false, enabled: false, config: {} }] });
+  await until(() => manager.snapshot()?.applicationState === 'pending', 'uninstall waits for the active turn boundary');
+  assert.equal((await execute()).content[0].text, 'second', 'an active turn keeps its published tool until uninstall applies');
+  idle = true;
+  await until(() => !registry.resolve(name), 'uninstalled plugin tool leaves discovery without restarting the host');
+  assert.equal((await store.read()).plugins[0].installed, false, 'uninstall is distinct from disabling an installed plugin');
+  await store.write({ serviceEnabled: true, plugins: [{ id: 'live', installed: true, enabled: true, config: {} }] });
+  await until(() => registry.resolve(name), 'retained package reconnects after reinstall');
   await writeFile(join(plugin, '.mcp.json'), '{');
   await until(() => errors.length > 0, 'malformed edit reported');
   assert.equal((await execute()).content[0].text, 'second', 'malformed edit preserves working catalog');
@@ -105,7 +119,7 @@ try {
   await writeFile(join(skills, 'live-skill', 'SKILL.md'), '---\nname: stopped\n---');
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.equal(changes, stoppedAt, 'watcher disposed without late notifications');
-  console.log('Capability hot reload passed: missing roots, Skill add/delete, real plugin stdio call, atomic edits, busy deferral, enable/disable, malformed config recovery and watcher cleanup.');
+  console.log('Capability hot reload passed: missing roots, Skill add/delete, real plugin stdio call, atomic edits, busy deferral, enable/disable, uninstall/reinstall, malformed config recovery and watcher cleanup.');
 } finally {
   dispose();
   await updates;

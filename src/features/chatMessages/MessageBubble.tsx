@@ -80,6 +80,7 @@ import {
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 import { FileMemoReference } from './FileMemoReference';
+import { mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, toolOutputPresentation } from './mediaPresentation';
 import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
@@ -328,6 +329,7 @@ const LazyMarkdownContent = lazy(async () => {
     pathAliases: ProjectPathAlias[];
     language: AppLanguage;
   }) {
+    const presentedMedia = useContext(PresentedMediaContext);
     return (
     <ReactMarkdown
       remarkPlugins={[
@@ -387,6 +389,8 @@ const LazyMarkdownContent = lazy(async () => {
             ? remapProjectPath(reference.path, pathAliases)
             : '';
           const resolvedSource = reference ? fileUrl(resolvedPath) : src;
+          const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
+          if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
           return (
             <img
               {...props}
@@ -963,6 +967,7 @@ function MessageBubbleView({
         )
       : allToolExecutions;
   const assistantProgressExecutions = turnActivityExecutions(message);
+  const outputPresentation = toolOutputPresentation(assistantProgressExecutions, pathAliases);
   const activations = mcpActivations(assistantProgressExecutions);
   const showAssistantProgress =
     message.role === 'assistant' &&
@@ -981,6 +986,8 @@ function MessageBubbleView({
   );
   const finalAssistantRound =
     !isActiveAssistantTurn && isFinalAssistantDisplayMessage(message);
+  const showFinalAnswer = finalAssistantRound &&
+    !guidanceBoundaryRound && !stoppedAssistantRound && !failedAssistantRound;
   const completedChangeReport = finalAssistantRound
     ? completedAssistantChangeReport(message)
     : null;
@@ -1089,7 +1096,7 @@ function MessageBubbleView({
     </div>
   );
   return (
-    <>
+    <PresentedMediaContext.Provider value={outputPresentation.inlineMedia}>
       <div className={`message-row assistant${isActiveAssistantTurn ? ' streaming' : ''}`}>
         <div className="assistant-bubble">
           {activations.map(target => <McpActivationStatus key={target.serverId}
@@ -1120,7 +1127,7 @@ function MessageBubbleView({
               )}
               {assistantBody}
             </>
-          ) : finalAssistantRound ? (
+          ) : showFinalAnswer ? (
             <>
               {showAssistantProgress && (
                 <AssistantRunHeader
@@ -1130,7 +1137,6 @@ function MessageBubbleView({
                   language={language}
                 />
               )}
-              {finalAnswerBody}
             </>
           ) : (
             <AssistantCompletedDisclosure
@@ -1141,7 +1147,9 @@ function MessageBubbleView({
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
-          <MessageToolOutputs sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions} language={language} />
+          {/* Keep result views mounted across completion; the final explanation follows their source results. */}
+          <MessageToolOutputs key="tool-outputs" sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions} artifacts={outputPresentation.artifacts} language={language} />
+          {showFinalAnswer && finalAnswerBody}
           {timeoutPresentation && (
             <div
               className="assistant-timeout-notice"
@@ -1243,7 +1251,7 @@ function MessageBubbleView({
           )}
         </div>
       </div>
-    </>
+    </PresentedMediaContext.Provider>
   );
 }
 
@@ -2594,12 +2602,15 @@ function MessageMediaStrip({
   language: AppLanguage;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
+  const presentedMedia = useContext(PresentedMediaContext);
   if (videoPaths.length === 0 && audioPaths.length === 0) return null;
   return (
     <div className="message-media-strip">
       {videoPaths.map((storedPathValue) => {
         const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
+        const presented = presentedMedia.get(mediaPresentationKey(pathValue));
+        if (presented) return <PresentedMediaReference key={`video-${pathValue}`} artifact={presented} />;
         return (
           <figure className="message-video-player" key={`video-${pathValue}`}
             onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
@@ -2619,6 +2630,8 @@ function MessageMediaStrip({
       {audioPaths.map((storedPathValue) => {
         const pathValue = remapProjectPath(storedPathValue, pathAliases);
         const name = basename(pathValue);
+        const presented = presentedMedia.get(mediaPresentationKey(pathValue));
+        if (presented) return <PresentedMediaReference key={`audio-${pathValue}`} artifact={presented} />;
         return (
           <figure className="message-audio-player" key={`audio-${pathValue}`}
             onContextMenu={event => openFileContextMenu(event, pathValue, { language })}>
@@ -2793,6 +2806,7 @@ function MessageImageStrip({
   language: AppLanguage;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
+  const presentedMedia = useContext(PresentedMediaContext);
   const resolvedPaths = paths.map((pathValue) => remapProjectPath(pathValue, pathAliases));
   const [preview, setPreview] = useState<ImagePreview | null>(null);
   if (resolvedPaths.length === 0) {
@@ -2802,6 +2816,8 @@ function MessageImageStrip({
     <>
       <div className="message-image-strip">
         {resolvedPaths.map((pathValue, index) => {
+          const presented = presentedMedia.get(mediaPresentationKey(pathValue));
+          if (presented) return <PresentedMediaReference key={`${pathValue}-${index}`} artifact={presented} />;
           return (
             <figure className="message-image-item" key={`${pathValue}-${index}`}>
               <MessageImagePreviewButton

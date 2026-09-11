@@ -58,6 +58,7 @@ test('a delivered memo resolves through the public runtime command after host re
   const path = join(root, 'delivery.txt'); await writeFile(path, 'Actual file');
   const registry = new ToolRegistry(); let round = 0;
   const provider = { async *stream(request) {
+    assert.ok(!request.tools.some(tool => tool.name === 'present_artifact'), 'file delivery does not need a separate presentation tool');
     const event = (sequence, kind, fields = {}) => ({ protocol: 'bush.model_event.v1', requestId: request.requestId,
       createdAt: '2026-09-10T00:00:00Z', sequence, kind, ...fields });
     yield event(0, 'response_started');

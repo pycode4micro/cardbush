@@ -94,7 +94,7 @@ const command = {
 
 这是卸载状态更新的内部契约示例，不是 shell 命令或现成模型工具。安装/启用改为目标的 `true/true`；单独停用只改变 `enabled`。前端已有 `fetchCardbushAppsConfiguration` / `saveCardbushAppsConfiguration`。Skill、插件清单和 MCP 配置目录的变更会通知界面并触发刷新；缺失目录新建后也会自动发现。Skill 搜索每次读取当前文件，保留用户禁用名单。MCP 空闲时应用，有活动 Turn 时自动排队，任务结束后应用，无需手动再次发送消息或重启整个 Runtime。未变更服务保留连接，变更服务重连；普通服务连接失败仅将该服务标为 unavailable，不阻止其他连接。需要 OAuth 登录的服务标为 auth_required；配置校验失败保留原有可用目录并报告错误。当前模型请求已发送的工具列表不会在请求中途被改写，新增 MCP 能力供后续任务使用。
 
-当前管理界面提供安装和启停，没有直接卸载按钮；Runtime 也没有通用插件创建/安装/卸载 Built-in Tool。没有可调用宿主入口时，skill 不能独自补足这个能力。
+插件详情和管理列表均提供卸载入口，使用 `uninstallCardbushPlugin` 读取最新配置并通过 Product Host 更新安装状态。卸载从已安装列表移除插件，并撤下所属 Skill、MCP 和扩展；包文件与设置保留，可重新安装。保存完成与 Runtime 应用结果分别呈现：活动 Turn 可能延后移除，Runtime 更新失败不把已保存的卸载伪装成未保存。独立 MCP 与共享账号不会随插件卸载。Runtime 仍没有通用插件创建/安装/卸载 Built-in Tool；没有可调用宿主入口时，skill 不能独自补足这个能力。
 
 ## 验证
 

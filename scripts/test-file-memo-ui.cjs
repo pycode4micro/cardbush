@@ -21,6 +21,7 @@ app.whenReady().then(async () => {
     const initialUrl = window.webContents.getURL();
     const sources = Object.fromEntries([
       ['memo', 'src/features/chatMessages/FileMemoReference.tsx'], ['link', 'src/features/chatMessages/LocalFileReferenceLink.tsx'], ['paths', 'src/shared/localPaths.ts'],
+      ['presentation', 'src/features/chatMessages/mediaPresentation.tsx'], ['scope', 'src/features/conversationScope.ts'], ['workspace', 'src/features/conversationWorkspace.ts'],
     ].map(([name, file]) => [name, compile(file)]));
     const run = code => window.webContents.executeJavaScript(code, true);
     await run(`
@@ -35,6 +36,9 @@ app.whenReady().then(async () => {
         new Function('require','module','exports',sources[name])(id => {
           if(id.endsWith('/localPaths'))return loadModule('paths');
           if(id==='./LocalFileReferenceLink')return loadModule('link');
+          if(id==='./mediaPresentation')return loadModule('presentation');
+          if(id.endsWith('/conversationScope'))return loadModule('scope');
+          if(id==='./conversationWorkspace')return loadModule('workspace');
           if(id==='./FileTypeIcon')return {FileTypeIcon:()=>null};
           if(id.endsWith('/fileMemo'))return {fetchFileMemo:()=>{throw Error('Unexpected live IPC');}};
           if(id.endsWith('/fileContextMenu'))return {openFileContextMenu:(event,p)=>{event.preventDefault();window.menus.push(p);}};

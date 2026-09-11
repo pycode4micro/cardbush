@@ -32,6 +32,16 @@ export function replayResponsesOutput(
   const calls = items.flatMap((item) => item.type === "function_call"
     ? [[item.call_id, item.name, item.arguments]]
     : isClientToolSearchCall(item) ? [[item.call_id, "mcp_search", clientToolSearchArguments(item)]] : []);
+  const reasoningItems = items.filter(item => item.type === "reasoning");
+  const reasoningText = reasoningItems.flatMap(item => [
+    ...(Array.isArray(item.content) ? item.content : []).map(part => typeof part?.text === "string" ? part.text : ""),
+    ...item.summary.map(part => typeof part?.text === "string" ? part.text : ""),
+  ]).join("");
+  // A terminal snapshot can omit an entire reasoning item while retaining
+  // every call and text item. Do not let that snapshot erase streamed facts.
+  // Encrypted reasoning remains opaque and must be replayed intact.
+  if (message.reasoningContent && reasoningText.length !== message.reasoningContent.length &&
+    !reasoningItems.some(item => item.encrypted_content)) return undefined;
   if (text !== message.content || JSON.stringify(calls) !== JSON.stringify(
     message.toolCalls.map((call) => [call.id, responseToolName(call.name), call.argumentsText]),
   )) return undefined;

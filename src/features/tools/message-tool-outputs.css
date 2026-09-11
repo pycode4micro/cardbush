@@ -1,7 +1,8 @@
 .message-tool-outputs { display: grid; gap: 12px; margin: 16px 0; min-width: 0; }
-.message-tool-artifact { margin: 0; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; }
-.message-tool-artifact-preview { display: block; padding: 0; width: 100%; border: 0; background: transparent; cursor: zoom-in; }
-.message-tool-artifact img, .message-tool-artifact video { display: block; width: 100%; max-height: 480px; object-fit: contain; }
+.message-tool-artifact { margin: 0; min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; }
+.message-tool-artifact.is-media { justify-self: start; width: fit-content; border: 0; border-radius: 10px; }
+.message-tool-artifact-preview { display: block; padding: 0; max-width: 100%; width: fit-content; border: 0; background: transparent; cursor: zoom-in; }
+.message-tool-artifact img, .message-tool-artifact video { display: block; width: auto; height: auto; max-width: min(100%, 560px); max-height: min(320px, 48vh); object-fit: contain; }
 .message-tool-artifact audio { display: block; width: 100%; }
 .message-tool-artifact figcaption { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; padding: 10px 14px; overflow-wrap: anywhere; }
 .message-tool-artifact figcaption small { opacity: .65; white-space: nowrap; }

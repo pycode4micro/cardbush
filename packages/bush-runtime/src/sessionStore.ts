@@ -118,6 +118,7 @@ export class SessionStore {
       );
     }
     validateCommittedTurn(turn);
+    validateCheckpointCoverage(turn, new Set(before.turns.map(item => item.turnId)));
     const knownMessageIds = new Set(
       before.turns.flatMap((item) => item.messages.map((message) => message.messageId)),
     );
@@ -268,6 +269,7 @@ export function projectSession(
     if (event.kind === "turn_committed") {
       const turn = event.payload;
       validateCommittedTurn(turn);
+      validateCheckpointCoverage(turn, turnIds);
       if (turn.supersession) {
         addSupersededMessages(messageIds, superseded, turn.supersession.messageIds);
       }
@@ -366,8 +368,31 @@ export function validateCommittedTurn(turn: CommittedTurn): void {
     if (boundaryIndex < turn.contextCheckpoint.inputMessageCount) {
       throw new Error("Turn context checkpoint boundary must be a generated Turn message.");
     }
+    if (turn.contextCheckpoint.projectionVersion === "exchange_v1") {
+      const [assistantId, receiptId] = turn.contextCheckpoint.exchangeMessageIds;
+      const assistant = turn.messages[boundaryIndex - 1];
+      const receipt = turn.messages[boundaryIndex];
+      if (boundaryIndex - 1 < turn.contextCheckpoint.inputMessageCount ||
+        assistant?.messageId !== assistantId || receipt?.messageId !== receiptId ||
+        assistant.message.role !== "assistant" || assistant.message.toolCalls.length !== 1 ||
+        assistant.message.toolCalls[0]!.name !== "checkpoint_context" || receipt.message.role !== "tool" ||
+        receipt.message.toolCallId !== assistant.message.toolCalls[0]!.id) {
+        throw new Error("Turn context checkpoint must reference a complete checkpoint_context exchange.");
+      }
+      if (turn.contextCheckpoint.coveredTurnIds.includes(turn.turnId)) {
+        throw new Error("Turn context checkpoint cannot cover its own Turn.");
+      }
+    }
   }
   validateConversation(turn.messages.map((message) => message.message));
+}
+
+function validateCheckpointCoverage(turn: CommittedTurn, priorTurnIds: Set<string>): void {
+  if (turn.contextCheckpoint?.projectionVersion !== "exchange_v1") return;
+  const ids = turn.contextCheckpoint.coveredTurnIds;
+  if (new Set(ids).size !== ids.length || ids.some(id => !priorTurnIds.has(id))) {
+    throw new Error("Context checkpoint coverage must contain unique preceding Turn identities.");
+  }
 }
 
 export function validateConversation(

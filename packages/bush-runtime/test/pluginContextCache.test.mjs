@@ -24,7 +24,7 @@ async function temp(t) { const root = await mkdtemp(join(tmpdir(), 'cardbush-plu
 test('discovery survives turns/restart without resending schemas, but not compaction or scope changes', async () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); registry.register(mcp());
   const initial = modelRequest(registry), coordinator = runner(registry);
-  const searched = await call(coordinator, initial, 'mcp_search', { query: 'docs' });
+  const searched = await call(coordinator, initial, 'mcp_search', { action: 'load', query: toolName });
   const history = searchMessages(searched.result), original = structuredClone(history);
   clearMcpDiscovery(registry, initial);
   const next = modelRequest(registry, { turnId: 'next', messages: history });
@@ -33,7 +33,7 @@ test('discovery survives turns/restart without resending schemas, but not compac
   const repeated = await call(coordinator, next, 'mcp_search', { query: 'docs' });
   assert.equal(repeated.result.matches[0].loaded, true);
   assert.equal(repeated.result.matches[0].inputSchema, undefined);
-  assert.equal((await call(coordinator, next, 'mcp_search', { query: 'docs', reload: true })).result.matches[0].inputSchema.type, 'object');
+  assert.equal((await call(coordinator, next, 'mcp_search', { action: 'load', query: toolName })).result.matches[0].inputSchema.type, 'object');
   assert.deepEqual(history, original);
 
   const restarted = new ToolRegistry(); registerMcpDiscovery(restarted); restarted.register(mcp());
@@ -44,7 +44,7 @@ test('discovery survives turns/restart without resending schemas, but not compac
   const compacted = searchMessages(repeated.result);
   synchronizeMcpDiscovery(restarted, recovered, compacted);
   assert.equal((await call(runner(restarted), recovered, 'mcp_call', { name: toolName, arguments: {} })).error.code, 'mcp_discovery_required');
-  assert.ok((await call(runner(restarted), recovered, 'mcp_search', { query: 'docs' })).result.matches[0].inputSchema);
+  assert.ok((await call(runner(restarted), recovered, 'mcp_search', { action: 'load', query: toolName })).result.matches[0].inputSchema);
   const other = modelRequest(registry, { sessionId: 'other', messages: history });
   synchronizeMcpDiscovery(registry, other, history);
   assert.equal((await call(coordinator, other, 'mcp_call', { name: toolName, arguments: {} })).kind, 'failed');
@@ -56,14 +56,14 @@ test('discovery survives turns/restart without resending schemas, but not compac
 test('schema updates reload only changed definitions while permissions and connections remain live', async () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); registry.replaceOwned('docs', [mcp()]);
   const request = modelRequest(registry), coordinator = runner(registry);
-  const first = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const first = await call(coordinator, request, 'mcp_search', { action: 'load', query: toolName });
   const history = searchMessages(first.result), projection = modelToolDefinitions(registry, request);
   const tracker = new CacheChainTracker(); tracker.observe({ ...request, tools: projection, messages: history });
   const changed = mcp({ definition: { ...mcp().definition, description: 'Search updated documentation', inputSchema: { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] } } });
   registry.replaceOwned('docs', [changed]);
   assert.equal((await call(coordinator, request, 'mcp_call', { name: toolName, arguments: {} })).error.code, 'mcp_discovery_required');
   synchronizeMcpDiscovery(registry, request, history);
-  const second = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const second = await call(coordinator, request, 'mcp_search', { action: 'load', query: toolName });
   assert.deepEqual(second.result.matches[0].inputSchema.required, ['topic']);
   assert.notEqual(first.result.matches[0].revision, second.result.matches[0].revision);
   const appended = [...history, ...searchMessages(second.result)];
@@ -84,7 +84,7 @@ test('replacing an MCP connection during approval prevents executing the capture
   registry.replaceOwned('docs', [mcp({ execute: () => { executed++; return {}; }, authorize: () => ({ kind: 'ask', request: { reason: 'Read docs', actions: ['read'], targets: [], capabilityIds: [] } }) })]);
   const request = modelRequest(registry);
   const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { registry.replaceOwned('docs', [mcp()]); return { decision: 'allow', grantedCapabilityIds: [] }; } } });
-  const searched = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const searched = await call(coordinator, request, 'mcp_search', { action: 'load', query: toolName });
   synchronizeMcpDiscovery(registry, request, searchMessages(searched.result));
   assert.equal((await call(coordinator, request, 'mcp_call', { name: toolName, arguments: {} })).error.code, 'tool_definition_changed');
   assert.equal(executed, 0);
@@ -93,7 +93,7 @@ test('replacing an MCP connection during approval prevents executing the capture
 test('archived/rewritten tool output cannot count as a visible schema', async () => {
   const registry = new ToolRegistry(); registerMcpDiscovery(registry); registry.register(mcp());
   const request = modelRequest(registry), coordinator = runner(registry);
-  const searched = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const searched = await call(coordinator, request, 'mcp_search', { action: 'load', query: toolName });
   const messages = searchMessages(searched.result);
   messages[1].content = JSON.stringify({ archived: true, preview: JSON.stringify(searched.result) });
   synchronizeMcpDiscovery(registry, request, messages);
@@ -107,7 +107,7 @@ test('a large archived schema becomes reusable only after all exact chunks are v
   const registry = new ToolRegistry(); registerMcpDiscovery(registry);
   registry.register(mcp({ definition: { ...mcp().definition, description: 'Docs '.repeat(5000) } }));
   const request = modelRequest(registry), coordinator = runner(registry);
-  const searched = await call(coordinator, request, 'mcp_search', { query: 'docs' });
+  const searched = await call(coordinator, request, 'mcp_search', { action: 'load', query: toolName });
   const text = JSON.stringify(searched.result), locator = 'tool-result://s/t/search-large';
   const messages = searchMessages(searched.result, 'search-large');
   messages[1].content = JSON.stringify({ archived: true, locator, originalChars: text.length, preview: text.slice(0, 400) });
@@ -242,7 +242,7 @@ test('real host preserves cache chain and discovered tools across a durable sess
         yield { ...base, sequence: 0, kind: 'response_started' };
         const name = turn === 'first' && round === 1 ? 'mcp_search' : 'mcp_call';
         if (round <= (turn === 'first' ? 2 : 1)) {
-          yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `${turn}-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(name === 'mcp_search' ? { query: 'docs' } : { name: toolName, arguments: {} }) };
+          yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `${turn}-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(name === 'mcp_search' ? { action: 'load', query: toolName } : { name: toolName, arguments: {} }) };
           yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'tool_calls' };
         } else { yield { ...base, sequence: 1, kind: 'text_delta', delta: 'done' }; yield { ...base, sequence: 2, kind: 'response_completed', finishReason: 'stop' }; }
       } } });

@@ -5,6 +5,7 @@ import { fileUrl, isAbsoluteLocalPath } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import { ImagePreviewDialog } from '../chatMessages/ImagePreviewDialog';
 import { LocalFileReferenceLink } from '../chatMessages/LocalFileReferenceLink';
+import { mediaPresentationKey } from '../chatMessages/mediaPresentation';
 import { McpAppPanel, mcpAppCommand } from './McpAppPanel';
 import './message-tool-outputs.css';
 
@@ -13,8 +14,8 @@ const interfaceKey = (view: Interface) => `${view.turnId}:${view.toolCallId}`;
 const sourceUrl = (path: string) => /^(?:https?:|data:|blob:)/i.test(path) ? path : fileUrl(path);
 
 /** Only explicit artifacts and host-bound UI declarations are promoted out of tool logs. */
-export function MessageToolOutputs({ sessionId, turnId, executions, language }: {
-  sessionId: string; turnId: string; executions: ChatToolExecution[]; language: AppLanguage;
+export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, language }: {
+  sessionId: string; turnId: string; executions: ChatToolExecution[]; artifacts: ChatToolArtifact[]; language: AppLanguage;
 }) {
   const [interfaces, setInterfaces] = useState<Interface[]>([]), [error, setError] = useState(''), [retry, setRetry] = useState(0);
   const [selection, setSelection] = useState('');
@@ -39,14 +40,12 @@ export function MessageToolOutputs({ sessionId, turnId, executions, language }: 
       .catch(cause => { if (!controller.signal.aborted) setError(String(cause instanceof Error ? cause.message : cause)); });
     return () => controller.abort();
   }, [sessionId, identities, retry]);
-  const artifacts = new Map<string, ChatToolArtifact>();
-  for (const execution of executions) for (const artifact of execution.artifacts ?? []) artifacts.set(artifact.path, artifact);
   const selected = interfaces.find(view => interfaceKey(view) === selection) ?? interfaces.at(-1);
   const label = (view: Interface) => view.title || view.serverTitle || (zh ? '插件界面' : 'Plugin interface');
   const optionLabel = (view: Interface) => `${label(view)}${view.resultError ? (zh ? ' · 调用失败' : ' · Call failed') : ''}`;
-  if (!artifacts.size && !interfaces.length && !error) return null;
+  if (!artifacts.length && !interfaces.length && !error) return null;
   return <section className="message-tool-outputs" aria-label={language === 'zh' ? '工具输出' : 'Tool outputs'}>
-    {[...artifacts.values()].map(artifact => <Artifact key={artifact.id} artifact={artifact} language={language} />)}
+    {artifacts.map(artifact => <Artifact key={`${mediaPresentationKey(artifact.path)}:${artifact.id}`} artifact={artifact} language={language} />)}
     {selected && <section className="message-plugin-outputs" aria-label={zh ? '插件结果' : 'Plugin results'}>
       {interfaces.length > 1 && <header className="message-plugin-outputs-heading">
         <span><PanelsTopLeft size={15} />{zh ? '插件结果' : 'Plugin results'}<small>{interfaces.length}</small></span>
@@ -79,13 +78,14 @@ function Artifact({ artifact, language }: { artifact: ChatToolArtifact; language
   };
   const link = local ? <LocalFileReferenceLink path={artifact.path} knownFileName={artifact.name}>{artifact.name}</LocalFileReferenceLink>
     : <a href={artifact.path} target="_blank" rel="noreferrer">{artifact.name}</a>;
-  return <figure className="message-tool-artifact" onContextMenu={event => openFileContextMenu(event, artifact.path, { language, image: artifact.type === 'image' })}>
-    {!failed && artifact.display !== 'attachment' && (artifact.type === 'image'
+  const hasMediaPreview = !failed && artifact.display !== 'attachment' && ['image', 'video', 'audio'].includes(artifact.type);
+  return <figure className={`message-tool-artifact${hasMediaPreview ? ' is-media' : ''}`} onContextMenu={event => openFileContextMenu(event, artifact.path, { language, image: artifact.type === 'image' })}>
+    {hasMediaPreview && (artifact.type === 'image'
       ? <button type="button" className="message-tool-artifact-preview" onClick={() => setPreview(true)} aria-label={language === 'zh' ? `查看 ${artifact.name}` : `View ${artifact.name}`}><img src={src} alt={artifact.name} onError={() => void loadFallback()} /></button>
       : artifact.type === 'video' ? <video controls preload="metadata" src={src} onError={() => setFailed(true)} />
         : artifact.type === 'audio' ? <audio controls preload="metadata" src={src} onError={() => setFailed(true)} /> : null)}
     {failed && <p role="status">{language === 'zh' ? '预览不可用，可打开原文件。' : 'Preview unavailable. Open the original file.'}</p>}
-    <figcaption>{link}{artifact.size !== undefined && <small>{formatSize(artifact.size)}</small>}</figcaption>
+    {!hasMediaPreview && <figcaption>{link}{artifact.size !== undefined && <small>{formatSize(artifact.size)}</small>}</figcaption>}
     {preview && <ImagePreviewDialog image={{ src, name: artifact.name, path: artifact.path }} language={language} onClose={() => setPreview(false)} />}
   </figure>;
 }

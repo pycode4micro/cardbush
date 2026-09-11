@@ -237,7 +237,7 @@ test("resumes a Session Turn with prior tool messages and commits it exactly onc
   secondSessions.close();
 });
 
-test("recovers a compacted active Session Turn without replaying its completed Tool prefix", async (t) => {
+for (const legacyProjection of [false, true]) test(`recovers a compacted active Session Turn from ${legacyProjection ? "stale request" : "canonical exchange"} projection without replaying completed Tools`, async (t) => {
   const roots = stateRoots(t);
   const firstEvents = new FileRuntimeEventPersistence({ root: roots.events });
   const firstSessions = new FileSessionEventPersistence({ root: roots.sessions });
@@ -287,7 +287,8 @@ test("recovers a compacted active Session Turn without replaying its completed T
               active_summary: "The fixture Tool completed successfully; continue by returning the final answer without rerunning it.",
             }),
           });
-          yield recoveryEvent(modelRequest.requestId, 2, "response_completed", {
+          yield recoveryEvent(modelRequest.requestId, 2, "usage", { inputTokens: 2900, outputTokens: 20 });
+          yield recoveryEvent(modelRequest.requestId, 3, "response_completed", {
             finishReason: "tool_calls",
           });
           return;
@@ -328,8 +329,8 @@ test("recovers a compacted active Session Turn without replaying its completed T
     "session_recovery",
     "turn_recovery",
   );
-  assert.match(durableCheckpoint.sessionCommit.activeContextCheckpoint.summary, /completed successfully/);
-  assert.equal(durableCheckpoint.sessionCommit.activeContextCheckpoint.projectionVersion, "stable_v1");
+  assert.match(durableCheckpoint.sessionCommit.generatedMessages.find(item => item.messageId === durableCheckpoint.sessionCommit.activeContextCheckpoint.exchangeMessageIds[0]).message.toolCalls[0].argumentsText, /completed successfully/);
+  assert.equal(durableCheckpoint.sessionCommit.activeContextCheckpoint.projectionVersion, "exchange_v1");
   assert.equal(durableCheckpoint.request.messages.some((message) =>
     message.name === "context_checkpoint_resume"), false);
   assert.deepEqual(
@@ -342,6 +343,10 @@ test("recovers a compacted active Session Turn without replaying its completed T
       includeResumeInstruction: true,
     }),
   );
+  if (legacyProjection) {
+    durableCheckpoint.request.messages = [{ role: "user", content: "stale serialized request; rebuild from canonical checkpoint facts" }];
+    new FileRuntimeCheckpointStore(roots.checkpoints).save(durableCheckpoint);
+  }
   firstEvents.close();
   firstSessions.close();
 
@@ -377,6 +382,11 @@ test("recovers a compacted active Session Turn without replaying its completed T
   });
 
   assert.equal(terminal.payload.status, "completed");
+  assert.equal(resumedProvider.requests[0].messages.some(message => message.name === "context_pressure"), false,
+    "the pre-compaction token count must not become a floor for the recovered smaller context");
+  const resumedCheckpoint = resumedProvider.requests[0].messages.find(message => message.role === "assistant" && message.toolCalls.some(call => call.name === "checkpoint_context"));
+  assert.equal(resumedCheckpoint?.role, "assistant");
+  assert.match(resumedCheckpoint.toolCalls[0].argumentsText, /completed successfully/);
   assert.equal(resumedProvider.requests[0].messages.some((message) =>
     message.name === "context_checkpoint_resume"), false);
   assert.equal(resumedProvider.requests[0].messages.some((message) =>
@@ -385,7 +395,7 @@ test("recovers a compacted active Session Turn without replaying its completed T
   assert.equal(committed.messages.some((message) =>
     message.message.role === "tool" &&
     message.message.toolCallId === "call_before_recovery_checkpoint"), true);
-  assert.match(committed.contextCheckpoint.summary, /completed successfully/);
+  assert.match(committed.messages.find(item => item.messageId === committed.contextCheckpoint.exchangeMessageIds[0]).message.toolCalls[0].argumentsText, /completed successfully/);
   assert.equal(committed.messages.at(-1).message.content, "recovered from active checkpoint");
   secondEvents.close();
   secondSessions.close();

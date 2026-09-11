@@ -19,6 +19,21 @@ import {
 } from "@cardbush/bush-protocol";
 import { InMemoryRuntimeHost, LogicMemoryStore, ToolRegistry, CoordinationStore } from "../dist/index.js";
 
+
+function isCheckpoint(message) {
+  return message.role === "assistant" && message.toolCalls.some(call => call.name === "checkpoint_context");
+}
+function checkpointArguments(message) {
+  return message.toolCalls.find(call => call.name === "checkpoint_context").argumentsText;
+}
+function checkpointSummary(turn) {
+  return checkpointArguments(turn.messages.find(item => item.messageId === turn.contextCheckpoint.exchangeMessageIds[0]).message);
+}
+function hasOrdinaryResult(messages) {
+  const checkpoints = new Set(messages.filter(isCheckpoint).flatMap(m => m.toolCalls.map(c => c.id)));
+  return messages.some(m => m.role === "tool" && !checkpoints.has(m.toolCallId));
+}
+
 const NOW = "2026-08-29T00:00:00.000Z";
 
 for (const actionable of [false, true]) test(`plan handoff ${actionable ? 'still continues actionable work' : 'retains waiting verification without forcing more execution'}`, async () => {
@@ -489,7 +504,8 @@ test('summary preparation and validation retries preserve the prefix until the c
   assert.deepEqual(observations.map(observation => observation.frozenPrefixBreak), [false, false, true]);
   assert.equal(observations[0].sharedPrefixMessages, requests[1].messages.length);
   const session = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'session_1' } });
-  assert.deepEqual(session.turns.slice(0, 2).map(turn => turn.contextSummary), ['First facts.', 'Second facts.']);
+  assert.deepEqual(session.turns.slice(0, 2).map(turn => turn.contextSummary), [undefined, undefined]);
+  assert.deepEqual(JSON.parse(checkpointSummary(session.turns[2])).summaries, ['First facts.', 'Second facts.']);
   assert.ok(session.turns.every(turn => turn.messages.every(item => item.message.name !== 'context_pressure')));
 });
 
@@ -501,7 +517,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
       async countInputTokens(request) {
         return {
           inputTokens: request.messages.some((message) =>
-            message.name === "turn_context_summary")
+            isCheckpoint(message))
               ? 100
             : request.messages.some((message) => message.name === "context_pressure")
               ? 2_900
@@ -589,16 +605,17 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     ["ordinary_tool", "checkpoint_context"],
   );
   assert.match(
-    observedRequests[2].messages.find((message) => message.name === "turn_context_summary")?.content ?? "",
+    checkpointArguments(observedRequests[2].messages.find(isCheckpoint)),
     /large prior payload/,
   );
   const snapshot = await host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   });
-  assert.match(snapshot.turns[0].contextSummary, /large prior payload/);
+  assert.equal(snapshot.turns[0].contextSummary, undefined);
+  assert.match(checkpointSummary(snapshot.turns[1]), /large prior payload/);
   assert.equal(snapshot.turns[0].messages[0].message.content.length, 20);
-  assert.equal(snapshot.turns[1].messages.length, 2);
+  assert.equal(snapshot.turns[1].messages.length, 4);
   assert.equal(snapshot.turns[1].usage.inputTokens, 200);
   assert.equal(snapshot.turns[1].usage.model, "model");
   assert.equal(snapshot.turns[1].usage.contextWindowTokens, 4000);
@@ -640,7 +657,7 @@ test("forces atomic context compaction and resumes the same active Turn", async 
     snapshot.turns[1].messages.some((message) =>
       message.message.role === "assistant" &&
       message.message.toolCalls.some((toolCall) => toolCall.name === "checkpoint_context")),
-    false,
+    true,
   );
   assert.equal(
     host.events("session_1", "turn_compact_2")
@@ -688,13 +705,13 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
     provider: {
       async countInputTokens(request) {
         if (request.messages.some((message) =>
-          message.role === "assistant" && message.content.includes("<active_turn_checkpoint"))) {
+          isCheckpoint(message))) {
           return { inputTokens: 180, source: "provider" };
         }
         if (request.messages.some((message) => message.name === "context_pressure")) {
           return { inputTokens: 2_900, source: "provider" };
         }
-        if (request.messages.some((message) => message.role === "tool")) {
+        if (hasOrdinaryResult(request.messages)) {
           return { inputTokens: 2_860, source: "provider" };
         }
         return { inputTokens: 100, source: "provider" };
@@ -775,10 +792,11 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
       ["system", undefined],
       ["user", undefined],
       ["assistant", undefined],
+      ["tool", undefined],
     ],
   );
-  assert.match(continued.messages[2].content, /active_turn_checkpoint/);
-  assert.match(continued.messages[2].content, /first observation completed/);
+  assert.ok(isCheckpoint(continued.messages[2]));
+  assert.match(checkpointArguments(continued.messages[2]), /first observation completed/);
   assert.equal(
     continued.messages.some((message) =>
       message.role === "tool" && message.toolCallId === "call_before_checkpoint"),
@@ -793,7 +811,7 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
     payload: { sessionId: "session_1" },
   });
   assert.equal(snapshot.turns.length, 1);
-  assert.match(snapshot.turns[0].contextCheckpoint.summary, /first observation completed/);
+  assert.match(checkpointSummary(snapshot.turns[0]), /first observation completed/);
   assert.equal(
     snapshot.turns[0].messages.some((message) =>
       message.message.role === "tool" &&
@@ -805,8 +823,8 @@ test("checkpoints an oversized active Turn at a safe Tool boundary and continues
     snapshot.turns[0].messages.some((message) =>
       message.message.role === "assistant" &&
       message.message.toolCalls.some((call) => call.name === "checkpoint_context")),
-    false,
-    "maintenance output must not become conversation history",
+    true,
+    "the canonical journal retains the real maintenance exchange",
   );
   const projected = await host.sendCommand({
     kind: ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
@@ -878,7 +896,7 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
         const hasPressure = request.messages.some((message) =>
           message.name === "context_pressure");
         const hasResume = request.messages.some((message) =>
-          message.role === "assistant" && message.content.includes("<active_turn_checkpoint"));
+          isCheckpoint(message));
         const inputTokens = hasResume
           ? 1_000
           : toolResultChars > 0
@@ -995,10 +1013,10 @@ test("bounds a parallel Tool batch before it can consume the checkpoint reserve"
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   });
-  assert.match(snapshot.turns[0].contextCheckpoint.summary, /Five large observations/);
+  assert.match(checkpointSummary(snapshot.turns[0]), /Five large observations/);
   assert.equal(
     snapshot.turns[0].messages.filter((message) => message.message.role === "tool").length,
-    5,
+    6,
   );
   const fullRecord = await host.sendCommand({
     kind: GET_RUNTIME_TOOL_EXECUTION_COMMAND,
@@ -1035,7 +1053,7 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
         if (request.messages.some((message) => message.name === "context_pressure")) {
           return { inputTokens: 2_900, source: "provider" };
         }
-        if (request.messages.some((message) => message.role === "tool")) {
+        if (hasOrdinaryResult(request.messages)) {
           return { inputTokens: 2_860, source: "provider" };
         }
         return { inputTokens: 100, source: "provider" };
@@ -1109,20 +1127,20 @@ test("replaces an active-Turn checkpoint cumulatively when the same Loop fills a
   assert.equal(observedRequests.length, 5);
   const finalRequest = observedRequests.at(-1);
   const checkpoints = finalRequest.messages.filter((message) =>
-    message.role === "assistant" && message.content.includes("<active_turn_checkpoint"));
+    isCheckpoint(message));
   assert.equal(checkpoints.length, 1);
-  assert.match(checkpoints[0].content, /Checkpoint two is cumulative/);
-  assert.doesNotMatch(checkpoints[0].content, /Checkpoint one:/);
+  assert.match(checkpointArguments(checkpoints[0]), /Checkpoint two is cumulative/);
+  assert.doesNotMatch(checkpointArguments(checkpoints[0]), /Checkpoint one:/);
   assert.equal(finalRequest.messages.filter((message) =>
     message.name === "context_checkpoint_resume").length, 0);
-  assert.equal(finalRequest.messages.some((message) => message.role === "tool"), false);
+  assert.equal(hasOrdinaryResult(finalRequest.messages), false);
   const snapshot = await host.sendCommand({
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   });
-  assert.match(snapshot.turns[0].contextCheckpoint.summary, /both the first and second/);
+  assert.match(checkpointSummary(snapshot.turns[0]), /both the first and second/);
   assert.equal(snapshot.turns[0].messages.filter((message) =>
-    message.message.role === "tool").length, 2);
+    message.message.role === "tool").length, 4);
 });
 
 test("applies user guidance queued during context maintenance before the resumed model round", async () => {
@@ -1156,7 +1174,7 @@ test("applies user guidance queued during context maintenance before the resumed
         if (request.messages.some((message) => message.name === "context_pressure")) {
           return { inputTokens: 2_900, source: "provider" };
         }
-        if (request.messages.some((message) => message.role === "tool")) {
+        if (hasOrdinaryResult(request.messages)) {
           return { inputTokens: 2_860, source: "provider" };
         }
         return { inputTokens: 100, source: "provider" };
@@ -1277,7 +1295,7 @@ test("rejects a stale active-Turn boundary and accepts only the exact authorized
         if (request.messages.some((message) => message.name === "context_pressure")) {
           return { inputTokens: 2_900, source: "provider" };
         }
-        if (request.messages.some((message) => message.role === "tool")) {
+        if (hasOrdinaryResult(request.messages)) {
           return { inputTokens: 2_860, source: "provider" };
         }
         return { inputTokens: 100, source: "provider" };
@@ -1356,8 +1374,8 @@ test("rejects a stale active-Turn boundary and accepts only the exact authorized
     kind: GET_RUNTIME_SESSION_COMMAND,
     payload: { sessionId: "session_1" },
   });
-  assert.match(snapshot.turns[0].contextCheckpoint.summary, /exact completed observation/);
-  assert.doesNotMatch(snapshot.turns[0].contextCheckpoint.summary, /forged/);
+  assert.match(checkpointSummary(snapshot.turns[0]), /exact completed observation/);
+  assert.doesNotMatch(checkpointSummary(snapshot.turns[0]), /forged/);
   const lifecycle = host.events("session_1", "turn_boundary_checkpoint")
     .filter((event) => event.kind.startsWith("context_compaction_"));
   assert.deepEqual(
@@ -1469,11 +1487,11 @@ test("calibrates unsupported Provider token counts before an append-only Loop ca
   );
   assert.equal(
     observedRequests.slice(0, 3).some((request) =>
-      request.messages.some((message) => message.name === "turn_context_summary")),
+      request.messages.some((message) => isCheckpoint(message))),
     false,
   );
   assert.equal(
-    observedRequests[3].messages.some((message) => message.name === "turn_context_summary"),
+    observedRequests[3].messages.some((message) => isCheckpoint(message)),
     true,
   );
   const usageEvents = host.events("session_1", "turn_calibration_2")
@@ -1483,7 +1501,7 @@ test("calibrates unsupported Provider token counts before an append-only Loop ca
   assert.equal(usageEvents.at(-1).payload.inputTokens, 5_000);
 });
 
-test("permits one bounded maintenance request to recover an already over-limit Session", async () => {
+test("an earlier oversized provider response is not permission to exceed the configured window", async () => {
   const observedRequests = [];
   let call = 0;
   const host = new InMemoryRuntimeHost({
@@ -1543,24 +1561,11 @@ test("permits one bounded maintenance request to recover an already over-limit S
   recovery.metadata = { contextWindowTokens: 100_000 };
   const terminal = await host.runSessionTurn(recovery);
 
-  assert.equal(terminal.payload.status, "completed");
-  assert.equal(observedRequests.length, 3);
-  assert.equal(
-    observedRequests[1].messages.some((message) => message.name === "context_pressure"),
-    true,
-  );
-  assert.equal(
-    observedRequests[2].messages.some((message) => message.name === "turn_context_summary"),
-    true,
-  );
-  assert.equal(
-    observedRequests.some((request, index) =>
-      index > 0 &&
-      !request.messages.some((message) =>
-        message.name === "context_pressure" || message.name === "turn_context_summary")),
-    false,
-    "an already over-limit Session must not dispatch another ordinary model request before recovery",
-  );
+  assert.equal(terminal.payload.reason, "context_compaction_request_limit_exceeded");
+  assert.equal(observedRequests.length, 1, 'the indivisible measured source must not be sent over the configured limit');
+  const session = await host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'session_1' } });
+  assert.equal(session.turns[0].messages[0].message.content, 'x'.repeat(190000));
+  assert.equal(session.turns[1].contextCheckpoint, undefined);
 });
 
 test("keeps checkpoint_context visible but rejects proactive compaction below 95 percent", async () => {
@@ -1784,7 +1789,7 @@ for (const recover of [true, false]) {
       dataRoot: root, toolRegistry: registry,
       provider: {
         async countInputTokens(request) {
-          if (request.messages.some(m => m.role === "assistant" && m.content.includes("<active_turn_checkpoint"))) return { inputTokens: 100, source: "provider" };
+          if (request.messages.some(m => isCheckpoint(m))) return { inputTokens: 100, source: "provider" };
           if (request.messages.some(m => m.name === "context_pressure")) return { inputTokens: 2900, source: "provider" };
           return { inputTokens: request.messages.some(m => m.role === "tool") ? 2860 : 100, source: "provider" };
         },
@@ -1802,9 +1807,9 @@ for (const recover of [true, false]) {
               index: 0, toolCallId: `checkpoint_${maintenance}`, nameDelta: "checkpoint_context", argumentsDelta: JSON.stringify(args),
             });
             yield event(request.requestId, 2, "response_completed", { finishReason: "tool_calls" });
-          } else if (request.messages.some(m => m.role === "assistant" && m.content.includes("<active_turn_checkpoint"))) {
+          } else if (request.messages.some(m => isCheckpoint(m))) {
             assert.equal(request.messages.some(m => m.name === "context_checkpoint_resume"), false);
-            assert.equal(request.messages.some(m => m.role === "tool"), false);
+            assert.equal(hasOrdinaryResult(request.messages), false);
             yield event(request.requestId, 1, "text_delta", { delta: "Finished without repeating the observation." });
             yield event(request.requestId, 2, "response_completed", { finishReason: "stop" });
           } else {
@@ -1840,7 +1845,7 @@ for (const recover of [true, false]) {
     assert.equal(session.turns.length, 1);
     assert.equal(session.turns[0].messages.filter(e => e.message.role === "tool" && e.message.toolCallId === "before_checkpoint_once").length, 1);
     if (recover) {
-      assert.match(session.turns[0].contextCheckpoint.summary, /observation completed/);
+      assert.match(checkpointSummary(session.turns[0]), /observation completed/);
       assert.equal(events.filter(e => e.kind === "context_compaction_completed").length, 1);
     } else {
       assert.equal(session.turns[0].contextCheckpoint, undefined);
@@ -1877,7 +1882,7 @@ test('continues after a successful checkpoint with a half-window output allowanc
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(observed.length, 3);
   assert.equal(observed[2].maxOutputTokens, 128_000, 'does not silently reduce configured output');
-  assert.ok(observed[2].messages.some(m => m.content.includes('Prior work retained.')));
+  assert.match(checkpointArguments(observed[2].messages.find(isCheckpoint)), /Prior work retained/);
   assert.equal(host.events('session_1', 'large-output').filter(e => e.kind === 'context_compaction_completed').length, 1);
 });
 

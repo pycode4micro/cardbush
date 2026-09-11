@@ -44,6 +44,7 @@ import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
 import {
   decodeProductSubagentConfig,
   defaultProductSubagentConfig,
+  readCardbushSearchResultLimit,
 } from '@cardbush/product-host';
 import {
   FileProviderCapabilityStore,
@@ -651,6 +652,7 @@ providers = new OpenAIResponsesProviderRegistry({
 });
 
 const toolRegistry = new ToolRegistry();
+const loadSearchResultLimit = () => readCardbushSearchResultLimit(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
 const skillRoots = skillRootsFromEnvironment();
 const pluginRoots = pluginRootsFromEnvironment();
 const automation = runtimeStateRoot ? new AutomationScheduler({
@@ -705,10 +707,11 @@ if (skillRoots.length > 0 || pluginRoots.length > 0) {
       })}\n`);
       return skillRoots;
     }
-  });
+  }, loadSearchResultLimit);
 }
 
 host = new InMemoryRuntimeHost({
+  loadSearchResultLimit,
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
   provider: providers,

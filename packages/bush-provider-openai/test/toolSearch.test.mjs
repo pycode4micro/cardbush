@@ -19,8 +19,8 @@ const request = overrides => modelRequestSchema.parse({
 });
 const textItem = (text = 'Done.') => ({ type: 'message', id: 'msg', role: 'assistant', status: 'completed',
   content: [{ type: 'output_text', text, annotations: [] }] });
-const searchItem = (id = 'search') => ({ type: 'tool_search_call', id: `ts_${id}`, call_id: id,
-  execution: 'client', status: 'completed', arguments: { query: 'docs' } });
+const searchItem = (id = 'search', args = { query: 'docs' }) => ({ type: 'tool_search_call', id: `ts_${id}`, call_id: id,
+  execution: 'client', status: 'completed', arguments: args });
 const functionItem = (id = 'read', name = 'mcp__docs__read') => ({ type: 'function_call', id: `fc_${id}`, call_id: id,
   name, arguments: '{}', status: 'completed' });
 const assistant = round => ({ role: 'assistant', content: round.text, reasoningContent: round.reasoning,
@@ -371,7 +371,7 @@ test('native calls use the authoritative execution pipeline and survive durable 
   const f = await fixture(t, (body, path) => {
     if (path.endsWith('/input_tokens')) return {};
     round++;
-    if (round === 1) return { output: [searchItem()] };
+    if (round === 1) return { output: [searchItem('search', { action: 'load', query: longTool.name })] };
     loadedName ??= body.input.find(item => item.type === 'tool_search_output')?.tools[0]?.name;
     if ([2, 4, 6].includes(round)) return { output: [functionItem(`read-${round}`, loadedName)], argumentsDoneOnly: true };
     return { output: [textItem()] };
@@ -421,7 +421,7 @@ test('overlapping parallel searches pass a strict provider and execute the disco
       error: { code: 'invalid_request_error', message: 'Tool names must be unique.' } };
     if (path.endsWith('/input_tokens')) return {};
     round++;
-    if (round === 1) return { output: [searchItem('one'), searchItem('two')] };
+    if (round === 1) return { output: [searchItem('one', { action: 'load', query: tool.name }), searchItem('two', { action: 'load', query: tool.name })] };
     if (round === 2) {
       const results = body.input.filter(item => item.type === 'tool_search_output');
       assert.deepEqual(results.map(item => item.call_id), ['one', 'two']);
@@ -444,6 +444,67 @@ test('overlapping parallel searches pass a strict provider and execute the disco
   assert.equal(terminal.payload.status, 'completed');
   assert.equal(round, 3);
   assert.equal(executed, 1);
+});
+
+for (const mode of ['native', 'function']) test(`progressive search then load then call keeps names, descriptions and prefixes in ${mode} mode`, async t => {
+  const fullName = `mcp__${'long_plugin_namespace_'.repeat(4)}__document_lookup`;
+  const description = 'Read project documents. ' + 'Complete documentation details. '.repeat(90);
+  const inputSchema = { type: 'object', properties: { schema_marker: { const: 'complete-schema' } } };
+  let round = 0, executed = 0;
+  const accepted = [];
+  const f = await fixture(t, (body, path) => {
+    if (mode === 'function' && isNative(body)) return unsupported;
+    if (path.endsWith('/input_tokens')) return {};
+    accepted.push(body);
+    assertClosedToolBatches(body.input);
+    const prior = accepted.at(-2);
+    if (prior) { assert.deepEqual(body.tools, prior.tools); assert.deepEqual(body.input.slice(0, prior.input.length), prior.input); }
+    const search = (id, args) => mode === 'native' ? searchItem(id, args)
+      : { ...functionItem(id, 'mcp_search'), arguments: JSON.stringify(args) };
+    round++;
+    if (round === 1) return { output: [search('summary', { query: 'document' })] };
+    if (round === 2) {
+      assert.equal(executed, 0);
+      const receipt = mode === 'native'
+        ? JSON.parse(body.input.find(item => item.type === 'message' && String(item.content).startsWith('[tool_search_result data]')).content.split('\n').slice(2).join('\n'))
+        : JSON.parse(body.input.find(item => item.type === 'function_call_output').output);
+      assert.equal(receipt.action, 'search');
+      assert.equal(receipt.matches[0].name, fullName, 'use a real name for loading, not a native hash alias');
+      assert.match(receipt.matches[0].description, /^Read project documents/);
+      assert.equal(receipt.matches[0].descriptionTruncated, true);
+      assert.equal(receipt.matches[0].inputSchema, undefined);
+      assert.equal(JSON.stringify(body).includes('schema_marker'), false, 'search does not secretly inject schemas');
+      if (mode === 'native') assert.deepEqual(body.input.find(item => item.type === 'tool_search_output').tools, []);
+      return { output: [search('load', { action: 'load', query: receipt.matches[0].name })] };
+    }
+    if (round === 3) {
+      assert.equal(executed, 0);
+      if (mode === 'native') {
+        const loaded = body.input.find(item => item.type === 'tool_search_output' && item.call_id === 'load').tools[0];
+        assert.deepEqual(loaded.parameters, inputSchema); assert.equal(loaded.description, description);
+        return { output: [functionItem('use', loaded.name)] };
+      }
+      const loaded = JSON.parse(body.input.find(item => item.type === 'function_call_output' && item.call_id === 'load').output);
+      assert.deepEqual(loaded.matches[0].inputSchema, inputSchema); assert.equal(loaded.matches[0].description, description);
+      return { output: [{ ...functionItem('use', 'mcp_call'), arguments: JSON.stringify({ name: fullName, arguments: {} }) }] };
+    }
+    assert.equal(executed, 1);
+    return { output: [textItem()] };
+  });
+  const tools = new ToolRegistry();
+  tools.register({ definition: { name: fullName, description, inputSchema },
+    manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'test', dispatch_scope: 'parent_session', mutating: false },
+    decodeInput: value => value, execute: () => { executed++; return { found: true }; },
+    mcpHook: { server: 'docs', tool: 'document_lookup', call: async () => ({}) } });
+  const host = new InMemoryRuntimeHost({ toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'progressive',
+    sessionId: 's', turnId: 'progressive', model, tools: tools.definitions(), prefixMessages: [],
+    inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read project documents' } }] });
+  assert.equal(terminal.payload.status, 'completed'); assert.equal(round, 4); assert.equal(executed, 1);
+  const breaks = host.events('s', 'progressive').filter(event => event.kind === 'provider_input_observed' && event.payload.frozenPrefixBreak);
+  assert.deepEqual(breaks.map(event => event.payload.changedParameters), mode === 'native' ? [] : [['tools']],
+    'only the initial explicit protocol rejection changes parameters; search/load/call keeps the accepted prefix');
 });
 
 test('reloads keep the first declaration, exact call receipts and incremental cache prefixes', () => {

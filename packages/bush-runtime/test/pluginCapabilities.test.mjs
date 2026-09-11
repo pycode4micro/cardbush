@@ -30,7 +30,7 @@ test('MCP discovery hides large catalogs, retains permission checks and cannot c
   assert.deepEqual(modelToolDefinitions(registry, req).map(tool => tool.name), ['mcp_search', 'mcp_call']);
   const runner = coordinator(registry, async permission => { asks++; return { decision: 'deny', grantedCapabilityIds: [] }; });
   assert.equal((await call(runner, req, 'mcp__service42__lookup', {})).error.code, 'tool_not_exposed');
-  const searched = await call(runner, req, 'mcp_search', { query: '*', server: 'service42' });
+  const searched = await call(runner, req, 'mcp_search', { action: 'load', query: 'mcp__service42__lookup' });
   assert.equal(searched.result.matches.length, 1); assert.ok(searched.result.matches[0].inputSchema);
   synchronizeMcpDiscovery(registry, req, [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }]);
   const denied = await call(runner, req, 'mcp_call', { name: searched.result.matches[0].name, arguments: {} });
@@ -61,7 +61,7 @@ test('MCP dispatch applies Hooks once to the real tool and remains usable in a r
   assert.ok(req.tools.some(tool => tool.name === 'mcp_call'));
   const events = [];
   const runner = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { throw Error('Unexpected approval'); } }, hooks: { before: async context => { events.push(['before', context.toolCall.name]); return { messages: [] }; }, after: async context => { events.push(['after', context.toolCall.name]); return { messages: [], ...(context.toolCall.name === 'mcp__docs__lookup' ? { toolFeedback: 'Scoped feedback' } : {}) }; } } });
-  const searched = await call(runner, req, 'mcp_search', { query: 'docs' });
+  const searched = await call(runner, req, 'mcp_search', { action: 'load', query: 'mcp__docs__lookup' });
   synchronizeMcpDiscovery(registry, req, [{ role: 'assistant', content: '', toolCalls: [{ id: 'search', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'search', content: JSON.stringify(searched.result) }]);
   events.length = 0;
   const result = await call(runner, req, 'mcp_call', { name: 'mcp__docs__lookup', arguments: {} });
@@ -142,7 +142,7 @@ test('Real host projects MCP schemas only through discovery to the provider', as
     yield { ...base, sequence: 0, kind: 'response_started' };
     const name = ++round === 1 ? 'mcp_search' : 'mcp_call';
     if (round <= 2) {
-      yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `tool-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(round === 1 ? { query: 'docs' } : { name: 'mcp__docs__lookup', arguments: {} }) };
+      yield { ...base, sequence: 1, kind: 'tool_call_delta', index: 0, toolCallId: `tool-${round}`, nameDelta: name, argumentsDelta: JSON.stringify(round === 1 ? { action: 'load', query: 'mcp__docs__lookup' } : { name: 'mcp__docs__lookup', arguments: {} }) };
     } else yield { ...base, sequence: 1, kind: 'text_delta', delta: 'done' };
     yield { ...base, sequence: 4, kind: 'response_completed', finishReason: round <= 2 ? 'tool_calls' : 'stop' };
   } } });

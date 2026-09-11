@@ -31,6 +31,8 @@ test('registers only the published Skill discovery tool', async () => {
     assert.equal('query' in searchResult, false);
     assert.equal(searchResult.matches[0].name, 'xlsx');
     assert.equal(searchResult.matches[0].mainResource, join(packageDir, 'SKILL.md'));
+    assert.deepEqual(Object.keys(searchResult.matches[0]).sort(), ['description', 'mainResource', 'name']);
+    assert.equal(search.definition.inputSchema.properties.action, undefined, 'skills use the existing file reader, not a load action');
 
     const directRegistry = new ToolRegistry();
     registerSkillTools(directRegistry, [packageDir]);
@@ -119,6 +121,18 @@ test('finds bundled skills from natural Chinese requests and exact English names
   for (const query of ['的', 'quasarxyz']) {
     assert.deepEqual((await search.execute(context({ query, limit: 8 }, 'search'))).matches, [], query);
   }
+});
+
+test('skill search bounds long descriptions and returns the original file path without instructions or scores', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-skill-cards-'));
+  try {
+    await writeSkill(root, 'long-description', 'Browser workflow '.repeat(2000));
+    const registry = new ToolRegistry(); registerSkillTools(registry, [root]);
+    const search = registry.resolve('search_skills');
+    const result = await search.execute(context(search.decodeInput({ query: 'browser' }), 'search'));
+    assert.deepEqual(result.matches[0], { name: 'long-description', description: ('Browser workflow '.repeat(2000)).slice(0, 512),
+      descriptionTruncated: true, mainResource: join(root, 'long-description', 'SKILL.md') });
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('segments mixed Chinese and identifiers without changing root precedence or visibility', async () => {

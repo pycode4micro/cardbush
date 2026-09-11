@@ -524,6 +524,12 @@
 
 .plugin-detail-hero h2 { margin: 0; font-size: 25px; }
 .plugin-detail-hero p { margin: 7px 0 0; color: var(--text-soft); }
+.plugin-detail-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.plugin-uninstall-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 7px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; }
+.plugin-uninstall-button:hover { color: var(--danger); border-color: var(--danger); }
+.plugin-uninstall-button:disabled { opacity: .5; cursor: default; }
+.plugin-uninstall-hint { margin: 0 10px 20px; font-size: 12px; color: var(--text-soft); line-height: 1.6; }
+@media (max-width: 560px) { .plugin-detail-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 
 .plugin-prompt-showcase {
   display: grid;
@@ -669,4 +675,33 @@
   .plugin-proxy-row { grid-template-columns: minmax(0, 1fr) minmax(140px, 215px); gap: 10px; }
   .plugin-proxy-row > button { grid-row: auto; grid-column: 2; }
 }
+
+.plugin-search-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 24px;
+  padding: 0 0 26px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--border);
+}
+
+.plugin-search-setting-copy { flex: 1 1 260px; min-width: 0; }
+.plugin-search-setting-copy label { font-weight: 600; }
+.plugin-search-setting-copy p { margin: 6px 0 0; color: var(--text-mid); font-size: 12px; line-height: 1.6; }
+.plugin-search-setting-controls { display: flex; align-items: center; gap: 8px; }
+.plugin-search-setting-controls input {
+  width: 90px;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-bg, transparent);
+}
+.plugin-search-setting-controls input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.plugin-search-setting-controls input[aria-invalid="true"] { border-color: var(--danger, #f06464); }
+.plugin-search-setting-controls button:disabled { opacity: .5; cursor: default; }
+.plugin-search-settings > .plugin-market-error { flex-basis: 100%; margin: 0; }
 @media (max-width: 640px) { .plugin-proxy-fields { grid-template-columns: 1fr; } }

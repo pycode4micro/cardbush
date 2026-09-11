@@ -6,6 +6,8 @@ import {
   type CacheChainObservationPayload,
   type CacheChainState,
   type ModelRequest,
+  type ProviderInputProjection,
+  type ProviderInputObservation,
 } from "@cardbush/bush-protocol";
 
 export class CacheChainTracker {
@@ -84,8 +86,37 @@ export class CacheChainTracker {
       requestOrdinal,
       stableInputDigest,
       messageDigests,
+      ...(this.#state.providerInput ? { providerInput: this.#state.providerInput } : {}),
     };
     return observation;
+  }
+
+  observeProviderInput(projection: ProviderInputProjection): ProviderInputObservation {
+    const previous = this.#state.providerInput;
+    const changedParameters = previous ? [...new Set([
+      ...Object.keys(previous.parameterDigests), ...Object.keys(projection.parameterDigests),
+    ])].filter(key => previous.parameterDigests[key] !== projection.parameterDigests[key]).sort() : [];
+    if (previous && previous.format !== projection.format) changedParameters.unshift("projection_format");
+    let shared = 0;
+    if (previous && !changedParameters.length) {
+      while (shared < Math.min(previous.inputDigests.length, projection.inputDigests.length) &&
+        previous.inputDigests[shared] === projection.inputDigests[shared]) shared++;
+    }
+    const frozenPrefixBreak = Boolean(previous &&
+      (changedParameters.length || shared < previous.inputDigests.length));
+    const stableInputDigest = digest(JSON.stringify({ format: projection.format, parameters: projection.parameterDigests }));
+    this.#state.providerInput = structuredClone(projection);
+    return {
+      requestOrdinal: this.#state.requestOrdinal,
+      format: projection.format, transport: projection.transport,
+      previousProjectionAvailable: Boolean(previous), changedParameters,
+      messageCount: projection.inputDigests.length,
+      previousMessageCount: previous?.inputDigests.length ?? 0,
+      sharedPrefixMessages: shared, appendedMessages: projection.inputDigests.length - shared,
+      frozenPrefixBreak, ...(frozenPrefixBreak ? { breakIndex: shared } : {}),
+      stableInputDigest,
+      sharedPrefixDigest: digest(JSON.stringify(projection.inputDigests.slice(0, shared))),
+    };
   }
 
   snapshot(): CacheChainState {

@@ -1,6 +1,7 @@
 import { PluginMcpSettings } from './PluginMcpSettings';
 import { PluginProxySettings, proxyLabel } from './PluginProxySettings';
-import { defaultPluginProxy, type PluginProxySettings as ProxySettings } from '@cardbush/bush-protocol';
+import { PluginSearchSettings } from './PluginSearchSettings';
+import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, type PluginProxySettings as ProxySettings } from '@cardbush/bush-protocol';
 import { AccountsPanel } from '../accounts/AccountsPanel';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
 import {
@@ -18,6 +19,7 @@ import {
   Server,
   Settings,
   Store,
+  Trash2,
   UserRound,
 } from 'lucide-react';
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -26,6 +28,8 @@ import {
   fetchCardbushAppsConfiguration,
   fetchMcpConnectionOverview,
   saveCardbushAppsConfiguration,
+  savePluginSearchResultLimit,
+  uninstallCardbushPlugin,
   setMcpServerProxy,
   resetMcpServerProxies,
 } from '../../backend/api';
@@ -93,6 +97,7 @@ export function PluginManagementPanel({
   const mcpLoadRevision = useRef(0);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const dirtyPluginIds = useRef(new Set<string>());
+  const uninstalling = useRef(false);
   const skillLoadRevision = useRef(0);
 
   const loadSkillDetail = useCallback(async (name: string, isCurrent: () => boolean, quiet = false) => {
@@ -236,6 +241,24 @@ export function PluginManagementPanel({
     } : current);
   }, []);
 
+  const uninstallPlugin = async (plugin: CardbushAppPlugin) => {
+    if (busy || uninstalling.current) return;
+    uninstalling.current = true;
+    setBusy(`uninstall:${plugin.id}`); setError('');
+    try {
+      const result = await uninstallCardbushPlugin(plugin.id);
+      dirtyPluginIds.current.delete(plugin.id);
+      receiveConfiguration(result.configuration);
+      onNotify(language === 'zh' ? `${plugin.name} 已卸载${result.pending ? '，连接变更正在后台生效' : ''}`
+        : `${plugin.name} uninstalled${result.pending ? '; connection changes are pending' : ''}`);
+      if (result.applicationError) setError(language === 'zh' ? `插件已卸载，但运行时更新失败：${result.applicationError}` : `Plugin uninstalled, but runtime update failed: ${result.applicationError}`);
+      try { setLocalSkills(await onReloadSkills()); }
+      catch (caught) { setError(current => current || (language === 'zh' ? `插件已卸载，但技能列表刷新失败：${errorMessage(caught)}` : `Plugin uninstalled, but skill refresh failed: ${errorMessage(caught)}`)); }
+      await loadConnections();
+    } catch (caught) { setError(errorMessage(caught)); }
+    finally { uninstalling.current = false; setBusy(''); }
+  };
+
   const observingConnections = mcpOverview?.snapshot?.applicationState === 'pending' || mcpOverview?.snapshot?.servers.some(server => server.health === 'restarting');
   useEffect(() => {
     if (!observingConnections || page.kind !== 'manage') return;
@@ -336,10 +359,22 @@ export function PluginManagementPanel({
     }
     finally { await loadConnections(); setBusy(''); }
   };
+  const saveSearchLimit = async (limit: number) => {
+    if (busy) return;
+    setBusy('search:default'); setError('');
+    try {
+      receiveConfiguration(await savePluginSearchResultLimit(limit));
+      onNotify(language === 'zh' ? '搜索结果数量已保存' : 'Search result limit saved');
+    } catch (caught) { throw new Error(errorMessage(caught)); }
+    finally { setBusy(''); }
+  };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
   if (page.kind === 'network') return <div className="plugin-detail-page">
     <button type="button" className="plugin-back" onClick={() => setPage({ kind: 'catalog' })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugins'}</button>
-    <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h2>
+    <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件设置' : 'Plugin settings'}</h2></header>
+    {configuration && <PluginSearchSettings language={language} value={configuration.searchResultLimit ?? DEFAULT_SEARCH_RESULT_LIMIT}
+      busy={Boolean(busy)} onSave={saveSearchLimit}/>}
+    <header className="plugin-catalog-heading"><h3>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h3>
       <p>{language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}</p></header>
     {configuration && <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
       onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())}
@@ -387,6 +422,7 @@ export function PluginManagementPanel({
         plugin={selectedPlugin}
         proxyDefaults={configuration?.proxy}
         onProxySave={proxy => savePluginProxy(selectedPlugin.id, proxy)}
+        onUninstall={() => void uninstallPlugin(selectedPlugin)}
         onMcpSaved={() => void load()}
         onManageAccounts={() => setPage({ kind: 'accounts', pluginId: selectedPlugin.id })}
         busy={Boolean(busy)}
@@ -434,6 +470,8 @@ export function PluginManagementPanel({
         onBack={() => setPage({ kind: 'catalog' })}
         onOpen={(plugin) => setPage({ kind: 'plugin', pluginId: plugin.id })}
         onPersist={(next, message) => void persist(next, 'manage', message)}
+        onUninstall={plugin => void uninstallPlugin(plugin)}
+        error={error}
       />
     );
   }
@@ -452,7 +490,7 @@ export function PluginManagementPanel({
           <button className={tab === 'accounts' ? 'active' : ''} type="button" onClick={() => { setAddOpen(false); setTab('accounts'); }}><UserRound size={16}/>{language === 'zh' ? '账号' : 'Accounts'}</button>
         </div>
         {tab !== 'accounts' && <div className="plugin-hub-actions">
-          <button type="button" title={language === 'zh' ? '插件代理' : 'Plugin proxy'} onClick={() => setPage({ kind: 'network' })}>{language === 'zh' ? '代理' : 'Proxy'}</button>
+          <button type="button" title={language === 'zh' ? '插件设置' : 'Plugin settings'} onClick={() => setPage({ kind: 'network' })}>{language === 'zh' ? '设置' : 'Settings'}</button>
           <button className="plugin-mcp-manage-button" type="button" onClick={() => setPage({ kind: 'manage', tab: 'mcp' })}>
             <Server size={17} /><span>{language === 'zh' ? 'MCP 服务' : 'MCP servers'}</span>
           </button>
@@ -705,7 +743,9 @@ function SkillCatalogCard({ language, skill, enabled, onOpen, onToggle }: {
   );
 }
 
-function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onBack, onOpen, onPersist }: {
+function PluginManagementList({ language, initialTab, configuration, plugins, connections, mcpLoading, mcpError, onOpenMcp, onRefreshMcp, query, busy, onQuery, onBack, onOpen, onPersist, onUninstall, error }: {
+  onUninstall: (plugin: CardbushAppPlugin) => void;
+  error: string;
   language: AppLanguage;
   initialTab?: ManageTab;
   configuration: CardbushAppsConfiguration | null;
@@ -749,6 +789,7 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
         <button className={activeTab === 'mcp' ? 'active' : ''} type="button" role="tab" aria-selected={activeTab === 'mcp'} onClick={() => setActiveTab('mcp')}>MCP <em>{mcpCount}</em></button>
       </div>
       <SearchField language={language} value={query} onChange={onQuery} kind={activeTab === 'plugins' ? 'plugins' : activeTab} />
+      {error && <p className="plugin-market-error" role="alert">{error}</p>}
       {activeTab === 'mcp' && <>
         <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError} />
         <button className="plugin-back" type="button" onClick={() => onOpenMcp()}><Plus size={16} />{language === 'zh' ? '添加 MCP 服务' : 'Add MCP server'}</button>
@@ -759,6 +800,7 @@ function PluginManagementList({ language, initialTab, configuration, plugins, co
           <article key={plugin.id}>
             <button className="plugin-featured-main" type="button" onClick={() => onOpen(plugin)}><PluginLogo plugin={plugin} /><span><strong>{plugin.name}</strong><small>{plugin.description}</small></span></button>
             <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy || !configuration} onClick={() => togglePlugin(plugin)}><span /></button>
+            <button className="plugin-uninstall-button" type="button" disabled={busy || !configuration} aria-label={language === 'zh' ? `卸载 ${plugin.name}` : `Uninstall ${plugin.name}`} title={language === 'zh' ? '卸载插件，保留包文件和设置' : 'Uninstall plugin; keep package files and settings'} onClick={() => onUninstall(plugin)}><Trash2 size={16}/></button>
           </article>
         ))}
         {activeTab === 'apps' && components.map(({ plugin, component }) => (
@@ -801,7 +843,8 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave }: {
+function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall }: {
+  onUninstall: () => void;
   proxyDefaults?: ProxySettings;
   onProxySave: (proxy: ProxySettings | undefined) => Promise<boolean>;
   onMcpSaved: () => void;
@@ -820,8 +863,13 @@ function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPers
       <header className="plugin-detail-hero">
         <PluginLogo plugin={plugin} large />
         <div><h2>{plugin.name}</h2><p>{plugin.description}</p></div>
-        {plugin.installed ? <button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (language === 'zh' ? '插件已停用' : 'Plugin disabled') : (language === 'zh' ? '插件已启用' : 'Plugin enabled'))}><span /></button> : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, language === 'zh' ? '插件已安装' : 'Plugin installed')}>{language === 'zh' ? '立即试用' : 'Install'}</button>}
+        {plugin.installed ? <div className="plugin-detail-actions"><button className={`plugin-switch ${plugin.enabled ? 'on' : ''}`} type="button" disabled={busy} onClick={() => onPersist({ ...plugin, enabled: !plugin.enabled }, plugin.enabled ? (language === 'zh' ? '插件已停用' : 'Plugin disabled') : (language === 'zh' ? '插件已启用' : 'Plugin enabled'))}><span /></button>
+          <button className="plugin-uninstall-button" type="button" disabled={busy} onClick={onUninstall}><Trash2 size={15}/>{language === 'zh' ? '卸载插件' : 'Uninstall'}</button></div>
+          : <button className="plugin-detail-primary" type="button" disabled={busy} onClick={() => onPersist({ ...plugin, installed: true, enabled: true }, language === 'zh' ? '插件已安装' : 'Plugin installed')}>{language === 'zh' ? '安装插件' : 'Install'}</button>}
       </header>
+      <p className="plugin-uninstall-hint">{plugin.installed
+        ? (language === 'zh' ? '卸载会从已添加列表移除插件及其能力，保留包文件和设置，方便重新安装。' : 'Uninstall removes the plugin and its capabilities from Added. Package files and settings are kept for reinstalling.')
+        : (language === 'zh' ? '此插件尚未安装。安装后可使用其能力。' : 'This plugin is not installed. Install it to use its capabilities.')}</p>
       {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <div key={prompt}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></div>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}

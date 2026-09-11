@@ -13,6 +13,12 @@ for (const projectionVersion of [undefined, 'stable_v1']) test(`checkpoint proje
   const checkpoint = { inputMessageCount: 1, throughMessageId: 'r', summary: 'File inspected; finish the request.', ...(projectionVersion ? { projectionVersion } : {}) };
   const turn = { turnId: 't', turnSequence: 1, messages, contextCheckpoint: checkpoint };
   const active = projectActiveTurnContext({ turnId: 't', inputMessages: messages.slice(0, 1), generatedMessages: messages.slice(1), checkpoint, includeResumeInstruction: true }).map(message => modelMessageSchema.parse(message));
+  assert.equal(active[1].role, 'user');
+  assert.equal(active[1].name, 'active_turn_checkpoint');
+  assert.equal(active[1].visibility, 'internal');
+  assert.equal(active[1].reasoningContent, undefined);
+  assert.equal(active[1].providerReplay, undefined);
+  assert.equal(active[1].toolCalls, undefined);
   const session = { sessionId: 's', revision: 1, turns: [turn], supersededMessageIds: [] };
   const committed = assembleContext({ session }).messages;
   assert.deepEqual(committed, active);
