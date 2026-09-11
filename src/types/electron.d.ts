@@ -160,6 +160,7 @@ declare global {
         httpsProxy: string;
         noProxy: string;
       }) => Promise<void>;
+      preparePluginUiNetwork?: () => Promise<void>;
       filesystemLocations: () => Promise<Array<{
         id: string;
         name: string;

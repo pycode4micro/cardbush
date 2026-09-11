@@ -46,6 +46,19 @@ app.whenReady().then(async () => {
     await new Promise(resolve => setTimeout(resolve, 1200));
     assert.equal(await read('window.checks'), 3, 'unmount cancels queued observation');
     assert.ok(await read('window.aborts > 0'));
+    window.setSize(460, 420);
+    await read('window.renderFailure("zh")');
+    await until('document.querySelector(".assistant-failure-notice small")?.textContent.includes("工具名称重复")');
+    assert.equal(await read('document.querySelector(".assistant-failure-details").open'), false);
+    assert.equal(await read('document.querySelector(".assistant-failure-notice small").textContent.includes("Tool names")'), false);
+    await read('document.querySelector(".assistant-failure-details summary").click()');
+    assert.equal(await read('document.querySelector(".assistant-failure-details").open'), true);
+    assert.match(await read('document.querySelector(".assistant-failure-details pre").textContent'), /400 Tool names must be unique\./);
+    assert.ok(await read('document.documentElement.scrollWidth <= window.innerWidth'), 'expanded diagnostics must fit a narrow conversation');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    writeFileSync(resolve('tmp/run-status-failure-zh.png'), (await window.webContents.capturePage()).toPNG());
+    await read('window.renderFailure("en")');
+    await until('document.querySelector(".assistant-failure-notice small")?.textContent.includes("Duplicate tool names")');
     console.log('Run status UI passed: concurrent states, idle-only MCP verification and cleanup.');
     clearTimeout(deadline); window.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); window.destroy(); app.exit(1); }

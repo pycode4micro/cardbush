@@ -3,8 +3,8 @@ import path from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const source = ['src/features/chatMessages/assistantRunActivity.ts', 'src/features/chatMessages/mcpActivation.ts',
-  'src/backend/mcpConfigurationFact.ts'].map(file => `export * from ${JSON.stringify(path.resolve(file))};`).join('\n');
-const { assistantRunActivity, turnActivityExecutions, mcpActivations, mcpActivationState, configuredMcpServerId } =
+  'src/backend/mcpConfigurationFact.ts', 'src/features/chatMessages/modelFailurePresentation.ts'].map(file => `export * from ${JSON.stringify(path.resolve(file))};`).join('\n');
+const { assistantRunActivity, turnActivityExecutions, mcpActivations, mcpActivationState, configuredMcpServerId, modelFailurePresentation } =
   await loadChatTranscript({ source });
 const execution = (id, state, metadata = {}, time = 0) => ({ id, name: 'terminal_exec', state,
   summary: id, output: '', createdAt: new Date(1788883200000 + time).toISOString(), metadata });
@@ -46,4 +46,16 @@ assert.equal(mcpActivations([{ ...fact, metadata: { ...fact.metadata, nativeResu
 assert.equal(configuredMcpServerId({ name: fact.name, argumentsText: '{"id":"blender","env":{"SECRET":"private"}}' }), 'blender');
 assert.equal(configuredMcpServerId({ name: fact.name, argumentsText: '{"id":"blender","enabled":false}' }), undefined);
 assert.equal(configuredMcpServerId({ name: 'other_tool', argumentsText: '{"id":"blender"}' }), undefined);
+const originalError = '400 Tool names must be unique.';
+const duplicateFailure = modelFailurePresentation('invalid_request_error', originalError, 'zh', 400);
+assert.match(duplicateFailure.detail, /工具名称重复/);
+assert.equal(duplicateFailure.detail.includes(originalError), false);
+assert.ok(duplicateFailure.technicalDetails.endsWith(originalError), 'provider diagnostics remain verbatim and separate from the localized explanation');
+assert.match(modelFailurePresentation('invalid_request_error', originalError, 'en', 400).detail, /Duplicate tool names/);
+const unknownFailure = modelFailurePresentation('unknown_provider_error', 'Unexpected upstream failure', 'zh');
+assert.match(unknownFailure.detail, /本轮执行未能完成/);
+assert.ok(unknownFailure.technicalDetails.includes('Unexpected upstream failure'));
+assert.match(modelFailurePresentation('invalid_request_error', 'Invalid parameters', 'zh', 400).detail, /请求参数/);
+assert.match(modelFailurePresentation('rate_limit_exceeded', 'Rate limited', 'zh', 429).detail, /限制了请求/);
+assert.match(modelFailurePresentation('insufficient_quota', 'Quota exhausted', 'zh', 429).detail, /额度或计费/);
 console.log('Run activity and MCP activation facts passed (concurrency, history, stale revisions and failures).');

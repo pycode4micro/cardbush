@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
-import { createReadStream } from 'node:fs';
 import { access, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { Parser, extract } from 'tar';
 import { safePackagePath, withinPackage } from './pluginPackagePaths';
+import { extractNpmPluginArchive, pluginArchiveLimits } from './pluginArchives';
 
 export interface NpmPluginSource { kind: 'npm'; package: string; version?: string; registry?: string }
 export type AcquisitionCommand = (command: string, args: string[], cwd: string) => Promise<string>;
@@ -74,7 +73,7 @@ export async function gitCatalogFile(repository: string, revision: string, path:
 export async function gitPluginArchive(repository: string, revision: string, path: string, run: AcquisitionCommand) {
   const file = join(dirname(repository), 'plugin.zip');
   await run('git', ['-C', repository, 'archive', '--format=zip', '--prefix=plugin/', '-o', file, revision, '--', ...(path ? [`:(literal)${safePackagePath(path)}`] : [])], dirname(repository));
-  if ((await stat(file)).size > 32 * 1024 * 1024) throw new Error('Plugin archive exceeds the size limit.');
+  if ((await stat(file)).size > pluginArchiveLimits.compressedBytes) throw new Error('Plugin archive exceeds the size limit.');
   return readFile(file);
 }
 
@@ -88,31 +87,7 @@ export async function acquireNpmPlugin(source: NpmPluginSource, stage: string, d
   if (!Array.isArray(output) || output.length !== 1 || typeof output[0].filename !== 'string') throw new Error('npm returned an invalid plugin archive.');
   const metadata = output[0];
   const file = withinPackage(pack, metadata.filename);
-  if ((await stat(file)).size > 32 * 1024 * 1024) throw new Error('Plugin archive exceeds the size limit.');
-  const seen = new Set<string>(); let size = 0;
-  await new Promise<void>((fulfill, reject) => {
-    const input = createReadStream(file);
-    const parser = new Parser({ strict: true, maxDecompressionRatio: 2000 });
-    parser.once('error', error => { input.destroy(); reject(error); });
-    parser.once('end', fulfill);
-    input.once('error', error => parser.abort(error));
-    parser.on('entry', entry => {
-      try {
-        if (!['File', 'Directory', 'OldFile'].includes(entry.type)) throw new Error('Plugin archives cannot contain links or special files.');
-        if (entry.path !== 'package/' || entry.type !== 'Directory') {
-          if (!entry.path.startsWith('package/')) throw new Error('Invalid npm archive root.');
-          const path = safePackagePath(entry.path.slice('package/'.length)).toLowerCase();
-          if (seen.has(path)) throw new Error('Plugin archive contains conflicting paths.');
-          seen.add(path); size += entry.size;
-          if (seen.size > 2000 || entry.size > 16 * 1024 * 1024 || size > 64 * 1024 * 1024) throw new Error('Expanded plugin exceeds the size limit.');
-        }
-        entry.resume();
-      } catch (error) { parser.abort(error as Error); }
-    });
-    input.pipe(parser);
-  });
-  await mkdir(destination);
-  await extract({ file, cwd: destination, strip: 1, strict: true, noChmod: true, noMtime: true });
+  await extractNpmPluginArchive(file, destination);
   return { revision: `npm:${metadata.version}:${metadata.shasum ?? metadata.integrity ?? ''}`, source: `${source.registry ?? 'https://registry.npmjs.org'}/${source.package}` };
 }
 

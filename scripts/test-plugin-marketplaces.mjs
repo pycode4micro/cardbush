@@ -23,13 +23,14 @@ const archive = new JSZip();
 archive.file('fixture/plugins/native-example/.codex-plugin/plugin.json',JSON.stringify(native));
 archive.file('fixture/plugins/native-example/skills/greet/SKILL.md','---\nname: greet\ndescription: Say hello\n---\nGreet the user.');
 archive.file('fixture/plugins/native-example/server.js','console.log("fixture only");');
+archive.file('fixture/plugins/native-example/.editor/skills','../skills',{unixPermissions:0o120777});
 archive.file('fixture/plugins/claude-example/.claude-plugin/plugin.json',JSON.stringify(claude));
 archive.file('fixture/plugins/claude-example/skill-pack/task/SKILL.md','---\nname: task\ndescription: Perform task\n---\nUse the task reference.');
 archive.file('fixture/plugins/claude-example/skills/default-task/SKILL.md','---\nname: default-task\ndescription: Default task\n---\nKeep the default skills alongside custom roots.');
 archive.file('fixture/plugins/claude-example/.mcp.json',JSON.stringify({mcpServers:{echo:{command:'node',args:['${CLAUDE_PLUGIN_ROOT}/server.js']}}}));
 archive.file('fixture/plugins/claude-example/server.js','console.log("fixture only");');
 archive.file('fixture/plugins/hook-example/.claude-plugin/plugin.json',JSON.stringify({name:'hook-example',version:'1.0.0',hooks:{hooks:{Stop:[{hooks:[{type:'prompt',prompt:'Check task'}]}]}}}));
-const archiveBytes=await archive.generateAsync({type:'nodebuffer'});
+const archiveBytes=await archive.generateAsync({type:'nodebuffer',platform:'UNIX'});
 let offline=false, currentSha=sha;
 const requests=[];
 const fetcher=async input=>{
@@ -79,6 +80,7 @@ try{
  const readsBeforeInstall=requests.length;
  const installed=await service.install(preview.token);
  assert.equal(installed.id,native.name);
+ assert.equal(await readFile(join(options.userPluginRoot,native.name,'.editor/skills/greet/SKILL.md'),'utf8'),await readFile(join(options.userPluginRoot,native.name,'skills/greet/SKILL.md'),'utf8'));
  assert.equal(requests.length,readsBeforeInstall,'install uses reviewed snapshot without refetching a moved branch');
  assert.equal(JSON.parse(await readFile(join(options.userPluginRoot,native.name,'.cardbush-marketplace.json'),'utf8')).revision,sha);
  await assert.rejects(service.install(preview.token),/expired/);
@@ -145,7 +147,7 @@ try{
  const localSource=await service.addLocal(local),localPreview=await service.preview(localSource.id,'local-example');
  await service.install(localPreview.token);
  assert.ok((await readdir(options.userPluginRoot)).includes('local-example'));
- // Archive extraction rejects traversal, Windows aliases, symlinks and decompression overflow.
+ // Archive extraction rejects traversal, Windows aliases, broken links and decompression overflow.
  for(const [name,unixPermissions] of [['../escape.txt',undefined],['CON.txt',undefined],['link',0o120777]]){
   const zip=new JSZip();zip.file('repo/plugin/'+name,'payload',{unixPermissions});
   await assert.rejects(extractPluginArchive(await zip.generateAsync({type:'nodebuffer',platform:'UNIX'}),'plugin',join(root,'unsafe-'+Math.random())));

@@ -8,6 +8,7 @@ import {
   compareAssistantSegments,
   isGuidanceSealedAssistantSegment,
   isSupersededLoopAssistant,
+  isBackendSupersededMessage,
   persistedChatMessageId,
   normalizeLoopContent,
   chatMessageTurnId,
@@ -23,6 +24,8 @@ import {
 import {
   mergeToolExecutionLists,
 } from './toolExecutionMerge';
+
+export { isBackendSupersededMessage } from './messageFacts';
 
 export function localLoopHistorySnapshot(message: ChatMessage): ChatMessage {
   const nextLoopIndex = nextLocalLoopIndex(message);
@@ -332,16 +335,6 @@ export function collapseLoopTranscriptMessages(messages: ChatMessage[]) {
     };
   }
   return sortMessagesByTranscriptOrder(dedupeVisibleTranscriptMessages(visible));
-}
-
-export function isBackendSupersededMessage(message: ChatMessage) {
-  const metadata = message.metadata ?? {};
-  return (
-    metadata.__bush_superseded === true ||
-    metadata.superseded === true ||
-    metadata.is_superseded === true ||
-    metadata.isSuperseded === true
-  );
 }
 
 export function dedupeVisibleTranscriptMessages(messages: ChatMessage[]) {

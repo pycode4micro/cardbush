@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { toolDefinitionSchema, type ModelMessage, type ModelRequest, type ToolDefinition } from '@cardbush/bush-protocol';
 import type { ToolRegistry } from './toolRegistry.js';
+import { MCP_HOST_CAPABILITIES } from './mcpHostCapabilities.js';
 
 export const MCP_DISCOVERY_PROTOCOL = 'bush.mcp_discovery.v1';
 
@@ -11,8 +12,8 @@ export function projectMcpDiscoveryResult(text: string, maxChars?: number): stri
   try { result = JSON.parse(text); } catch { return undefined; }
   if (result?.protocol !== MCP_DISCOVERY_PROTOCOL || !Array.isArray(result.matches)) return undefined;
   const catalog = result.matches.map((item: any) => ({ name: item.name, server: item.server, tool: item.tool,
-    revision: item.revision, ...(typeof item.description === 'string' ? { summary: item.description.slice(0, 160) } : {}) }));
-  const output = { protocol: result.protocol, sessionId: result.sessionId, catalog,
+    revision: item.revision, ...(item.interface ? { interface: item.interface } : {}), ...(typeof item.description === 'string' ? { summary: item.description.slice(0, 160) } : {}) }));
+  const output = { protocol: result.protocol, sessionId: result.sessionId, catalog, ...(result.hostCapabilities ? { hostCapabilities: result.hostCapabilities } : {}),
     matches: [] as unknown[], total: result.total, more: result.more, next_offset: result.next_offset,
     unloaded: result.matches.map((item: any) => item.name) as string[] };
   const serialize = () => JSON.stringify({ ...output, ...(output.unloaded.length ? {
@@ -196,13 +197,15 @@ export function registerMcpDiscovery(registry: ToolRegistry): void {
       const loaded = loadedTools(registry, request);
       const matches = candidates.slice(context.input.offset, context.input.offset + context.input.limit).map(candidate => {
         const version = revision(registry, candidate.definition);
-        const reference = { name: candidate.definition.name, server: candidate.server, tool: candidate.tool, revision: version };
+        const app = registry.resolve(candidate.definition.name)?.mcpApp;
+        const reference = { name: candidate.definition.name, server: candidate.server, tool: candidate.tool, revision: version,
+          declarationSource: 'server', ...(app ? { interface: { resourceUri: app.resourceUri, state: 'declared' } } : {}) };
         const alreadyLoaded = loaded.get(candidate.definition.name) === version;
         return !context.input.reload && alreadyLoaded ? { ...reference, loaded: true } : { ...candidate.definition, ...reference };
       });
       remember(registry, request, loaded);
       const next = context.input.offset + matches.length;
-      return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, matches, total: candidates.length,
+      return { protocol: MCP_DISCOVERY_PROTOCOL, sessionId: request.sessionId, hostCapabilities: MCP_HOST_CAPABILITIES, matches, total: candidates.length,
         more: candidates.length > next, ...(candidates.length > next ? { next_offset: next } : {}) };
     },
   });

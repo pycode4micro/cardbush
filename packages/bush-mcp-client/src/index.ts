@@ -1,4 +1,5 @@
 import { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
+import { projectMcpResult } from './modelResult.js';
 export { attachMcpResultFallback, McpResultValidationError } from "./resultFallback.js";
 import { createHash } from "node:crypto";
 import { McpInteractiveCalls, ScopedMcpClient, type McpElicitationHandler } from './elicitation.js';
@@ -511,17 +512,16 @@ export class McpClientManager {
       },
       ...(typeof resourceUri === 'string' && resourceUri.startsWith('ui://') ? { mcpApp: {
         resourceUri,
+        get connectionIdentity() { return !connection.retired && connection.health === 'ready' ? connection.client : undefined; },
+        title: tool.remote.title ?? tool.remote.annotations?.title,
+        serverTitle: connection.client.getServerVersion()?.title ?? connection.client.getServerVersion()?.name,
         readResource: async (uri: string, signal?: AbortSignal) => {
           if (connection.retired || connection.health !== 'ready') throw new Error('MCP UI service is no longer connected.');
           return connection.client.readResource({ uri }, { signal, timeout: 30_000 });
         },
       } } : {}),
       // UI-only metadata remains in native execution records, never in model context.
-      renderModelResult: result => {
-        if (!result || typeof result !== 'object') return undefined;
-        const { _meta, ...modelResult } = result as Record<string, unknown>;
-        return JSON.stringify(modelResult);
-      },
+      renderModelResult: projectMcpResult,
       manifest: tool.manifest,
       parallelSafe: tool.policy.parallelSafe,
       executionChannel: `mcp:${connection.config.id}`,

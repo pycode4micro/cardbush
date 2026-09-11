@@ -63,6 +63,10 @@ export interface ToolRegistration<TInput = unknown> {
   };
   mcpApp?: {
     resourceUri: string;
+    /** Host-only live connection identity; a getter can invalidate it on reconnect. */
+    readonly connectionIdentity?: object;
+    title?: string;
+    serverTitle?: string;
     readResource: (uri: string, signal?: AbortSignal) => Promise<unknown>;
   };
   definition: ToolDefinition;

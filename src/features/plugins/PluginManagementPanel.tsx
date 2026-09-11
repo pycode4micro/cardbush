@@ -215,7 +215,7 @@ export function PluginManagementPanel({
     try {
       const saved = await saveCardbushAppsConfiguration(next);
       dirtyPluginIds.current.clear();
-      setConfiguration(saved);
+      receiveConfiguration(saved);
       void loadConnections();
       setLocalSkills(await onReloadSkills());
       onNotify(message);
@@ -226,7 +226,7 @@ export function PluginManagementPanel({
     } finally {
       setBusy('');
     }
-  }, [onNotify, onReloadSkills, loadConnections]);
+  }, [onNotify, onReloadSkills, loadConnections, receiveConfiguration]);
 
   const replacePlugin = useCallback((plugin: CardbushAppPlugin) => {
     dirtyPluginIds.current.add(plugin.id);
@@ -304,35 +304,48 @@ export function PluginManagementPanel({
     catch (caught) { setError(errorMessage(caught)); return false; }
     finally { setBusy(''); }
   };
-  const resetProxyOverrides = async () => {
-    if (busy) return;
-    setBusy('proxy:reset'); setError('');
+  const saveGlobalProxy = async (proxy: ProxySettings, applyToAll = false) => {
+    if (busy) return false;
+    setBusy('proxy:global'); setError('');
     try {
       const latest = await fetchCardbushAppsConfiguration();
-      const saved = latest.plugins.some(plugin => plugin.config.proxy !== undefined)
-        ? await saveCardbushAppsConfiguration({ ...latest, plugins: latest.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })) })
-        : latest;
+      // Persist and request runtime application even on a retry whose values
+      // already reached disk before the previous runtime refresh failed.
+      const saved = await saveCardbushAppsConfiguration({ ...latest, proxy, plugins: applyToAll
+        ? latest.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })) : latest.plugins });
       receiveConfiguration(saved);
-      // Preserve other unsaved plugin fields while clearing this explicit override.
-      setConfiguration(current => current && current.revision === saved.revision ? { ...current,
-        plugins: current.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })),
-      } : current);
-      await resetMcpServerProxies();
-      setMcpOverview(current => current ? { ...current, servers: current.servers.map(server => ({ ...server, proxy: undefined })) } : current);
-      setProxyResetRevision(value => value + 1);
-      onNotify(language === 'zh' ? '所有插件和 MCP 已恢复使用默认代理' : 'All plugins and MCP servers now use the default proxy');
-    } catch (caught) { setError(errorMessage(caught)); }
+      if (applyToAll) {
+        // Preserve other unsaved plugin fields while clearing this explicit override.
+        setConfiguration(current => current && current.revision === saved.revision ? { ...current,
+          plugins: current.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })),
+        } : current);
+        await resetMcpServerProxies();
+        setMcpOverview(current => current ? { ...current, servers: current.servers.map(server => ({ ...server, proxy: undefined })) } : current);
+        setProxyResetRevision(value => value + 1);
+      }
+      onNotify(applyToAll
+        ? (language === 'zh' ? '已保存并应用到全部插件和 MCP' : 'Saved and applied to all plugins and MCP servers')
+        : (language === 'zh' ? '插件代理已保存' : 'Plugin proxy saved'));
+      return true;
+    } catch (caught) {
+      setError(errorMessage(caught));
+      // A runtime refresh can fail after a durable write. Read back the saved
+      // facts so the page cannot revert to an older default on the next edit.
+      await fetchCardbushAppsConfiguration().then(receiveConfiguration).catch(() => undefined);
+      return false;
+    }
     finally { await loadConnections(); setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
   if (page.kind === 'network') return <div className="plugin-detail-page">
     <button type="button" className="plugin-back" onClick={() => setPage({ kind: 'catalog' })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugins'}</button>
     <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h2>
-      <p>{language === 'zh' ? '所有插件和 MCP 默认跟随此处的全局设置；只有需要例外时，才在下方单独修改。' : 'All plugins and MCP servers follow this global setting by default. Change individual rows only for exceptions.'}</p></header>
+      <p>{language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}</p></header>
     {configuration && <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
-      onSave={proxy => persist({ ...configuration, proxy: proxy ?? defaultPluginProxy() }, 'network', language === 'zh' ? '插件代理已保存' : 'Plugin proxy saved')} />}
+      onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())}
+      applyToAll={{ formId: 'plugin-proxy-global', save: proxy => saveGlobalProxy(proxy, true) }} />}
     <section className="plugin-proxy-list"><div className="plugin-section-title"><h3>{language === 'zh' ? '插件与 MCP' : 'Plugins and MCP'}</h3><span>{plugins.filter(item => item.installed).length + (mcpOverview?.servers.length ?? 0)}</span>
-      <button type="button" className="plugin-proxy-reset" disabled={Boolean(busy) || !configuration || !mcpOverview} onClick={() => void resetProxyOverrides()}>{language === 'zh' ? '全部使用默认' : 'Use default for all'}</button></div>
+      <button type="submit" form="plugin-proxy-global" className="plugin-proxy-reset" disabled={Boolean(busy) || !configuration}>{language === 'zh' ? '一键应用' : 'Apply to all'}</button></div>
       <label className="plugin-search"><Search size={17}/><input aria-label={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} placeholder={language === 'zh' ? '搜索插件或 MCP' : 'Search plugins or MCP'} value={proxyQuery} onChange={event => setProxyQuery(event.target.value)}/></label>
       <McpCatalogNotice language={language} loading={mcpLoading} error={mcpError}/>
       {plugins.filter(item => item.installed).map(plugin => <div key={`plugin:${plugin.id}`} hidden={!proxyMatches(plugin.name, plugin.id)} data-proxy-scope={`plugin:${plugin.id}`}>
@@ -363,7 +376,7 @@ export function PluginManagementPanel({
       }} />{marketProxyOpen && configuration && <dialog className="plugin-proxy-dialog" ref={node => { if (node && !node.open) node.showModal(); }} onCancel={() => setMarketProxyOpen(false)}>
         <header><h3>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h3><button type="button" className="plugin-back" onClick={() => setMarketProxyOpen(false)}>{language === 'zh' ? '关闭代理设置' : 'Close proxy settings'}</button></header>
         <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
-          onSave={proxy => persist({ ...configuration, proxy: proxy ?? defaultPluginProxy() }, 'network', language === 'zh' ? '插件代理已保存' : 'Plugin proxy saved')} />
+          onSave={proxy => saveGlobalProxy(proxy ?? defaultPluginProxy())} />
         {error && <p className="plugin-market-error" role="alert">{error}</p>}
       </dialog>}</>;
   }

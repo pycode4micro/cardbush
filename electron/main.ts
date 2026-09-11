@@ -2181,7 +2181,7 @@ ipcMain.handle('models:list', async (_, baseUrl: string, apiKey: string) => {
   if (!token) {
     throw new Error('Missing API key');
   }
-  const response = await net.fetch(endpoint, {
+  const response = await session.fromPartition('cardbush-model-network').fetch(endpoint, {
     method: 'GET',
     headers: {
       accept: 'application/json',
@@ -2328,6 +2328,16 @@ function pluginNetworking() {
   return pluginNetworkPromise ??= import('./pluginNetwork.mjs').then(({ PluginNetwork }) =>
     new PluginNetwork(productAppsConfigPath(), partition => session.fromPartition(partition)));
 }
+let pluginUiNetworkPromise: Promise<import('./pluginUiNetwork.mjs', { with: { 'resolution-mode': 'import' } }).PluginUiNetwork> | undefined;
+function refreshPluginUiNetwork() {
+  pluginUiNetworkPromise ??= Promise.all([pluginNetworking(), import('./pluginUiNetwork.mjs')])
+    .then(([network, { PluginUiNetwork }]) => new PluginUiNetwork(network, session.defaultSession, app));
+  return pluginUiNetworkPromise.then(network => network.refresh());
+}
+ipcMain.handle('plugins:prepare-ui-network', async event => {
+  assertMainWindowSender(event.sender.id);
+  await refreshPluginUiNetwork();
+});
 const pluginFetch: typeof fetch = async (input, init) => (await pluginNetworking()).fetch(input, init);
 let mcpDesktopHost: McpDesktopHost | undefined;
 let openAiAccountPromise: Promise<import('./openAiAccount.mjs', { with: { 'resolution-mode': 'import' } }).OpenAiAccount> | undefined;
@@ -3541,6 +3551,7 @@ async function initializeProductHost(controller: RuntimeHostController) {
     bundledPluginRoot, userPluginRoot,
     path.join(app.getPath('userData'), 'product-host', 'config'),
   ], () => {
+    void refreshPluginUiNetwork().catch((error: unknown) => console.warn('[plugin-ui-network]', error));
     const notify = () => {
       for (const window of BrowserWindow.getAllWindows()) {
         sendToLiveRenderer(window, 'capabilities:changed');
@@ -4291,19 +4302,21 @@ async function applyProxySettings(proxy: {
   noProxy: string;
 }) {
   (await pluginNetworking()).setModel(proxy);
+  await refreshPluginUiNetwork();
+  const modelSession = session.fromPartition('cardbush-model-network');
   if (proxy.mode === 'system') {
-    await session.defaultSession.setProxy({ mode: 'system' });
+    await modelSession.setProxy({ mode: 'system' });
     return;
   }
   if (proxy.mode === 'none') {
-    await session.defaultSession.setProxy({ mode: 'direct' });
+    await modelSession.setProxy({ mode: 'direct' });
     return;
   }
   const rules = [
     proxy.httpProxy.trim() ? `http=${normalizeProxyRule(proxy.httpProxy)}` : '',
     proxy.httpsProxy.trim() ? `https=${normalizeProxyRule(proxy.httpsProxy)}` : '',
   ].filter(Boolean);
-  await session.defaultSession.setProxy({
+  await modelSession.setProxy({
     mode: rules.length > 0 ? 'fixed_servers' : 'direct',
     proxyRules: rules.join(';'),
     proxyBypassRules: proxy.noProxy.trim(),

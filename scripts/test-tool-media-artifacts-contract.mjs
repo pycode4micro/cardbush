@@ -53,6 +53,12 @@ assert.equal(structured.length, 1);
 assert.equal(structured[0].id, 'artifact-one');
 assert.equal(structured[0].type, 'image');
 assert.equal(structured[0].size, 42);
+const wrapped = toolArtifactsFromPayload({ result: { mcp: { name: 'mcp__fixture__generate', server: 'fixture', tool: 'generate' }, result: {
+  content: [{ type: 'resource_link', name: 'report.pdf', uri: 'https://example.test/report.pdf', mimeType: 'application/pdf' }],
+  structuredContent: { artifacts: [{ type: 'image', path: 'C:/workspace/result.png' }] },
+} } });
+assert.deepEqual(Array.from(wrapped, artifact => artifact.type), ['image', 'document']);
+assert.equal(wrapped[1].display, 'attachment');
 
 const undeclared = toolArtifactsFromPayload({
   metadata: {

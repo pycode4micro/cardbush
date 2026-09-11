@@ -125,7 +125,8 @@ import { registerPluginCommandTools, parsePluginCommandInvocation } from './plug
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
-import { McpAppsHost, MCP_APPS_COMMAND } from './mcpAppsHost.js';
+import { McpAppsHost, MCP_APPS_COMMAND, registerMcpAppStatusTool } from './mcpAppsHost.js';
+import { registerArtifactTools } from './artifactTools.js';
 import { PluginHookScopes } from './pluginHookScopes.js';
 import { PluginAgentEnvironment, type OpenAgentMcpScope } from './pluginAgentEnvironment.js';
 import { PluginBackgroundTasks } from './pluginBackgroundTasks.js';
@@ -149,7 +150,7 @@ import {
   RuntimeEventProjector,
   type RuntimeEventProjectorOptions,
 } from "./runtimeEventProjector.js";
-import { RuntimeToolLoop } from "./runtimeToolLoop.js";
+import { RuntimeToolLoop, modelFacingNativeToolResult } from "./runtimeToolLoop.js";
 import { ToolRegistry } from "./toolRegistry.js";
 import {
   InMemoryRuntimeCheckpointStore,
@@ -356,6 +357,7 @@ export class InMemoryRuntimeHost {
     registerMcpDiscovery(this.#toolRegistry);
     this.#toolExecutions = options.toolExecutionStore ?? new ToolExecutionStore();
     registerFileMemoTools(this.#toolRegistry, this.#toolExecutions);
+    registerArtifactTools(this.#toolRegistry);
     registerInteractionTools(this.#toolRegistry);
     const runtimeDataRoot = resolve(
       options.dataRoot || join(process.cwd(), ".cardbush-runtime"),
@@ -373,6 +375,7 @@ export class InMemoryRuntimeHost {
         after: context => run(context.outcome.kind === 'returned' ? 'PostToolUse' : 'PostToolUseFailure', { toolName: context.toolCall.name, input: context.input, output: context.outcome.kind === 'returned' ? context.outcome.result : context.outcome.error, signal: context.signal }),
       };
     });
+    registerMcpAppStatusTool(this.#toolRegistry, this.#mcpApps);
     this.#automation = options.automation;
     this.#pluginHooks = new PluginHookRunner(runtimeDataRoot, {
       network: options.pluginNetwork,
@@ -1446,10 +1449,6 @@ export class InMemoryRuntimeHost {
       });
     try {
       await this.#mcpApps.remember(request);
-      if (input.nextRound === 1 && request.metadata.agentRole !== 'child') {
-        const context = await this.#mcpApps.context(request.sessionId);
-        if (context) messages.push({ role: 'user', name: 'mcp_app_context', content: context });
-      }
       if (this.#loadPluginExtensions && !request.metadata.pluginHookEvaluation) {
         this.#pluginHooks.openSession(request.sessionId);
         pluginExtensions = await this.#loadPluginExtensions();
@@ -1507,6 +1506,22 @@ export class InMemoryRuntimeHost {
       }
       while (true) {
         round += 1;
+        if (request.metadata.agentRole !== 'child') {
+          const context = await this.#mcpApps.context(request.sessionId);
+          const lastContext = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_context');
+          if (context && context !== lastContext?.content) {
+            const message: ModelMessage = { role: 'user', name: 'mcp_app_context', visibility: 'internal', content: context };
+            messages.push(message); generatedMessages.push({ messageId: `msg_mcp_context_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+          }
+          const last = [...messages].reverse().find(message => message.role === 'user' && message.name === 'mcp_app_observations');
+          let cursor = 0;
+          try { cursor = last ? Number(JSON.parse(last.content).cursor) || 0 : 0; } catch { /* Older context has no observation cursor. */ }
+          const observations = await this.#mcpApps.observations.since(request.sessionId, cursor);
+          if (observations.events.length) {
+            const message: ModelMessage = { role: 'user', name: 'mcp_app_observations', visibility: 'internal', content: JSON.stringify(observations) };
+            messages.push(message); generatedMessages.push({ messageId: `msg_mcp_app_${request.turnId}_${round}`, createdAt: this.#sessionNow(), message });
+          }
+        }
         for (const delivery of this.#pluginHooks.takeMessages(request.sessionId)) {
           for (const [index, content] of delivery.messages.entries()) {
             const message: ModelMessage = { role: 'developer', name: 'plugin_hook_feedback', content };
@@ -2661,7 +2676,7 @@ export class InMemoryRuntimeHost {
     const native = record.outcome === "returned"
       ? record.result
       : { runtimeError: record.error };
-    return record.modelText ?? JSON.stringify(native) ?? "null";
+    return record.modelText ?? JSON.stringify(record.outcome === 'returned' ? native : modelFacingNativeToolResult(native, record.toolCall.name)) ?? "null";
   }
 
   async #recordLogicFeedback(input: {

@@ -48,6 +48,19 @@ function assertClosedToolBatches(items) {
   assert.deepEqual([...pending.keys()], [], 'Every call must have an output');
 }
 
+function declaredNames(params) {
+  return [...(params.tools ?? []), ...params.input.flatMap(item =>
+    item.type === 'tool_search_output' || item.type === 'additional_tools' ? item.tools : [])]
+    .filter(tool => tool.type === 'function').map(tool => tool.name);
+}
+
+function searchMessages(id, matches) {
+  return [
+    { role: 'assistant', content: '', toolCalls: [{ id, name: 'mcp_search', argumentsText: '{"query":"docs","reload":true}' }] },
+    { role: 'tool', toolCallId: id, content: searchResult(matches) },
+  ];
+}
+
 async function fixture(t, handler) {
   const calls = [], failures = [];
   const server = createServer(async (req, res) => {
@@ -398,4 +411,123 @@ test('native calls use the authoritative execution pipeline and survive durable 
   assert.equal(requests[1].input.filter(item => item.type === 'tool_search_output').length, 1);
   assert.match(requests[6].input.find(item => item.type === 'function_call_output' && item.call_id === 'read-6').output, /revoked/);
   assert.ok(next.host.events('s', 'two').filter(event => event.kind === 'cache_chain_observed').every(event => !event.payload.frozenPrefixBreak));
+});
+
+test('overlapping parallel searches pass a strict provider and execute the discovered tool once', async t => {
+  let round = 0, executed = 0;
+  const f = await fixture(t, (body, path) => {
+    const names = declaredNames(body);
+    if (names.length !== new Set(names).size) return { status: 400,
+      error: { code: 'invalid_request_error', message: 'Tool names must be unique.' } };
+    if (path.endsWith('/input_tokens')) return {};
+    round++;
+    if (round === 1) return { output: [searchItem('one'), searchItem('two')] };
+    if (round === 2) {
+      const results = body.input.filter(item => item.type === 'tool_search_output');
+      assert.deepEqual(results.map(item => item.call_id), ['one', 'two']);
+      assert.deepEqual(results.map(item => item.tools.length), [1, 0]);
+      assertClosedToolBatches(body.input);
+      return { output: [functionItem()] };
+    }
+    return { output: [textItem()] };
+  });
+  const tools = new ToolRegistry();
+  tools.register({ definition: tool,
+    manifest: { effect_kind: 'observation', operation: 'test.read', risk: 'low', owner: 'test', dispatch_scope: 'parent_session', mutating: false },
+    decodeInput: value => value, execute: () => { executed++; return { value: 'docs' }; },
+    mcpHook: { server: 'docs', tool: 'read', call: async () => ({}) } });
+  const host = new InMemoryRuntimeHost({ toolRegistry: tools, registerDefaultWorkspaceTools: false, provider: f.provider });
+  t.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const terminal = await host.runSessionTurn({ protocol: 'bush.session_turn_request.v1', requestId: 'overlap',
+    sessionId: 's', turnId: 'overlap', model, tools: tools.definitions(), prefixMessages: [],
+    inputMessages: [{ messageId: 'human', message: { role: 'user', content: 'Read docs' } }] });
+  assert.equal(terminal.payload.status, 'completed');
+  assert.equal(round, 3);
+  assert.equal(executed, 1);
+});
+
+test('reloads keep the first declaration, exact call receipts and incremental cache prefixes', () => {
+  const definition = { ...tool, inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'number' } } } };
+  const match = { ...definition, server: 'docs', tool: 'read', revision: 'v1' };
+  const messages = searchMessages('initial', [match]);
+  const initial = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  const offset = messages.length;
+  messages.push(...searchMessages('reload', [match, { ...match, inputSchema: {
+    properties: { b: { type: 'number' }, a: { type: 'string' } }, type: 'object',
+  } }]));
+  const original = structuredClone(messages);
+  const full = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  assert.deepEqual(declaredNames(full).filter(name => name === tool.name), [tool.name]);
+  assert.deepEqual(full.input.slice(0, initial.input.length), initial.input);
+  assert.equal(full.input.filter(item => item.type === 'tool_search_output').length, 2);
+  assert.match(full.input.at(-1).content, /reload/);
+  assertClosedToolBatches(full.input);
+  const delta = toResponsesCreateParams(request({ messages, providerState: {
+    strategy: 'response_chain', previousResponseId: 'stored', inputMessageOffset: offset,
+  } }), { toolSearchMode: 'native' });
+  assert.equal(delta.previous_response_id, 'stored');
+  assert.deepEqual(delta.input, full.input.slice(initial.input.length));
+  assert.deepEqual(messages, original);
+  // Once the first definition leaves context, the retained full reload owns it.
+  const compacted = toResponsesCreateParams(request({ messages: messages.slice(offset) }), { toolSearchMode: 'native' });
+  assert.deepEqual(compacted.input.find(item => item.type === 'tool_search_output').tools.map(item => item.name), [tool.name]);
+});
+
+test('changed schemas replace stale declarations with one full replay, then resume chaining', () => {
+  const messages = searchMessages('old');
+  const offset = messages.length;
+  const updated = { ...tool, description: 'Read the updated docs',
+    inputSchema: { type: 'object', properties: { revision: { type: 'string' } } },
+    server: 'docs', tool: 'read', revision: 'v2' };
+  messages.push(...searchMessages('updated', [updated]));
+  const original = structuredClone(messages);
+  const providerState = { strategy: 'response_chain', previousResponseId: 'old-response', inputMessageOffset: offset };
+  const params = toResponsesCreateParams(request({ messages, providerState }), { toolSearchMode: 'native' });
+  assert.equal(params.previous_response_id, undefined, 'a stored old declaration cannot be replaced by an incremental input');
+  assert.equal(params.store, true, 'the new root can still be used for subsequent chaining');
+  const results = params.input.filter(item => item.type === 'tool_search_output');
+  assert.deepEqual(results.map(item => item.tools.length), [0, 1]);
+  assert.deepEqual(results[1].tools[0].parameters, updated.inputSchema);
+  assertClosedToolBatches(params.input);
+  const next = toResponsesCreateParams(request({ messages: [...messages, { role: 'user', content: 'Continue' }],
+    providerState: { ...providerState, previousResponseId: 'updated-response', inputMessageOffset: messages.length },
+  }), { toolSearchMode: 'native' });
+  assert.equal(next.previous_response_id, 'updated-response');
+  assert.deepEqual(next.input, [{ type: 'message', role: 'user', content: 'Continue' }]);
+  assert.deepEqual(messages, original, 'stored historical schemas must not be rewritten');
+});
+
+test('direct exposure, long aliases and portable results retain their own declaration rules', () => {
+  const long = { ...tool, name: `mcp__${'plugin'.repeat(15)}__read` };
+  const matches = [{ ...long, server: 'docs', tool: 'read', revision: 'v1' }];
+  const messages = [...searchMessages('one', matches), ...searchMessages('two', matches)];
+  const req = request({ messages, tools: [...registry.definitions(), long, { ...long }] });
+  const native = toResponsesCreateParams(req, { toolSearchMode: 'native' });
+  const names = declaredNames(native);
+  assert.equal(names.length, new Set(names).size);
+  assert.equal(names.filter(name => name.startsWith('cb_mcp_')).length, 1);
+  assert.ok(native.input.filter(item => item.type === 'tool_search_output').every(item => !item.tools.length));
+  const portable = toResponsesCreateParams(req, { toolSearchMode: 'function' });
+  assert.equal(portable.input.filter(item => item.type === 'function_call_output').length, 2);
+  assert.equal(portable.input.find(item => item.type === 'function_call_output').output, messages[1].content);
+  assert.throws(() => toResponsesCreateParams(request({ tools: [tool, { ...tool, description: 'conflict' }] })), /Conflicting tool definitions/);
+});
+
+test('archive and direct rediscovery share declarations without breaking pending batches', () => {
+  const content = searchResult(), locator = 'tool-result://s/t/search';
+  const messages = searchMessages('archived');
+  messages[1].content = JSON.stringify({ archived: true, locator, originalChars: content.length, preview: '' });
+  messages.push({ role: 'assistant', content: '', toolCalls: [{ id: 'page', name: 'read_archived_tool_result', argumentsText: '{}' }] },
+    { role: 'tool', toolCallId: 'page', content: JSON.stringify({ locator, offset: 0, next_offset: content.length }) + '\n\n[text]\n' + content });
+  const initial = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  messages.push(...searchMessages('direct'));
+  const params = toResponsesCreateParams(request({ messages }), { toolSearchMode: 'native' });
+  assert.deepEqual(params.input.slice(0, initial.input.length), initial.input);
+  assert.equal(declaredNames(params).filter(name => name === tool.name).length, 1);
+  assertClosedToolBatches(params.input);
+  // The same two sources in reverse order must not append empty additional_tools.
+  const reversed = toResponsesCreateParams(request({ messages: [...searchMessages('first'), ...messages.slice(0, 4)] }), { toolSearchMode: 'native' });
+  assert.equal(reversed.input.some(item => item.type === 'additional_tools'), false);
+  assert.equal(declaredNames(reversed).filter(name => name === tool.name).length, 1);
+  assertClosedToolBatches(reversed.input);
 });

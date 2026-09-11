@@ -280,6 +280,8 @@ export interface ControlStreamRequest {
 export interface EditMessageRequest extends ControlStreamRequest {
   messageId: string;
   content: string;
+  // Regeneration must stay anchored to the assistant Turn the user selected.
+  expectedTurnId?: string;
 }
 
 export interface SendGuidanceRequest {
@@ -2681,6 +2683,16 @@ export async function editMessage(request: EditMessageRequest) {
       throw new Error(
         localizedClientMessage('消息不存在', 'Message does not exist'),
       );
+    }
+    if (messages[index].message.role !== 'user' || isInternalRuntimeMessage(messages[index])) {
+      throw new Error(localizedClientMessage('只能重跑用户消息', 'Only user messages can be rerun'));
+    }
+    if (request.expectedTurnId !== undefined &&
+      messages[index].turnId !== request.expectedTurnId.trim()) {
+      throw new Error(localizedClientMessage(
+        '回复与原始用户消息不属于同一轮，已取消重新生成，请刷新后重试。',
+        'The response and original user message belong to different Turns. Regeneration was cancelled; refresh and retry.',
+      ));
     }
     const supersedeFrom =
       index > 0 &&

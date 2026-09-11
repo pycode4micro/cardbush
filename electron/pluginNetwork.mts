@@ -112,7 +112,11 @@ export class PluginNetwork {
     });
     server.on('connection', socket => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); socket.on('error', () => socket.destroy()); });
     server.on('connect', (incoming, client, head) => {
-      if (incoming.headers['proxy-authorization'] !== auth) { client.end('HTTP/1.1 407 Proxy Authentication Required\r\n\r\n'); return; }
+      if (incoming.headers['proxy-authorization'] !== auth) {
+        // Chromium starts HTTPS tunnels without cached proxy credentials. It
+        // needs the challenge to invoke the host login handler and retry CONNECT.
+        client.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="CardBush"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); return;
+      }
       const abort = new AbortController();
       client.once('close', () => abort.abort());
       const timer = setTimeout(() => { abort.abort(); client.destroy(); }, 20_000);

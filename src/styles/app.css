@@ -9810,7 +9810,8 @@ body.right-inspector-resizing .right-inspector-resizer {
   margin-top: 1px;
 }
 
-.assistant-timeout-notice > span {
+.assistant-timeout-notice > span,
+.assistant-failure-content {
   min-width: 0;
   display: grid;
   gap: 2px;
@@ -9826,6 +9827,27 @@ body.right-inspector-resizing .right-inspector-resizer {
   color: var(--text-soft);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.assistant-failure-details {
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.assistant-failure-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.assistant-failure-details pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: inherit;
 }
 
 .composer-command-mode {

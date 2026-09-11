@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import type {
   Response,
   ResponseCreateParamsStreaming,
-  ResponseInput,
   ResponseInputItem,
   ResponseStreamEvent,
 } from "openai/resources/responses/responses";
@@ -28,6 +27,7 @@ import { ResponseText, ResponseTextError } from "./responsesText.js";
 import { ResponseOutputIndex, ResponseOutputIdentityError } from "./responsesOutputIndex.js";
 import { discoveryInputProjection, hasMcpDiscovery, historicalToolSearchMode, isToolSearchUnsupported, responseTools, TOOL_SEARCH_CAPABILITY } from "./responsesToolSearch.js";
 import { responseToolAliases, responseToolName } from "./responsesToolNames.js";
+import { uniqueToolDeclarations } from "./responsesToolDeclarations.js";
 import {
   InMemoryProviderCapabilityStore,
   openAIResponsesCapabilityScope,
@@ -230,17 +230,22 @@ export function toResponsesCreateParams(
       `Provider continuation offset ${inputMessageOffset} exceeds ${request.messages.length} messages.`,
     );
   }
+  const projectDiscovery = discoveryInputProjection(request);
+  const projected = uniqueToolDeclarations(request.messages.map((message, messageIndex) => ({
+    messageIndex,
+    items: projectDiscovery(messageIndex, toResponseInputItems(message, messageIndex, request, toolSearchMode)),
+  })), responseTools(request, toolSearchMode), inputMessageOffset);
   return {
     model: request.model,
-    input: toResponseInput(request, inputMessageOffset, toolSearchMode),
-    tools: responseTools(request, toolSearchMode),
+    input: projected.input,
+    tools: projected.tools,
     max_output_tokens: request.maxOutputTokens,
     temperature: request.temperature,
     top_p: request.topP,
     reasoning: request.reasoningEffort
       ? { effort: request.reasoningEffort }
       : undefined,
-    ...(providerState?.previousResponseId
+    ...(providerState?.previousResponseId && !projected.replayFromStart
       ? { previous_response_id: providerState.previousResponseId }
       : {}),
     store: Boolean(providerState),
@@ -260,14 +265,6 @@ export function toResponsesInputTokenCountParams(
       ? { previous_response_id: params.previous_response_id }
       : {}),
   };
-}
-
-function toResponseInput(request: ModelRequest, offset: number, mode: ResponsesToolSearchMode): ResponseInput {
-  const projectDiscovery = discoveryInputProjection(request);
-  return request.messages.flatMap((message, index) => {
-    const items = projectDiscovery(index, toResponseInputItems(message, index, request, mode));
-    return index < offset ? [] : items;
-  });
 }
 
 function toResponseInputItems(

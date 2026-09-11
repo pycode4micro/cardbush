@@ -81,3 +81,18 @@ test('trusted Hook feedback cannot be bypassed by the structured discovery proje
   synchronizeMcpDiscovery(registry, request, [{ role: 'assistant', content: '', toolCalls: [call] }, ...result.messages]);
   assert.equal(mcpToolWasDiscovered(registry, request, 'mcp__seedream__generate'), false);
 });
+
+test('discovery carries presentation capabilities and declared UI through compact and truncated results', async () => {
+  const { registry, request, search } = fixture();
+  registry.resolve('mcp__seedream__generate').mcpApp = { resourceUri: 'ui://generate', readResource: async () => { throw Error('Search must not load UI'); } };
+  const result = await search({ query: 'mcp__seedream__generate' });
+  assert.equal(result.hostCapabilities.files.presentationTool, 'present_artifact');
+  const projected = projectMcpDiscoveryResult(JSON.stringify(result));
+  synchronizeMcpDiscovery(registry, request, [{ role: 'assistant', content: '', toolCalls: [{ id: 'c', name: 'mcp_search', argumentsText: '{}' }] }, { role: 'tool', toolCallId: 'c', content: projected }]);
+  const compact = await search({ query: 'mcp__seedream__generate' });
+  assert.equal(compact.matches[0].loaded, true); assert.equal(compact.matches[0].interface.state, 'declared');
+  assert.equal(compact.matches[0].revision, result.matches[0].revision);
+  const limited = JSON.parse(projectMcpDiscoveryResult(JSON.stringify(result), 0));
+  assert.equal(limited.matches.length, 0); assert.equal(limited.catalog[0].interface.resourceUri, 'ui://generate');
+  assert.deepEqual(limited.hostCapabilities, result.hostCapabilities);
+});

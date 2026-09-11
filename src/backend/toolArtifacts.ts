@@ -12,7 +12,9 @@ import {
 export function toolArtifactsFromPayload(
   payload: Record<string, unknown>,
 ): ChatToolArtifact[] {
-  const result = asRecord(payload.result ?? payload);
+  const native = asRecord(payload.result ?? payload);
+  // The runtime dispatcher has an explicit envelope; arbitrary nested objects are not searched.
+  const result = asRecord(native.mcp).name && native.result ? asRecord(native.result) : native;
   const structured = asRecord(result.structuredContent);
   const artifacts: ChatToolArtifact[] = [];
   collectDeclaredArtifacts(result.artifacts, artifacts);
@@ -82,7 +84,6 @@ function artifactFromSource(
   const hint = stringValue(record.kind ?? record.type ?? record.media_type ?? record.mediaType)
     .toLowerCase();
   const type = artifactType(source, hint, mimeType);
-  if (!type) return null;
   const size = numberValue(record.size ?? record.byte_size ?? record.byteSize);
   return {
     id: stringValue(record.id ?? record.artifact_id ?? record.artifactId) ||
@@ -94,7 +95,7 @@ function artifactFromSource(
     ...(mimeType ? { mimeType } : {}),
     display: stringValue(record.display).toLowerCase() === 'attachment'
       ? 'attachment'
-      : 'inline',
+      : type === 'document' ? 'attachment' : 'inline',
     readOnly: typeof (record.read_only ?? record.readOnly) === 'boolean'
       ? Boolean(record.read_only ?? record.readOnly)
       : true,
@@ -105,12 +106,12 @@ function artifactType(
   source: string,
   hint: string,
   mimeType: string,
-): ChatToolArtifact['type'] | null {
+): ChatToolArtifact['type'] {
   const mime = mimeType.toLowerCase();
   if (hint === 'image' || mime.startsWith('image/') || isImagePath(source)) return 'image';
   if (hint === 'video' || mime.startsWith('video/') || isVideoPath(source)) return 'video';
   if (hint === 'audio' || mime.startsWith('audio/') || isAudioPath(source)) return 'audio';
-  return null;
+  return 'document';
 }
 
 function isRenderableSource(value: string) {

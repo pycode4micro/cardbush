@@ -1,8 +1,43 @@
-.mcp-app-panel { margin: 12px 0; min-width: 0; }
-.mcp-app-panel > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
-.mcp-app-panel iframe { display: block; width: 100%; border: 1px solid var(--border-color, #445057); border-radius: 10px; background: #fff; }
-.mcp-app-panel.fullscreen { position: fixed; inset: 24px; z-index: 1200; display: flex; flex-direction: column; padding: 16px; background: var(--bg-primary, #101719); border: 1px solid #65737a; border-radius: 14px; box-shadow: 0 10px 50px #0008; }
-.mcp-app-panel.fullscreen iframe { flex: 1; min-height: 0; }
-.mcp-app-confirm { padding: 12px; margin-bottom: 8px; border: 1px solid #997734; border-radius: 8px; }
+.mcp-app-anchor { min-width: 0; }
+.mcp-app-panel { position: relative; box-sizing: border-box; width: 100%; max-width: none; max-height: none; margin: 0; padding: 0; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); }
+.mcp-app-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 44px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.mcp-app-panel.unframed:not(.fullscreen) { border-color: transparent; background: transparent; border-radius: 0; }
+.mcp-app-panel.unframed:not(.fullscreen) > .mcp-app-heading { border-bottom-color: transparent; }
+.mcp-app-title { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-mid); }
+.mcp-app-title > svg { flex-shrink: 0; color: var(--text-soft); }
+.mcp-app-title strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-app-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+.mcp-app-panel button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 28px; padding: 5px 9px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-mid); font: inherit; font-size: 12px; cursor: pointer; transition: background var(--motion-fast, 110ms); }
+.mcp-app-panel button:hover { background: var(--surface-raised); color: var(--text); }
+.mcp-app-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mcp-app-actions button { width: 28px; padding: 4px; }
+.mcp-app-panel .mcp-app-reopen { justify-content: flex-start; margin: 0 10px 10px; }
+.mcp-app-viewport { position: relative; min-width: 0; overflow: hidden; transition: height var(--motion-normal, 180ms) ease; }
+.mcp-app-viewport iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; opacity: 0; transition: opacity var(--motion-normal, 180ms) ease; }
+.mcp-app-viewport.is-loaded iframe { opacity: 1; }
+.mcp-app-loading { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 24px; padding: 28px; background: var(--surface); color: var(--text-soft); animation: mcp-app-show 180ms ease both; }
+.mcp-app-loading > span { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; }
+.mcp-app-loading > span svg { animation: mcp-app-spin 1.2s linear infinite; }
+.mcp-app-skeleton { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; width: min(100%, 460px); align-self: center; }
+.mcp-app-skeleton i { display: block; height: 66px; border-radius: 9px; background: color-mix(in srgb, var(--text-soft) 9%, transparent); animation: mcp-app-pulse 1.8s ease-in-out infinite alternate; }
+.mcp-app-skeleton i:nth-child(2) { animation-delay: 200ms; }
+.mcp-app-skeleton i:nth-child(3) { animation-delay: 400ms; }
+.mcp-app-error { display: flex; align-items: flex-start; gap: 10px; margin: 0 12px 12px; padding: 12px; border-radius: 9px; background: color-mix(in srgb, var(--text-soft) 8%, transparent); font-size: 12px; color: var(--text-mid); }
+.mcp-app-error > svg { margin-top: 2px; flex-shrink: 0; }
+.mcp-app-error > div { flex: 1; min-width: 0; }
+.mcp-app-error p { margin: 0 0 4px; }
+.mcp-app-error summary { cursor: pointer; color: var(--text-soft); }
+.mcp-app-error pre { margin: 8px 0 0; max-height: 120px; overflow: auto; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mcp-app-error > button { flex-shrink: 0; background: var(--surface-raised); }
+.mcp-app-panel.fullscreen { position: fixed; inset: 24px; width: auto; height: auto; display: flex; flex-direction: column; box-shadow: 0 10px 50px #0008; }
+.mcp-app-panel::backdrop { background: #0009; }
+.mcp-app-panel.fullscreen > .mcp-app-heading { flex-shrink: 0; }
+.mcp-app-panel.fullscreen .mcp-app-viewport { flex: 1; min-height: 0; }
+.mcp-app-confirm { padding: 12px; margin: 0 12px 12px; border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border)); border-radius: 9px; }
 .mcp-app-confirm p, .mcp-app-confirm code { display: block; max-height: 140px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.mcp-app-confirm button { margin: 8px 8px 0 0; }
+.mcp-app-confirm button { margin: 8px 8px 0 0; background: var(--surface-raised); }
+@keyframes mcp-app-spin { to { transform: rotate(360deg); } }
+@keyframes mcp-app-show { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mcp-app-pulse { to { opacity: .45; } }
+@media (max-width: 600px) { .mcp-app-panel.fullscreen { inset: 8px; } }
+@media (prefers-reduced-motion: reduce) { .mcp-app-panel *, .mcp-app-skeleton i { animation: none; transition: none; } }

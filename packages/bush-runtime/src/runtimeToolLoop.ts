@@ -502,7 +502,14 @@ function serializeNativeToolResult(result: unknown): string {
   return JSON.stringify(result) ?? "null";
 }
 
-function modelFacingNativeToolResult(result: unknown, toolName: string): unknown {
+export function modelFacingNativeToolResult(result: unknown, toolName: string): unknown {
+  const failure = result as { runtimeError?: { details?: { resultValidationFailed?: boolean; rawResult?: unknown } } } | null;
+  const details = failure?.runtimeError?.details;
+  if (details?.resultValidationFailed === true && details.rawResult && typeof details.rawResult === 'object' && !Array.isArray(details.rawResult)) {
+    const { _meta, ...rawResult } = details.rawResult as Record<string, unknown>;
+    // Retain the original error/result in the journal; UI-only metadata stays out of model context.
+    return { ...failure, runtimeError: { ...failure?.runtimeError, details: { ...details, rawResult } } };
+  }
   if (toolName !== "inject_image_input" || !result || typeof result !== "object" || Array.isArray(result)) {
     return result;
   }

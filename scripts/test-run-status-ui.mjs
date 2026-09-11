@@ -13,6 +13,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssistantActivityDetails } from '${resolve('src/features/chatMessages/AssistantActivityDetails.tsx').replaceAll('\\', '/')}';
 import { McpActivationStatus } from '${resolve('src/features/chatMessages/McpActivationStatus.tsx').replaceAll('\\', '/')}';
+import { MessageBubble } from '${resolve('src/features/chatMessages/MessageBubble.tsx').replaceAll('\\', '/')}';
 import '${resolve('src/styles/app.css').replaceAll('\\', '/')}';
 import '${resolve('src/styles/themes/cyberpunk.css').replaceAll('\\', '/')}';
 const initial = {protocol:'bush.mcp_snapshot_result.v1',snapshotId:'fixture',revision:1,pendingRevision:2,applicationState:'pending',servers:[]};
@@ -31,6 +32,15 @@ window.renderFixture = active => root.render(<div className="app theme-cyberpunk
  <McpActivationStatus target={target} isActive={active} language="zh"/>
  </main></div>);
 window.unmountFixture = () => root.unmount();
+let failureRoot;
+window.renderFailure = language => {
+ failureRoot ??= createRoot(document.getElementById('root'));
+ const no = async () => {};
+ failureRoot.render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',padding:24,boxSizing:'border-box'}}>
+  <MessageBubble message={{id:'failure',role:'assistant',content:'',status:'failed',metadata:{stop_reason:'invalid_request_error',stop_details:{status:400,message:'400 Tool names must be unique.'}}}}
+   language={language} sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+ </div>);
+};
 window.renderFixture(true);
 `;
 try {
@@ -46,12 +56,12 @@ try {
       if (id === '\0run-status-runtime') return `export function createDesktopRuntimeSession(){return {dispose(){},client:{getMcpSnapshot(signal){window.checks++; signal.addEventListener('abort',()=>window.aborts++,{once:true}); return Promise.resolve(window.fixtureSnapshot());}}};}`;
     },
   }], build: { outDir: directory, emptyOutDir: true, minify: false,
-    lib: { entry: resolve('__run_status_fixture__.tsx'), formats: ['iife'], name: 'RunStatusFixture' } } });
+    lib: { entry: resolve('__run_status_fixture__.tsx'), formats: ['es'] } } });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(item => item.output);
   const entry = outputs.find(item => item.type === 'chunk' && item.isEntry);
   assert.ok(entry);
   const css = outputs.filter(item => item.type === 'asset' && item.fileName.endsWith('.css'));
-  await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${css.map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
+  await writeFile(join(directory, 'index.html'), `<!doctype html><html><head><meta charset="utf-8">${css.map(item => `<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script type="module" src="${entry.fileName}"></script></body></html>`);
   const require = createRequire(import.meta.url);
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;

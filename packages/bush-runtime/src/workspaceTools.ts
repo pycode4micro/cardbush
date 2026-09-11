@@ -503,7 +503,7 @@ function manifest(operation: string, effectKind: string, mutating: boolean) {
   };
 }
 
-function authorizePath(action: "read" | "write") {
+export function authorizePath(action: "read" | "write") {
   return async (context: ToolAdmissionContext<PathInput>) => {
     const path = await resolveToolPath(context, context.input.path, action === "write");
     return pathAdmission(context, path, action);

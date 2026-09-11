@@ -211,6 +211,7 @@ const desktopApi = {
     httpsProxy: string;
     noProxy: string;
   }) => ipcRenderer.invoke('network:set-proxy', proxy) as Promise<void>,
+  preparePluginUiNetwork: () => ipcRenderer.invoke('plugins:prepare-ui-network') as Promise<void>,
   filesystemLocations: () =>
     ipcRenderer.invoke('filesystem:locations') as Promise<Array<{
       id: string;

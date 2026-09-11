@@ -91,7 +91,7 @@ try {
   npmArchive = join(root, 'bad.tgz');
   await writeFile(npmArchive, gzipSync(Buffer.concat([badHeader.block, Buffer.alloc(1024)])));
   const stage = join(root, 'bad-stage'); await mkdir(stage);
-  await assert.rejects(acquireNpmPlugin(npmSource({ package: 'fixture-plugin', version: '^1.0.0' }), stage, join(stage, 'plugin'), run), /links or special files/);
+  await assert.rejects(acquireNpmPlugin(npmSource({ package: 'fixture-plugin', version: '^1.0.0' }), stage, join(stage, 'plugin'), run), /link.*outside the plugin package/);
   assert.ok(!(await readdir(stage)).includes('plugin'));
   console.log('Plugin acquisition passed: Git/SSH/ref parsing, real pinned Git snapshots, npm range declarations, script-free pack arguments, staged installation, malformed tar rejection and source removal.');
 } finally {

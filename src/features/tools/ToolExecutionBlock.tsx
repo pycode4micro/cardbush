@@ -33,7 +33,6 @@ import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { PlanningAssessmentNotice, planningAssessmentFromExecution } from './PlanningAssessmentNotice';
 import { SubagentAuditSignalsPanel, subagentAuditSignalsFromExecution } from './SubagentAuditSignalsPanel';
 import { SubagentChildTools, subagentChildToolExecutions } from './SubagentChildTools';
-import { McpAppPanel } from './McpAppPanel';
 import { ToolChangeBlock } from './ToolChangeBlock';
 import { ToolHookDecisionNotice, toolHookDecisionFromExecution } from './ToolHookDecisionNotice';
 import { RuntimeProfileBadge, WorkerProfileBadge, runtimeProfileInfoFromExecution } from './ToolProfileBadges';
@@ -843,7 +842,7 @@ function ToolExecutionDetail({
     <div className="tool-execution-body">
       {hasSummary && !goalUpdate && summary !== failureMessage && <pre className="tool-execution-input">{summary}</pre>}
       {failureMessage && failureMessage !== output && <p className="tool-execution-error">{failureMessage}</p>}
-      {execution.state === 'completed' && (execution.name.startsWith('mcp__') || execution.name === 'mcp_call') && <McpAppPanel sessionId={message.conversationId ?? ''} turnId={execution.turnId ?? message.turnId ?? ''} toolCallId={execution.id} language={language} />}
+      {asRecord(error.details).resultValidationFailed === true && <p className="tool-execution-error">{language === 'zh' ? '服务器已返回结果，但客户端解析失败；这不代表服务端操作失败。原始结果保留在详情中。' : 'The server returned a result, but client validation failed. This does not establish server-side failure. The original result is retained in the details.'}</p>}
       {goalUpdate && <GoalUpdateNotice update={goalUpdate} language={language} />}
       <RuntimeProfileBadge info={runtimeInfo} />
       <WorkerProfileBadge info={workerInfo} />

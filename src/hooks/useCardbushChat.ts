@@ -138,6 +138,7 @@ import {
 } from '../features/chatMessages/transcript/assistantStreamBuffer';
 import {
   hasCompletedAssistantForTurn,
+  chatMessageTurnId,
   findUserMessageForAssistantRegenerate,
   persistedChatMessageId,
   messageIdentityMatches,
@@ -3112,18 +3113,20 @@ export function useCardbushChat(
         setError(localize('请先在设置中配置模型', 'Configure a model in Settings first'));
         return;
       }
-      const messages = messagesByConversation[conversationId] ?? activeMessages;
-      const index = messages.findIndex((item) => item.id === message.id);
-      if (index < 0) {
+      const expectedTurnId = chatMessageTurnId(message);
+      if (message.role !== 'assistant' || !expectedTurnId) {
+        setError(localize('这条回复缺少轮次信息，无法重新生成', 'This response is missing Turn information and cannot be regenerated'));
         return;
       }
+      let messages = messagesByConversation[conversationId] ?? activeMessages;
+      if (!messages.some((item) => messageIdentityMatches(item, message))) return;
       let sourceUserMessage = findUserMessageForAssistantRegenerate(message, messages);
       let messageId = persistedChatMessageId(sourceUserMessage);
       let refreshFailed = false;
       if (!messageId) {
         const historyRead = beginHistoryRead(conversationId);
         const loadedMessages = await fetchMessages(conversationId, {
-          includeSuperseded: true,
+          includeSuperseded: false,
         }).catch((caught) => {
           refreshFailed = true;
           setError(localize(
@@ -3135,9 +3138,10 @@ export function useCardbushChat(
         if (!isHistoryReadCurrent(historyRead)) return;
         if (loadedMessages.length > 0) {
           applyHistoryRead(historyRead, loadedMessages);
+          messages = mergeLoadedMessagesPreservingLocalState(messages, loadedMessages);
           sourceUserMessage = findUserMessageForAssistantRegenerate(
             message,
-            loadedMessages,
+            messages,
           );
           messageId = persistedChatMessageId(sourceUserMessage);
         }
@@ -3152,13 +3156,21 @@ export function useCardbushChat(
         ));
         return;
       }
+      if (isSessionSending(conversationId)) return;
       const userIndex = messages.findIndex((item) =>
         messageIdentityMatches(item, sourceUserMessage),
       );
-      const keptMessages = userIndex >= 0 ? messages.slice(0, userIndex) : messages.slice(0, index);
+      if (userIndex < 0 || chatMessageTurnId(sourceUserMessage) !== expectedTurnId) {
+        setError(localize('未定位到本轮原消息，已取消重新生成', 'The original message for this Turn was not found. Regeneration was cancelled'));
+        return;
+      }
+      const keptMessages = messages.slice(0, userIndex);
       const createdAt = new Date().toISOString();
       const replayedUser: ChatMessage = {
-        ...sourceUserMessage,
+        id: `user-regenerate-${crypto.randomUUID()}`,
+        role: 'user',
+        content: sourceUserMessage.content,
+        attachments: sourceUserMessage.attachments,
         conversationId,
         createdAt,
       };
@@ -3167,7 +3179,6 @@ export function useCardbushChat(
         requestContext.standardImageInputEnabled === true,
       );
       const tempAssistant: ChatMessage = {
-        ...message,
         id: `assistant-regenerate-${crypto.randomUUID()}`,
         role: 'assistant',
         content: '',
@@ -3198,6 +3209,7 @@ export function useCardbushChat(
           editMessage({
             sessionId: conversationId,
             messageId,
+            expectedTurnId,
             content: sourceUserMessage.content,
             model: selectedModelName(managedModelConfigs, selectedModel),
             modelConfig: modelConfigFor(managedModelConfigs, selectedModel),
@@ -3236,6 +3248,7 @@ export function useCardbushChat(
       applyHistoryRead,
       conversations,
       isSessionSending,
+      localize,
       managedModelConfigs,
       messagesByConversation,
       requestContext.disabledSkillNames,

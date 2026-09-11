@@ -208,26 +208,43 @@ export function findUserMessageForAssistantRegenerate(
   source: ChatMessage,
   candidates: ChatMessage[],
 ) {
-  const persistedCandidates = candidates.filter(
-    (candidate) => candidate.role === 'user' && persistedChatMessageId(candidate),
-  );
-  const sourceTurnId = chatMessageTurnId(source);
-  if (sourceTurnId) {
-    const turnMatch = [...persistedCandidates]
-      .reverse()
-      .find((candidate) => chatMessageTurnId(candidate) === sourceTurnId);
-    if (turnMatch) {
-      return turnMatch;
-    }
-  }
+  if (source.role !== 'assistant' || isBackendSupersededMessage(source)) return undefined;
   const sourceIndex = candidates.findIndex((candidate) =>
     messageIdentityMatches(candidate, source),
   );
-  const previousMessages =
-    sourceIndex >= 0 ? candidates.slice(0, sourceIndex) : candidates;
-  return [...previousMessages]
-    .reverse()
-    .find((candidate) => candidate.role === 'user' && persistedChatMessageId(candidate));
+  const sourceTurnId = chatMessageTurnId(source);
+  const sourceMessageIndex = numericOrderValue(source.messageIndex);
+  // Resolve the nearest input before checking its durable identity. Skipping an
+  // optimistic user row here can silently select a much earlier Session input.
+  const preceding = sourceIndex >= 0 ? candidates.slice(0, sourceIndex) : candidates;
+  const users = preceding.filter((candidate) => {
+    if (candidate.role !== 'user' || isBackendSupersededMessage(candidate)) return false;
+    if (source.conversationId && candidate.conversationId &&
+      candidate.conversationId !== source.conversationId) return false;
+    if (sourceTurnId && chatMessageTurnId(candidate) !== sourceTurnId) return false;
+    if (sourceIndex >= 0) return true;
+    if (!sourceTurnId) return false;
+    const candidateIndex = numericOrderValue(candidate.messageIndex);
+    return sourceMessageIndex == null ||
+      (candidateIndex != null && candidateIndex < sourceMessageIndex);
+  });
+  // An unlocated segment without an ordering fact is only unambiguous when
+  // its Turn has one user input. Refresh history instead of guessing.
+  if (sourceIndex < 0 && sourceMessageIndex == null && users.length !== 1) {
+    return undefined;
+  }
+  const user = users.at(-1);
+  return persistedChatMessageId(user) ? user : undefined;
+}
+
+export function isBackendSupersededMessage(message: ChatMessage) {
+  const metadata = message.metadata ?? {};
+  return (
+    metadata.__bush_superseded === true ||
+    metadata.superseded === true ||
+    metadata.is_superseded === true ||
+    metadata.isSuperseded === true
+  );
 }
 
 export function messageIdentityMatches(left: ChatMessage, right: ChatMessage) {

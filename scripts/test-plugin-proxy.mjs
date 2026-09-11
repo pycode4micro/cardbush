@@ -9,7 +9,7 @@ import { once } from 'node:events';
 import { PluginNetwork } from '../dist-electron/pluginNetwork.mjs';
 import { ProxyFetchPool } from '../dist-electron/proxyFetch.mjs';
 import { defaultPluginProxy, pluginProxySchema, networkProxySchema, resolvePluginProxy, pluginProxyEnvironment } from '../packages/bush-protocol/dist/index.js';
-import { CardbushAppsConfigStore, ProductMcpConfigStore } from '../packages/cardbush-product-host/dist/index.js';
+import { CardbushAppsConfigStore, ProductMcpConfigStore, ProductHost } from '../packages/cardbush-product-host/dist/index.js';
 import { mergeMcpServer } from '../dist-electron/productMcpManagement.mjs';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
@@ -122,6 +122,70 @@ test('MCP proxy batch reset preserves every other stored field and rejects concu
   assert.equal(applied.length, 1, 'a failed transaction never applies its stale snapshot');
 });
 
+test('renderer proxy API persists through Product Host restarts, batch application and runtime failures', async t => {
+  const { file, root, network } = await setup(t);
+  const initial = await new CardbushAppsConfigStore(file).read();
+  const catalog = [...initial.plugins, { ...initial.plugins[0], id: 'disabled-plugin', installation: 'AVAILABLE' }];
+  const apps = () => new CardbushAppsConfigStore(file, { loadCatalog: async () => catalog });
+  const mcp = () => new ProductMcpConfigStore(join(root, 'mcp-servers.json'));
+  const makeHost = () => new ProductHost(undefined, undefined,
+    { get: () => apps().read(), update: config => apps().write(config) },
+    { get: () => mcp().read(), update: config => mcp().write(config) });
+  let host = makeHost(), failRuntime = false;
+  const applied = [];
+  const api = await loadChatTranscript({
+    source: `export { fetchCardbushAppsConfiguration, saveCardbushAppsConfiguration, resetMcpServerProxies } from ${JSON.stringify(resolve('src/backend/api.ts'))};`,
+    globals: { process: { env: { NODE_ENV: 'production' } }, AbortController, setTimeout, clearTimeout, window: { setTimeout, clearTimeout, cardbushDesktop: {
+      productHostCommand: command => host.execute(command),
+      runtime: { command: async request => {
+        if (failRuntime) throw new Error('fixture runtime offline');
+        applied.push(request.command.payload);
+        return { protocol: request.protocol, operationId: request.operationId, type: 'command_response', ok: true,
+          result: { protocol: 'bush.mcp_snapshot_result.v1', snapshotId: request.command.payload.snapshotId,
+            revision: request.command.payload.revision, servers: [] } };
+      } },
+    } } },
+  });
+  const before = await api.fetchCardbushAppsConfiguration();
+  const system = await api.saveCardbushAppsConfiguration({ ...before, proxy: config('system') });
+  host = makeHost();
+  assert.equal((await api.fetchCardbushAppsConfiguration()).proxy.mode, 'system');
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).proxy.mode, 'system', 'the real renderer payload reaches disk');
+  network.setModel(config('manual', { httpProxy: 'http://localhost:8181' }));
+  assert.equal((await network.configuration()).default.mode, 'system', 'a model proxy update cannot change the saved plugin default');
+  await assert.rejects(api.saveCardbushAppsConfiguration({ ...before, proxy: config('model') }), /configuration changed/);
+  assert.equal((await api.fetchCardbushAppsConfiguration()).proxy.mode, 'system', 'stale renderer writes cannot revert a saved choice');
+
+  const withOverrides = await api.saveCardbushAppsConfiguration({ ...system, plugins: system.plugins.map(plugin => ({ ...plugin,
+    installed: true, enabled: plugin.id !== 'disabled-plugin', config: { ...plugin.config, proxy: config('none'),
+      ...(plugin.id === 'disabled-plugin' ? { preserve: { nested: true } } : {}) },
+  })) });
+  const servers = ['active', 'disabled'].map((id, index) => ({ id, name: id, description: '', enabled: !index,
+    transport: 'stdio', command: process.execPath, args: [], env: { KEEP: 'value' },
+    proxy: config('none'), extension: { preserve: true },
+  }));
+  await mcp().write({ servers });
+  const manual = config('manual', { httpProxy: 'http://localhost:8991', httpsProxy: 'socks5://localhost:8992', noProxy: '.internal' });
+  await api.saveCardbushAppsConfiguration({ ...withOverrides, proxy: manual,
+    plugins: withOverrides.plugins.map(plugin => ({ ...plugin, config: { ...plugin.config, proxy: undefined } })) });
+  await api.resetMcpServerProxies();
+  host = makeHost();
+  const restored = await api.fetchCardbushAppsConfiguration();
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.proxy)), manual);
+  assert.ok(restored.plugins.every(plugin => plugin.config.proxy === undefined));
+  assert.equal(restored.plugins.find(plugin => plugin.id === 'disabled-plugin').enabled, false);
+  assert.equal(restored.plugins.find(plugin => plugin.id === 'disabled-plugin').config.preserve.nested, true);
+  assert.deepEqual((await mcp().read()).servers, servers.map(({ proxy, ...server }) => server));
+  const effective = await network.configuration();
+  for (const proxy of [effective.default, ...Object.values(effective.plugins), ...Object.values(effective.servers)]) assert.deepEqual(proxy, manual);
+  assert.ok(applied.length >= 4, 'saves also request runtime application');
+
+  failRuntime = true;
+  await assert.rejects(api.saveCardbushAppsConfiguration({ ...restored, proxy: config('system') }), /fixture runtime offline/);
+  host = makeHost();
+  assert.equal((await api.fetchCardbushAppsConfiguration()).proxy.mode, 'system', 'activation failure cannot undo a completed durable write');
+});
+
 test('independent plugin routes preserve raw HTTP output, authenticate only to the proxy and select HTTP versus HTTPS', async t => {
   const a = await proxy(t, 'A'), b = await proxy(t, 'B');
   const { network, pool, file, sessions } = await setup(t);
@@ -189,6 +253,12 @@ test('streaming responses deliver before completion and cancellation closes upst
   const probe = request(unsigned, { agent: false }); probe.end();
   const [unauthorized] = await once(probe, 'response'); unauthorized.resume();
   assert.equal(unauthorized.statusCode, 407);
+  assert.equal(unauthorized.headers['proxy-authenticate'], 'Basic realm="CardBush"');
+  const connectProbe = request(unsigned, { method: 'CONNECT', path: new URL(url).host, agent: false }); connectProbe.end();
+  const [challenge, socket] = await once(connectProbe, 'connect'); socket.destroy();
+  assert.equal(challenge.statusCode, 407);
+  assert.equal(challenge.headers['proxy-authenticate'], 'Basic realm="CardBush"', 'HTTPS must challenge before the browser can send proxy credentials');
+  assert.equal(challenge.headers['content-length'], '0');
   const abort = new AbortController(), response = await pool.forEndpoint(endpoint)(url, { signal: abort.signal });
   const reader = response.body.getReader(), first = await reader.read();
   assert.equal(new TextDecoder().decode(first.value), 'data: first\n\n');

@@ -97,7 +97,7 @@ test('opaque pagination cursors retain callable tools from every scoped page', a
   assert.deepEqual(f.calls, ['first_profile', 'last_profile']);
 });
 
-test('native OpenAI transport uses the ordinary registry, approval and output validation with exact app scoping', async t => {
+test('native OpenAI transport uses the ordinary registry and approval with exact app scoping', async t => {
   const f = fixture(), registry = new ToolRegistry(); let client;
   const manager = new McpClientManager({ registry, createClient: () => (client = new Client({ name: 'test', version: '1' })),
     createTransport: server => createOpenAiTransport(server, f.token, f.fetch) }); t.after(() => manager.close());
@@ -120,6 +120,22 @@ test('native OpenAI transport uses the ordinary registry, approval and output va
   f.nextAccount();
   await assert.rejects(client.callTool({ name: 'gmail_profile', arguments: {} }), /account changed/);
   assert.equal(f.calls.length, 1, 'new-account credentials are not sent over the prior account session');
+});
+
+test('hosted null results bypass output-shape rejection without altering payloads or application scope', async t => {
+  const raw = { content: [{ type: 'text', text: '{"job":"complete"}' }], structuredContent: null, isError: false, _meta: { opaque: 'widget-only' } };
+  const f = fixture(undefined, raw), registry = new ToolRegistry(); let client;
+  const manager = new McpClientManager({ registry, createClient: () => (client = new Client({ name: 'test', version: '1' })),
+    createTransport: server => createOpenAiTransport(server, f.token, f.fetch) });
+  t.after(() => manager.close()); await manager.apply(snapshot(config()));
+  const registration = registry.resolve('mcp__plugin_mail_gmail__gmail_profile');
+  const request = { requestId: 'r', sessionId: 's', turnId: 't', metadata: {} };
+  const result = await registration.execute({ ...request, input: {}, toolCall: { id: 'c', name: registration.definition.name } });
+  assert.deepEqual(result, raw);
+  assert.deepEqual(await registration.mcpHook.call({}, { request, timeoutMs: 1000 }), raw);
+  assert.deepEqual(JSON.parse(registration.renderModelResult(result)), { content: raw.content, structuredContent: null, isError: false });
+  await assert.rejects(client.callTool({ name: 'other_profile', arguments: {} }), /does not belong/);
+  assert.deepEqual(f.calls, ['gmail_profile', 'gmail_profile']);
 });
 
 test('sign-out immediately disconnects hosted clients while snapshot replacement waits for active tasks', async t => {

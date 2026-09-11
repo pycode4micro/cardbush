@@ -85,7 +85,7 @@ test('invalid packages leave the existing installation intact and clean staging'
     ['Windows alternate stream', () => packageZip().file('server.js:stream', 'no')],
     ['Windows trailing dot', () => packageZip().file('server.js.', 'no')],
     ['backslash path', () => packageZip().file('..\\escape.txt', 'no')],
-    ['symbolic link', () => packageZip().file('link', '../outside', { unixPermissions: 0o120777 })],
+    ['link outside package', () => packageZip().file('link', '../outside', { unixPermissions: 0o120777 })],
     ['special file', () => packageZip().file('pipe', 'no', { unixPermissions: 0o010644 })],
     ['case collision', () => packageZip().file('SERVER.JS', 'no')],
     ['file-directory collision', () => packageZip().file('conflict', 'no').file('conflict/nested', 'no')],
@@ -110,6 +110,17 @@ test('invalid packages leave the existing installation intact and clean staging'
     await assert.rejects(installLocalProductPlugin(path, installed), /size limit/);
     await assertNoStage(root);
   });
+});
+
+test('ZIP installation preserves file and directory link contents through the install transaction', async t => {
+  const { root, installed } = await fixture(t);
+  const zip = packageZip().file('AGENTS.md', 'Shared instructions')
+    .file('CLAUDE.md', 'AGENTS.md', { unixPermissions: 0o120777 })
+    .file('.editor/skills', '../skills', { unixPermissions: 0o120777 });
+  await installLocalProductPlugin(await zipFile(root, zip), installed);
+  assert.equal(await readFile(join(installed, id, 'CLAUDE.md'), 'utf8'), 'Shared instructions');
+  assert.deepEqual(await readdir(join(installed, id, '.editor/skills')), []);
+  await assertNoStage(root);
 });
 
 test('file and folder pickers are separate and reject unsupported source types', () => {

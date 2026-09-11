@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
+import { ToolRegistry, ToolExecutionCoordinator, ToolExecutionStore, registerArtifactTools } from '../dist/index.js';
+
+test('explicit file presentation uses workspace permissions and durable native attachments', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-artifact-'));
+  t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-artifact-')); await rm(root, { recursive: true, force: true }); });
+  const registry = new ToolRegistry(); registerArtifactTools(registry);
+  const rows = [], persistence = { load: () => rows, append: row => rows.push(structuredClone(row)) };
+  const store = new ToolExecutionStore({ persistence });
+  let permissions = 0, ordinal = 0;
+  const coordinator = new ToolExecutionCoordinator({ registry, permissions: { request: async () => { permissions++; return { decision: 'deny', grantedCapabilityIds: [] }; } } });
+  const run = async (path, roots = [root]) => {
+    const identity = { sessionId: 's', turnId: 't', requestId: 'r', round: 1, ordinal: ++ordinal };
+    const call = { protocol: 'bush.tool_call.v1', id: 'c' + ordinal, name: 'present_artifact', argumentsText: JSON.stringify({ path }) };
+    const result = await coordinator.execute(call, identity, undefined, { request: { sessionId: 's', permissionMode: 'task_free', tools: registry.definitions(), metadata: { taskRoots: roots } }, contextMessages: [] });
+    store.record(call, identity, result); return result;
+  };
+  const path = join(root, '中文 output.png'); await writeFile(path, 'fixture bytes, not a semantic image test');
+  const first = await run(path);
+  assert.equal(first.kind, 'returned'); assert.equal(first.result.presentation, 'submitted');
+  assert.equal(first.result.artifacts[0].type, 'image'); assert.equal(first.result.artifacts[0].path, path);
+  assert.equal(first.result.file.size, Buffer.byteLength('fixture bytes, not a semantic image test'));
+  assert.equal(first.result.file.mediaTypeSource, 'extension'); assert.equal(permissions, 0);
+  assert.equal((await run(path)).result.artifacts[0].id, first.result.artifacts[0].id);
+  await writeFile(path, 'changed');
+  assert.notEqual((await run(path)).result.artifacts[0].id, first.result.artifacts[0].id);
+  assert.deepEqual(new ToolExecutionStore({ persistence }).get('s', 't', 'c1').result, first.result, 'replay retains the original observed metadata');
+  const doc = join(root, 'report.txt'); await writeFile(doc, 'Report');
+  assert.equal((await run(doc)).result.artifacts[0].display, 'attachment');
+  await mkdir(join(root, 'unrelated'));
+  const denied = await run(path, [join(root, 'unrelated')]); assert.notEqual(denied.kind, 'returned'); assert.equal(permissions, 1);
+  assert.notEqual((await run(root)).kind, 'returned');
+  await rm(path); assert.notEqual((await run(path)).kind, 'returned');
+  const decode = registry.resolve('present_artifact').decodeInput;
+  assert.throws(() => decode({ path: 'relative.png' }));
+  assert.throws(() => decode({ path: doc, verified: true }));
+});

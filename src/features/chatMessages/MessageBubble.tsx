@@ -64,6 +64,8 @@ import {
   remarkAutolinkBoundaries,
 } from './markdownFormat';
 import { ImagePreviewDialog } from './ImagePreviewDialog';
+import { modelFailurePresentation } from './modelFailurePresentation';
+import { MessageToolOutputs } from '../tools/MessageToolOutputs';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
   localFileReference,
@@ -262,7 +264,7 @@ function assistantTimeoutPresentation(
 function assistantFailurePresentation(
   message: ChatMessage,
   language: AppLanguage,
-) {
+): { reason: string; title: string; detail: string; technicalDetails?: string } | null {
   if (message.role !== 'assistant') return null;
   const metadata = message.metadata ?? {};
   const status = String(message.status ?? metadata.status ?? '').trim().toLowerCase();
@@ -293,12 +295,7 @@ function assistantFailurePresentation(
   }
   return {
     reason,
-    title: language === 'zh' ? '本轮执行失败' : 'This turn failed',
-    detail: providerMessage || (
-      language === 'zh'
-        ? `运行时未能完成本轮（${reason}）。请重试。`
-        : `The Runtime could not complete this turn (${reason}). Please retry.`
-    ),
+    ...modelFailurePresentation(reason, providerMessage, language, stopDetails.status),
   };
 }
 
@@ -972,6 +969,7 @@ function MessageBubbleView({
     !stoppedAssistantRound &&
     (isActiveAssistantTurn ||
       toolExecutions.length > 0 ||
+      assistantProgressExecutions.some(execution => execution.artifacts?.length || execution.name === 'mcp_call' || execution.name.startsWith('mcp__')) ||
       hasAssistantProgressSource(message, assistantProgressExecutions));
   const assistantCompletedAt =
     message.role === 'assistant' && !isActiveAssistantTurn
@@ -1133,23 +1131,6 @@ function MessageBubbleView({
                 />
               )}
               {finalAnswerBody}
-              {completedChangeReport && (
-                <AssistantChangedFilesSummary
-                  report={completedChangeReport}
-                  language={language}
-                  onOpenReview={onOpenChangeReview}
-                  onRevert={() => onRevertChangeReport(
-                    {
-                      ...completedChangeReport,
-                      id: `${message.id}:completed-change-summary`,
-                      messageId: message.id,
-                      turnId: message.turnId,
-                      createdAt: message.createdAt,
-                    },
-                    message,
-                  )}
-                />
-              )}
             </>
           ) : (
             <AssistantCompletedDisclosure
@@ -1160,6 +1141,7 @@ function MessageBubbleView({
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
+          <MessageToolOutputs sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions} language={language} />
           {timeoutPresentation && (
             <div
               className="assistant-timeout-notice"
@@ -1180,11 +1162,32 @@ function MessageBubbleView({
               role="alert"
             >
               <CircleAlert size={15} />
-              <span>
+              <div className="assistant-failure-content">
                 <strong>{failurePresentation.title}</strong>
                 <small>{failurePresentation.detail}</small>
-              </span>
+                {failurePresentation.technicalDetails && <details className="assistant-failure-details">
+                  <summary>{language === 'zh' ? '错误详情' : 'Error details'}</summary>
+                  <pre>{failurePresentation.technicalDetails}</pre>
+                </details>}
+              </div>
             </div>
+          )}
+          {completedChangeReport && (
+            <AssistantChangedFilesSummary
+              report={completedChangeReport}
+              language={language}
+              onOpenReview={onOpenChangeReview}
+              onRevert={() => onRevertChangeReport(
+                {
+                  ...completedChangeReport,
+                  id: `${message.id}:completed-change-summary`,
+                  messageId: message.id,
+                  turnId: message.turnId,
+                  createdAt: message.createdAt,
+                },
+                message,
+              )}
+            />
           )}
         </div>
         <div className="message-actions">
