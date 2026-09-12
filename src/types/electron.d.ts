@@ -116,6 +116,8 @@ declare global {
         callback: () => void,
       ) => () => void;
       writeDebugLog: (scope: string, payload: unknown) => Promise<string>;
+      windowScrollDiagnosticConfig?: () => Promise<import('../../electron/windowScrollDiagnostics').WindowScrollDiagnosticConfig | undefined>;
+      onWindowScrollDiagnosticEvent?: (callback: (event: Record<string, unknown>) => void) => () => void;
       showErrorDialog: (error: { title: string; message: string }) => Promise<void>;
       restoreEditorFocus?: (state: { documentFocused: boolean }) => Promise<boolean>;
       wallpaperAccent: () => Promise<{
@@ -125,7 +127,8 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
-      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') => Promise<void>;
+      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
+      onWindowAppearanceChanged: (callback: (state: import('../../electron/windowAppearance').WindowAppearanceState) => void) => () => void;
       productHostCommand: (command: unknown) => Promise<unknown>;
       mcpRequests: () => Promise<import('../../electron/mcpDesktopHost').McpUserRequest[]>;
       answerMcpRequest: (id: string, answer: unknown) => Promise<boolean>;
@@ -145,7 +148,7 @@ declare global {
       onCapabilityCatalogChanged?: (callback: () => void) => () => void;
       readSkill: (skillName: string) => Promise<unknown>;
       installLocalPlugin: (kind?: 'directory' | 'zip') => Promise<{ id: string; manifestPath: string } | null>;
-      pluginCommands: () => Promise<Array<{ id: string; description: string; argumentHint: string; kind?: 'command' | 'skill' }>>;
+      pluginCommands: () => Promise<import('../types').PluginCommandSummary[]>;
       pluginMarketSources: () => Promise<PluginMarketSource[]>;
       addPluginMarket: (source: string) => Promise<PluginMarketSource>;
       addLocalPluginMarket: () => Promise<PluginMarketSource | null>;
@@ -220,6 +223,8 @@ declare global {
           kind: 'file' | 'folder';
         }>
       >;
+      runtimePluginRenderers: () => Promise<Array<{ id: string; name: string; source?: string; hash?: string; error?: string }>>;
+      runtimePluginFile: (input: { pluginId: string; action: 'import' | 'export' | 'reveal'; text?: string; name?: string; yaml?: string }) => Promise<unknown>;
       saveTeamWorkflow: (input: {
         projectDir?: string;
         workflowId: string;

@@ -1,0 +1,28 @@
+{
+  "name": "team",
+  "version": "0.2.0",
+  "description": "Optional CardBush Team configuration and delegation extension.",
+  "author": {
+    "name": "CardBush"
+  },
+  "cardbush": {
+    "runtimeExtension": {
+      "apiVersion": 1,
+      "entry": "./dist/runtime.mjs",
+      "renderer": "./dist/renderer.mjs"
+    }
+  },
+  "interface": {
+    "displayName": "Team",
+    "shortDescription": "独立管理 Team 与成员配置",
+    "longDescription": "可选的 CardBush Team 扩展。成员配置保存为文件，支持 JSON/YAML 导入导出。当前版本完成既有 Team 能力的拆分；team_chat 自由讨论尚未接入。停用不会影响普通 Subagent，也不会删除配置文件。",
+    "developerName": "CardBush",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "brandColor": "#5f8f79",
+    "logo": "./assets/logo.svg"
+  }
+}

@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Download, FolderOpen, Plus, RefreshCw, Save, Trash2, Upload } from 'lucide-react';
 import { useEffect } from 'react';
 
 import type {
@@ -6,7 +6,7 @@ import type {
   AppLanguage,
   TeamDefinition,
   TeamMemberDefinition,
-} from '../../types';
+} from './types';
 import {
   loadTeamWorkspace,
   teamWorkspaceActions,
@@ -36,6 +36,7 @@ export function TeamWorkflowPanel({ language }: {
           {workspace.error ? <RefreshCw size={14} /> : <Plus size={14} />}
           {workspace.error ? (zh ? '重试' : 'Retry') : (zh ? '新建 Team' : 'New team')}
         </button>
+        {!workspace.error && <button type="button" onClick={() => void teamWorkspaceActions.importFile()}><Upload size={14} />{zh ? '导入 JSON / YAML' : 'Import JSON / YAML'}</button>}
       </div>
     );
   }
@@ -47,6 +48,9 @@ export function TeamWorkflowPanel({ language }: {
           <span><small>{team.name}</small><strong>{workspace.view === 'manage' ? (zh ? '快速管理' : 'Quick management') : workspace.view === 'install' ? (zh ? '新建配置' : 'Create configuration') : profile.name}</strong></span>
         </div>
         <div className="team-workflow-toolbar-actions">
+          <button type="button" title={zh ? '导入 JSON / YAML' : 'Import JSON / YAML'} disabled={workspace.saving} onClick={() => void teamWorkspaceActions.importFile()}><Upload size={15} /></button>
+          <button type="button" title={zh ? '导出配置' : 'Export configuration'} onClick={() => void teamWorkspaceActions.exportFile()}><Download size={15} /></button>
+          <button type="button" title={workspace.configurationPath || (zh ? '配置文件' : 'Configuration file')} onClick={() => void teamWorkspaceActions.revealFile()}><FolderOpen size={15} /></button>
           <button type="button" title={zh ? '刷新' : 'Refresh'} onClick={() => void teamWorkspaceActions.refresh()}><RefreshCw size={15} /></button>
           {workspace.view === 'agent' && (
             <button className="primary" type="button" disabled={workspace.saving} onClick={() => void teamWorkspaceActions.saveTeam(team.id)}>

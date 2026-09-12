@@ -13,6 +13,7 @@ import {
   type SessionUsage,
   type SessionSupersession,
   type TurnContextCheckpoint,
+  type RuntimeUserPromptsRequest,
 } from "@cardbush/bush-protocol";
 import { isDeepStrictEqual } from "node:util";
 
@@ -69,6 +70,10 @@ export class RuntimeSessionCoordinator {
 
   list(): SessionSnapshot[] {
     return this.#store.list();
+  }
+
+  listUserPrompts(input: RuntimeUserPromptsRequest) {
+    return this.#store.listUserPrompts(input);
   }
 
   create(sessionId: string, metadata: Record<string, unknown> = {}): SessionSnapshot {

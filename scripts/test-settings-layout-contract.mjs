@@ -154,7 +154,7 @@ assert.match(app, /aria-hidden=\{settingsVisible\}/);
 assert.match(app, /inert=\{settingsVisible \? true : undefined\}/);
 assert.match(
   css,
-  /\.app > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*29px 0 0;[\s\S]*?z-index:\s*100;/,
+  /\.app > \.settings-shell\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*var\(--window-frame-height\) 0 0;[\s\S]*?z-index:\s*100;/,
   'Settings must cover the preserved app shell below the native title bar.',
 );
 assert.match(

@@ -1,4 +1,5 @@
 import { ArrowDown, Sparkles } from 'lucide-react';
+import { ComposerReferenceContext } from '../composer/ComposerReferenceContext';
 import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -91,6 +92,7 @@ import type {
 } from '../../types';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import { cssEscape } from '../../shared/cssEscape';
+import { observeWindowScrollDiagnostics, recordWindowScrollDiagnostic, windowScrollDiagnosticsActive } from './windowScrollDiagnostics';
 import {
   BackendLoading,
   RuntimeStatusBanner,
@@ -121,6 +123,7 @@ function scrollDebugEnabled() {
 }
 
 function scrollDebug(label: string, data: Record<string, unknown>) {
+  recordWindowScrollDiagnostic(label, data);
   if (!scrollDebugEnabled()) return;
   const entry = {
     at: new Date().toISOString(),
@@ -148,6 +151,7 @@ function gentleAutoFollowScrollBehavior(): ScrollBehavior {
 }
 
 export function ChatPanel({
+  browserTabs = [],
   language,
   theme,
   title,
@@ -165,6 +169,7 @@ export function ChatPanel({
   messages,
   activeGoal,
   goalAvailable,
+  teamAvailable = false,
   goalCancelling,
   goalWaiting,
   changeReports,
@@ -230,6 +235,7 @@ export function ChatPanel({
   draft,
   onDraftChange,
 }: {
+  browserTabs?: import('../../shared/promptReferences').BrowserPromptReference[];
   language: AppLanguage;
   theme: ThemeMode;
   title: string;
@@ -247,6 +253,7 @@ export function ChatPanel({
   messages: ChatMessage[];
   activeGoal: ExperimentalGoal | null;
   goalAvailable: boolean;
+  teamAvailable?: boolean;
   goalCancelling: boolean;
   goalWaiting: boolean;
   changeReports: ConversationChangeReport[];
@@ -445,6 +452,7 @@ export function ChatPanel({
   });
   const streamScrollFrameRef = useRef<number | null>(null);
   const outerResizeFollowFrameRef = useRef<number | null>(null);
+  const outerResizeSizesRef = useRef(new WeakMap<Element, string>());
   const scrollTraceSequenceRef = useRef(0);
   const activeScrollTraceIdRef = useRef('');
   const scrollTraceObserveUntilRef = useRef(0);
@@ -568,7 +576,7 @@ export function ChatPanel({
   const captureScrollGeometry = useCallback(
     (label: string, extra: Record<string, unknown> = {}) => {
       // Disabled diagnostics must not force layout just to discard the result.
-      if (!scrollDebugEnabled()) return;
+      if (!scrollDebugEnabled() && !windowScrollDiagnosticsActive()) return;
       const scroller = listScrollerRef.current;
       const chatBody = chatBodyRef.current;
       const frame = chatBody?.querySelector('.chat-content-frame');
@@ -1756,17 +1764,25 @@ export function ChatPanel({
       (element): element is Element => element instanceof Element,
     );
     if (observed.length === 0) return undefined;
-    let lastSignature = '';
     const observer = new ResizeObserver((entries) => {
+      // Deliveries contain only the targets reported in this batch. Comparing
+      // whole batches mistakes a different subset (or a new observer's initial
+      // delivery) for a resize and nudges an otherwise unchanged conversation.
+      // Keep each target's measurement across effect restarts; session entry
+      // already has its own synchronous scroll restoration.
+      let resized = false;
       const signature = entries
         .map((entry) => {
           const target = entry.target as HTMLElement;
-          return `${target.className}:${Math.round(entry.contentRect.width)}x${Math.round(entry.contentRect.height)}`;
+          const size = `${Math.round(entry.contentRect.width)}x${Math.round(entry.contentRect.height)}`;
+          const previous = outerResizeSizesRef.current.get(target);
+          outerResizeSizesRef.current.set(target, size);
+          if (previous !== undefined && previous !== size) resized = true;
+          return `${target.className}:${size}`;
         })
         .sort()
         .join('|');
-      if (signature === lastSignature) return;
-      lastSignature = signature;
+      if (!resized) return;
       const beforeScrollTop = scroller?.scrollTop ?? null;
       const beforeScrollHeight = scroller?.scrollHeight ?? null;
       const beforeBottom = scroller
@@ -2176,6 +2192,22 @@ export function ChatPanel({
     };
   }, [activeConversationId, cancelScheduledStreamFollow, setScrollBottomVisible]);
 
+  const diagnosticStateRef = useRef<() => Record<string, unknown>>(() => ({}));
+  diagnosticStateRef.current = () => ({
+    conversationId: activeConversationId, sending, loading, messageCount: renderMessages.length,
+    autoFollow: autoFollowStreamRef.current, userDetached: userDetachedFromBottomRef.current,
+    atBottom: atBottomRef.current, restoring: scrollActivationRef.current?.restoring,
+    composerDockHeight, quickContextBottomInset, pendingInteraction: Boolean(pendingInteraction),
+    manualDetachRemainingMs: Math.max(0, manualScrollDetachUntilRef.current - Date.now()),
+    programmaticRemainingMs: Math.max(0, programmaticScrollUntilRef.current - Date.now()),
+    pendingFollow: streamScrollFrameRef.current != null, pendingResizeFollow: outerResizeFollowFrameRef.current != null,
+  });
+  useEffect(() => {
+    const scroller = listScrollerRef.current;
+    if (!scroller) return;
+    return observeWindowScrollDiagnostics(scroller, () => diagnosticStateRef.current());
+  }, [activeConversationId, scrollMountRevision, loading, showWelcome]);
+
   useLayoutEffect(() => {
     const activation = scrollActivationRef.current;
     if (!activation?.restoring) return;
@@ -2448,6 +2480,7 @@ export function ChatPanel({
   }
 
   return (
+    <ComposerReferenceContext.Provider value={{ sessionId: activeConversationId, browserTabs, messages }}>
     <div
       className={`chat-panel${sidebarCollapsed ? ' sidebar-collapsed' : ''}${!workSummaryPresence.mounted ? ' work-summary-hidden' : ' work-summary-requested'}${windowMaximized ? ' window-maximized' : ' window-restored'}`}
     >
@@ -2538,6 +2571,7 @@ export function ChatPanel({
             queuedMessages={queuedMessages}
             selectedModel={selectedModel}
             availableModels={availableModels}
+            teamAvailable={teamAvailable}
             goalAvailable={goalAvailable}
             referencePlanAvailable={referencePlanAvailable}
             referencePlanMode={referencePlanMode}
@@ -2678,7 +2712,7 @@ export function ChatPanel({
         {!showWelcome && !loading && !pendingInteraction && (
           <div
             className={`composer-dock${
-              sending || activeGoal || currentTurnChangeSummary || queuedMessageCount > 0
+              sending || activeGoal || queuedMessageCount > 0
                 ? ' runtime-attached'
                 : ''
             }`}
@@ -2687,7 +2721,7 @@ export function ChatPanel({
               '--shadow-accent': shadowAccentColor,
             } as CSSProperties}
           >
-            {(sending || activeGoal || currentTurnChangeSummary || queuedMessageCount > 0) && (
+            {(sending || activeGoal || queuedMessageCount > 0) && (
               <LiveComposerRuntimeRail
                 key={`runtime:${activeConversationId}`}
                 ref={runtimeRailRef}
@@ -2732,6 +2766,7 @@ export function ChatPanel({
               queuedMessages={[]}
               selectedModel={selectedModel}
               availableModels={availableModels}
+              teamAvailable={teamAvailable}
               goalAvailable={goalAvailable}
               referencePlanAvailable={referencePlanAvailable}
               referencePlanMode={referencePlanMode}
@@ -2783,5 +2818,6 @@ export function ChatPanel({
         </button>
       </div>
     </div>
+    </ComposerReferenceContext.Provider>
   );
 }

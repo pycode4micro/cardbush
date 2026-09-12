@@ -6,7 +6,7 @@ import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, pluginProxySchema, sea
 
 export const CARDBUSH_APPS_CONFIG_PROTOCOL = "cardbush.apps_config.v1" as const;
 
-export type CardbushPluginComponentKind = "skill" | "mcp" | "app" | 'agent' | 'hook' | 'command';
+export type CardbushPluginComponentKind = "skill" | "mcp" | "app" | 'agent' | 'hook' | 'command' | 'runtime';
 
 export interface CardbushPluginComponent {
   kind: CardbushPluginComponentKind;
@@ -14,6 +14,7 @@ export interface CardbushPluginComponent {
   name: string;
   description: string;
   hook?: { definitionHash: string; definition: Record<string, unknown>; executable: boolean };
+  runtime?: { settings: boolean };
   mcp?: { transport?: string; url?: string; registeredAppId?: string; required?: boolean };
 }
 
@@ -37,6 +38,8 @@ export interface CardbushPluginCatalogEntry {
   authentication?: 'ON_INSTALL' | 'ON_USE';
   /** Absolute, validated directories containing this plugin's Skill packages. */
   skillRoots?: string[];
+  /** Installed native extension identities, resolved from the package manifest. */
+  runtimeExtensions?: string[];
   components: CardbushPluginComponent[];
 }
 

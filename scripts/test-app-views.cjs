@@ -46,6 +46,7 @@ async function buildViews() {
   const { default: react } = await import('@vitejs/plugin-react');
   const entryId = '\0app-view-test.ts';
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
+    'src/features/panels/FeatureContentPanel.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
     'src/hooks/useSoftPanelPresence.ts',
@@ -157,8 +158,14 @@ app.whenReady().then(async () => {
           read.done = true; read.resolve({ content, truncated, encoding });
         }
       };
-      preview('D:/fixture/first.md');
+      if (${JSON.stringify(process.env.CARDBUSH_APP_VIEWS_CASE)} !== 'conversation-titles') preview('D:/fixture/first.md');
     `);
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'conversation-titles') {
+      await require('./helpers/conversation-title-rendering.cjs')({ run, until, pause, window });
+      assert.deepEqual(await run('failures'), [], 'no conversation title renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await until('reads.length >= 2', 'StrictMode preview effects');
     assert.equal(await run("views.normalizeInspectorBrowserAddress('127.0.0.1:51733')"), 'http://127.0.0.1:51733');
     assert.equal(await run("views.inspectorSource('D:/fixture/report.xlsx')"), 'cardbush-file://office-preview/?path=D%3A%2Ffixture%2Freport.xlsx');
@@ -195,6 +202,7 @@ app.whenReady().then(async () => {
     `);
     assert.deepEqual(await run('linkTargets'), ['http://localhost:51231/', 'http://localhost:51231/admin.html'], 'clicks open the exact URL in the inspector');
     await require('./helpers/markdown-file-navigation.cjs')({ run, until, pause, window });
+    await require('./helpers/chat-final-file-references.cjs')({ run, until, pause });
     await run("preview('D:/fixture/code.ts')");
     await until("reads.some(read => read.path.endsWith('code.ts'))", 'source read');
     await run("resolveReads('D:/fixture/code.ts', 'const extractedView = true;', true)");
@@ -348,6 +356,30 @@ app.whenReady().then(async () => {
       updateChat({ activeConversationId: 'session-a', messages });
     `);
     await until("document.querySelector('.message-list')?.textContent.includes('Fixture assistant answer')", 'draft to loaded session');
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || ['window-scroll', 'window-scroll-references'].includes(process.env.CARDBUSH_APP_VIEWS_CASE)) {
+      await require('./helpers/chat-window-reference-scroll.cjs')({ run, until, pause, window });
+      await require('./helpers/chat-window-reference-scroll.cjs')({ run, until, pause, window, theme: 'theme-bright' });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll-references') {
+      assert.deepEqual(await run('failures'), [], 'no reference refresh renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll-logs') {
+      await require('./helpers/chat-window-scroll-diagnostics.cjs')({ run, until, pause, window });
+      assert.deepEqual(await run('failures'), [], 'no window diagnostic renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'window-scroll') {
+      await require('./helpers/chat-window-scroll.cjs')({ run, until, pause, window });
+      await require('./helpers/chat-window-scroll.cjs')({ run, until, pause, window, theme: 'theme-dark' });
+      await require('./helpers/chat-stream-append.cjs')({ run, until, pause, window, root });
+      await require('./helpers/chat-session-scroll.cjs')({ run, until, pause });
+      assert.deepEqual(await run('failures'), [], 'no window scroll renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await require('./helpers/queue-interaction.cjs')({ run, until, pause, window, root });
     if (process.env.CARDBUSH_APP_VIEWS_CASE === 'queue') {
       assert.deepEqual(await run('failures'), [], 'no queue renderer errors');

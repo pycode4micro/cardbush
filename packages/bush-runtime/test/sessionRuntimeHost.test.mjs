@@ -11,6 +11,7 @@ import {
   BUSH_SESSION_TURN_REQUEST_PROTOCOL,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  GET_RUNTIME_USER_MESSAGE_COMMAND,
   GET_RUNTIME_TOOL_EXECUTION_COMMAND,
   LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
   RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
@@ -1904,6 +1905,43 @@ for (const [inputTokens, succeeds] of [[191_000, true], [225_000, false]]) {
     if (!succeeds) assert.equal(terminal.payload.reason, 'current_turn_context_limit_exceeded');
   });
 }
+
+test('user reference reads share the durable fact before and after commit, including guidance metadata', async () => {
+  const release = Promise.withResolvers();
+  const secondRelease = Promise.withResolvers();
+  let calls = 0;
+  const host = new InMemoryRuntimeHost({ provider: {
+    async *stream(request) {
+      calls++;
+      await (calls === 1 ? release.promise : secondRelease.promise);
+      yield event(request.requestId, 0, 'text_delta', { delta: 'done' });
+      yield event(request.requestId, 1, 'response_completed', { finishReason: 'stop' });
+    },
+  } });
+  const request = sessionRequest('reference-request', 'reference-turn', 'reference-user', 'authored plus resolved facts');
+  request.inputMessages[0].metadata = { composerReferenceContent: 'authored' };
+  const running = host.runSessionTurn(request);
+  const readUser = (messageId, sessionId = 'session_1') => host.sendCommand({ kind: GET_RUNTIME_USER_MESSAGE_COMMAND,
+    payload: { sessionId, turnId: 'reference-turn', messageId } });
+  try {
+    await waitFor(() => calls === 1);
+    assert.equal((await readUser('reference-user')).message.content, 'authored plus resolved facts');
+    assert.equal((await readUser('reference-user')).metadata.composerReferenceContent, 'authored');
+    assert.equal(await readUser('reference-user', 'wrong-session'), null);
+    assert.equal(await readUser('missing'), null);
+    await host.sendCommand({ kind: ENQUEUE_RUNTIME_GUIDANCE_COMMAND, payload: {
+      protocol: BUSH_RUNTIME_GUIDANCE_PROTOCOL, sessionId: 'session_1', turnId: 'reference-turn', messageId: 'reference-guidance',
+      createdAt: NOW, content: 'guidance plus selected source', metadata: { composerReferenceContent: 'guidance' },
+    } });
+    release.resolve();
+    await waitFor(() => calls === 2);
+    assert.equal((await readUser('reference-guidance')).metadata.composerReferenceContent, 'guidance');
+  } finally { release.resolve(); secondRelease.resolve(); await running; }
+  assert.equal((await readUser('reference-user')).metadata.composerReferenceContent, 'authored');
+  assert.equal((await readUser('reference-guidance')).message.content, 'guidance plus selected source');
+  await host.sendCommand({ kind: SUPERSEDE_RUNTIME_SESSION_MESSAGES_COMMAND, payload: { sessionId: 'session_1', messageIds: ['reference-user'], reason: 'edited' } });
+  assert.equal(await readUser('reference-user'), null, 'a durable checkpoint cannot resurrect a replaced user instruction');
+});
 
 function sessionRequest(requestId, turnId, messageId, content) {
   return {

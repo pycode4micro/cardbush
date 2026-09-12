@@ -1,3 +1,4 @@
+import { RuntimePluginWorkspace } from '../../plugins/runtimeWorkspaces';
 import { PluginMcpSettings } from './PluginMcpSettings';
 import { pluginPrompt } from './pluginPrompts';
 import { PluginProxySettings, proxyLabel } from './PluginProxySettings';
@@ -53,6 +54,7 @@ type Page =
   | { kind: 'manage'; tab?: ManageTab }
   | { kind: 'marketplace' }
   | { kind: 'network' }
+  | { kind: 'workspace'; pluginId: string; extensionId: string }
   | { kind: 'accounts'; pluginId: string }
   | { kind: 'plugin'; pluginId: string }
   | { kind: 'skill'; skillName: string };
@@ -418,12 +420,19 @@ export function PluginManagementPanel({
         {error && <p className="plugin-market-error" role="alert">{error}</p>}
       </dialog>}</>;
   }
+  if (page.kind === 'workspace') {
+    const plugin = plugins.find(item => item.id === page.pluginId);
+    return <div className="plugin-workspace-page"><button className="plugin-back" type="button" onClick={() => setPage({ kind: 'plugin', pluginId: page.pluginId })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugin'}</button>
+      {plugin?.installed && plugin.enabled ? <RuntimePluginWorkspace id={page.extensionId} language={language}/> : <p>{language === 'zh' ? '请先启用插件。' : 'Enable this plugin first.'}</p>}
+    </div>;
+  }
   if (selectedPlugin) {
     return (
       <PluginDetail
         onOpenPrompt={onOpenPrompt}
         language={language}
         plugin={selectedPlugin}
+        onOpenWorkspace={extensionId => setPage({ kind: 'workspace', pluginId: selectedPlugin.id, extensionId })}
         proxyDefaults={configuration?.proxy}
         onProxySave={proxy => savePluginProxy(selectedPlugin.id, proxy)}
         onUninstall={() => void uninstallPlugin(selectedPlugin)}
@@ -847,7 +856,8 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+function PluginDetail({ onOpenWorkspace, language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+  onOpenWorkspace: (id: string) => void;
   onOpenPrompt?: (prompt: string) => void;
   onUninstall: () => void;
   proxyDefaults?: ProxySettings;
@@ -880,6 +890,7 @@ function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPers
         onClick={() => onOpenPrompt?.(pluginPrompt(plugin, prompt))}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></button>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
+      {plugin.installed && plugin.enabled && plugin.components.filter(component => component.kind === 'runtime' && component.runtime?.settings).map(component => <section className="plugin-detail-section" key={component.id}><button type="button" className="plugin-back" onClick={() => onOpenWorkspace(component.id)}><Settings size={16}/>{language === 'zh' ? '打开插件配置' : 'Open plugin settings'}</button></section>)}
       {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
         <PluginProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />

@@ -168,15 +168,13 @@ export function ComposerRuntimeRail({
         title: thinkingNotice.preview || thinkingNotice.content,
       });
     }
-    if (changeSummary) {
+    if (running && changeSummary) {
       const summary = language === 'zh'
         ? `${changeSummary.fileCount} 个文件 · 累计 ${changedLineCount} 行`
         : `${changeSummary.fileCount} files · ${changedLineCount} lines total`;
       items.push({
         kind: 'changes',
-        label: running
-          ? language === 'zh' ? '更改中' : 'Changing'
-          : language === 'zh' ? '已更改' : 'Changed',
+        label: language === 'zh' ? '更改中' : 'Changing',
         summary,
         title: summary,
       });
@@ -246,10 +244,10 @@ export function ComposerRuntimeRail({
   }, [activePanel]);
 
   useEffect(() => {
-    if (!changeSummary) {
+    if (!running || !changeSummary) {
       setChangesOpen(false);
     }
-  }, [changeSummary]);
+  }, [running, changeSummary]);
 
   useEffect(() => {
     if (!hasProcessing) {
@@ -619,7 +617,7 @@ export function ComposerRuntimeRail({
           <div className="thinking-context-content">{thinkingNotice.content}</div>
         </section>
       )}
-      {panelPresence.mounted && renderedPanel === 'changes' && changeSummary && (
+      {panelPresence.mounted && renderedPanel === 'changes' && running && changeSummary && (
         <section
           className="runtime-context-panel change-context-panel"
           aria-label={language === 'zh' ? '文件更改' : 'File changes'}

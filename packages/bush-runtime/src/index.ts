@@ -30,8 +30,7 @@ export * from "./sessionStore.js";
 export * from "./skillTools.js";
 export * from "./subagentTaskStore.js";
 export * from "./subagentTool.js";
-export * from "./teamSnapshotStore.js";
-export * from "./teamTool.js";
+export * from './runtimeExtension.js';
 export * from "./terminalCommandSafety.js";
 export * from "./runtimeToolLoop.js";
 export * from "./toolCallAccumulator.js";
@@ -48,3 +47,4 @@ export { McpAppsHost, MCP_APPS_COMMAND, registerMcpAppStatusTool } from './mcpAp
 export * from './fileMemo.js';
 export * from './mcpHostCapabilities.js';
 export type { SearchResultLimitProvider } from './searchResultLimit.js';
+export type { RuntimeRendererHost, RuntimeRendererSnapshot, RuntimeRendererExtension } from './rendererExtension.js';

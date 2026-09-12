@@ -1,4 +1,7 @@
 import { configuredMcpServerId } from './mcpConfigurationFact';
+import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
+import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
+import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
   AppLanguage,
   AssistantRevision,
@@ -42,9 +45,6 @@ import type {
   CapabilityCandidatesUpdate,
   TerminalRuntime,
   TurnTerminalSnapshot,
-  AgentProfileDefinition,
-  TeamDefinition,
-  TeamConfigurationCapabilities,
   CardbushAppsConfiguration,
   CardbushAppPlugin,
 } from '../types';
@@ -58,7 +58,7 @@ import type {
   RuntimeSessionTurnRequest,
 } from '@cardbush/bush-protocol';
 import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
-import { AGENT_PROFILE_PROTOCOL } from '../types';
+
 import { standardImageInputToolDefaultName } from './toolVisibility';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
 import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
@@ -81,12 +81,7 @@ import {
   validateProductMcpServer,
 } from './productMcp';
 import { mcpConnectionState, type McpConnectionOverview } from './mcpConnectionOverview';
-import {
-  readProductAgentProfiles,
-  readProductTeams,
-  replaceProductTeamConfiguration,
-  resetProductTeamConfiguration,
-} from './productTeams';
+import { resetRuntimePluginAssets } from '../plugins/runtimeExtensions';
 import {
   answerRuntimeInteraction,
   hasRuntimeInteraction,
@@ -561,7 +556,7 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       maintenanceLogsCacheClear: true,
       maintenanceRuntimeAssetsReset: true,
       runtimeAssetResetProtocol: RUNTIME_ASSET_RESET_PROTOCOL,
-      runtimeAssetResetCategories: ['prompts', 'skills', 'agent_profiles', 'teams'],
+      runtimeAssetResetCategories: features.has('product_team_snapshot') ? ['prompts', 'skills', 'agent_profiles', 'teams'] : ['prompts', 'skills'],
       shadowConversationActivation: true,
       standardImageInputTool: features.has('native_image_inputs'),
       projects: true,
@@ -627,125 +622,7 @@ export function isRuntimeWorkspaceSnapshotUnavailableError(
   return error instanceof RuntimeWorkspaceSnapshotUnavailableError;
 }
 
-export async function fetchTeams(
-  signal?: AbortSignal,
-): Promise<TeamDefinition[]> {
-  void signal;
-  return readProductTeams();
-}
 
-export async function saveTeamDefinition(
-  team: TeamDefinition,
-  signal?: AbortSignal,
-) {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog(signal);
-    const teams = readProductTeams();
-    const index = teams.findIndex((item) => item.id === team.id);
-    if (index >= 0) teams[index] = team;
-    else teams.push(team);
-    await replaceProductTeamConfiguration(runtime.client, {
-      teams,
-      profiles: readProductAgentProfiles(),
-      tools,
-    });
-    return team;
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function deleteTeamDefinition(teamId: string): Promise<void> {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog();
-    await replaceProductTeamConfiguration(runtime.client, {
-      teams: readProductTeams().filter((team) => team.id !== teamId.trim()),
-      profiles: readProductAgentProfiles(),
-      tools,
-    });
-    return;
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function fetchAgentProfiles(
-  signal?: AbortSignal,
-): Promise<AgentProfileDefinition[]> {
-  void signal;
-  return readProductAgentProfiles();
-}
-
-export async function saveAgentProfile(
-  profile: AgentProfileDefinition,
-  signal?: AbortSignal,
-) {
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog(signal);
-    const profiles = readProductAgentProfiles();
-    const index = profiles.findIndex((item) => item.id === profile.id);
-    if (index >= 0) profiles[index] = profile;
-    else profiles.push(profile);
-    await replaceProductTeamConfiguration(runtime.client, {
-      teams: readProductTeams(),
-      profiles,
-      tools,
-    });
-    return profile;
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function deleteAgentProfile(profileId: string): Promise<void> {
-  const normalized = profileId.trim();
-  const runtime = createDesktopRuntimeSession();
-  try {
-    await synchronizeProductMcpSnapshot(runtime.client);
-    const tools = await runtime.client.getToolCatalog();
-    await replaceProductTeamConfiguration(runtime.client, {
-      teams: readProductTeams(),
-      profiles: readProductAgentProfiles().filter(
-        (profile) => profile.id !== normalized,
-      ),
-      tools,
-    });
-    return;
-  } finally {
-    runtime.dispose();
-  }
-}
-
-export async function fetchTeamConfigurationCapabilities(signal?: AbortSignal) {
-  void signal;
-  return {
-    available: true,
-    teamProtocol: 'bush.team_snapshot.v1',
-    agentProfileProtocol: AGENT_PROFILE_PROTOCOL,
-    contextProtocol: 'bush.session_snapshot.v1',
-    delegationTool: 'team_delegate',
-    ordinarySubagentProfileArgument: false,
-    memberCapabilities: [
-      'responsibility',
-      'disabled_tools',
-      'skills',
-      'hooks',
-      'guards',
-      'prompts.instructions',
-      'fallback',
-    ],
-    toolPolicy: 'explicit_snapshot',
-    fallbackMemberRequired: true,
-    fixedDag: false,
-    profileOnlyHooks: [],
-  } satisfies TeamConfigurationCapabilities;
-}
 
 export async function fetchGoalRuntimeStatus(): Promise<GoalRuntimeStatus> {
   return {
@@ -1473,8 +1350,10 @@ function runtimeConversation(
     .reverse()
     .find((message) => message.message.role === 'assistant');
   const title =
-    optionalString(snapshot.metadata?.title) ||
-    initialRuntimeConversationTitle(firstUserMessage?.message.content) ||
+    conversationDisplayTitle(optionalString(snapshot.metadata?.title) ?? '') ||
+    conversationTitleFromUserText(firstUserMessage
+      ? authoredPromptContent(firstUserMessage.message.content, firstUserMessage.metadata)
+      : '') ||
     defaultConversationTitle(snapshot.sessionId);
   const projectDir = optionalString(snapshot.metadata?.projectDir);
   const projectId =
@@ -1504,14 +1383,6 @@ function taskWorkspaceDirectory(metadata: Record<string, unknown> | undefined) {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
   }
   return '';
-}
-
-function initialRuntimeConversationTitle(value: unknown) {
-  const normalized = String(value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!normalized) return '';
-  return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
 }
 
 function lexicalTerms(value: string) {
@@ -1867,12 +1738,13 @@ function cardbushAppsConfigurationFromPayload(
         : 'AVAILABLE',
       components: arrayFrom(value.components).map((candidate) => {
         const component = asRecord(candidate);
-        const kind = component.kind === 'skill' || component.kind === 'app' || component.kind === 'agent' || component.kind === 'hook' || component.kind === 'command' ? component.kind : 'mcp';
+        const kind = component.kind === 'skill' || component.kind === 'app' || component.kind === 'agent' || component.kind === 'hook' || component.kind === 'command' || component.kind === 'runtime' ? component.kind : 'mcp';
         return {
           kind,
           id: String(component.id ?? ''),
           name: String(component.name ?? component.id ?? ''),
           description: String(component.description ?? ''),
+          ...(component.runtime ? { runtime: { settings: asRecord(component.runtime).settings === true } } : {}),
           ...(component.mcp ? { mcp: { transport: optionalString(asRecord(component.mcp).transport), url: optionalString(asRecord(component.mcp).url), registeredAppId: optionalString(asRecord(component.mcp).registeredAppId), required: asRecord(component.mcp).required === true } } : {}),
           ...(component.hook && typeof asRecord(component.hook).definitionHash === 'string' ? { hook: {
             definitionHash: String(asRecord(component.hook).definitionHash),
@@ -1987,27 +1859,10 @@ export async function resetRuntimeAssets(
       confirm: true,
     }),
   );
-  if (resetsTeams) {
-    const runtime = createDesktopRuntimeSession();
-    try {
-      await synchronizeProductMcpSnapshot(runtime.client);
-      const tools = await runtime.client.getToolCatalog();
-      await resetProductTeamConfiguration(runtime.client, tools);
-      for (const category of ['agent_profiles', 'teams'] as const) {
-        const current = result.categories[category];
-        result.categories[category] = {
-          changed: true,
-          sourcePath: current?.sourcePath ?? 'bundled-defaults',
-          targetPath: current?.targetPath ?? 'product-configuration',
-          seedFileCount: 1,
-          restoredFileCount: 1,
-          removedRuntimeFileCount: 0,
-        };
-      }
-      result.changed = true;
-    } finally {
-      runtime.dispose();
-    }
+  const reset = await resetRuntimePluginAssets(selected);
+  for (const category of reset) if (category === 'teams' || category === 'agent_profiles') {
+    result.categories[category] = { changed: true, sourcePath: 'plugin-defaults', targetPath: 'plugin-configuration', seedFileCount: 1, restoredFileCount: 1, removedRuntimeFileCount: 0 };
+    result.changed = true;
   }
   assertRuntimeAssetResetProtocol(result.protocol);
   return result;
@@ -2778,12 +2633,17 @@ export async function sendGuidance(request: SendGuidanceRequest) {
   trace('guidance-requested');
   const runtime = createDesktopRuntimeSession();
   try {
+    const snapshot = promptReferenceParts(guidance).some(part => part.reference?.kind === 'user-turn')
+      ? await runtime.client.getSession(sessionId, request.signal) : undefined;
+    const referencedInput = await resolvePromptReferenceContext(guidance, sessionId, snapshot, undefined,
+      (turnId, messageId) => runtime.client.getUserMessage(sessionId, turnId, messageId, request.signal));
     await runtime.client.enqueueGuidance({
       protocol: 'bush.runtime_guidance.v1',
       sessionId,
       turnId,
       messageId: request.clientMessageId.trim(),
-      content: guidance,
+      content: referencedInput.content,
+      ...(referencedInput.metadata ? { metadata: referencedInput.metadata } : {}),
       createdAt: new Date().toISOString(),
     }, request.signal);
     trace('guidance-accepted');

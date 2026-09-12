@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
+import { TeamConfigurationFileStore } from '../packages/cardbush-team-plugin/dist/configStore.js';
 import { resolve } from 'node:path';
-import { TeamSnapshotStore } from '../packages/bush-runtime/dist/teamSnapshotStore.js';
+import { TeamSnapshotStore } from '../packages/cardbush-team-plugin/dist/teamSnapshotStore.js';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const revisionKey = 'cardbush_product_team_revision_v1';
@@ -9,14 +13,27 @@ const tool = name => ({ name, description: name, inputSchema: { type: 'object', 
 const baseTools = [tool('read_file')];
 const pluginTools = [...baseTools, tool('mcp__example__read')];
 
+const filesRoot = await mkdtemp(join(tmpdir(), 'cardbush-team-config-tests-'));
+const files = new WeakMap();
+let fileSequence = 0;
+after(async () => {
+  assert.ok(filesRoot.startsWith(tmpdir() + sep));
+  await rm(filesRoot, { recursive: true, force: true });
+});
+
 async function loadProduct(storage) {
+  if (!files.has(storage)) files.set(storage, new TeamConfigurationFileStore(join(filesRoot, String(++fileSequence), 'teams.json')));
+  const file = files.get(storage);
   return loadChatTranscript({
-    globals: { structuredClone, TextEncoder, window: { localStorage: {
+    globals: { structuredClone, TextEncoder, window: {
+      cardbushDesktop: { teamConfiguration: async input => structuredClone(await (input.action === 'read'
+        ? file.read(input.migration) : file.write(input.configuration, input.expectedHash))) },
+      localStorage: {
       getItem: key => storage.get(key) ?? null,
       setItem: (key, value) => storage.set(key, value),
       removeItem: key => storage.delete(key),
     } } },
-    source: ['src/backend/productTeams.ts', 'src/runtime-client/ProtocolRuntimeClient.ts']
+    source: `import { setHost } from ${JSON.stringify(resolve('packages/cardbush-team-plugin/ui/host.ts'))}; setHost({command: (_kind,input) => window.cardbushDesktop.teamConfiguration(input)});\n` + ['packages/cardbush-team-plugin/ui/productTeams.ts', 'src/runtime-client/ProtocolRuntimeClient.ts']
       .map(file => `export * from ${JSON.stringify(resolve(file))};`).join('\n'),
   });
 }
@@ -46,8 +63,8 @@ async function fixture() {
   return { storage, product, state, applied, createClient, client: createClient() };
 }
 
-function configuration(product, tools = baseTools) {
-  return { teams: product.readProductTeams(), profiles: product.readProductAgentProfiles(), tools };
+async function configuration(product, tools = baseTools) {
+  return { ...(await product.readProductTeamConfiguration()).configuration, tools };
 }
 
 test('plugin tool addition and removal advance revisions; reordered and duplicate names are idempotent', async () => {
@@ -67,12 +84,12 @@ test('plugin tool addition and removal advance revisions; reordered and duplicat
 test('only effective constraints advance the revision, and disabled tools remain excluded', async () => {
   const { product, client, state, applied } = await fixture();
   await product.synchronizeProductTeamSnapshot(client, baseTools);
-  const config = configuration(product);
+  const config = await configuration(product);
   config.profiles[0].disabledTools = ['mcp__example__read'];
   assert.equal((await product.replaceProductTeamConfiguration(client, config)).revision, 1);
   assert.equal((await product.synchronizeProductTeamSnapshot(client, pluginTools)).revision, 1);
   assert.equal(applied.length, 1);
-  const updated = configuration(product, pluginTools);
+  const updated = await configuration(product, pluginTools);
   updated.profiles[0].prompts.instructions = 'Use verified evidence. 中文约束';
   updated.profiles[0].skills = ['review'];
   assert.equal((await product.replaceProductTeamConfiguration(client, updated)).revision, 2);
@@ -149,11 +166,11 @@ test('existing snapshots from an older host advance safely without an available 
   assert.equal((await product.synchronizeProductTeamSnapshot(client, [...pluginTools].reverse())).revision, 9);
 });
 
-test('failed configuration saves roll back before a queued send reads the team', async () => {
+test('failed configuration saves leave the file unchanged before a queued send reads the team', async () => {
   const { product, client, state, storage } = await fixture();
   await product.synchronizeProductTeamSnapshot(client, baseTools);
   const before = new Map(storage);
-  const config = configuration(product);
+  const config = await configuration(product);
   config.teams[0].name = 'Rejected edit';
   let release, entered;
   const blocked = new Promise(resolve => { release = resolve; });
@@ -167,7 +184,7 @@ test('failed configuration saves roll back before a queued send reads the team',
   await failedSave;
   assert.equal((await send).revision, 1);
   assert.deepEqual(storage, before);
-  assert.equal(product.readProductTeams()[0].name, 'General Team');
+  assert.equal((await product.readProductTeams())[0].name, 'General Team');
   assert.equal(state.store.team('general').name, 'General Team');
   state.beforeApply = undefined;
   assert.equal((await product.replaceProductTeamConfiguration(client, config)).revision, 2);
@@ -176,7 +193,7 @@ test('failed configuration saves roll back before a queued send reads the team',
 test('a successful save is visible to a queued send and invalid saves leave both sides intact', async () => {
   const { product, client, state, storage } = await fixture();
   await product.synchronizeProductTeamSnapshot(client, baseTools);
-  const config = configuration(product);
+  const config = await configuration(product);
   config.teams[0].name = 'Saved team';
   const results = await Promise.all([
     product.replaceProductTeamConfiguration(client, config),
@@ -185,20 +202,20 @@ test('a successful save is visible to a queued send and invalid saves leave both
   assert.deepEqual(results.map(result => result.revision), [2, 3]);
   assert.equal(state.store.team('general').name, 'Saved team');
   const before = new Map(storage);
-  const invalid = configuration(product, pluginTools);
+  const invalid = await configuration(product, pluginTools);
   invalid.teams[0].members[0].agentProfileId = 'missing';
-  await assert.rejects(product.replaceProductTeamConfiguration(client, invalid), /missing Agent configuration/);
+  await assert.rejects(product.replaceProductTeamConfiguration(client, invalid), /Missing Agent Profile/);
   assert.deepEqual(storage, before);
   assert.equal(state.store.result().revision, 3);
   assert.equal((await product.resetProductTeamConfiguration(client, baseTools)).revision, 4);
   assert.equal(state.store.team('general').name, 'General Team');
 });
 
-test('an uncertain save restores local settings and the next send reconciles forward', async () => {
+test('an uncertain save leaves the file unchanged and the next send reconciles forward', async () => {
   const { product, client, state, storage } = await fixture();
   await product.synchronizeProductTeamSnapshot(client, baseTools);
   const before = new Map(storage);
-  const config = configuration(product);
+  const config = await configuration(product);
   config.teams[0].name = 'Unconfirmed team';
   state.loseResponse = true;
   await assert.rejects(product.replaceProductTeamConfiguration(client, config), /lost apply response/);

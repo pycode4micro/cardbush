@@ -1,4 +1,5 @@
 import { readAgentInstructions } from './globalInstructions';
+import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
   RuntimeEvent,
   RuntimeProviderBindingRef,
@@ -40,7 +41,7 @@ import type {
 } from './api';
 import { synchronizeProductMcpSnapshot } from './productMcp';
 import { configuredMcpServerId } from './mcpConfigurationFact';
-import { synchronizeProductTeamSnapshot } from './productTeams';
+import { prepareRuntimePluginTurn } from '../plugins/runtimeExtensions';
 import { parseGoalCommand } from './goalCommand';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { projectRuntimeTurnMessages } from './runtimeSessionMessageProjection';
@@ -105,10 +106,7 @@ export async function streamRuntimeChat(
       runtime.client.getGoal(request.sessionId, controller.signal),
       runtime.client.getSession(request.sessionId, controller.signal),
     ]);
-    await synchronizeProductTeamSnapshot(
-      runtime.client,
-      catalog.map((entry) => entry.definition),
-    );
+    await prepareRuntimePluginTurn(request, catalog.map(entry => entry.definition));
     const disabled = new Set(request.disabledTools ?? []);
     const permissionMode = request.permissionMode ?? 'task_free';
     const interactiveRequests = request.interactiveRequestsEnabled === true;
@@ -172,6 +170,8 @@ export async function streamRuntimeChat(
       ? new Date(submittedAt).toISOString()
       : new Date().toISOString();
     const initialLocalDate = new Date().toLocaleDateString('en-CA');
+    const referencedInput = await resolvePromptReferenceContext(effectiveUserInput, request.sessionId, existingSession, request.uiLanguage,
+      (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, controller.signal));
     const runtimeRequest = createProductAgentTurnRequest({
       ...sharedAgentInput,
       requestId,
@@ -180,7 +180,8 @@ export async function streamRuntimeChat(
       createdAt: initialCreatedAt,
       localDate: initialLocalDate,
       sessionEnvironmentLocalDate,
-      userText: effectiveUserInput,
+      userText: referencedInput.content,
+      userMessageMetadata: referencedInput.metadata,
       ...(goalCommand ? { userMessageName: 'goal_request' } : {}),
       files: request.files,
       images: request.images?.map((image) => image.path),
@@ -417,7 +418,7 @@ export async function streamRuntimeTurnEvents(
 
 async function consumeRuntimeEvents(
   runtime: ReturnType<typeof createDesktopRuntimeSession>,
-  runtimeRequest: Pick<RuntimeSessionTurnRequest, 'sessionId' | 'turnId'>,
+  runtimeRequest: Pick<RuntimeSessionTurnRequest, 'sessionId' | 'turnId'> & Partial<Pick<RuntimeSessionTurnRequest, 'inputMessages'>>,
   request: ChatStreamEventHandlers,
   pendingToolLoads: Set<Promise<void>>,
   onTerminal: (event: Extract<RuntimeEvent, { kind: 'turn_terminal' }>) => void,
@@ -459,6 +460,7 @@ async function consumeRuntimeEvents(
         request.onStart?.({
           sessionId: event.sessionId,
           turnId: event.turnId,
+          userMessageId: runtimeRequest.inputMessages?.find(item => item.message.role === 'user' && item.message.visibility !== 'internal')?.messageId,
           createdAt: event.createdAt,
         });
         break;

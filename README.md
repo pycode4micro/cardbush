@@ -4,8 +4,10 @@
 
 CardBush is an Electron desktop Agent application with its production Agent
 Runtime embedded in TypeScript. Normal chat, sessions, model access, tools,
-permissions, Goal, Plan, Subagent, Team and persistence run inside CardBush over
+permissions, Goal, Plan, Subagent and persistence run inside CardBush over
 typed Electron IPC; no BushServer HTTP process or localhost port is required.
+
+Team is distributed as an independently installable ZIP plugin; it is not part of the desktop build. See [Team extraction and file configuration](docs/TEAM_PLUGIN_EXTRACTION.md) for its boundaries and current status.
 
 ## Status
 

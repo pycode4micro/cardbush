@@ -714,3 +714,6 @@
 .plugin-search-setting-controls button:disabled { opacity: .5; cursor: default; }
 .plugin-search-settings > .plugin-market-error { flex-basis: 100%; margin: 0; }
 @media (max-width: 640px) { .plugin-proxy-fields { grid-template-columns: 1fr; } }
+
+.plugin-workspace-page { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; gap: 12px; }
+.plugin-workspace-page > .plugin-back { align-self: flex-start; }

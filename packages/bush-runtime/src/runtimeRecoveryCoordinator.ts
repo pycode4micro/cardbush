@@ -93,6 +93,13 @@ export class RuntimeRecoveryCoordinator {
     return this.#inspectState(sessionId, turnId).inspection;
   }
 
+  /** Read the durable input fact of an unfinished Turn, without exposing its model request. */
+  readUserMessage(sessionId: string, turnId: string, messageId: string) {
+    const commit = this.#checkpoints.load(sessionId, turnId)?.sessionCommit;
+    return [...commit?.inputMessages ?? [], ...commit?.generatedMessages ?? []].find(item =>
+      item.messageId === messageId && item.message.role === 'user' && item.message.visibility !== 'internal') ?? null;
+  }
+
   #inspectState(
     sessionId: string,
     turnId: string,

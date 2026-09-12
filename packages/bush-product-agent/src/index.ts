@@ -74,6 +74,7 @@ export interface ProductAgentTurnInput {
   /** Last session environment epoch already committed to this Session. */
   sessionEnvironmentLocalDate?: string;
   userText: string;
+  userMessageMetadata?: Record<string, unknown>;
   userMessageName?: string;
   /** UI locale is a fallback, never an override of the user's language. */
   uiLanguage?: "zh" | "en";
@@ -140,8 +141,8 @@ function createBaseProductAgentTurnRequest(
       {
         messageId: input.messageId,
         createdAt: input.createdAt,
-        ...(input.attachments?.length
-          ? { metadata: { attachments: input.attachments.map((item) => ({ ...item })) } }
+        ...(input.attachments?.length || input.userMessageMetadata
+          ? { metadata: { ...input.userMessageMetadata, ...(input.attachments?.length ? { attachments: input.attachments.map((item) => ({ ...item })) } : {}) } }
           : {}),
         message: {
           role: "user",

@@ -1,5 +1,6 @@
 import { Clipboard, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
+import { conversationDisplayTitle } from '../shared/conversationTitle';
 
 export function TopBar({
   title,
@@ -18,9 +19,10 @@ export function TopBar({
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
   onToggleInspector: () => void;
 }) {
+  const displayTitle = conversationDisplayTitle(title);
   return (
     <div className="topbar">
-      <h1>{title}</h1>
+      <h1 title={displayTitle}>{displayTitle}</h1>
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
           className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}

@@ -8,6 +8,9 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - '!dist-electron/productA2A.js'
+  - '!dist-electron/teamPlugin.js'
+  - '!packages/bush-runtime/dist/teamTool.*'
+  - '!packages/bush-runtime/dist/teamSnapshotStore.*'
   - packages/*/dist/**/*
   - packages/*/package.json
   - assets/**/*
@@ -16,6 +19,8 @@ files:
   - '!assets/runtime-tools/**/*'
   - package.json
   - node_modules/**/*
+  - '!packages/cardbush-team-plugin/**/*'
+  - '!node_modules/@cardbush/team-plugin/**/*'
   - '!node_modules/.cache/**/*'
   - '!**/*.map'
 extraResources:

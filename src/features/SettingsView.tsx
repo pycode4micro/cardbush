@@ -1,4 +1,5 @@
 import { GlobalInstructionsPanel } from './settings/GlobalInstructionsPanel';
+import type { WindowMaterialPreference } from './appearance/windowAppearance';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
 import { DEFAULT_MAX_CONTEXT_TOKENS as defaultMaxContextTokens } from '@cardbush/bush-product-agent';
 import {
@@ -220,6 +221,8 @@ export function SettingsView({
   active,
   onReady,
   themePreference,
+  windowMaterial = 'auto',
+  onWindowMaterialChange,
   language,
   languageMode,
   systemLanguage,
@@ -252,6 +255,8 @@ export function SettingsView({
   active: boolean;
   onReady: () => void;
   themePreference: ThemePreference;
+  windowMaterial?: WindowMaterialPreference;
+  onWindowMaterialChange?: (value: WindowMaterialPreference) => void;
   language: AppLanguage;
   languageMode: AppLanguageMode;
   systemLanguage: AppLanguage;
@@ -613,6 +618,8 @@ export function SettingsView({
       return (
         <SettingsProfilePanel
           themePreference={themePreference}
+          windowMaterial={windowMaterial}
+          onWindowMaterialChange={onWindowMaterialChange}
           language={language}
           languageMode={languageMode}
           systemLanguage={systemLanguage}
@@ -985,6 +992,8 @@ export function SettingsView({
 
 function SettingsProfilePanel({
   themePreference,
+  windowMaterial,
+  onWindowMaterialChange,
   language,
   languageMode,
   systemLanguage,
@@ -1000,6 +1009,8 @@ function SettingsProfilePanel({
   onResetImportedThemeStyle,
 }: {
   themePreference: ThemePreference;
+  windowMaterial: WindowMaterialPreference;
+  onWindowMaterialChange?: (value: WindowMaterialPreference) => void;
   language: AppLanguage;
   languageMode: AppLanguageMode;
   systemLanguage: AppLanguage;
@@ -1057,6 +1068,16 @@ function SettingsProfilePanel({
         checked={themePreference === 'dark'}
         onChange={() => onThemePreferenceChange('dark')}
       />
+      {onWindowMaterialChange && (
+        <SettingsSwitch
+          title={language === 'zh' ? '窗口玻璃效果' : 'Window glass effect'}
+          subtitle={language === 'zh'
+            ? '让顶栏和侧栏随桌面背景自然透色。适用于浅色、深色主题；系统不支持时使用纯色。'
+            : 'Blend the title bar and sidebar with your desktop in light and dark themes. Use a solid surface when unavailable.'}
+          checked={windowMaterial === 'auto'}
+          onChange={(enabled) => onWindowMaterialChange(enabled ? 'auto' : 'solid')}
+        />
+      )}
       <SettingsDivider />
       <SettingsGroupTitle>
         {language === 'zh' ? '其他主题' : 'Additional themes'}

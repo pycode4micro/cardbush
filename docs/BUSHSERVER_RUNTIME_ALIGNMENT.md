@@ -2,6 +2,8 @@
 
 Baseline: BushServer `main` at `f67bcec` (2026-08-29).
 
+Update: Team execution and configuration UI are distributed as an independent native plugin ZIP, built from `packages/cardbush-team-plugin`; the desktop no longer imports that package. References below describe the original alignment checkpoint; see [the current Team boundary](TEAM_PLUGIN_EXTRACTION.md).
+
 CardBush runs one provider-independent TypeScript Agent Runtime in an Electron
 Utility Process. BushServer is the reference implementation and fixture source;
 it is not a production process, HTTP dependency, or fallback execution path.
@@ -95,7 +97,7 @@ request_permission
 
 Built-ins are code-owned and cannot be installed, removed, enabled, disabled or
 reset from Settings. Runtime asset reset covers Prompts, Skills, Agent Profiles
-and Teams only. External executable extensions use MCP.
+and Teams only (Team configuration reset is contributed by the installed plugin). External executable extensions use MCP or the versioned CardBush native plugin API.
 
 ## Authority and remaining validation boundary
 

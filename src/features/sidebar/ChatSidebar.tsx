@@ -40,6 +40,7 @@ import { createPortal } from 'react-dom';
 
 import { fetchRuntimeTurnToolExecutionDetails } from '../../backend/api';
 import { basename, samePath } from '../../shared/localPaths';
+import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { recordUiPerformanceMetric } from '../../shared/uiPerformanceTrace';
 import type {
   AppLanguage,
@@ -1231,22 +1232,23 @@ function ConversationRow({
   onClick: () => void;
 }) {
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const displayTitle = conversationDisplayTitle(conversation.title);
   const [editingTitle, setEditingTitle] = useState(false);
-  const [renameDraft, setRenameDraft] = useState(conversation.title);
+  const [renameDraft, setRenameDraft] = useState(displayTitle);
   const [renamePending, setRenamePending] = useState(false);
   const [renameFailed, setRenameFailed] = useState(false);
   const changeCount = changeReports?.reduce((sum, report) => sum + report.fileCount, 0) ?? 0;
   const beginRename = useCallback(() => {
-    setRenameDraft(conversation.title);
+    setRenameDraft(displayTitle);
     setRenameFailed(false);
     setEditingTitle(true);
-  }, [conversation.title]);
+  }, [displayTitle]);
   const cancelRename = useCallback(() => {
     if (renamePending) return;
-    setRenameDraft(conversation.title);
+    setRenameDraft(displayTitle);
     setRenameFailed(false);
     setEditingTitle(false);
-  }, [conversation.title, renamePending]);
+  }, [displayTitle, renamePending]);
   const submitRename = useCallback(async () => {
     const nextTitle = renameDraft.trim();
     if (!nextTitle) {
@@ -1254,7 +1256,7 @@ function ConversationRow({
       renameInputRef.current?.focus();
       return;
     }
-    if (nextTitle === conversation.title.trim()) {
+    if (nextTitle === displayTitle) {
       setEditingTitle(false);
       setRenameFailed(false);
       return;
@@ -1266,7 +1268,7 @@ function ConversationRow({
     setRenameFailed(!saved);
     if (saved) setEditingTitle(false);
     else renameInputRef.current?.focus();
-  }, [conversation.title, onRename, renameDraft]);
+  }, [displayTitle, onRename, renameDraft]);
 
   useEffect(() => {
     if (!editingTitle) return;
@@ -1373,7 +1375,7 @@ function ConversationRow({
           </button>
         </form>
       ) : (
-        <ScrollingConversationTitle title={conversation.title} />
+        <ScrollingConversationTitle title={displayTitle} />
       )}
       {!editingTitle && running && (
         <span

@@ -11,6 +11,7 @@ export const runtimeGuidanceRequestSchema = z.object({
   turnId: z.string().min(1),
   messageId: z.string().min(1),
   content: z.string().trim().min(1),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string().min(1),
 });
 

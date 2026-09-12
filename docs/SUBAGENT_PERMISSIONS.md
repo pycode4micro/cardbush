@@ -78,9 +78,11 @@ Turn metadata for diagnostics. Ordinary Subagents and Team members therefore
 explain the same effective restriction set. Profile tool selection is intersected
 with this list; a Profile cannot re-enable a baseline-disabled tool.
 
-`subagent`, `await_subagents` and `team_delegate` are explicit defaults instead of
+`subagent`, `await_subagents` and `team_delegate` are explicit child-policy defaults instead of
 hidden implementation rules. This keeps today's one-level delegation easy to
 audit and leaves a deliberate configuration boundary for a future recursive
 delegation design. Removing them is an advanced action and must be paired with
 bounded depth, cancellation and permission review before it is treated as a
 supported product mode.
+
+`team_delegate` is now supplied only by the optional Team plugin. Keeping its name in a child-policy exclusion list does not register or enable the tool; ordinary Subagents remain part of the core Runtime.

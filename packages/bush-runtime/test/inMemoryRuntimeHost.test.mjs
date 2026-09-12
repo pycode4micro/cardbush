@@ -164,9 +164,9 @@ test("exposes Plan and Goal as explicit typed command facts", async () => {
     "read_file",
     "subagent",
     "await_subagents",
-    "team_delegate",
   ]) assert.ok(names.includes(required), required);
   for (const excluded of [
+    "team_delegate",
     "ocr_image",
     "declare_turn_outcome",
     "skills_manager",

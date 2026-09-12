@@ -3,6 +3,9 @@ import {
   BUSH_RUNTIME_IPC_PROTOCOL,
   APPLY_RUNTIME_MCP_SNAPSHOT_COMMAND,
   GET_RUNTIME_MCP_SNAPSHOT_COMMAND,
+  GET_RUNTIME_CAPABILITIES_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_COMMAND,
+  GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
   SHUTDOWN_RUNTIME_COMMAND,
   REMOVE_RUNTIME_PROVIDER_BINDING_COMMAND,
   UPSERT_RUNTIME_PROVIDER_BINDING_COMMAND,
@@ -38,6 +41,7 @@ import {
   AutomationScheduler,
 } from '@cardbush/bush-runtime';
 import { McpClientManager, McpOAuthCoordinator, type CredentialState } from '@cardbush/bush-mcp-client';
+import { RuntimePluginState } from './runtimePluginState.mjs';
 import { ProxyFetchPool } from './proxyFetch.mjs';
 import { openPluginAgentMcp } from './pluginAgentMcp.mjs';
 import { McpHostBridge, isMcpHostMessage } from './mcpHostBridge.js';
@@ -58,6 +62,7 @@ import {
   loadEnabledProductPluginSkillRoots,
   loadEnabledProductPluginMcpServers,
   loadEnabledProductPluginExtensions,
+  loadEnabledProductRuntimeExtensions,
   type PluginRoot,
 } from './productPlugins.js';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -238,6 +243,10 @@ async function executeRuntimeCommand(
   command: { kind: string; payload: unknown },
   signal: AbortSignal,
 ) {
+  if ([GET_RUNTIME_CAPABILITIES_COMMAND, GET_RUNTIME_TOOL_CATALOG_COMMAND, GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
+    ].some(kind => kind === command.kind) || !host.capabilities().supportedCommands.includes(command.kind) || host.isExtensionCommand(command.kind) || command.kind.startsWith('plugin.')) {
+    await optionalRuntimePlugins.refresh();
+  }
   if (command.kind === AUTOMATION_COMMAND) {
     if (!automation) throw new Error('Persistent automation storage is unavailable.');
     return automation.manage(command.payload);
@@ -834,6 +843,12 @@ function pluginRootsFromEnvironment(): PluginRoot[] {
     return { path: root.path, source: root.source };
   });
 }
+
+const optionalRuntimePlugins = new RuntimePluginState({
+  host, dataRoot: process.env.CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT?.trim() || join(runtimeStateRoot || process.cwd(), 'plugin-data'),
+  loadEnabled: () => loadEnabledProductRuntimeExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
+  reportError: message => console.warn(`[runtime-plugin] Optional extensions are unavailable: ${message}`),
+});
 
 parentPort.on('message', (messageEvent) => {
   void handleMessage(messageEvent.data);

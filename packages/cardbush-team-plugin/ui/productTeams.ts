@@ -1,3 +1,4 @@
+import { defaultTeamConfiguration, TEAM_CONFIGURATION_FILE_PROTOCOL, teamConfigurationSchema, type TeamConfigurationReceipt } from '../src/configuration';
 import {
   BUSH_TEAM_SNAPSHOT_PROTOCOL,
   serializeTeamSnapshotContent,
@@ -7,14 +8,14 @@ import {
   type ToolDefinition,
 } from '@cardbush/bush-protocol';
 
-import type { AgentProfileDefinition, TeamDefinition } from '../types';
-import type { ProtocolRuntimeClient } from '../runtime-client/ProtocolRuntimeClient';
+import type { AgentProfileDefinition, TeamDefinition } from './types';
+import { teamConfiguration, runtimeClient } from './host';
 
 const teamsKey = 'cardbush_product_teams_v1';
 const profilesKey = 'cardbush_product_agent_profiles_v1';
 const revisionKey = 'cardbush_product_team_revision_v1';
 const snapshotId = 'cardbush-product-teams';
-type TeamSnapshotClient = Pick<ProtocolRuntimeClient, 'getTeamSnapshot' | 'applyTeamSnapshot'>;
+type TeamSnapshotClient = typeof runtimeClient;
 
 // Per-turn clients share one Runtime team store; revision selection and apply must be serialized.
 let pendingUpdate: Promise<unknown> = Promise.resolve();
@@ -24,85 +25,53 @@ function serializeUpdate<T>(update: () => Promise<T>): Promise<T> {
   return task;
 }
 
-const bundledGeneralProfile: AgentProfileDefinition = {
-  protocol: 'bush.agent_profile.v1',
-  id: 'general',
-  name: 'General Agent',
-  description: 'General-purpose collaborator for delegated work.',
-  disabledTools: [],
-  skills: [],
-  hooks: [],
-  guards: [],
-  prompts: {
-    instructions: 'Handle the delegated task carefully and return concrete evidence to the parent Agent.',
-  },
-};
-
-const bundledGeneralTeam: TeamDefinition = {
-  protocol: 'bush.team.v1',
-  id: 'general',
-  name: 'General Team',
-  description: 'A minimal Team with one general-purpose fallback member.',
-  members: [{
-    id: 'general',
-    agentProfileId: 'general',
-    responsibility: 'Handle general delegated work.',
-    fallback: true,
-  }],
-};
-
-export function readProductTeams(): TeamDefinition[] {
-  return readArrayOrDefault(teamsKey, [bundledGeneralTeam]) as TeamDefinition[];
+export async function readProductTeamConfiguration(): Promise<TeamConfigurationReceipt> {
+  const bridge = teamConfiguration;
+  if (!bridge) throw new Error('The Team plugin file configuration bridge is unavailable.');
+  const oldTeams = window.localStorage.getItem(teamsKey);
+  const oldProfiles = window.localStorage.getItem(profilesKey);
+  const defaults = defaultTeamConfiguration();
+  const migration = oldTeams || oldProfiles ? { ...defaults,
+    teams: oldTeams ? JSON.parse(oldTeams) : defaults.teams,
+    profiles: oldProfiles ? JSON.parse(oldProfiles) : defaults.profiles,
+  } : undefined;
+  const receipt = await bridge({ action: 'read', migration }) as TeamConfigurationReceipt;
+  teamConfigurationSchema.parse(receipt.configuration);
+  // Remove legacy storage only after the file-backed receipt confirms successful migration.
+  window.localStorage.removeItem(teamsKey);
+  window.localStorage.removeItem(profilesKey);
+  return receipt;
 }
 
-export function readProductAgentProfiles(): AgentProfileDefinition[] {
-  return readArrayOrDefault(profilesKey, [bundledGeneralProfile]) as AgentProfileDefinition[];
+export async function readProductTeams(): Promise<TeamDefinition[]> {
+  return (await readProductTeamConfiguration()).configuration.teams;
 }
-
-export async function synchronizeProductTeamSnapshot(
-  client: TeamSnapshotClient,
-  tools: ToolDefinition[],
-): Promise<TeamSnapshotResult> {
-  return serializeUpdate(() => applySnapshot(client, snapshot(
-    readProductTeams(), readProductAgentProfiles(), tools,
-  )));
+export async function readProductAgentProfiles(): Promise<AgentProfileDefinition[]> {
+  return (await readProductTeamConfiguration()).configuration.profiles;
 }
-
-export async function replaceProductTeamConfiguration(
-  client: TeamSnapshotClient,
-  input: {
-    teams: TeamDefinition[];
-    profiles: AgentProfileDefinition[];
-    tools: ToolDefinition[];
-  },
-): Promise<TeamSnapshotResult> {
+export async function synchronizeProductTeamSnapshot(client: TeamSnapshotClient, tools: ToolDefinition[]): Promise<TeamSnapshotResult> {
   return serializeUpdate(async () => {
-    const next = snapshot(input.teams, input.profiles, input.tools);
-    const previous = new Map([
-      [teamsKey, window.localStorage.getItem(teamsKey)],
-      [profilesKey, window.localStorage.getItem(profilesKey)],
-      [revisionKey, window.localStorage.getItem(revisionKey)],
-    ]);
-    try {
-      window.localStorage.setItem(teamsKey, JSON.stringify(input.teams));
-      window.localStorage.setItem(profilesKey, JSON.stringify(input.profiles));
-      return await applySnapshot(client, next);
-    } catch (error) {
-      for (const [key, value] of previous) restore(key, value);
-      throw error;
-    }
+    const { configuration } = await readProductTeamConfiguration();
+    return applySnapshot(client, snapshot(configuration.teams, configuration.profiles, tools));
   });
 }
-
-export async function resetProductTeamConfiguration(
-  client: TeamSnapshotClient,
-  tools: ToolDefinition[],
-): Promise<TeamSnapshotResult> {
-  return replaceProductTeamConfiguration(client, {
-    teams: [structuredClone(bundledGeneralTeam)],
-    profiles: [structuredClone(bundledGeneralProfile)],
-    tools,
+export async function replaceProductTeamConfiguration(client: TeamSnapshotClient, input: {
+  teams: TeamDefinition[]; profiles: AgentProfileDefinition[]; tools: ToolDefinition[]; expectedHash?: string;
+}): Promise<TeamSnapshotResult & { configurationReceipt: TeamConfigurationReceipt }> {
+  return serializeUpdate(async () => {
+    const before = await readProductTeamConfiguration();
+    if (input.expectedHash !== undefined && input.expectedHash !== before.contentHash) throw new Error('Team configuration changed on disk. Refresh before saving.');
+    const configuration = teamConfigurationSchema.parse({ protocol: TEAM_CONFIGURATION_FILE_PROTOCOL, teams: input.teams, profiles: input.profiles });
+    const next = snapshot(configuration.teams, configuration.profiles, input.tools);
+    // Validate/admit effective constraints before committing the editable source file.
+    // On a lost apply response or a file conflict the next send reconciles from that file.
+    const result = await applySnapshot(client, next);
+    const configurationReceipt = await teamConfiguration({ action: 'write', configuration, expectedHash: before.contentHash }) as TeamConfigurationReceipt;
+    return { ...result, configurationReceipt };
   });
+}
+export async function resetProductTeamConfiguration(client: TeamSnapshotClient, tools: ToolDefinition[]): Promise<TeamSnapshotResult> {
+  return replaceProductTeamConfiguration(client, { ...defaultTeamConfiguration(), tools });
 }
 
 function snapshot(
@@ -175,23 +144,7 @@ async function applySnapshot(client: TeamSnapshotClient, next: TeamSnapshot): Pr
   return result;
 }
 
-function readArrayOrDefault(key: string, fallback: unknown[]): unknown[] {
-  const raw = window.localStorage.getItem(key);
-  if (!raw?.trim()) return structuredClone(fallback);
-  try {
-    const value: unknown = JSON.parse(raw);
-    return Array.isArray(value) ? value : structuredClone(fallback);
-  } catch {
-    return structuredClone(fallback);
-  }
-}
-
 function readRevision() {
   const value = Number(window.localStorage.getItem(revisionKey));
   return Number.isSafeInteger(value) && value > 0 ? value : 1;
-}
-
-function restore(key: string, value: string | null) {
-  if (value == null) window.localStorage.removeItem(key);
-  else window.localStorage.setItem(key, value);
 }

@@ -1,14 +1,13 @@
+import { teamConfiguration } from './host';
 import { useSyncExternalStore } from 'react';
+import { TEAM_CONFIGURATION_FILE_PROTOCOL } from '../src/configuration';
 
 import {
   deleteAgentProfile,
   deleteTeamDefinition,
-  fetchAgentProfiles,
   fetchTeamConfigurationCapabilities,
-  fetchTeams,
-  saveAgentProfile,
-  saveTeamDefinition,
-} from '../../backend/api';
+  fetchTeamWorkspace, saveTeamWorkspace,
+} from './api';
 import {
   AGENT_PROFILE_PROTOCOL,
   TEAM_CONFIGURATION_PROTOCOL,
@@ -17,7 +16,7 @@ import {
   type TeamConfigurationCapabilities,
   type TeamDefinition,
   type TeamMemberDefinition,
-} from '../../types';
+} from './types';
 
 export type TeamWorkspaceView = 'agent' | 'manage' | 'install';
 export type TeamSidebarDisplayMode = 'name' | 'description';
@@ -26,6 +25,8 @@ const displayModeStorageKey = 'cardbush_team_sidebar_display_mode_v1';
 const selectedTeamStorageKey = 'cardbush_selected_team_v1';
 
 type TeamWorkspaceState = {
+  configurationPath: string;
+  configurationHash: string;
   teams: TeamDefinition[];
   profiles: AgentProfileDefinition[];
   capabilities: TeamConfigurationCapabilities | null;
@@ -45,6 +46,7 @@ type TeamWorkspaceState = {
 };
 
 let state: TeamWorkspaceState = {
+  configurationPath: '', configurationHash: '',
   teams: [], profiles: [], capabilities: null,
   activeTeamId: '', activeMemberId: '', selectedTeamId: readStorage(selectedTeamStorageKey),
   view: 'agent',
@@ -55,6 +57,7 @@ let state: TeamWorkspaceState = {
 };
 const listeners = new Set<() => void>();
 let loadPromise: Promise<void> | null = null;
+let editRevision = 0;
 
 function readStorage(key: string) {
   try { return window.localStorage.getItem(key)?.trim() ?? ''; } catch { return ''; }
@@ -75,6 +78,7 @@ function normalizeSelection(current: TeamWorkspaceState): TeamWorkspaceState {
   };
 }
 function publish(next: TeamWorkspaceState) {
+  if (next.teams !== state.teams || next.profiles !== state.profiles) editRevision += 1;
   state = normalizeSelection(next);
   listeners.forEach((listener) => listener());
 }
@@ -98,6 +102,8 @@ function createMember(profile: AgentProfileDefinition, fallback: boolean): TeamM
   return { id: profile.id, agentProfileId: profile.id, responsibility: '', fallback };
 }
 
+export const readWorkspaceState = () => state;
+export const subscribeWorkspace = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export function useTeamWorkspaceState() {
   return useSyncExternalStore(
     (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -106,14 +112,16 @@ export function useTeamWorkspaceState() {
 }
 
 export function loadTeamWorkspace(force = false) {
-  if (loadPromise && !force) return loadPromise;
+  if (loadPromise) return loadPromise;
+  if (state.saving) return Promise.resolve();
   if (state.loaded && !force) return Promise.resolve();
   publish({ ...state, loading: true, error: '' });
-  loadPromise = Promise.all([fetchTeams(), fetchAgentProfiles(), fetchTeamConfigurationCapabilities()])
-    .then(([teams, profiles, capabilities]) => {
+  loadPromise = Promise.all([fetchTeamWorkspace(), fetchTeamConfigurationCapabilities()])
+    .then(([receipt, capabilities]) => {
+      const { teams, profiles } = receipt.configuration;
       const selectedTeamId = state.selectedTeamId || readStorage(selectedTeamStorageKey);
       publish({
-      ...state, teams, profiles, capabilities,
+      ...state, teams, profiles, capabilities, configurationPath: receipt.path, configurationHash: receipt.contentHash,
       selectedTeamId: teams.some((team) => team.id === selectedTeamId) ? selectedTeamId : '',
       loading: false, loaded: true, error: '',
       dirtyTeamIds: new Set(), dirtyProfileIds: new Set(),
@@ -128,6 +136,31 @@ export function loadTeamWorkspace(force = false) {
 
 export const teamWorkspaceActions = {
   refresh() { return loadTeamWorkspace(true); },
+  async importFile() {
+    if (state.saving) return;
+    const startingRevision = editRevision;
+    try {
+      const imported = await teamConfiguration({ action: 'import' }) as { teams: TeamDefinition[]; profiles: AgentProfileDefinition[] } | null;
+      if (!imported) return;
+      if (startingRevision !== editRevision) throw new Error('Team configuration changed while importing. Please try again.');
+      publish({ ...state, saving: true, error: '' });
+      const receipt = await saveTeamWorkspace({ ...imported, expectedHash: state.configurationHash });
+      publish({ ...state, saving: false, configurationHash: receipt.contentHash });
+      if (editRevision !== startingRevision) {
+        publish({ ...state, error: 'Configuration imported. Edits made during import are still in the draft; refresh to view the imported file.' });
+        return;
+      }
+      await loadTeamWorkspace(true);
+    } catch (error) { publish({ ...state, saving: false, error: errorText(error) }); }
+  },
+  async exportFile() {
+    try { await teamConfiguration({ action: 'export', configuration: { protocol: TEAM_CONFIGURATION_FILE_PROTOCOL, teams: state.teams, profiles: state.profiles } }); }
+    catch (error) { publish({ ...state, error: errorText(error) }); }
+  },
+  async revealFile() {
+    try { await teamConfiguration({ action: 'reveal' }); }
+    catch (error) { publish({ ...state, error: errorText(error) }); }
+  },
   clearError() { publish({ ...state, error: '' }); },
   setView(view: TeamWorkspaceView) { publish({ ...state, view }); },
   setDisplayMode(displayMode: TeamSidebarDisplayMode) { writeStorage(displayModeStorageKey, displayMode); publish({ ...state, displayMode }); },
@@ -197,24 +230,18 @@ export const teamWorkspaceActions = {
   },
   async saveTeam(teamId: string) {
     const team = state.teams.find((candidate) => candidate.id === teamId); if (!team || state.saving) return;
+    const submittedRevision = editRevision;
     publish({ ...state, saving: true, error: '' });
     try {
-      const profileIds = [...new Set(team.members.map((member) => member.agentProfileId))];
-      const savedProfiles = await Promise.all(profileIds.map((profileId) => {
-        const profile = state.profiles.find((candidate) => candidate.id === profileId);
-        if (!profile) throw new Error(`Agent Profile ${profileId} is missing`);
-        return saveAgentProfile(profile);
-      }));
-      const savedTeam = await saveTeamDefinition(team);
-      const dirtyProfiles = new Set(state.dirtyProfileIds); savedProfiles.forEach((profile) => dirtyProfiles.delete(profile.id));
-      const dirtyTeams = new Set(state.dirtyTeamIds); dirtyTeams.delete(savedTeam.id);
-      publish({
-        ...state,
-        teams: state.teams.map((item) => item.id === savedTeam.id ? savedTeam : item),
-        profiles: state.profiles.map((item) => savedProfiles.find((saved) => saved.id === item.id) ?? item),
-        saving: false, error: '', dirtyTeamIds: dirtyTeams, dirtyProfileIds: dirtyProfiles,
-        remoteTeamIds: new Set(state.remoteTeamIds).add(savedTeam.id),
-        remoteProfileIds: new Set([...state.remoteProfileIds, ...savedProfiles.map((item) => item.id)]),
+      const receipt = await saveTeamWorkspace({ teams: state.teams, profiles: state.profiles, expectedHash: state.configurationHash });
+      const unchangedDraft = editRevision === submittedRevision;
+      publish({ ...state,
+        ...(unchangedDraft ? { teams: receipt.configuration.teams, profiles: receipt.configuration.profiles,
+          dirtyTeamIds: new Set<string>(), dirtyProfileIds: new Set<string>() } : {}),
+        configurationPath: receipt.path, configurationHash: receipt.contentHash,
+        saving: false, error: '',
+        remoteTeamIds: new Set(receipt.configuration.teams.map(item => item.id)),
+        remoteProfileIds: new Set(receipt.configuration.profiles.map(item => item.id)),
       });
     } catch (error) { publish({ ...state, saving: false, error: errorText(error) }); throw error; }
   },
@@ -231,16 +258,24 @@ export const teamWorkspaceActions = {
     });
   },
   async deleteTeam(teamId: string) {
+    if (state.saving) return;
+    publish({ ...state, saving: true, error: '' });
     try {
-      if (state.remoteTeamIds.has(teamId)) await deleteTeamDefinition(teamId);
+      const receipt = state.remoteTeamIds.has(teamId) ? await deleteTeamDefinition(teamId, state.configurationHash) : null;
       if (state.selectedTeamId === teamId) writeStorage(selectedTeamStorageKey, '');
-      publish({ ...state, teams: state.teams.filter((team) => team.id !== teamId), selectedTeamId: state.selectedTeamId === teamId ? '' : state.selectedTeamId, error: '' });
-    } catch (error) { publish({ ...state, error: errorText(error) }); throw error; }
+      publish({ ...state, teams: state.teams.filter((team) => team.id !== teamId), selectedTeamId: state.selectedTeamId === teamId ? '' : state.selectedTeamId,
+        configurationHash: receipt?.contentHash ?? state.configurationHash,
+        remoteTeamIds: new Set([...state.remoteTeamIds].filter(id => id !== teamId)), saving: false, error: '' });
+    } catch (error) { publish({ ...state, saving: false, error: errorText(error) }); throw error; }
   },
   async deleteProfile(profileId: string) {
+    if (state.saving) return;
+    publish({ ...state, saving: true, error: '' });
     try {
-      if (state.remoteProfileIds.has(profileId)) await deleteAgentProfile(profileId);
-      publish({ ...state, profiles: state.profiles.filter((profile) => profile.id !== profileId), error: '' });
-    } catch (error) { publish({ ...state, error: errorText(error) }); throw error; }
+      const receipt = state.remoteProfileIds.has(profileId) ? await deleteAgentProfile(profileId, state.configurationHash) : null;
+      publish({ ...state, profiles: state.profiles.filter((profile) => profile.id !== profileId),
+        configurationHash: receipt?.contentHash ?? state.configurationHash,
+        remoteProfileIds: new Set([...state.remoteProfileIds].filter(id => id !== profileId)), saving: false, error: '' });
+    } catch (error) { publish({ ...state, saving: false, error: errorText(error) }); throw error; }
   },
 };

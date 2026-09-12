@@ -7,7 +7,7 @@ const legacyInternalRuntimeMessageNames = new Set([
   'empty_stop_recovery',
 ]);
 
-export function isInternalRuntimeMessage(message: RuntimeSessionMessage): boolean {
+export function isInternalRuntimeMessage(message: Pick<RuntimeSessionMessage, 'message'>): boolean {
   if (message.message.role === 'developer' && message.message.name === 'output_limit_continuation') return true;
   if (message.message.role !== 'user') return false;
   if (message.message.visibility === 'internal') return true;

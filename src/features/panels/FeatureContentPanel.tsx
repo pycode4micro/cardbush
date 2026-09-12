@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import {
   Suspense,
-  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -24,12 +23,10 @@ import type {
   SkillSummary,
 } from '../../types';
 import { SkillIcon } from '../skills/SkillIcon';
+import { conversationDisplayTitle } from '../../shared/conversationTitle';
 import { AutomationPanel } from '../automations/AutomationPanel';
 
-const LazyTeamPanel = lazy(async () => {
-  const module = await import('../TeamPanel');
-  return { default: module.TeamPanel };
-});
+import { RuntimeDelegationSurface } from '../../plugins/runtimeWorkspaces';
 
 export function FeatureContentPanel({
   language,
@@ -87,7 +84,7 @@ export function FeatureContentPanel({
   if (section === 'team') {
     return (
       <Suspense fallback={<FeaturePanelLoading language={language} />}>
-        <LazyTeamPanel
+        <RuntimeDelegationSurface slot="content"
           language={language}
           activeProjectDir={activeProjectDir}
           workflowValidationAvailable={workflowValidationAvailable}
@@ -126,7 +123,7 @@ function SearchPanel({
         if (!normalizedQuery) {
           return true;
         }
-        return `${conversation.title} ${conversation.preview}`
+        return `${conversationDisplayTitle(conversation.title)} ${conversation.preview}`
           .toLowerCase()
           .includes(normalizedQuery);
       }),
@@ -157,7 +154,7 @@ function SearchPanel({
             type="button"
             onClick={() => onOpenConversation(conversation.id)}
           >
-            <h3>{conversation.title}</h3>
+            <h3>{conversationDisplayTitle(conversation.title)}</h3>
             <p>{conversation.preview}</p>
           </button>
         ))}

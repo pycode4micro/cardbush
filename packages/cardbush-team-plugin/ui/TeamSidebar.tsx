@@ -8,7 +8,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import type { AppLanguage } from '../../types';
+import type { AppLanguage } from './types';
 import {
   loadTeamWorkspace,
   teamWorkspaceActions,
@@ -35,11 +35,13 @@ export function TeamSidebar({
   language,
   onBack,
   onOpenSettings,
+  embedded = false,
   softVisible = true,
 }: {
   language: AppLanguage;
-  onBack: () => void;
-  onOpenSettings: () => void;
+  onBack?: () => void;
+  onOpenSettings?: () => void;
+  embedded?: boolean;
   softVisible?: boolean;
 }) {
   const zh = language === 'zh';
@@ -157,15 +159,15 @@ export function TeamSidebar({
 
   return (
     <aside
-      className={`sidebar team-sidebar soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
+      className={`sidebar team-sidebar ${embedded ? 'team-sidebar-embedded' : 'soft-panel-motion'} ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       ref={sidebarRef}
       aria-hidden={!softVisible}
     >
       <div className="sidebar-panel-content">
       <div className="team-sidebar-top">
-        <button className="team-back-button" type="button" onClick={onBack}>
+        {onBack && <button className="team-back-button" type="button" onClick={onBack}>
           <span>{zh ? '返回会话' : 'Back to chats'}</span>
-        </button>
+        </button>}
         <label className="team-sidebar-search">
           <input
             value={query}
@@ -316,10 +318,10 @@ export function TeamSidebar({
         </div>
       </div>
 
-      <button className="settings-dock" type="button" onClick={onOpenSettings}>
+      {onOpenSettings && <button className="settings-dock" type="button" onClick={onOpenSettings}>
         <Settings size={17} />
         <span>{zh ? '设置' : 'Settings'}</span>
-      </button>
+      </button>}
       </div>
 
       {contextMenu && createPortal(

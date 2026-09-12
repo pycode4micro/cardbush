@@ -3,7 +3,6 @@ import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import {
   ANSWER_RUNTIME_PERMISSION_COMMAND,
   ENQUEUE_RUNTIME_GUIDANCE_COMMAND,
-  APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   ASSEMBLE_RUNTIME_SESSION_CONTEXT_COMMAND,
   BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
   BUSH_RUNTIME_EVENT_PROTOCOL,
@@ -12,9 +11,12 @@ import {
   GET_RUNTIME_PLAN_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_COMMAND,
   GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
-  GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  GET_RUNTIME_USER_MESSAGE_COMMAND,
+  LIST_RUNTIME_USER_PROMPTS_COMMAND,
+  runtimeUserPromptsRequestSchema,
+  runtimeUserMessageIdentitySchema,
   LIST_RUNTIME_SESSIONS_COMMAND,
   LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
@@ -55,7 +57,6 @@ import {
   setRuntimePlanRequestSchema,
   subagentTaskIdentitySchema,
   subagentTaskListRequestSchema,
-  teamSnapshotSchema,
   updateRuntimeGoalRequestSchema,
   updateRuntimeSessionMetadataRequestSchema,
   supersedeRuntimeSessionMessagesRequestSchema,
@@ -141,8 +142,7 @@ import {
   type JoinedSubagentResult,
 } from "./subagentTool.js";
 import { SubagentTaskStore } from "./subagentTaskStore.js";
-import { TeamSnapshotStore } from "./teamSnapshotStore.js";
-import { registerTeamTool } from "./teamTool.js";
+import { runtimeExtensionOwner, type RuntimeExtension, type RuntimeExtensionApi, type RuntimeExtensionFactory } from './runtimeExtension.js';
 import { registerWorkspaceTools, WorkspaceObservationStore, TerminalSessionManager } from "./workspaceTools.js";
 import type { ModelProvider } from "./modelProvider.js";
 import {
@@ -211,7 +211,7 @@ export interface InMemoryRuntimeHostOptions {
   coordinationStore?: CoordinationStore;
   durableCoordination?: boolean;
   subagentTaskStore?: SubagentTaskStore;
-  teamSnapshotStore?: TeamSnapshotStore;
+  extensions?: Array<{ create: RuntimeExtensionFactory; enabled?: boolean }>;
   durableSubagentTasks?: boolean;
   subagentPermissionPolicy?: SubagentPermissionPolicy;
   loadPluginExtensions?: PluginExtensionLoader;
@@ -326,7 +326,9 @@ export class InMemoryRuntimeHost {
   readonly #capabilityGrants = new InMemoryRuntimeCapabilityStore();
   readonly #coordination: CoordinationStore;
   readonly #subagentTasks: SubagentTaskStore;
-  readonly #teams: TeamSnapshotStore;
+  readonly #extensionApi: Omit<RuntimeExtensionApi, 'tools' | 'dataDirectory'>;
+  readonly #extensions = new Map<string, { extension: RuntimeExtension; enabled: boolean }>();
+  readonly #activeExtensionCommands = new Map<string, number>();
   readonly #workspaceObservations: WorkspaceObservationStore;
   readonly #onRecoveryError?: (error: Error) => void;
   readonly #activeTurns = new Set<string>();
@@ -338,6 +340,7 @@ export class InMemoryRuntimeHost {
     messageId: string;
     content: string;
     createdAt: string;
+    metadata?: Record<string, unknown>;
   }>>();
   readonly #pendingAgentGuidance = new Map<string, PendingAgentGuidance[]>();
   readonly #contextCompactionAuthorizations = new Map<string, ContextCompactionState>();
@@ -532,22 +535,16 @@ export class InMemoryRuntimeHost {
         ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
       },
     );
-    this.#teams = options.teamSnapshotStore ?? new TeamSnapshotStore({
-      canApply: () => !this.hasActiveTurns(),
-    });
-    registerTeamTool(
-      this.#toolRegistry,
-      this.#teams,
-      this.#subagentTasks,
-      async (request, signal) => {
+    this.#extensionApi = {
+      subagentTasks: this.#subagentTasks,
+      hasActiveTurns: () => this.hasActiveTurns(),
+      getToolDefinitions: () => this.#toolRegistry.definitions(),
+      permissionPolicy: subagentPermissionPolicy,
+      runChild: async (request, signal) => {
         const terminal = await this.runSessionTurn(request, { signal });
-        return {
-          terminal,
-          session: this.#sessions.snapshot(request.sessionId),
-        };
+        return { terminal, session: this.#sessions.snapshot(request.sessionId) };
       },
-      { permissionPolicy: subagentPermissionPolicy },
-    );
+    };
     this.#capabilities = {
       protocol: BUSH_RUNTIME_CAPABILITIES_PROTOCOL,
       hostId: options.hostId ?? "in-memory-runtime",
@@ -597,6 +594,8 @@ export class InMemoryRuntimeHost {
         INSPECT_RUNTIME_RECOVERY_COMMAND,
         RESUME_MODEL_TURN_COMMAND,
         GET_RUNTIME_SESSION_COMMAND,
+        GET_RUNTIME_USER_MESSAGE_COMMAND,
+        LIST_RUNTIME_USER_PROMPTS_COMMAND,
         CREATE_RUNTIME_SESSION_COMMAND,
         DELETE_RUNTIME_SESSION_COMMAND,
         LIST_RUNTIME_SESSIONS_COMMAND,
@@ -617,8 +616,6 @@ export class InMemoryRuntimeHost {
         REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
         GET_RUNTIME_SUBAGENT_TASK_COMMAND,
         LIST_RUNTIME_SUBAGENT_TASKS_COMMAND,
-        APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND,
-        GET_RUNTIME_TEAM_SNAPSHOT_COMMAND,
         GET_RUNTIME_PLAN_COMMAND,
         SET_RUNTIME_PLAN_COMMAND,
         GET_RUNTIME_GOAL_COMMAND,
@@ -653,16 +650,75 @@ export class InMemoryRuntimeHost {
         "explicit_goal_facts",
         ...(options.durableCoordination ? ["durable_coordination"] : []),
         "subagent_context_fork",
-        "product_team_snapshot",
-        "team_concurrent_execution",
         ...(options.durableSubagentTasks ? ["durable_subagent_tasks"] : []),
         ...(options.additionalFeatures ?? []),
       ],
     };
+    for (const candidate of options.extensions ?? []) this.installExtension(candidate.create, { enabled: candidate.enabled });
+  }
+
+  /** Stage registrations, then atomically admit a plugin. A bad factory cannot leave partial tools behind. */
+  installExtension(create: RuntimeExtensionFactory, options: { id?: string; enabled?: boolean; dataDirectory?: string; replace?: boolean } = {}): string {
+    const staged = new ToolRegistry();
+    const extension = create({ ...this.#extensionApi, tools: staged, dataDirectory: options.dataDirectory });
+    try {
+      if (!extension || !/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/.test(extension.id) || (options.id && extension.id !== options.id)) throw new Error('Runtime extension identity is empty, invalid, or does not match its package.');
+      if (!Array.isArray(extension.features) || extension.features.some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid Runtime extension features.');
+      if (!extension.commands || typeof extension.commands !== 'object') throw new Error('Invalid Runtime extension commands.');
+      const prior = this.#extensions.get(extension.id);
+      if (prior && !options.replace) throw new Error(`Duplicate Runtime extension ${extension.id}.`);
+      if (prior && this.isExtensionBusy(extension.id)) throw new Error('Runtime extension update is pending until active work finishes.');
+      const commands = new Set(this.#capabilities.supportedCommands);
+      for (const { extension: installed } of this.#extensions.values()) if (installed.id !== extension.id) {
+        Object.keys(installed.commands).forEach(command => commands.add(command));
+      }
+      for (const [command, handler] of Object.entries(extension.commands)) {
+        if (!command.trim() || commands.has(command) || typeof handler !== 'function') throw new Error(`Runtime extension command conflicts with an existing command: ${command}`);
+      }
+      const owner = runtimeExtensionOwner(extension.id);
+      this.#toolRegistry.replaceOwned(owner, staged.catalog().map(entry => staged.resolve(entry.definition.name)!));
+      this.#extensions.set(extension.id, { extension, enabled: options.enabled === true });
+      this.#toolRegistry.setOwnerEnabled(owner, options.enabled === true);
+      try { prior?.extension.dispose?.(); } catch (error) { console.warn('Previous extension cleanup failed', error); }
+      return extension.id;
+    } catch (error) {
+      try { extension?.dispose?.(); } catch { /* preserve admission error */ }
+      throw error;
+    }
+  }
+
+  removeExtension(id: string): void {
+    const entry = this.#extensions.get(id);
+    if (!entry) return;
+    this.setExtensionEnabled(id, false);
+    if (this.isExtensionBusy(id)) return;
+    this.#toolRegistry.removeOwned(runtimeExtensionOwner(id));
+    this.#extensions.delete(id);
+    try { entry.extension.dispose?.(); } catch (error) { console.warn('Extension cleanup failed', error); }
   }
 
   capabilities(): RuntimeCapabilities {
-    return structuredClone(this.#capabilities);
+    const result = structuredClone(this.#capabilities);
+    for (const { extension, enabled } of this.#extensions.values()) if (enabled) {
+      result.features.push(...extension.features);
+      result.supportedCommands.push(...Object.keys(extension.commands));
+    }
+    return result;
+  }
+
+  setExtensionEnabled(id: string, enabled: boolean): void {
+    const entry = this.#extensions.get(id);
+    if (!entry) throw new Error(`Runtime extension ${id} is not available in this host.`);
+    entry.enabled = enabled;
+    this.#toolRegistry.setOwnerEnabled(runtimeExtensionOwner(id), enabled);
+  }
+
+  isExtensionCommand(kind: string): boolean {
+    return [...this.#extensions.values()].some(({ extension }) => Object.hasOwn(extension.commands, kind));
+  }
+
+  isExtensionBusy(id: string): boolean {
+    return this.hasActiveTurns() || (this.#activeExtensionCommands.get(id) ?? 0) > 0;
   }
 
   hasActiveTurns(): boolean {
@@ -696,6 +752,19 @@ export class InMemoryRuntimeHost {
     command: RuntimeHostCommand,
     signal?: AbortSignal,
   ): Promise<unknown> {
+    for (const { extension, enabled } of this.#extensions.values()) {
+      const handler = Object.hasOwn(extension.commands, command.kind) ? extension.commands[command.kind] : undefined;
+      if (handler) {
+        if (!enabled) throw new Error(`Runtime extension ${extension.id} is not enabled.`);
+        this.#activeExtensionCommands.set(extension.id, (this.#activeExtensionCommands.get(extension.id) ?? 0) + 1);
+        try { return await handler(command.payload, signal); }
+        finally {
+          const remaining = (this.#activeExtensionCommands.get(extension.id) ?? 1) - 1;
+          if (remaining > 0) this.#activeExtensionCommands.set(extension.id, remaining);
+          else this.#activeExtensionCommands.delete(extension.id);
+        }
+      }
+    }
     switch (command.kind) {
       case MCP_APPS_COMMAND:
         return this.#mcpApps.command(command.payload, signal);
@@ -704,6 +773,16 @@ export class InMemoryRuntimeHost {
       case RUN_MODEL_TURN_COMMAND:
         if (this.#shuttingDown) throw new Error("Runtime is shutting down.");
         return this.runModelTurn(modelRequestSchema.parse(command.payload), { signal });
+      case GET_RUNTIME_USER_MESSAGE_COMMAND: {
+        const { sessionId, turnId, messageId } = runtimeUserMessageIdentitySchema.parse(command.payload);
+        const snapshot = this.#sessions.snapshot(sessionId);
+        if (snapshot?.supersededMessageIds.includes(messageId)) return null;
+        const turn = snapshot?.turns.find(turn => turn.turnId === turnId);
+        const item = turn ? turn.messages.find(item => item.messageId === messageId) : this.#recovery.readUserMessage(sessionId, turnId, messageId);
+        return item?.message.role === 'user' && item.message.visibility !== 'internal' ? item : null;
+      }
+      case LIST_RUNTIME_USER_PROMPTS_COMMAND:
+        return this.#sessions.listUserPrompts(runtimeUserPromptsRequestSchema.parse(command.payload));
       case GET_RUNTIME_SESSION_COMMAND: {
         const input = runtimeSessionReadRequestSchema.parse(command.payload);
         const snapshot = this.#sessions.snapshot(input.sessionId);
@@ -834,10 +913,6 @@ export class InMemoryRuntimeHost {
         const input = subagentTaskListRequestSchema.parse(command.payload);
         return this.#subagentTasks.list(input.parentSessionId, input.parentTurnId);
       }
-      case APPLY_RUNTIME_TEAM_SNAPSHOT_COMMAND:
-        return this.#teams.apply(teamSnapshotSchema.parse(command.payload));
-      case GET_RUNTIME_TEAM_SNAPSHOT_COMMAND:
-        return this.#teams.result() ?? null;
       case GET_RUNTIME_PLAN_COMMAND: {
         const identity = runtimeCoordinationSessionSchema.parse(command.payload);
         return this.#coordination.getPlan(identity.sessionId) ?? null;
@@ -872,6 +947,7 @@ export class InMemoryRuntimeHost {
             messageId: guidance.messageId,
             content: guidance.content,
             createdAt: guidance.createdAt,
+            ...(guidance.metadata ? { metadata: guidance.metadata } : {}),
           });
           this.#guidanceQueues.set(key, queue);
         }
@@ -2746,6 +2822,7 @@ export class InMemoryRuntimeHost {
       input.generatedMessages.push({
         messageId: guidance.messageId,
         createdAt: guidance.createdAt,
+        ...(guidance.metadata ? { metadata: guidance.metadata } : {}),
         message,
       });
       return message;

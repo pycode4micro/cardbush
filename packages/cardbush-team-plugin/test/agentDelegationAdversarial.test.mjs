@@ -4,16 +4,15 @@ import test from "node:test";
 import { teamSnapshotSchema } from "@cardbush/bush-protocol";
 import {
   SubagentTaskStore,
-  TeamSnapshotStore,
   ToolExecutionCoordinator,
   ToolRegistry,
   buildChildTurnRequest,
   inheritedChildMessages,
   projectSubagentTasks,
   registerSubagentTool,
-  registerTeamTool,
   resolveChildTurn,
-} from "../dist/index.js";
+} from "@cardbush/bush-runtime";
+import { TeamSnapshotStore, registerTeamTool } from '../dist/index.js';
 
 test("adversarial: inherited context cannot smuggle parent system or developer authority", () => {
   const context = turnContext({

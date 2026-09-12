@@ -1112,7 +1112,7 @@ export function CardlingSceneHost({
 
   return (
     <section ref={sceneHostRef} className="scene-host" aria-label={scene.title}>
-      <header className="scene-toolbar">
+      <header className="scene-toolbar window-drag">
         <div className="scene-toolbar-title">
           <Sparkles size={16} />
           <span>

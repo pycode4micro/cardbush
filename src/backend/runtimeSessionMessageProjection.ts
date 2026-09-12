@@ -165,7 +165,8 @@ export function projectRuntimeSessionMessage(
     id: message.messageId,
     messageId: message.messageId,
     role,
-    content: message.message.content,
+    content: role === 'user' && typeof message.metadata?.composerReferenceContent === 'string'
+      ? message.metadata.composerReferenceContent : message.message.content,
     conversationId: sessionId,
     turnId: message.turnId,
     createdAt: message.createdAt,

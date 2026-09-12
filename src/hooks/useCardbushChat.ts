@@ -86,6 +86,7 @@ import {
   stripWrappingQuotes,
 } from '../shared/localPaths';
 import { truncateText } from '../shared/text';
+import { conversationTitleFromUserText } from '../shared/conversationTitle';
 import { SessionReadFence, canApplySessionSnapshot } from '../shared/sessionReadFence';
 import {
   applyGoalToolUpdate,
@@ -191,6 +192,7 @@ export function useCardbushChat(
     teamModeEnabled?: boolean;
     selectedTeamId?: string;
     selectedTeamName?: string;
+    selectedTeamInstructions?: string;
     terminalRuntime?: TerminalRuntime;
     reasoningTraceVisible?: boolean;
     interactiveRequestsAvailable?: boolean;
@@ -2204,7 +2206,7 @@ export function useCardbushChat(
       }
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
+      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
       const userMessageId = `user-${crypto.randomUUID()}`;
       const submittedAt = new Date().toISOString();
       const userMessage: ChatMessage = {
@@ -2306,7 +2308,7 @@ export function useCardbushChat(
                   assistantSegmentIndex: start.assistantSegmentIndex,
                   turnId: start.turnId,
                   createdAt: start.createdAt,
-                }),
+                }, start.userMessageId),
                 sessionId,
                 userMessage.id,
               ),
@@ -2640,6 +2642,7 @@ export function useCardbushChat(
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
       requestContext.selectedTeamName,
+      requestContext.selectedTeamInstructions,
       requestContext.standardImageInputEnabled,
       referencePlanMode,
       permissionMode,
@@ -2810,7 +2813,8 @@ export function useCardbushChat(
                 startIds.has(item.id)
                   ? markLocalMessageTurnStarted(
                       applyAssistantStreamRoute(
-                        { ...item, turnId: start.turnId, conversationId: sessionId },
+                        { ...item, turnId: start.turnId, conversationId: sessionId,
+                          ...(item.role === 'user' && start.userMessageId ? { messageId: start.userMessageId } : {}) },
                         item.role === 'assistant'
                           ? {
                               messageId: start.messageId ?? '',
@@ -3191,7 +3195,7 @@ export function useCardbushChat(
       const initialMessages = [...keptMessages, replayedUser, tempAssistant];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
+      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
       const controlTeamId = teamIdFromMessage(sourceUserMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
@@ -3258,6 +3262,7 @@ export function useCardbushChat(
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
+      requestContext.selectedTeamInstructions,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
       referencePlanMode,
@@ -3365,7 +3370,7 @@ export function useCardbushChat(
       ];
       const projectDir = conversationProjectRequestDir(conversation);
       const workspaceDir = conversationWorkspaceRoot(conversation);
-      const teamInstructions = requestContext.teamModeEnabled === true ? teamModeContextPrompt() : undefined;
+      const teamInstructions = requestContext.teamModeEnabled === true ? requestContext.selectedTeamInstructions : undefined;
       const controlTeamId = teamIdFromMessage(editSourceMessage) || requestContext.selectedTeamId;
 
       await runControlAssistantStream({
@@ -3430,6 +3435,7 @@ export function useCardbushChat(
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
       requestContext.selectedTeamId,
+      requestContext.selectedTeamInstructions,
       requestContext.standardImageInputEnabled,
       requestContext.terminalRuntime,
       referencePlanMode,
@@ -4217,18 +4223,6 @@ function teamIdFromMessage(message?: ChatMessage) {
   return String(message?.metadata?.team_id ?? message?.metadata?.teamId ?? '').trim();
 }
 
-function teamModeContextPrompt() {
-  return [
-    'Team mode / Agent Flow instructions:',
-    '- Treat the user as the Boss who makes final decisions; do not assume human members will join execution.',
-    '- Design a progressive Agent Flow before execution: mission boundary, scene profiles, tools, validation, and stop/continue criteria.',
-    '- Prefer compact conversational output with one current layer at a time. Do not dump the full DAG unless the Boss asks for it.',
-    '- When proposing a layer, include concise cards for each scene Agent: name, responsibility, profile/tool needs, and validation evidence.',
-    '- Ask the Boss to choose: revise this layer, continue to the next layer, or enter execution.',
-    '- If the Boss asks to execute, run the task using available tools and keep the Agent Flow decisions auditable.',
-  ].join('\n');
-}
-
 function conversationProjectRequestDir(conversation: ConversationSummary) {
   return conversationProjectDir(conversation);
 }
@@ -4340,18 +4334,6 @@ function firstUserTitleSource(messages: ChatMessage[], fallback: string) {
     messages.find((message) => message.role === 'user')?.content.trim() ||
     fallback.trim()
   );
-}
-
-function conversationTitleFromUserText(value: string) {
-  const readable = value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !attachmentPathFromLine(line))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  const fallback = value.replace(/\s+/g, ' ').trim();
-  return truncateText(readable || fallback, 28);
 }
 
 function splitStreamAttachmentMentions(content: string) {

@@ -1,5 +1,8 @@
 import { usePluginCatalog } from '../plugins/pluginCatalog';
 import { pluginReference } from '../plugins/pluginPrompts';
+import { PluginGlyph } from '../plugins/PluginGlyph';
+import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
+import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import {
   ArrowRight,
@@ -19,11 +22,13 @@ import {
   FileSpreadsheet,
   FileText,
   FolderOpen,
+  Globe,
   KeyRound,
   ListChecks,
   ListOrdered,
   LoaderCircle,
   Lock,
+  MessageSquare,
   Paperclip,
   Plus,
   Presentation,
@@ -43,6 +48,8 @@ import {
   type CSSProperties,
   type ReactNode,
   useCallback,
+  useContext,
+  Fragment,
   useEffect,
   useId,
   useMemo,
@@ -65,6 +72,7 @@ import type {
   ReferencePlanMode,
   RuntimeStartupStatus,
   SkillSummary,
+  PluginCommandSummary,
 } from '../../types';
 import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
@@ -72,11 +80,7 @@ import { SkillIcon } from '../skills/SkillIcon';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
 import { modelLogoFor } from './modelLogos';
 import type { QuickLoadPayload } from './quickLoad';
-import {
-  loadTeamWorkspace,
-  teamWorkspaceActions,
-  useTeamWorkspaceState,
-} from '../team/teamWorkspaceStore';
+import { useRuntimeDelegationWorkspace, selectRuntimePluginChoice } from '../../plugins/runtimeExtensions';
 
 type ComposerImageAttachment = {
   id: string;
@@ -142,7 +146,7 @@ export type ContextWindowUsage = {
   measuredAt?: string;
 };
 
-type ComposerCommandMode = 'slash' | 'plugin';
+type ComposerCommandMode = 'slash' | 'plugin' | 'mention';
 
 type ComposerCommandState = {
   mode: ComposerCommandMode;
@@ -152,6 +156,7 @@ type ComposerCommandState = {
 };
 
 type ComposerCommandItem = {
+  category?: 'actions' | 'plugins' | 'skills' | 'commands' | 'files' | 'browser' | 'turns';
   id: string;
   title: string;
   subtitle: string;
@@ -304,6 +309,7 @@ export function Composer({
   selectedModel,
   availableModels,
   goalAvailable = false,
+  teamAvailable = false,
   referencePlanAvailable,
   referencePlanMode,
   permissionMode,
@@ -349,6 +355,7 @@ export function Composer({
   selectedModel: string;
   availableModels: ManagedModelConfig[];
   goalAvailable?: boolean;
+  teamAvailable?: boolean;
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
   permissionMode: PermissionMode;
@@ -390,7 +397,8 @@ export function Composer({
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
   const plugins = usePluginCatalog();
-  const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; description: string; argumentHint: string; kind?: 'command' | 'skill' }>>([]);
+  const [pluginCommands, setPluginCommands] = useState<PluginCommandSummary[]>([]);
+  const referenceContext = useContext(ComposerReferenceContext);
   useEffect(() => {
     const desktop = window.cardbushDesktop;
     if (!desktop?.pluginCommands) return;
@@ -398,7 +406,7 @@ export function Composer({
     const refresh = () => {
       const revision = ++generation;
       void desktop.pluginCommands().then(commands => { if (active && revision === generation) setPluginCommands(commands); })
-        .catch(() => { if (active && revision === generation) setPluginCommands([]); });
+        .catch(() => { /* Retain the last successful catalog during a transient refresh failure. */ });
     };
     refresh();
     const unsubscribe = desktop.onCapabilityCatalogChanged?.(refresh);
@@ -413,10 +421,15 @@ export function Composer({
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
   const [guidingQueuedId, setGuidingQueuedId] = useState('');
   const [cancelReady, setCancelReady] = useState(false);
-  const teamWorkspace = useTeamWorkspaceState();
-  const selectedTeam = teamWorkspace.teams.find((team) => team.id === teamWorkspace.selectedTeamId);
+  const teamWorkspace = useRuntimeDelegationWorkspace();
+  const delegationCommand = teamWorkspace.command ? `/${teamWorkspace.command}` : '';
+  const selectedTeam = teamAvailable ? teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId) : undefined;
 
-  useEffect(() => { void loadTeamWorkspace().catch(() => undefined); }, []);
+  useEffect(() => {
+    if (!teamAvailable) setActiveMenu(menu => menu === 'teams' ? null : menu);
+  }, [teamAvailable]);
+
+
   const goalDraft = composerGoalDraftPresentation(draft);
   const composerInputValue = goalDraft?.content ?? draft;
   const hasContent =
@@ -504,7 +517,7 @@ export function Composer({
     if (!hasContent) {
       return;
     }
-    if (/^\/team\s*$/i.test(draft) && imageAttachments.length === 0 && fileAttachments.length === 0) {
+    if (teamAvailable && delegationCommand && draft.trim().toLowerCase() === delegationCommand.toLowerCase() && imageAttachments.length === 0 && fileAttachments.length === 0) {
       onDraftChange('');
       setCommandState(null);
       setPopoverAnchor(null);
@@ -780,12 +793,19 @@ export function Composer({
     focusComposer(before.length);
   }
 
+  const pluginCommandItems = useMemo<ComposerCommandItem[]>(() => plugins.map(plugin => ({
+    id: `$${plugin.id}`, title: plugin.name, category: 'plugins',
+    subtitle: `${plugin.enabled ? '' : language === 'zh' ? '已停用 · ' : 'Disabled · '}${plugin.description}`,
+    icon: <PluginGlyph plugin={plugin} />, value: `${pluginReference(plugin)} `,
+    searchText: `${plugin.id} ${plugin.name} ${plugin.description} ${plugin.keywords.join(' ')}`,
+  })), [plugins, language]);
+
   const slashCommands = useMemo<ComposerCommandItem[]>(
     () => {
       const commands: ComposerCommandItem[] = [
-        {
-          id: '/team',
-          title: language === 'zh' ? '选择 Team' : 'Select team',
+        ...(delegationCommand ? [{
+          id: delegationCommand,
+          title: language === 'zh' ? `选择 ${teamWorkspace.pluginName}` : `Select ${teamWorkspace.pluginName}`,
           subtitle: language === 'zh'
             ? '为下一轮选择可派发的 Team 成员集合'
             : 'Choose the team member set for the next turn',
@@ -794,8 +814,8 @@ export function Composer({
             setPopoverAnchor(null);
             setActiveMenu('teams');
           },
-          searchText: '/team 团队 team agent',
-        },
+          searchText: `${delegationCommand} ${teamWorkspace.pluginName} 团队 agent`,
+        }] : []),
         {
           id: '/model',
           title: language === 'zh' ? '模型切换' : 'Switch model',
@@ -847,19 +867,40 @@ export function Composer({
           searchText: '/new 新会话 new conversation',
         },
       ];
-      commands.push(...pluginCommands.filter(command => command.kind !== 'skill' || (!disabledSkillNames.has(command.id) && !disabledSkillNames.has(command.id.split(':').at(-1)!))).map(command => ({
-        id: `/${command.id}`, title: `/${command.id}`, subtitle: [command.argumentHint, command.description].filter(Boolean).join(' · '),
-        icon: <FileCode2 size={16} />, value: `/${command.id} `, searchText: `${command.id} ${command.description} command 命令`,
-      })));
-      return goalAvailable
-        ? commands
-        : commands.filter((command) => command.id !== '/goal');
+      commands.push(...pluginCommandItems);
+      commands.push(...pluginCommands.filter(command => command.kind !== 'skill' || (!disabledSkillNames.has(command.id) && !disabledSkillNames.has(command.id.split(':').at(-1)!))).map(command => {
+        const plugin = plugins.find(plugin => plugin.id === command.pluginId);
+        const skill = skills.find(skill => skill.path === command.path || skill.name === command.id);
+        return {
+          id: `/${command.id}`, title: skill?.displayName || command.name || command.id.split(':').slice(-1)[0],
+          category: command.kind === 'skill' ? 'skills' as const : 'commands' as const,
+          subtitle: [plugin?.name, command.description, command.argumentHint].filter(Boolean).join(' · '),
+          icon: skill?.logoPath || skill?.logoDarkPath ? <SkillIcon skill={skill} compact /> : <PluginGlyph plugin={plugin} />,
+          value: `/${command.id} `, searchText: `${command.id} ${skill?.displayName || ''} ${command.description} ${plugin?.name || ''}`,
+        };
+      }));
+      const commandPaths = new Set(pluginCommands.map(command => command.path));
+      commands.push(...skills.filter(skill => !commandPaths.has(skill.path) && !pluginCommands.some(command => command.id === skill.name) &&
+        !disabledSkillNames.has(skill.name) && skill.invocationMode !== 'model' && skill.invocationMode !== 'disabled').map(skill => ({
+          id: `skill:${skill.name}`, title: skill.displayName || skill.name, category: 'skills' as const,
+          subtitle: [skill.sourceLabel, language === 'zh' ? skill.descriptionZh || skill.description : skill.description].filter(Boolean).join(' · '),
+          icon: <SkillIcon skill={skill} compact />,
+          value: `[${skill.name.replace(/([\\\[\]])/g, '\\$1')}](<${skill.path.replaceAll('\\', '/').replaceAll('>', '%3E').replaceAll('<', '%3C')}>) `,
+          searchText: `${skill.name} ${skill.displayName || ''} ${skill.description} ${skill.descriptionZh || ''}`,
+        })));
+      return commands.filter(command => (goalAvailable || command.id !== '/goal') && (teamAvailable || command.id !== delegationCommand));
     },
     [
       goalAvailable,
+      teamAvailable,
+      delegationCommand,
+      teamWorkspace.pluginName,
       language,
       onCreateConversation,
       pluginCommands,
+      pluginCommandItems,
+      plugins,
+      skills,
       disabledSkillNames,
     ],
   );
@@ -868,15 +909,28 @@ export function Composer({
     if (!commandState) {
       return [];
     }
-    const items = commandState.mode === 'plugin' ? plugins.map(plugin => ({
-      id: `$${plugin.id}`, title: plugin.name,
-      subtitle: `${plugin.enabled ? '' : language === 'zh' ? '已停用 · ' : 'Disabled · '}${plugin.description}`,
-      icon: plugin.logoPath ? <img className="composer-plugin-option-logo" src={fileUrl(plugin.logoPath)} alt="" /> : <Puzzle size={16} />,
-      value: `${pluginReference(plugin)} `,
-      searchText: `${plugin.id} ${plugin.name} ${plugin.description} ${plugin.keywords.join(' ')}`,
-    })) : slashCommands;
-    return rankComposerCommandItems(items, commandState.query).slice(0, 50);
-  }, [commandState, slashCommands, plugins, language]);
+    const items: ComposerCommandItem[] = commandState.mode === 'mention' ? [
+      { id: 'reference:files', category: 'files', title: language === 'zh' ? '文件和文件夹' : 'Files and folders',
+        subtitle: language === 'zh' ? '从电脑中添加附件' : 'Attach from your computer', icon: <Paperclip size={18} />,
+        run: pickAttachments, searchText: 'file folder attachment 文件 附件 文件夹' },
+      ...referenceContext.browserTabs.map(tab => ({
+        id: `browser:${tab.tabId}`, category: 'browser' as const, title: tab.title, subtitle: tab.url,
+        icon: <Globe size={18} />, value: `${promptReferenceMarkdown(tab)} `, searchText: `browser 浏览器 ${tab.title} ${tab.url}`,
+      })),
+      ...referenceableUserMessages(referenceContext.messages, referenceContext.sessionId).map((message, index) => {
+        const title = message.content.trim().replace(/\s+/g, ' ').slice(0, 80) || message.attachments?.map(item => item.name).join(', ') || '';
+        const turnLabel = language === 'zh' ? `用户指令 ${index + 1}` : `User instruction ${index + 1}`;
+        return { id: `turn:${message.messageId}`, category: 'turns' as const, title,
+          subtitle: turnLabel, icon: <MessageSquare size={18} />,
+          value: `${promptReferenceMarkdown({ kind: 'user-turn', sessionId: referenceContext.sessionId,
+            turnId: message.turnId!, messageId: message.messageId!, title })} `,
+          searchText: `turn 用户 指令 ${turnLabel} ${message.content}` };
+      }).reverse(),
+    ] : commandState.mode === 'plugin' ? pluginCommandItems : slashCommands;
+    const order = ['actions', 'files', 'browser', 'turns', 'plugins', 'skills', 'commands'];
+    return rankComposerCommandItems(items, commandState.query).slice(0, 50)
+      .sort((a, b) => order.indexOf(a.category || 'actions') - order.indexOf(b.category || 'actions'));
+  }, [commandState, slashCommands, pluginCommandItems, referenceContext, language]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -1276,10 +1330,10 @@ export function Composer({
                 : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
               : language === 'zh'
               ? compact
-                ? '问 cardbush 任何事。输入 $ 选择插件，/ 选择快捷功能'
+                ? '问 cardbush 任何事。/ 选择功能，@ 引用'
                 : '给 cardbush 发消息…'
               : compact
-                ? 'Ask cardbush anything. Type $ for plugins, / for quick actions'
+                ? 'Ask cardbush anything. / for actions, @ to reference'
                 : 'Message cardbush...'
           }
         />
@@ -1407,7 +1461,10 @@ function ComposerCommandPalette({
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const emptyLabel = mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
+  const emptyLabel = mode === 'mention' ? (language === 'zh' ? '没有匹配的浏览器或用户指令' : 'No matching browser tabs or user instructions') : mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
+  const categories = language === 'zh'
+    ? { actions: '快捷操作', plugins: '插件', skills: '技能', commands: '插件命令', files: '添加', browser: 'CardBush 浏览器', turns: '当前对话 · 用户指令' }
+    : { actions: 'Actions', plugins: 'Plugins', skills: 'Skills', commands: 'Plugin commands', files: 'Add', browser: 'CardBush browser', turns: 'This conversation · User instructions' };
   useEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     row?.scrollIntoView({ block: 'nearest' });
@@ -1415,19 +1472,23 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
-        <span>{language === 'zh' ? `输入 ${mode === 'plugin' ? '$' : '/'} 选择` : `Type ${mode === 'plugin' ? '$' : '/'} to choose`}</span>
+        <strong>{mode === 'mention' ? (language === 'zh' ? '引用' : 'Reference') : mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
+        <span>{language === 'zh' ? '输入关键词筛选' : 'Type to filter'}</span>
       </header>
       <div className="composer-command-list">
         {items.length === 0 ? (
           <div className="composer-command-empty">{emptyLabel}</div>
         ) : (
           items.map((item, index) => (
+            <Fragment key={item.id}>
+            {(index === 0 || item.category !== items[index - 1].category) &&
+              <div className="composer-command-category">{categories[item.category || 'actions']}</div>}
             <button
               className={`composer-command-row ${
                 index === selectedIndex ? 'active' : ''
               } ${item.disabled ? 'disabled' : ''}`}
               type="button"
+              data-command-id={item.id}
               key={item.id}
               disabled={item.disabled}
               ref={(element) => {
@@ -1438,12 +1499,13 @@ function ComposerCommandPalette({
                 onSelect(item);
               }}
             >
-              {item.icon}
-              <span>
+              <span className="composer-command-icon">{item.icon}</span>
+              <span className="composer-command-label">
                 <strong>{item.title}</strong>
                 <small>{item.subtitle}</small>
               </span>
             </button>
+            </Fragment>
           ))
         )}
       </div>
@@ -1515,6 +1577,10 @@ export function detectComposerCommand(
 ): ComposerCommandState | null {
   const safeCaret = Math.max(0, Math.min(value.length, caret));
   const beforeCaret = value.slice(0, safeCaret);
+  const mentionMatch = beforeCaret.match(/(^|\s)@([^\s@/\\:]*)$/);
+  if (mentionMatch?.index != null) {
+    return { mode: 'mention', start: mentionMatch.index + mentionMatch[1].length, end: safeCaret, query: mentionMatch[2] };
+  }
   const pluginMatch = beforeCaret.match(/(^|\s)\$([^\s$]*)$/);
   if (pluginMatch?.index != null) {
     return { mode: 'plugin', start: pluginMatch.index + pluginMatch[1].length, end: safeCaret, query: pluginMatch[2] };
@@ -1894,7 +1960,7 @@ function composerMenuTitle(menu: Exclude<ComposerMenu, null>, language: AppLangu
 }
 
 function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onClose: () => void }) {
-  const workspace = useTeamWorkspaceState();
+  const workspace = useRuntimeDelegationWorkspace();
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardNavigating, setKeyboardNavigating] = useState(false);
@@ -1902,8 +1968,8 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
   const listboxId = useId();
   const normalized = query.trim().toLowerCase();
   const teams = useMemo(
-    () => workspace.teams.filter((team) => !normalized || `${team.id} ${team.name} ${team.description}`.toLowerCase().includes(normalized)),
-    [normalized, workspace.teams],
+    () => workspace.choices.filter((team) => !normalized || `${team.id} ${team.name} ${team.description}`.toLowerCase().includes(normalized)),
+    [normalized, workspace.choices],
   );
   const options = useMemo(
     () => [
@@ -1917,13 +1983,13 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
     [language, teams],
   );
   const optionSignature = options.map((option) => option.id).join('\u0000');
-  const select = (teamId: string) => { teamWorkspaceActions.selectForNextTurn(teamId); onClose(); };
+  const select = (teamId: string) => { if (workspace.extensionId) selectRuntimePluginChoice(workspace.extensionId, teamId); onClose(); };
 
   useEffect(() => {
-    const selectedIndex = options.findIndex((option) => option.id === workspace.selectedTeamId);
+    const selectedIndex = options.findIndex((option) => option.id === workspace.selectedId);
     setActiveIndex(normalized && options.length > 1 ? 1 : Math.max(0, selectedIndex));
     setKeyboardNavigating(false);
-  }, [normalized, optionSignature, workspace.selectedTeamId]);
+  }, [normalized, optionSignature, workspace.selectedId]);
 
   const moveActive = (nextIndex: number) => {
     const normalizedIndex = (nextIndex + options.length) % options.length;
@@ -1964,12 +2030,12 @@ function ComposerTeamPicker({ language, onClose }: { language: AppLanguage; onCl
     <div className="composer-team-picker">
       <label><Search size={14} /><input autoFocus role="combobox" aria-expanded="true" aria-controls={listboxId} aria-activedescendant={`${listboxId}-option-${activeIndex}`} aria-autocomplete="list" value={query} onChange={(event) => setQuery(event.currentTarget.value)} onKeyDown={handleKeyDown} placeholder={language === 'zh' ? '搜索 Team' : 'Search teams'} /></label>
       <div className="popover-list" id={listboxId} role="listbox">
-        <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!workspace.selectedTeamId} className={`popover-row ${workspace.selectedTeamId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
-          <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!workspace.selectedTeamId && <Check size={14} />}
+        <button ref={(element) => { optionRefs.current[0] = element; }} id={`${listboxId}-option-0`} role="option" aria-selected={!workspace.selectedId} className={`popover-row ${workspace.selectedId ? '' : 'active'} ${activeIndex === 0 && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} onMouseEnter={() => setActiveIndex(0)} onClick={() => select('')}>
+          <Circle size={14} /><span><strong>{options[0].name}</strong><small>{options[0].description}</small></span>{!workspace.selectedId && <Check size={14} />}
         </button>
         {teams.map((team, index) => {
           const optionIndex = index + 1;
-          return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={workspace.selectedTeamId === team.id} className={`popover-row ${workspace.selectedTeamId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || `${team.members.length} Agents · ${team.id}`}</small></span>{workspace.selectedTeamId === team.id && <Check size={14} />}</button>;
+          return <button ref={(element) => { optionRefs.current[optionIndex] = element; }} id={`${listboxId}-option-${optionIndex}`} role="option" aria-selected={workspace.selectedId === team.id} className={`popover-row ${workspace.selectedId === team.id ? 'active' : ''} ${activeIndex === optionIndex && keyboardNavigating ? 'keyboard-active' : ''}`} type="button" tabIndex={-1} key={team.id} onMouseEnter={() => setActiveIndex(optionIndex)} onClick={() => select(team.id)}><UsersRound size={14} /><span><strong>{team.name}</strong><small>{team.description || team.id}</small></span>{workspace.selectedId === team.id && <Check size={14} />}</button>;
         })}
         {!workspace.loading && teams.length === 0 && <p className="composer-popover-empty">{workspace.error || (language === 'zh' ? '没有可用 Team' : 'No teams available')}</p>}
       </div>

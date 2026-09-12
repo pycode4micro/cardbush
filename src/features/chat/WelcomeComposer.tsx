@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import { Composer } from '../composer';
 import { samePath } from '../../shared/localPaths';
+import { StarWordmark } from './StarWordmark';
+import { WelcomeSuggestions } from './WelcomeSuggestions';
 import type {
   AppLanguage,
   AppSettingsState,
@@ -29,6 +31,7 @@ export function WelcomeComposer({
   queuedMessages,
   selectedModel,
   availableModels,
+  teamAvailable = false,
   goalAvailable,
   referencePlanAvailable,
   referencePlanMode,
@@ -69,6 +72,7 @@ export function WelcomeComposer({
   queuedMessages: QueuedChatMessage[];
   selectedModel: string;
   availableModels: ManagedModelConfig[];
+  teamAvailable?: boolean;
   goalAvailable: boolean;
   referencePlanAvailable: boolean;
   referencePlanMode: ReferencePlanMode;
@@ -96,6 +100,16 @@ export function WelcomeComposer({
   onSend: (text: string) => Promise<void>;
   onCancel: () => Promise<void>;
 }) {
+  const welcomeRef = useRef<HTMLDivElement>(null);
+  function selectSuggestion(text: string) {
+    if (sending || draft.trim()) return;
+    onDraftChange(text);
+    requestAnimationFrame(() => {
+      const input = welcomeRef.current?.querySelector<HTMLElement>('[data-composer-input]');
+      input?.focus();
+      if (input instanceof HTMLTextAreaElement) input.setSelectionRange(text.length, text.length);
+    });
+  }
   const welcomeComposer = (
     <Composer
       compact
@@ -111,6 +125,7 @@ export function WelcomeComposer({
       queuedMessages={queuedMessages}
       selectedModel={selectedModel}
       availableModels={availableModels}
+      teamAvailable={teamAvailable}
       goalAvailable={goalAvailable}
       referencePlanAvailable={referencePlanAvailable}
       referencePlanMode={referencePlanMode}
@@ -138,11 +153,9 @@ export function WelcomeComposer({
   );
 
   return (
-    <div className="welcome-composer">
+    <div className="welcome-composer" ref={welcomeRef}>
       <div className="welcome-hero">
-        <span className="welcome-hero-mark" aria-hidden="true">
-          <img className="welcome-hero-logo" src="./cardbush-logo.png" alt="" />
-        </span>
+        <StarWordmark />
         <h2>
           {onlyTalkMode
             ? language === 'zh'
@@ -152,6 +165,7 @@ export function WelcomeComposer({
               ? `你想让我们在 ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'} 中构建什么？`
               : `What do you want us to build in ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'}?`}
         </h2>
+        <WelcomeSuggestions language={language} disabled={sending || Boolean(draft.trim())} onSelect={selectSuggestion} />
       </div>
       <div className={`welcome-input-stack${onlyTalkMode ? ' only-talk' : ''}`}>
         {!onlyTalkMode && (

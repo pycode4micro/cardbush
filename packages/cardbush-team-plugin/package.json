@@ -1,0 +1,43 @@
+{
+  "name": "@cardbush/team-plugin",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./configuration": {
+      "types": "./dist/configuration.d.ts",
+      "import": "./dist/configuration.js"
+    },
+    "./config-store": {
+      "types": "./dist/configStore.d.ts",
+      "import": "./dist/configStore.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "package": "npm run build && node build.mjs",
+    "build:ui": "node build.mjs"
+  },
+  "dependencies": {
+    "@cardbush/bush-protocol": "0.1.0",
+    "@cardbush/bush-runtime": "0.1.0",
+    "@cardbush/product-host": "0.1.0",
+    "js-yaml": "4.3.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "lucide-react": "^1.16.0",
+    "jszip": "^3.10.1",
+    "rolldown": "1.2.3"
+  }
+}

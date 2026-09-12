@@ -95,6 +95,17 @@ type AnyToolRegistration = ToolRegistration<unknown>;
 
 export class ToolRegistry {
   readonly #registrations = new Map<string, AnyToolRegistration>();
+  readonly #hiddenOwners = new Set<string>();
+
+  /** Hide a disabled extension from new requests without deleting handlers frozen into active Turns. */
+  setOwnerEnabled(owner: string, enabled: boolean): void {
+    if (enabled) this.#hiddenOwners.delete(owner);
+    else this.#hiddenOwners.add(owner);
+  }
+
+  #catalogVisible(registration: AnyToolRegistration): boolean {
+    return !registration.sessionScope && !this.#hiddenOwners.has(registration.registrationOwner ?? '');
+  }
 
   register<TInput>(candidate: ToolRegistration<TInput>): this {
     const registration = normalizeRegistration(candidate);
@@ -163,13 +174,13 @@ export class ToolRegistry {
   }
 
   definitions(): ToolDefinition[] {
-    return [...this.#registrations.values()].filter(registration => !registration.sessionScope).map(({ definition }) =>
+    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map(({ definition }) =>
       structuredClone(definition),
     );
   }
 
   catalog(): ToolCatalogEntry[] {
-    return [...this.#registrations.values()].filter(registration => !registration.sessionScope).map((registration) =>
+    return [...this.#registrations.values()].filter(registration => this.#catalogVisible(registration)).map((registration) =>
       structuredClone({
         definition: registration.definition,
         manifest: registration.manifest,

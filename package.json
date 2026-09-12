@@ -15,6 +15,8 @@
     "npm": ">=10"
   },
   "scripts": {
+    "test:window-material": "tsc -p tsconfig.node.json && node --test scripts/test-window-appearance.mjs && node scripts/run-window-appearance.mjs",
+    "preview:window-material": "tsc -p tsconfig.node.json && node scripts/run-window-appearance.mjs --preview",
     "test:plugin-search-settings": "npm run build:runtime && tsc -p tsconfig.node.json && node --test scripts/test-plugin-search-settings.mjs packages/bush-runtime/test/mcpDiscoveryDelivery.test.mjs packages/bush-runtime/test/skillTools.test.mjs packages/bush-provider-openai/test/toolSearch.test.mjs && node scripts/test-capability-hot-reload.mjs && node scripts/test-plugin-connections-ui.mjs",
     "test:context-budget": "npm run build:runtime && node --test --test-timeout=20000 packages/bush-runtime/test/contextBudgetRecovery.test.mjs packages/bush-runtime/test/contextCompaction.test.mjs packages/bush-runtime/test/inputTokenBasis.test.mjs packages/bush-runtime/test/outputLimitContinuation.test.mjs packages/bush-runtime/test/checkpointExchange.test.mjs packages/bush-runtime/test/sessionRuntimeHost.test.mjs packages/bush-runtime/test/stableCheckpoint.test.mjs packages/bush-runtime/test/runtimeRecovery.test.mjs packages/bush-provider-openai/test/contextBudgetRecovery.test.mjs packages/bush-provider-openai/test/tokenCalibration.test.mjs && node scripts/test-checkpoint-presentation.mjs",
     "test:cache-adversarial": "npm run build:runtime && node --test packages/bush-runtime/test/checkpointExchange.test.mjs packages/bush-runtime/test/inputTokenBasis.test.mjs packages/bush-provider-openai/test/cacheAdversarial.test.mjs packages/bush-provider-openai/test/reasoningContext.test.mjs packages/bush-provider-openai/test/tokenCalibration.test.mjs && node scripts/test-checkpoint-presentation.mjs",
@@ -62,6 +64,7 @@
     "test:turn-guidance": "node scripts/test-turn-guidance-contract.mjs",
     "test:agent-language": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/bush-product-agent && node --test scripts/test-agent-language.mjs",
     "test:composer-actions": "node --test scripts/test-composer-quick-actions-contract.mjs scripts/test-plugin-prompts.mjs",
+    "test:composer-references": "npm run build:runtime && node --test scripts/test-composer-references.mjs scripts/test-composer-quick-actions-contract.mjs packages/bush-runtime/test/sessionRuntimeHost.test.mjs && node scripts/test-plugin-connections-ui.mjs && node scripts/test-inspector-navigation-ui.mjs",
     "test:editor-focus": "tsc -p tsconfig.node.json && node --test scripts/test-editor-focus.mjs && node scripts/test-editor-focus-worker.cjs",
     "test:panel-motion": "node scripts/test-panel-motion-contract.mjs",
     "test:inspector-tabs": "node scripts/run-inspector-tabs-test.mjs && node scripts/test-inspector-navigation-ui.mjs",
@@ -107,7 +110,7 @@
     "test:desktop-control-overlay": "node scripts/test-desktop-control-overlay-contract.mjs",
     "test:capability-candidates": "node scripts/test-capability-candidates-contract.mjs",
     "test:subagent-observability": "node scripts/test-subagent-observability-contract.mjs && node scripts/test-subagent-observability-ui.mjs",
-    "test:team-configuration": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && node scripts/test-team-configuration-contract.mjs && node --test scripts/test-product-teams.mjs packages/bush-runtime/test/teamSnapshotStore.test.mjs packages/bush-runtime/test/teamTool.test.mjs",
+    "test:team-configuration": "npm run build --workspace @cardbush/bush-protocol && npm run build --workspace @cardbush/bush-runtime && npm run build --workspace @cardbush/product-host && npm run build --workspace @cardbush/team-plugin && node scripts/test-team-configuration-contract.mjs && node --test scripts/test-product-teams.mjs packages/cardbush-team-plugin/test/*.test.mjs",
     "test:runtime-asset-reset": "node scripts/test-runtime-asset-reset-contract.mjs",
     "test:llm-timeouts": "node scripts/test-llm-timeout-contract.mjs",
     "test:connection-recovery": "node scripts/test-connection-recovery-contract.mjs",
@@ -133,7 +136,9 @@
     "typecheck:runtime": "npm run typecheck --workspace @cardbush/bush-protocol && npm run typecheck --workspace @cardbush/bush-runtime && npm run typecheck --workspace @cardbush/bush-provider-openai && npm run typecheck --workspace @cardbush/bush-mcp-client && npm run typecheck --workspace @cardbush/apps-mcp && npm run typecheck --workspace @cardbush/chrome-mcp && npm run typecheck --workspace @cardbush/bush-runtime-electron",
     "pretypecheck": "npm run build:runtime",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
-    "test:all": "node scripts/run-release-checks.mjs"
+    "test:all": "node scripts/run-release-checks.mjs",
+    "test:team-plugin": "npm run test:team-configuration && npm run package --workspace @cardbush/team-plugin && tsc -p tsconfig.node.json && node --test scripts/test-team-plugin.mjs packages/bush-runtime/test/runtimeExtension.test.mjs packages/bush-runtime/test/subagentTool.test.mjs packages/bush-runtime/test/subagentPersistence.test.mjs && node scripts/test-subagent-observability-contract.mjs && node scripts/test-team-plugin-ui.mjs && node scripts/test-runtime-plugin-ui.mjs",
+    "build:team-plugin": "npm run build:runtime && npm run package --workspace @cardbush/team-plugin"
   },
   "dependencies": {
     "@cardbush/apps-mcp": "0.1.0",

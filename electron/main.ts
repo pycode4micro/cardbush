@@ -1,3 +1,5 @@
+import { registerRuntimePluginUiIpc } from './runtimePluginUi';
+import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
 import { McpDesktopHost } from './mcpDesktopHost';
 import {
@@ -13,6 +15,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  nativeTheme,
   screen,
   session,
   shell,
@@ -37,6 +40,7 @@ import { inspectProjectRoots } from './projectRoots';
 import { watchCapabilityCatalog } from './capabilityCatalogWatcher';
 import { sendToLiveRenderer } from './rendererDelivery';
 import { restoreEditorFocus } from './rendererFocus';
+import { WindowScrollDiagnostics } from './windowScrollDiagnostics';
 import { buildFileContextMenu, type FileContextMenuOptions } from './fileContextMenu';
 import { PluginMarketplaceService } from './pluginMarketplaces';
 import { runAcquisitionCommand } from './pluginAcquisition';
@@ -307,10 +311,8 @@ type CardlingDesktopState = {
 type AppThemeMode = CardlingDesktopState['theme'];
 
 const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
-  // Keep native window colors opaque and in six-digit RGB form. Although
-  // Electron documents ARGB hex support, the Windows runtime used by the dev
-  // launcher silently kept the HWND background at its default #FFFFFF when an
-  // eight-digit value was supplied.
+  // Six-digit opaque backing colors are also used when native material is
+  // unavailable, disabled, or the active theme owns its complete background.
   dark: '#1a1a1a',
   bright: '#f5f3ef',
   parchment: '#e1d4ba',
@@ -318,6 +320,11 @@ const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
 };
 
 let lastMainWindowTheme: AppThemeMode = 'dark';
+let lastMainWindowMaterialPreference: WindowMaterialPreference = 'auto';
+let lastMainWindowCustomTheme = false;
+const windowAppearanceControllers = new WeakMap<BrowserWindow, WindowAppearanceController>();
+const windowAppearanceStates = new WeakMap<BrowserWindow, WindowAppearanceState>();
+const windowScrollDiagnostics = new WeakMap<BrowserWindow, WindowScrollDiagnostics>();
 let windowCompositionTraceSequence = 0;
 
 type CardlingDesktopAction =
@@ -434,7 +441,8 @@ function traceMainWindowComposition(
   }
   const traceId = ++windowCompositionTraceSequence;
   const startedAt = Date.now();
-  const expectedBackground = backgroundForMainWindowTheme(lastMainWindowTheme);
+  const expectedBackground = windowAppearanceStates.get(target)?.material === 'mica'
+    ? '#00000000' : backgroundForMainWindowTheme(lastMainWindowTheme);
   const nativeState = () => {
     if (target.isDestroyed()) {
       return { destroyed: true };
@@ -553,6 +561,7 @@ function createWindow(options: { reveal?: boolean } = {}) {
   });
   applyCardbushWindowIcon(window, windowIcon, 'create-window', loadedWindowIcon.sourcePath);
   mainWindow = window;
+  windowScrollDiagnostics.set(window, new WindowScrollDiagnostics(window, appLogsDir()));
   window.setMenu(null);
   applyMainWindowVisualMaterial(window, lastMainWindowTheme);
 
@@ -566,6 +575,12 @@ function createWindow(options: { reveal?: boolean } = {}) {
     applyCardbushWindowIcon(window, windowIcon);
     applyMainWindowVisualMaterial(window, lastMainWindowTheme);
   };
+  nativeTheme.on('updated', refreshWindowBackdrop);
+  app.on('gpu-info-update', refreshWindowBackdrop);
+  window.once('closed', () => {
+    nativeTheme.removeListener('updated', refreshWindowBackdrop);
+    app.removeListener('gpu-info-update', refreshWindowBackdrop);
+  });
   window.on('minimize', refreshWindowBackdrop);
   window.on('minimize', () => traceMainWindowComposition(window, 'minimize'));
   window.on('restore', refreshWindowBackdrop);
@@ -780,33 +795,43 @@ function applyMainWindowVisualMaterial(target: BrowserWindow, theme: AppThemeMod
   }
   lastMainWindowTheme = theme;
   const background = backgroundForMainWindowTheme(theme);
-  if (process.platform === 'win32') {
-    try {
-      // Electron resets the native HWND background to white when the material
-      // changes. Apply the material first so the themed backing color is the
-      // final native-window operation.
-      target.setBackgroundMaterial('none');
-    } catch {
-      // Older Windows builds ignore this; the opaque theme color still applies.
-    }
+  let controller = windowAppearanceControllers.get(target);
+  if (!controller) {
+    controller = new WindowAppearanceController(target, process.platform, (error) => {
+      appendDebugLog('window-composition', { stage: 'material-fallback', error: String(error) });
+    });
+    windowAppearanceControllers.set(target, controller);
   }
-  target.setBackgroundColor(background);
-  // BrowserWindow owns a separate native content View whose default backing
-  // color is white. During Windows minimize/restore transitions Chromium can
-  // briefly expose this View between the HWND and the rendered web page, so it
-  // must follow the app theme as well.
-  target.contentView.setBackgroundColor(background);
+  const state = controller.apply(resolveWindowAppearance({
+    theme,
+    preference: lastMainWindowMaterialPreference,
+    customTheme: lastMainWindowCustomTheme,
+    platform: process.platform,
+    release: os.release(),
+    reducedTransparency: nativeTheme.prefersReducedTransparency,
+    highContrast: nativeTheme.shouldUseHighContrastColors || nativeTheme.inForcedColorsMode,
+    gpuCompositing: app.getGPUFeatureStatus().gpu_compositing,
+  }), background);
+  const previous = windowAppearanceStates.get(target);
+  windowAppearanceStates.set(target, state);
+  if (JSON.stringify(previous) !== JSON.stringify(state)) {
+    sendToLiveRenderer(target, 'appearance:window-changed', state);
+  }
   if (windowCompositionDebugEnabled) {
     const actualBackground = target.getBackgroundColor();
     appendDebugLog('window-composition', {
       stage: 'background-applied',
       theme,
-      requestedBackground: background,
+      material: state.material,
+      requestedBackground: state.material === 'mica' ? '#00000000' : background,
       actualBackground,
-      matches:
-        actualBackground.toLowerCase() === background.toLowerCase(),
+      // For a normal HWND Electron's getter may omit alpha. It cannot verify
+      // the native Mica surface; only compare opaque backing colors here.
+      matches: state.material === 'none'
+        ? actualBackground.toLowerCase() === background.toLowerCase() : undefined,
     });
   }
+  return state;
 }
 
 function backgroundForMainWindowTheme(theme: AppThemeMode) {
@@ -1977,7 +2002,13 @@ ipcMain.handle('debug:append-log', (event, scope: string, payload: unknown) => {
   if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) {
     throw new Error('debug log is only available to the main window');
   }
+  if (scope === 'window-scroll') return windowScrollDiagnostics.get(mainWindow)?.append(payload);
   return appendDebugLog(scope, payload);
+});
+
+ipcMain.handle('debug:window-scroll-config', (event) => {
+  if (mainWindow == null || event.sender.id !== mainWindow.webContents.id) return undefined;
+  return windowScrollDiagnostics.get(mainWindow)?.config;
 });
 
 let globalInstructionsStore: GlobalInstructionsStore | undefined;
@@ -2066,7 +2097,7 @@ ipcMain.handle('appearance:wallpaper-accent', () => {
   return readWallpaperAccent();
 });
 
-ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
+ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, options?: WindowAppearanceOptions) => {
   const sourceWindow = BrowserWindow.fromWebContents(event.sender);
   if (sourceWindow !== mainWindow || sourceWindow == null || sourceWindow.isDestroyed()) {
     return;
@@ -2076,8 +2107,15 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode) => {
       theme === 'cyberpunk'
       ? theme
       : 'dark';
-  applyMainWindowVisualMaterial(sourceWindow, normalizedTheme);
+  lastMainWindowMaterialPreference = options?.material === 'solid' ? 'solid' : 'auto';
+  lastMainWindowCustomTheme = options?.customTheme === true;
+  lastMainWindowTheme = normalizedTheme;
+  const source = options?.themeSource === 'dark' || options?.themeSource === 'light'
+    ? options.themeSource : 'system';
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
+  const state = applyMainWindowVisualMaterial(sourceWindow, normalizedTheme);
   traceMainWindowComposition(sourceWindow, 'theme-change', [0, 80]);
+  return state;
 });
 
 ipcMain.handle('filesystem:locations', (event) => {
@@ -2309,7 +2347,7 @@ ipcMain.handle('skills:read', async (_, skillName: string) => {
 ipcMain.handle('plugins:commands', async event => {
   assertMainWindowSender(event.sender.id);
   const { commands, skills } = await loadEnabledProductPluginExtensions(productPluginRoots(), productAppsConfigPath());
-  return [...commands, ...skills].filter(command => command.userInvocable).map(command => ({ id: command.id, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' }));
+  return [...commands, ...skills].filter(command => command.userInvocable).map(command => ({ id: command.id, pluginId: command.pluginId, name: command.name, path: command.path, description: command.description, argumentHint: command.argumentHint, kind: command.kind ?? 'command' }));
 });
 ipcMain.handle('plugins:install-local', async (event, kind: unknown = 'directory') => {
   assertMainWindowSender(event.sender.id);
@@ -2517,6 +2555,13 @@ ipcMain.handle('dialog:pick-appearance-style', async () => {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+
+registerRuntimePluginUiIpc(ipcMain, {
+  dataRoot: () => path.join(app.getPath('userData'), 'plugin-data'),
+  roots: productPluginRoots, configPath: productAppsConfigPath,
+  window: () => mainWindow,
+  assertSender: assertMainWindowSender,
 });
 
 ipcMain.handle('project:list-root', (_, rootPath: string) => {
@@ -3416,6 +3461,7 @@ async function initializeRuntimeHostWithinDeadline() {
         ),
         CARDBUSH_RUNTIME_SKILL_ROOTS: JSON.stringify(productSkillRoots()),
         CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify(productPluginRoots()),
+        CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(app.getPath('userData'), 'plugin-data'),
         ...(bundledRipgrep ? { CARDBUSH_RG_PATH: bundledRipgrep } : {}),
         CARDBUSH_APPS_MCP_ENTRY: path.join(
           app.getAppPath(),

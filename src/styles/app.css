@@ -1,3 +1,8 @@
+/* Keep one cursor while dragging across buttons, links and text. */
+body:is(.sidebar-resizing, .right-inspector-resizing, .change-review-resizing) * {
+  cursor: col-resize !important;
+}
+
 /* These dimensions are local to the panel, not inherited by embedded views. */
 @property --right-inspector-width {
   syntax: '<length>';
@@ -12,6 +17,7 @@
 }
 
 .app {
+  --window-frame-height: 36px;
   /* Use the full window as the sizing container so fixed overlays retain
      their viewport origin (the desktop shell starts below the title bar). */
   container-type: inline-size;
@@ -97,11 +103,14 @@
   -webkit-app-region: drag;
 }
 
-.no-drag,
-button,
-select,
-input,
-textarea {
+/* Only controls inside native drag regions need exclusions. Registering every
+   scrolling button as no-drag can punch holes in the title bar on Electron 42
+   when Chromium reports an offscreen control's unclipped rectangle. */
+.window-drag .no-drag,
+.window-drag button,
+.window-drag select,
+.window-drag input,
+.window-drag textarea {
   app-region: no-drag;
   -webkit-app-region: no-drag;
 }
@@ -109,8 +118,8 @@ textarea {
 .window-frame {
   position: relative;
   z-index: 1000;
-  flex: 0 0 29px;
-  height: 29px;
+  flex: 0 0 var(--window-frame-height);
+  height: var(--window-frame-height);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -132,7 +141,7 @@ textarea {
 .window-sidebar-toggle {
   position: relative;
   flex: 0 0 auto;
-  height: 25px;
+  height: 28px;
   width: max-content;
   min-width: 28px;
   interpolate-size: allow-keywords;
@@ -142,6 +151,7 @@ textarea {
   border-radius: 6px;
   color: inherit;
   background: transparent;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -190,16 +200,15 @@ textarea {
 
 .window-sidebar-icon-viewport {
   width: 28px;
-  height: 24px;
+  height: 100%;
   overflow: hidden;
   border-radius: 6px;
   color: var(--text-mid);
-  background: color-mix(in srgb, var(--text) 6%, transparent);
+  background: transparent;
 }
 
 .window-sidebar-toggle:hover .window-sidebar-icon-viewport {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 11%, transparent);
 }
 
 .window-sidebar-toggle:focus-visible {
@@ -219,22 +228,6 @@ textarea {
   -webkit-app-region: drag;
 }
 
-/*
- * Electron 42 on Windows can invalidate a regular element's draggable region
- * after an unrelated scroll. Keep the flex item for layout, but expose a
- * separate painted hit-test layer: pseudo-element drag regions remain active
- * in the affected Electron path (electron/electron#52063).
- */
-.window-spacer::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  user-select: none;
-  app-region: drag;
-  -webkit-app-region: drag;
-  -webkit-user-select: none;
-}
-
 .frame-chip,
 .window-button {
   height: 28px;
@@ -251,6 +244,7 @@ textarea {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
+  line-height: 1;
   letter-spacing: 0;
 }
 
@@ -331,7 +325,7 @@ textarea {
 
 .window-button {
   width: 40px;
-  height: 29px;
+  height: var(--window-frame-height, 36px);
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -447,7 +441,7 @@ textarea {
   --layout-sidebar-space: var(--sidebar-width);
   --conversation-pane-min-width: 440px;
   position: relative;
-  height: calc(100vh - 29px);
+  height: calc(100vh - var(--window-frame-height));
   display: flex;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
@@ -462,7 +456,7 @@ textarea {
 
 .app > .settings-shell {
   position: absolute;
-  inset: 29px 0 0;
+  inset: var(--window-frame-height) 0 0;
   z-index: 100;
 }
 
@@ -484,7 +478,6 @@ textarea {
 .settings-shell {
   --text-soft: color-mix(in srgb, var(--text) 64%, transparent);
   --text-mid: color-mix(in srgb, var(--text) 82%, transparent);
-  background: var(--surface);
 }
 
 .render-failure-shell {
@@ -625,7 +618,7 @@ textarea {
   flex: 0 0 var(--panel-resize-hit-width);
   width: var(--panel-resize-hit-width);
   margin: 0 calc(var(--panel-resize-hit-width) / -2);
-  cursor: ew-resize;
+  cursor: col-resize;
   touch-action: none;
   user-select: none;
   opacity: 1;
@@ -655,7 +648,7 @@ body.sidebar-resizing .sidebar-resizer::after {
 }
 
 body.sidebar-resizing {
-  cursor: ew-resize;
+  cursor: col-resize;
   user-select: none;
 }
 
@@ -1575,6 +1568,12 @@ body.sidebar-resizing .right-inspector {
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 
+.main-stage,
+.settings-content {
+  border-radius: 14px 0 0 14px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 78%, transparent);
+}
+
 .main-stage {
   flex: 1;
   min-width: 0;
@@ -1584,8 +1583,6 @@ body.sidebar-resizing .right-inspector {
   overflow: hidden;
   background: var(--surface);
   border: 0;
-  border-radius: 14px 0 0 14px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .chat-panel,
@@ -1729,7 +1726,7 @@ body.sidebar-resizing .right-inspector {
   bottom: 0;
   left: calc(var(--panel-resize-hit-width) / -2);
   width: var(--panel-resize-hit-width);
-  cursor: ew-resize;
+  cursor: col-resize;
   touch-action: none;
   user-select: none;
 }
@@ -1753,7 +1750,7 @@ body.right-inspector-resizing .right-inspector-resizer::after {
 }
 
 body.right-inspector-resizing {
-  cursor: ew-resize;
+  cursor: col-resize;
   user-select: none;
 }
 
@@ -3255,41 +3252,100 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .welcome-hero {
+  container: welcome-hero / inline-size;
   min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 36px 0 24px;
+  justify-content: safe center;
+  gap: 12px;
+  width: min(100%, var(--chat-track-width));
+  overflow-y: auto;
+  padding: 10px 0 28px;
   text-align: center;
 }
 
-.welcome-hero-mark {
-  width: 52px;
-  height: 52px;
-  display: inline-grid;
-  place-items: center;
-  overflow: hidden;
-  opacity: 0.58;
-}
-
-.welcome-hero-logo {
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
-  filter: grayscale(1) saturate(0) contrast(0.78) brightness(1.18);
+.welcome-star-wordmark {
+  display: block;
+  flex: 0 0 auto;
+  width: min(480px, 100%);
+  height: clamp(90px, 13vw, 150px);
+  color: var(--text);
 }
 
 .welcome-composer h2 {
   margin: 0;
   color: var(--text);
-  font-size: clamp(18px, 2vw, 23px);
+  font-size: clamp(17px, 1.7vw, 21px);
   font-weight: 540;
   letter-spacing: 0;
   line-height: 1.4;
   text-align: center;
+}
+
+.welcome-suggestions {
+  width: min(100%, 720px);
+  flex: 0 0 auto;
+  margin-top: 14px;
+}
+
+.welcome-suggestions-caption {
+  margin: 0 0 14px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.welcome-suggestions-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  text-align: left;
+}
+
+.welcome-suggestion {
+  position: relative;
+  min-width: 0;
+  min-height: 108px;
+  padding: 14px 16px 22px;
+  color: var(--text-mid);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  border-radius: 14px;
+  text-align: left;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.welcome-suggestion:hover:not(:disabled),
+.welcome-suggestion:focus-visible {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--text) 24%, transparent);
+}
+
+.welcome-suggestion:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.welcome-suggestion:disabled { opacity: .5; cursor: default; }
+.welcome-suggestion-topic { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 9px; font-size: 12px; color: var(--text); }
+.welcome-suggestion-topic > span { flex-shrink: 0; color: var(--text-soft); font-size: 10px; }
+.welcome-suggestion-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.6; font-size: 12px; }
+.welcome-suggestion-arrow { position: absolute; right: 12px; bottom: 10px; color: var(--text-soft); }
+
+@media (max-height: 680px) {
+  .welcome-hero { justify-content: flex-start; gap: 6px; padding-top: 0; padding-bottom: 16px; }
+  .welcome-star-wordmark { height: 100px; }
+  .welcome-suggestions { margin-top: 6px; }
+  .welcome-suggestions-caption { margin-bottom: 8px; }
+}
+
+@container welcome-hero (max-width: 620px) {
+  .welcome-suggestions-list { grid-template-columns: 1fr; gap: 6px; }
+  .welcome-suggestion { min-height: 0; padding: 10px 30px 10px 12px; }
+  .welcome-suggestion-topic { margin-bottom: 4px; }
+  .welcome-suggestion-text { -webkit-line-clamp: 2; }
 }
 
 .welcome-input-stack {
@@ -6092,7 +6148,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   width: 15px;
   height: 15px;
   object-fit: contain;
-  filter: brightness(0) invert(1);
+  filter: var(--model-logo-filter, brightness(0));
   opacity: 0.94;
 }
 
@@ -9824,7 +9880,7 @@ body.right-inspector-resizing .right-inspector-resizer {
   left: 0;
   bottom: calc(100% + 8px);
   z-index: 16;
-  width: min(380px, 100%);
+  width: min(460px, 100%);
   max-height: var(--composer-popover-max-height, 360px);
   overflow: hidden;
   color: var(--text);
@@ -9878,11 +9934,11 @@ body.right-inspector-resizing .right-inspector-resizer {
 
 .composer-command-row {
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 7px 9px;
+  padding: 6px 9px;
   color: var(--text-mid);
   background: transparent;
   border-radius: 8px;
@@ -9900,11 +9956,25 @@ body.right-inspector-resizing .right-inspector-resizer {
   opacity: 0.62;
 }
 
-.composer-command-row span {
+.composer-command-label {
+  flex: 1;
   min-width: 0;
   display: grid;
   gap: 2px;
 }
+
+.composer-command-category { padding: 9px 9px 3px; color: var(--text-soft); font-size: 11px; font-weight: 500; }
+.composer-command-category:first-child { padding-top: 2px; }
+.composer-command-icon { display: flex; flex: 0 0 20px; width: 20px; align-items: center; justify-content: center; }
+.composer-command-icon > svg { flex-shrink: 0; }
+.composer-command-icon .skill-icon.compact { width: 20px; height: 20px; border-radius: 4px; }
+.composer-command-icon .skill-icon img { width: 18px; height: 18px; }
+.composer-context-token, .context-reference-token { display: inline-flex; align-items: center; gap: 4px; max-width: min(340px, 100%); vertical-align: text-bottom; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.composer-context-token { user-select: all; }
+.composer-context-token > span, .context-reference-token > span { overflow: hidden; text-overflow: ellipsis; }
+.composer-context-token svg, .context-reference-token svg, .composer-plugin-token svg { flex-shrink: 0; }
+.composer-context-token button { padding: 0 2px; border: 0; background: transparent; color: var(--text-soft); font: inherit; line-height: 1; cursor: pointer; }
+.composer-context-token button:hover { color: var(--text); }
 
 .composer-command-row strong,
 .composer-command-row small {
@@ -10554,11 +10624,7 @@ body.right-inspector-resizing .right-inspector-resizer {
 }
 
 .model-logo {
-  filter: invert(1);
-}
-
-.theme-light .model-logo {
-  filter: none;
+  filter: var(--model-logo-filter, brightness(0));
 }
 
 .composer-actions .model-select svg {
@@ -14894,8 +14960,6 @@ body.right-inspector-resizing .right-inspector-resizer {
   padding: clamp(34px, 6vh, 64px) clamp(24px, 5vw, 64px) 56px;
   background: var(--surface);
   border: 0;
-  border-radius: 0;
-  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--border) 78%, transparent);
 }
 
 .settings-track {

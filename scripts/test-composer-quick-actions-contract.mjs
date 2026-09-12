@@ -42,9 +42,9 @@ const slashBlock = source.match(
 assert.ok(slashBlock, 'slash quick-action block is missing');
 assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
-  ['/team', '/model', '/goal', '/skill', '/new'],
+  ['/model', '/goal', '/skill', '/new'],
 );
-assert.match(slashBlock, /选择 Team/);
+assert.match(slashBlock, /id: delegationCommand/);
 assert.match(slashBlock, /模型切换/);
 assert.match(slashBlock, /目标/);
 assert.match(slashBlock, /技能/);
@@ -97,8 +97,8 @@ assert.match(
   'slash commands must not be parsed as POSIX file attachments',
 );
 assert.doesNotMatch(slashBlock.split('commands.push')[0], /title:\s*['"`]\//, 'built-in quick actions retain their descriptive labels');
-assert.doesNotMatch(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
-assert.doesNotMatch(source, /mentionMatch|mentionCommands|输入 @|Type @/);
+assert.match(source, /ComposerCommandMode\s*=\s*[^;]*mention/);
+assert.match(source, /referenceableUserMessages\(referenceContext.messages, referenceContext.sessionId\)/);
 assert.match(
   source,
   /`\$\{selectedModelConfig\.modelName\} · \$\{selectedModelConfig\.provider\}`/,
@@ -267,8 +267,13 @@ assert.deepEqual(detect('请处理 /go'), {
 assert.equal(detect('请处理/go'), null);
 assert.equal(detect('请处理\n/go'), null);
 assert.equal(detect('请处理\t/go'), null);
-assert.equal(detect('@file'), null);
-assert.equal(detect('请查看 @file'), null);
+assert.deepEqual(detect('@file'), { mode: 'mention', start: 0, end: 5, query: 'file' });
+assert.deepEqual(detect('请查看 @file'), { mode: 'mention', start: 4, end: 9, query: 'file' });
+assert.deepEqual(detect('请查看\n@浏览器'), { mode: 'mention', start: 4, end: 8, query: '浏览器' });
+assert.equal(detect('user@example.com'), null);
+assert.equal(detect('https://example.com/@user'), null);
+assert.equal(detect('@C:\\folder'), null, 'native attachment path syntax does not open the picker');
+assert.equal(detect('@/tmp/file'), null);
 assert.deepEqual(detect('$'), { mode: 'plugin', start: 0, end: 1, query: '' });
 assert.deepEqual(detect('请用 $seedream'), { mode: 'plugin', start: 3, end: 12, query: 'seedream' });
 assert.deepEqual(detect('请用\n$个人'), { mode: 'plugin', start: 3, end: 6, query: '个人' });

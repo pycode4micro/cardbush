@@ -3,11 +3,10 @@ import test from "node:test";
 
 import {
   SubagentTaskStore,
-  TeamSnapshotStore,
   ToolExecutionCoordinator,
   ToolRegistry,
-  registerTeamTool,
-} from "../dist/index.js";
+} from "@cardbush/bush-runtime";
+import { TeamSnapshotStore, registerTeamTool } from '../dist/index.js';
 
 test("runs configured Team assignments concurrently with immutable Profile constraints", async () => {
   const registry = new ToolRegistry();

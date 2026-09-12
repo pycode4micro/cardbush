@@ -13,10 +13,10 @@ import {
   resolveChildTurn,
   type ChildTurnRunner,
   type SubagentPermissionPolicy,
-} from "./childTurn.js";
-import type { SubagentTaskStore } from "./subagentTaskStore.js";
+} from "@cardbush/bush-runtime";
+import type { SubagentTaskStore } from "@cardbush/bush-runtime";
 import type { TeamSnapshotStore } from "./teamSnapshotStore.js";
-import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import type { ToolHandlerContext, ToolRegistry } from "@cardbush/bush-runtime";
 
 export const TEAM_DELEGATE_TOOL = "team_delegate" as const;
 
@@ -50,6 +50,7 @@ export function registerTeamTool(
     createTurnId?: () => string;
     createMessageId?: () => string;
     permissionPolicy?: SubagentPermissionPolicy;
+    registrationOwner?: string;
   } = {},
 ): void {
   if (registry.resolve(TEAM_DELEGATE_TOOL)) return;
@@ -60,6 +61,7 @@ export function registerTeamTool(
   const createMessageId = options.createMessageId ?? (() => `team_message_${randomUUID()}`);
 
   registry.register<TeamDelegateInput>({
+    registrationOwner: options.registrationOwner,
     definition: {
       name: TEAM_DELEGATE_TOOL,
       description:

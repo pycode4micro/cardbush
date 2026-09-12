@@ -2,14 +2,17 @@ import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, type Keyboard
 import type { AppLanguage, CardbushAppPlugin } from '../../types';
 import { fileUrl } from '../../shared/localPaths';
 import { restoreNativeEditorFocus } from '../../shared/editorFocus';
-import { pluginPromptParts } from '../plugins/pluginPrompts';
+import { pluginPromptParts, type PluginPromptPart } from '../plugins/pluginPrompts';
+import { promptReferenceParts, type PromptReference } from '../../shared/promptReferences';
+
+type ComposerPromptPart = PluginPromptPart & { contextReference?: PromptReference };
 
 export interface ComposerPromptInputHandle {
   focus(): void;
   setSelectionRange(start: number, end: number): void;
 }
 
-/** Textareas keep native editing until an explicit plugin reference needs inline rendering. */
+/** Keep native text editing until an explicit reference needs an inline token. */
 export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   value: string;
   plugins: CardbushAppPlugin[];
@@ -27,8 +30,9 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   const lastCaret = useRef(value.length);
   const change = useRef(onChange);
   change.current = onChange;
-  const parts = pluginPromptParts(value, plugins);
-  const rich = parts.some(part => part.plugin);
+  const parts: ComposerPromptPart[] = pluginPromptParts(value, plugins).flatMap(part => part.reference ? [part]
+    : promptReferenceParts(part.text).map(contextPart => ({ text: contextPart.text, start: part.start + contextPart.start, contextReference: contextPart.reference })));
+  const rich = parts.some(part => part.plugin || part.contextReference);
   useImperativeHandle(ref, () => ({
     focus: () => (rich ? editor.current : textarea.current)?.focus(),
     setSelectionRange: (start, end) => {
@@ -41,31 +45,34 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
   useLayoutEffect(() => {
     const node = editor.current;
     if (!node || composing.current) return;
-    const rendered = Array.from(node.querySelectorAll<HTMLElement>('[data-plugin-reference]')).map(chip => chip.dataset.pluginReference);
-    const expected = parts.filter(part => part.plugin).map(part => part.text);
+    const rendered = Array.from(node.querySelectorAll<HTMLElement>('[data-plugin-reference], [data-context-reference]')).map(chip => tokenText(chip));
+    const expected = parts.filter(part => part.plugin || part.contextReference).map(part => part.text);
     if (readPrompt(node) === value && JSON.stringify(rendered) === JSON.stringify(expected)) return;
     const focused = document.activeElement === node;
     const caret = caretOffset(node);
     const fragment = document.createDocumentFragment();
     for (const part of parts) {
-      if (!part.plugin) { fragment.append(document.createTextNode(part.text)); continue; }
+      if (!part.plugin && !part.contextReference) { fragment.append(document.createTextNode(part.text)); continue; }
+      const reference = part.contextReference;
+      const title = part.plugin?.name || reference!.title;
       const chip = document.createElement('span');
-      chip.className = 'composer-plugin-token';
+      chip.className = part.plugin ? 'composer-plugin-token' : 'composer-context-token';
       chip.contentEditable = 'false';
-      chip.dataset.pluginReference = part.text;
-      chip.title = `$${part.plugin.id}`;
-      const logo = part.plugin.logoPath || part.plugin.logoDarkPath;
+      if (part.plugin) chip.dataset.pluginReference = part.text;
+      else chip.dataset.contextReference = part.text;
+      chip.title = part.plugin ? part.plugin.name : reference?.kind === 'browser' ? reference.url : title;
+      const logo = part.plugin?.logoPath || part.plugin?.logoDarkPath;
       if (logo) {
         const image = document.createElement('img'); image.src = fileUrl(logo); image.alt = ''; image.draggable = false;
+        image.onerror = () => image.replaceWith(referenceGlyph('plugin'));
         chip.append(image);
       } else {
-        const fallback = document.createElement('span'); fallback.className = 'composer-plugin-fallback'; fallback.textContent = '$';
-        fallback.setAttribute('aria-hidden', 'true'); chip.append(fallback);
+        chip.append(referenceGlyph(reference?.kind || 'plugin'));
       }
-      const label = document.createElement('span'); label.textContent = part.plugin.name; chip.append(label);
+      const label = document.createElement('span'); label.textContent = title; chip.append(label);
       const remove = document.createElement('button');
       remove.type = 'button'; remove.tabIndex = -1; remove.textContent = '×';
-      remove.setAttribute('aria-label', `${language === 'zh' ? '移除插件引用' : 'Remove plugin reference'} ${part.plugin.name}`);
+      remove.setAttribute('aria-label', `${language === 'zh' ? part.plugin ? '移除插件引用' : '移除引用' : part.plugin ? 'Remove plugin reference' : 'Remove reference'} ${title}`);
       remove.onmousedown = event => event.preventDefault();
       remove.onclick = () => {
         const start = offsetBefore(node, chip);
@@ -167,7 +174,8 @@ export const ComposerPromptInput = forwardRef<ComposerPromptInputHandle, {
 function readPrompt(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
   if (node instanceof HTMLElement) {
-    if (node.dataset.pluginReference) return node.dataset.pluginReference;
+    const token = tokenText(node);
+    if (token) return token;
     if (node.tagName === 'BR') return '\n';
   }
   return Array.from(node.childNodes).map((child, index) => {
@@ -196,8 +204,8 @@ function selectOffsets(root: HTMLElement, start: number, end: number): void {
         const length = node.textContent?.length ?? 0;
         if (offset <= length) return [node, offset]; offset -= length; return;
       }
-      if (node instanceof HTMLElement && node.dataset.pluginReference) {
-        const length = node.dataset.pluginReference.length;
+      if (node instanceof HTMLElement && tokenText(node)) {
+        const length = tokenText(node)!.length;
         if (offset <= length) return [node.parentNode!, Array.from(node.parentNode!.childNodes).indexOf(node) + (offset ? 1 : 0)];
         offset -= length; return;
       }
@@ -207,4 +215,17 @@ function selectOffsets(root: HTMLElement, start: number, end: number): void {
   };
   const range = document.createRange(); range.setStart(...locate(start)); range.setEnd(...locate(end));
   const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+}
+
+function tokenText(node: HTMLElement) { return node.dataset.pluginReference || node.dataset.contextReference; }
+
+function referenceGlyph(kind: PromptReference['kind'] | 'plugin'): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', width: '16', height: '16', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(name, value);
+  const path = document.createElementNS(svg.namespaceURI, 'path');
+  path.setAttribute('d', kind === 'browser'
+    ? 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18Z'
+    : kind === 'user-turn' ? 'M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3ZM7 8h10M7 12h7'
+    : 'M8 3h3a3 3 0 1 1 6 0h4v6a3 3 0 1 0 0 6v6h-6a3 3 0 1 0-6 0H3v-6a3 3 0 1 0 0-6V3Z');
+  svg.append(path); return svg;
 }

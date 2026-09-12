@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -37,12 +37,15 @@ async function run() {
   const runtimeStateRoot = mkdtempSync(
     path.join(tmpdir(), 'cardbush-runtime-utility-'),
   );
-  const appsConfigPath = path.join(runtimeStateRoot, 'apps.json');
+  const appsConfigPath = path.join(runtimeStateRoot, 'product-host', 'config', 'apps.json');
+  mkdirSync(path.dirname(appsConfigPath), { recursive: true });
   writeFileSync(appsConfigPath, JSON.stringify({
     protocol: 'cardbush.apps_config.v1',
     revision: 1,
     serviceEnabled: true,
     plugins: [{
+      id: 'team', installed: false, enabled: false, config: {},
+    }, {
       id: 'computer-use',
       installed: true,
       enabled: true,
@@ -59,6 +62,9 @@ async function run() {
     }],
   }));
 
+  const { installLocalProductPlugin } = require('../dist-electron/localPluginInstall.js');
+  const userPluginRoot = path.join(runtimeStateRoot, 'plugins');
+  await installLocalProductPlugin(path.join(repositoryRoot, 'release-plugins/team-0.2.0.zip'), userPluginRoot);
   await app.whenReady();
   const {
     RuntimeUtilityProcessController,
@@ -77,11 +83,12 @@ async function run() {
     env: {
       ...withoutProviderConfiguration(process.env),
       CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
+      CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(runtimeStateRoot, 'plugin-data'),
       CARDBUSH_APPS_CONFIG_PATH: appsConfigPath,
       CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify([{
         path: path.join(repositoryRoot, 'assets', 'plugins'),
         source: 'bundled',
-      }]),
+      }, { path: userPluginRoot, source: 'user' }]),
       CARDBUSH_APPS_MCP_ENTRY: path.join(
         repositoryRoot,
         'packages',
@@ -125,6 +132,32 @@ async function run() {
     );
     assert.equal(capabilityResponse.type, 'command_response');
     assert.equal(capabilityResponse.ok, true);
+    assert.equal(capabilityResponse.result.features.includes('product_team_snapshot'), false);
+    const originalPluginConfig = readFileSync(appsConfigPath, 'utf8');
+    let teamOperation = 0;
+    const teamCommand = (kind, payload = {}) => controller.command({ protocol: BUSH_RUNTIME_IPC_PROTOCOL, type: 'command',
+      operationId: `optional-team-${++teamOperation}`, command: { kind, payload } });
+    try {
+      const withTeam = JSON.parse(originalPluginConfig);
+      const configuredTeam = withTeam.plugins.find(plugin => plugin.id === 'team');
+      configuredTeam.installed = true; configuredTeam.enabled = true;
+      writeFileSync(appsConfigPath, JSON.stringify(withTeam));
+      const enabled = await teamCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
+      assert.equal(enabled.ok, true);
+      assert.equal(enabled.result.features.includes('product_team_snapshot'), true);
+      const configuration = await teamCommand('plugin.team.configuration', { action: 'read' });
+      assert.equal(configuration.ok, true);
+      assert.equal(configuration.result.path, path.join(runtimeStateRoot, 'plugin-data', 'team', 'teams.json'));
+      assert.ok((await teamCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'team_delegate'));
+      configuredTeam.enabled = false;
+      writeFileSync(appsConfigPath, JSON.stringify(withTeam));
+      assert.equal((await teamCommand(GET_RUNTIME_TOOL_CATALOG_COMMAND)).result.some(tool => tool.name === 'team_delegate'), false);
+      assert.equal((await teamCommand('runtime.get_team_snapshot')).ok, false);
+      writeFileSync(appsConfigPath, '{ malformed plugin config');
+      const unavailable = await teamCommand(GET_RUNTIME_CAPABILITIES_COMMAND);
+      assert.equal(unavailable.ok, true, 'optional plugin failure does not block core capability reads');
+      assert.equal(unavailable.result.features.includes('product_team_snapshot'), false);
+    } finally { writeFileSync(appsConfigPath, originalPluginConfig); }
     let mcpObservation = 0;
     const waitForMcp = () => within((async () => {
       while (true) {
@@ -453,6 +486,7 @@ async function run() {
       env: {
         ...withoutProviderConfiguration(process.env),
         CARDBUSH_RUNTIME_STATE_ROOT: runtimeStateRoot,
+      CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(runtimeStateRoot, 'plugin-data'),
       },
     });
     try {

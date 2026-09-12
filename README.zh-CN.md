@@ -4,8 +4,10 @@
 
 CardBush 是一款 Electron 桌面 Agent 应用，生产 Agent Runtime 已使用
 TypeScript 内聚到应用中。普通对话、会话、模型调用、工具、权限、Goal、
-Plan、Subagent、Team 与持久化均通过 Electron 类型化 IPC 在 CardBush 内部
+Plan、Subagent 与持久化均通过 Electron 类型化 IPC 在 CardBush 内部
 运行，不再要求 BushServer HTTP 进程或 localhost 端口。
+
+Team 已拆为独立安装的 ZIP 插件，不再随主应用构建，配置文件与当前能力边界见 [Team 拆分说明](docs/TEAM_PLUGIN_EXTRACTION.md)。
 
 ## 当前状态
 

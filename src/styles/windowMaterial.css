@@ -1,0 +1,51 @@
+/* Native Mica owns the desktop backdrop. These layers only tint it; a CSS
+   blur cannot sample the desktop and would add an unnecessary compositor. */
+html[data-window-material="mica"] .app {
+  background: transparent;
+  --window-chrome-tint: rgba(255, 255, 255, 0.05);
+  --window-chrome-border: rgba(0, 0, 0, 0.09);
+}
+
+html[data-window-material="mica"] .app.theme-dark {
+  --window-chrome-tint: rgba(24, 24, 24, 0.05);
+  --window-chrome-border: rgba(255, 255, 255, 0.07);
+  --surface: #181818;
+  --surface-strong: #282828;
+  --surface-raised: #303030;
+  --border: #2b2b2b;
+  --text: #eeeeee;
+  --text-mid: #b6b6b6;
+  --text-soft: #888888;
+}
+
+html[data-window-material="mica"] .app > .desktop-shell,
+html[data-window-material="mica"] .app > .settings-shell {
+  background: transparent;
+  border-color: var(--window-chrome-border);
+}
+
+html[data-window-material="mica"] .app .window-frame,
+html[data-window-material="mica"] .app .sidebar,
+html[data-window-material="mica"] .app .settings-sidebar {
+  background: var(--window-chrome-tint);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-window-material="mica"] .app .window-frame {
+  border-color: var(--window-chrome-border);
+  border-bottom-color: transparent;
+}
+
+html[data-window-material="mica"] .app .sidebar {
+  --sidebar-text: var(--text);
+  --sidebar-text-mid: color-mix(in srgb, var(--text) 78%, transparent);
+  --sidebar-text-soft: color-mix(in srgb, var(--text) 62%, transparent);
+  --sidebar-text-muted: color-mix(in srgb, var(--text) 46%, transparent);
+}
+
+html[data-window-material="mica"] .app .main-stage,
+html[data-window-material="mica"] .app .settings-content {
+  box-shadow: inset 0 0 0 1px var(--window-chrome-border);
+}

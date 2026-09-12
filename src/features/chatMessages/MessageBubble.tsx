@@ -36,9 +36,11 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+import type { Components, Options as MarkdownOptions } from 'react-markdown';
 
 import {
   basename,
@@ -80,7 +82,9 @@ import {
   type ProjectPathAlias,
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
-import { PluginPromptFallback, PluginReferenceLink } from '../plugins/PluginReferenceLink';
+import { PluginReferenceLink } from '../plugins/PluginReferenceLink';
+import { PromptReferenceFallback, PromptReferenceLink } from '../composer/PromptReferenceLink';
+import { parsePromptReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { FileMemoReference } from './FileMemoReference';
 import { mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext, toolOutputPresentation } from './mediaPresentation';
@@ -310,7 +314,11 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
 }
 
 const FinalAnswerMediaContext = createContext(false);
+// Assistant narration stays textual until its final response is committed.
+// User references and Markdown previews outside that narration remain interactive.
+const RichFileReferencesContext = createContext(true);
 const noPresentedMedia: ReadonlyMap<string, ChatToolArtifact> = new Map();
+const noFilePathAliases: ProjectPathAlias[] = [];
 
 const LazyMarkdownContent = lazy(async () => {
   const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
@@ -318,147 +326,173 @@ const LazyMarkdownContent = lazy(async () => {
     import('remark-gfm'),
   ]);
 
+  type MarkdownRenderSettings = {
+    workspaceRoot: string;
+    pathAliases: ProjectPathAlias[];
+    language: AppLanguage;
+  };
+  const MarkdownRenderContext = createContext<MarkdownRenderSettings>({
+    workspaceRoot: '', pathAliases: noFilePathAliases, language: 'zh',
+  });
+  // Focus refreshes can replace alias arrays and media maps without changing
+  // the message. Component types must stay stable so resolved files, media and
+  // code controls retain their state; current settings arrive through context.
+  const components: Components = {
+    a: ({ href, children, ...props }) => {
+      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      const richFileReferences = useContext(RichFileReferencesContext);
+      const contextReference = href && parsePromptReference(href);
+      if (contextReference) return <PromptReferenceLink reference={contextReference} />;
+      if (href && parseFileMemoReference(href)) return richFileReferences
+        ? <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>
+        : <span>{children || href}</span>;
+      const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
+      if (localPath) {
+        if (!richFileReferences) return <span title={localPath}>{children}</span>;
+        const pluginReference = pluginReferenceFromLink(reactNodeText(children), localPath);
+        if (pluginReference) return <PluginReferenceLink reference={pluginReference} />;
+        return (
+          <LocalFileReferenceLink
+            path={remapProjectPath(localPath, pathAliases)}
+            unavailableLabel={children}
+          >
+            {children}
+          </LocalFileReferenceLink>
+        );
+      }
+      if (!href) {
+        return <button
+          type="button"
+          className="markdown-link-error"
+          onClick={() => void showUiError(
+            language === 'zh' ? '无法打开链接' : 'Unable to open link',
+            language === 'zh' ? '链接地址为空或使用了不支持的协议。' : 'The link is empty or uses an unsupported protocol.',
+          )}
+        >{children}</button>;
+      }
+      return (
+        <a
+          {...props}
+          href={href}
+          onClick={(event) => {
+            if (href.startsWith('#')) {
+              return;
+            }
+            event.preventDefault();
+            openInspector(href, href);
+          }}
+        >
+          {children}
+        </a>
+      );
+    },
+    img: ({ src, alt, ...props }) => {
+      const { workspaceRoot, pathAliases, language } = useContext(MarkdownRenderContext);
+      const presentedMedia = useContext(PresentedMediaContext);
+      const finalAnswerMedia = useContext(FinalAnswerMediaContext);
+      if (src && parseFileMemoReference(src)) return <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>;
+      const reference = markdownLocalFileReference(src, workspaceRoot);
+      const resolvedPath = reference
+        ? remapProjectPath(reference.path, pathAliases)
+        : '';
+      const resolvedSource = reference ? fileUrl(resolvedPath) : src;
+      const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
+      if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
+      if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
+        return <video src={resolvedSource} controls playsInline preload="metadata" aria-label={alt || undefined}
+          onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
+      }
+      if (finalAnswerMedia && isAudioPath(resolvedPath || src || '')) {
+        return <audio src={resolvedSource} controls preload="metadata" aria-label={alt || undefined}
+          onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
+      }
+      return (
+        <img
+          {...props}
+          src={resolvedSource}
+          alt={alt ?? ''}
+          onContextMenu={event => openFileContextMenu(event, resolvedPath, { image: true, language })}
+          onClick={reference
+            ? () => openInspector(resolvedPath, reference.label)
+            : undefined}
+        />
+      );
+    },
+    code: ({ children, className, ...props }) => {
+      const { workspaceRoot, pathAliases } = useContext(MarkdownRenderContext);
+      const richFileReferences = useContext(RichFileReferencesContext);
+      const text = reactNodeText(children).trim();
+      const reference = richFileReferences && !className
+        ? localFileReference(text, workspaceRoot)
+        : null;
+      if (reference) {
+        return (
+          <LocalFileReferenceLink
+            path={remapProjectPath(reference.path, pathAliases)}
+            unavailableLabel={text}
+          >
+            {reference.label}
+          </LocalFileReferenceLink>
+        );
+      }
+      return <code {...props} className={className}>{children}</code>;
+    },
+    pre: ({ children, ...props }) => {
+      const { language } = useContext(MarkdownRenderContext);
+      return <MarkdownCodeBlock {...props} language={language}>{children}</MarkdownCodeBlock>;
+    },
+    h1: ({ children, className, ...props }) => {
+      const conclusionHeading = /^(?:结论|conclusion)\s*[:：]/i.test(
+        reactNodeText(children).trim(),
+      );
+      return (
+        <h1
+          {...props}
+          className={[
+            className,
+            conclusionHeading ? 'markdown-conclusion-heading' : '',
+          ].filter(Boolean).join(' ') || undefined}
+        >
+          {children}
+        </h1>
+      );
+    },
+    table: ({ children, ...props }) => (
+      <div className="markdown-table-scroll">
+        <table {...props}>{children}</table>
+      </div>
+    ),
+  };
+
   function MarkdownRenderer({
     content,
     workspaceRoot,
     pathAliases,
     language,
-  }: {
-    content: string;
-    workspaceRoot: string;
-    pathAliases: ProjectPathAlias[];
-    language: AppLanguage;
-  }) {
-    const presentedMedia = useContext(PresentedMediaContext);
-    const finalAnswerMedia = useContext(FinalAnswerMediaContext);
+  }: MarkdownRenderSettings & { content: string }) {
+    const richFileReferences = useContext(RichFileReferencesContext);
+    const settings = useMemo(() => ({ workspaceRoot, pathAliases, language }), [workspaceRoot, pathAliases, language]);
+    const remarkPlugins = useMemo(() => {
+      const plugins: NonNullable<MarkdownOptions['remarkPlugins']> = [remarkGfm, remarkAutolinkBoundaries];
+      if (richFileReferences) plugins.push([remarkLocalFileReferences, { workspaceRoot }]);
+      return plugins;
+    }, [workspaceRoot, richFileReferences]);
+    const urlTransform = useCallback((url: string) => {
+      if (parsePromptReference(url)) return url;
+      if (parseFileMemoReference(url)) return url;
+      const reference = markdownLocalFileReference(url, workspaceRoot);
+      return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
+    }, [workspaceRoot]);
     return (
-    <ReactMarkdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkAutolinkBoundaries,
-        [remarkLocalFileReferences, { workspaceRoot }],
-      ]}
-      urlTransform={(url) => {
-        if (parseFileMemoReference(url)) return url;
-        const reference = markdownLocalFileReference(url, workspaceRoot);
-        return reference ? localFileReferenceHref(reference.path) : defaultUrlTransform(url) || undefined;
-      }}
-      components={{
-        a: ({ href, children, ...props }) => {
-          if (href && parseFileMemoReference(href)) return <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>;
-          const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
-          if (localPath) {
-            const pluginReference = pluginReferenceFromLink(reactNodeText(children), localPath);
-            if (pluginReference) return <PluginReferenceLink reference={pluginReference} />;
-            return (
-              <LocalFileReferenceLink
-                path={remapProjectPath(localPath, pathAliases)}
-                unavailableLabel={children}
-              >
-                {children}
-              </LocalFileReferenceLink>
-            );
-          }
-          if (!href) {
-            return <button
-              type="button"
-              className="markdown-link-error"
-              onClick={() => void showUiError(
-                language === 'zh' ? '无法打开链接' : 'Unable to open link',
-                language === 'zh' ? '链接地址为空或使用了不支持的协议。' : 'The link is empty or uses an unsupported protocol.',
-              )}
-            >{children}</button>;
-          }
-          return (
-            <a
-              {...props}
-              href={href}
-              onClick={(event) => {
-                if (href.startsWith('#')) {
-                  return;
-                }
-                event.preventDefault();
-                openInspector(href, href);
-              }}
-            >
-              {children}
-            </a>
-          );
-        },
-        img: ({ src, alt, ...props }) => {
-          if (src && parseFileMemoReference(src)) return <FileMemoReference reference={src} inline language={language}>{alt}</FileMemoReference>;
-          const reference = markdownLocalFileReference(src, workspaceRoot);
-          const resolvedPath = reference
-            ? remapProjectPath(reference.path, pathAliases)
-            : '';
-          const resolvedSource = reference ? fileUrl(resolvedPath) : src;
-          const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
-          if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
-          if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
-            return <video src={resolvedSource} controls playsInline preload="metadata" aria-label={alt || undefined}
-              onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
-          }
-          if (finalAnswerMedia && isAudioPath(resolvedPath || src || '')) {
-            return <audio src={resolvedSource} controls preload="metadata" aria-label={alt || undefined}
-              onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
-          }
-          return (
-            <img
-              {...props}
-              src={resolvedSource}
-              alt={alt ?? ''}
-              onContextMenu={event => openFileContextMenu(event, resolvedPath, { image: true, language })}
-              onClick={reference
-                ? () => openInspector(resolvedPath, reference.label)
-                : undefined}
-            />
-          );
-        },
-        code: ({ children, className, ...props }) => {
-          const text = reactNodeText(children).trim();
-          const reference = !className
-            ? localFileReference(text, workspaceRoot)
-            : null;
-          if (reference) {
-            return (
-              <LocalFileReferenceLink
-                path={remapProjectPath(reference.path, pathAliases)}
-                unavailableLabel={text}
-              >
-                {reference.label}
-              </LocalFileReferenceLink>
-            );
-          }
-          return <code {...props} className={className}>{children}</code>;
-        },
-        pre: ({ children, ...props }) => (
-          <MarkdownCodeBlock {...props} language={language}>{children}</MarkdownCodeBlock>
-        ),
-        h1: ({ children, className, ...props }) => {
-          const conclusionHeading = /^(?:结论|conclusion)\s*[:：]/i.test(
-            reactNodeText(children).trim(),
-          );
-          return (
-            <h1
-              {...props}
-              className={[
-                className,
-                conclusionHeading ? 'markdown-conclusion-heading' : '',
-              ].filter(Boolean).join(' ') || undefined}
-            >
-              {children}
-            </h1>
-          );
-        },
-        table: ({ children, ...props }) => (
-          <div className="markdown-table-scroll">
-            <table {...props}>{children}</table>
-          </div>
-        ),
-      }}
-    >
-      {normalizeMarkdownContentForDisplay(content)}
-    </ReactMarkdown>
+      <MarkdownRenderContext.Provider value={settings}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          urlTransform={urlTransform}
+          components={components}
+        >
+          {normalizeMarkdownContentForDisplay(content)}
+        </ReactMarkdown>
+      </MarkdownRenderContext.Provider>
     );
   }
 
@@ -466,11 +500,11 @@ const LazyMarkdownContent = lazy(async () => {
 });
 
 const FileReferenceWorkspaceContext = createContext('');
-const FileReferencePathAliasesContext = createContext<ProjectPathAlias[]>([]);
+const FileReferencePathAliasesContext = createContext<ProjectPathAlias[]>(noFilePathAliases);
 
 export function MessageFileReferenceScope({
   workspaceRoot,
-  pathAliases = [],
+  pathAliases = noFilePathAliases,
   children,
 }: {
   workspaceRoot?: string;
@@ -1089,7 +1123,11 @@ function MessageBubbleView({
       )}
     </>
   );
-  const assistantBody = assistantBodyContent;
+  const assistantBody = (
+    <RichFileReferencesContext.Provider value={false}>
+      {assistantBodyContent}
+    </RichFileReferencesContext.Provider>
+  );
   const finalAnswerBody = (
     <FinalAnswerMediaContext.Provider value={true}>
       <PresentedMediaContext.Provider value={noPresentedMedia}>
@@ -2984,7 +3022,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   const pathAliases = useContext(FileReferencePathAliasesContext);
   return (
     <div className="markdown-content">
-      <Suspense fallback={<p className="markdown-fallback"><PluginPromptFallback content={content} /></p>}>
+      <Suspense fallback={<p className="markdown-fallback"><PromptReferenceFallback content={content} /></p>}>
         <LazyMarkdownContent
           content={content}
           workspaceRoot={workspaceRoot}

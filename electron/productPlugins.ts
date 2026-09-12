@@ -1,3 +1,4 @@
+import { resolveRuntimePluginPackage, readRuntimePluginBundle } from './runtimePluginPackage';
 import { cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { resolvePluginManifest, pluginRootForManifest, type ResolvedPluginManifest } from './pluginManifest';
@@ -89,7 +90,7 @@ export async function loadEnabledProductPluginSkillRootEntries(
   return [...result.values()];
 }
 
-async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string) {
+export async function loadEnabledProductPlugins(roots: PluginRoot[], configPath: string) {
   const catalog = await loadProductPluginCatalog(roots);
   let snapshot: Record<string, unknown> | null = null;
   try {
@@ -125,6 +126,28 @@ export async function loadEnabledProductPluginExtensions(roots: PluginRoot[], co
     return { ...value, agents: value.agents.map(agent => ({ ...agent, trusted: Boolean(agent.definitionHash && trusted.has(agent.definitionHash)) })), hooks: value.hooks.map(hook => ({ ...hook, trusted: Boolean(hook.definitionHash && trusted.has(hook.definitionHash)) })) };
   }));
   return { hooks: extensions.flatMap(value => value.hooks), agents: extensions.flatMap(value => value.agents), commands: extensions.flatMap(value => value.commands), skills: extensions.flatMap(value => value.skills) };
+}
+
+export async function loadEnabledProductRuntimeExtensions(roots: PluginRoot[], configPath: string) {
+  return Promise.all((await loadEnabledProductPlugins(roots, configPath)).filter(plugin => plugin.runtimeExtensions?.length).map(async plugin => {
+    const resolved = await resolvePluginManifest(pluginRootForManifest(plugin.manifestPath));
+    const extension = await resolveRuntimePluginPackage(resolved.root, resolved.manifest);
+    if (!extension) throw new Error(`Plugin ${plugin.id} lost its Runtime declaration. Refresh the catalog.`);
+    return { ...extension, ...await readRuntimePluginBundle(extension.entry) };
+  }));
+}
+
+export async function loadEnabledProductRuntimeRenderers(roots: PluginRoot[], configPath: string) {
+  const result = [];
+  for (const plugin of await loadEnabledProductPlugins(roots, configPath)) {
+    if (!plugin.runtimeExtensions?.length) continue;
+    try {
+      const resolved = await resolvePluginManifest(pluginRootForManifest(plugin.manifestPath));
+      const extension = await resolveRuntimePluginPackage(resolved.root, resolved.manifest);
+      if (extension?.renderer) result.push({ id: plugin.id, name: plugin.name, ...await readRuntimePluginBundle(extension.renderer) });
+    } catch (error) { result.push({ id: plugin.id, name: plugin.name, error: error instanceof Error ? error.message : String(error) }); }
+  }
+  return result;
 }
 
 /** External plugin MCP servers use their own namespace and explicit permission. */
@@ -285,14 +308,17 @@ async function decodeManifest(input: {
     installation,
     authentication: resolved.authentication,
     skillRoots,
+    runtimeExtensions: (await resolveRuntimePluginPackage(pluginRoot, manifest)) ? [id] : [],
     components: await componentsFromManifest(resolved),
   };
 }
 
 async function componentsFromManifest(
-  { manifest, skillRoots, extensions, registeredApps }: ResolvedPluginManifest,
+  { manifest, root, skillRoots, extensions, registeredApps }: ResolvedPluginManifest,
 ): Promise<CardbushPluginComponent[]> {
   const result: CardbushPluginComponent[] = [];
+  const runtime = await resolveRuntimePluginPackage(root, manifest);
+  if (runtime) result.push({ kind: 'runtime', id: runtime.id, name: runtime.id, description: 'Installed CardBush native extension', runtime: { settings: Boolean(runtime.renderer) } });
   for (const command of extensions.commands) result.push({ kind: 'command', id: command.id, name: `/${command.id}`, description: command.description });
   for (const agent of extensions.agents) result.push({ kind: 'agent', id: agent.id, name: agent.name, description: agent.description,
     ...(agent.mcpServers?.some(server => typeof server !== 'string') ? { hook: { definitionHash: agent.definitionHash!, definition: { agent: agent.id, mcpServers: agent.mcpServers }, executable: true } } : {}) });

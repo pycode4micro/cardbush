@@ -189,6 +189,12 @@ const desktopApi = {
   },
   writeDebugLog: (scope: string, payload: unknown) =>
     ipcRenderer.invoke('debug:append-log', scope, payload) as Promise<string>,
+  windowScrollDiagnosticConfig: () => ipcRenderer.invoke('debug:window-scroll-config'),
+  onWindowScrollDiagnosticEvent: (callback: (event: Record<string, unknown>) => void) => {
+    const listener = (_event: unknown, value: Record<string, unknown>) => callback(value);
+    ipcRenderer.on('debug:window-scroll-event', listener);
+    return () => ipcRenderer.removeListener('debug:window-scroll-event', listener);
+  },
   showErrorDialog: (error: { title: string; message: string }) =>
     ipcRenderer.invoke('app:show-error', error) as Promise<void>,
   restoreEditorFocus: (state: { documentFocused: boolean }) =>
@@ -201,8 +207,13 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
-  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk') =>
-    ipcRenderer.invoke('appearance:set-window-theme', theme) as Promise<void>,
+  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk', options?: import('./windowAppearance').WindowAppearanceOptions) =>
+    ipcRenderer.invoke('appearance:set-window-theme', theme, options) as Promise<import('./windowAppearance').WindowAppearanceState | undefined>,
+  onWindowAppearanceChanged: (callback: (state: import('./windowAppearance').WindowAppearanceState) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: import('./windowAppearance').WindowAppearanceState) => callback(state);
+    ipcRenderer.on('appearance:window-changed', listener);
+    return () => ipcRenderer.removeListener('appearance:window-changed', listener);
+  },
   productHostCommand: (command: unknown) =>
     ipcRenderer.invoke('cardbush-product-host:command', command) as Promise<unknown>,
   setProxy: (proxy: {
@@ -289,6 +300,8 @@ const desktopApi = {
       path: string;
       scope: 'project' | 'global';
     }>,
+  runtimePluginRenderers: () => ipcRenderer.invoke('plugins:runtime-renderers'),
+  runtimePluginFile: (input: { pluginId: string; action: 'import' | 'export' | 'reveal'; text?: string; name?: string; yaml?: string }) => ipcRenderer.invoke('plugins:extension-file', input),
   gitInfo: (rootPath: string) =>
     ipcRenderer.invoke('project:git-info', rootPath) as Promise<{
       branch: string;

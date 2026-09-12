@@ -10,6 +10,24 @@ export const BUSH_CONTEXT_SNAPSHOT_PROTOCOL = "bush.context_snapshot.v1" as cons
 export const BUSH_SESSION_TURN_REQUEST_PROTOCOL =
   "bush.session_turn_request.v1" as const;
 export const GET_RUNTIME_SESSION_COMMAND = "runtime.get_session" as const;
+export const GET_RUNTIME_USER_MESSAGE_COMMAND = "runtime.get_user_message" as const;
+export const LIST_RUNTIME_USER_PROMPTS_COMMAND = "runtime.list_user_prompts" as const;
+/** Small, read-only projection of authored history for local discovery UIs. */
+export const runtimeUserPromptsRequestSchema = z.object({
+  since: z.string().datetime(),
+  until: z.string().datetime(),
+  limit: z.number().int().min(1).max(2000).default(1200),
+}).refine(value => Date.parse(value.since) <= Date.parse(value.until), 'Invalid history interval');
+export const runtimeUserPromptSchema = z.object({
+  sessionId: z.string().min(1),
+  messageId: z.string().min(1),
+  createdAt: z.string().min(1),
+  content: z.string().max(4000),
+  truncated: z.boolean(),
+});
+export type RuntimeUserPromptsRequest = z.infer<typeof runtimeUserPromptsRequestSchema>;
+export type RuntimeUserPrompt = z.infer<typeof runtimeUserPromptSchema>;
+export const runtimeUserMessageIdentitySchema = z.object({ sessionId: z.string().min(1), turnId: z.string().min(1), messageId: z.string().min(1) });
 export const CREATE_RUNTIME_SESSION_COMMAND = "runtime.create_session" as const;
 export const DELETE_RUNTIME_SESSION_COMMAND = "runtime.delete_session" as const;
 export const LIST_RUNTIME_SESSIONS_COMMAND = "runtime.list_sessions" as const;

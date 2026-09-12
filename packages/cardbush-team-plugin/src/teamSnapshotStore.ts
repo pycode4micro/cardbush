@@ -9,6 +9,7 @@ import {
   type TeamSnapshotResult,
 } from "@cardbush/bush-protocol";
 
+/** Effective Team configuration belongs to the optional Team plugin. */
 export class TeamSnapshotStore {
   readonly #canApply: () => boolean;
   #snapshot?: TeamSnapshot;

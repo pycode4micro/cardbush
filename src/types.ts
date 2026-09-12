@@ -407,11 +407,12 @@ export interface CardbushAppPlugin {
   installation: 'AVAILABLE' | 'INSTALLED_BY_DEFAULT';
   authentication?: 'ON_INSTALL' | 'ON_USE';
   components: Array<{
-    kind: 'skill' | 'mcp' | 'app' | 'agent' | 'hook' | 'command';
+    kind: 'skill' | 'mcp' | 'app' | 'agent' | 'hook' | 'command' | 'runtime';
     id: string;
     name: string;
     description: string;
     hook?: { definitionHash: string; definition: Record<string, unknown>; executable: boolean };
+    runtime?: { settings: boolean };
     mcp?: { transport?: string; url?: string; registeredAppId?: string; required?: boolean };
   }>;
   installed: boolean;
@@ -541,6 +542,16 @@ export interface AssistantRevision {
   assistantSegmentIndex?: number;
 }
 
+export interface PluginCommandSummary {
+  id: string;
+  pluginId?: string;
+  name?: string;
+  path?: string;
+  description: string;
+  argumentHint: string;
+  kind?: 'command' | 'skill';
+}
+
 export interface ChatMessage {
   id: string;
   /** View projection identity only; never replaces a Runtime message ID. */
@@ -570,6 +581,7 @@ export interface ChatMessage {
 export interface StreamStart {
   sessionId: string;
   turnId: string;
+  userMessageId?: string;
   messageId?: string;
   assistantSegmentIndex?: number;
   createdAt?: string;

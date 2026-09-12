@@ -15,6 +15,13 @@ import {
   GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND,
   GET_RUNTIME_SUBAGENT_TASK_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
+  GET_RUNTIME_USER_MESSAGE_COMMAND,
+  LIST_RUNTIME_USER_PROMPTS_COMMAND,
+  runtimeUserPromptsRequestSchema,
+  runtimeUserPromptSchema,
+  type RuntimeUserPromptsRequest,
+  runtimeUserMessageIdentitySchema,
+  runtimeSessionInputMessageSchema,
   LIST_RUNTIME_SESSIONS_COMMAND,
   LIST_RUNTIME_TURN_CONTEXT_COMPACTIONS_COMMAND,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
@@ -110,6 +117,20 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
       { kind: GET_RUNTIME_CAPABILITIES_COMMAND, payload: {} },
       decodeRuntimeCapabilities,
       signal,
+    );
+  }
+
+  getUserMessage(sessionId: string, turnId: string, messageId: string, signal?: AbortSignal) {
+    return this.command(
+      { kind: GET_RUNTIME_USER_MESSAGE_COMMAND, payload: runtimeUserMessageIdentitySchema.parse({ sessionId, turnId, messageId }) },
+      input => input == null ? null : runtimeSessionInputMessageSchema.parse(input), signal,
+    );
+  }
+
+  listUserPrompts(input: RuntimeUserPromptsRequest, signal?: AbortSignal) {
+    return this.command(
+      { kind: LIST_RUNTIME_USER_PROMPTS_COMMAND, payload: runtimeUserPromptsRequestSchema.parse(input) },
+      value => runtimeUserPromptSchema.array().parse(value), signal,
     );
   }
 

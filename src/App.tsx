@@ -1,5 +1,6 @@
 import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
   ArrowRight,
@@ -53,6 +54,7 @@ import {
 import { useSoftPanelPresence } from './hooks/useSoftPanelPresence';
 import { useInspectorTabStrip } from './hooks/useInspectorTabStrip';
 import { useInspectorTabs } from './hooks/useInspectorTabs';
+import { inspectorBrowserReferences } from './features/composer/ComposerReferenceContext';
 import { workSummaryInspectorTab, type InspectorTab, type InspectorResourceTab, type InspectorReviewTab } from './features/inspector/inspectorTabs';
 import { useOutsideDismiss } from './hooks/useOutsideDismiss';
 import { createPortal } from 'react-dom';
@@ -80,17 +82,17 @@ import {
 import {
   ChatSidebar,
   ConversationChangeDialog,
-  TeamSidebar,
   type ProjectAction,
 } from './features/sidebar';
-import { loadTeamWorkspace, useTeamWorkspaceState } from './features/team/teamWorkspaceStore';
+import { refreshRuntimeRendererPlugins, useRuntimeDelegationWorkspace } from './plugins/runtimeExtensions';
+import { RuntimeDelegationSurface } from './plugins/runtimeWorkspaces';
 import { COPY_FEEDBACK_EVENT } from './features/messageFeedback';
 import { basename, fileUrl, samePath, stripWrappingQuotes } from './shared/localPaths';
 import {
   themeAccentColor,
-  themeBackgroundColor,
   themeClassNames,
 } from './features/appearance/themeRuntime';
+import { useWindowAppearance, readWindowMaterialPreference, WINDOW_MATERIAL_STORAGE_KEY, type WindowMaterialPreference } from './features/appearance/windowAppearance';
 import {
   importedThemeBaseMode,
   importedThemeStyleVariables,
@@ -292,6 +294,11 @@ function CardbushApp() {
   );
   const [themePreference, setThemePreferenceState] =
     useState<ThemePreference>(() => readInitialThemePreference());
+  const [windowMaterial, setWindowMaterialState] = useState(readWindowMaterialPreference);
+  const setWindowMaterial = useCallback((value: WindowMaterialPreference) => {
+    localStorage.setItem(WINDOW_MATERIAL_STORAGE_KEY, value);
+    setWindowMaterialState(value);
+  }, []);
   const [systemDark, setSystemDark] = useState(() => systemPrefersDark());
   const [languageMode, setLanguageModeState] = useState<AppLanguageMode>(() =>
     readInitialLanguageMode(),
@@ -368,6 +375,10 @@ function CardbushApp() {
   }, []);
   const [backendCapabilities, setBackendCapabilities] =
     useState<BackendCapabilities>(defaultBackendCapabilities);
+  useCapabilityCatalogRefresh(useCallback(async isCurrent => {
+    const capabilities = await fetchBackendCapabilities();
+    if (isCurrent()) setBackendCapabilities(capabilities);
+  }, []));
   const [modelConfigSyncReady, setModelConfigSyncReady] = useState(false);
   const [backendDefaultModelName, setBackendDefaultModelName] = useState('');
   const lastSavedModelConfigSignatureRef = useRef('');
@@ -387,14 +398,7 @@ function CardbushApp() {
   const shadowAccentColor =
     importedThemeVariables['--accent'] ?? themeAccentColor(theme);
 
-  const applyThemeBackground = useCallback(() => {
-    applyDocumentBackdrop(theme);
-  }, [theme]);
-
-  useEffect(() => {
-    applyThemeBackground();
-    void window.cardbushDesktop?.setWindowTheme?.(theme).catch(() => undefined);
-  }, [applyThemeBackground, theme]);
+  useWindowAppearance(theme, themePreference, windowMaterial);
 
   useEffect(() => {
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -504,23 +508,6 @@ function CardbushApp() {
     };
   }, []);
 
-  useEffect(() => {
-    const refreshBackground = () => applyThemeBackground();
-    const refreshVisibleBackground = () => {
-      if (document.visibilityState === 'visible') {
-        applyThemeBackground();
-      }
-    };
-    window.addEventListener('focus', refreshBackground);
-    window.addEventListener('pageshow', refreshBackground);
-    document.addEventListener('visibilitychange', refreshVisibleBackground);
-    return () => {
-      window.removeEventListener('focus', refreshBackground);
-      window.removeEventListener('pageshow', refreshBackground);
-      document.removeEventListener('visibilitychange', refreshVisibleBackground);
-    };
-  }, [applyThemeBackground]);
-
   const availableModels = useMemo(
     () => effectiveModels(appSettings.managedModelConfigs),
     [appSettings.managedModelConfigs],
@@ -540,18 +527,21 @@ function CardbushApp() {
   }, [projectItems, recentProjectDir]);
   const fallbackProjectDir = fallbackProject?.rootPath.trim() ?? '';
   const fallbackProjectId = fallbackProject?.id.trim() ?? '';
-  const teamWorkspace = useTeamWorkspaceState();
+  const teamWorkspace = useRuntimeDelegationWorkspace();
   useEffect(() => {
-    void loadTeamWorkspace().catch(() => undefined);
-  }, []);
+    if (backendCapabilities.teamMode) void refreshRuntimeRendererPlugins().catch(() => undefined);
+    else if (section === 'team') setSection('chat');
+  }, [backendCapabilities.teamMode, section]);
   const chat = useCardbushChat(appSettings.managedModelConfigs, availableModels, {
     runtimeReady: runtimeStartup.phase === 'ready',
     language,
     disabledSkillNames,
     standardImageInputEnabled: visualInputEnabled,
     browserPrivacyMode: browserPrivacyModeEnabled,
-    selectedTeamId: teamWorkspace.selectedTeamId,
-    selectedTeamName: teamWorkspace.teams.find((team) => team.id === teamWorkspace.selectedTeamId)?.name,
+    teamModeEnabled: backendCapabilities.teamMode && Boolean(teamWorkspace.selectedId),
+    selectedTeamId: backendCapabilities.teamMode ? teamWorkspace.selectedId : '',
+    selectedTeamName: teamWorkspace.choices.find((team) => team.id === teamWorkspace.selectedId)?.name,
+    selectedTeamInstructions: teamWorkspace.instructions,
     terminalRuntime: appSettings.terminal.runtime,
     reasoningTraceVisible,
     interactiveRequestsAvailable: backendCapabilities.interactiveRequests,
@@ -612,7 +602,7 @@ function CardbushApp() {
       persistDisabledSkillNames(next);
     }
     if (categories.includes('agent_profiles') || categories.includes('teams')) {
-      await loadTeamWorkspace(true);
+      await refreshRuntimeRendererPlugins();
     }
   }, [language]);
   useEffect(() => {
@@ -732,6 +722,9 @@ function CardbushApp() {
   const [inspectorNavigationByTarget, setInspectorNavigationByTarget] = useState<
     Record<string, InspectorNavigationState>
   >({});
+  const composerBrowserTabs = useMemo(() => inspectorBrowserReferences(inspectorTabs, inspectorNavigationByTarget), [inspectorTabs, inspectorNavigationByTarget]);
+  const composerBrowserTabsRef = useRef(composerBrowserTabs);
+  composerBrowserTabsRef.current = composerBrowserTabs;
   const inspectorTabContextTarget = inspectorTabContextMenu
     ? inspectorTabs.find((tab) => tab.id === inspectorTabContextMenu.tabId) ?? null
     : null;
@@ -755,6 +748,15 @@ function CardbushApp() {
   const openInspectorTarget = useCallback((detail: InspectorOpenDetail) => {
     const target = stripWrappingQuotes(detail.target.trim());
     if (!target) return;
+    const sourceTab = detail.sourceTabId ? composerBrowserTabsRef.current.find(tab => tab.tabId === detail.sourceTabId && tab.url === target) : undefined;
+    if (sourceTab) {
+      selectInspectorTab(sourceTab.tabId);
+      setInspectorOpen(true);
+      setInspectorAddMenuOpen(false);
+      setInspectorTabsMenuOpen(false);
+      setInspectorTabContextMenu(null);
+      return;
+    }
     const normalizedDetail: InspectorOpenDetail = {
       target,
       ...(detail.title?.trim() ? { title: detail.title.trim() } : {}),
@@ -770,7 +772,7 @@ function CardbushApp() {
     setInspectorAddMenuOpen(false);
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
-  }, [openInspectorTab]);
+  }, [openInspectorTab, selectInspectorTab]);
   const openChangeReviewInspector = useCallback((
     conversationId: string,
     initialFilePath = '',
@@ -1505,12 +1507,31 @@ function CardbushApp() {
     ],
   );
 
+  const activateConversationScope = useCallback((scope: ConversationScope) => {
+    const target = firstConversationInScope(chat.preparedConversations, scope)
+      ?? firstConversationInScope(chat.conversations, scope);
+    if (target) {
+      chat.openConversation(target.id);
+    } else if (scope.mode === 'task') {
+      chat.prepareConversation();
+    } else if (scope.projectDir) {
+      chat.prepareConversation(scope.projectDir, undefined, scope.projectId);
+    } else {
+      chat.clearConversationSelection();
+    }
+  }, [chat.preparedConversations, chat.conversations, chat.openConversation,
+    chat.prepareConversation, chat.clearConversationSelection]);
+
   const changeOnlyTalkMode = useCallback((enabled: boolean) => {
+    // Resolve the destination in this event. Clearing first made the welcome
+    // composer mount once for __new__ and again for the selected scope.
     setOnlyTalkMode(enabled);
     window.localStorage.setItem(onlyTalkModeStorageKey, String(enabled));
     setSection('chat');
-    chat.clearConversationSelection();
-  }, [chat.clearConversationSelection]);
+    activateConversationScope(enabled ? { mode: 'task' } : {
+      mode: 'project', projectId: fallbackProjectId || undefined, projectDir: fallbackProjectDir,
+    });
+  }, [activateConversationScope, fallbackProjectId, fallbackProjectDir]);
 
   const openPluginPrompt = useCallback((prompt: string) => {
     const projectDir = onlyTalkMode ? undefined : activeConversationProjectDir || fallbackProjectDir || undefined;
@@ -1579,37 +1600,12 @@ function CardbushApp() {
       ? conversationMatchesScope(chat.activeConversation, { mode: 'task' })
       : Boolean(chat.activeConversation && !isOnlyTalkConversation(chat.activeConversation));
     if (activeMatchesMode) return;
-    const preparedConversation = firstConversationInScope(
-      chat.preparedConversations,
-      scope,
-    );
-    if (preparedConversation) {
-      chat.openConversation(preparedConversation.id);
-      return;
-    }
-    const recentConversation = firstConversationInScope(chat.conversations, scope);
-    if (recentConversation) {
-      chat.openConversation(recentConversation.id);
-      return;
-    }
-    if (scope.mode === 'task') {
-      chat.prepareConversation();
-      return;
-    }
-    if (scope.projectDir) {
-      chat.prepareConversation(scope.projectDir, undefined, scope.projectId);
-      return;
-    }
-    if (chat.activeConversationId) chat.clearConversationSelection();
+    activateConversationScope(scope);
   }, [
+    activateConversationScope,
     chat.activeConversation,
     chat.activeConversationId,
-    chat.clearConversationSelection,
-    chat.conversations,
     chat.loading,
-    chat.openConversation,
-    chat.preparedConversations,
-    chat.prepareConversation,
     fallbackProjectDir,
     fallbackProjectId,
     onlyTalkMode,
@@ -2270,6 +2266,7 @@ function CardbushApp() {
         onOpenSkills={() => {
           openSettings('mcp', 'skills');
         }}
+        teamAvailable={backendCapabilities.teamMode}
         onOpenTeam={() => {
           setSettingsOpen(false);
           setSection('team');
@@ -2282,6 +2279,8 @@ function CardbushApp() {
             active={settingsVisible}
             onReady={markSettingsReady}
             themePreference={themePreference}
+            windowMaterial={windowMaterial}
+            onWindowMaterialChange={setWindowMaterial}
             language={language}
             languageMode={languageMode}
             systemLanguage={systemLanguage}
@@ -2320,7 +2319,7 @@ function CardbushApp() {
           {sidebarPresence.mounted && (
             <>
               {section === 'team' ? (
-                <TeamSidebar
+                <RuntimeDelegationSurface slot="sidebar"
                   language={language}
                   onBack={() => setSection('chat')}
                   onOpenSettings={() => openSettings('profile')}
@@ -2364,6 +2363,7 @@ function CardbushApp() {
           <section className="main-stage">
             {section === 'chat' ? (
               <ChatPanel
+                browserTabs={composerBrowserTabs}
                 language={language}
                 theme={theme}
                 title={chat.activeConversation?.title ?? 'cardbush'}
@@ -2386,6 +2386,7 @@ function CardbushApp() {
                 onWelcomeProjectChange={changeWelcomeProject}
                 messages={chat.activeMessages}
                 activeGoal={chat.activeGoal}
+                teamAvailable={backendCapabilities.teamMode}
                 goalAvailable={chat.goalAvailable}
                 goalCancelling={chat.activeGoalCancelling}
                 goalWaiting={chat.activeGoalWaiting}
@@ -3353,35 +3354,6 @@ function resolveTheme(
   return prefersDark ? 'dark' : 'bright';
 }
 
-function applyDocumentBackdrop(theme: ThemeMode) {
-  const background = themeBackgroundColor(theme);
-  const root = document.getElementById('root');
-  const documentStyle = document.documentElement.style;
-  if (document.documentElement.dataset.startTheme !== theme) {
-    document.documentElement.dataset.startTheme = theme;
-  }
-  if (documentStyle.getPropertyValue('--cardbush-window-bg') !== background) {
-    documentStyle.setProperty('--cardbush-window-bg', background);
-  }
-  if (document.documentElement.style.backgroundColor !== background) {
-    document.documentElement.style.backgroundColor = background;
-  }
-  if (document.body.style.backgroundColor !== background) {
-    document.body.style.backgroundColor = background;
-  }
-  if (document.documentElement.dataset.startCustomBackground) {
-    delete document.documentElement.dataset.startCustomBackground;
-  }
-  if (documentStyle.getPropertyValue('--cardbush-custom-background-image')) {
-    documentStyle.removeProperty('--cardbush-custom-background-image');
-  }
-  if (root?.style.background !== background) {
-    root?.style.setProperty('background', background);
-  }
-  window.localStorage.removeItem('cardbush_background_image_path');
-  window.localStorage.removeItem('cardbush_shadow_accent_color');
-}
-
 function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) {
   return mode === 'system' ? systemLanguage : mode;
 }
@@ -3788,6 +3760,7 @@ function WindowFrame({
   onOpenPluginSettings,
   onOpenSkills,
   onOpenTeam,
+  teamAvailable,
 }: {
   language: AppLanguage;
   sidebarCollapsed: boolean;
@@ -3796,6 +3769,7 @@ function WindowFrame({
   onOpenPluginSettings: () => void;
   onOpenSkills: () => void;
   onOpenTeam: () => void;
+  teamAvailable: boolean;
 }) {
   const [maximized, setMaximized] = useState(false);
   const [openMenu, setOpenMenu] = useState<'plugins' | 'beta' | null>(null);
@@ -3869,7 +3843,7 @@ function WindowFrame({
             onClick={() => runMenuAction(onOpenSkills)}
           />
         </WindowFrameMenu>
-        <WindowFrameMenu
+        {teamAvailable && <WindowFrameMenu
           label="Beta"
           open={openMenu === 'beta'}
           onToggle={() => setOpenMenu((current) => current === 'beta' ? null : 'beta')}
@@ -3879,7 +3853,7 @@ function WindowFrame({
             label="Team"
             onClick={() => runMenuAction(onOpenTeam)}
           />
-        </WindowFrameMenu>
+        </WindowFrameMenu>}
       </div>
       <div className="window-spacer window-drag" aria-hidden="true" />
       <WindowButton
@@ -4045,11 +4019,8 @@ function FeaturePanel({
   onCreateConversation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
-  const teamWorkspace = useTeamWorkspaceState();
-  const activeTeam = teamWorkspace.teams.find((team) => team.id === teamWorkspace.activeTeamId);
-  const label = section === 'team'
-    ? activeTeam?.name.trim() || sectionLabels[section][language]
-    : sectionLabels[section][language];
+  const teamWorkspace = useRuntimeDelegationWorkspace();
+  const label = section === 'team' ? teamWorkspace.title || sectionLabels[section][language] : sectionLabels[section][language];
   return (
     <div className="feature-panel">
       <TopBar

@@ -347,7 +347,7 @@ assert.match(app, /onReorderQueuedMessage=\{onReorderQueuedMessage\}/);
 assert.match(runtimeRail, /previousQueuedMessageCountRef/);
 assert.match(runtimeRail, /setPriorityKind\('queue'\)/);
 assert.match(runtimeRail, /setRollingToKind\(priorityKind\)/);
-assert.match(app, /currentTurnChangeSummary \|\| queuedMessageCount > 0/);
+assert.match(app, /sending \|\| activeGoal \|\| queuedMessageCount > 0/);
 assert.match(app, /onShowQueue=\{\(\) => runtimeRailRef\.current\?\.showQueue\(\)\}/);
 assert.match(runtimeRail, /className=\{`runtime-screen-track \$\{reelAnimating \? 'rolling' : ''\}`\}/);
 assert.match(runtimeRail, /<RuntimeScreenLine[\s\S]*?<RuntimeScreenLine/);

@@ -10,6 +10,8 @@ import {
   type SessionEvent,
   type SessionSnapshot,
   type SessionSupersession,
+  type RuntimeUserPrompt,
+  type RuntimeUserPromptsRequest,
 } from "@cardbush/bush-protocol";
 
 export interface SessionEventPersistence {
@@ -51,6 +53,41 @@ export class SessionStore {
       .map((sessionId) => this.snapshot(sessionId))
       .filter((session): session is SessionSnapshot => session !== undefined)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  listUserPrompts(input: RuntimeUserPromptsRequest): RuntimeUserPrompt[] {
+    const since = Date.parse(input.since), until = Date.parse(input.until);
+    const identities = new Set([...this.#events.keys(), ...(this.#persistence?.listSessionIds?.() ?? [])]);
+    const prompts: RuntimeUserPrompt[] = [];
+    for (const sessionId of identities) {
+      // Read the validated journal in place; do not clone/transport assistant
+      // payloads or rebuild a second store of conversation facts.
+      const events = this.#load(sessionId);
+      let metadata: Record<string, unknown> | undefined;
+      const superseded = new Set<string>();
+      for (const event of events) {
+        if (event.kind === 'session_created' || event.kind === 'session_metadata_updated') metadata = event.payload.metadata;
+        if (event.kind === 'messages_superseded') event.payload.messageIds.forEach(id => superseded.add(id));
+        if (event.kind === 'turn_committed') event.payload.supersession?.messageIds.forEach(id => superseded.add(id));
+      }
+      if (metadata?.agentRole === 'child' || metadata?.hidden === true || metadata?.automationId || metadata?.automationRunId) continue;
+      for (const event of events) {
+        if (event.kind !== 'turn_committed') continue;
+        for (const item of event.payload.messages) {
+          const time = Date.parse(item.createdAt);
+          if (!Number.isFinite(time) || time < since || time > until || superseded.has(item.messageId)) continue;
+          if (item.message.role !== 'user' || item.message.visibility === 'internal' ||
+            (item.message.name && item.message.name !== 'goal_request')) continue;
+          const content = typeof item.metadata?.composerReferenceContent === 'string'
+            ? item.metadata.composerReferenceContent : item.message.content;
+          if (!content.trim()) continue;
+          prompts.push({ sessionId, messageId: item.messageId, createdAt: item.createdAt,
+            content: content.slice(0, 4000), truncated: content.length > 4000 });
+        }
+      }
+    }
+    return prompts.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+      a.sessionId.localeCompare(b.sessionId) || a.messageId.localeCompare(b.messageId)).slice(0, input.limit);
   }
 
   ensureSession(

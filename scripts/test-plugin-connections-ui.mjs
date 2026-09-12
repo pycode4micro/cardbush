@@ -13,10 +13,15 @@ const source = `
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
-import {Composer} from '${local('src/features/composer/Composer.tsx')}';
+import {Composer as CoreComposer} from '${local('src/features/composer/Composer.tsx')}';
+import {ComposerReferenceContext} from '${local('src/features/composer/ComposerReferenceContext.ts')}';
+import {promptReferenceMarkdown} from '${local('src/shared/promptReferences.ts')}';
+window.promptReferenceMarkdown=promptReferenceMarkdown;
+function Composer(props){const [sources,setSources]=React.useState({sessionId:'current',browserTabs:[],messages:[]});window.setFixtureSources=setSources;return <ComposerReferenceContext.Provider value={sources}><CoreComposer {...props}/></ComposerReferenceContext.Provider>}
 import {MessageBubble} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {McpUserRequests} from '${local('src/features/plugins/McpUserRequests.tsx')}';
 import {accountProviders,openAiAccountSummary} from '${local('electron/accountManager.mts')}';
+import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 import '${local('src/styles/themes/cyberpunk.css')}';
 const plugin=(id,name,component,source='bundled')=>({id,name,source,version:'1.0.0',manifestPath:'C:/Fixture Plugins/'+id+'/.codex-plugin/plugin.json',description:name+' tools',longDescription:'',category:'Tools',keywords:id==='personal.tools'?['个人工具']:[],capabilities:[],defaultPrompts:['查看当前状态并说明结果'],config:{},installed:true,enabled:true,brandColor:'#74d2f7',components:[{kind:'mcp',id:component,name,description:'MCP service'}]});

@@ -83,7 +83,7 @@ assert.match(
 );
 assert.match(
   stylesSource,
-  /\.right-inspector-resizer\s*\{[\s\S]*?left:\s*-4px;[\s\S]*?width:\s*8px;[\s\S]*?cursor:\s*ew-resize;/,
+  /\.right-inspector-resizer\s*\{[^}]*left:\s*calc\(var\(--panel-resize-hit-width\) \/ -2\);[^}]*width:\s*var\(--panel-resize-hit-width\);[^}]*cursor:\s*col-resize;/,
   'Right inspector resize hit area must align with the left sidebar resize handle',
 );
 assert.doesNotMatch(
@@ -93,22 +93,16 @@ assert.doesNotMatch(
 );
 const windowDragRule = stylesSource.match(/\.window-drag\s*\{([^}]*)\}/)?.[1] ?? '';
 const windowSpacerRule = stylesSource.match(/\.window-spacer\s*\{([^}]*)\}/)?.[1] ?? '';
-const windowSpacerHitLayerRule = stylesSource.match(
-  /\.window-spacer::before\s*\{([^}]*)\}/,
-)?.[1] ?? '';
 const noDragRule = stylesSource.match(
-  /\.no-drag,\s*button,\s*select,\s*input,\s*textarea\s*\{([^}]*)\}/,
+  /\.window-drag \.no-drag,\s*\.window-drag button,\s*\.window-drag select,\s*\.window-drag input,\s*\.window-drag textarea\s*\{([^}]*)\}/,
 )?.[1] ?? '';
 assert.match(windowDragRule, /app-region:\s*drag/);
 assert.match(windowDragRule, /-webkit-app-region:\s*drag/);
 assert.match(windowSpacerRule, /min-width:\s*48px/);
 assert.match(windowSpacerRule, /height:\s*100%/);
 assert.match(windowSpacerRule, /app-region:\s*drag/);
-assert.match(windowSpacerHitLayerRule, /content:\s*["']{2}/);
-assert.match(windowSpacerHitLayerRule, /position:\s*absolute/);
-assert.match(windowSpacerHitLayerRule, /inset:\s*0/);
-assert.match(windowSpacerHitLayerRule, /app-region:\s*drag/);
-assert.match(windowSpacerHitLayerRule, /-webkit-app-region:\s*drag/);
+assert.doesNotMatch(stylesSource, /\.window-spacer::before\s*\{/, 'No duplicate drag-region workaround is needed');
+assert.doesNotMatch(stylesSource, /\.no-drag,\s*button,/, 'Scrolling controls must not register global native drag exclusions');
 assert.match(noDragRule, /app-region:\s*no-drag/);
 assert.match(
   appSource,
@@ -116,7 +110,7 @@ assert.match(
   'The empty center title-bar area must remain an explicit native drag target',
 );
 const windowGlyphRule = stylesSource.match(/\.window-glyph\s*\{([^}]*)\}/)?.[1] ?? '';
-assert.match(stylesSource, /\.window-button\s*\{\s*width:\s*40px;[\s\S]*?height:\s*29px/);
+assert.match(stylesSource, /\.window-button\s*\{\s*width:\s*40px;[\s\S]*?height:\s*var\(--window-frame-height, 36px\)/);
 assert.match(windowGlyphRule, /width:\s*10px/);
 assert.match(windowGlyphRule, /height:\s*10px/);
 assert.match(
@@ -213,15 +207,15 @@ assert.match(
 assert.match(appSource, /cardbush_only_talk_mode/);
 assert.match(
   appSource,
-  /const changeOnlyTalkMode[\s\S]*?chat\.clearConversationSelection\(\)/,
-  'Switching chat modes without a matching conversation must show an empty draft instead of creating a session.',
+  /const changeOnlyTalkMode[\s\S]*?activateConversationScope\(enabled \? \{ mode: 'task' \}/,
+  'Switching chat modes must resolve its destination in the same event.',
 );
 const onlyTalkModeBlock = appSource.match(
-  /const changeOnlyTalkMode[\s\S]*?\}, \[chat\]\);/,
+  /const changeOnlyTalkMode[\s\S]*?\}, \[activateConversationScope, fallbackProjectId, fallbackProjectDir\]\);/,
 )?.[0] ?? '';
 assert.doesNotMatch(
   onlyTalkModeBlock,
-  /chat\.startConversation/,
+  /chat\.(?:startConversation|clearConversationSelection)/,
   'The only-talk/project toggle must never create a conversation implicitly.',
 );
 assert.match(conversationWorkspaceSource, /export function isOnlyTalkConversation/);
@@ -253,7 +247,7 @@ assert.match(sidebarSource, /\[cardbush:sidebar-title-layout\]/);
 assert.doesNotMatch(sidebarSource, /conversation-change-badge/);
 assert.doesNotMatch(sidebarSource, /overlapsDiff/);
 assert.doesNotMatch(sidebarSource, /className=\{`conversation-title[^\n]*[\s\S]{0,160}title=\{title\}/);
-assert.match(sidebarSource, /<ScrollingConversationTitle title=\{conversation\.title\}/);
+assert.match(sidebarSource, /<ScrollingConversationTitle title=\{displayTitle\}/);
 assert.match(stylesSource, /@keyframes conversation-title-marquee/);
 assert.match(
   stylesSource,
@@ -330,8 +324,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const changeOnlyTalkMode = useCallback[\s\S]*?\}, \[chat\.clearConversationSelection\]\);/,
-  'The sidebar mode handler must remain stable while chat messages stream',
+  /const changeOnlyTalkMode = useCallback[\s\S]*?\}, \[activateConversationScope, fallbackProjectId, fallbackProjectDir\]\);/,
+  'The mode handler must depend on its destination selector, not the per-render chat object',
 );
 assert.match(appSource, /cardbush_recent_project_dir/);
 assert.match(
@@ -360,7 +354,7 @@ assert.match(
   /\.welcome-project-switcher\s*\{[\s\S]*?width:\s*calc\(100% - 30px\)[\s\S]*?margin:\s*0 15px -1px[\s\S]*?border-radius:\s*16px 16px 0 0/,
   'The project rail must be inset and visually joined to the welcome composer',
 );
-assert.match(appSource, /className="welcome-hero-logo" src="\.\/cardbush-logo\.png"/);
+assert.match(appSource, /<StarWordmark\s*\/>/);
 assert.doesNotMatch(appSource, /<u>\{selectedProjectDir/);
 
 console.log('sidebar interaction contract tests passed');
