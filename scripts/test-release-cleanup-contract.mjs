@@ -56,11 +56,11 @@ assert(
 );
 assert(
   app.includes('onToggleWorkSummary={renderMessages.length > 0') &&
-    app.includes('onOpenReview={changeReports.length > 0 ? openChangeReview : undefined}') &&
+    app.includes('onToggleInspector={onToggleInspector}') &&
     app.includes('conversationContentAvailable={renderMessages.length > 0}') &&
     app.includes('{conversationContentAvailable && onToggleWorkSummary && (') &&
-    app.includes('{conversationContentAvailable && onOpenReview && reviewAvailable && ('),
-  'conversation-only topbar actions must stay hidden on the welcome screen',
+    !app.includes('conversationContentAvailable && onToggleInspector'),
+  'only the work summary requires conversation content; the sidebar stays available on welcome',
 );
 assert(
   app.includes('const [refreshError, setRefreshError]') &&

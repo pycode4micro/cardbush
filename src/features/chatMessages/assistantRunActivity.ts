@@ -1,7 +1,7 @@
 import type { ChatMessage, ChatToolExecution } from '../../types';
 
 /** Merge observations across the Turn, including earlier assistant segments. */
-export function turnActivityExecutions(message: ChatMessage): ChatToolExecution[] {
+export function turnActivityExecutions(message: Pick<ChatMessage, 'loopHistory' | 'toolExecutions'>): ChatToolExecution[] {
   const byId = new Map<string, ChatToolExecution>();
   for (const execution of [
     ...(message.loopHistory ?? []).flatMap(segment => segment.toolExecutions ?? []),

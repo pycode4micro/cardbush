@@ -1,10 +1,13 @@
 const assert = require('node:assert/strict');
 const { join, resolve } = require('node:path');
 const { writeFileSync } = require('node:fs');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, session } = require('electron');
 const directory = resolve(process.argv[2]); app.disableHardwareAcceleration(); app.setPath('userData', join(directory, 'profile'));
 const deadline = setTimeout(() => { console.error('MCP Apps UI timed out'); app.exit(1); }, 25000);
 app.whenReady().then(async () => {
+  session.defaultSession.protocol.handle('cardbush-file', request => new URL(request.url).pathname.endsWith('.png')
+    ? new Response('<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240"><rect width="100%" height="100%" fill="#234d4f"/><circle cx="240" cy="120" r="75" fill="#f2bd77"/></svg>', { headers: { 'content-type': 'image/svg+xml' } })
+    : new Response('', { status: 404 }));
   const win = new BrowserWindow({ show: false, width: 880, height: 720, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false } });
   require('../dist-electron/sandboxFrameGuard.js').installSandboxFrameNavigationGuard(win.webContents);
   const read = async script => { try { return await win.webContents.executeJavaScript(script); } catch (error) { throw new Error(`Fixture script failed: ${script}`, { cause: error }); } };
@@ -20,6 +23,7 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".message-tool-artifact img")?.naturalWidth === 1');
     await read('window.originalFrame=document.querySelector("iframe"); renderFixture(false)');
     await until('document.body.innerText.includes("report.pdf")');
+    assert.equal(await read('document.querySelector(".message-tool-artifact img")'), null, 'completed replies do not promote independent media ahead of the answer');
     assert.equal(await read('document.querySelector("iframe") === originalFrame'), true, 'completion keeps the active interface mounted');
     assert.equal(await read('!!(document.querySelector(".message-tool-outputs").compareDocumentPosition(document.querySelector(".assistant-final-answer")) & Node.DOCUMENT_POSITION_FOLLOWING)'), true, 'delivered results precede their final explanation');
     assert.equal(await read('operations.filter(x=>x.action==="open").length'), 1);
@@ -94,7 +98,7 @@ app.whenReady().then(async () => {
     assert.equal(await read('operations.filter(x=>x.action==="call").length'), 2, 'resource failure never replays the generating tool');
     await send('blank'); await until('!document.querySelector("iframe")'); assert.equal(await read('operations.at(-1).action'), 'close', 'document replacement revokes the original interface');
     await read('clearFixture()'); await read('renderFixture(false)'); await until('!!document.querySelector("iframe")');
-    assert.equal(await read('document.querySelectorAll(".message-tool-artifact").length'), 2, 're-entering a completed turn restores declared outputs');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact").length'), 1, 're-entering restores document outputs without promoting independent media');
     assert.equal(await read('operations.filter(x=>x.action==="open").length'), 2, 're-entry reopens only the UI resource, not the generating tool');
     assert.equal(await read('operations.filter(x=>x.action==="call").length'), 2, 'only user-triggered interface actions call the service');
     await read(`{const select=document.querySelector('.message-plugin-outputs select');select.value='t:old';select.dispatchEvent(new Event('change',{bubbles:true}))}`);
@@ -195,13 +199,12 @@ app.whenReady().then(async () => {
       await win.setContentSize(windowWidth, 720);
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs><linearGradient id="bg"><stop stop-color="#183b45"/><stop offset="1" stop-color="#a5d4bf"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><circle cx="${width*.54}" cy="${height*.43}" r="${Math.min(width,height)*.23}" fill="#f2bd77"/><path d="M0 ${height} L${width*.35} ${height*.48} L${width*.62} ${height*.72} L${width} ${height*.4} V${height}Z" fill="#234d4f"/></svg>`;
       const artifact = { id: `layout-${name}`, name: `${name}.svg`, path: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`, type: 'image', display: 'inline' };
-      await read(`mediaOnly=true;fixtureImage=${JSON.stringify(artifact)};renderFixture(false)`);
+      await read(`mediaOnly=true;fixtureImage=${JSON.stringify(artifact)};renderFixture(true)`);
       await until(`document.querySelector('.message-tool-artifact img')?.naturalWidth === ${width}`);
-      const layout = await read(`(()=>{const image=document.querySelector('.message-tool-artifact img').getBoundingClientRect(),card=document.querySelector('.message-tool-artifact').getBoundingClientRect(),outputs=document.querySelector('.message-tool-outputs').getBoundingClientRect(),answer=document.querySelector('.assistant-final-answer').getBoundingClientRect();return{width:image.width,height:image.height,cardWidth:card.width,left:card.left-outputs.left,available:outputs.width,answerTop:answer.top,bottom:card.bottom,caption:!!document.querySelector('.message-tool-artifact figcaption')}})()`);
+      const layout = await read(`(()=>{const image=document.querySelector('.message-tool-artifact img').getBoundingClientRect(),card=document.querySelector('.message-tool-artifact').getBoundingClientRect(),outputs=document.querySelector('.message-tool-outputs').getBoundingClientRect();return{width:image.width,height:image.height,cardWidth:card.width,left:card.left-outputs.left,available:outputs.width,caption:!!document.querySelector('.message-tool-artifact figcaption')}})()`);
       assert.ok(layout.width > 0 && layout.width <= Math.min(560,layout.available)+1 && layout.height <= 321, `${name} fits a compact responsive preview`);
       assert.ok(Math.abs(layout.width/layout.height-width/height) < .02, `${name} retains its aspect ratio`);
       assert.ok(Math.abs(layout.cardWidth-layout.width) <= 1 && Math.abs(layout.left) <= 1, `${name} does not create a full-width empty frame`);
-      assert.ok(layout.answerTop >= layout.bottom, `${name} appears before the explanation`);
       assert.equal(layout.caption, false, 'rendered media keeps file information in existing preview and context-menu actions');
       if (name === 'square') {
         await read('document.querySelector(".message-tool-artifact-preview").click()');
@@ -213,37 +216,90 @@ app.whenReady().then(async () => {
       await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
       win.webContents.invalidate(); writeFileSync(resolve(`tmp/tool-output-layout-${name}.png`), (await win.webContents.capturePage()).toPNG());
     }
-    await read(`fixtureImage={id:'unavailable',name:'unavailable.png',path:'data:image/png;base64,bm90YW5pbWFnZQ==',type:'image',display:'inline'};renderFixture(false)`);
+    await read(`fixtureImage={id:'unavailable',name:'unavailable.png',path:'data:image/png;base64,bm90YW5pbWFnZQ==',type:'image',display:'inline'};renderFixture(true)`);
     await until('document.querySelector(".message-tool-artifact figcaption")?.textContent.includes("unavailable.png")');
     assert.equal(await read('document.querySelector(".message-tool-artifact img")'), null, 'failed media retains a file fallback without an empty preview');
     const deliveredImage = {id:'apple',name:'apple.png',path:'C:\\\\fixture\\\\apple.png',type:'image',display:'inline'};
     const answer = '苹果图片已生成完毕。\n\nC:/fixture/apple.png\n\n尺寸与格式说明。';
     await read(`fixtureImage=${JSON.stringify(deliveredImage)};fixtureContent=${JSON.stringify(answer)};renderFixture(true)`);
-    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth===1');
-    await read('window.retainedMedia=document.querySelector(".message-tool-artifact img");renderFixture(false)');
-    await until('!!document.querySelector(".assistant-final-answer .local-file-reference")');
-    assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'a standalone path references the already presented image');
-    assert.equal(await read('document.querySelector(".message-tool-artifact img")===retainedMedia'),true,'completion does not remount the primary media');
-    assert.match(await read('document.querySelector(".assistant-final-answer").textContent'),/苹果图片已生成完毕[\s\S]*apple.png[\s\S]*尺寸与格式说明/,'authored prose and the file reference retain their order');
-    for(const content of ['![苹果](<C:/fixture/apple.png>)','![苹果](file:///C:/fixture/apple.png)','![苹果](cardbush-memo:s/t/call)']) {
+    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth>0');
+    assert.equal(await read('document.querySelectorAll(".assistant-active-transcript img").length'), 1, 'loop media is anchored inside the execution transcript');
+    await read('renderFixture(false)');
+    await until('document.querySelector(".assistant-final-answer img")?.naturalWidth===480');
+    assert.equal(await read('document.querySelector(".message-tool-artifact")'), null);
+    assert.deepEqual(await read(`Array.from(document.querySelector('.assistant-final-answer .message-inline-media-content').children).map(el=>el.querySelector('img')?'image':el.textContent.trim())`),
+      ['苹果图片已生成完毕。', 'image', '尺寸与格式说明。'], 'final media stays between its authored paragraphs');
+    for(const reference of ['![苹果](<C:/fixture/apple.png>)','![苹果](file:///C:/fixture/apple.png)','![苹果](cardbush-memo:s/t/call)']) {
+      const content = `前文。\n\n${reference}\n\n后文。`;
       await read(`fixtureContent=${JSON.stringify(content)};renderFixture(false)`);
-      await until('!!document.querySelector(".assistant-final-answer .local-file-reference")&&document.querySelector(".assistant-final-answer").textContent.includes("苹果")');
-      if(content.includes('cardbush-memo:'))await until('!!document.querySelector(".file-memo-reference .local-file-reference")');
-      assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'Markdown and resolved memo references do not create a second image');
+      await until('document.querySelector(".assistant-final-answer img")?.naturalWidth===480&&document.querySelector(".assistant-final-answer").textContent.includes("前文")');
+      assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'), 1, 'the model reference renders an image even when the file is a tool artifact');
+      assert.equal(await read('document.querySelector(".message-tool-artifact")'), null);
     }
-    await read(`fixtureContent='C:/elsewhere/apple.png';renderFixture(false)`);
-    await until('!!document.querySelector(".assistant-final-answer .message-image-preview")');
-    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),1,'same filename in another directory remains a different image');
-    await read(`fixtureContent='C:/fixture/apple.png';fixtureArtifacts=[];renderFixture(false)`);
-    await until('!!document.querySelector(".assistant-final-answer .message-image-preview")&&!document.querySelector(".message-tool-artifact")');
-    await read('fixtureArtifacts=[{...fixtureImage,display:"attachment"}];renderFixture(false)');
-    await until('!!document.querySelector(".message-tool-artifact figcaption")&&!!document.querySelector(".assistant-final-answer .message-image-preview")');
-    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),0,'an attachment-only card does not suppress a requested inline image');
-    await read('fixtureContent="已完成";fixtureArtifacts=[fixtureImage,{...fixtureImage,id:"same-file",path:"file:///C:/fixture/apple.png"}];fixtureAttachments=[{...fixtureImage,path:"c:/fixture/apple.png"}];renderFixture(false)');
-    await until('document.querySelector(".message-tool-artifact img")?.naturalWidth===1&&!!document.querySelector(".assistant-final-answer .local-file-reference")');
-    assert.equal(await read('document.querySelectorAll(".message-tool-artifact").length'),1,'multiple delivery records for the same file share one preview');
-    assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'),0,'a detached attachment shares the same per-turn presentation');
-    console.log('Media deduplication UI passed: historical bare path, Markdown, file memo, attachments, file URL aliases, distinct files, missing primary previews and retained streaming media.');
+    const ordered = '开头。\n\nC:/fixture/voice.wav\nC:/fixture/apple.png\nC:/fixture/clip.mp4\n\n结尾。';
+    await read(`fixtureContent=${JSON.stringify(ordered)};fixtureArtifacts=[fixtureImage];renderFixture(false)`);
+    await until('document.querySelector(".assistant-final-answer audio")&&document.querySelector(".assistant-final-answer video")');
+    assert.deepEqual(await read('Array.from(document.querySelectorAll(".assistant-final-answer audio,.assistant-final-answer img,.assistant-final-answer video")).map(el=>el.tagName)'), ['AUDIO','IMG','VIDEO'], 'mixed standalone media follows the final answer order');
+    const embedded = '第一段。\n\n![音频](C:/fixture/voice.wav)\n\n第二段。\n\n![图片](C:/fixture/apple.png)\n\n第三段。\n\n![视频](C:/fixture/clip.mp4)\n\n末段。';
+    await read(`fixtureContent=${JSON.stringify(embedded)};fixtureAttachments=[fixtureImage];renderFixture(false)`);
+    await until('!!document.querySelector(".assistant-final-answer .markdown-content audio")&&!!document.querySelector(".assistant-final-answer .markdown-content video")');
+    assert.deepEqual(await read('Array.from(document.querySelectorAll(".assistant-final-answer p")).map(el=>el.querySelector("audio,img,video")?.tagName??el.textContent)'),
+      ['第一段。','AUDIO','第二段。','IMG','第三段。','VIDEO','末段。']);
+    assert.equal(await read('Array.from(document.querySelectorAll(".assistant-final-answer audio,.assistant-final-answer video")).every(el=>el.controls)'), true);
+    assert.equal(await read('document.querySelector(".message-tool-artifact")'), null);
+    await win.setContentSize(430, 720);
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    assert.equal(await read('document.documentElement.scrollWidth <= innerWidth'), true);
+    win.webContents.invalidate(); writeFileSync(resolve('tmp/final-answer-media-order.png'), (await win.webContents.capturePage()).toPNG());
+    await read('clearFixture()'); await read('renderFixture(false)');
+    await until('!!document.querySelector(".assistant-final-answer .markdown-content audio")');
+    assert.equal(await read('document.querySelectorAll(".assistant-final-answer img").length'), 1, 'reopening a final reply keeps only its authored media');
+    await read('fixtureContent="已完成";fixtureArtifacts=[fixtureImage,{...fixtureImage,id:"same-file",path:"file:///C:/fixture/apple.png"}];fixtureAttachments=[fixtureImage];renderFixture(false)');
+    await until('document.querySelector(".assistant-final-answer")?.textContent==="已完成"');
+    assert.equal(await read('document.querySelector(".message-tool-artifact,img,audio,video")'), null, 'unreferenced final attachments are not inserted above or below the answer');
+    console.log('Final answer media UI passed: authored text/media order, mixed media, Markdown players, memo references, no independent attachment promotion and re-entry.');
+    await read(`window.loopImage={id:'loop-image',name:'apple.png',path:'C:/fixture/apple.png',type:'image',display:'inline'};
+      window.loopCall={id:'generate-image',name:'fixture_generate',state:'completed',turnId:'t',summary:'生成图片',output:'Image ready',success:true,durationMs:1,createdAt:'2026-09-10T00:00:01Z',sequence:1,contentOffset:5,contentOffsetExplicit:true,artifacts:[loopImage],metadata:{}};
+      window.loopRound={id:'image-round',role:'assistant',turnId:'t',content:'开始生成。',createdAt:'2026-09-10T00:00:00Z',toolExecutions:[loopCall]};
+      fixtureMessageOverrides={content:'图片返回后的自查说明。',attachments:[],toolExecutions:[],loopHistory:[loopRound]};renderFixture(true)`);
+    await until('document.querySelector(".message-tool-media-outputs img")?.naturalWidth>0&&document.querySelector("[data-segment-id=message]")?.textContent.includes("自查说明")');
+    await read('document.querySelector(".message-tool-media-outputs .message-tool-artifact-preview").click()');
+    await until('document.querySelector(".image-preview-stage")?.getAttribute("aria-busy")==="false"');
+    assert.equal(await read('(()=>{const image=document.querySelector(".image-preview-canvas img"),stage=document.querySelector(".image-preview-stage");return image.naturalWidth>0&&image.getBoundingClientRect().width<=stage.clientWidth&&image.getBoundingClientRect().height<=stage.clientHeight})()'),true,'a tool thumbnail opens at the fitted size');
+    await read('document.querySelector(".image-preview-close").click()');
+    await until('!document.querySelector(".image-preview-dialog")');
+    assert.equal(await read('document.querySelector(".message-tool-media-outputs").closest("[data-segment-id]").dataset.segmentId'),'image-round','the preview stays in the producing round');
+    assert.equal(await read('!!(document.querySelector(".message-tool-media-outputs").compareDocumentPosition(document.querySelector("[data-segment-id=message]")) & Node.DOCUMENT_POSITION_FOLLOWING)'),true,'later narration follows the image instead of being inserted above it');
+    await read('window.loopImageNode=document.querySelector(".message-tool-media-outputs img");fixtureMessageOverrides={...fixtureMessageOverrides,content:fixtureMessageOverrides.content+"\\n\\n流式追加的说明。"};renderFixture(true)');
+    await until('document.querySelector("[data-segment-id=message]")?.textContent.includes("流式追加")');
+    assert.equal(await read('document.querySelector(".message-tool-media-outputs img")===loopImageNode'),true,'appending narration retains the mounted image');
+    await read(`fixtureMessageOverrides={...fixtureMessageOverrides,toolExecutions:[{...loopCall,id:'inspect-image',sequence:2,createdAt:'2026-09-10T00:00:02Z',contentOffset:0,artifacts:[{...loopImage,id:'view-again',path:'file:///C:/fixture/apple.png'}]}]};renderFixture(true)`);
+    await until('document.body.innerText.includes("流式追加")');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),1,'a later observation of the same image is deduplicated at its original position');
+    assert.equal(await read('document.querySelector(".message-tool-media-outputs img")===loopImageNode'),true);
+    await read(`window.mediaBoundary=fixtureMessageOverrides.content.length;
+      fixtureMessageOverrides={...fixtureMessageOverrides,content:fixtureMessageOverrides.content+'\\n\\n音视频返回后的说明。',toolExecutions:[...fixtureMessageOverrides.toolExecutions,{...loopCall,id:'generate-video-audio',sequence:3,createdAt:'2026-09-10T00:00:03Z',contentOffset:mediaBoundary,artifacts:[{id:'loop-video',name:'clip.mp4',path:'C:/fixture/clip.mp4',type:'video',display:'inline'},{id:'loop-audio',name:'voice.mp3',path:'C:/fixture/voice.mp3',type:'audio',display:'inline'}]}]};renderFixture(true)`);
+    await until('!!document.querySelector(".message-tool-media-outputs audio")');
+    assert.deepEqual(await read('Array.from(document.querySelectorAll(".message-tool-media-outputs img,.message-tool-media-outputs video,.message-tool-media-outputs audio")).map(node=>node.tagName)'),['IMG','VIDEO','AUDIO']);
+    assert.equal(await read('(()=>{const tail=Array.from(document.querySelectorAll(".markdown-content p")).find(node=>node.textContent==="音视频返回后的说明。");return !!(document.querySelector(".message-tool-media-outputs audio").compareDocumentPosition(tail)&Node.DOCUMENT_POSITION_FOLLOWING)})()'),true,'media within a round precedes text appended after its content offset');
+    await win.setContentSize(880,850);
+    await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    for(let attempt=0;attempt<3;attempt++){
+      try{win.webContents.invalidate();writeFileSync(resolve('tmp/loop-media-order.png'),(await win.webContents.capturePage()).toPNG());break;}
+      catch(error){if(attempt===2||!String(error).includes('UnknownVizError'))throw error;await new Promise(resolve=>setTimeout(resolve,100));}
+    }
+    for(const status of ['stopped','failed']){
+      await read(`fixtureMessageOverrides={...fixtureMessageOverrides,status:${JSON.stringify(status)}};renderFixture(false)`);
+      await until('!!document.querySelector(".message-tool-media-outputs img")&&!document.querySelector(".message-row.streaming")');
+      assert.equal(await read('!!(document.querySelector(".message-tool-media-outputs").compareDocumentPosition(document.querySelector("[data-segment-id=message]")) & Node.DOCUMENT_POSITION_FOLLOWING)'),true,status+' transcripts preserve chronological media placement');
+    }
+    await read('clearFixture()');await read('renderFixture(false)');
+    await until('!!document.querySelector(".message-tool-media-outputs audio")');
+    assert.equal(await read('document.querySelectorAll(".message-tool-artifact img").length'),1,'reopening a terminal transcript reconstructs the same single preview');
+    await read('fixtureMessageOverrides={content:"开头。\\n\\nC:/fixture/voice.mp3\\nC:/fixture/apple.png\\nC:/fixture/clip.mp4\\n\\n尾段。",attachments:[],toolExecutions:[],loopHistory:[]};renderFixture(true)');
+    await until('!!document.querySelector(".message-inline-media-block video")');
+    assert.deepEqual(await read('Array.from(document.querySelectorAll(".message-inline-media-block audio,.message-inline-media-block img,.message-inline-media-block video")).map(node=>node.tagName)'),['AUDIO','IMG','VIDEO'],'consecutive authored media in a loop preserve their source order');
+    console.log('Loop media UI passed: producing-call anchors, streamed narration order, stable image mounts, repeated observations, mixed media, stop/failure and transcript re-entry.');
     console.log('MCP Apps UI passed: chronological final outputs, compact media/aspect ratio/narrow layouts and fallback, latest output/selection, file-summary ordering, loading/recovery, top-layer expansion/Esc, retained iframe state, intrinsic/legacy sizing, host context, theme/canvas, sandbox/CSP, overlapping requests, correlated results and permission races.');
     clearTimeout(deadline); win.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); win.destroy(); app.exit(1); }

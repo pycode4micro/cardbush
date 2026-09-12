@@ -1,47 +1,26 @@
-import { Clipboard, Menu, PanelRightOpen } from 'lucide-react';
+import { Clipboard, PanelRightOpen } from 'lucide-react';
 import type { AppLanguage } from '../types';
 
 export function TopBar({
   title,
-  sidebarCollapsed,
   language,
   conversationContentAvailable = false,
   workSummaryVisible,
-  reviewAvailable,
+  inspectorOpen,
   onToggleWorkSummary,
-  onOpenReview,
-  onRevealSidebar,
+  onToggleInspector,
 }: {
   title: string;
-  sidebarCollapsed: boolean;
   language: AppLanguage;
   conversationContentAvailable?: boolean;
   workSummaryVisible?: boolean;
-  reviewAvailable?: boolean;
+  inspectorOpen: boolean;
   onToggleWorkSummary?: (anchor: HTMLElement) => void;
-  onOpenReview?: () => void;
-  onRevealSidebar: () => void;
+  onToggleInspector: () => void;
 }) {
   return (
     <div className="topbar">
-      {sidebarCollapsed && (
-        <button className="icon-button" type="button" onClick={onRevealSidebar}>
-          <Menu size={20} />
-        </button>
-      )}
       <h1>{title}</h1>
-      {conversationContentAvailable && onOpenReview && reviewAvailable && (
-        <button
-          className="topbar-inspector-action icon-only"
-          type="button"
-          data-change-review-toggle
-          onClick={() => onOpenReview()}
-          title={language === 'zh' ? '在右侧打开修改审查' : 'Open review on the right'}
-          aria-label={language === 'zh' ? '打开修改审查' : 'Open change review'}
-        >
-          <PanelRightOpen size={15} />
-        </button>
-      )}
       {conversationContentAvailable && onToggleWorkSummary && (
         <button
           className={`topbar-inspector-action icon-only ${workSummaryVisible ? 'active' : ''}`}
@@ -54,6 +33,18 @@ export function TopBar({
           <Clipboard size={15} />
         </button>
       )}
+      {!inspectorOpen && <button
+        className="topbar-inspector-action icon-only"
+        type="button"
+        data-inspector-toggle
+        onClick={() => onToggleInspector()}
+        title={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
+        aria-label={language === 'zh' ? '展开右侧栏' : 'Expand sidebar'}
+        aria-expanded={false}
+        aria-controls="right-inspector"
+      >
+        <PanelRightOpen size={15} />
+      </button>}
     </div>
   );
 }

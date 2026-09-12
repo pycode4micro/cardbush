@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  CircleStop,
   ChevronDown,
   Clock3,
   FileText,
@@ -10,6 +11,8 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,6 +20,7 @@ import {
 } from 'react';
 
 import { fetchSubagentTask, fetchTurnSnapshot } from '../../backend/api';
+import { useOutsideDismiss } from '../../hooks/useOutsideDismiss';
 import type {
   AppLanguage,
   ChatMessage,
@@ -28,6 +32,7 @@ import {
   SUBAGENT_DISPATCH_UI_EVENT,
   type WorkSummaryInspectorDetail,
 } from '../subagents/subagentObservabilityEvents';
+import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
 import {
   groupWorkSummaryHistoryByTurn,
   historyTurnLabel,
@@ -38,10 +43,12 @@ export function WorkSummaryInspector({
   detail,
   messages,
   language,
+  active = true,
 }: {
   detail: WorkSummaryInspectorDetail;
   messages: ChatMessage[];
   language: AppLanguage;
+  active?: boolean;
 }) {
   if (detail.kind === 'turn-history') {
     return (
@@ -49,40 +56,72 @@ export function WorkSummaryInspector({
         detail={detail}
         messages={messages}
         language={language}
+        active={active}
       />
     );
   }
-  return <SubagentTaskInspector detail={detail} language={language} />;
+  return <SubagentTaskInspector detail={detail} language={language} active={active} />;
 }
 
 function TurnHistoryInspector({
   detail,
   messages,
   language,
+  active,
 }: {
   detail: Extract<WorkSummaryInspectorDetail, { kind: 'turn-history' }>;
   messages: ChatMessage[];
   language: AppLanguage;
+  active: boolean;
 }) {
-  const groups = useMemo(() => {
-    const all = groupWorkSummaryHistoryByTurn(messages);
-    if (!detail.turnId) return all;
-    return all.filter((group) => (group.turnId || group.id) === detail.turnId);
-  }, [detail.turnId, messages]);
-  const turnSelectorRef = useRef<HTMLDetailsElement | null>(null);
+  const groups = useMemo(() => groupWorkSummaryHistoryByTurn(messages), [messages]);
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [selectedTurnId, setSelectedTurnId] = useState('');
+  const selectorId = useId();
+  const scrollRef = useRef<HTMLElement | null>(null);
+  const headingRef = useRef<HTMLElement | null>(null);
+  const turnSelectorRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const turnNodesRef = useRef(new Map<string, HTMLElement>());
+  const appliedRequestRef = useRef<typeof detail | null>(null);
+  const selectorContainers = useMemo(() => [turnSelectorRef], []);
+  const closeSelector = useCallback((event?: Event) => {
+    if (event instanceof KeyboardEvent && event.key === 'Escape') {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+    setSelectorOpen(false);
+  }, []);
+  useOutsideDismiss(selectorOpen, selectorContainers, closeSelector);
+  useEffect(() => { if (!active) closeSelector(); }, [active, closeSelector]);
 
-  const jumpToTurn = useCallback((groupId: string) => {
-    turnNodesRef.current.get(groupId)?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
+  const jumpToTurn = useCallback((groupId: string, behavior: ScrollBehavior = 'smooth') => {
+    const scroller = scrollRef.current;
+    const turn = turnNodesRef.current.get(groupId);
+    if (!scroller || !turn) return;
+    scroller.scrollTo({
+      top: scroller.scrollTop + turn.getBoundingClientRect().top
+        - scroller.getBoundingClientRect().top - (headingRef.current?.offsetHeight ?? 0) - 14,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : behavior,
     });
-    turnSelectorRef.current?.removeAttribute('open');
+    setSelectedTurnId(groupId);
+    setSelectorOpen(false);
   }, []);
 
+  // A requested turn is an anchor in the session's history, not a separate page.
+  // Tab activation alone must not reset the reader's position.
+  useLayoutEffect(() => {
+    if (!active || appliedRequestRef.current === detail) return;
+    if (detail.turnId) {
+      const group = groups.find(item => (item.turnId || item.id) === detail.turnId);
+      if (!group) return;
+      jumpToTurn(group.id, 'instant');
+    }
+    appliedRequestRef.current = detail;
+  }, [active, detail, groups, jumpToTurn]);
+
   return (
-    <section className="work-summary-inspector work-summary-turn-inspector">
-      <header className="work-summary-inspector-heading">
+    <section className="work-summary-inspector work-summary-turn-inspector" ref={scrollRef}>
+      <header className="work-summary-inspector-heading" ref={headingRef}>
         <Clock3 size={17} />
         <div>
           <strong>{detail.title || (language === 'zh' ? '回合执行详情' : 'Turn execution details')}</strong>
@@ -91,18 +130,27 @@ function TurnHistoryInspector({
           </small>
         </div>
         {groups.length > 1 && (
-          <details className="work-summary-turn-selector" ref={turnSelectorRef}>
-            <summary title={language === 'zh' ? '快速选择回合' : 'Quickly select a turn'}>
+          <div className="work-summary-turn-selector" ref={turnSelectorRef}>
+            <button type="button" ref={triggerRef}
+              title={language === 'zh' ? '快速选择回合' : 'Quickly select a turn'}
+              aria-expanded={selectorOpen} aria-haspopup="menu" aria-controls={selectorId}
+              onClick={() => setSelectorOpen(open => !open)}>
               <span>{language === 'zh' ? '选择回合' : 'Select turn'}</span>
               <ChevronDown size={13} />
-            </summary>
-            <div className="work-summary-turn-selector-menu">
+            </button>
+            {selectorOpen && <div className="work-summary-turn-selector-menu" id={selectorId}
+              role="menu" aria-label={language === 'zh' ? '选择回合' : 'Select turn'}>
               {groups.map((group) => (
                 <button
                   type="button"
                   key={group.id}
                   title={group.prompt}
-                  onClick={() => jumpToTurn(group.id)}
+                  role="menuitem"
+                  aria-current={selectedTurnId === group.id ? 'true' : undefined}
+                  onClick={() => {
+                    triggerRef.current?.focus({ preventScroll: true });
+                    jumpToTurn(group.id);
+                  }}
                 >
                   <span>{historyTurnLabel(group, language)}</span>
                   {historyTurnTimestamp(group.message, language) && (
@@ -110,8 +158,8 @@ function TurnHistoryInspector({
                   )}
                 </button>
               ))}
-            </div>
-          </details>
+            </div>}
+          </div>
         )}
       </header>
       {groups.length > 0 ? (
@@ -120,6 +168,7 @@ function TurnHistoryInspector({
             <article
               className="work-summary-inspector-turn"
               key={group.id}
+              data-turn-id={group.id}
               ref={(node) => {
                 if (node) turnNodesRef.current.set(group.id, node);
                 else turnNodesRef.current.delete(group.id);
@@ -154,9 +203,11 @@ function TurnHistoryInspector({
 function SubagentTaskInspector({
   detail,
   language,
+  active,
 }: {
   detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>;
   language: AppLanguage;
+  active: boolean;
 }) {
   const [task, setTask] = useState(detail.task);
   const [childTurn, setChildTurn] = useState<Record<string, unknown> | null>(null);
@@ -190,6 +241,7 @@ function SubagentTaskInspector({
   }, [task.childTurnId, task.taskId]);
 
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     void refresh(controller.signal);
     const receiveDispatch = (rawEvent: Event) => {
@@ -211,13 +263,13 @@ function SubagentTaskInspector({
       controller.abort();
       window.removeEventListener(SUBAGENT_DISPATCH_UI_EVENT, receiveDispatch);
     };
-  }, [detail.sessionId, refresh, task.taskId, task.toolCallId]);
+  }, [active, detail.sessionId, refresh, task.taskId, task.toolCallId]);
 
-  const status = subagentInspectorStatus(task, language);
-  const active = task.status === 'running';
+  const status = subagentTaskPresentation(task, language);
+  const running = task.status === 'running';
 
   useEffect(() => {
-    if (!active || !task.taskId?.trim()) return undefined;
+    if (!active || !running || !task.taskId?.trim()) return undefined;
     const controller = new AbortController();
     const refreshActiveTask = () => {
       if (document.visibilityState !== 'visible') return;
@@ -228,12 +280,7 @@ function SubagentTaskInspector({
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [active, refresh, task.taskId]);
-  const reportSummary = stringValue(task.report.summary);
-  const remainingWork = stringList(task.report.remaining_work ?? task.report.remainingWork);
-  const requestedCapabilities = stringList(
-    task.report.requested_capabilities ?? task.report.requestedCapabilities,
-  );
+  }, [active, running, refresh, task.taskId]);
   const permissionRequirements = stringList(
     task.raw.permission_requirements ?? task.raw.permissionRequirements,
   );
@@ -242,11 +289,13 @@ function SubagentTaskInspector({
     <section className="work-summary-inspector subagent-task-inspector">
       <header className="work-summary-inspector-heading subagent">
         <span className={`subagent-inspector-state ${status.tone}`}>
-          {active
+          {running
             ? <LoaderCircle className="spin" size={17} />
             : status.tone === 'failed'
               ? <TriangleAlert size={17} />
-              : <CheckCircle2 size={17} />}
+              : task.status === 'stopped'
+                ? <CircleStop size={17} />
+                : <CheckCircle2 size={17} />}
         </span>
         <div>
           <strong>{task.agentName || task.teamMemberId || detail.title || (language === 'zh' ? '子 Agent 任务' : 'Subagent task')}</strong>
@@ -273,8 +322,8 @@ function SubagentTaskInspector({
         {task.origin === 'team' && <Fact label="Team" value={task.teamId || '-'} />}
         {task.origin === 'team' && <Fact label={language === 'zh' ? '成员' : 'Member'} value={task.teamMemberId || '-'} />}
         {task.origin === 'team' && <Fact label="Profile" value={task.agentProfileId || '-'} />}
-        <Fact label={language === 'zh' ? '审查状态' : 'Review status'} value={task.reviewStatus || (language === 'zh' ? '待审查' : 'Pending')} />
-        <Fact label={language === 'zh' ? '契约状态' : 'Contract state'} value={task.contractState || '-'} />
+        <Fact label={language === 'zh' ? '执行状态' : 'Execution status'} value={status.label} />
+        {task.completedAt && <Fact label={language === 'zh' ? '结束时间' : 'Finished at'} value={new Date(task.completedAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')} />}
       </div>
 
       {task.requestPrompt && (
@@ -282,21 +331,9 @@ function SubagentTaskInspector({
           <p>{task.requestPrompt}</p>
         </InspectorSection>
       )}
-      {(reportSummary || task.responsePrompt) && (
+      {task.responsePrompt && (
         <InspectorSection title={language === 'zh' ? '子级结果' : 'Child result'}>
-          <p>{reportSummary || task.responsePrompt}</p>
-        </InspectorSection>
-      )}
-      {remainingWork.length > 0 && (
-        <InspectorSection title={language === 'zh' ? '剩余工作' : 'Remaining work'}>
-          <ul>{remainingWork.map((item) => <li key={item}>{item}</li>)}</ul>
-        </InspectorSection>
-      )}
-      {requestedCapabilities.length > 0 && (
-        <InspectorSection title={language === 'zh' ? '请求的能力' : 'Requested capabilities'}>
-          <div className="subagent-inspector-chips">
-            {requestedCapabilities.map((item) => <span key={item}>{item}</span>)}
-          </div>
+          <p>{task.responsePrompt}</p>
         </InspectorSection>
       )}
       {permissionRequirements.length > 0 && (
@@ -366,33 +403,10 @@ function taskFromDispatch(event: SubagentDispatchEvent): SubagentTaskSnapshot {
     terminal: event.terminal,
     accepted: event.accepted,
     errorMessage: event.errorCode,
-    reviewStatus: event.reviewStatus,
-    contractState: event.contractState,
     detailEndpoint: event.detailEndpoint,
-    report: {},
-    review: {},
-    contractEvaluation: {},
-    executionContract: {},
-    workerProposal: {},
-    mergePlan: {},
     usage: {},
     raw: event.raw,
   };
-}
-
-function subagentInspectorStatus(task: SubagentTaskSnapshot, language: AppLanguage) {
-  if (task.status === 'running') return { tone: 'running', label: language === 'zh' ? '运行中' : 'Running' };
-  if (task.status === 'completed') {
-    if (task.reviewStatus === 'accepted') return { tone: 'complete', label: language === 'zh' ? '父级已接受' : 'Accepted by parent' };
-    if (task.reviewStatus === 'rejected') return { tone: 'failed', label: language === 'zh' ? '父级已拒绝' : 'Rejected by parent' };
-    if (task.reviewStatus === 'revision_requested') return { tone: 'review', label: language === 'zh' ? '需要修订' : 'Revision requested' };
-    return { tone: 'review', label: language === 'zh' ? '待父级审查' : 'Awaiting parent review' };
-  }
-  return { tone: 'failed', label: language === 'zh' ? '任务未完成' : 'Task incomplete' };
-}
-
-function stringValue(value: unknown) {
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 function stringList(value: unknown) {

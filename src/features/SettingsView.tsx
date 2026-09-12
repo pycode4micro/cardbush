@@ -244,6 +244,7 @@ export function SettingsView({
   onToggleSkill,
   onReloadSkills,
   onLoadSkillDetail,
+  onOpenPluginPrompt,
   visualInputAvailable,
   visualInputEnabled,
   onVisualInputEnabledChange,
@@ -275,6 +276,7 @@ export function SettingsView({
   onToggleSkill: (skillName: string, enabled: boolean) => void;
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
+  onOpenPluginPrompt?: (prompt: string) => void;
   visualInputAvailable: boolean;
   visualInputEnabled: boolean;
   onVisualInputEnabledChange: (enabled: boolean) => void;
@@ -883,6 +885,7 @@ export function SettingsView({
         </div>
       ) : (
         <PluginManagementPanel
+          onOpenPrompt={onOpenPluginPrompt}
           language={language}
           initialTab={initialPluginTab}
           skills={skills}

@@ -727,6 +727,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       ref={sidebarRef}
       aria-hidden={!softVisible}
     >
+      <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
         <div className="new-chat-mode-row">
           <NavRow
@@ -887,6 +888,7 @@ export const ChatSidebar = memo(function ChatSidebar({
         <Settings size={17} />
         <span>{language === 'zh' ? '设置' : 'Settings'}</span>
       </button>
+      </div>
       {contextMenu && (
         createPortal(
           <SidebarContextMenu
@@ -1647,6 +1649,7 @@ export function ConversationChangeDialog({
   conversation,
   reports,
   initialFilePath = '',
+  selectionRequestId,
   notice,
   revertingChangeId,
   revertedChangeIds,
@@ -1655,11 +1658,13 @@ export function ConversationChangeDialog({
   onRevertAll,
   revertAvailable = true,
   embedded = false,
+  workspaceControls,
 }: {
   language: AppLanguage;
   conversation: ConversationSummary;
   reports: ConversationChangeReport[];
   initialFilePath?: string;
+  selectionRequestId?: string;
   notice: string;
   revertingChangeId: string;
   revertedChangeIds: ReadonlySet<string>;
@@ -1668,6 +1673,7 @@ export function ConversationChangeDialog({
   onRevertAll: () => Promise<void>;
   revertAvailable?: boolean;
   embedded?: boolean;
+  workspaceControls?: React.ReactNode;
 }) {
   const [hydratedReports, setHydratedReports] = useState<
     Map<string, ToolChangeReport>
@@ -1700,6 +1706,7 @@ export function ConversationChangeDialog({
     [reviewGroups],
   );
   const [selectedKey, setSelectedKey] = useState(reviewItems[0]?.key ?? '');
+  const appliedFileSelectionRef = useRef<{ path: string; requestId?: string } | null>(null);
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
     () => new Set(reviewGroups[0] ? [reviewGroups[0].id] : []),
   );
@@ -1845,10 +1852,13 @@ export function ConversationChangeDialog({
   useEffect(() => {
     const normalized = initialFilePath.trim().replaceAll('\\', '/').toLowerCase();
     if (!normalized) return;
+    const applied = appliedFileSelectionRef.current;
+    if (applied?.path === normalized && applied.requestId === selectionRequestId) return;
     const item = reviewItems.find((candidate) =>
       candidate.file.path.trim().replaceAll('\\', '/').toLowerCase() === normalized,
     );
     if (!item) return;
+    appliedFileSelectionRef.current = { path: normalized, requestId: selectionRequestId };
     setSelectedKey(item.key);
     const group = reviewGroups.find((candidate) =>
       candidate.items.some((groupItem) => groupItem.key === item.key),
@@ -1856,7 +1866,7 @@ export function ConversationChangeDialog({
     if (group) {
       setExpandedGroupIds((current) => new Set(current).add(group.id));
     }
-  }, [initialFilePath, reviewGroups, reviewItems]);
+  }, [initialFilePath, selectionRequestId, reviewGroups, reviewItems]);
   const newestGroupId = reviewGroups[0]?.id ?? '';
   useEffect(() => {
     const availableIds = new Set(reviewGroups.map((group) => group.id));
@@ -1902,7 +1912,7 @@ export function ConversationChangeDialog({
           </span>
           {totals.additions > 0 && <b className="diff-count add">+{totals.additions}</b>}
           {totals.deletions > 0 && <b className="diff-count del">-{totals.deletions}</b>}
-          {revertAvailable && (
+          {revertAvailable && resolvedReports.length > 0 && (
             <button
               className="danger-soft-button"
               type="button"
@@ -1918,6 +1928,7 @@ export function ConversationChangeDialog({
             </button>
           )}
         </div>
+        {workspaceControls}
         {notice && <pre className="change-review-notice">{notice}</pre>}
         <div
           className="change-review-workspace"
@@ -1976,7 +1987,7 @@ export function ConversationChangeDialog({
               </>
             ) : (
               <div className="change-review-empty">
-                {language === 'zh' ? '正在等待文件级 diff。' : 'Waiting for a file diff.'}
+                {language === 'zh' ? '暂无可审查的文件修改。' : 'No file changes to review.'}
               </div>
             )}
           </section>
@@ -2091,4 +2102,3 @@ function formatChangeTimestamp(value: string | undefined, language: AppLanguage)
     minute: '2-digit',
   }).format(date);
 }
-

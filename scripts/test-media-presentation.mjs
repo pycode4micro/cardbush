@@ -53,3 +53,22 @@ test('ordinary filenames and opaque plugin UI do not fabricate presented media',
     assert.equal(present([execution([artifact])]).inlineMedia.has(key(artifact.path)), true);
   }
 });
+
+test('loop media stays with its first producing call while later observations enrich it', () => {
+  const first = image('C:\\workspace\\apple.png');
+  const latest = image('file:///C:/workspace/apple.png', { id: 'inspected-again', size: 75 });
+  const video = { id: 'video', path: 'C:/workspace/clip.mp4', name: 'clip.mp4', type: 'video' };
+  const audio = { id: 'audio', path: 'C:/workspace/voice.mp3', name: 'voice.mp3', type: 'audio' };
+  const input = [
+    { ...execution([first]), id: 'generate' },
+    { ...execution([latest, video, audio]), id: 'inspect' },
+  ];
+  const original = JSON.stringify(input);
+  const result = present(input, [{ from: 'C:/workspace', to: 'D:/moved' }]);
+  assert.deepEqual([...result.mediaByExecution.keys()], ['generate', 'inspect']);
+  assert.equal(result.mediaByExecution.get('generate')[0].id, 'inspected-again');
+  assert.equal(result.mediaByExecution.get('generate')[0].path, 'D:/moved/apple.png');
+  assert.deepEqual(Array.from(result.mediaByExecution.get('inspect'), item => item.type), ['video', 'audio']);
+  assert.equal(result.mediaByExecution.get('generate')[0], result.inlineMedia.get(key(first.path)));
+  assert.equal(JSON.stringify(input), original, 'anchoring is a projection, never an edit to runtime history');
+});

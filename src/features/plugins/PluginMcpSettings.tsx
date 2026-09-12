@@ -5,10 +5,12 @@ import { fetchCardbushAppsConfiguration, fetchMcpConnectionOverview } from '../.
 import { mcpConnectionState, type McpConnectionOverview } from '../../backend/mcpConnectionOverview';
 import type { CardbushAppPlugin } from '../../types';
 import { useCapabilityCatalogRefresh } from '../../hooks/useCapabilityCatalogRefresh';
+import { ArrowUpRight } from 'lucide-react';
+import { pluginTroubleshootingPrompt } from './pluginPrompts';
 import './mcp-integration.css';
 
 type Json = Record<string, unknown>;
-export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts }: { plugin: CardbushAppPlugin; language: 'zh' | 'en'; onSaved: () => void; onManageAccounts?: () => void }) {
+export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts, onOpenPrompt }: { plugin: CardbushAppPlugin; language: 'zh' | 'en'; onSaved: () => void; onManageAccounts?: () => void; onOpenPrompt?: (prompt: string) => void }) {
   const zh = language === 'zh';
   const [draft, setDraft] = useState<Json>(() => record(plugin.config.mcp_servers));
   const [overview, setOverview] = useState<McpConnectionOverview | null>(null);
@@ -225,6 +227,12 @@ export function PluginMcpSettings({ plugin, language, onSaved, onManageAccounts 
               <button type="button" disabled={cancelling || busy === 'save' || Boolean(busy && !busy.startsWith(`${id}:`))}
                 onClick={() => void setConnectionEnabled(component.id, false)}>{cancelling ? (zh ? '正在取消…' : 'Cancelling…') : (zh ? '取消连接' : 'Cancel connection')}</button></>}
         </div>}</header>
+        {onOpenPrompt && enabled && ['unavailable', 'configuration_required', 'auth_required'].includes(connectionState) && <button
+          type="button" className="plugin-troubleshoot-action" disabled={Boolean(busy) || dirty}
+          onClick={() => onOpenPrompt(pluginTroubleshootingPrompt(plugin, {
+            id, name: component.name, state: connectionState, transport,
+            error: actual?.lastError || overview?.snapshot?.applicationError,
+          }, language))}><ArrowUpRight size={15} />{zh ? '交给助手排查' : 'Troubleshoot with assistant'}</button>}
         {waitingForAuthorization && <p role="status" className="plugin-mcp-hint">{zh ? '请在浏览器完成授权，返回后会自动检查连接。' : 'Finish authorization in your browser. We’ll check the connection when you return.'}</p>}
         {pending && <p className="plugin-mcp-hint">{!enabled
           ? (zh ? '已保存停用设置；正在运行的任务仍可能使用旧连接，任务结束后会移除。' : 'Disabling is saved. Running tasks may still use the previous connection until they finish.')

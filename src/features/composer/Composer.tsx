@@ -1,4 +1,6 @@
-import { restoreNativeEditorFocus } from '../../shared/editorFocus';
+import { usePluginCatalog } from '../plugins/pluginCatalog';
+import { pluginReference } from '../plugins/pluginPrompts';
+import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
 import {
   ArrowRight,
   ArrowUp,
@@ -19,6 +21,7 @@ import {
   FolderOpen,
   KeyRound,
   ListChecks,
+  ListOrdered,
   LoaderCircle,
   Lock,
   Paperclip,
@@ -63,7 +66,7 @@ import type {
   RuntimeStartupStatus,
   SkillSummary,
 } from '../../types';
-import { ImagePreviewDialog } from '../chatMessages';
+import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from '../chatMessages';
 import { openInspector } from '../inspector/inspectorEvents';
 import { SkillIcon } from '../skills/SkillIcon';
 import { ShadowCloneIcon } from '../../components/ShadowCloneIcon';
@@ -88,12 +91,6 @@ type ComposerFileAttachment = {
   name: string;
   kind: 'file' | 'folder';
   size?: number;
-};
-
-type ImagePreview = {
-  src: string;
-  name: string;
-  path?: string;
 };
 
 function useRuntimeStartupStatus(): RuntimeStartupStatus {
@@ -145,7 +142,7 @@ export type ContextWindowUsage = {
   measuredAt?: string;
 };
 
-type ComposerCommandMode = 'slash';
+type ComposerCommandMode = 'slash' | 'plugin';
 
 type ComposerCommandState = {
   mode: ComposerCommandMode;
@@ -328,6 +325,7 @@ export function Composer({
   onEditQueuedMessage,
   onGuideQueuedMessage,
   onRemoveQueuedMessage,
+  onShowQueue,
   onConfigureModels,
   onCreateConversation,
   onToggleSkill,
@@ -372,6 +370,7 @@ export function Composer({
   onEditQueuedMessage?: (item: ComposerQueuedMessage) => void;
   onGuideQueuedMessage?: (queuedId: string) => Promise<void>;
   onRemoveQueuedMessage?: (queuedId: string) => void;
+  onShowQueue?: () => void;
   onConfigureModels: () => void;
   onCreateConversation?: () => void;
   onToggleSkill: (skillName: string, enabled: boolean) => void;
@@ -385,11 +384,12 @@ export function Composer({
   const runtimeReady = runtimeStartup.phase === 'ready';
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<ComposerPromptInputHandle>(null);
   const fileDragDepthRef = useRef(0);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const plugins = usePluginCatalog();
   const [pluginCommands, setPluginCommands] = useState<Array<{ id: string; description: string; argumentHint: string; kind?: 'command' | 'skill' }>>([]);
   useEffect(() => {
     const desktop = window.cardbushDesktop;
@@ -448,34 +448,6 @@ export function Composer({
     return () => window.clearTimeout(timer);
   }, [cancelEnabled, sending]);
 
-
-  const resizeComposerTextarea = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return;
-    }
-    const computed = window.getComputedStyle(textarea);
-    const lineHeight = Number.parseFloat(computed.lineHeight) || 20;
-    const minHeight = Math.ceil(lineHeight * 2);
-    const maxHeight = Math.min(
-      Math.ceil(window.innerHeight * 0.32),
-      Math.ceil(lineHeight * 10),
-    );
-    textarea.style.height = 'auto';
-    const nextHeight = Math.max(minHeight, Math.min(textarea.scrollHeight, maxHeight));
-    textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
-  }, []);
-
-  useEffect(() => {
-    resizeComposerTextarea();
-  }, [compact, draft, fileAttachments.length, imageAttachments.length, resizeComposerTextarea]);
-
-  useEffect(() => {
-    const handleResize = () => resizeComposerTextarea();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [resizeComposerTextarea]);
 
   const updatePopoverMaxHeight = useCallback(() => {
     const topInset = 52;
@@ -896,8 +868,15 @@ export function Composer({
     if (!commandState) {
       return [];
     }
-    return rankComposerCommandItems(slashCommands, commandState.query).slice(0, 50);
-  }, [commandState, slashCommands]);
+    const items = commandState.mode === 'plugin' ? plugins.map(plugin => ({
+      id: `$${plugin.id}`, title: plugin.name,
+      subtitle: `${plugin.enabled ? '' : language === 'zh' ? '已停用 · ' : 'Disabled · '}${plugin.description}`,
+      icon: plugin.logoPath ? <img className="composer-plugin-option-logo" src={fileUrl(plugin.logoPath)} alt="" /> : <Puzzle size={16} />,
+      value: `${pluginReference(plugin)} `,
+      searchText: `${plugin.id} ${plugin.name} ${plugin.description} ${plugin.keywords.join(' ')}`,
+    })) : slashCommands;
+    return rankComposerCommandItems(items, commandState.query).slice(0, 50);
+  }, [commandState, slashCommands, plugins, language]);
 
   useEffect(() => {
     setCommandIndex(0);
@@ -977,6 +956,7 @@ export function Composer({
       {commandState && (
         <ComposerCommandPalette
           language={language}
+          mode={commandState.mode}
           items={commandItems}
           selectedIndex={commandIndex}
           onSelect={(item) => applyCommand(item)}
@@ -1029,7 +1009,7 @@ export function Composer({
           onClose={() => setPreviewImage(null)}
         />
       )}
-      {queueLabel && (
+      {queueLabel && !onShowQueue && (
         <div className="composer-secondary-row composer-queue-row" title={queueTitle}>
           <div className="composer-queue-summary">
             <Clock3 size={13} />
@@ -1132,13 +1112,16 @@ export function Composer({
                   className="composer-image-preview"
                   type="button"
                   title={language === 'zh' ? '放大查看图片' : 'Preview image'}
-                  onClick={() =>
+                  onClick={event => {
+                    const thumbnail = event.currentTarget.querySelector('img');
                     setPreviewImage({
                       src: image.previewUrl,
                       name: image.name,
                       path: image.path,
-                    })
-                  }
+                      naturalWidth: thumbnail?.naturalWidth,
+                      naturalHeight: thumbnail?.naturalHeight,
+                    });
+                  }}
                 >
                   <img src={image.previewUrl} alt={image.name} />
                 </button>
@@ -1218,29 +1201,24 @@ export function Composer({
             </button>
           </div>
         )}
-        <textarea
+        <ComposerPromptInput
           ref={textareaRef}
-          onPointerDown={event => restoreNativeEditorFocus(event.nativeEvent)}
+          plugins={plugins}
+          language={language}
           autoFocus={autoFocus}
           value={composerInputValue}
-          onChange={(event) => {
-            const next = event.target.value;
+          onChange={(next, caret) => {
             if (goalDraft) {
               onDraftChange(`/goal${next ? ` ${next}` : ' '}`);
               setCommandState(null);
               return;
             }
             onDraftChange(next);
-            updateCommandFromTextarea(next, event.currentTarget.selectionStart);
+            updateCommandFromTextarea(next, caret);
           }}
-          onClick={(event) => {
+          onSelectionChange={(caret) => {
             if (!goalDraft) {
-              updateCommandFromTextarea(draft, event.currentTarget.selectionStart);
-            }
-          }}
-          onKeyUp={(event) => {
-            if (!goalDraft) {
-              updateCommandFromTextarea(draft, event.currentTarget.selectionStart);
+              updateCommandFromTextarea(draft, caret);
             }
           }}
           onKeyDown={(event) => {
@@ -1298,13 +1276,12 @@ export function Composer({
                 : `Reply to ${shadowAgentName || 'Shadow Agent'}...`
               : language === 'zh'
               ? compact
-                ? '问 cardbush 任何事。输入 / 选择快捷功能'
+                ? '问 cardbush 任何事。输入 $ 选择插件，/ 选择快捷功能'
                 : '给 cardbush 发消息…'
               : compact
-                ? 'Ask cardbush anything. Type / for quick actions'
+                ? 'Ask cardbush anything. Type $ for plugins, / for quick actions'
                 : 'Message cardbush...'
           }
-          rows={2}
         />
         <div className="composer-footer">
           <div className="composer-tools">
@@ -1350,6 +1327,15 @@ export function Composer({
               <span>{permissionLabel}</span>
               <ChevronDown size={13} />
             </button>
+            {queuedMessageCount > 0 && onShowQueue && (
+              <button className="composer-queue-button" type="button"
+                title={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
+                aria-label={language === 'zh' ? `查看排队消息（${queuedMessageCount}）` : `Show queue (${queuedMessageCount})`}
+                onClick={() => { setActiveMenu(null); onShowQueue(); }}>
+                <ListOrdered size={15} aria-hidden="true" />
+                <span>{queuedMessageCount}</span>
+              </button>
+            )}
           </div>
           <div className="composer-actions">
             <button
@@ -1409,17 +1395,19 @@ export function Composer({
 
 function ComposerCommandPalette({
   language,
+  mode,
   items,
   selectedIndex,
   onSelect,
 }: {
   language: AppLanguage;
+  mode: ComposerCommandMode;
   items: ComposerCommandItem[];
   selectedIndex: number;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const rowRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const emptyLabel = language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
+  const emptyLabel = mode === 'plugin' ? (language === 'zh' ? '没有匹配的已安装插件' : 'No matching installed plugins') : language === 'zh' ? '没有匹配的快捷功能' : 'No matching quick actions';
   useEffect(() => {
     const row = rowRefs.current[Math.max(0, selectedIndex)];
     row?.scrollIntoView({ block: 'nearest' });
@@ -1427,8 +1415,8 @@ function ComposerCommandPalette({
   return (
     <div className="composer-command-palette">
       <header>
-        <strong>{language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
-        <span>{language === 'zh' ? '输入 / 选择' : 'Type / to choose'}</span>
+        <strong>{mode === 'plugin' ? (language === 'zh' ? '插件' : 'Plugins') : language === 'zh' ? '快捷功能' : 'Quick actions'}</strong>
+        <span>{language === 'zh' ? `输入 ${mode === 'plugin' ? '$' : '/'} 选择` : `Type ${mode === 'plugin' ? '$' : '/'} to choose`}</span>
       </header>
       <div className="composer-command-list">
         {items.length === 0 ? (
@@ -1492,7 +1480,7 @@ function scoreSlashCommand(
   query: string,
 ): [number, number, number] | null {
   const source = item.searchText ?? `${item.id} ${item.title} ${item.subtitle}`;
-  const commandName = normalizeCommandQuery(item.id.replace(/^\/+/, ''));
+  const commandName = normalizeCommandQuery(item.id.replace(/^[/$]+/, ''));
   const compactSource = normalizeCommandQuery(source);
   if (!query) {
     return [0, 0, commandName.length];
@@ -1518,7 +1506,7 @@ function scoreSlashCommand(
 }
 
 function normalizeCommandQuery(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '');
+  return value.toLowerCase().replace(/[^\p{L}\p{N}._-]+/gu, '');
 }
 
 export function detectComposerCommand(
@@ -1527,6 +1515,10 @@ export function detectComposerCommand(
 ): ComposerCommandState | null {
   const safeCaret = Math.max(0, Math.min(value.length, caret));
   const beforeCaret = value.slice(0, safeCaret);
+  const pluginMatch = beforeCaret.match(/(^|\s)\$([^\s$]*)$/);
+  if (pluginMatch?.index != null) {
+    return { mode: 'plugin', start: pluginMatch.index + pluginMatch[1].length, end: safeCaret, query: pluginMatch[2] };
+  }
   const slashMatch = beforeCaret.match(/(^| )\/([^\s/]*)$/);
   if (!slashMatch || slashMatch.index == null) {
     return null;

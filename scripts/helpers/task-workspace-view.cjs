@@ -42,17 +42,32 @@ module.exports = async ({ run, until, pause, window, root }) => {
       cancelOperation: async () => {}, startStream: async () => {}, stopStream: async () => {}, onStreamFrame: () => () => {},
     };
     window.workspaceBusy = false;
-    window.showWorkspace = () => renderView(h(views.TaskWorkspaceBar, {
-      key: 'workspace-task', sessionId: 'workspace-task', projectDir: 'D:/source', language: 'zh', busy: workspaceBusy,
-      onChanged: async () => { workspaceRefreshes++; },
-    }));
+    window.showWorkspace = () => renderView(h('aside', {
+      className: 'right-inspector', style: { width: 620, height: 700, flex: 'none', maxWidth: 'none' },
+    }, h('div', { className: 'right-inspector-body' }, h(views.ConversationChangeDialog, {
+      embedded: true, language: 'zh',
+      conversation: { id: 'workspace-task', title: 'Project task', projectDir: 'D:/source' },
+      reports: [], notice: '', revertingChangeId: '', revertedChangeIds: new Set(),
+      onClose: () => {}, onRevert: async () => {}, onRevertAll: async () => {},
+      workspaceControls: h(views.TaskWorkspaceBar, {
+        key: 'workspace-task', sessionId: 'workspace-task', projectDir: 'D:/source', language: 'zh', busy: workspaceBusy,
+        onChanged: async () => { workspaceRefreshes++; },
+      }),
+    }))));
     window.workspaceButton = text => [...document.querySelectorAll('.task-workspace-bar button')].find(button => button.textContent === text);
     showWorkspace();
   `);
   await until("Boolean(workspaceButton('应用到原项目')) && !workspaceButton('应用到原项目').disabled", 'workspace review ready');
   assert.equal(await run('workspaceCalls.length'), 0, 'review must not apply files');
-  await run("document.querySelector('.task-workspace-review').open = true; document.querySelector('.task-workspace-review details').open = true");
+  assert.equal(await run("Boolean(document.querySelector('.change-review-summary .danger-soft-button'))"), false, 'empty review must not claim all changes have been reverted');
+  await run("document.querySelector('.task-workspace-details').open = true; document.querySelector('.task-workspace-review').open = true; document.querySelector('.task-workspace-review details').open = true");
   await pause();
+  assert.equal(await run(`(() => {
+    const panel = document.querySelector('.change-review-dialog').getBoundingClientRect();
+    const controls = document.querySelector('.task-workspace-bar').getBoundingClientRect();
+    const diff = document.querySelector('.change-review-workspace').getBoundingClientRect();
+    return controls.left >= panel.left && controls.right <= panel.right && controls.height <= panel.height * .45 + 1 && diff.height > 100;
+  })()`), true, 'expanded workspace controls stay within the review sidebar and leave room for the diff');
   fs.mkdirSync(path.join(root, 'tmp'), { recursive: true });
   fs.writeFileSync(path.join(root, 'tmp/task-workspace-ui.png'), (await window.webContents.capturePage()).toPNG());
   await run("document.querySelector('.task-workspace-review').open = true; workspaceButton('应用到原项目').click()");
@@ -78,6 +93,7 @@ module.exports = async ({ run, until, pause, window, root }) => {
   await pause();
   await run("workspaceFixture.workspace = { ...workspaceFixture.workspace, mode: 'direct', workspaceDir: 'D:/source', status: 'ready', versioning: 'none' }; workspaceFixture.changes = []; showWorkspace()");
   await until("Boolean(workspaceButton('创建 Git 仓库'))", 'Local folder offers explicit repository creation');
+  assert.equal(await run("document.querySelector('.task-workspace-details > summary').textContent"), '工作区操作');
   assert.equal(await run("document.querySelector('.task-workspace-heading span').textContent"), '项目目录', 'the Runtime Local workspace is shown as the project directory');
   assert.equal(await run("document.querySelector('.task-workspace-heading code').textContent"), 'D:/source');
   assert.equal(await run("document.querySelector('.task-workspace-bar select')"), null, 'automatic workspace presentation does not expose a mode selector');

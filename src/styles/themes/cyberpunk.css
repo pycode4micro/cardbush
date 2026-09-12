@@ -88,10 +88,6 @@
   opacity: 0.72;
 }
 
-.app.theme-cyberpunk .window-separator {
-  color: rgba(247, 240, 0, 0.48);
-}
-
 .app.theme-cyberpunk .frame-chip {
   color: var(--text-mid);
   border-radius: 0;

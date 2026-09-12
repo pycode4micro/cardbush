@@ -3028,12 +3028,6 @@ function runtimeSubagentTask(task: RuntimeSubagentTask): SubagentTaskSnapshot {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     completedAt: task.completedAt,
-    report: task.finalResponse ? { finalResponse: task.finalResponse } : {},
-    review: {},
-    contractEvaluation: {},
-    executionContract: {},
-    workerProposal: {},
-    mergePlan: {},
     usage: task.usage,
     raw: { ...task },
   };

@@ -869,14 +869,17 @@
 
 /* Team configuration workspace ------------------------------------------------ */
 .sidebar.team-sidebar {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
-.sidebar.team-sidebar > .settings-dock {
+.team-sidebar > .sidebar-panel-content {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.team-sidebar .sidebar-panel-content > .settings-dock {
   align-self: end;
   margin-top: 0;
 }

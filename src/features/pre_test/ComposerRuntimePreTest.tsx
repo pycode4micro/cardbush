@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import type { ExperimentalGoal } from '../../backend/api';
 import type { AppLanguage, PendingInteraction, TaskPlanSnapshot } from '../../types';
@@ -10,6 +10,7 @@ import {
   Composer,
   ComposerRuntimeRail,
   type ThinkingNotice,
+  type ComposerRuntimeRailHandle,
 } from '../composer';
 import { reorderScopedQueue } from '../composer/queueOrdering';
 import { PermissionRequestCard } from '../interactions/PermissionRequestCard';
@@ -134,6 +135,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
     { id: 'pre-test-queue-2', text: '核对第二条排队消息的顺序。', createdAt: '2026-01-01T00:00:01.000Z' },
     { id: 'pre-test-queue-3', text: '完成后运行队列回归测试。', createdAt: '2026-01-01T00:00:02.000Z' },
   ]);
+  const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const showProcessing = fixture === 'processing' || fixture === 'combined';
   const showThinking = fixture === 'thinking' || fixture === 'combined';
   const showChanges = fixture === 'changes' || fixture === 'combined';
@@ -198,6 +200,7 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
           ) : (
             <>
               <ComposerRuntimeRail
+                ref={runtimeRailRef}
                 language={language}
                 running={fixture !== 'queue'}
                 taskPlan={showProcessing ? taskPlanFixture : undefined}
@@ -262,7 +265,8 @@ export function ComposerRuntimePreTest({ language }: { language: AppLanguage }) 
                 onDraftChange={shadowOpen ? setShadowDraft : setDraft}
                 sending={!shadowOpen}
                 goalAvailable
-                queuedMessageCount={0}
+                queuedMessageCount={showQueue ? queuedMessages.length : 0}
+                onShowQueue={() => runtimeRailRef.current?.showQueue()}
                 queuedMessagePreview=""
                 queuedMessages={[]}
                 selectedModel="pre-test-glm"

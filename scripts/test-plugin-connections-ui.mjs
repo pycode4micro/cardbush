@@ -14,13 +14,15 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginManagementPanel} from '${local('src/features/plugins/PluginManagementPanel.tsx')}';
 import {Composer} from '${local('src/features/composer/Composer.tsx')}';
+import {MessageBubble} from '${local('src/features/chatMessages/MessageBubble.tsx')}';
 import {McpUserRequests} from '${local('src/features/plugins/McpUserRequests.tsx')}';
 import {accountProviders,openAiAccountSummary} from '${local('electron/accountManager.mts')}';
 import '${local('src/styles/app.css')}';
 import '${local('src/styles/themes/cyberpunk.css')}';
-const plugin=(id,name,component,source='bundled')=>({id,name,source,description:name+' tools',longDescription:'',category:'Tools',keywords:[],capabilities:[],defaultPrompts:[],config:{},installed:true,enabled:true,brandColor:'#74d2f7',components:[{kind:'mcp',id:component,name,description:'MCP service'}]});
+const plugin=(id,name,component,source='bundled')=>({id,name,source,version:'1.0.0',manifestPath:'C:/Fixture Plugins/'+id+'/.codex-plugin/plugin.json',description:name+' tools',longDescription:'',category:'Tools',keywords:id==='personal.tools'?['个人工具']:[],capabilities:[],defaultPrompts:['查看当前状态并说明结果'],config:{},installed:true,enabled:true,brandColor:'#74d2f7',components:[{kind:'mcp',id:component,name,description:'MCP service'}]});
 window.fixtureApps={revision:1,serviceEnabled:true,plugins:[plugin('computer-use','Computer Use','cardbush_apps'),plugin('chrome','Chrome','chrome-devtools'),plugin('personal.tools','Personal Tools','echo','user')]};
 window.fixtureApps.plugins[1].components[0].name='Chrome Devtools';
+for(const plugin of window.fixtureApps.plugins)plugin.logoPath='C:/Fixture Icons/'+plugin.id+'.svg';
 window.fixtureApps.plugins[1].components.push({kind:'app',id:'chrome',name:'Chrome',description:'Registered MCP connection',mcp:{registeredAppId:'cardbush_chrome'}});
 window.fixtureApps.plugins[2].components[0].mcp={transport:'http',url:'https://fixture.invalid/mcp'};
 window.fixtureApps.plugins[2].components.push(...['command','prompt'].map((type,index)=>({kind:'hook',id:'hook-'+type,name:type==='command'?'SessionStart':'Stop',description:'Hook fixture',hook:{definitionHash:'hash-'+index,definition:{event:type==='command'?'SessionStart':'Stop',handler:{type,command:'echo reviewed'}},executable:type==='command'}})));
@@ -73,9 +75,14 @@ Object.assign(window.cardbushDesktop,{
  installMarketPlugin:async token=>{marketInstalls++;fixtureApps={...fixtureApps,plugins:[...fixtureApps.plugins,plugin('claude-example','Claude Example','echo','user')]};return{id:'claude-example',manifestPath:'fixture'}},
 });
 window.refreshFixture=()=>{for(const fn of listeners)fn()};
+window.fixtureCatalogReads=0;window.inspectedPaths=[];
+window.cardbushDesktop.inspectLocalReference=async path=>{window.inspectedPaths.push(path);return{path,name:path.split('/').at(-1),kind:'file'}};
+if(location.hash==='#transcript')window.deferNextAppsRead=true;
 const skill={name:'compat:manual',displayName:'手动审查',description:'检查当前修改',defaultPrompt:'请审查当前修改并说明依据。',invocationMode:'manual',path:'fixture/skills/manual/SKILL.md',source:'plugin',sourceId:'compat',sourceLabel:'Compatibility',content:'Review evidence.',packageDir:'fixture',routingHidden:true,requires:[],conflictsWith:[],companionTools:[],blockedTools:[],requiredReads:[],conditionalReads:[],resourceQuickRefs:[]};
 const props={language:'zh',initialTab:'plugins',skills:[skill],disabledSkillNames:new Set(),onToggleSkill:()=>{},onReloadSkills:async()=>[skill],onLoadSkillDetail:async()=>skill,onOpenMcp:id=>opened.push(id??'new'),onOpenNetwork:()=>opened.push('proxy'),onNotify:message=>localNotifications.push(message)};
-function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');window.showComposer=()=>setComposer(true);return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props}/>}</main><McpUserRequests language="zh"/></div>}
+function Fixture(){const [composer,setComposer]=React.useState(false);const [draft,setDraft]=React.useState('');const [transcript,setTranscript]=React.useState(location.hash==='#transcript'?JSON.parse(sessionStorage.getItem('transcript-fixture')??'[]'):null);window.showTranscript=messages=>{sessionStorage.setItem('transcript-fixture',JSON.stringify(messages));setTranscript(messages)};window.showComposer=()=>setComposer(true);window.showPlugins=()=>setComposer(false);window.setFixtureDraft=setDraft;window.fixtureDraft=draft;
+if(transcript)return <div className="app theme-dark" style={{'--accent':'#78a9ef','--text':'#ecebe5','--text-mid':'#c5c3b9','--text-soft':'#a4a195','--border':'#44433e',background:'#1e1e1b',padding:24,minHeight:'100vh',boxSizing:'border-box'}}>{transcript.map((content,index)=><MessageBubble key={index} message={{id:'fixture-user-'+index,role:'user',content,createdAt:'2026-09-11T12:00:00Z'}} language="zh" sending={false} activeTurnId="" activeAssistantMessageId="" onRegenerate={async()=>{}} onEditUserMessage={async()=>{}} onRetryGuidance={async()=>{}} onRevertChangeReport={async()=>{}} onOpenScene={()=>{}}/>)}</div>;
+return <div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><main style={{padding:26,width:'100%',boxSizing:'border-box'}}>{composer?<Composer language="zh" autoFocus draft={draft} onDraftChange={setDraft} sending={false} selectedModel="fixture" availableModels={[{id:'fixture',name:'Fixture',model:'fixture',enabled:true}]} referencePlanAvailable={false} referencePlanMode="off" permissionMode="task_free" subagentPermissionRouting="parent" reasoningLevelAvailable={false} reasoningLevel="medium" reasoningLevels={[]} onModelChange={()=>{}} onReferencePlanModeChange={()=>{}} onPermissionModeChange={()=>{}} onSubagentPermissionRoutingChange={()=>{}} onReasoningLevelChange={()=>{}} onSend={async text=>{sentCommands.push(text);setDraft('')}} onCancel={async()=>{}} disabledSkillNames={new Set()} visualInputAvailable={false} visualInputEnabled={false} onConfigureModels={()=>{}} onToggleSkill={()=>{}} onVisualInputEnabledChange={()=>{}}/>:<PluginManagementPanel {...props} onOpenPrompt={prompt=>{window.openedPrompt=prompt;setDraft(prompt);setComposer(true)}}/>}</main><McpUserRequests language="zh"/></div>}
 let fixtureRoot=createRoot(document.getElementById('root'));
 fixtureRoot.render(<Fixture/>);
 window.remountPlugins=()=>{fixtureRoot.unmount();fixtureRoot=createRoot(document.getElementById('root'));fixtureRoot.render(<Fixture/>)};
@@ -85,12 +92,12 @@ try {
     name:'plugin-connections-fixture',enforce:'pre',
     resolveId(id,importer){
       if(id.endsWith('__plugin_connections_fixture__.tsx'))return '\0plugin-fixture.tsx';
-      if(id==='../../backend/api'&&/Plugin(?:ManagementPanel|McpSettings)\.tsx$/.test(importer??''))return '\0plugin-fixture-api';
+      if(id==='../../backend/api'&&/(?:Plugin(?:ManagementPanel|McpSettings)\.tsx|pluginCatalog\.ts)$/.test(importer??''))return '\0plugin-fixture-api';
     },
     load(id){
       if(id==='\0plugin-fixture.tsx')return source;
       if(id==='\0plugin-fixture-api')return `
-        export async function fetchCardbushAppsConfiguration(){const value=structuredClone(window.fixtureApps);if(window.deferNextAppsRead){window.deferNextAppsRead=false;await new Promise(resolve=>window.releaseAppsRead=resolve);}return value;}
+        export async function fetchCardbushAppsConfiguration(){window.fixtureCatalogReads++;if(window.fixtureAppsFailure)throw Error('catalog offline');const value=structuredClone(window.fixtureApps);if(window.deferNextAppsRead){window.deferNextAppsRead=false;await new Promise(resolve=>window.releaseAppsRead=resolve);}return value;}
         export async function saveCardbushAppsConfiguration(value){if(window.marketSaveFails)throw Error('fixture activation failed');if(value.revision!==window.fixtureApps.revision)throw Error('revision conflict');window.fixtureApps={...value,revision:value.revision+1};if(window.proxySyncFails)throw Error('fixture runtime refresh failed');return window.fixtureApps;}
         export async function savePluginSearchResultLimit(limit){window.searchSaveCalls=(window.searchSaveCalls??0)+1;if(window.searchSaveFails)throw Error('fixture search setting failed');if(window.deferSearchSave)await new Promise(resolve=>window.finishSearchSave=resolve);window.fixtureApps={...window.fixtureApps,revision:window.fixtureApps.revision+1,searchResultLimit:limit};return structuredClone(window.fixtureApps);}
         export async function fetchMcpConnectionOverview(){window.fixtureReads++;if(window.fixtureFailure)throw Error('fixture offline');const value=structuredClone(window.fixtureOverview);if(window.fixtureReadDelay)await new Promise(resolve=>setTimeout(resolve,window.fixtureReadDelay));return value;}
@@ -106,7 +113,7 @@ try {
   await writeFile(join(directory,'index.html'),`<!doctype html><html><head><meta charset="utf-8">${css.map(item=>`<link rel="stylesheet" href="${item.fileName}">`).join('')}</head><body><div id="root"></div><script src="${entry.fileName}"></script></body></html>`);
   const require=createRequire(import.meta.url),env={...process.env};
   delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
-  const run=spawnSync(require('electron'),['scripts/test-plugin-connections-ui-worker.cjs',directory],{env,windowsHide:true,stdio:'inherit',timeout:30000});
+  const run=spawnSync(require('electron'),['scripts/test-plugin-connections-ui-worker.cjs',directory],{env,windowsHide:true,stdio:'inherit',timeout:55000});
   assert.equal(run.status,0,String(run.error??'Plugin UI fixture failed'));
 } finally {
   assert.ok(directory.startsWith(parent+sep+'plugin-connections-ui-'));

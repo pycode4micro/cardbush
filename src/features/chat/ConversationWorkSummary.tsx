@@ -7,6 +7,8 @@ import {
   FileCode2,
   FileOutput,
   LoaderCircle,
+  CircleStop,
+  TriangleAlert,
   Wrench,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -34,6 +36,7 @@ import {
   openWorkSummaryInspector,
   SUBAGENT_DISPATCH_UI_EVENT,
 } from '../subagents/subagentObservabilityEvents';
+import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
 import {
   groupWorkSummaryHistoryByTurn,
   historyTurnLabel,
@@ -199,42 +202,49 @@ export function ConversationWorkSummary({
                   <span>{subagentTasks.length}</span>
                 </div>
                 <div className="work-summary-subagent-list">
-                  {visibleSubagentTasks.map((task) => (
-                    <button
-                      className="work-summary-subagent-task"
-                      type="button"
-                      key={subagentTaskIdentity(task)}
-                      onClick={() => openWorkSummaryInspector({
-                        kind: 'subagent-task',
-                        sessionId,
-                        task,
-                        title: subagentTaskTitle(task, language),
-                      })}
-                    >
-                      <span className={`work-summary-subagent-state ${subagentTaskTone(task)}`}>
-                        {subagentTaskActive(task)
-                          ? <LoaderCircle className="spin" size={13} />
-                          : <CheckCircle2 size={13} />}
-                      </span>
-                      <span className="work-summary-subagent-main">
-                        <strong>{subagentTaskTitle(task, language)}</strong>
-                        {task.origin === 'team' && (
-                          <span className="work-summary-subagent-tags">
-                            {task.teamId && <em>Team · {task.teamId}</em>}
-                            {task.teamMemberId && <em>{language === 'zh' ? '成员' : 'Member'} · {task.teamMemberId}</em>}
-                            {task.agentProfileId && <em>Profile · {task.agentProfileId}</em>}
-                          </span>
-                        )}
-                        <small title={task.requestPrompt || task.errorMessage}>
-                          {task.requestPrompt || task.errorMessage || subagentTaskStatusLabel(task, language)}
-                        </small>
-                      </span>
-                      <span className={`work-summary-subagent-status ${subagentTaskTone(task)}`}>
-                        {subagentTaskStatusLabel(task, language)}
-                      </span>
-                      <ChevronRight size={14} />
-                    </button>
-                  ))}
+                  {visibleSubagentTasks.map((task) => {
+                    const status = subagentTaskPresentation(task, language);
+                    return (
+                      <button
+                        className="work-summary-subagent-task"
+                        type="button"
+                        key={subagentTaskIdentity(task)}
+                        onClick={() => openWorkSummaryInspector({
+                          kind: 'subagent-task',
+                          sessionId,
+                          task,
+                          title: subagentTaskTitle(task, language),
+                        })}
+                      >
+                        <span className={`work-summary-subagent-state ${status.tone}`}>
+                          {subagentTaskActive(task)
+                            ? <LoaderCircle className="spin" size={13} />
+                            : task.status === 'failed'
+                              ? <TriangleAlert size={13} />
+                              : task.status === 'stopped'
+                                ? <CircleStop size={13} />
+                                : <CheckCircle2 size={13} />}
+                        </span>
+                        <span className="work-summary-subagent-main">
+                          <strong>{subagentTaskTitle(task, language)}</strong>
+                          {task.origin === 'team' && (
+                            <span className="work-summary-subagent-tags">
+                              {task.teamId && <em>Team · {task.teamId}</em>}
+                              {task.teamMemberId && <em>{language === 'zh' ? '成员' : 'Member'} · {task.teamMemberId}</em>}
+                              {task.agentProfileId && <em>Profile · {task.agentProfileId}</em>}
+                            </span>
+                          )}
+                          <small title={task.requestPrompt || task.errorMessage}>
+                            {task.requestPrompt || task.errorMessage || status.label}
+                          </small>
+                        </span>
+                        <span className={`work-summary-subagent-status ${status.tone}`}>
+                          {status.label}
+                        </span>
+                        <ChevronRight size={14} />
+                      </button>
+                    );
+                  })}
                 </div>
                 {remainingSubagentTaskCount > 0 && (
                   <button
@@ -403,15 +413,7 @@ function subagentTaskFromDispatchEvent(event: SubagentDispatchEvent): SubagentTa
     terminal: event.terminal,
     accepted: event.accepted,
     errorMessage: event.errorCode,
-    reviewStatus: event.reviewStatus,
-    contractState: event.contractState,
     detailEndpoint: event.detailEndpoint,
-    report: {},
-    review: {},
-    contractEvaluation: {},
-    executionContract: {},
-    workerProposal: {},
-    mergePlan: {},
     usage: {},
     raw: event.raw,
   };
@@ -480,15 +482,6 @@ function subagentTaskActive(task: SubagentTaskSnapshot) {
   return task.status === 'running';
 }
 
-function subagentTaskTone(task: SubagentTaskSnapshot) {
-  if (task.status === 'failed' || task.status === 'stopped') return 'failed';
-  if (task.status === 'completed' && task.reviewStatus !== 'accepted') {
-    return 'review';
-  }
-  if (task.reviewStatus === 'accepted') return 'complete';
-  return 'running';
-}
-
 function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
   if (task.agentName?.trim()) return task.agentName.trim();
   if (task.origin === 'team' && task.teamMemberId?.trim()) return task.teamMemberId.trim();
@@ -497,17 +490,4 @@ function subagentTaskTitle(task: SubagentTaskSnapshot, language: AppLanguage) {
     return language === 'zh' ? `子任务 ${compact}` : `Task ${compact}`;
   }
   return language === 'zh' ? '正在派发子 Agent' : 'Dispatching subagent';
-}
-
-function subagentTaskStatusLabel(task: SubagentTaskSnapshot, language: AppLanguage) {
-  if (task.status === 'running') {
-    return language === 'zh' ? '运行中' : 'Running';
-  }
-  if (task.status === 'completed') {
-    return task.reviewStatus === 'accepted'
-      ? language === 'zh' ? '父级已接受' : 'Accepted by parent'
-      : language === 'zh' ? '待父级审查' : 'Awaiting parent review';
-  }
-  if (task.status === 'stopped') return language === 'zh' ? '已停止' : 'Stopped';
-  return language === 'zh' ? '未完成' : 'Not completed';
 }

@@ -1,11 +1,11 @@
 import type * as React from 'react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import type { AppLanguage } from '../types';
+import { panelCollapseWidth } from './panelSizing';
 
 const defaultSidebarWidth = 272;
 const minimumSidebarWidth = 220;
-const collapseSidebarWidthThreshold = 180;
 const maximumSidebarWidth = 420;
 
 type SidebarDragState = {
@@ -20,25 +20,35 @@ type SidebarDragState = {
 
 export function SidebarResizer({
   language,
+  width,
   onWidthChange,
   onResizeEnd,
   onCollapse,
   softVisible = true,
 }: {
   language: AppLanguage;
+  width?: number;
   onWidthChange: (value: number) => void;
   onResizeEnd?: (value: number, shouldCollapse: boolean) => void;
   onCollapse?: () => void;
   softVisible?: boolean;
 }) {
+  const handleRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<SidebarDragState | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelRef.current?.(), []);
-  useEffect(() => { if (!softVisible) cancelRef.current?.(); }, [softVisible]);
+  useLayoutEffect(() => {
+    if (!softVisible) {
+      cancelRef.current?.();
+      return;
+    }
+    const scope = handleRef.current?.closest<HTMLElement>('.app');
+    if (scope && width != null && !dragStateRef.current) writePreviewWidth(scope, width);
+  }, [softVisible, width]);
 
   const beginResize = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || !softVisible) return;
       cancelRef.current?.();
       event.preventDefault();
       const scope = document.querySelector<HTMLElement>('.app') ?? document.documentElement;
@@ -52,7 +62,8 @@ export function SidebarResizer({
         animationFrame: 0,
         pendingWidth: currentWidth,
       };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      const handle = event.currentTarget;
+      handle.setPointerCapture(event.pointerId);
       document.body.classList.add('sidebar-resizing');
 
       const endResize = (restoreWidth = false) => {
@@ -70,6 +81,9 @@ export function SidebarResizer({
         window.removeEventListener('pointerup', handlePointerUp);
         window.removeEventListener('pointercancel', handlePointerCancel);
         window.removeEventListener('blur', handleWindowBlur);
+        if (state && handle.isConnected && handle.hasPointerCapture(state.pointerId)) {
+          handle.releasePointerCapture(state.pointerId);
+        }
       };
       const handlePointerMove = (moveEvent: PointerEvent) => {
         const state = dragStateRef.current;
@@ -84,7 +98,7 @@ export function SidebarResizer({
         state.pendingWidth = nextWidth;
         const shouldCollapseNow = Boolean(
           onCollapse
-          && nextWidth < collapseSidebarWidthThreshold
+          && nextWidth < panelCollapseWidth
           && nextWidth < state.startWidth,
         );
         if (shouldCollapseNow) {
@@ -108,12 +122,13 @@ export function SidebarResizer({
         if (!state || upEvent.pointerId !== state.pointerId) {
           return;
         }
-        writePreviewWidth(state.scope, state.currentWidth);
+        const finalWidth = Math.max(minimumSidebarWidth, state.currentWidth);
+        writePreviewWidth(state.scope, finalWidth);
         endResize();
         if (onResizeEnd) {
-          onResizeEnd(state.currentWidth, false);
+          onResizeEnd(finalWidth, false);
         } else {
-          onWidthChange(state.currentWidth);
+          onWidthChange(finalWidth);
         }
       };
       const handlePointerCancel = (event: PointerEvent) => {
@@ -126,11 +141,12 @@ export function SidebarResizer({
       window.addEventListener('pointercancel', handlePointerCancel);
       window.addEventListener('blur', handleWindowBlur);
     },
-    [onCollapse, onResizeEnd, onWidthChange],
+    [onCollapse, onResizeEnd, onWidthChange, softVisible],
   );
 
   return (
     <div
+      ref={handleRef}
       className={`sidebar-resizer soft-panel-motion ${softVisible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
       role="separator"
       aria-orientation="vertical"

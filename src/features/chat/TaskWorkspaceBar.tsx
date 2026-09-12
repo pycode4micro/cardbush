@@ -72,7 +72,7 @@ export function TaskWorkspaceBar({ sessionId, projectDir, language, busy, gitAva
     ? (zh ? '工作区需要处理' : 'Workspace needs attention')
     : count > 0
       ? (zh ? `${count} 个文件${workspace?.mode === 'worktree' ? '待应用' : '有修改'}` : `${count} files ${workspace?.mode === 'worktree' ? 'pending' : 'changed'}`)
-      : (zh ? '工作区详情' : 'Workspace details');
+      : (zh ? '工作区操作' : 'Workspace actions');
   return <div className="task-workspace-bar">
     <details className="task-workspace-details">
       <summary className={attention ? 'task-workspace-error' : undefined}>{summary}</summary>

@@ -650,8 +650,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /className="topbar-inspector-action icon-only"[\s\S]*?onClick=\{\(\) => onOpenReview\(\)\}/,
-  'The top-bar review button must not forward its React click event as a file path.',
+  /data-inspector-toggle\s+onClick=\{\(\) => onToggleInspector\(\)\}/,
+  'The top-bar sidebar button must not forward its React click event into the review opener.',
 );
 assert.match(
   appSource,
@@ -1371,7 +1371,7 @@ assert.match(
   'Review navigation entries must use the shared extension-aware file icon',
 );
 assert.equal(
-  (sidebarReviewSource.match(/\{revertAvailable && \(/g) ?? []).length,
+  (sidebarReviewSource.match(/\{revertAvailable && (?:resolvedReports\.length > 0 && )?\(/g) ?? []).length,
   2,
   'The review panel must hide both single-set and all-changes revert actions during an active Turn',
 );
@@ -1387,7 +1387,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /if \(changeReviewReports\.length === 0\) return null;[\s\S]*?id: changeReviewConversationId/,
+  /for \(const \[id, reports\] of Object\.entries\(changeReportsByConversation\)\)[\s\S]*?byId\.set\(id, \{\s*id,/,
   'review must remain mountable before a newly created conversation reaches the sidebar list',
 );
 assert.match(stylesSource, /\.change-review-group-files\s*\{/);

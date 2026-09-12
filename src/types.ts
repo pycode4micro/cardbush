@@ -2,6 +2,7 @@ import type {
   PluginProxySettings,
   ReasoningEffort,
   RuntimePermissionRequest,
+  SubagentTask,
 } from '@cardbush/bush-protocol';
 
 export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team' | 'automations';
@@ -861,7 +862,7 @@ export interface TeamConfigurationCapabilities {
 }
 
 type SubagentDispatchPhase = 'dispatching' | 'dispatched' | 'failed';
-export type SubagentTaskStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type SubagentTaskStatus = SubagentTask['status'];
 
 export interface SubagentDispatchEvent {
   protocol: string;
@@ -882,8 +883,6 @@ export interface SubagentDispatchEvent {
   agentProfileId?: string;
   autonomyLevel?: string;
   taskType?: string;
-  reviewStatus?: string;
-  contractState?: string;
   errorCode?: string;
   detailEndpoint?: string;
   taskListEndpoint?: string;
@@ -910,20 +909,11 @@ export interface SubagentTaskSnapshot {
   terminal: boolean;
   accepted?: boolean;
   errorMessage?: string;
-  reviewStatus?: string;
-  reportOutcome?: string;
-  contractState?: string;
   createdAt?: string;
   updatedAt?: string;
   startedAt?: string;
   completedAt?: string;
   detailEndpoint?: string;
-  report: Record<string, unknown>;
-  review: Record<string, unknown>;
-  contractEvaluation: Record<string, unknown>;
-  executionContract: Record<string, unknown>;
-  workerProposal: Record<string, unknown>;
-  mergePlan: Record<string, unknown>;
   usage: Record<string, unknown>;
   raw: Record<string, unknown>;
 }

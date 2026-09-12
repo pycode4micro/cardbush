@@ -6,6 +6,7 @@ import { LocalFileReferenceLink } from './LocalFileReferenceLink';
 
 /** A render-only projection of this turn's explicit artifacts, never a second file registry. */
 export const PresentedMediaContext = createContext<ReadonlyMap<string, ChatToolArtifact>>(new Map());
+export const ToolMediaContext = createContext<ReadonlyMap<string, ChatToolArtifact[]>>(new Map());
 
 function localMediaPath(source: string): string {
   const value = stripWrappingQuotes(source);
@@ -31,11 +32,14 @@ export function mediaPresentationKey(source: string): string {
 export function toolOutputPresentation(executions: ChatToolExecution[], aliases: ProjectPathAlias[] = []) {
   const byPath = new Map<string, ChatToolArtifact>();
   const sourceKeys = new Map<string, string>();
+  const owners = new Map<string, string>();
   for (const execution of executions) for (const artifact of execution.artifacts ?? []) {
     const path = remapProjectPath(localMediaPath(artifact.path), aliases);
     const key = mediaPresentationKey(path);
     byPath.set(key, path === artifact.path ? artifact : { ...artifact, path });
     sourceKeys.set(mediaPresentationKey(artifact.path), key);
+    // Later observations can enrich a result without moving its first appearance.
+    if (!owners.has(key)) owners.set(key, execution.id);
   }
   const inlineMedia = new Map<string, ChatToolArtifact>();
   for (const [source, key] of sourceKeys) {
@@ -45,7 +49,13 @@ export function toolOutputPresentation(executions: ChatToolExecution[], aliases:
       inlineMedia.set(key, artifact);
     }
   }
-  return { artifacts: [...byPath.values()], inlineMedia };
+  const mediaByExecution = new Map<string, ChatToolArtifact[]>();
+  for (const [key, artifact] of byPath) {
+    if (!['image', 'video', 'audio'].includes(artifact.type)) continue;
+    const owner = owners.get(key)!;
+    mediaByExecution.set(owner, [...(mediaByExecution.get(owner) ?? []), artifact]);
+  }
+  return { artifacts: [...byPath.values()], inlineMedia, mediaByExecution };
 }
 
 /** Preserve the authored reference and its location without mounting another media preview. */

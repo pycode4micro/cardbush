@@ -53,6 +53,7 @@ import type {
   AppLanguage,
   ChatAttachment,
   ChatMessage,
+  ChatToolArtifact,
   ChatToolExecution,
 } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
@@ -63,9 +64,9 @@ import {
   normalizeMarkdownContentForDisplay,
   remarkAutolinkBoundaries,
 } from './markdownFormat';
-import { ImagePreviewDialog } from './ImagePreviewDialog';
+import { ImagePreviewDialog, type ImagePreviewSource as ImagePreview } from './ImagePreviewDialog';
 import { modelFailurePresentation } from './modelFailurePresentation';
-import { MessageToolOutputs } from '../tools/MessageToolOutputs';
+import { MessageToolArtifact, MessageToolOutputs } from '../tools/MessageToolOutputs';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import {
   localFileReference,
@@ -79,8 +80,10 @@ import {
   type ProjectPathAlias,
 } from '../conversationScope';
 import { LocalFileReferenceLink } from './LocalFileReferenceLink';
+import { PluginPromptFallback, PluginReferenceLink } from '../plugins/PluginReferenceLink';
+import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { FileMemoReference } from './FileMemoReference';
-import { mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, toolOutputPresentation } from './mediaPresentation';
+import { mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext, toolOutputPresentation } from './mediaPresentation';
 import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
@@ -306,11 +309,8 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
     : {};
 }
 
-type ImagePreview = {
-  src: string;
-  name: string;
-  path?: string;
-};
+const FinalAnswerMediaContext = createContext(false);
+const noPresentedMedia: ReadonlyMap<string, ChatToolArtifact> = new Map();
 
 const LazyMarkdownContent = lazy(async () => {
   const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
@@ -330,6 +330,7 @@ const LazyMarkdownContent = lazy(async () => {
     language: AppLanguage;
   }) {
     const presentedMedia = useContext(PresentedMediaContext);
+    const finalAnswerMedia = useContext(FinalAnswerMediaContext);
     return (
     <ReactMarkdown
       remarkPlugins={[
@@ -347,6 +348,8 @@ const LazyMarkdownContent = lazy(async () => {
           if (href && parseFileMemoReference(href)) return <FileMemoReference reference={href} language={language}>{children}</FileMemoReference>;
           const localPath = markdownLocalFileReference(href, workspaceRoot)?.path;
           if (localPath) {
+            const pluginReference = pluginReferenceFromLink(reactNodeText(children), localPath);
+            if (pluginReference) return <PluginReferenceLink reference={pluginReference} />;
             return (
               <LocalFileReferenceLink
                 path={remapProjectPath(localPath, pathAliases)}
@@ -391,6 +394,14 @@ const LazyMarkdownContent = lazy(async () => {
           const resolvedSource = reference ? fileUrl(resolvedPath) : src;
           const presented = presentedMedia.get(mediaPresentationKey(resolvedPath || src || ''));
           if (presented) return <PresentedMediaReference artifact={presented}>{alt}</PresentedMediaReference>;
+          if (finalAnswerMedia && isVideoPath(resolvedPath || src || '')) {
+            return <video src={resolvedSource} controls playsInline preload="metadata" aria-label={alt || undefined}
+              onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
+          }
+          if (finalAnswerMedia && isAudioPath(resolvedPath || src || '')) {
+            return <audio src={resolvedSource} controls preload="metadata" aria-label={alt || undefined}
+              onContextMenu={event => openFileContextMenu(event, resolvedPath, { language })} />;
+          }
           return (
             <img
               {...props}
@@ -1080,23 +1091,22 @@ function MessageBubbleView({
   );
   const assistantBody = assistantBodyContent;
   const finalAnswerBody = (
-    <div className="assistant-final-answer">
-      <MessageImageStrip paths={detachedImagePaths} language={language} />
-      <MessageMediaStrip
-        videoPaths={detachedVideoPaths}
-        audioPaths={detachedAudioPaths}
-        language={language}
-      />
-      {assistantContent && (
-        <MessageInlineMediaContent
-          content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
-          language={language}
-        />
-      )}
-    </div>
+    <FinalAnswerMediaContext.Provider value={true}>
+      <PresentedMediaContext.Provider value={noPresentedMedia}>
+        <div className="assistant-final-answer">
+          {assistantContent && (
+            <MessageInlineMediaContent
+              content={assistantTextWithoutToolNarration(assistantContent, toolExecutions)}
+              language={language}
+            />
+          )}
+        </div>
+      </PresentedMediaContext.Provider>
+    </FinalAnswerMediaContext.Provider>
   );
   return (
     <PresentedMediaContext.Provider value={outputPresentation.inlineMedia}>
+    <ToolMediaContext.Provider value={outputPresentation.mediaByExecution}>
       <div className={`message-row assistant${isActiveAssistantTurn ? ' streaming' : ''}`}>
         <div className="assistant-bubble">
           {activations.map(target => <McpActivationStatus key={target.serverId}
@@ -1147,8 +1157,9 @@ function MessageBubbleView({
               {assistantBody}
             </AssistantCompletedDisclosure>
           )}
-          {/* Keep result views mounted across completion; the final explanation follows their source results. */}
-          <MessageToolOutputs key="tool-outputs" sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions} artifacts={outputPresentation.artifacts} language={language} />
+          {/* Loop media belongs to its tool boundary; keep interactive interfaces mounted independently. */}
+          <MessageToolOutputs key="tool-outputs" sessionId={message.conversationId ?? ''} turnId={message.turnId ?? ''} executions={assistantProgressExecutions}
+            artifacts={outputPresentation.artifacts.filter(artifact => !['image', 'video', 'audio'].includes(artifact.type))} language={language} />
           {showFinalAnswer && finalAnswerBody}
           {timeoutPresentation && (
             <div
@@ -1251,6 +1262,7 @@ function MessageBubbleView({
           )}
         </div>
       </div>
+    </ToolMediaContext.Provider>
     </PresentedMediaContext.Provider>
   );
 }
@@ -1577,6 +1589,7 @@ function AssistantMessageContent({
   ) => Promise<void>;
   onOpenScene: (scene: CardlingScene) => void;
 }) {
+  const mediaByExecution = useContext(ToolMediaContext);
   const sortedExecutions = [...executions].sort(compareToolExecutionOrder);
   const displayContent = sortedExecutions.some(hasExplicitToolContentOffset)
     ? content
@@ -1609,6 +1622,14 @@ function AssistantMessageContent({
         onOpenScene={onOpenScene}
       />,
     );
+    const media = group.executions.flatMap(execution => mediaByExecution.get(execution.id) ?? []);
+    if (media.length) {
+      blocks.push(
+        <div key={`media-${groupKey}`} className="message-tool-outputs message-tool-media-outputs">
+          {media.map(artifact => <MessageToolArtifact key={mediaPresentationKey(artifact.path)} artifact={artifact} language={language} />)}
+        </div>,
+      );
+    }
     cursor = group.offset;
   });
 
@@ -2300,6 +2321,8 @@ export function AssistantLoopHistoryBlock({
   onOpenScene?: (scene: CardlingScene) => void;
 }) {
   const visibleHistory = coalesceAssistantTranscript(history).filter(hasVisibleLoopHistoryMessage);
+  const pathAliases = useContext(FileReferencePathAliasesContext);
+  const outputPresentation = toolOutputPresentation(turnActivityExecutions({ loopHistory: history }), pathAliases);
   const summary =
     language === 'zh'
       ? '历史执行记录'
@@ -2310,6 +2333,8 @@ export function AssistantLoopHistoryBlock({
   }
 
   return (
+    <PresentedMediaContext.Provider value={outputPresentation.inlineMedia}>
+    <ToolMediaContext.Provider value={outputPresentation.mediaByExecution}>
     <div className="assistant-loop-history">
       <div className="assistant-loop-history-summary">
         <Clock3 size={15} />
@@ -2334,6 +2359,8 @@ export function AssistantLoopHistoryBlock({
         ))}
       </div>
     </div>
+    </ToolMediaContext.Provider>
+    </PresentedMediaContext.Provider>
   );
 }
 
@@ -2862,29 +2889,12 @@ function MessageInlineMediaContent({
             />
           );
         }
-        const imagePaths = block.items
-          .filter((item) => item.type === 'image')
-          .map((item) => item.path);
-        const videoPaths = block.items
-          .filter((item) => item.type === 'video')
-          .map((item) => item.path);
-        const audioPaths = block.items
-          .filter((item) => item.type === 'audio')
-          .map((item) => item.path);
-        return (
-          <div
-            className="message-inline-media-block"
-            // eslint-disable-next-line react/no-array-index-key
-            key={`media-${index}`}
-          >
-            <MessageImageStrip paths={imagePaths} language={language} />
-            <MessageMediaStrip
-              videoPaths={videoPaths}
-              audioPaths={audioPaths}
-              language={language}
-            />
-          </div>
-        );
+        return <div className="message-inline-media-block" key={`media-${index}`}>
+          {block.items.map((item, itemIndex) => item.type === 'image'
+            ? <MessageImageStrip key={itemIndex} paths={[item.path]} language={language} />
+            : <MessageMediaStrip key={itemIndex} videoPaths={item.type === 'video' ? [item.path] : []}
+              audioPaths={item.type === 'audio' ? [item.path] : []} language={language} />)}
+        </div>;
       })}
     </div>
   );
@@ -2939,8 +2949,10 @@ function MessageImagePreviewButton({
       type="button"
       title={name}
       onContextMenu={event => openFileContextMenu(event, pathValue, { image: true, language })}
-      onClick={() => {
-        if (!failed) onPreview({ src, name, path: pathValue });
+      onClick={event => {
+        const thumbnail = event.currentTarget.querySelector('img');
+        if (!failed) onPreview({ src, name, path: pathValue,
+          naturalWidth: thumbnail?.naturalWidth, naturalHeight: thumbnail?.naturalHeight });
       }}
     >
       {failed ? (
@@ -2972,7 +2984,7 @@ export const MarkdownContent = memo(function MarkdownContent({
   const pathAliases = useContext(FileReferencePathAliasesContext);
   return (
     <div className="markdown-content">
-      <Suspense fallback={<p className="markdown-fallback">{content}</p>}>
+      <Suspense fallback={<p className="markdown-fallback"><PluginPromptFallback content={content} /></p>}>
         <LazyMarkdownContent
           content={content}
           workspaceRoot={workspaceRoot}

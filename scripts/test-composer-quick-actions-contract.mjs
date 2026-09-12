@@ -269,6 +269,11 @@ assert.equal(detect('请处理\n/go'), null);
 assert.equal(detect('请处理\t/go'), null);
 assert.equal(detect('@file'), null);
 assert.equal(detect('请查看 @file'), null);
+assert.deepEqual(detect('$'), { mode: 'plugin', start: 0, end: 1, query: '' });
+assert.deepEqual(detect('请用 $seedream'), { mode: 'plugin', start: 3, end: 12, query: 'seedream' });
+assert.deepEqual(detect('请用\n$个人'), { mode: 'plugin', start: 3, end: 6, query: '个人' });
+assert.equal(detect('price$5'), null);
+assert.equal(detect('$seedream '), null);
 
 console.log('composer quick-action contract tests passed');
 

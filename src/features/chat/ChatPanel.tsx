@@ -60,6 +60,7 @@ import {
   LiveComposerRuntimeRail,
   quickPayloadText,
   type QuickLoadPayload,
+  type ComposerRuntimeRailHandle,
 } from '../composer';
 import { summarizeChangeReports, type ConversationChangeReport } from '../tools';
 import { goalToolUpdateFromExecution } from '../../shared/goalState';
@@ -147,14 +148,14 @@ function gentleAutoFollowScrollBehavior(): ScrollBehavior {
 }
 
 export function ChatPanel({
-  workspaceControls,
   language,
   theme,
   title,
   onlyTalkMode,
   sidebarCollapsed,
   windowMaximized,
-  onRevealSidebar,
+  inspectorOpen,
+  onToggleInspector,
   activeConversationId,
   activeProjectDir,
   projectPathAliases,
@@ -229,14 +230,14 @@ export function ChatPanel({
   draft,
   onDraftChange,
 }: {
-  workspaceControls?: import('react').ReactNode;
   language: AppLanguage;
   theme: ThemeMode;
   title: string;
   onlyTalkMode: boolean;
   sidebarCollapsed: boolean;
   windowMaximized: boolean;
-  onRevealSidebar: () => void;
+  inspectorOpen: boolean;
+  onToggleInspector: () => void;
   activeConversationId: string;
   activeProjectDir?: string;
   projectPathAliases: Array<{ from: string; to: string }>;
@@ -399,6 +400,7 @@ export function ChatPanel({
   const listScrollerRef = useRef<HTMLElement | null>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
+  const runtimeRailRef = useRef<ComposerRuntimeRailHandle>(null);
   const scrollBottomButtonRef = useRef<HTMLButtonElement>(null);
   const atBottomRef = useRef(true);
   const autoFollowStreamRef = useRef(true);
@@ -2399,7 +2401,7 @@ export function ChatPanel({
       if (
         target.closest('.conversation-work-summary') ||
         target.closest('[data-work-summary-toggle]') ||
-        target.closest('[data-change-review-toggle]') ||
+        target.closest('[data-inspector-toggle]') ||
         target.closest('.right-inspector')
       ) {
         return;
@@ -2451,11 +2453,10 @@ export function ChatPanel({
     >
       <TopBar
         title={title}
-        sidebarCollapsed={sidebarCollapsed}
         language={language}
         conversationContentAvailable={renderMessages.length > 0}
         workSummaryVisible={showWorkSummary}
-        reviewAvailable={changeReports.length > 0}
+        inspectorOpen={inspectorOpen}
         onToggleWorkSummary={renderMessages.length > 0
           ? (anchor) => {
               if (showWorkSummary) {
@@ -2466,10 +2467,8 @@ export function ChatPanel({
               setWorkSummaryVisible(true);
             }
           : undefined}
-        onOpenReview={changeReports.length > 0 ? openChangeReview : undefined}
-        onRevealSidebar={onRevealSidebar}
+        onToggleInspector={onToggleInspector}
       />
-      {workspaceControls}
       {notice && (
         <RuntimeStatusBanner
           language={language}
@@ -2690,6 +2689,8 @@ export function ChatPanel({
           >
             {(sending || activeGoal || currentTurnChangeSummary || queuedMessageCount > 0) && (
               <LiveComposerRuntimeRail
+                key={`runtime:${activeConversationId}`}
+                ref={runtimeRailRef}
                 activeConversationId={activeConversationId}
                 thinkingVisible={thinkingVisible}
                 language={language}
@@ -2725,7 +2726,8 @@ export function ChatPanel({
               stopping={stopping}
               guidanceDeliveryMode={guidanceDeliveryMode}
               cancelEnabled={Boolean(activeTurnId)}
-              queuedMessageCount={0}
+              queuedMessageCount={queuedMessageCount}
+              onShowQueue={() => runtimeRailRef.current?.showQueue()}
               queuedMessagePreview=""
               queuedMessages={[]}
               selectedModel={selectedModel}

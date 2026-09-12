@@ -161,6 +161,7 @@ export function TeamSidebar({
       ref={sidebarRef}
       aria-hidden={!softVisible}
     >
+      <div className="sidebar-panel-content">
       <div className="team-sidebar-top">
         <button className="team-back-button" type="button" onClick={onBack}>
           <span>{zh ? '返回会话' : 'Back to chats'}</span>
@@ -319,6 +320,7 @@ export function TeamSidebar({
         <Settings size={17} />
         <span>{zh ? '设置' : 'Settings'}</span>
       </button>
+      </div>
 
       {contextMenu && createPortal(
         <TeamSidebarContextMenu

@@ -1,4 +1,5 @@
 import { PluginMcpSettings } from './PluginMcpSettings';
+import { pluginPrompt } from './pluginPrompts';
 import { PluginProxySettings, proxyLabel } from './PluginProxySettings';
 import { PluginSearchSettings } from './PluginSearchSettings';
 import { DEFAULT_SEARCH_RESULT_LIMIT, defaultPluginProxy, type PluginProxySettings as ProxySettings } from '@cardbush/bush-protocol';
@@ -68,6 +69,7 @@ export function PluginManagementPanel({
   onLoadSkillDetail,
   onOpenMcp,
   onNotify,
+  onOpenPrompt,
 }: {
   language: AppLanguage;
   initialTab: 'plugins' | 'skills';
@@ -78,6 +80,7 @@ export function PluginManagementPanel({
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onOpenMcp: (serverId?: string) => void;
   onNotify: (message: string) => void;
+  onOpenPrompt?: (prompt: string) => void;
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
   const [page, setPage] = useState<Page>({ kind: 'catalog' });
@@ -418,6 +421,7 @@ export function PluginManagementPanel({
   if (selectedPlugin) {
     return (
       <PluginDetail
+        onOpenPrompt={onOpenPrompt}
         language={language}
         plugin={selectedPlugin}
         proxyDefaults={configuration?.proxy}
@@ -843,7 +847,8 @@ function McpConnectionBadge({ item, language }: { item: PluginMcpConnection; lan
   </span>;
 }
 
-function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall }: {
+function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPersist, onMcpSaved, onManageAccounts, proxyDefaults, onProxySave, onUninstall, onOpenPrompt }: {
+  onOpenPrompt?: (prompt: string) => void;
   onUninstall: () => void;
   proxyDefaults?: ProxySettings;
   onProxySave: (proxy: ProxySettings | undefined) => Promise<boolean>;
@@ -870,10 +875,12 @@ function PluginDetail({ language, plugin, busy, error, onBack, onReplace, onPers
       <p className="plugin-uninstall-hint">{plugin.installed
         ? (language === 'zh' ? '卸载会从已添加列表移除插件及其能力，保留包文件和设置，方便重新安装。' : 'Uninstall removes the plugin and its capabilities from Added. Package files and settings are kept for reinstalling.')
         : (language === 'zh' ? '此插件尚未安装。安装后可使用其能力。' : 'This plugin is not installed. Install it to use its capabilities.')}</p>
-      {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <div key={prompt}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></div>)}</div>}
+      {plugin.defaultPrompts.length > 0 && <div className="plugin-prompt-showcase" style={{ '--plugin-brand': plugin.brandColor } as CSSProperties}>{plugin.defaultPrompts.map((prompt) => <button type="button" key={prompt} disabled={!plugin.installed || busy || !onOpenPrompt}
+        title={language === 'zh' ? '在新会话中使用此提示词' : 'Use this prompt in a new conversation'}
+        onClick={() => onOpenPrompt?.(pluginPrompt(plugin, prompt))}><PluginLogo plugin={plugin} compact /><span><strong>{plugin.name}</strong>{prompt}</span><ChevronRight size={18} /></button>)}</div>}
       <p className="plugin-long-description">{plugin.longDescription}</p>
       {error && <p className="plugin-market-error" role="alert">{error}</p>}
-      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} />}
+      {plugin.installed && <PluginMcpSettings plugin={plugin} language={language} onSaved={onMcpSaved} onManageAccounts={onManageAccounts} onOpenPrompt={onOpenPrompt} />}
       {plugin.installed && <details className="plugin-detail-section plugin-proxy-section"><summary>{language === 'zh' ? '网络代理' : 'Network proxy'} · {proxyLabel(plugin.config.proxy?.mode ?? 'inherit', language === 'zh')}</summary>
         <PluginProxySettings key={plugin.id} language={language} value={plugin.config.proxy} defaults={proxyDefaults} individual busy={busy} onSave={onProxySave} />
       </details>}

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
+import { panelCollapseWidth } from './panelSizing';
 
 import {
   conversationPaneMinimum,
@@ -21,19 +22,34 @@ export function RightInspectorResizer({
   width,
   windowMaximized,
   onWidthChange,
+  onCollapse,
+  softVisible = true,
   label,
 }: {
   width: number;
   windowMaximized: boolean;
   onWidthChange: (width: number) => void;
+  onCollapse?: () => void;
+  softVisible?: boolean;
   label: string;
 }) {
+  const handleRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<InspectorDragState | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelRef.current?.(), []);
+  useLayoutEffect(() => {
+    if (!softVisible) {
+      cancelRef.current?.();
+      return;
+    }
+    // A snap keeps its transient width through the exit animation. Restore the
+    // saved width before reopening, including when the exit is interrupted.
+    const scope = handleRef.current?.closest<HTMLElement>('.right-inspector');
+    if (scope && !dragRef.current) writePreviewWidth(scope, width);
+  }, [softVisible, width]);
 
   const beginResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || !softVisible) return;
     cancelRef.current?.();
     event.preventDefault();
     const scope = event.currentTarget.closest<HTMLElement>('.right-inspector');
@@ -51,7 +67,8 @@ export function RightInspectorResizer({
       animationFrame: 0,
       pendingWidth: currentWidth,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
     document.body.classList.add('right-inspector-resizing');
 
     const finish = (restoreWidth = false) => {
@@ -69,6 +86,9 @@ export function RightInspectorResizer({
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerCancel);
       window.removeEventListener('blur', handleWindowBlur);
+      if (state && handle.isConnected && handle.hasPointerCapture(state.pointerId)) {
+        handle.releasePointerCapture(state.pointerId);
+      }
     };
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const state = dragRef.current;
@@ -78,9 +98,16 @@ export function RightInspectorResizer({
       const nextWidth = clampPreviewWidth(
         state.startWidth + state.startX - moveEvent.clientX,
         state.maximumWidth,
+        Boolean(onCollapse),
       );
       state.currentWidth = nextWidth;
       state.pendingWidth = nextWidth;
+      if (onCollapse && nextWidth < panelCollapseWidth && nextWidth < state.startWidth) {
+        writePreviewWidth(state.scope, nextWidth);
+        finish();
+        onCollapse();
+        return;
+      }
       if (!state.animationFrame) {
         state.animationFrame = window.requestAnimationFrame(() => {
           const latest = dragRef.current;
@@ -95,9 +122,9 @@ export function RightInspectorResizer({
       if (!state || upEvent.pointerId !== state.pointerId) {
         return;
       }
-      const finalWidth = state.currentWidth;
-      writePreviewWidth(state.scope, finalWidth);
+      const finalWidth = Math.max(minimumInspectorWidth, state.currentWidth);
       finish();
+      writePreviewWidth(state.scope, finalWidth);
       onWidthChange(finalWidth);
     };
     const handlePointerCancel = (event: PointerEvent) => {
@@ -109,10 +136,11 @@ export function RightInspectorResizer({
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerCancel);
     window.addEventListener('blur', handleWindowBlur);
-  }, [onWidthChange, width, windowMaximized]);
+  }, [onCollapse, onWidthChange, softVisible, width, windowMaximized]);
 
   return (
     <div
+      ref={handleRef}
       className="right-inspector-resizer"
       role="separator"
       aria-orientation="vertical"
@@ -147,8 +175,8 @@ function readMaximumInspectorWidth(currentWidth: number, windowMaximized: boolea
   );
 }
 
-function clampPreviewWidth(value: number, maximumWidth: number) {
-  return Math.max(minimumInspectorWidth, Math.min(maximumWidth, value));
+function clampPreviewWidth(value: number, maximumWidth: number, canCollapse: boolean) {
+  return Math.max(canCollapse ? 0 : minimumInspectorWidth, Math.min(maximumWidth, value));
 }
 
 function writePreviewWidth(scope: HTMLElement, width: number) {

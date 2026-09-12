@@ -4,6 +4,7 @@ import {
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -16,6 +17,8 @@ export type ImagePreviewSource = {
   src: string;
   name: string;
   path?: string;
+  naturalWidth?: number;
+  naturalHeight?: number;
 };
 
 const minimumZoom = 0.25;
@@ -34,6 +37,12 @@ function clampZoom(value: number) {
   return Math.min(maximumZoom, Math.max(minimumZoom, value));
 }
 
+function previewNaturalSize(image: ImagePreviewSource) {
+  const width = image.naturalWidth ?? 0, height = image.naturalHeight ?? 0;
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? { width, height } : { width: 0, height: 0 };
+}
+
 export function ImagePreviewDialog({
   image,
   language,
@@ -44,12 +53,14 @@ export function ImagePreviewDialog({
   onClose: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<ImageDragState | null>(null);
   const zoomRef = useRef(1);
   const [zoom, setZoom] = useState(1);
-  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
+  const [naturalSize, setNaturalSize] = useState(() => previewNaturalSize(image));
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [dragging, setDragging] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const applyZoom = useCallback((value: number, focalPoint?: { x: number; y: number }) => {
     const current = zoomRef.current;
@@ -76,17 +87,29 @@ export function ImagePreviewDialog({
     }
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     zoomRef.current = 1;
     setZoom(1);
-    setNaturalSize({ width: 0, height: 0 });
+    setFailed(false);
+    dragRef.current = null;
+    setDragging(false);
+    const element = imageRef.current;
+    // Cached images may finish loading before passive effects run. Never erase that observation.
+    setNaturalSize(element?.complete && element.naturalWidth > 0
+      ? { width: element.naturalWidth, height: element.naturalHeight }
+      : previewNaturalSize(image));
+    if (stageRef.current) {
+      stageRef.current.scrollLeft = 0;
+      stageRef.current.scrollTop = 0;
+    }
   }, [image.src]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     const updateSize = () => {
-      setStageSize({ width: stage.clientWidth, height: stage.clientHeight });
+      const width = stage.clientWidth, height = stage.clientHeight;
+      setStageSize(current => current.width === width && current.height === height ? current : { width, height });
     };
     updateSize();
     const observer = new ResizeObserver(updateSize);
@@ -158,15 +181,16 @@ export function ImagePreviewDialog({
 
   const availableWidth = Math.max(1, stageSize.width - 32);
   const availableHeight = Math.max(1, stageSize.height - 32);
-  const fitScale = naturalSize.width > 0 && naturalSize.height > 0
+  const ready = !failed && naturalSize.width > 0 && naturalSize.height > 0 && stageSize.width > 0 && stageSize.height > 0;
+  const fitScale = ready
     ? Math.min(1, availableWidth / naturalSize.width, availableHeight / naturalSize.height)
     : 1;
-  const canvasWidth = naturalSize.width > 0
+  const canvasWidth = ready
     ? Math.max(1, Math.round(naturalSize.width * fitScale * zoom))
-    : undefined;
-  const canvasHeight = naturalSize.height > 0
+    : 0;
+  const canvasHeight = ready
     ? Math.max(1, Math.round(naturalSize.height * fitScale * zoom))
-    : undefined;
+    : 0;
   const percentage = Math.round(zoom * 100);
 
   return createPortal(
@@ -184,7 +208,7 @@ export function ImagePreviewDialog({
             <button
               type="button"
               onClick={() => applyZoom(zoomRef.current - zoomStep)}
-              disabled={zoom <= minimumZoom}
+              disabled={!ready || zoom <= minimumZoom}
               aria-label={language === 'zh' ? '缩小图片' : 'Zoom out'}
               title={language === 'zh' ? '缩小（Ctrl -）' : 'Zoom out (Ctrl -)'}
             >
@@ -194,6 +218,7 @@ export function ImagePreviewDialog({
               className="image-preview-zoom-value"
               type="button"
               onClick={() => applyZoom(1)}
+              disabled={!ready}
               aria-label={language === 'zh' ? '恢复适应窗口' : 'Fit to window'}
               title={language === 'zh' ? '适应窗口（Ctrl 0）' : 'Fit to window (Ctrl 0)'}
             >
@@ -202,7 +227,7 @@ export function ImagePreviewDialog({
             <button
               type="button"
               onClick={() => applyZoom(zoomRef.current + zoomStep)}
-              disabled={zoom >= maximumZoom}
+              disabled={!ready || zoom >= maximumZoom}
               aria-label={language === 'zh' ? '放大图片' : 'Zoom in'}
               title={language === 'zh' ? '放大（Ctrl +）' : 'Zoom in (Ctrl +)'}
             >
@@ -222,6 +247,7 @@ export function ImagePreviewDialog({
         <div
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
+          aria-busy={!ready && !failed}
           onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -236,14 +262,20 @@ export function ImagePreviewDialog({
           onDoubleClick={() => applyZoom(zoomRef.current === 1 ? 2 : 1)}
           onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >
+          {!ready && <p className="image-preview-status" role="status">{failed
+            ? language === 'zh' ? '图片无法预览' : 'Image preview unavailable'
+            : language === 'zh' ? '正在加载图片…' : 'Loading image…'}</p>}
           <div
             className="image-preview-canvas"
-            style={{ width: canvasWidth, height: canvasHeight }}
+            style={{ width: canvasWidth, height: canvasHeight, visibility: ready ? 'visible' : 'hidden' }}
           >
             <img
+              ref={imageRef}
               src={image.src}
               alt={image.name}
               draggable={false}
+              decoding="sync"
+              onError={() => setFailed(true)}
               onLoad={(event) => {
                 setNaturalSize({
                   width: event.currentTarget.naturalWidth,

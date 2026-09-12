@@ -48,8 +48,10 @@ async function buildViews() {
   const exports = [...appViewFiles.slice(1), 'src/features/sidebar/ChatSidebar.tsx',
     'src/components/SidebarResizer.tsx', 'src/components/RightInspectorResizer.tsx',
     'src/hooks/useCapabilityCatalogRefresh.ts',
+    'src/hooks/useSoftPanelPresence.ts',
     'src/features/chatMessages/MessageBubble.tsx',
     'src/features/inspector/InspectorErrorBoundary.tsx',
+    'src/features/composer/queueOrdering.ts',
     'src/features/chatMessages/transcript/liveMessageUpdates.ts']
     .map(file => `export * from ${JSON.stringify(path.join(root, file))};`).join('\n');
   const result = await build({
@@ -272,21 +274,41 @@ app.whenReady().then(async () => {
     await pause();
     assert.equal(await run('navigation.length'), unmountedNavigationCount);
     await require('./helpers/resizer-lifecycle.cjs')({ run, until, pause });
+    await require('./helpers/inspector-snap.cjs')({ run, until, pause, window, root });
+    await require('./helpers/sidebar-snap.cjs')({ run, until, pause, window });
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'inspector-resize') {
+      assert.deepEqual(await run('failures'), [], 'no inspector resize renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
 
     await run(`
-      window.reviewArgs = null;
-      const topbarProps = { title: 'Fixture', sidebarCollapsed: false, language: 'en', reviewAvailable: true,
-        onRevealSidebar: () => {}, onOpenReview: (...args) => { reviewArgs = args; }, onToggleWorkSummary: () => {} };
+      window.inspectorArgs = null;
+      const topbarProps = { title: 'Fixture', language: 'en', inspectorOpen: false,
+        onToggleInspector: (...args) => { inspectorArgs = args; }, onToggleWorkSummary: () => {} };
       renderView(h(views.TopBar, topbarProps));
-      window.showToolbar = () => renderView(h(views.TopBar, { ...topbarProps, conversationContentAvailable: true }));
+      window.showToolbar = (inspectorOpen = true) => renderView(h(views.TopBar, { ...topbarProps, inspectorOpen, conversationContentAvailable: true }));
       void 0;
     `);
     await pause();
-    assert.equal(await run("document.querySelectorAll('[data-change-review-toggle], [data-work-summary-toggle]').length"), 0, 'welcome must hide conversation actions');
+    assert.equal(await run("document.querySelectorAll('[data-inspector-toggle]').length"), 1, 'welcome has a permanent sidebar button');
+    assert.equal(await run("document.querySelectorAll('[data-work-summary-toggle]').length"), 0, 'welcome still hides the work summary');
+    assert.equal(await run("document.querySelector('[data-inspector-toggle]').getAttribute('aria-expanded')"), 'false');
+    await run("document.querySelector('[data-inspector-toggle]').click()");
+    assert.deepEqual(await run('inspectorArgs'), [], 'the toggle must not receive a React click event');
+    await run('showToolbar(false)');
+    await until("document.querySelectorAll('.topbar button').length === 2", 'both conversation actions visible');
+    assert.equal(await run("document.querySelector('[data-work-summary-toggle]').nextElementSibling?.matches('[data-inspector-toggle]')"), true, 'work summary precedes the right sidebar toggle');
     await run('showToolbar()');
-    await until("!!document.querySelector('[data-change-review-toggle]')", 'conversation toolbar');
-    await run("document.querySelector('[data-change-review-toggle]').click()");
-    assert.deepEqual(await run('reviewArgs'), [], 'review must not receive a React click event as a file path');
+    await until("!document.querySelector('[data-inspector-toggle]')", 'the expanded inspector owns its close control without a duplicate in the title');
+    assert.equal(await run("document.querySelector('.topbar .lucide-menu')"), null, 'the old left sidebar hamburger is removed from conversation titles');
+    await require('./helpers/window-sidebar-toggle.cjs')({ run, until, pause, window, root });
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'titlebar') {
+      assert.deepEqual(await run('failures'), [], 'no title bar renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
+    await require('./helpers/inspector-start-layout.cjs')({ run, until, pause, window, root });
 
     await run(`
       const noop = async () => {};
@@ -326,6 +348,12 @@ app.whenReady().then(async () => {
       updateChat({ activeConversationId: 'session-a', messages });
     `);
     await until("document.querySelector('.message-list')?.textContent.includes('Fixture assistant answer')", 'draft to loaded session');
+    await require('./helpers/queue-interaction.cjs')({ run, until, pause, window, root });
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'queue') {
+      assert.deepEqual(await run('failures'), [], 'no queue renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await run("window.retainedList = document.querySelector('.message-list'); updateChat({ title: 'Updated title' })");
     await pause();
     assert.equal(await run("retainedList === document.querySelector('.message-list')"), true, 'unrelated root props must not remount the list');

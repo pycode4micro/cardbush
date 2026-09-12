@@ -19,6 +19,7 @@ const runtimeRail = read('src', 'features', 'composer', 'ComposerRuntimeRail.tsx
 const composer = read('src', 'features', 'composer', 'Composer.tsx');
 const chatHook = read('src', 'hooks', 'useCardbushChat.ts');
 const queueOrdering = read('src', 'features', 'composer', 'queueOrdering.ts');
+const queueDrag = read('src', 'features', 'composer', 'useQueueReorder.ts');
 const messageBubble = read('src', 'features', 'chatMessages', 'MessageBubble.tsx');
 const featureContent = read('src', 'features', 'panels', 'FeatureContentPanel.tsx');
 const theme = read('src', 'styles', 'theme.css');
@@ -56,7 +57,7 @@ assert.match(
 );
 assert.match(
   css,
-  /calc\(100% - var\(--layout-sidebar-space\) - var\(--conversation-pane-min-width\)\)/,
+  /calc\(100cqw - 2px - var\(--layout-sidebar-space\) - var\(--conversation-pane-min-width\)\)/,
   'The inspector width must preserve the shared conversation-pane minimum instead of a separate hard-coded limit',
 );
 assert.match(
@@ -124,9 +125,9 @@ assert.match(
   /<header className=\{`right-inspector-toolbar[\s\S]*?className="right-inspector-tabs"[\s\S]*?<\/header>/,
   'Browser and file tabs must live in the inspector title bar',
 );
-assert.match(app, /type InspectorTab = InspectorResourceTab \| InspectorReviewTab \| InspectorShadowTab/);
+assert.match(read('src', 'features', 'inspector', 'inspectorTabs.ts'), /type InspectorTab = InspectorResourceTab \| InspectorReviewTab \| InspectorShadowTab/);
 assert.match(app, /className="right-inspector-add-tab"/);
-assert.match(app, /className="right-inspector-add-menu" role="menu"/);
+assert.match(app, /<InspectorActions \{\.\.\.inspectorActionProps\} menu/);
 assert.match(app, /className="right-inspector-tab-strip"/);
 assert.match(app, /className="right-inspector-tab-scroll"/);
 assert.match(app, /useInspectorTabStrip\(activeInspectorTabIdentity, displayedInspectorTabs\.length\)/);
@@ -140,7 +141,7 @@ assert.match(app, /关闭右侧标签页/);
 assert.match(app, /关闭全部标签页/);
 assert.match(
   app,
-  /className="right-inspector-add-menu"[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab[\s\S]*?openNewBrowserInspectorTab/,
+  /const inspectorActionProps = \{[\s\S]*?pickAttachments[\s\S]*?openShadowInspectorTab[\s\S]*?openNewBrowserInspectorTab/,
   'The inspector new-tab menu must offer file, Shadow, and browser tabs in one place',
 );
 assert.match(app, /tab\.kind === 'review'[\s\S]*?<Clipboard/);
@@ -202,14 +203,14 @@ assert.doesNotMatch(
 assert.match(app, /!showWorkSummary \|\| windowMaximized/);
 assert.match(app, /target\.closest\('\.conversation-work-summary'\)/);
 assert.match(app, /target\.closest\('\[data-work-summary-toggle\]'\)/);
-assert.match(app, /target\.closest\('\[data-change-review-toggle\]'\)/);
+assert.match(app, /target\.closest\('\[data-inspector-toggle\]'\)/);
 assert.match(app, /target\.closest\('\.right-inspector'\)/);
 assert.match(app, /data-work-summary-toggle/);
-assert.match(app, /data-change-review-toggle/);
+assert.match(app, /data-inspector-toggle/);
 assert.match(
   app,
-  /data-change-review-toggle[\s\S]*?<PanelRightOpen[\s\S]*?data-work-summary-toggle[\s\S]*?<Clipboard/,
-  'The compact toolbar must place review before the far-right summary action',
+  /data-work-summary-toggle[\s\S]*?<Clipboard[\s\S]*?data-inspector-toggle[\s\S]*?<PanelRightOpen/,
+  'The compact toolbar must place the summary before the far-right sidebar action',
 );
 assert.doesNotMatch(
   app,
@@ -251,9 +252,9 @@ assert.match(
   /\.window-maximized\.work-summary-requested \.chat-content-frame\s*\{[\s\S]*?right:\s*328px/,
   'A maximized conversation must keep its summary indentation even while the external inspector is open',
 );
-assert.match(app, /retainedInspectorContent/);
-assert.match(app, /sidebarPreviewWidth/);
-assert.match(app, /onResizeEnd=\{\(width, shouldCollapse\)/);
+assert.match(app, /const \[inspectorOpen, setInspectorOpen\] = useState\(false\)/);
+assert.doesNotMatch(app, /sidebarPreviewWidth/);
+assert.match(app, /<SidebarResizer\s+language=\{language\}\s+width=\{sidebarWidth\}/);
 assert.match(sidebar, /soft-panel-motion/);
 assert.match(summary, /soft-panel-motion/);
 assert.match(summary, /const historyTurnPageSize = 3/);
@@ -287,7 +288,8 @@ assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?width:\s*336px/);
 assert.match(css, /\.conversation-work-summary\s*\{[\s\S]*?border-radius:\s*22px/);
 assert.match(sidebarResizer, /requestAnimationFrame/);
 assert.match(sidebarResizer, /writePreviewWidth\(latest\.scope, latest\.pendingWidth\)/);
-assert.match(sidebarResizer, /nextWidth < collapseSidebarWidthThreshold/);
+assert.match(sidebarResizer, /nextWidth < panelCollapseWidth/);
+assert.match(rightInspectorResizer, /nextWidth < panelCollapseWidth/);
 assert.match(sidebarResizer, /shouldCollapseNow[\s\S]*?endResize\(\);[\s\S]*?onResizeEnd\?\.\(nextWidth, true\);[\s\S]*?onCollapse\?\.\(\)/);
 assert.doesNotMatch(
   sidebarResizer,
@@ -336,10 +338,9 @@ assert.match(runtimeRail, /CornerDownLeft/);
 assert.match(composer, /CornerDownLeft/);
 assert.doesNotMatch(composer, /<Sparkles size=\{12\} \/>/);
 assert.match(runtimeRail, /className="runtime-queue-drag-handle"/);
-assert.match(runtimeRail, /setPointerCapture\(pointerId\)/);
-assert.match(runtimeRail, /setTimeout\(\(\) => \{[\s\S]*?360\)/);
+assert.match(queueDrag, /setPointerCapture\(event\.pointerId\)/);
 assert.match(runtimeRail, /data-queue-item-id=\{item\.id\}/);
-assert.match(runtimeRail, /onReorderQueuedMessage\?\.\(session\.queuedId, targetQueuedId\)/);
+assert.match(runtimeRail, /useQueueReorder\(queuedMessages, onReorderQueuedMessage/);
 assert.match(chatHook, /reorderScopedQueue\([\s\S]*?queuedMessagesRef\.current/);
 assert.match(app, /onReorderQueuedMessage=\{chat\.reorderQueuedMessage\}/);
 assert.match(app, /onReorderQueuedMessage=\{onReorderQueuedMessage\}/);
@@ -347,7 +348,7 @@ assert.match(runtimeRail, /previousQueuedMessageCountRef/);
 assert.match(runtimeRail, /setPriorityKind\('queue'\)/);
 assert.match(runtimeRail, /setRollingToKind\(priorityKind\)/);
 assert.match(app, /currentTurnChangeSummary \|\| queuedMessageCount > 0/);
-assert.match(app, /queuedMessageCount=\{0\}/);
+assert.match(app, /onShowQueue=\{\(\) => runtimeRailRef\.current\?\.showQueue\(\)\}/);
 assert.match(runtimeRail, /className=\{`runtime-screen-track \$\{reelAnimating \? 'rolling' : ''\}`\}/);
 assert.match(runtimeRail, /<RuntimeScreenLine[\s\S]*?<RuntimeScreenLine/);
 assert.doesNotMatch(css, /@keyframes runtime-screen-roll/);
@@ -369,7 +370,7 @@ assert.match(
 assert.match(css, /\.composer-runtime-rail\.context-visible \.runtime-context-panel/);
 assert.match(css, /\.composer-runtime-rail\.context-exiting \.runtime-context-panel/);
 assert.match(css, /\.runtime-queue-list\s*\{[\s\S]*?overflow-y:\s*auto/);
-assert.match(css, /\.runtime-queue-item\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto/);
+assert.match(css, /\.runtime-queue-item-header\s*\{[\s\S]*?grid-template-columns:\s*auto minmax\(0, 1fr\) auto/);
 assert.match(css, /\.runtime-screen-queue-actions\s*\{[\s\S]*?position:\s*absolute[\s\S]*?right:\s*8px/);
 assert.match(css, /\.composer-queue-actions\s*\{[\s\S]*?opacity:\s*1/);
 assert.doesNotMatch(
