@@ -150,19 +150,20 @@ assert.match(sidebarSource, /pinnedProjects\.map\(renderProjectBlock\)/);
 assert.match(sidebarSource, /pinnedConversations\.map\(renderStandaloneConversation\)/);
 assert.match(sidebarSource, /options\.pinned[\s\S]*?取消置顶[\s\S]*?置顶对话/);
 assert.match(stylesSource, /\.window-frame-menu-popover\s*\{/);
-assert.match(sidebarSource, /className=\{`only-talk-toggle\$\{onlyTalkMode \? ' active' : ''\}`\}/);
-assert.match(sidebarSource, /aria-pressed=\{onlyTalkMode\}/);
+const windowFrameBlock = appSource.match(/function WindowFrame\([\s\S]*?function WindowFrameMenu\(/)?.[0] ?? '';
+assert.doesNotMatch(windowFrameBlock, /only-talk-toggle|onOnlyTalkModeChange/);
+assert.doesNotMatch(sidebarSource, /onlyTalkMode|onOnlyTalkModeChange|only-talk-toggle/);
+assert.doesNotMatch(stylesSource, /\.only-talk-toggle|new-chat-mode-row|sidebar-mode-enter/);
 assert.match(
   sidebarSource,
-  /onlyTalkMode \? <Cloud size=\{12\} \/> : <Folder size=\{12\} \/>/,
-  'The only-talk toggle must show the current mode with project and cloud icons',
+  /className="sidebar-sections"[\s\S]*?pinnedProjects\.map\(renderProjectBlock\)[\s\S]*?regularProjects\.map\(renderProjectBlock\)[\s\S]*?recentConversations\.map\(renderStandaloneConversation\)/,
+  'Projects and independent chats must share a stable sidebar instead of separate modes',
 );
 assert.match(
   sidebarSource,
-  /onlyTalkMode[\s\S]*?language === 'zh' \? '仅会话' : 'Only talk'[\s\S]*?language === 'zh' \? '项目' : 'Projects'/,
-  'The only-talk toggle label must describe the current mode',
+  /recentConversations = useMemo\([\s\S]*?!projectItems\.some\(project =>[\s\S]*?conversationMatchesScope/,
+  'Recent chats must include ungrouped conversations without duplicating project chats',
 );
-assert.match(sidebarSource, /onlyTalkConversations\.map\(renderStandaloneConversation\)/);
 assert.match(sidebarSource, /cardbush_conversation_read_state_v1/);
 assert.match(sidebarSource, /conversationReadReceipt\(/);
 assert.match(sidebarSource, /document\.visibilityState !== 'visible' \|\| !document\.hasFocus\(\)/);
@@ -198,25 +199,15 @@ assert.match(
   /item\.id === normalizedId && item\.title === nextTitle[\s\S]*?title: previous\.title/,
   'A failed rename must roll back only the optimistic title written by that request',
 );
-assert.match(sidebarSource, /key=\{onlyTalkMode \? 'only-talk' : 'projects'\}/);
 assert.match(
   appSource,
-  /createConversation\(onlyTalkMode \? null : activeConversationProjectDir \|\| undefined\)/,
-  'Only-talk new chats must explicitly bypass the recent-project fallback',
+  /const handleSidebarCreateConversation = useCallback\(\(\) => \{\s*createConversation\(\)/,
+  'The general new-chat entry must start independently of the active project',
 );
-assert.match(appSource, /cardbush_only_talk_mode/);
-assert.match(
-  appSource,
-  /const changeOnlyTalkMode[\s\S]*?activateConversationScope\(enabled \? \{ mode: 'task' \}/,
-  'Switching chat modes must resolve its destination in the same event.',
-);
-const onlyTalkModeBlock = appSource.match(
-  /const changeOnlyTalkMode[\s\S]*?\}, \[activateConversationScope, fallbackProjectId, fallbackProjectDir\]\);/,
-)?.[0] ?? '';
 assert.doesNotMatch(
-  onlyTalkModeBlock,
-  /chat\.(?:startConversation|clearConversationSelection)/,
-  'The only-talk/project toggle must never create a conversation implicitly.',
+  appSource,
+  /cardbush_only_talk_mode|cardbush_recent_project_dir|activateConversationScope|fallbackProjectDir/,
+  'A global mode or recent project must not redirect the active conversation',
 );
 assert.match(conversationWorkspaceSource, /export function isOnlyTalkConversation/);
 assert.match(
@@ -224,8 +215,7 @@ assert.match(
   /metadataMode === 'task'/,
   'Task metadata must override a stale project-dir index when grouping conversations',
 );
-assert.match(stylesSource, /@keyframes sidebar-mode-enter/);
-assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.sidebar-mode-content/);
+assert.match(stylesSource, /\.sidebar-sections\s*\{/);
 const sidebarIconRule = stylesSource.match(
   /\.nav-row-icon,\s*\.project-row-icon\s*\{([^}]*)\}/,
 )?.[1] ?? '';
@@ -319,27 +309,21 @@ assert.match(appSource, /onOpenConversationChanges=\{handleSidebarOpenConversati
 assert.match(appSource, /onOpenSettings=\{handleSidebarOpenSettings\}/);
 assert.match(
   appSource,
-  /const createConversation = useCallback[\s\S]*?chat\.clearConversationSelection,[\s\S]*?chat\.prepareConversation,[\s\S]*?\]\s*,?\s*\);/,
+  /const createConversation = useCallback[\s\S]*?\[\s*chat\.activeConversationId,\s*chat\.prepareConversation,\s*projectItems,\s*\]/,
   'Creating a conversation must depend on stable chat methods, not the per-render chat object',
 );
 assert.match(
   appSource,
-  /const changeOnlyTalkMode = useCallback[\s\S]*?\}, \[activateConversationScope, fallbackProjectId, fallbackProjectDir\]\);/,
-  'The mode handler must depend on its destination selector, not the per-render chat object',
-);
-assert.match(appSource, /cardbush_recent_project_dir/);
-assert.match(
-  appSource,
-  /const activeProject = activeConversationProjectDir[\s\S]*?projectDir === undefined[\s\S]*?activeProject\?\.rootPath\.trim\(\) \|\| fallbackProjectDir \|\| undefined[\s\S]*?chat\.prepareConversation\(resolvedProjectDir, undefined, resolvedProjectId\)/,
-  'New chat must prefer the active available project, then reserve a draft without persisting it',
+  /const resolvedProjectDir = projectDir\?\.trim\(\) \|\| undefined;[\s\S]*?chat\.prepareConversation\(resolvedProjectDir, undefined, resolvedProjectId\)/,
+  'New chat must reserve a draft using only an explicitly selected project',
 );
 assert.match(appSource, /function WelcomeProjectSwitcher\(/);
 assert.match(appSource, /placeholder=\{language === 'zh' \? '搜索项目' : 'Search projects'\}/);
-assert.match(appSource, /不在项目中工作/);
+assert.match(appSource, /不关联项目/);
 assert.match(
   appSource,
-  /className=\{`welcome-input-stack\$\{onlyTalkMode \? ' only-talk' : ''\}`\}[\s\S]*?!onlyTalkMode && \([\s\S]*?<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
-  'The project context rail must be physically joined above the welcome composer',
+  /className="welcome-input-stack">\s*<WelcomeProjectSwitcher[\s\S]*?\{welcomeComposer\}/,
+  'The optional project selector must always be available above the welcome composer',
 );
 assert.match(chatHookSource, /updateConversation\(\{[\s\S]*?projectDir: normalizedProjectDir \?\? null/);
 assert.match(stylesSource, /\.welcome-project-switcher\s*\{/);

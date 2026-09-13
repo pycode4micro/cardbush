@@ -1,5 +1,7 @@
 export * from "./cacheChainTracker.js";
 export * from "./childTurn.js";
+export * from "./childAgentPolicy.js";
+export * from "./cleanAgentSettings.js";
 export * from "./pluginExtensions.js";
 export * from "./contextAssembler.js";
 export * from "./contextCompaction.js";

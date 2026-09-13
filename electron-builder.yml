@@ -1,6 +1,9 @@
 appId: com.cardbush.desktop
 productName: CardBush
 asar: true
+asarUnpack:
+  - node_modules/@img/**/*
+  - node_modules/sharp/**/*
 directories:
   output: release
   buildResources: assets

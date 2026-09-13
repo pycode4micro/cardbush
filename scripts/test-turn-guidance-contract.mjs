@@ -108,7 +108,7 @@ const bubbleSource = fs.readFileSync(
   'utf8',
 );
 assert.match(bubbleSource, /guidance-delivery-status/);
-assert.match(bubbleSource, /发送中/);
+assert.doesNotMatch(bubbleSource, /发送中/);
 assert.match(bubbleSource, /已排队/);
 assert.match(bubbleSource, /发送失败/);
 assert.match(bubbleSource, /guidance-retry-button/);

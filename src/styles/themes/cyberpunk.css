@@ -819,7 +819,6 @@
   letter-spacing: 0.025em;
 }
 
-.app.theme-cyberpunk .guidance-delivery-status.pending,
 .app.theme-cyberpunk .guidance-delivery-status.queued {
   color: var(--cyber-yellow);
   border-color: rgba(247, 240, 0, 0.44);

@@ -1,4 +1,5 @@
 import { readAgentInstructions } from './globalInstructions';
+import { readConversationStyle } from '../features/settings/conversationStyle';
 import { resolvePromptReferenceContext } from './promptReferenceContext';
 import type {
   RuntimeEvent,
@@ -174,6 +175,7 @@ export async function streamRuntimeChat(
       (turnId, messageId) => runtime.client.getUserMessage(request.sessionId, turnId, messageId, controller.signal));
     const runtimeRequest = createProductAgentTurnRequest({
       ...sharedAgentInput,
+      conversationStyle: readConversationStyle(),
       requestId,
       turnId,
       messageId: userMessageId,
@@ -251,6 +253,7 @@ export async function streamRuntimeChat(
       const continuationLocalDate = new Date().toLocaleDateString('en-CA');
       currentRequest = createProductAgentTurnRequest({
         ...sharedAgentInput,
+        conversationStyle: readConversationStyle(),
         requestId: `request_${crypto.randomUUID()}`,
         turnId: `turn_${crypto.randomUUID()}`,
         messageId: `message_${crypto.randomUUID()}`,

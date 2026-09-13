@@ -1,6 +1,7 @@
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
+import { UsageLedger } from './usageLedger';
 import { McpDesktopHost } from './mcpDesktopHost';
 import {
   app,
@@ -181,6 +182,8 @@ let productHostController: {
   savePluginConnections: (input: unknown) => Promise<unknown>;
   requestPluginCredentials: (input: unknown, signal: AbortSignal) => Promise<unknown>;
   resolveAutomationModel: (modelId: string) => Promise<Record<string, unknown>>;
+  subagentModels: () => Promise<Array<{ id: string; model: string; maxContextTokens?: number; maxOutputTokens?: number }>>;
+  resolveSubagentModel: (modelId: string) => Promise<Record<string, unknown>>;
 } | null = null;
 let productMcpManagement: { url: string; token: string; close: () => Promise<void> } | null = null;
 let disposeCapabilityCatalogWatcher: (() => void) | undefined;
@@ -2019,6 +2022,14 @@ ipcMain.handle('instructions:read-global', (event) => {
   assertRuntimeRendererSender(event.sender.id);
   return getGlobalInstructionsStore().read();
 });
+
+let usageLedger: UsageLedger | undefined;
+app.on('will-quit', () => { usageLedger?.close(); usageLedger = undefined; });
+ipcMain.handle('usage:statistics', event => {
+  assertMainWindowSender(event.sender.id);
+  usageLedger ??= new UsageLedger(path.join(app.getPath('userData'), 'usage', 'ledger.sqlite'));
+  return usageLedger.snapshot();
+});
 ipcMain.handle('instructions:read-applicable', (event, projectDir?: string, workspaceDir?: string) => {
   assertRuntimeRendererSender(event.sender.id);
   return readAgentInstructionDocuments(getGlobalInstructionsStore(), projectDir, workspaceDir);
@@ -3453,6 +3464,7 @@ async function initializeRuntimeHostWithinDeadline() {
           app.getPath('userData'),
           'runtime-state',
         ),
+        CARDBUSH_USAGE_LEDGER_PATH: path.join(app.getPath('userData'), 'usage', 'ledger.sqlite'),
         CARDBUSH_SUBAGENT_CONFIG_PATH: path.join(
           app.getPath('userData'),
           'product-host',
@@ -3511,6 +3523,11 @@ async function initializeRuntimeHostWithinDeadline() {
         if (operation === 'automation.prepare-model') {
           if (!productHostController) throw new Error('Product Host is not ready.');
           return productHostController.resolveAutomationModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
+        }
+        if (operation === 'subagent.models' || operation === 'subagent.prepare-model') {
+          if (!productHostController) throw new Error('Product Host is not ready.');
+          return operation === 'subagent.models' ? productHostController.subagentModels()
+            : productHostController.resolveSubagentModel(String((payload as { modelId?: unknown })?.modelId ?? ''));
         }
         if (operation === 'openai.access-token') return (await openAiDesktop()).access({
           rejectedToken: typeof (payload as { rejectedToken?: unknown })?.rejectedToken === 'string' ? (payload as { rejectedToken: string }).rejectedToken : undefined, signal });

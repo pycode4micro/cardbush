@@ -107,7 +107,7 @@ app.whenReady().then(async () => {
       if (await run(condition)) return;
       await pause(25);
     }
-    throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText'));
+    throw new Error('Timed out: ' + label + '\n' + await run('document.body.innerText') + '\nRenderer errors: ' + await run('JSON.stringify(window.failures ?? [])'));
   };
   try {
     await window.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
@@ -321,7 +321,7 @@ app.whenReady().then(async () => {
     await run(`
       const noop = async () => {};
       window.chatProps = {
-        language: 'en', theme: 'dark', title: 'Fixture session', onlyTalkMode: false,
+        language: 'en', theme: 'dark', title: 'Fixture session',
         sidebarCollapsed: false, windowMaximized: false, activeConversationId: 'draft',
         selectedProjectDir: 'D:/fixture', activeProjectDir: 'D:/fixture', projectPathAliases: [],
         availableProjects: [{ id: 'project', title: 'Fixture project', rootPath: 'D:/fixture' }],
@@ -348,6 +348,14 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('.welcome-project-menu')", 'welcome project menu');
     await run("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     await until("!document.querySelector('.welcome-project-menu')", 'Escape closes only the project menu');
+    if (!process.env.CARDBUSH_APP_VIEWS_CASE || process.env.CARDBUSH_APP_VIEWS_CASE === 'file-drop') {
+      await require('./helpers/chat-file-drop.cjs')({ run, until, pause });
+    }
+    if (process.env.CARDBUSH_APP_VIEWS_CASE === 'file-drop') {
+      assert.deepEqual(await run('failures'), [], 'no file drop renderer errors');
+      assert.deepEqual(errors, []);
+      return;
+    }
     await run(`
       const messages = [
         { id: 'user-a', role: 'user', content: 'Fixture user question', turnId: 'turn-a', createdAt: '2026-09-05T00:00:00Z' },

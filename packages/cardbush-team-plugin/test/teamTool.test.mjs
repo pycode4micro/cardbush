@@ -95,7 +95,8 @@ test("runs configured Team assignments concurrently with immutable Profile const
   ]);
   assert.ok(requests.every((request) => request.metadata.disabledTools.includes("subagent")));
   assert.ok(requests.every((request) => request.metadata.disabledTools.includes("team_delegate")));
-  assert.ok(requests.every((request) => request.tools.length === 0));
+  for (const request of requests) assert.deepEqual(request.tools, parentRequest.tools);
+  assert.ok(requests.every((request) => request.inputMessages[0].message.content.startsWith('你当前处于子agent状态\n')));
   assert.deepEqual(outcome.result.members.map((member) => member.memberId), [
     "builder", "reviewer",
   ]);

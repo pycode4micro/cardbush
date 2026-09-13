@@ -68,6 +68,8 @@ import {
 import { dirname, isAbsolute, join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { UsageLedger } from './usageLedger.js';
+import { usageRecordingProvider } from './usageRecordingProvider.mjs';
 
 const parentPort = process.parentPort;
 if (!parentPort) {
@@ -659,6 +661,10 @@ providers = new OpenAIResponsesProviderRegistry({
   fallbackProvider: createEnvironmentProvider(providerCapabilityStore),
   capabilityStore: providerCapabilityStore,
 });
+const usageLedgerPath = process.env.CARDBUSH_USAGE_LEDGER_PATH?.trim();
+if (usageLedgerPath && !isAbsolute(usageLedgerPath)) throw new Error('CARDBUSH_USAGE_LEDGER_PATH must be an absolute path.');
+const usageLedger = usageLedgerPath ? new UsageLedger(usageLedgerPath) : undefined;
+process.once('exit', () => usageLedger?.close());
 
 const toolRegistry = new ToolRegistry();
 const loadSearchResultLimit = () => readCardbushSearchResultLimit(process.env.CARDBUSH_APPS_CONFIG_PATH?.trim());
@@ -723,7 +729,7 @@ host = new InMemoryRuntimeHost({
   loadSearchResultLimit,
   ...(process.env.CARDBUSH_MCP_DESKTOP_BRIDGE === '1' ? { pluginNetwork: (pluginId: string) => pluginNetwork({ pluginId }) } : {}),
   automation,
-  provider: providers,
+  provider: usageLedger ? usageRecordingProvider(providers, usage => usageLedger.record(usage)) : providers,
   toolRegistry,
   dataRoot: runtimeStateRoot,
   eventLog,
@@ -743,6 +749,13 @@ host = new InMemoryRuntimeHost({
   durableCoordination: Boolean(runtimeStateRoot),
   durableSubagentTasks: Boolean(runtimeStateRoot),
   subagentPermissionPolicy,
+  subagentModels: {
+    list: signal => mcpHost.request<import('@cardbush/bush-runtime').SubagentModelOption[]>('subagent.models', {}, signal),
+    resolve: async (modelId, signal) => {
+      const selected = await mcpHost.request<{ modelId: string; model: string; binding: RuntimeProviderBindingRef; maxContextTokens?: number; maxOutputTokens?: number }>('subagent.prepare-model', { modelId }, signal);
+      return { id: selected.modelId, model: selected.model, providerBinding: selected.binding, maxContextTokens: selected.maxContextTokens, maxOutputTokens: selected.maxOutputTokens };
+    },
+  },
   loadPluginExtensions: () => loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? ''),
   openAgentMcpScope: (agent, request, signal) => openPluginAgentMcp(mcp, agent, request, signal),
   requestBackgroundPermission: async (input, signal) => {

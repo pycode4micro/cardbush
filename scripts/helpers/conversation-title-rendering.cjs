@@ -15,8 +15,8 @@ module.exports = async function testConversationTitleRendering({ run, until, pau
     window.showTitleFixture = index => renderView(h('div', { className: 'desktop-shell' },
       h(views.ChatSidebar, {
         language: 'zh', section: 'chat', activeConversationId: titleFixtures[index].id,
-        projects: [], conversations: titleConversations, changeReportsByConversation: {}, onlyTalkMode: true,
-        onOnlyTalkModeChange: titleNoop, onSectionChange: titleNoop, onConversationChange: titleNoop,
+        projects: [], conversations: titleConversations, changeReportsByConversation: {},
+        onSectionChange: titleNoop, onConversationChange: titleNoop,
         onCreateConversation: titleNoop, onAddProject: titleNoop, onProjectAction: titleNoop,
         onDeleteConversation: titleNoop, onRenameConversation: async (id, title) => { titleRenames.push({ id, title }); return true; },
         onOpenConversationChanges: titleNoop, onOpenSettings: titleNoop,

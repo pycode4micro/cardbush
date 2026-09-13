@@ -58,6 +58,10 @@ export class PluginAgentEnvironment {
       // A plugin cannot raise the user's configured permission level.
       request.metadata.pluginAgentPermissionMode = agent.permissionMode ?? 'default';
       await this.memory.prepare(agent, request, this.registry, this.readContext?.(request.sessionId));
+      if (Array.isArray(request.metadata.childToolAllowlist)) {
+        const selected = new Set(request.metadata.childToolAllowlist);
+        request.tools = request.tools.filter(tool => selected.has(tool.name));
+      }
       request.metadata.pluginScopedSkillIds = [...new Set([...(Array.isArray(request.metadata.pluginScopedSkillIds) ? request.metadata.pluginScopedSkillIds : []), ...(agent.skills ?? []).map(skill => skill.name)])];
       validateAgentSkills(agent, request, this.registry);
       signal?.throwIfAborted(); return { release };

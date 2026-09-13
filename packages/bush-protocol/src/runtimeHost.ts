@@ -303,6 +303,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       providerResponseId: z.string().min(1).optional(),
       preflightInputTokens: z.number().int().nonnegative().optional(),
       preflightMeasurement: z.enum(["provider", "fallback_estimate"]).optional(),
+      requestBody: z.object({ bytes: z.number().int().nonnegative(), maxBytes: z.number().int().positive() }).optional(),
       usableInputTokens: z.number().int().positive().optional(),
       inputCalibration: z.object({
         inputTokens: z.number().int().nonnegative(),
@@ -341,6 +342,7 @@ export const runtimeEventSchema = z.discriminatedUnion("kind", [
       normalOutputTokens: z.number().int().positive().optional(),
       safetyTokens: z.number().int().nonnegative().optional(),
       trigger: z.enum(["budget", "provider_context_limit"]).optional(),
+      requestBody: z.object({ bytes: z.number().int().nonnegative(), maxBytes: z.number().int().positive() }).optional(),
       countFailure: z.object({ code: z.string(), message: z.string(), status: z.number().int().optional() }).optional(),
       precedingTurnCount: z.number().int().nonnegative(),
       activeTurnIncluded: z.boolean(),

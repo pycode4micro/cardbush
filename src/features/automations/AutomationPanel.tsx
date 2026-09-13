@@ -19,13 +19,17 @@ const errorText = (caught: unknown, zh: boolean) => {
     'The automation model was removed. Send a message in the target conversation with an available model.': '原模型已移除，请在目标会话选择可用模型并发送一条消息。',
   } as Record<string, string>)[text] ?? text;
 };
-export function AutomationPanel({ language, onOpenConversation }: { language: 'zh' | 'en'; onOpenConversation: (id: string) => void }) {
+export function AutomationPanel({ language, onOpenConversation, onCreateAutomation }: {
+  language: 'zh' | 'en';
+  onOpenConversation: (id: string) => void;
+  onCreateAutomation: () => void;
+}) {
   const zh = language === 'zh';
   const [overview, setOverview] = useState<AutomationOverview>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
-  const [form, setForm] = useState<{ id?: string; revision?: number; name: string; prompt: string; sessionId: string; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
+  const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
   const generation = useRef(0), mutation = useRef(false);
   const refresh = useCallback(async () => {
     const revision = ++generation.current;
@@ -48,25 +52,25 @@ export function AutomationPanel({ language, onOpenConversation }: { language: 'z
     mutation.current = true; setBusy(key); setError('');
     try {
       await window.cardbushDesktop!.automationCommand(command);
-      if (command.action === 'create' || command.action === 'update') setForm(undefined);
+      if (command.action === 'update') setForm(undefined);
       await refresh();
     } catch (caught) { setError(errorText(caught, zh)); }
     finally { mutation.current = false; setBusy(''); }
   };
-  const edit = (job?: AutomationJob) => {
+  const edit = (job: AutomationJob) => {
     setError('');
-    setForm({ id: job?.id, revision: job?.revision, name: job?.name ?? '', prompt: job?.prompt ?? '', sessionId: job?.sessionId ?? overview?.sessions[0]?.id ?? '',
-      kind: job?.trigger.kind ?? 'once', at: localInput(job && job.trigger.kind !== 'event' ? job.trigger.at : new Date(Date.now() + 3600000).toISOString()),
-      minutes: job?.trigger.kind === 'interval' ? job.trigger.seconds / 60 : 60,
-      event: job?.trigger.kind === 'event' ? job.trigger.event : 'Stop', tool: job?.trigger.kind === 'event' ? job.trigger.tool : '',
-      cooldown: job?.trigger.kind === 'event' ? job.trigger.cooldownSeconds : 60, timeZone: job?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone });
+    setForm({ id: job.id, revision: job.revision, name: job.name, prompt: job.prompt, sessionId: job.sessionId,
+      kind: job.trigger.kind, at: localInput(job.trigger.kind !== 'event' ? job.trigger.at : new Date(Date.now() + 3600000).toISOString()),
+      minutes: job.trigger.kind === 'interval' ? job.trigger.seconds / 60 : 60,
+      event: job.trigger.kind === 'event' ? job.trigger.event : 'Stop', tool: job.trigger.kind === 'event' ? job.trigger.tool : '',
+      cooldown: job.trigger.kind === 'event' ? job.trigger.cooldownSeconds : 60, timeZone: job.timeZone });
   };
   const save = () => {
     if (!form) return;
     try {
       const trigger: AutomationDefinition['trigger'] = form.kind === 'event' ? { kind: 'event', event: form.event, tool: form.tool.trim(), cooldownSeconds: form.cooldown }
         : form.kind === 'interval' ? { kind: 'interval', at: new Date(form.at).toISOString(), seconds: form.minutes * 60 } : { kind: 'once', at: new Date(form.at).toISOString() };
-      void operate({ action: form.id ? 'update' : 'create', id: form.id, expectedRevision: form.revision,
+      void operate({ action: 'update', id: form.id, expectedRevision: form.revision,
         definition: { name: form.name, sessionId: form.sessionId, prompt: form.prompt, trigger, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } }, 'form');
     } catch { setError(zh ? '请输入有效的执行时间。' : 'Enter a valid execution time.'); }
   };
@@ -76,13 +80,13 @@ export function AutomationPanel({ language, onOpenConversation }: { language: 'z
   const time = (value?: string) => value ? new Date(value).toLocaleString(zh ? 'zh-CN' : 'en-US') : '—';
   const jobs = overview?.jobs.filter(job => `${job.name} ${job.prompt}`.toLowerCase().includes(filter.toLowerCase())) ?? [];
   return <div className="feature-content automation-panel">
-    <header className="automation-heading"><div><h1><CalendarClock size={25} />{zh ? '定时与自动化' : 'Automations'}</h1><p>{zh ? '在指定时间或事件发生时，让 agent 按提示词继续会话。' : 'Continue a conversation with a saved prompt at a time or when an event occurs.'}</p></div>
+    <header className="automation-heading"><div><h1><CalendarClock size={25} />{zh ? '定时与自动化' : 'Automations'}</h1><p>{zh ? '告诉 agent 你想做什么、何时执行，通过对话完成设置。' : 'Tell the agent what to do and when, and set up the task through conversation.'}</p></div>
       <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()}><RefreshCw size={16}/></button>
-        <button type="button" className="primary-button" disabled={!overview?.available || Boolean(busy)} onClick={() => edit()}><Plus size={16}/>{zh ? '新建自动化' : 'New automation'}</button></div></header>
+        <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={16}/>{zh ? '新建自动化' : 'New automation'}</button></div></header>
     <p className="automation-runtime-note">{zh ? 'CardBush 运行时执行；关闭或休眠期间错过的时间，恢复后合并执行一次。会话忙碌时先排队。' : 'Runs while CardBush is open. Missed times coalesce into one run after reopening or waking. Busy conversations wait.'}</p>
     {error && <p className="automation-error" role="alert">{error}</p>}
     {form && <form className="automation-form" onSubmit={event => { event.preventDefault(); save(); }}>
-      <h2>{form.id ? (zh ? '编辑自动化' : 'Edit automation') : (zh ? '新建自动化' : 'New automation')}</h2>
+      <h2>{zh ? '编辑自动化' : 'Edit automation'}</h2>
       <fieldset disabled={Boolean(busy)}>
         <div className="automation-fields"><label>{zh ? '名称' : 'Name'}<input required maxLength={120} value={form.name} onChange={event => setForm({ ...form, name: event.target.value })}/></label>
           <label>{zh ? '目标会话' : 'Conversation'}<select required value={form.sessionId} onChange={event => setForm({ ...form, sessionId: event.target.value })}><option value="">{zh ? '选择一个已开始的会话' : 'Choose a started conversation'}</option>
@@ -102,7 +106,7 @@ export function AutomationPanel({ language, onOpenConversation }: { language: 'z
       </fieldset></form>}
     <input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={zh ? '搜索自动化' : 'Search automations'} value={filter} onChange={event => setFilter(event.target.value)}/>
     {!overview && !error && <p role="status">{zh ? '正在读取自动化…' : 'Loading automations…'}</p>}
-    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。你可以在这里创建，也可以在会话中让 agent 设置定时。' : 'Create an automation here or ask the agent to schedule one in a conversation.')}</p></div>}
+    {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”，在对话中告诉 agent 你的安排。' : 'No automations yet. Click New automation and tell the agent what you have in mind.')}</p></div>}
     <div className="automation-list">{jobs.map(job => {
       const latest = job.runs.at(-1), active = latest?.status === 'running' || latest?.status === 'queued';
       const label = active ? runLabels[latest.status] : job.state === 'active' ? (zh ? '已启用' : 'Active') : job.state === 'paused' ? (zh ? '已暂停' : 'Paused') : (zh ? '已完成' : 'Completed');

@@ -80,7 +80,10 @@ test('tool loops and active compaction retain original human request and locale,
 });
 
 test('children inherit human language evidence and fallback even when assignment wording is English', () => {
-  const parent = request();
+  const parent = request({
+    instructionDocuments: [{ path: 'C:/fixture/AGENTS.md', scope: 'global', content: '先核对事实再修改。' }],
+    conversationStyle: { mode: 'professional', customTone: '' },
+  });
   const context = {
     sessionId: parent.sessionId, turnId: parent.turnId,
     turn: { request: parent, contextMessages: [
@@ -95,7 +98,12 @@ test('children inherit human language evidence and fallback even when assignment
       inherited: inheritedChildMessages(context, inherit), metadata: {},
     });
     assertOneCommunicationPolicy(child.prefixMessages);
-    assert.ok(child.prefixMessages.some(m => m.name === 'communication_context' && m.content.includes('zh-CN')));
+    assert.deepEqual(child.prefixMessages[0], parent.prefixMessages[0]);
+    assert.ok(child.prefixMessages.some(m => m.name === 'global_instructions' && m.content.includes('先核对事实再修改。')));
+    assert.ok(child.prefixMessages.some(m => m.content.includes('Mode: professional')));
+    assert.ok(child.prefixMessages.some(m => m.content.includes('ui_language_fallback: zh-CN')));
+    if (inherit) assert.deepEqual(child.prefixMessages, context.turn.contextMessages);
+    assert.ok(child.inputMessages[0].message.content.startsWith('你当前处于子agent状态\n'));
     assert.equal(child.prefixMessages.some(m => m.content === parent.inputMessages.at(-1).message.content), inherit);
   }
 });

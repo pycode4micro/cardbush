@@ -1,8 +1,8 @@
 import { Check, Folder, LoaderCircle, Monitor, Search, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import type { QueuedChatMessage } from '../../hooks/useCardbushChat';
 import { Composer } from '../composer';
-import { samePath } from '../../shared/localPaths';
+import { basename, samePath } from '../../shared/localPaths';
 import { StarWordmark } from './StarWordmark';
 import { WelcomeSuggestions } from './WelcomeSuggestions';
 import type {
@@ -19,7 +19,7 @@ import type {
 
 export function WelcomeComposer({
   language,
-  onlyTalkMode = false,
+  fileDropTarget,
   draft,
   onDraftChange,
   sending,
@@ -60,7 +60,7 @@ export function WelcomeComposer({
   onCancel,
 }: {
   language: AppLanguage;
-  onlyTalkMode?: boolean;
+  fileDropTarget?: RefObject<HTMLElement | null>;
   draft: string;
   onDraftChange: (value: string) => void;
   sending: boolean;
@@ -101,6 +101,8 @@ export function WelcomeComposer({
   onCancel: () => Promise<void>;
 }) {
   const welcomeRef = useRef<HTMLDivElement>(null);
+  const selectedProjectTitle = availableProjects.find(project => samePath(project.rootPath, selectedProjectDir))?.title
+    || basename(selectedProjectDir);
   function selectSuggestion(text: string) {
     if (sending || draft.trim()) return;
     onDraftChange(text);
@@ -113,6 +115,7 @@ export function WelcomeComposer({
   const welcomeComposer = (
     <Composer
       compact
+      fileDropTarget={fileDropTarget}
       language={language}
       draft={draft}
       onDraftChange={onDraftChange}
@@ -157,26 +160,22 @@ export function WelcomeComposer({
       <div className="welcome-hero">
         <StarWordmark />
         <h2>
-          {onlyTalkMode
+          {selectedProjectDir
             ? language === 'zh'
-              ? '你想聊些什么？'
-              : 'What would you like to talk about?'
-            : language === 'zh'
-              ? `你想让我们在 ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'} 中构建什么？`
-              : `What do you want us to build in ${selectedProjectDir ? (availableProjects.find((project) => samePath(project.rootPath, selectedProjectDir))?.title || 'cardbush') : 'cardbush'}?`}
+              ? `你想在 ${selectedProjectTitle} 中做些什么？`
+              : `What would you like to do in ${selectedProjectTitle}?`
+            : language === 'zh' ? '你想做些什么？' : 'What would you like to do?'}
         </h2>
         <WelcomeSuggestions language={language} disabled={sending || Boolean(draft.trim())} onSelect={selectSuggestion} />
       </div>
-      <div className={`welcome-input-stack${onlyTalkMode ? ' only-talk' : ''}`}>
-        {!onlyTalkMode && (
-          <WelcomeProjectSwitcher
-            language={language}
-            projects={availableProjects}
-            selectedProjectDir={selectedProjectDir}
-            disabled={sending}
-            onSelect={onProjectChange}
-          />
-        )}
+      <div className="welcome-input-stack">
+        <WelcomeProjectSwitcher
+          language={language}
+          projects={availableProjects}
+          selectedProjectDir={selectedProjectDir}
+          disabled={sending}
+          onSelect={onProjectChange}
+        />
         {welcomeComposer}
       </div>
     </div>
@@ -203,6 +202,7 @@ function WelcomeProjectSwitcher({
   const selectedProject = projects.find((project) =>
     samePath(project.rootPath, selectedProjectDir),
   );
+  const hasProject = Boolean(selectedProjectDir.trim());
   const normalizedQuery = query.trim().toLowerCase();
   const filteredProjects = projects.filter((project) =>
     !normalizedQuery || `${project.title} ${project.rootPath}`.toLowerCase().includes(normalizedQuery),
@@ -231,7 +231,7 @@ function WelcomeProjectSwitcher({
   }, [disabled]);
 
   async function selectProject(projectDir: string | null) {
-    if (disabled) return;
+    if (disabled || busy) return;
     setBusy(true);
     try {
       await onSelect(projectDir);
@@ -285,13 +285,13 @@ function WelcomeProjectSwitcher({
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={!selectedProject}
+              aria-checked={!hasProject}
               disabled={busy || disabled}
               onClick={() => void selectProject(null)}
             >
               <X size={14} />
-              <span>{language === 'zh' ? '不在项目中工作' : 'Work without a project'}</span>
-              {!selectedProject && <Check size={14} />}
+              <span>{language === 'zh' ? '不关联项目' : 'No project'}</span>
+              {!hasProject && <Check size={14} />}
             </button>
           </div>
         </div>
@@ -300,13 +300,13 @@ function WelcomeProjectSwitcher({
         className="welcome-project-trigger"
         type="button"
         aria-expanded={open}
-        disabled={disabled}
+        disabled={disabled || busy}
         onClick={() => setOpen((current) => !current)}
       >
         {busy ? <LoaderCircle className="spinning" size={14} /> : <Folder size={14} />}
-        <span>{selectedProject?.title || (language === 'zh' ? '不在项目中' : 'No project')}</span>
+        <span>{selectedProject?.title || (hasProject ? basename(selectedProjectDir) : language === 'zh' ? '关联项目' : 'Link a project')}</span>
       </button>
-      {selectedProject && (
+      {hasProject && (
         <span className="welcome-project-context-meta" aria-label={language === 'zh' ? '本地项目' : 'Local project'}>
           <Monitor size={13} aria-hidden="true" />
           <span>{language === 'zh' ? '本地' : 'Local'}</span>

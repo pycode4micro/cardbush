@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { defaultPluginProxy, pluginProxySchema, type PluginProxySettings } from '@cardbush/bush-protocol';
 import type { AppLanguage } from '../../types';
+import { SettingsDropdown } from '../settings/SettingsDropdown';
 
 export function proxyLabel(mode: string, zh: boolean): string {
   return ({ inherit: zh ? '使用默认' : 'Use default', model: zh ? '跟随模型代理' : 'Follow model proxy',
@@ -51,8 +52,8 @@ export function PluginProxySettings({ language, value, defaults, individual = fa
     onSubmit={event => { event.preventDefault(); if (applyToAll) void save(draft, false, true); }}>
     {label && <div className="plugin-proxy-row-name"><strong>{label}</strong>{caption && <small>{caption}</small>}</div>}
     <label className="plugin-proxy-mode"><span>{zh ? '代理方式' : 'Proxy mode'}</span>
-      <select aria-label={label ? `${label} ${zh ? '代理方式' : 'proxy mode'}` : zh ? '代理方式' : 'Proxy mode'} value={mode} disabled={busy || saving} onChange={event => {
-        const mode = event.target.value; setInherit(mode === 'inherit');
+      <SettingsDropdown label={label ? `${label} ${zh ? '代理方式' : 'proxy mode'}` : zh ? '代理方式' : 'Proxy mode'} value={mode} disabled={busy || saving} onChange={mode => {
+        setInherit(mode === 'inherit');
         if (mode !== 'inherit') {
           const next = { ...draft, mode: mode as PluginProxySettings['mode'] };
           update(next);
@@ -60,10 +61,9 @@ export function PluginProxySettings({ language, value, defaults, individual = fa
           // stay editable until the complete configuration is saved/applied.
           if (!individual && mode !== 'manual') void save(next, false);
         } else { setDirty(true); setError(''); }
-      }}>{(individual ? ['inherit', 'model', 'none', 'system', 'manual'] : ['model', 'none', 'system', 'manual']).map(mode =>
-        <option key={mode} value={mode}>{mode === 'inherit'
+      }} options={(individual ? ['inherit', 'model', 'none', 'system', 'manual'] : ['model', 'none', 'system', 'manual']).map(mode => ({ value: mode, label: mode === 'inherit'
           ? `${proxyLabel(mode, zh)}${zh ? '（' : ' ('}${proxyLabel(defaults?.mode ?? 'model', zh)}${zh ? '）' : ')'}`
-          : proxyLabel(mode, zh)}</option>)}</select>
+          : proxyLabel(mode, zh) }))} />
     </label>
     {!compact && <p className="plugin-proxy-help">{inherit
       ? `${zh ? '当前插件默认：' : 'Current plugin default: '}${proxyLabel(defaults?.mode ?? 'model', zh)}`

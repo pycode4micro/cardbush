@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import {
-  FileSessionEventPersistence, InMemoryRuntimeHost, SessionStore, ToolRegistry,
+  FileSessionEventPersistence, InMemoryRuntimeHost, ModelImageStore, SessionStore, ToolRegistry,
 } from "@cardbush/bush-runtime";
 import { OpenAIResponsesProvider, resolveLocalImageInputs } from "../dist/index.js";
 import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.mjs";
 
 const NOW = "2026-09-05T08:00:00.000Z";
 
-test("real Tool loop, session journal and provider projection retain deleted-image bytes across restart", async (context) => {
+for (const compressed of [false, true]) test(`real Tool loop and journal retain ${compressed ? 'compressed' : 'small original'} image bytes across restart`, async (context) => {
   const { root, source } = await imageFixture(context);
+  const original = compressed ? await sharp({ create: { width: 1600, height: 1000, channels: 3,
+    noise: { type: 'gaussian', mean: 128, sigma: 30 } } }).png().toBuffer() : png;
+  await writeFile(source, original);
+  const expected = await readFile(await new ModelImageStore(root).snapshot(source));
+  if (compressed) assert.ok(expected.length < original.length / 2);
   const journalRoot = join(root, "sessions");
   const firstJournal = new FileSessionEventPersistence({ root: journalRoot });
   const registry = new ToolRegistry();
@@ -53,12 +59,12 @@ test("real Tool loop, session journal and provider projection retain deleted-ima
     const beforeDelete = imageMessage(projected[1].messages);
     const afterDelete = imageMessage(projected[2].messages);
     assert.deepEqual(beforeDelete, afterDelete);
-    assert.equal(beforeDelete.images[0].url, "data:image/png;base64," + png.toString("base64"));
+    assert.equal(beforeDelete.images[0].url.split(',')[1], expected.toString("base64"));
     const snapshot = await host.sendCommand({ kind: "runtime.get_session", payload: { sessionId: "session_images" } });
     saved = imageMessage(snapshot.turns[0].messages.map((item) => item.message));
     assert.notEqual(saved.images[0].url, source);
     assert.equal(saved.images[0].url.startsWith("data:"), false);
-    assert.deepEqual(await readFile(saved.images[0].url), png);
+    assert.deepEqual(await readFile(saved.images[0].url), expected);
     const cacheChecks = host.events("session_images", "turn_1")
       .filter((item) => item.kind === "cache_chain_observed");
     assert.equal(cacheChecks.length, 3);
@@ -89,6 +95,31 @@ test("real Tool loop, session journal and provider projection retain deleted-ima
   } finally {
     secondJournal.close();
   }
+});
+
+test('new user attachments are compressed before journaling and their bytes survive source deletion', async context => {
+  const { root, source } = await imageFixture(context);
+  const original = await sharp({ create: { width: 1600, height: 1000, channels: 3,
+    noise: { type: 'gaussian', mean: 128, sigma: 30 } } }).png().toBuffer();
+  await writeFile(source, original);
+  const inputs = [];
+  const host = new InMemoryRuntimeHost({ dataRoot: root, registerDefaultWorkspaceTools: false,
+    provider: { async *stream(request) {
+      inputs.push(await resolveLocalImageInputs(request));
+      yield event(request, 0, 'text_delta', { delta: 'Image inspected.' });
+      yield event(request, 1, 'response_completed', { finishReason: 'stop' });
+    } } });
+  context.after(() => host.sendCommand({ kind: 'runtime.shutdown', payload: {} }));
+  const first = sessionRequest(root, 1);
+  first.inputMessages[0].message.images = [{ url: source, detail: 'high' }];
+  assert.equal((await host.runSessionTurn(first)).payload.status, 'completed');
+  assert.deepEqual(await readFile(source), original);
+  const images = inputs[0].messages.find(message => message.images?.length).images;
+  assert.ok(Buffer.from(images[0].url.split(',')[1], 'base64').length < original.length / 2);
+  assert.equal(images[0].detail, 'high');
+  await rm(source);
+  assert.equal((await host.runSessionTurn(sessionRequest(root, 2))).payload.status, 'completed');
+  assert.deepEqual(inputs[1].messages.find(message => message.images?.length).images, images);
 });
 
 test("an unavailable legacy image is an explicit local input failure, not a retryable provider outage", async (context) => {

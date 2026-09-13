@@ -13,7 +13,7 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
 import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
-window.listeners=new Set(); window.calls=[]; window.opened=[]; window.failSave=false;
+window.listeners=new Set(); window.calls=[]; window.opened=[]; window.setupRequests=0; window.failSave=false;
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
 window.cardbushDesktop={onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
@@ -28,7 +28,7 @@ window.cardbushDesktop={onAutomationChanged:fn=>{listeners.add(fn);return()=>lis
  else if(command.action==='delete')state.jobs=state.jobs.filter(job=>job.id!==command.id);
  notify();return structuredClone(job);
 }};
-createRoot(document.getElementById('root')).render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)}/></div>);
+createRoot(document.getElementById('root')).render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%',height:'100vh',overflow:'auto'}}><AutomationPanel language="zh" onOpenConversation={id=>opened.push(id)} onCreateAutomation={()=>setupRequests++}/></div>);
 `;
 try {
   const result = await build({ configFile: false, logLevel: 'silent', define: { 'process.env.NODE_ENV': '"production"' }, plugins: [{

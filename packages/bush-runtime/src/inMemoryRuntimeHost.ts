@@ -131,6 +131,7 @@ import { registerPluginCommandTools, parsePluginCommandInvocation } from './plug
 import { buildChildTurnRequest, resolveChildTurn } from './childTurn.js';
 import { pluginAgentTools } from './pluginExtensions.js';
 import { registerMcpDiscovery, modelToolDefinitions, clearMcpDiscovery, synchronizeMcpDiscovery } from './mcpToolDiscovery.js';
+import { childAgentToolDenial } from './childAgentPolicy.js';
 import type { SearchResultLimitProvider } from './searchResultLimit.js';
 import { McpAppsHost, MCP_APPS_COMMAND, registerMcpAppStatusTool } from './mcpAppsHost.js';
 import { PluginHookScopes } from './pluginHookScopes.js';
@@ -214,6 +215,7 @@ export interface InMemoryRuntimeHostOptions {
   extensions?: Array<{ create: RuntimeExtensionFactory; enabled?: boolean }>;
   durableSubagentTasks?: boolean;
   subagentPermissionPolicy?: SubagentPermissionPolicy;
+  subagentModels?: import('./cleanAgentSettings.js').SubagentModelCatalog;
   loadPluginExtensions?: PluginExtensionLoader;
   pluginNetwork?: (pluginId: string) => Promise<{ fetch: typeof fetch; env: Record<string, string> }>;
   automation?: AutomationScheduler;
@@ -532,6 +534,7 @@ export class InMemoryRuntimeHost {
           return this.#joinPendingAgentGuidance(key, taskIds);
         },
         permissionPolicy: subagentPermissionPolicy,
+        models: options.subagentModels,
         ...(options.loadPluginExtensions ? { loadPluginAgents: async () => (await options.loadPluginExtensions!()).agents } : {}),
       },
     );
@@ -1047,6 +1050,14 @@ export class InMemoryRuntimeHost {
     options: { signal?: AbortSignal },
   ): Promise<RuntimeEvent> {
     const candidate = runtimeSessionTurnRequestSchema.parse(input);
+    // Pin only newly submitted images. Stored history and forked prefixes keep
+    // their original observations, independent of source-file edits or codecs.
+    for (const entry of candidate.inputMessages) {
+      if (entry.message.role !== "user" || !entry.message.images) continue;
+      entry.message.images = await Promise.all(entry.message.images.map(async image => ({
+        ...image, url: await this.#modelImages.snapshot(image.url, options.signal),
+      })));
+    }
     const automationContext = this.#automation ? structuredClone(candidate) : undefined;
     const workspace = await this.#taskWorkspaces?.descriptor(candidate.sessionId);
     if (workspace?.status === "discarded") throw new Error("This task workspace was discarded. Create a new task to continue.");
@@ -1061,7 +1072,9 @@ export class InMemoryRuntimeHost {
         (workspace.mode === "worktree" ? "\nThe task copy starts from the source's working files, including uncommitted and non-ignored untracked files. Ignored files and dependencies are not copied. Changes remain in this copy until explicitly applied to the source project." : ""),
       });
     }
-    if (!candidate.metadata.pluginHookEvaluation && !candidate.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)) {
+    if (!candidate.metadata.pluginHookEvaluation &&
+      (!Array.isArray(candidate.metadata.childToolAllowlist) || candidate.metadata.childToolAllowlist.includes(CHECKPOINT_CONTEXT_TOOL)) &&
+      !candidate.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)) {
       const maintenanceTool = this.#toolRegistry.definitions().find((tool) =>
         tool.name === CHECKPOINT_CONTEXT_TOOL,
       );
@@ -1398,6 +1411,7 @@ export class InMemoryRuntimeHost {
           normalOutputTokens: pressure.reservedOutputTokens,
           safetyTokens: contextBudgetForPressure(pressure).safetyTokens,
           trigger: forceContextCompaction || pressure.countFailure ? 'provider_context_limit' : 'budget',
+          ...(pressure.requestBody ? { requestBody: pressure.requestBody } : {}),
           ...(pressure.countFailure ? { countFailure: pressure.countFailure } : {}),
           precedingTurnCount: state.unsummarizedTurnIds.length,
           activeTurnIncluded: state.activeTurn !== undefined,
@@ -1701,6 +1715,7 @@ export class InMemoryRuntimeHost {
                     measurement: pressure.measurement,
                     usableInputTokens: pressure.usableInputTokens,
                     reservedOutputTokens: pressure.reservedOutputTokens,
+                    ...(pressure.requestBody ? { requestBody: pressure.requestBody } : {}),
                   },
                 });
               }
@@ -1715,7 +1730,8 @@ export class InMemoryRuntimeHost {
           return await finalize({ status: 'failed', reason: 'current_turn_context_limit_exceeded',
             details: { estimatedPromptTokens: dispatchPressure.estimatedPromptTokens,
               usableInputTokens: dispatchPressure.usableInputTokens,
-              message: 'The request does not fit the configured context window, and this entry point has no recorded Session history to compact.' } });
+              ...(dispatchPressure.requestBody ? { requestBody: dispatchPressure.requestBody } : {}),
+              message: 'The request exceeds the token or request-body budget, and this entry point has no recorded Session history to compact.' } });
         }
 
         const contextCompactionRequired = Boolean(compactionTransaction);
@@ -1774,6 +1790,7 @@ export class InMemoryRuntimeHost {
                 'The checkpoint request does not fit; staging complete source fragments before consolidation.',
                 { jobId: compactionJob.id, inputTokens: maintenancePressure.estimatedPromptTokens,
                   outputTokens: dispatchOutputTokens,
+                  ...(maintenancePressure.requestBody ? { requestBody: maintenancePressure.requestBody } : {}),
                   ...(maintenancePressure.countFailure ? { countFailure: maintenancePressure.countFailure } : {}) });
               this.#recovery.save({ request, messages, nextRound: round + 1,
                 cacheChainState: cacheChain.snapshot(), sessionCommit: sessionCommitCheckpoint() });
@@ -1786,9 +1803,10 @@ export class InMemoryRuntimeHost {
                 inputTokens: maintenancePressure.estimatedPromptTokens,
                 measurement: maintenancePressure.measurement,
                 usableInputTokens: maintenancePressure.usableInputTokens,
+                ...(maintenancePressure.requestBody ? { requestBody: maintenancePressure.requestBody } : {}),
                 jobId: compactionJob.id,
                 ...(maintenancePressure.countFailure ? { countFailure: maintenancePressure.countFailure } : {}),
-                message: 'A complete source exchange or consolidated checkpoint cannot fit within the configured context window. The original conversation has been preserved.',
+                message: 'A complete source exchange or consolidated checkpoint cannot fit within the token or request-body budget. The original conversation has been preserved.',
               },
             });
           }
@@ -1816,7 +1834,8 @@ export class InMemoryRuntimeHost {
           });
           if (
             contextCompactionRequired &&
-            !roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL)
+            (!roundRequest.tools.some((tool) => tool.name === CHECKPOINT_CONTEXT_TOOL) ||
+              childAgentToolDenial(request, this.#toolRegistry.resolve(CHECKPOINT_CONTEXT_TOOL)!))
           ) {
             return await finalize({
               status: "failed",
@@ -1950,7 +1969,8 @@ export class InMemoryRuntimeHost {
                 ...(dispatchPressure
                   ? {
                       preflightInputTokens: dispatchPressure.estimatedPromptTokens,
-                      preflightMeasurement: dispatchPressure.measurement,
+                  preflightMeasurement: dispatchPressure.measurement,
+                  ...(dispatchPressure.requestBody ? { requestBody: dispatchPressure.requestBody } : {}),
                       usableInputTokens: dispatchPressure.usableInputTokens,
                       ...(dispatchPressure.calibration ? { inputCalibration: dispatchPressure.calibration } : {}),
                     }
@@ -2114,7 +2134,9 @@ export class InMemoryRuntimeHost {
           continue;
         }
         const checkpointCalls = completedRound.toolCalls.filter((call) =>
-          call.name === CHECKPOINT_CONTEXT_TOOL,
+          call.name === CHECKPOINT_CONTEXT_TOOL &&
+          request.tools.some(tool => tool.name === CHECKPOINT_CONTEXT_TOOL) &&
+          !childAgentToolDenial(request, this.#toolRegistry.resolve(CHECKPOINT_CONTEXT_TOOL)!),
         );
         if (!contextCompactionRequired && checkpointCalls.length === 0) outputLimitContinuations = 0;
         if (contextCompactionRequired && checkpointCalls.length === 0) {
@@ -2585,12 +2607,20 @@ export class InMemoryRuntimeHost {
     let projectedInputTokens: number | undefined;
     let inputProjection: ProviderInputProjection | undefined;
     let countFailure: ContextPressure['countFailure'];
+    let requestBody: ContextPressure['requestBody'];
+    const onRequestBodyBudget = (budget: NonNullable<ContextPressure['requestBody']>) => {
+      if (!Number.isSafeInteger(budget.bytes) || budget.bytes < 0 ||
+          !Number.isSafeInteger(budget.maxBytes) || budget.maxBytes <= 0) {
+        throw new Error("Provider request-body budget must contain nonnegative bytes and a positive limit.");
+      }
+      requestBody = { ...budget };
+    };
     try {
       signal?.throwIfAborted();
       const measurement = await settleAtAbort(
         Promise.resolve(this.#provider.countInputTokens?.(
           { ...request, messages, providerState },
-          { signal },
+          { signal, onRequestBodyBudget },
         )),
         signal,
         "Provider input-token counting was cancelled.",
@@ -2606,7 +2636,7 @@ export class InMemoryRuntimeHost {
       if (!measurement) {
         projectedInputTokens = await settleAtAbort(
           Promise.resolve(this.#provider.estimateInputTokens?.(
-            request, { signal, onInputProjection: projection => { inputProjection = structuredClone(projection); } })),
+            request, { signal, onRequestBodyBudget, onInputProjection: projection => { inputProjection = structuredClone(projection); } })),
           signal, "Provider input projection was cancelled.",
         );
       }
@@ -2642,7 +2672,7 @@ export class InMemoryRuntimeHost {
       providerInputTokens,
       { minimumInputTokens, projectedInputTokens, calibration },
     );
-    return pressure ? { ...pressure, ...(inputProjection ? { inputProjection } : {}),
+    return pressure ? { ...pressure, ...(requestBody ? { requestBody } : {}), ...(inputProjection ? { inputProjection } : {}),
       ...(countFailure ? { countFailure } : {}) } : undefined;
   }
 

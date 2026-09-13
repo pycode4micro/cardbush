@@ -1,11 +1,19 @@
 import type { ModelEvent, ModelRequest, ProviderInputProjection } from "@cardbush/bush-protocol";
 
+export interface ModelRequestBodyBudget {
+  /** UTF-8 bytes of the complete serialized HTTP body, including base64. */
+  bytes: number;
+  maxBytes: number;
+}
+
 export interface ModelStreamOptions {
   signal?: AbortSignal;
   /** Full input fingerprints at each dispatch attempt, or of the local
    * projection during estimateInputTokens(). No API request is made by estimation.
    */
   onInputProjection?: (projection: ProviderInputProjection) => void;
+  /** Separate transport budget; never turn bytes into reported token usage. */
+  onRequestBodyBudget?: (budget: ModelRequestBodyBudget) => void;
 }
 
 export interface ModelInputTokenCount {

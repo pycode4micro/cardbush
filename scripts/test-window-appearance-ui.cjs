@@ -133,13 +133,13 @@ app.whenReady().then(async () => {
           ...['minimize','maximize','close'].map(action => h('button', { key:action, className:'window-button' + (action === 'close' ? ' danger' : ''), onClick:() => ipcRenderer.send('fixture:window',action) }, h('span',{className:'window-glyph ' + action})))),
         h('main', { className: settings ? 'settings-shell' : 'desktop-shell' },
           settings ? h('aside', { className:'settings-sidebar' }, h('button', { className:'back-button', onClick:() => setSettings(false) }, '返回应用'), h('button', { className:'settings-nav active' }, '个性化')) :
-          h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{}, onlyTalkMode:true,
-            softVisible:!collapsed, onOnlyTalkModeChange:noop, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
+          h(views.ChatSidebar, { language:'zh', section:'chat', activeConversationId:'', runningConversationIds:new Set(), attentionByConversation:{}, projects:[], conversations:[], changeReportsByConversation:{},
+            softVisible:!collapsed, onSectionChange:noop, onConversationChange:noop, onCreateConversation:noop, onAddProject:noop, onProjectAction:noop, onDeleteConversation:noop,
             onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:()=>setSettings(true) }),
           h('section', { className: settings ? 'settings-content' : 'main-stage' }, h('div', { className:'chat-panel' },
             h(views.TopBar, { title:settings ? '个性化' : '新会话', language:'zh', inspectorOpen:false, onToggleInspector:noop }),
             settings ? h('div', { style:{padding:32} }, '顶栏右侧可切换玻璃 / 纯色与浅色 / 深色。') :
-            h(views.WelcomeComposer, { language:'zh', onlyTalkMode:true, draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
+            h(views.WelcomeComposer, { language:'zh', draft, onDraftChange:setDraft, sending:false, stopping:false, guidanceDeliveryMode:'immediate', cancelEnabled:false,
               queuedMessageCount:0, queuedMessagePreview:'', queuedMessages:[], selectedModel:'preview', availableModels:[{id:'preview',provider:'preview',modelName:'CardBush 预览'}],
               goalAvailable:false, referencePlanAvailable:false, referencePlanMode:'off', permissionMode:'full-access', subagentPermissionRouting:'inherit', reasoningLevelAvailable:false, reasoningLevel:'medium', reasoningLevels:[],
               selectedProjectDir:'', availableProjects:[], skills:[], disabledSkillNames:new Set(), onProjectChange:async()=>{}, onToggleSkill:noop, onModelChange:noop, onReferencePlanModeChange:noop,

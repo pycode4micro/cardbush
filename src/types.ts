@@ -4,11 +4,15 @@ import type {
   RuntimePermissionRequest,
   SubagentTask,
 } from '@cardbush/bush-protocol';
+import type { ConversationStyleSettings } from '@cardbush/bush-product-agent';
 
 export type AppSection = 'chat' | 'search' | 'skills' | 'subagents' | 'team' | 'automations';
 export type SettingsSection =
   | 'instructions'
   | 'profile'
+  | 'appearance'
+  | 'usage'
+  | 'browser'
   | 'companion'
   | 'runtime'
   | 'proxy'
@@ -319,6 +323,7 @@ export type CardlingDesktopAction =
   | { type: 'miniChatSend'; text: string };
 
 export interface AppSettingsState {
+  conversationStyle: ConversationStyleSettings;
   proxy: ProxySettings;
   browser: BrowserSettings;
   thinking: ThinkingUiSettings;

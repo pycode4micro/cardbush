@@ -1,5 +1,6 @@
 import { McpUserRequests } from './features/plugins/McpUserRequests';
-import { DEFAULT_MAX_CONTEXT_TOKENS } from '@cardbush/bush-product-agent';
+import { DEFAULT_MAX_CONTEXT_TOKENS, normalizeConversationStyle } from '@cardbush/bush-product-agent';
+import { readConversationStyle, saveConversationStyle } from './features/settings/conversationStyle';
 import { useCapabilityCatalogRefresh } from './hooks/useCapabilityCatalogRefresh';
 import {
   ArrowLeft,
@@ -65,19 +66,17 @@ import { inspectorMaximum } from './components/rightInspectorSizing';
 import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
 import { sectionLabels } from './features/appSections';
+import { automationSetupPrompt } from './features/automations/automationPrompts';
 import { WorkSummaryInspector } from './features/chat/WorkSummaryInspector';
 import {
   changeRootForConversation,
   conversationProjectDir as conversationProjectRoot,
   conversationWorkspaceRoot,
-  isOnlyTalkConversation,
 } from './features/conversationWorkspace';
 import {
   conversationMatchesScope,
   conversationProjectId,
   conversationProjectPathAliases,
-  firstConversationInScope,
-  type ConversationScope,
 } from './features/conversationScope';
 import {
   ChatSidebar,
@@ -234,11 +233,10 @@ type InspectorTabContextMenuState = {
 const defaultSidebarWidth = 272;
 const minSidebarWidth = 220;
 const maxSidebarWidth = 420;
-const recentProjectStorageKey = 'cardbush_recent_project_dir';
-const onlyTalkModeStorageKey = 'cardbush_only_talk_mode';
 const importedThemeStyleStorageKey = 'cardbush_imported_theme_style';
 
 const defaultAppSettings: AppSettingsState = {
+  conversationStyle: normalizeConversationStyle(undefined),
   proxy: {
     mode: 'none',
     httpProxy: '',
@@ -316,7 +314,7 @@ function CardbushApp() {
   );
   const [windowMaximized, setWindowMaximized] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [pluginPromptFocus, setPluginPromptFocus] = useState(0);
+  const [conversationPromptFocus, setConversationPromptFocus] = useState(0);
   const [settingsMounted, setSettingsMounted] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] =
@@ -324,12 +322,6 @@ function CardbushApp() {
   const [settingsPluginTab, setSettingsPluginTab] = useState<'plugins' | 'skills'>('plugins');
   const [projectItems, setProjectItems] = useState<ProjectItem[]>(readProjectItems);
   const [projectRenameTarget, setProjectRenameTarget] = useState<ProjectItem | null>(null);
-  const [recentProjectDir, setRecentProjectDir] = useState(
-    () => window.localStorage.getItem(recentProjectStorageKey)?.trim() ?? '',
-  );
-  const [onlyTalkMode, setOnlyTalkMode] = useState(
-    () => window.localStorage.getItem(onlyTalkModeStorageKey) === 'true',
-  );
   const [wallpaperAccent, setWallpaperAccent] = useState<WallpaperAccent | null>(null);
   const [draftsByConversation, setDraftsByConversation] = useState<Record<string, string>>({});
   const [disabledSkillNames, setDisabledSkillNames] = useState<Set<string>>(
@@ -518,15 +510,6 @@ function CardbushApp() {
     backendCapabilities.browserPrivacyMode && appSettings.browser.privacyMode;
   const reasoningTraceVisible =
     backendCapabilities.reasoningStream && appSettings.thinking.visible;
-  const fallbackProject = useMemo(() => {
-    const available = projectItems.filter((project) => !project.archived && !project.missing);
-    return (
-      available.find((project) => samePath(project.rootPath, recentProjectDir)) ??
-      available[0]
-    );
-  }, [projectItems, recentProjectDir]);
-  const fallbackProjectDir = fallbackProject?.rootPath.trim() ?? '';
-  const fallbackProjectId = fallbackProject?.id.trim() ?? '';
   const teamWorkspace = useRuntimeDelegationWorkspace();
   useEffect(() => {
     if (backendCapabilities.teamMode) void refreshRuntimeRendererPlugins().catch(() => undefined);
@@ -550,8 +533,6 @@ function CardbushApp() {
     defaultReasoningLevel: backendCapabilities.defaultReasoningLevel,
     contextWindowUsageAvailable: backendCapabilities.contextWindowUsage,
     workspaceChangesAvailable: backendCapabilities.workspaceChanges,
-    defaultProjectId: onlyTalkMode ? '' : fallbackProjectId,
-    defaultProjectDir: onlyTalkMode ? '' : fallbackProjectDir,
   });
   useEffect(() => installUiLongTaskObserver(), []);
   useEffect(() => {
@@ -670,26 +651,12 @@ function CardbushApp() {
 
   const activeConversationProjectDir = conversationProjectRoot(chat.activeConversation);
   const conversationProjectDir = conversationWorkspaceRoot(chat.activeConversation);
-  const activeProjectDir =
-    conversationProjectDir ||
-    (!onlyTalkMode && !chat.activeConversation
-      ? fallbackProjectDir || undefined
-      : undefined);
+  const activeProjectDir = conversationProjectDir || undefined;
   const activeProjectPathAliases = useMemo(
     () => conversationProjectPathAliases(chat.activeConversation),
     [chat.activeConversation],
   );
 
-  const rememberRecentProject = useCallback((projectDir: string) => {
-    const normalized = projectDir.trim();
-    if (!normalized) return;
-    setRecentProjectDir(normalized);
-    window.localStorage.setItem(recentProjectStorageKey, normalized);
-  }, []);
-
-  useEffect(() => {
-    if (activeConversationProjectDir) rememberRecentProject(activeConversationProjectDir);
-  }, [activeConversationProjectDir, rememberRecentProject]);
   const activeDraftKey = chat.activeConversationId.trim() || '__new__';
   const activeDraft = draftsByConversation[activeDraftKey] ?? '';
   const setActiveDraft = useCallback(
@@ -1295,6 +1262,8 @@ function CardbushApp() {
     window.localStorage.setItem('cardbush.sidebar_width', String(next));
   }, []);
 
+  const collapseSidebar = useCallback(() => setSidebarCollapsed(true), []);
+
   const updateAppSettings = useCallback(
     (updater: (current: AppSettingsState) => AppSettingsState) => {
       setAppSettings((current) => {
@@ -1474,84 +1443,46 @@ function CardbushApp() {
 
   const createConversation = useCallback(
     (projectDir?: string | null) => {
-      const activeProject = activeConversationProjectDir
-        ? projectItems.find((project) =>
-            !project.archived &&
-            !project.missing &&
-            samePath(project.rootPath, activeConversationProjectDir),
-          )
-        : undefined;
-      const resolvedProjectDir = projectDir === undefined
-        ? activeProject?.rootPath.trim() || fallbackProjectDir || undefined
-        : projectDir?.trim() || undefined;
+      const resolvedProjectDir = projectDir?.trim() || undefined;
       const resolvedProjectId = resolvedProjectDir
         ? projectItems.find((project) => samePath(project.rootPath, resolvedProjectDir))?.id
         : undefined;
-      if (!onlyTalkMode && !resolvedProjectDir) {
-        setSection('chat');
-        chat.clearConversationSelection();
-        return;
+      const target = chat.prepareConversation(resolvedProjectDir, undefined, resolvedProjectId);
+      if (!chat.activeConversationId) {
+        setDraftsByConversation(current => {
+          const unassigned = current.__new__;
+          if (!unassigned) return current;
+          const existing = current[target.id];
+          return { ...current, __new__: '', [target.id]: existing && existing !== unassigned ? `${existing}\n\n${unassigned}` : unassigned };
+        });
       }
-      if (resolvedProjectDir) rememberRecentProject(resolvedProjectDir);
       setSection('chat');
-      chat.prepareConversation(resolvedProjectDir, undefined, resolvedProjectId);
+      return target;
     },
     [
-      activeConversationProjectDir,
-      chat.clearConversationSelection,
+      chat.activeConversationId,
       chat.prepareConversation,
-      fallbackProjectDir,
-      onlyTalkMode,
       projectItems,
-      rememberRecentProject,
     ],
   );
 
-  const activateConversationScope = useCallback((scope: ConversationScope) => {
-    const target = firstConversationInScope(chat.preparedConversations, scope)
-      ?? firstConversationInScope(chat.conversations, scope);
-    if (target) {
-      chat.openConversation(target.id);
-    } else if (scope.mode === 'task') {
-      chat.prepareConversation();
-    } else if (scope.projectDir) {
-      chat.prepareConversation(scope.projectDir, undefined, scope.projectId);
-    } else {
-      chat.clearConversationSelection();
-    }
-  }, [chat.preparedConversations, chat.conversations, chat.openConversation,
-    chat.prepareConversation, chat.clearConversationSelection]);
-
-  const changeOnlyTalkMode = useCallback((enabled: boolean) => {
-    // Resolve the destination in this event. Clearing first made the welcome
-    // composer mount once for __new__ and again for the selected scope.
-    setOnlyTalkMode(enabled);
-    window.localStorage.setItem(onlyTalkModeStorageKey, String(enabled));
-    setSection('chat');
-    activateConversationScope(enabled ? { mode: 'task' } : {
-      mode: 'project', projectId: fallbackProjectId || undefined, projectDir: fallbackProjectDir,
-    });
-  }, [activateConversationScope, fallbackProjectId, fallbackProjectDir]);
-
-  const openPluginPrompt = useCallback((prompt: string) => {
-    const projectDir = onlyTalkMode ? undefined : activeConversationProjectDir || fallbackProjectDir || undefined;
-    const projectId = projectDir ? projectItems.find(project => samePath(project.rootPath, projectDir))?.id : undefined;
-    const target = chat.prepareConversation(projectDir, undefined, projectId);
-    if (!projectDir) {
-      setOnlyTalkMode(true);
-      window.localStorage.setItem(onlyTalkModeStorageKey, 'true');
-    }
+  const openConversationPrompt = useCallback((prompt: string, scope: 'current' | 'independent' = 'current') => {
+    const target = createConversation(scope === 'current' ? activeConversationProjectDir : undefined);
     setDraftsByConversation(current => {
-      const existing = current[target.id] || (!chat.activeConversationId ? current.__new__ : '') || '';
+      const existing = current[target.id] || '';
       return { ...current, [target.id]: existing.trim() && existing !== prompt ? `${existing.trimEnd()}\n\n${prompt}` : prompt };
     });
-    setSection('chat');
     setSettingsOpen(false);
-    setPluginPromptFocus(value => value + 1);
-  }, [onlyTalkMode, activeConversationProjectDir, fallbackProjectDir, projectItems, chat.prepareConversation, chat.activeConversationId]);
+    setConversationPromptFocus(value => value + 1);
+  }, [activeConversationProjectDir, createConversation]);
+
+  const openPluginPrompt = useCallback((prompt: string) => openConversationPrompt(prompt), [openConversationPrompt]);
+  const createAutomationConversation = useCallback(() => {
+    openConversationPrompt(automationSetupPrompt(language), 'independent');
+  }, [language, openConversationPrompt]);
 
   useEffect(() => {
-    if (!pluginPromptFocus || settingsOpen || section !== 'chat') return;
+    if (!conversationPromptFocus || settingsOpen || section !== 'chat') return;
     const focus = () => {
       const input = Array.from(document.querySelectorAll<HTMLElement>('[data-composer-input]')).find(node => node.checkVisibility());
       if (!input) return;
@@ -1562,71 +1493,34 @@ function CardbushApp() {
         const selection = window.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
       }
       observer.disconnect();
-      setPluginPromptFocus(0);
+      setConversationPromptFocus(0);
     };
     let frame = requestAnimationFrame(focus);
     const observer = new MutationObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(focus); });
     observer.observe(document.querySelector('.desktop-shell') ?? document.body, { childList: true, subtree: true });
     return () => { cancelAnimationFrame(frame); observer.disconnect(); };
-  }, [pluginPromptFocus, settingsOpen, section, chat.activeConversationId]);
+  }, [conversationPromptFocus, settingsOpen, section, chat.activeConversationId]);
 
-  const openConversationInScope = useCallback((conversationId: string) => {
+  const openConversation = useCallback((conversationId: string) => {
     const normalized = conversationId.trim();
     if (!normalized) return false;
     const target = chat.conversations.find((conversation) => conversation.id === normalized);
     if (!target) return false;
-    const taskMode = isOnlyTalkConversation(target);
-    setOnlyTalkMode(taskMode);
-    window.localStorage.setItem(onlyTalkModeStorageKey, String(taskMode));
-    const targetProjectDir = conversationProjectRoot(target);
-    if (targetProjectDir) rememberRecentProject(targetProjectDir);
     chat.openConversation(normalized);
     setSection('chat');
     return true;
-  }, [chat.conversations, chat.openConversation, rememberRecentProject]);
-
-  useEffect(() => {
-    if (section !== 'chat' || chat.loading) return;
-    const scope: ConversationScope = onlyTalkMode
-      ? { mode: 'task' }
-      : fallbackProjectDir
-        ? {
-            mode: 'project',
-            projectId: fallbackProjectId || undefined,
-            projectDir: fallbackProjectDir,
-          }
-        : { mode: 'project', projectDir: '' };
-    const activeMatchesMode = onlyTalkMode
-      ? conversationMatchesScope(chat.activeConversation, { mode: 'task' })
-      : Boolean(chat.activeConversation && !isOnlyTalkConversation(chat.activeConversation));
-    if (activeMatchesMode) return;
-    activateConversationScope(scope);
-  }, [
-    activateConversationScope,
-    chat.activeConversation,
-    chat.activeConversationId,
-    chat.loading,
-    fallbackProjectDir,
-    fallbackProjectId,
-    onlyTalkMode,
-    section,
-  ]);
+  }, [chat.conversations, chat.openConversation]);
 
   const changeWelcomeProject = useCallback(async (projectDir: string | null) => {
     const normalized = projectDir?.trim() || null;
-    if (!normalized) {
-      changeOnlyTalkMode(true);
-      return;
-    }
     const projectId =
-      projectItems.find((project) => samePath(project.rootPath, normalized))?.id ?? null;
-    rememberRecentProject(normalized);
+      normalized ? projectItems.find((project) => samePath(project.rootPath, normalized))?.id ?? null : null;
     if (!chat.activeConversationId.trim()) {
       createConversation(normalized);
       return;
     }
     await chat.setConversationProject(chat.activeConversationId, normalized, projectId);
-  }, [changeOnlyTalkMode, chat, createConversation, projectItems, rememberRecentProject]);
+  }, [chat.activeConversationId, chat.setConversationProject, createConversation, projectItems]);
 
   const pendingSessionAttentionRef = useRef('');
   const openSessionAttention = useCallback((sessionId: string) => {
@@ -1635,10 +1529,10 @@ function CardbushApp() {
     setSettingsOpen(false);
     setSection('chat');
     pendingSessionAttentionRef.current = normalized;
-    if (openConversationInScope(normalized)) {
+    if (openConversation(normalized)) {
       pendingSessionAttentionRef.current = '';
     }
-  }, [openConversationInScope]);
+  }, [openConversation]);
 
   const consumeSessionAttentionOpen = useCallback(async () => {
     const consume = window.cardbushDesktop?.consumeSessionAttentionOpen;
@@ -1803,12 +1697,8 @@ function CardbushApp() {
       persistProjectItems(next);
       return next;
     });
-    if (samePath(recentProjectDir, moved.previousPath)) {
-      setRecentProjectDir(moved.nextPath);
-      window.localStorage.setItem(recentProjectStorageKey, moved.nextPath);
-    }
     return null;
-  }, [chat, language, recentProjectDir]);
+  }, [chat, language]);
 
   const handleProjectAction = useCallback(
     async (action: ProjectAction, project: ProjectItem) => {
@@ -2230,11 +2120,11 @@ function CardbushApp() {
     setSection(nextSection);
   }, []);
   const handleSidebarConversationChange = useCallback((conversationId: string) => {
-    openConversationInScope(conversationId);
-  }, [openConversationInScope]);
+    openConversation(conversationId);
+  }, [openConversation]);
   const handleSidebarCreateConversation = useCallback(() => {
-    createConversation(onlyTalkMode ? null : undefined);
-  }, [createConversation, onlyTalkMode]);
+    createConversation();
+  }, [createConversation]);
   const handleSidebarAddProject = useCallback(() => {
     void addProject();
   }, [addProject]);
@@ -2299,6 +2189,10 @@ function CardbushApp() {
             onLanguageModeChange={setLanguageMode}
             onSettingsChange={updateAppSettings}
             onUseModel={chat.setSelectedModel}
+            sidebarCollapsed={sidebarCollapsed}
+            sidebarPresence={sidebarPresence}
+            sidebarWidth={sidebarWidth}
+            onSidebarCollapse={collapseSidebar}
             onSidebarWidthChange={setSidebarWidth}
             onConversationHistoryCleared={() => chat.reloadConversations()}
             onRuntimeAssetsReloaded={reloadRuntimeAssetConfiguration}
@@ -2335,8 +2229,6 @@ function CardbushApp() {
                   projects={projectItems}
                   conversations={chat.conversations}
                   changeReportsByConversation={sidebarChangeReportsByConversation}
-                  onlyTalkMode={onlyTalkMode}
-                  onOnlyTalkModeChange={changeOnlyTalkMode}
                   onSectionChange={handleSidebarSectionChange}
                   onConversationChange={handleSidebarConversationChange}
                   onCreateConversation={handleSidebarCreateConversation}
@@ -2352,11 +2244,9 @@ function CardbushApp() {
               <SidebarResizer
                 language={language}
                 width={sidebarWidth}
-                onWidthChange={(width) => {
-                  setSidebarWidth(width);
-                }}
-                onCollapse={() => setSidebarCollapsed(true)}
-                softVisible={sidebarPresence.visible}
+                onWidthChange={setSidebarWidth}
+                onCollapse={collapseSidebar}
+                softVisible={sidebarPresence.visible && !settingsVisible}
               />
             </>
           )}
@@ -2367,7 +2257,6 @@ function CardbushApp() {
                 language={language}
                 theme={theme}
                 title={chat.activeConversation?.title ?? 'cardbush'}
-                onlyTalkMode={onlyTalkMode}
                 sidebarCollapsed={sidebarCollapsed}
                 windowMaximized={windowMaximized}
                 inspectorOpen={inspectorOpen}
@@ -2375,14 +2264,8 @@ function CardbushApp() {
                 activeConversationId={chat.activeConversationId}
                 activeProjectDir={activeProjectDir}
                 projectPathAliases={activeProjectPathAliases}
-                selectedProjectDir={
-                  onlyTalkMode ? '' : activeConversationProjectDir
-                }
-                availableProjects={
-                  onlyTalkMode
-                    ? []
-                    : projectItems.filter((project) => !project.archived && !project.missing)
-                }
+                selectedProjectDir={activeConversationProjectDir}
+                availableProjects={projectItems.filter((project) => !project.archived && !project.missing)}
                 onWelcomeProjectChange={changeWelcomeProject}
                 messages={chat.activeMessages}
                 activeGoal={chat.activeGoal}
@@ -2442,9 +2325,7 @@ function CardbushApp() {
                 onSubagentPermissionRoutingChange={chat.setSubagentPermissionRouting}
                 onReasoningLevelChange={chat.setReasoningLevel}
                 onConfigureModels={() => openSettings('models')}
-                onCreateConversation={() =>
-                  createConversation(onlyTalkMode ? null : activeConversationProjectDir || undefined)
-                }
+                onCreateConversation={handleSidebarCreateConversation}
                 onToggleSkill={toggleSkillEnabled}
                 onRefreshActiveSession={refreshBackendAndActiveSession}
                 onSend={chat.sendMessage}
@@ -2470,6 +2351,7 @@ function CardbushApp() {
             ) : (
               <FeaturePanel
                 language={language}
+                onCreateAutomation={createAutomationConversation}
                 inspectorOpen={inspectorOpen}
                 onToggleInspector={toggleInspector}
                 section={section}
@@ -2481,11 +2363,9 @@ function CardbushApp() {
                 onToggleSkill={toggleSkillEnabled}
                 onReloadSkills={chat.reloadSkills}
                 onLoadSkillDetail={chat.loadSkillDetail}
-                onCreateConversation={() =>
-                  createConversation(onlyTalkMode ? null : activeConversationProjectDir || undefined)
-                }
+                onCreateConversation={handleSidebarCreateConversation}
                 onOpenConversation={(conversationId) => {
-                  openConversationInScope(conversationId);
+                  openConversation(conversationId);
                 }}
               />
             )}
@@ -3360,6 +3240,7 @@ function resolveAppLanguage(mode: AppLanguageMode, systemLanguage: AppLanguage) 
 
 function readInitialAppSettings(): AppSettingsState {
   return normalizeAppSettings({
+    conversationStyle: readConversationStyle(),
     proxy: {
       mode: proxyModeFromStorage(
         window.localStorage.getItem('cardbush_proxy_mode'),
@@ -3473,6 +3354,7 @@ function normalizeAppSettings(settings: AppSettingsState): AppSettingsState {
   const httpProxy = settings.proxy.httpProxy.trim();
   const httpsProxy = settings.proxy.httpsProxy.trim();
   return {
+    conversationStyle: normalizeConversationStyle(settings.conversationStyle),
     proxy: {
       mode: normalizeProxyMode(settings.proxy.mode),
       httpProxy,
@@ -3553,6 +3435,7 @@ function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
 }
 
 function persistAppSettings(settings: AppSettingsState) {
+  saveConversationStyle(settings.conversationStyle);
   window.localStorage.setItem('cardbush_proxy_mode', settings.proxy.mode);
   window.localStorage.setItem('cardbush_proxy_http', settings.proxy.httpProxy);
   window.localStorage.setItem('cardbush_proxy_https', settings.proxy.httpsProxy);
@@ -4002,6 +3885,7 @@ function FeaturePanel({
   onReloadSkills,
   onLoadSkillDetail,
   onCreateConversation,
+  onCreateAutomation,
   onOpenConversation,
 }: {
   language: AppLanguage;
@@ -4017,6 +3901,7 @@ function FeaturePanel({
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onCreateConversation: () => void;
+  onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
   const teamWorkspace = useRuntimeDelegationWorkspace();
@@ -4042,6 +3927,7 @@ function FeaturePanel({
           onReloadSkills={onReloadSkills}
           onLoadSkillDetail={onLoadSkillDetail}
           onCreateConversation={onCreateConversation}
+          onCreateAutomation={onCreateAutomation}
           onOpenConversation={onOpenConversation}
         />
       </Suspense>

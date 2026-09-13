@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { BUSH_MODEL_EVENT_PROTOCOL, type ModelEvent } from "@cardbush/bush-protocol";
 import { ModelImageInputError } from "@cardbush/bush-runtime";
+import { RequestBodyBudgetError } from "./requestBodyBudget.js";
 
 type FailureEvent = Extract<ModelEvent, { kind: "response_failed" }>;
 type Diagnostics = NonNullable<FailureEvent["diagnostics"]>;
@@ -77,7 +78,7 @@ export function providerFailureEvent(
   if (aborted || error instanceof OpenAI.APIUserAbortError) {
     return { ...base, code: "request_aborted", message: "The model request was aborted.", retryable: false };
   }
-  if (error instanceof ModelImageInputError) {
+  if (error instanceof ModelImageInputError || error instanceof RequestBodyBudgetError) {
     return { ...base, code: error.code, message: error.message, retryable: false };
   }
   const diagnostics = transportDiagnostics(error);

@@ -21,6 +21,7 @@ import type {
 } from "@cardbush/bush-runtime";
 import { readLocalModelImage } from "@cardbush/bush-runtime";
 import { providerFailureEvent } from "./providerFailure.js";
+import { assertRequestBodyBudget, DEFAULT_REQUEST_BODY_MAX_BYTES, requestBodyBudget } from "./requestBodyBudget.js";
 import { isClientToolSearchCall, replayResponsesOutput, responsesReplayData, type ResponsesToolSearchMode } from "./responsesReplay.js";
 import { ResponseToolCalls, ResponseToolCallError } from "./responsesToolCalls.js";
 import { ResponseText, ResponseTextError } from "./responsesText.js";
@@ -43,6 +44,8 @@ export interface OpenAIResponsesProviderConfig {
   timeoutMs?: number;
   capabilityStore?: ProviderCapabilityStore;
   capabilityScope?: string;
+  /** Local JSON-body budget, independent of the model's context window. */
+  maxRequestBodyBytes?: number;
 }
 
 export interface ResponseCreateProjectionOptions {
@@ -370,8 +373,13 @@ export class OpenAIResponsesProvider implements ModelProvider {
   readonly #client: OpenAI;
   readonly #capabilityStore: ProviderCapabilityStore;
   readonly #capabilityScope: string;
+  readonly #maxRequestBodyBytes: number;
 
   constructor(config: OpenAIResponsesProviderConfig) {
+    this.#maxRequestBodyBytes = config.maxRequestBodyBytes ?? DEFAULT_REQUEST_BODY_MAX_BYTES;
+    if (!Number.isSafeInteger(this.#maxRequestBodyBytes) || this.#maxRequestBodyBytes <= 0) {
+      throw new Error("maxRequestBodyBytes must be a positive safe integer.");
+    }
     this.#client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseURL,
@@ -385,10 +393,12 @@ export class OpenAIResponsesProvider implements ModelProvider {
 
   async estimateInputTokens(request: ModelRequest, options: ModelStreamOptions = {}): Promise<number> {
     options.signal?.throwIfAborted();
-    const projection = await this.#project({ ...request, providerState: undefined });
+    const projection = await this.#project(request);
     options.signal?.throwIfAborted();
-    const fingerprint = responsesInputFingerprint(projection.params, projection.params, request.providerBinding);
+    const full = toResponsesCreateParams(projection.request, { disableProviderState: true, toolSearchMode: projection.toolSearchMode });
+    const fingerprint = responsesInputFingerprint(full, full, request.providerBinding);
     options.onInputProjection?.(fingerprint);
+    options.onRequestBodyBudget?.(requestBodyBudget(projection.params, this.#maxRequestBodyBytes));
     return fingerprint.tokenEstimate!.tokens;
   }
 
@@ -400,6 +410,11 @@ export class OpenAIResponsesProvider implements ModelProvider {
       return undefined;
     }
     const projection = await this.#project(request);
+    const budget = requestBodyBudget(projection.params, this.#maxRequestBodyBytes);
+    options.onRequestBodyBudget?.(budget);
+    // Do not send an oversized body to the counting endpoint either. Runtime
+    // can use the local estimate and the independent byte budget to compact.
+    if (budget.bytes > budget.maxBytes) return undefined;
     if (projection.toolSearchMode === "native" &&
       this.#readCapability(request.model, TOOL_SEARCH_TOKEN_COUNT_CAPABILITY) === "unsupported") return undefined;
     try {
@@ -451,6 +466,9 @@ export class OpenAIResponsesProvider implements ModelProvider {
       // Once any response is accepted, never replay it under another protocol.
       const { result: stream, projection } = await this.#withToolSearchFallback(request, initialProjection,
         (params, activeProjection) => {
+          const budget = requestBodyBudget(params, this.#maxRequestBodyBytes);
+          options.onRequestBodyBudget?.(budget);
+          assertRequestBodyBudget(budget);
           if (options.onInputProjection) {
             const full = toResponsesCreateParams(activeProjection.request, {
               disableProviderState: true, toolSearchMode: activeProjection.toolSearchMode,

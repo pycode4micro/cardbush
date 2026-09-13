@@ -5,7 +5,6 @@ import {
   CircleCheck,
   ChevronDown,
   Clipboard,
-  Cloud,
   Code2,
   Edit3,
   Folder,
@@ -51,11 +50,8 @@ import type {
 } from '../../types';
 import { sectionLabels } from '../appSections';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
-import {
-  conversationProjectDir,
-  isOnlyTalkConversation,
-} from '../conversationWorkspace';
-import { conversationProjectId } from '../conversationScope';
+import { conversationProjectDir } from '../conversationWorkspace';
+import { conversationMatchesScope } from '../conversationScope';
 import { copyText } from '../messageFeedback';
 import {
   groupChangeReportsByTurn,
@@ -189,8 +185,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   projects: projectItems,
   conversations: conversationItems,
   changeReportsByConversation,
-  onlyTalkMode,
-  onOnlyTalkModeChange,
   onSectionChange,
   onConversationChange,
   onCreateConversation,
@@ -210,8 +204,6 @@ export const ChatSidebar = memo(function ChatSidebar({
   projects: ProjectItem[];
   conversations: ConversationSummary[];
   changeReportsByConversation: Record<string, ConversationChangeReport[]>;
-  onlyTalkMode: boolean;
-  onOnlyTalkModeChange: (enabled: boolean) => void;
   onSectionChange: (value: AppSection) => void;
   onConversationChange: (id: string) => void;
   onCreateConversation: () => void;
@@ -237,7 +229,7 @@ export const ChatSidebar = memo(function ChatSidebar({
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<SidebarContextMenuState | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    () => new Set(['pinned', 'projects']),
+    () => new Set(['pinned', 'projects', 'recent']),
   );
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(
     () => new Set(),
@@ -276,13 +268,12 @@ export const ChatSidebar = memo(function ChatSidebar({
     () => visibleConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
     [pinnedConversationIds, visibleConversations],
   );
-  const onlyTalkConversations = useMemo(() => {
-    const taskConversations = visibleConversations.filter(isOnlyTalkConversation);
-    return [
-      ...taskConversations.filter((conversation) => pinnedConversationIds.has(conversation.id)),
-      ...taskConversations.filter((conversation) => !pinnedConversationIds.has(conversation.id)),
-    ];
-  }, [pinnedConversationIds, visibleConversations]);
+  const recentConversations = useMemo(
+    () => regularConversations.filter(conversation => !projectItems.some(project =>
+      conversationMatchesScope(conversation, { mode: 'project', projectId: project.id, projectDir: project.rootPath }),
+    )),
+    [projectItems, regularConversations],
+  );
   const unreadConversationIds = useMemo(() => {
     if (!conversationReadState.initialized) return new Set<string>();
     return new Set(
@@ -637,12 +628,9 @@ export const ChatSidebar = memo(function ChatSidebar({
       <ProjectBlock
         key={project.id}
         project={project}
-        conversations={regularConversations.filter((item) => {
-          const projectId = conversationProjectId(item);
-          if (projectId) return projectId === project.id;
-          const projectDir = conversationProjectDir(item);
-          return Boolean(projectDir && samePath(projectDir, project.rootPath));
-        })}
+        conversations={regularConversations.filter(item => conversationMatchesScope(item, {
+          mode: 'project', projectId: project.id, projectDir: project.rootPath,
+        }))}
         activeConversationId={activeConversationId}
         runningConversationIds={runningConversationIds}
         attentionByConversation={attentionByConversation}
@@ -730,46 +718,21 @@ export const ChatSidebar = memo(function ChatSidebar({
     >
       <div className="sidebar-panel-content">
       <nav className="sidebar-nav">
-        <div className="new-chat-mode-row">
-          <NavRow
-            icon={<Edit3 size={14} />}
-            label={language === 'zh' ? '新会话' : 'New chat'}
-            onClick={onCreateConversation}
-            onContextMenu={(event) =>
-              openContextMenu(event, 'nav:new-chat', [
-                {
-                  key: 'new-chat',
-                  icon: <Edit3 size={15} />,
-                  label: language === 'zh' ? '新建普通对话' : 'New chat',
-                  onClick: onCreateConversation,
-                },
-              ])
-            }
-          />
-          <button
-            className={`only-talk-toggle${onlyTalkMode ? ' active' : ''}`}
-            type="button"
-            aria-pressed={onlyTalkMode}
-            aria-label={
-              onlyTalkMode
-                ? language === 'zh' ? '切换到项目' : 'Switch to projects'
-                : language === 'zh' ? '切换到仅会话' : 'Switch to only talk'
-            }
-            title={
-              onlyTalkMode
-                ? language === 'zh' ? '当前：仅会话；点击切换到项目' : 'Current: only talk; switch to projects'
-                : language === 'zh' ? '当前：项目；点击切换到仅会话' : 'Current: projects; switch to only talk'
-            }
-            onClick={() => onOnlyTalkModeChange(!onlyTalkMode)}
-          >
-            {onlyTalkMode ? <Cloud size={12} /> : <Folder size={12} />}
-            <span>
-              {onlyTalkMode
-                ? language === 'zh' ? '仅会话' : 'Only talk'
-                : language === 'zh' ? '项目' : 'Projects'}
-            </span>
-          </button>
-        </div>
+        <NavRow
+          icon={<Edit3 size={14} />}
+          label={language === 'zh' ? '新会话' : 'New chat'}
+          onClick={onCreateConversation}
+          onContextMenu={(event) =>
+            openContextMenu(event, 'nav:new-chat', [
+              {
+                key: 'new-chat',
+                icon: <Edit3 size={15} />,
+                label: language === 'zh' ? '新建普通对话' : 'New chat',
+                onClick: onCreateConversation,
+              },
+            ])
+          }
+        />
         <NavRow
           active={section === 'search'}
           icon={<Search size={14} />}
@@ -790,27 +753,7 @@ export const ChatSidebar = memo(function ChatSidebar({
       </nav>
 
       <div className="sidebar-scroll">
-        <div
-          key={onlyTalkMode ? 'only-talk' : 'projects'}
-          className={`sidebar-mode-content ${onlyTalkMode ? 'only-talk' : 'projects'}`}
-        >
-          {onlyTalkMode ? (
-            onlyTalkConversations.length > 0 ? (
-              <div className="only-talk-conversation-list">
-                {onlyTalkConversations.map(renderStandaloneConversation)}
-              </div>
-            ) : (
-              <div className="only-talk-empty">
-                <MessageSquare size={16} />
-                <span>
-                  {language === 'zh'
-                    ? '还没有普通对话，点击上方“新会话”开始'
-                    : 'No chats yet. Use New chat above to begin.'}
-                </span>
-              </div>
-            )
-          ) : (
-            <>
+        <div className="sidebar-sections">
               <SectionHeader
                 title={language === 'zh' ? '置顶' : 'Pinned'}
                 action={<Pin size={14} />}
@@ -866,8 +809,24 @@ export const ChatSidebar = memo(function ChatSidebar({
                 }
               />
               {expandedSections.has('projects') && regularProjects.map(renderProjectBlock)}
-            </>
-          )}
+              <SectionHeader
+                title={language === 'zh' ? '最近' : 'Recent'}
+                action={<MessageSquare size={14} />}
+                actionLabel={language === 'zh' ? '最近会话' : 'Recent chats'}
+                expanded={expandedSections.has('recent')}
+                onToggle={() => toggleSection('recent')}
+              />
+              {expandedSections.has('recent') && (
+                recentConversations.length > 0 ? (
+                  <div className="sidebar-conversation-list">
+                    {recentConversations.map(renderStandaloneConversation)}
+                  </div>
+                ) : (
+                  <div className="sidebar-conversation-empty">
+                    {language === 'zh' ? '点击上方“新会话”开始' : 'Use New chat above to begin.'}
+                  </div>
+                )
+              )}
         </div>
       </div>
 

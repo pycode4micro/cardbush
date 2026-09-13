@@ -45,6 +45,7 @@ declare global {
         onStreamFrame: (callback: (message: unknown) => void) => () => void;
       };
       readGlobalInstructions: () => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
+      usageStatistics: () => Promise<import('../../electron/usageLedger').UsageStatistics>;
       readAgentInstructions: (projectDir?: string, workspaceDir?: string) => Promise<import('@cardbush/bush-product-agent').AgentInstructionDocument[]>;
       saveGlobalInstructions: (content: string, revision: string) => Promise<import('../backend/globalInstructions').GlobalInstructionsSnapshot>;
       rendererReady: () => Promise<void>;

@@ -72,6 +72,8 @@ export function PluginManagementPanel({
   onOpenMcp,
   onNotify,
   onOpenPrompt,
+  presentation = 'catalog',
+  onOpenNetwork,
 }: {
   language: AppLanguage;
   initialTab: 'plugins' | 'skills';
@@ -83,6 +85,8 @@ export function PluginManagementPanel({
   onOpenMcp: (serverId?: string) => void;
   onNotify: (message: string) => void;
   onOpenPrompt?: (prompt: string) => void;
+  presentation?: 'catalog' | 'network';
+  onOpenNetwork?: () => void;
 }) {
   const [tab, setTab] = useState<'plugins' | 'skills' | 'accounts'>(initialTab);
   const [page, setPage] = useState<Page>({ kind: 'catalog' });
@@ -374,11 +378,16 @@ export function PluginManagementPanel({
     finally { setBusy(''); }
   };
   const proxyMatches = (name: string, id: string) => `${name} ${id}`.toLocaleLowerCase().includes(proxyQuery.trim().toLocaleLowerCase());
-  if (page.kind === 'network') return <div className="plugin-detail-page">
+  if (presentation === 'network' || page.kind === 'network') return <div className="plugin-detail-page plugin-network-page">
+    {presentation !== 'network' && <>
     <button type="button" className="plugin-back" onClick={() => setPage({ kind: 'catalog' })}><ArrowLeft size={17}/>{language === 'zh' ? '返回插件' : 'Back to plugins'}</button>
     <header className="plugin-catalog-heading"><h2>{language === 'zh' ? '插件设置' : 'Plugin settings'}</h2></header>
     {configuration && <PluginSearchSettings language={language} value={configuration.searchResultLimit ?? DEFAULT_SEARCH_RESULT_LIMIT}
       busy={Boolean(busy)} onSave={saveSearchLimit}/>}
+    </>}
+    {onOpenNetwork && presentation !== 'network' ? <button type="button" className="settings-link-row" onClick={onOpenNetwork}>
+      <span><strong>{language === 'zh' ? '网络代理' : 'Network proxy'}</strong><small>{language === 'zh' ? '管理插件市场、插件与 MCP 的代理。' : 'Manage proxies for the marketplace, plugins, and MCP.'}</small></span><ChevronRight size={17} />
+    </button> : <>
     <header className="plugin-catalog-heading"><h3>{language === 'zh' ? '插件代理' : 'Plugin proxy'}</h3>
       <p>{language === 'zh' ? '全局代理用于插件市场、插件和 MCP。选择后自动保存；手动代理填写完成后保存。点击“一键应用”可将当前设置应用到全部，之后仍可单独修改。' : 'The global proxy covers the marketplace, plugins and MCP. Choices save automatically; save manual addresses when ready. Apply to all to use the current settings everywhere, then adjust exceptions below.'}</p></header>
     {configuration && <PluginProxySettings language={language} value={configuration.proxy ?? defaultPluginProxy()} busy={Boolean(busy)}
@@ -396,6 +405,7 @@ export function PluginManagementPanel({
       </div>)}
       {!plugins.some(item => item.installed && proxyMatches(item.name, item.id)) && !mcpOverview?.servers.some(item => proxyMatches(item.name, item.id)) && <p className="plugin-proxy-help">{language === 'zh' ? '没有匹配的插件或 MCP' : 'No matching plugins or MCP servers'}</p>}
     </section>
+    </>}
     {error && <p className="plugin-market-error" role="alert">{error}</p>}
   </div>;
   if (page.kind === 'accounts') return <AccountsPanel language={language} onBack={() => setPage({ kind: 'plugin', pluginId: page.pluginId })}/>;

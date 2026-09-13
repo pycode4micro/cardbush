@@ -4,6 +4,8 @@ import { PluginGlyph } from '../plugins/PluginGlyph';
 import { ComposerReferenceContext, referenceableUserMessages } from './ComposerReferenceContext';
 import { promptReferenceMarkdown } from '../../shared/promptReferences';
 import { ComposerPromptInput, type ComposerPromptInputHandle } from './ComposerPromptInput';
+import { useFileDropZone } from './useFileDropZone';
+import { showUiError } from '../../shared/showUiError';
 import {
   ArrowRight,
   ArrowUp,
@@ -296,6 +298,7 @@ function readFileAsDataUrl(file: File) {
 
 export function Composer({
   compact,
+  fileDropTarget,
   autoFocus = false,
   language,
   draft,
@@ -342,6 +345,7 @@ export function Composer({
   contextWindow,
 }: {
   compact?: boolean;
+  fileDropTarget?: React.RefObject<HTMLElement | null>;
   autoFocus?: boolean;
   language: AppLanguage;
   draft: string;
@@ -392,7 +396,6 @@ export function Composer({
   const runtimeStartupFailed = runtimeStartup.phase === 'error';
   const composerStackRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<ComposerPromptInputHandle>(null);
-  const fileDragDepthRef = useRef(0);
   const [activeMenu, setActiveMenu] = useState<ComposerMenu>(null);
   const [commandState, setCommandState] = useState<ComposerCommandState | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
@@ -415,7 +418,13 @@ export function Composer({
   }, []);
   const [imageAttachments, setImageAttachments] = useState<ComposerImageAttachment[]>([]);
   const [fileAttachments, setFileAttachments] = useState<ComposerFileAttachment[]>([]);
-  const [fileDragActive, setFileDragActive] = useState(false);
+  const dropTargetRef = fileDropTarget ?? composerStackRef;
+  const fileDragActive = useFileDropZone(dropTargetRef, transfer => {
+    void handleDrop(transfer).catch(error => showUiError(
+      language === 'zh' ? '无法添加附件' : 'Unable to add attachments',
+      error instanceof Error ? error.message : String(error),
+    ));
+  });
   const [previewImage, setPreviewImage] = useState<ImagePreview | null>(null);
   const [popoverMaxHeight, setPopoverMaxHeight] = useState(420);
   const [popoverAnchor, setPopoverAnchor] = useState<ComposerPopoverAnchor | null>(null);
@@ -656,28 +665,25 @@ export function Composer({
     };
   }, [commandState]);
 
-  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    fileDragDepthRef.current = 0;
-    setFileDragActive(false);
-    const raw = event.dataTransfer.getData('application/x-cardbush-quickload');
+  async function handleDrop(transfer: DataTransfer) {
+    const raw = transfer.getData('application/x-cardbush-quickload');
     if (raw) {
-      event.preventDefault();
       try {
         loadPayload(JSON.parse(raw) as QuickLoadPayload);
       } catch {
-        const text = event.dataTransfer.getData('text/plain');
+        const text = transfer.getData('text/plain');
         if (text.trim()) {
           onDraftChange(draft.trim() ? `${draft.trimEnd()}\n${text}` : text);
         }
       }
       return;
     }
-    const files = [...event.dataTransfer.files];
+    const files = [...transfer.files];
     if (files.length === 0) {
       return;
     }
-    event.preventDefault();
     await addTransferredFiles(files);
+    textareaRef.current?.focus();
   }
 
   async function pickAttachments() {
@@ -745,10 +751,6 @@ export function Composer({
     } catch {
       return '';
     }
-  }
-
-  function hasFileTransfer(dataTransfer: DataTransfer): boolean {
-    return dataTransfer.files.length > 0 || dataTransfer.types.includes('Files');
   }
 
   function selectModel(model: string) {
@@ -1123,40 +1125,13 @@ export function Composer({
           textareaRef.current?.focus();
         }}
         onPaste={(event) => void pasteAttachments(event)}
-        onDragEnter={(event) => {
-          if (!hasFileTransfer(event.dataTransfer)) {
-            return;
-          }
-          event.preventDefault();
-          fileDragDepthRef.current += 1;
-          setFileDragActive(true);
-        }}
-        onDragOver={(event) => {
-          if (
-            hasFileTransfer(event.dataTransfer) ||
-            event.dataTransfer.types.includes('application/x-cardbush-quickload')
-          ) {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'copy';
-          }
-        }}
-        onDragLeave={(event) => {
-          if (!hasFileTransfer(event.dataTransfer)) {
-            return;
-          }
-          fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
-          if (fileDragDepthRef.current === 0) {
-            setFileDragActive(false);
-          }
-        }}
-        onDrop={(event) => void handleDrop(event)}
       >
-        {fileDragActive && (
+        {fileDragActive && dropTargetRef.current && createPortal(
           <div className="composer-file-drop-overlay" role="status">
             <Paperclip size={20} />
             <strong>{language === 'zh' ? '松开即可添加' : 'Drop to attach'}</strong>
             <span>{language === 'zh' ? '支持文件、文件夹和图片' : 'Files, folders and images are supported'}</span>
-          </div>
+          </div>, dropTargetRef.current,
         )}
         {imageAttachments.length > 0 && (
           <div className="composer-image-strip">

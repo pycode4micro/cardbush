@@ -1,7 +1,6 @@
 import { Minus, Plus, X } from 'lucide-react';
 import {
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -29,9 +28,18 @@ type ImageDragState = {
   pointerId: number;
   startX: number;
   startY: number;
-  scrollLeft: number;
-  scrollTop: number;
+  x: number;
+  y: number;
 };
+
+type ImageView = { zoom: number; x: number; y: number };
+type ImageGeometry = { width: number; height: number; viewportWidth: number; viewportHeight: number };
+
+function constrainView(view: ImageView, geometry: ImageGeometry): ImageView {
+  const limitX = Math.max(0, (geometry.width * view.zoom - (geometry.viewportWidth - 32)) / 2);
+  const limitY = Math.max(0, (geometry.height * view.zoom - (geometry.viewportHeight - 32)) / 2);
+  return { zoom: view.zoom, x: Math.max(-limitX, Math.min(limitX, view.x)), y: Math.max(-limitY, Math.min(limitY, view.y)) };
+}
 
 function clampZoom(value: number) {
   return Math.min(maximumZoom, Math.max(minimumZoom, value));
@@ -55,41 +63,36 @@ export function ImagePreviewDialog({
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const dragRef = useRef<ImageDragState | null>(null);
-  const zoomRef = useRef(1);
-  const [zoom, setZoom] = useState(1);
+  const viewRef = useRef<ImageView>({ zoom: 1, x: 0, y: 0 });
+  const geometryRef = useRef<ImageGeometry>({ width: 0, height: 0, viewportWidth: 0, viewportHeight: 0 });
+  const [view, setView] = useState(viewRef.current);
   const [naturalSize, setNaturalSize] = useState(() => previewNaturalSize(image));
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [dragging, setDragging] = useState(false);
   const [failed, setFailed] = useState(false);
+  const { zoom } = view;
 
-  const applyZoom = useCallback((value: number, focalPoint?: { x: number; y: number }) => {
-    const current = zoomRef.current;
-    const next = clampZoom(Math.round(value * 100) / 100);
-    if (next === current) return;
-
-    const stage = stageRef.current;
-    const point = stage
-      ? focalPoint ?? { x: stage.clientWidth / 2, y: stage.clientHeight / 2 }
-      : null;
-    const contentPoint = stage && point
-      ? { x: stage.scrollLeft + point.x, y: stage.scrollTop + point.y }
-      : null;
-
-    zoomRef.current = next;
-    setZoom(next);
-
-    if (stage && point && contentPoint) {
-      const ratio = next / current;
-      window.requestAnimationFrame(() => {
-        stage.scrollLeft = contentPoint.x * ratio - point.x;
-        stage.scrollTop = contentPoint.y * ratio - point.y;
-      });
-    }
+  const updateView = useCallback((next: ImageView) => {
+    const constrained = constrainView(next, geometryRef.current);
+    viewRef.current = constrained;
+    setView(current => current.zoom === constrained.zoom && current.x === constrained.x && current.y === constrained.y ? current : constrained);
   }, []);
 
+  const applyZoom = useCallback((value: number, focalPoint?: { x: number; y: number }) => {
+    const current = viewRef.current;
+    const next = clampZoom(Math.round(value * 100) / 100);
+    const geometry = geometryRef.current;
+    if (next === current.zoom || !geometry.width || !geometry.height) return;
+    const dx = focalPoint ? focalPoint.x - geometry.viewportWidth / 2 : 0;
+    const dy = focalPoint ? focalPoint.y - geometry.viewportHeight / 2 : 0;
+    const ratio = next / current.zoom;
+    // Commit scale and focal-point positioning together, before the same paint.
+    updateView({ zoom: next, x: dx - (dx - current.x) * ratio, y: dy - (dy - current.y) * ratio });
+  }, [updateView]);
+
   useLayoutEffect(() => {
-    zoomRef.current = 1;
-    setZoom(1);
+    viewRef.current = { zoom: 1, x: 0, y: 0 };
+    setView(viewRef.current);
     setFailed(false);
     dragRef.current = null;
     setDragging(false);
@@ -98,10 +101,6 @@ export function ImagePreviewDialog({
     setNaturalSize(element?.complete && element.naturalWidth > 0
       ? { width: element.naturalWidth, height: element.naturalHeight }
       : previewNaturalSize(image));
-    if (stageRef.current) {
-      stageRef.current.scrollLeft = 0;
-      stageRef.current.scrollTop = 0;
-    }
   }, [image.src]);
 
   useLayoutEffect(() => {
@@ -131,21 +130,34 @@ export function ImagePreviewDialog({
       if (!isZoomIn && !isZoomOut && !isReset) return;
       event.preventDefault();
       event.stopPropagation();
-      applyZoom(isReset ? 1 : zoomRef.current + (isZoomIn ? zoomStep : -zoomStep));
+      applyZoom(isReset ? 1 : viewRef.current.zoom + (isZoomIn ? zoomStep : -zoomStep));
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [applyZoom, onClose]);
 
-  const handleWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    applyZoom(
-      zoomRef.current + (event.deltaY < 0 ? zoomStep : -zoomStep),
-      { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
-    );
-  }, [applyZoom]);
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey || event.metaKey) {
+        if (!event.deltaY) return;
+        const bounds = stage.getBoundingClientRect();
+        applyZoom(viewRef.current.zoom + (event.deltaY < 0 ? zoomStep : -zoomStep),
+          { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+      } else {
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1;
+        const dx = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX;
+        const dy = event.shiftKey && !event.deltaX ? 0 : event.deltaY;
+        updateView({ ...viewRef.current, x: viewRef.current.x - dx * unit, y: viewRef.current.y - dy * unit });
+      }
+    };
+    // React's delegated wheel listener is passive; use a cancellable listener so Ctrl+wheel cannot zoom the app.
+    stage.addEventListener('wheel', handleWheel, { passive: false });
+    return () => stage.removeEventListener('wheel', handleWheel);
+  }, [applyZoom, updateView]);
 
   const finishDrag = useCallback((stage: HTMLDivElement, pointerId: number) => {
     if (dragRef.current?.pointerId !== pointerId) return;
@@ -163,8 +175,8 @@ export function ImagePreviewDialog({
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      scrollLeft: stage.scrollLeft,
-      scrollTop: stage.scrollTop,
+      x: viewRef.current.x,
+      y: viewRef.current.y,
     };
     stage.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -174,10 +186,9 @@ export function ImagePreviewDialog({
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    event.currentTarget.scrollLeft = drag.scrollLeft - (event.clientX - drag.startX);
-    event.currentTarget.scrollTop = drag.scrollTop - (event.clientY - drag.startY);
+    updateView({ zoom: viewRef.current.zoom, x: drag.x + event.clientX - drag.startX, y: drag.y + event.clientY - drag.startY });
     event.preventDefault();
-  }, []);
+  }, [updateView]);
 
   const availableWidth = Math.max(1, stageSize.width - 32);
   const availableHeight = Math.max(1, stageSize.height - 32);
@@ -186,12 +197,17 @@ export function ImagePreviewDialog({
     ? Math.min(1, availableWidth / naturalSize.width, availableHeight / naturalSize.height)
     : 1;
   const canvasWidth = ready
-    ? Math.max(1, Math.round(naturalSize.width * fitScale * zoom))
+    ? Math.max(1, Math.round(naturalSize.width * fitScale))
     : 0;
   const canvasHeight = ready
-    ? Math.max(1, Math.round(naturalSize.height * fitScale * zoom))
+    ? Math.max(1, Math.round(naturalSize.height * fitScale))
     : 0;
   const percentage = Math.round(zoom * 100);
+
+  useLayoutEffect(() => {
+    geometryRef.current = { width: canvasWidth, height: canvasHeight, viewportWidth: stageSize.width, viewportHeight: stageSize.height };
+    updateView(viewRef.current);
+  }, [canvasWidth, canvasHeight, stageSize.width, stageSize.height, updateView]);
 
   return createPortal(
     <div className="modal-backdrop image-preview-backdrop" onMouseDown={onClose}>
@@ -207,7 +223,7 @@ export function ImagePreviewDialog({
           <div className="image-preview-zoom-controls" aria-label={language === 'zh' ? '图片缩放' : 'Image zoom'}>
             <button
               type="button"
-              onClick={() => applyZoom(zoomRef.current - zoomStep)}
+              onClick={() => applyZoom(viewRef.current.zoom - zoomStep)}
               disabled={!ready || zoom <= minimumZoom}
               aria-label={language === 'zh' ? '缩小图片' : 'Zoom out'}
               title={language === 'zh' ? '缩小（Ctrl -）' : 'Zoom out (Ctrl -)'}
@@ -226,7 +242,7 @@ export function ImagePreviewDialog({
             </button>
             <button
               type="button"
-              onClick={() => applyZoom(zoomRef.current + zoomStep)}
+              onClick={() => applyZoom(viewRef.current.zoom + zoomStep)}
               disabled={!ready || zoom >= maximumZoom}
               aria-label={language === 'zh' ? '放大图片' : 'Zoom in'}
               title={language === 'zh' ? '放大（Ctrl +）' : 'Zoom in (Ctrl +)'}
@@ -248,7 +264,6 @@ export function ImagePreviewDialog({
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
           aria-busy={!ready && !failed}
-          onWheel={handleWheel}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={(event) => finishDrag(event.currentTarget, event.pointerId)}
@@ -259,7 +274,10 @@ export function ImagePreviewDialog({
               setDragging(false);
             }
           }}
-          onDoubleClick={() => applyZoom(zoomRef.current === 1 ? 2 : 1)}
+          onDoubleClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            applyZoom(viewRef.current.zoom === 1 ? 2 : 1, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+          }}
           onContextMenu={event => openFileContextMenu(event, image.path ?? '', { image: true, language })}
         >
           {!ready && <p className="image-preview-status" role="status">{failed
@@ -267,7 +285,8 @@ export function ImagePreviewDialog({
             : language === 'zh' ? '正在加载图片…' : 'Loading image…'}</p>}
           <div
             className="image-preview-canvas"
-            style={{ width: canvasWidth, height: canvasHeight, visibility: ready ? 'visible' : 'hidden' }}
+            style={{ width: canvasWidth, height: canvasHeight, visibility: ready ? 'visible' : 'hidden',
+              transform: `translate3d(${(stageSize.width - canvasWidth * zoom) / 2 + view.x}px, ${(stageSize.height - canvasHeight * zoom) / 2 + view.y}px, 0) scale(${zoom})` }}
           >
             <img
               ref={imageRef}

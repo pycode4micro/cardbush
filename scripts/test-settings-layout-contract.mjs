@@ -6,6 +6,11 @@ const read = (...parts) => fs.readFileSync(path.join(process.cwd(), ...parts), '
 const app = read('src', 'App.tsx');
 const types = read('src', 'types.ts');
 const settings = read('src', 'features', 'SettingsView.tsx');
+const navigation = read('src', 'features', 'settings', 'settingsNavigation.ts');
+const controls = read('src', 'features', 'settings', 'SettingsControls.tsx');
+const profilePanel = read('src', 'features', 'settings', 'SettingsPersonalizationPanel.tsx');
+const appearancePanel = read('src', 'features', 'settings', 'SettingsAppearancePanel.tsx');
+const usagePanel = read('src', 'features', 'settings', 'UsageStatisticsPanel.tsx');
 const css = read('src', 'styles', 'app.css');
 const importedTheme = read('src', 'features', 'appearance', 'importedThemeStyle.ts');
 const electronMain = read('electron', 'main.ts');
@@ -16,17 +21,17 @@ const sidebarResizer = read('src', 'components', 'SidebarResizer.tsx');
 
 const expectedSections = [
   'profile',
-  'instructions',
+  'appearance',
+  'usage',
   'runtime',
   'proxy',
   'mcp',
   'cache',
   'models',
   'diagnostics',
-  'about',
 ].sort();
-const navigationBlock = settings.match(
-  /const settingsNavigationGroups[\s\S]*?const settingsIcons/,
+const navigationBlock = navigation.match(
+  /const settingsNavigationGroups[\s\S]*?const keywords/,
 )?.[0] ?? '';
 const groupedSections = [
   ...navigationBlock.matchAll(/sections:\s*\[([^\]]+)\]/g),
@@ -47,35 +52,35 @@ assert.doesNotMatch(
   /SubagentsPanel|子任务运行态|Task runtime/,
   'The provisional Subagent runtime settings UI must remain hidden',
 );
-assert.match(settings, /const settingsDescriptions:/);
+assert.match(navigation, /const settingsDescriptions:/);
 assert.match(settings, /className="settings-navigation"/);
 assert.match(settings, /aria-current=\{section === id \? 'page' : undefined\}/);
 assert.match(settings, /className="settings-page-header"/);
-assert.match(settings, /className="settings-card-body"/);
+assert.match(controls, /className="settings-card-body"/);
 assert.doesNotMatch(settings, /settings\.thinking\.accentColor|思考颜色|Thinking color/);
 assert.doesNotMatch(app, /defaultThinkingAccentColor|cardbush_thinking_accent_color'\s*,\s*normalizeHexColor/);
-assert.match(settings, /name="guidance-delivery-mode"/);
-assert.match(settings, /'加入队列' : 'Add to queue'/);
-assert.match(settings, /'马上发送' : 'Send immediately'/);
+assert.match(profilePanel, /name="guidance-delivery-mode"/);
+assert.match(profilePanel, /'加入队列' : 'Add to queue'/);
+assert.match(profilePanel, /'马上发送' : 'Send immediately'/);
 assert.match(app, /cardbush_guidance_delivery_mode/);
 assert.match(app, /settings\.guidance\?\.deliveryMode === 'immediate'/);
-assert.match(settings, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
-assert.match(settings, /profile: Palette/);
-const profilePanel = settings.match(
-  /function SettingsProfilePanel[\s\S]*?function UsageStatisticsPanel/,
-)?.[0] ?? '';
+assert.match(navigation, /profile: \{ zh: '个性化', en: 'Personalization' \}/);
+assert.match(settings, /profile: SlidersHorizontal/);
 const runtimePanel = settings.match(
   /if \(section === 'runtime'\)[\s\S]*?if \(section === 'proxy'\)/,
 )?.[0] ?? '';
 assert.match(profilePanel, /name="guidance-delivery-mode"/);
 assert.doesNotMatch(runtimePanel, /name="guidance-delivery-mode"/);
-assert.match(profilePanel, /'基础主题' : 'Base themes'/);
-assert.match(profilePanel, /'其他主题' : 'Additional themes'/);
-assert.match(profilePanel, /value="parchment"[\s\S]*?onThemePreferenceChange\('parchment'\)/);
+assert.match(profilePanel, /<ConversationStyleSettings/);
+assert.match(profilePanel, /<GlobalInstructionsPanel/);
+assert.doesNotMatch(profilePanel, /UsageStatisticsPanel|theme-mode|language-mode/);
+assert.match(appearancePanel, /name="theme-mode"/);
+assert.match(appearancePanel, /value="parchment"/);
+assert.match(appearancePanel, /onThemePreferenceChange\(value as ThemePreference\)/);
 assert.match(types, /ThemePreference[\s\S]*?'parchment'[\s\S]*?'custom'/);
 assert.match(app, /preference === 'light'[\s\S]*?return 'bright'/);
 assert.match(app, /preference === 'parchment'[\s\S]*?return 'parchment'/);
-assert.doesNotMatch(profilePanel, /name="light-style"|浅色外观|Light appearance/);
+assert.doesNotMatch(appearancePanel, /name="light-style"|浅色外观|Light appearance/);
 assert.doesNotMatch(
   settings,
   /背景图片|Background image|pickBackgroundImage|shadow-color-setting|Shadow 消息|Accent color/,
@@ -93,19 +98,19 @@ assert.doesNotMatch(app, /backgroundImagePath|has-custom-background|appSettings\
 assert.doesNotMatch(startup, /cardbush_background_image_path|data-start-custom-background/);
 assert.match(
   settings,
-  /<UsageStatisticsPanel[\s\S]*?<SettingsCard[\s\S]*?title=\{language === 'zh' \? '外观' : 'Appearance'\}/,
-  'Personalization must show cumulative usage before appearance settings',
+  /if \(section === 'usage'\)[\s\S]*?<UsageStatisticsPanel/,
+  'Usage statistics must have a dedicated page',
 );
-assert.match(settings, /className="usage-heatmap-grid"/);
-assert.match(settings, /UsageHeatmapRange = 'year' \| 'month' \| 'week'/);
-assert.match(settings, /className="usage-range-switcher"/);
-assert.doesNotMatch(settings, /className="usage-legend"/);
+assert.match(usagePanel, /className="usage-heatmap-grid"/);
+assert.match(usagePanel, /UsageHeatmapRange = 'year' \| 'month' \| 'week'/);
+assert.match(usagePanel, /className="usage-range-switcher"/);
+assert.doesNotMatch(usagePanel, /className="usage-legend"|SettingsCard/);
 assert.match(css, /\.usage-stat-grid\s*\{/);
 assert.match(css, /\.usage-heatmap-grid\s*\{/);
 assert.match(
   css,
-  /\.personalization-settings-stack\s*\{[\s\S]*?container-type:\s*inline-size/,
-  'Personalization layout must respond to its actual content width.',
+  /\.usage-settings\s*\{[\s\S]*?container-type:\s*inline-size/,
+  'Usage layout must respond to its actual content width.',
 );
 assert.match(
   css,
@@ -116,7 +121,7 @@ assert.match(css, /\.usage-heatmap-scroll\s*\{[\s\S]*?overflow:\s*hidden/);
 assert.doesNotMatch(css, /\.usage-heatmap-scroll\s*\{[\s\S]*?overflow-x:\s*auto/);
 assert.match(
   css,
-  /@container personalization-settings \(max-width:\s*680px\)[\s\S]*?\.usage-stat-grid[\s\S]*?repeat\(2,/,
+  /@container usage-settings \(max-width:\s*680px\)[\s\S]*?\.usage-stat-grid[\s\S]*?repeat\(2,/,
   'Usage statistics must reflow when the settings content is narrow.',
 );
 assert.match(css, /\.settings-card-body\s*\{/);
@@ -126,8 +131,8 @@ assert.match(settings, /aria-expanded=\{addModelExpanded\}/);
 assert.match(settings, /const confirmResetModels = useCallback\(\(\) => \{/);
 assert.match(settings, /const confirmed = window\.confirm\([\s\S]*?if \(confirmed\) onResetModels\(\)/);
 assert.match(settings, /className="secondary-button danger model-clear-all-button"[\s\S]*?onClick=\{confirmResetModels\}/);
-assert.match(settings, /bodyHidden\?: boolean/);
-assert.match(settings, /!bodyHidden && <div className="settings-card-body">/);
+assert.match(controls, /bodyHidden\?: boolean/);
+assert.match(controls, /!bodyHidden && <div className="settings-card-body">/);
 assert.match(css, /\.model-settings-stack\s*\{[\s\S]*?container-name:\s*model-settings/);
 assert.match(css, /@container model-settings \(max-width:\s*720px\)[\s\S]*?\.model-row[\s\S]*?repeat\(2,/);
 assert.match(
@@ -164,15 +169,17 @@ assert.match(
 );
 assert.match(css, /\.settings-shell\.settings-inactive\s*\{[\s\S]*?visibility:\s*hidden/);
 assert.match(
-  css,
-  /\.settings-sidebar\s*\{[\s\S]*?min-width:\s*220px;[\s\S]*?overflow:\s*hidden;/,
-  'Settings and plugin navigation must remain docked at a readable sidebar width.',
+  settings,
+  /sidebar settings-sidebar soft-panel-motion/,
+  'Settings must reuse the main sidebar motion and layout styles.',
 );
+assert.match(app, /<LazySettingsView[\s\S]*?sidebarPresence=\{sidebarPresence\}[\s\S]*?sidebarWidth=\{sidebarWidth\}[\s\S]*?onSidebarCollapse=\{collapseSidebar\}/);
+assert.match(settings, /<SidebarResizer[\s\S]*?onCollapse=\{onSidebarCollapse\}/);
 assert.match(sidebarResizer, /const minimumSidebarWidth = 220/);
 assert.match(
   sidebarResizer,
   /clampPreviewWidth\([\s\S]*?Boolean\(onCollapse\)[\s\S]*?canCollapse \? 0 : minimumSidebarWidth/,
-  'Only the main app sidebar may cross the readable minimum to trigger collapse.',
+  'A collapsible sidebar may cross the readable minimum to trigger collapse.',
 );
 assert.match(
   sidebarResizer,

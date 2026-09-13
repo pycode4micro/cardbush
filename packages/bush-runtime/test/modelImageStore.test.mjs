@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { MAX_MODEL_IMAGE_BYTES, ModelImageStore, readLocalModelImage } from "../dist/index.js";
+import { MAX_MODEL_IMAGE_SOURCE_BYTES, ModelImageStore, readLocalModelImage } from "../dist/index.js";
 import { gif, imageFixture, png } from "./helpers/modelImages.mjs";
 
 test("pins exact bytes across source overwrite, deletion, and store restart", async (context) => {
@@ -51,7 +51,7 @@ test("rejects missing, incomplete, non-image, directory and oversized inputs bef
     await writeFile(source, bytes);
     await assert.rejects(store.snapshot(source), { code: "image_input_not_ready" });
   }
-  await writeFile(source, Buffer.alloc(MAX_MODEL_IMAGE_BYTES + 1));
+  await truncate(source, MAX_MODEL_IMAGE_SOURCE_BYTES + 1);
   await assert.rejects(store.snapshot(source), { code: "image_input_too_large" });
   await assert.rejects(readdir(join(root, "model-images")), { code: "ENOENT" });
 });
@@ -69,14 +69,17 @@ test("validates raster completion, not the filename extension", async (context) 
   await assert.rejects(store.snapshot(source), { code: "image_input_not_ready" });
 });
 
-test("does not reinterpret remote or data URLs, and honors cancellation before local IO", async (context) => {
+test("leaves remote URLs alone, pins data images, and honors cancellation before IO", async (context) => {
   const { root, source } = await imageFixture(context);
   const store = new ModelImageStore(root);
-  for (const url of ["https://example.test/image.png", "data:image/png;base64," + png.toString("base64")]) {
-    assert.equal(await store.snapshot(url), url);
-  }
+  const remote = "https://example.test/image.png";
+  assert.equal(await store.snapshot(remote), remote);
   const abort = new AbortController();
   abort.abort();
   await assert.rejects(store.snapshot(source, abort.signal), { name: "AbortError" });
   await assert.rejects(readdir(join(root, "model-images")), { code: "ENOENT" });
+  const saved = await store.snapshot("data:image/png;base64," + png.toString("base64"));
+  assert.deepEqual(await readFile(saved), png);
+  assert.equal(saved, await store.snapshot(source));
+  await assert.rejects(store.snapshot("data:image/png;base64,not base64!"), { code: "image_input_invalid" });
 });

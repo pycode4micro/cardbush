@@ -17,6 +17,7 @@ import { BUSH_TOOL_CALL_PROTOCOL } from "@cardbush/bush-protocol";
 import { settleAtAbort } from "./abortSettlement.js";
 import type { PluginHookResult } from './pluginExtensions.js';
 import { pluginCommandDeniesTool } from './pluginCommandTools.js';
+import { childAgentToolDenial } from './childAgentPolicy.js';
 
 export interface ToolExecutionHooks {
   before: (context: { toolCall: ToolCall; input: unknown; turn?: ToolHandlerContext['turn']; signal?: AbortSignal }) => Promise<PluginHookResult>;
@@ -106,6 +107,10 @@ export class ToolExecutionCoordinator {
         `Tool ${toolCall.name} is not registered in this Runtime host.`,
       );
     }
+
+    const childDenial = childAgentToolDenial(turn?.request, registration);
+    if (childDenial) return failedResult(childDenial.code, childDenial.message, undefined,
+      { agentRole: 'child', toolName: toolCall.name }, 'permission');
 
     const hooks = registration.delegatesToolExecution ? undefined : this.#hooks;
     let parsedArguments: unknown;

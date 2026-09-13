@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, open, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { compressModelImage, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
+
+export { MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_PIXELS, MODEL_IMAGE_TARGET_BYTES, MAX_MODEL_IMAGE_SOURCE_BYTES } from "./modelImageCompression.js";
 
 export const MAX_MODEL_IMAGE_BYTES = 9_000_000;
 
@@ -12,7 +15,7 @@ export class ModelImageInputError extends Error {
 }
 
 /** Read one bounded, complete observation, rather than a file that is still being written. */
-export async function readLocalModelImage(path: string, signal?: AbortSignal): Promise<{
+export async function readLocalModelImage(path: string, signal?: AbortSignal, maxBytes = MAX_MODEL_IMAGE_BYTES): Promise<{
   content: Buffer;
   mime: string;
 }> {
@@ -23,8 +26,8 @@ export async function readLocalModelImage(path: string, signal?: AbortSignal): P
     try {
       const before = await file.stat({ bigint: true });
       if (!before.isFile()) throw new ModelImageInputError("image_input_invalid", `Model image is not a file: ${path}`);
-      if (before.size > BigInt(MAX_MODEL_IMAGE_BYTES)) {
-        throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${MAX_MODEL_IMAGE_BYTES} bytes: ${path}`);
+      if (before.size > BigInt(maxBytes)) {
+        throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${maxBytes} bytes: ${path}`);
       }
       // One extra byte detects growth without an unbounded readFile allocation.
       const buffer = Buffer.alloc(Number(before.size) + 1);
@@ -65,16 +68,31 @@ export class ModelImageStore {
     this.#root = resolve(dataRoot, "model-images");
   }
 
-  async snapshot(source: string, signal?: AbortSignal): Promise<string> {
+  async snapshot(source: string, signal?: AbortSignal, options: { original?: boolean } = {}): Promise<string> {
+    signal?.throwIfAborted();
     const value = source.trim();
-    // Keep existing remote/data image behavior; this store owns local file observations only.
-    if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) return value;
-    const { content, mime } = await readLocalModelImage(value, signal);
+    // Remote URLs remain provider-owned; do not fetch arbitrary URLs in the host.
+    if (/^https?:\/\//i.test(value)) return value;
+    const managed = isAbsolute(value) && dirname(resolve(value)) === this.#root;
+    const maxBytes = options.original || managed ? MAX_MODEL_IMAGE_BYTES : MAX_MODEL_IMAGE_SOURCE_BYTES;
+    let { content, mime } = /^data:image\//i.test(value)
+      ? readDataImage(value, maxBytes) : await readLocalModelImage(value, signal, maxBytes);
+    if (managed) {
+      const expected = join(this.#root, `${createHash("sha256").update(content).digest("hex")}.${mime.slice(6)}`);
+      if (resolve(value) !== expected) throw new ModelImageInputError("image_snapshot_corrupt", "Stored model image failed its content integrity check.");
+      // Snapshots (including legacy and explicit originals) are immutable. Never
+      // re-encode the prefix when replaying history or receiving a tool snapshot.
+      return expected;
+    }
+    if (!options.original) {
+      try { ({ content, mime } = await compressModelImage(content, mime, signal)); }
+      catch (error) {
+        if (signal?.aborted) throw error;
+        throw new ModelImageInputError("image_input_compression_failed", `Cannot prepare model image: ${error instanceof Error ? error.message : String(error)}. Use a complete PNG, JPEG or WebP, crop the relevant area, or request original: true.`, { cause: error });
+      }
+    }
     const digest = createHash("sha256").update(content).digest("hex");
     const target = join(this.#root, `${digest}.${mime.slice("image/".length)}`);
-    if (resolve(value) === target) {
-      return target;
-    }
     signal?.throwIfAborted();
     await mkdir(this.#root, { recursive: true, mode: 0o700 });
     const temporary = join(this.#root, `${randomUUID()}.tmp`);
@@ -96,6 +114,19 @@ export class ModelImageStore {
     }
     return target;
   }
+}
+
+function readDataImage(value: string, maxBytes: number): { content: Buffer; mime: string } {
+  const header = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(value);
+  if (!header) throw new ModelImageInputError("image_input_invalid", "Data image must use base64 encoding.");
+  const encoded = value.slice(header[0].length);
+  if (encoded.length > Math.ceil(maxBytes / 3) * 4) {
+    throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${maxBytes} bytes.`);
+  }
+  const content = Buffer.from(encoded, "base64");
+  if (content.length > maxBytes) throw new ModelImageInputError("image_input_too_large", `Model image exceeds ${maxBytes} bytes.`);
+  if (content.toString("base64") !== encoded) throw new ModelImageInputError("image_input_invalid", "Data image contains invalid base64.");
+  return { content, mime: imageMime(content) };
 }
 
 function imageMime(content: Buffer): string {

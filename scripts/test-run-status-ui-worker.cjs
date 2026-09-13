@@ -22,12 +22,36 @@ app.whenReady().then(async () => {
   };
   try {
     await window.loadFile(join(directory, 'index.html'));
-    await until('document.body.innerText.includes("待确认 1 项")');
+    await until('document.querySelector(".assistant-run-header") && document.body.innerText.includes(window.fixtureNarration)');
     assert.equal(await read('window.checks'), 0, 'active Turn must not poll MCP activation');
     const text = await read('document.body.innerText');
-    assert.match(text, /工具执行中 1 项/);
-    assert.match(text, /1 个最近报告仍在运行/);
     assert.match(text, /正在后台连接或等待工具生效/);
+    const measure = () => read(`(() => {
+      const header = document.querySelector('.assistant-run-header');
+      const body = [...document.querySelectorAll('.assistant-bubble p')].find(item => item.textContent === window.fixtureNarration);
+      return { height: header.getBoundingClientRect().height, bodyTop: body.getBoundingClientRect().top,
+        children: header.children.length, text: header.textContent };
+    })()`);
+    for (const [width, language] of [[780, 'zh'], [460, 'en']]) {
+      window.setSize(width, 600);
+      await read(`window.renderFixture(true, 'idle', ${JSON.stringify(language)})`);
+      await until(`document.querySelector('.app').dataset.phase === 'idle' && document.querySelector('.app').dataset.language === ${JSON.stringify(language)}`);
+      const baseline = await measure();
+      for (const phase of ['running', 'waiting', 'background', 'settled', 'mixed']) {
+        await read(`window.renderFixture(true, ${JSON.stringify(phase)}, ${JSON.stringify(language)})`);
+        await until(`document.querySelector('.app').dataset.phase === ${JSON.stringify(phase)}`);
+        const current = await measure();
+        assert.equal(current.height, baseline.height, `${phase}: tool updates must not add a header row`);
+        assert.equal(current.bodyTop, baseline.bodyTop, `${phase}: tool updates must not move preceding narration`);
+        assert.equal(current.children, 2, 'header contains only timing and divider, without an activity placeholder');
+        assert.doesNotMatch(current.text, /terminal_exec|工具执行中|tools executing|最近工具|Last tool event|后台终端|Background terminals/);
+        assert.ok(await read('document.querySelector(".tool-execution-summary")'), `${phase}: tool records remain in the transcript`);
+        if (phase === 'waiting' || phase === 'mixed') {
+          assert.match(await read('document.querySelector(".tool-execution-summary").textContent'), /等待授权|Awaiting permission/);
+        }
+      }
+    }
+    assert.equal(await read('window.checks'), 0, 'tool status changes must not start MCP polling');
     assert.ok(await read('document.documentElement.scrollWidth <= window.innerWidth'), 'status text must wrap inside a narrow conversation');
     await new Promise(resolve => setTimeout(resolve, 150));
     writeFileSync(resolve('tmp/run-status-active.png'), (await window.webContents.capturePage()).toPNG());
@@ -59,7 +83,7 @@ app.whenReady().then(async () => {
     writeFileSync(resolve('tmp/run-status-failure-zh.png'), (await window.webContents.capturePage()).toPNG());
     await read('window.renderFailure("en")');
     await until('document.querySelector(".assistant-failure-notice small")?.textContent.includes("Duplicate tool names")');
-    console.log('Run status UI passed: concurrent states, idle-only MCP verification and cleanup.');
+    console.log('Run status UI passed: stable header and narration across tool states, idle-only MCP verification and cleanup.');
     clearTimeout(deadline); window.destroy(); app.exit(0);
   } catch (error) { console.error(error); clearTimeout(deadline); window.destroy(); app.exit(1); }
 });

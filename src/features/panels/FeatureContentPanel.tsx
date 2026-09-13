@@ -40,6 +40,7 @@ export function FeatureContentPanel({
   onReloadSkills,
   onLoadSkillDetail,
   onCreateConversation,
+  onCreateAutomation,
   onOpenConversation,
 }: {
   language: AppLanguage;
@@ -53,9 +54,10 @@ export function FeatureContentPanel({
   onReloadSkills: () => Promise<SkillSummary[]>;
   onLoadSkillDetail: (skillName: string) => Promise<SkillDetail>;
   onCreateConversation: () => void;
+  onCreateAutomation: () => void;
   onOpenConversation: (conversationId: string) => void;
 }) {
-  if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} />;
+  if (section === 'automations') return <AutomationPanel language={language} onOpenConversation={onOpenConversation} onCreateAutomation={onCreateAutomation} />;
   if (section === 'search') {
     return (
       <SearchPanel

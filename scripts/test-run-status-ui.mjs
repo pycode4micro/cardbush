@@ -11,7 +11,6 @@ const directory = await mkdtemp(join(parent, 'run-status-ui-'));
 const source = `
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { AssistantActivityDetails } from '${resolve('src/features/chatMessages/AssistantActivityDetails.tsx').replaceAll('\\', '/')}';
 import { McpActivationStatus } from '${resolve('src/features/chatMessages/McpActivationStatus.tsx').replaceAll('\\', '/')}';
 import { MessageBubble } from '${resolve('src/features/chatMessages/MessageBubble.tsx').replaceAll('\\', '/')}';
 import '${resolve('src/styles/app.css').replaceAll('\\', '/')}';
@@ -26,11 +25,22 @@ const executions = [
  {id:'permission',name:'configure_mcp_server',state:'awaiting_permission',summary:'配置 Blender MCP',createdAt:'2026-09-08T13:01:31Z',metadata:{}},
  {id:'verify',name:'terminal_exec',state:'running',summary:'检查已下载文件',createdAt:'2026-09-08T13:01:32Z',metadata:{}}
 ];
-window.renderFixture = active => root.render(<div className="app theme-cyberpunk" style={{minWidth:0,width:'100%'}}><main style={{padding:32,width:'100%',maxWidth:760,boxSizing:'border-box'}}>
- <div className="assistant-run-header"><span className="assistant-run-label">{active?'处理中 12m 5s':'已处理 12m 5s'}</span><div className="assistant-run-divider"/>
- {active && <AssistantActivityDetails executions={executions} language="zh"/>}</div>
- <McpActivationStatus target={target} isActive={active} language="zh"/>
+const no = async () => {};
+const startedAt = new Date(Date.now() - 125000).toISOString();
+window.fixtureNarration = '正文位置保持稳定。';
+window.renderFixture = (active, phase = 'mixed', language = 'zh') => {
+ const selected = phase === 'idle' ? [] : phase === 'running' ? [executions[2]] :
+  phase === 'waiting' ? [executions[1]] : phase === 'background' ? [executions[0]] :
+  phase === 'settled' ? executions.map(item => ({...item,state:'completed',metadata:{}})) : executions;
+ const toolExecutions = selected.map(item => ({...item,output:'',contentOffset:window.fixtureNarration.length,contentOffsetExplicit:true}));
+ root.render(<div className="app theme-cyberpunk" data-phase={phase} data-language={language} style={{minWidth:0,width:'100%'}}><main style={{padding:32,width:'100%',maxWidth:760,boxSizing:'border-box'}}>
+  <MessageBubble message={{id:'progress',turnId:'fixture-turn',role:'assistant',content:window.fixtureNarration,status:active?'running':'completed',
+    toolExecutions,metadata:{cardbush_turn_started_at:startedAt}}}
+   language={language} sending={active} activeTurnId={active?'fixture-turn':''} activeAssistantMessageId={active?'progress':''}
+   onRegenerate={no} onEditUserMessage={no} onRetryGuidance={no} onRevertChangeReport={no} onOpenScene={no}/>
+  <McpActivationStatus target={target} isActive={active} language={language}/>
  </main></div>);
+};
 window.unmountFixture = () => root.unmount();
 let failureRoot;
 window.renderFailure = language => {

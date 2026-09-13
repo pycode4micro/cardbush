@@ -9,6 +9,7 @@ import {
 
 import {
   buildChildTurnRequest,
+  assertParentAgent,
   inheritedChildMessages,
   resolveChildTurn,
   type ChildTurnRunner,
@@ -103,6 +104,7 @@ export function registerTeamTool(
     decodeInput,
     execute: async (context) => {
       if (!context.turn) throw new Error("Team dispatch requires the parent Turn context.");
+      assertParentAgent(context.turn.request);
       const team = teams.team(context.input.teamId);
       if (!team) throw new Error(`Team ${context.input.teamId} is not configured.`);
       const assignments = resolveAssignments(team, context.input.assignments);

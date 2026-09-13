@@ -51,7 +51,7 @@ CardBush 支持 OpenAI 公开插件包与自定义市场，并直接解析 Claud
 - OpenAI `interface` 的显示名、图标、建议提示词用于技能页面；模型发现使用 SKILL.md 的描述。`policy.allow_implicit_invocation: false` 与 Claude `disable-model-invocation: true` 均阻止模型自动调用，但仍允许用户按声明手动调用。`user-invocable: false` 隐藏手动入口，模型入口另按策略判断。
 - 插件技能使用 `plugin:skill` 标识，避免不同插件的同名技能互相覆盖。用户可以输入 `/plugin:skill 参数` 或 `$plugin:skill 参数`；允许手动调用的插件技能也进入输入框的命令列表。模型通过 `search_skills` 发现，再用 `run_skill` 执行。命令和技能保留各自的目录与身份；重名入口在安装检查时拒绝。
 - OpenAI `dependencies.tools` 中带地址的 MCP 声明进入现有连接管理；包内同名 MCP 可复用，地址冲突会报告。依赖不会在预览时连接，也不会自动打开登录页。依赖工具未连接、未暴露或技能被任务禁用时，运行明确失败。
-- Claude `context: fork` 支持 general-purpose、Explore、Plan 和同插件 Agent。按当前 Claude Skills 语义默认后台运行，`background: false` 等待完成；Agent 自身的 `background: true` 和 `subagent.run_in_background` 也可显式开启后台。沿用配置的子模型和权限，工具范围取父任务、子任务策略和 Agent 声明的交集，嵌套调用上限为 4 层。Explore / Plan 限制为标记为只读的工具。
+- Claude `context: fork` 支持 general-purpose、Explore、Plan 和同插件 Agent。按当前 Claude Skills 语义默认后台运行，`background: false` 等待完成；Agent 自身的 `background: true` 和 `subagent.run_in_background` 也可显式开启后台。沿用配置的子模型和权限，Agent 声明可收窄工具范围，子任务禁用项在调用时检查。子 agent 不可再次派发，包括通过 Skill/Command 的 `context: fork` 派发；普通内联技能仍可使用。Explore / Plan 限制为标记为只读的工具。
 - Agent 的 `skills` 直接预加载同插件静态技能正文，缺失、被禁用、禁止模型调用或依赖工具不在子任务范围内时拒绝执行。需要动态上下文或再次 fork 的技能不能作为静态预加载项。局部 MCP 连接完成后才检查这些依赖。
 - 动态 shell 上下文复用原生命令的参数转义、审批和取消机制；`allowed-tools` 不越过宿主权限，`disallowed-tools` 在执行期间生效。安装、预览和目录浏览不执行脚本。
 

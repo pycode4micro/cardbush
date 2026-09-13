@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ModelImageStore } from "../dist/index.js";
-import { imageFixture } from "./helpers/modelImages.mjs";
+import { ModelImageStore, readLocalModelImage } from "../dist/index.js";
+import { imageFixture, png } from "./helpers/modelImages.mjs";
 
 import {
   InMemoryRuntimeEventLog,
@@ -61,8 +61,9 @@ test("does not append an image when the Tool round has no remaining image budget
   assert.equal(result.messages.some((message) => message.images?.length), false);
 });
 
-test("keeps injected image locators out of the model-facing Tool receipt", async () => {
-  const imageUrl = `data:image/png;base64,${"A".repeat(20_000)}`;
+test("keeps injected image locators out of the model-facing Tool receipt", async (context) => {
+  const { root } = await imageFixture(context);
+  const imageUrl = `data:image/png;base64,${png.toString('base64')}`;
   const registry = new ToolRegistry();
   registry.register({
     ...registration(),
@@ -87,6 +88,7 @@ test("keeps injected image locators out of the model-facing Tool receipt", async
     eventLog: new InMemoryRuntimeEventLog(),
     identity: { requestId: "request_inject", sessionId: "session", turnId: "turn" },
     registry,
+    modelImages: new ModelImageStore(root),
   });
   const result = await loop.execute([{
     id: "call_inject",
@@ -102,7 +104,7 @@ test("keeps injected image locators out of the model-facing Tool receipt", async
     attached_images: 1,
   });
   assert.equal(result.messages[0].content.includes(imageUrl), false);
-  assert.equal(result.messages[1].images[0].url, imageUrl);
+  assert.deepEqual((await readLocalModelImage(result.messages[1].images[0].url)).content, png);
 });
 
 function registration(source = "https://example.test/screen.png") {

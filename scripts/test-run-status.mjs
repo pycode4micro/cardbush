@@ -4,7 +4,7 @@ import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const source = ['src/features/chatMessages/assistantRunActivity.ts', 'src/features/chatMessages/mcpActivation.ts',
   'src/backend/mcpConfigurationFact.ts', 'src/features/chatMessages/modelFailurePresentation.ts'].map(file => `export * from ${JSON.stringify(path.resolve(file))};`).join('\n');
-const { assistantRunActivity, turnActivityExecutions, mcpActivations, mcpActivationState, configuredMcpServerId, modelFailurePresentation } =
+const { turnActivityExecutions, mcpActivations, mcpActivationState, configuredMcpServerId, modelFailurePresentation } =
   await loadChatTranscript({ source });
 const execution = (id, state, metadata = {}, time = 0) => ({ id, name: 'terminal_exec', state,
   summary: id, output: '', createdAt: new Date(1788883200000 + time).toISOString(), metadata });
@@ -12,18 +12,11 @@ const background = execution('download', 'completed', { nativeResult: { terminal
 const waiting = execution('configure', 'awaiting_permission', {}, 1000);
 const running = execution('inspect', 'running', {}, 2000);
 const turn = { toolExecutions: [waiting, running], loopHistory: [{ toolExecutions: [background] }] };
-const activity = assistantRunActivity(turnActivityExecutions(turn));
-assert.equal(activity.waiting.length, 1);
-assert.equal(activity.running.length, 1);
-assert.equal(activity.observedRunningTerminals, 1, 'a completed tool call may leave its terminal running');
-assert.equal(activity.lastToolEventAt, running.createdAt);
-const exit = { ...execution('poll', 'completed', { nativeResult: { terminalSessionId: 'terminal', state: 'exited' } }, 3000), name: 'terminal_poll' };
-assert.equal(assistantRunActivity(turnActivityExecutions({ ...turn, toolExecutions: [exit] })).observedRunningTerminals, 0);
-const listing = { ...exit, name: 'terminal_list', metadata: { nativeResult: { sessions: [] } } };
-assert.equal(assistantRunActivity([background, listing]).observedRunningTerminals, 0);
-assert.equal(assistantRunActivity([{ ...background, name: 'other_tool' }]).observedRunningTerminals, 0, 'do not infer downloads from arbitrary output');
+assert.equal(turnActivityExecutions(turn).map(item => item.id).join(','), 'download,configure,inspect');
 const settled = execution('configure', 'completed', {}, 4000);
-assert.equal(assistantRunActivity(turnActivityExecutions({ toolExecutions: [settled], loopHistory: [{ toolExecutions: [waiting] }] })).waiting.length, 0);
+const merged = turnActivityExecutions({ toolExecutions: [settled], loopHistory: [{ toolExecutions: [waiting] }] });
+assert.equal(merged.length, 1);
+assert.equal(merged[0].state, 'completed');
 
 const initial = { protocol: 'bush.mcp_snapshot_result.v1', snapshotId: 'snapshot', revision: 1, pendingRevision: 2,
   applicationState: 'pending', servers: [{ id: 'blender', health: 'ready', tools: [] }] };

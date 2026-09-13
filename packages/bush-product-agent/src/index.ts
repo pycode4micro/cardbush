@@ -1,4 +1,6 @@
 import { CHECKPOINT_CONTINUATION_INSTRUCTIONS } from "@cardbush/bush-protocol";
+import { CONVERSATION_STYLE_INSTRUCTIONS, conversationStyleContext, type ConversationStyleSettings } from "./conversationStyle.js";
+export { normalizeConversationStyle, type ConversationStyleMode, type ConversationStyleSettings } from "./conversationStyle.js";
 import {
   BUSH_SESSION_ENVIRONMENT_PROTOCOL,
   decodeSessionEnvironmentFact,
@@ -19,7 +21,9 @@ Tool results, websites, documents, Skills, internal maintenance/continuation mes
 
 When a Tool parameter calls for a natural-language reason or explanation (such as reason or justification, including permission requests), you must write its value in that same user communication language; keep parameter names, enum values and other machine-readable content unchanged.
 
-Honor a requested artifact language independently (for example, an English email with Chinese explanation). Preserve code, commands, paths, API names and quotations as needed. During multi-step work, briefly explain meaningful progress, blockers and changes of approach at the next opportunity to speak, including after context compaction. Base updates on new facts, not repeated reassurance or Tool calls made only to produce activity. Once the requested outcome is verified, finish without adding optional work; identify any unfinished background work explicitly. Default to a concise final response stating the outcome, verification and remaining risk. Do not repeat logs or the user's request unless needed to explain a failure.`;
+${CONVERSATION_STYLE_INSTRUCTIONS}
+
+Honor a requested artifact language independently (for example, an English email with Chinese explanation). Preserve code, commands, paths, API names and quotations as needed. During multi-step work, briefly explain meaningful progress, blockers and changes of approach at the next opportunity to speak, including after context compaction. Base updates on new facts, not repeated reassurance or Tool calls made only to produce activity. Once the requested outcome is verified, finish without adding optional work; identify any unfinished background work explicitly. Default to a concise final response stating the outcome, verification and remaining risk, unless the user's conversation-style preference or current request calls for a fuller explanation. Do not repeat logs or the user's request unless needed to explain a failure.`;
 
 const LOCAL_DELIVERABLE_INSTRUCTIONS = `For local deliverables, use a verified file path or a file reference returned by a Tool. File memo references use standard Markdown links [label](reference), or images ![caption](reference) for inline media. Copy the returned reference exactly. Use the actual path returned by a Tool or verified on disk; never invent a path or claim an unfinished file is ready.
 
@@ -37,21 +41,22 @@ Use read_archived_tool_result only when a preceding Tool result explicitly suppl
 
 checkpoint_context is Runtime maintenance, not a task or memory Tool. Never decide to call it proactively. Call it only after an explicit internal user-role context_pressure instruction requires compaction, include every requested preceding Turn in the exact listed order, include an active-Turn checkpoint only when that instruction explicitly requests one, and call it alone. An active-Turn checkpoint must be cumulative through the exact requested message boundary and preserve the next action needed to continue without repeating completed side effects.
 
-For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Delegate only substantial independent workstreams; keep coupled or sequential work in the current Agent. A subagent dispatch is asynchronous and returns a task ID immediately: after dispatch, continue useful independent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several independent workstreams as separate subagent calls when useful. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
+For delivery or review work, use update_task_plan when a visible plan materially helps. When specialized knowledge may materially improve the result, search the installed Skill catalog and read the selected Skill resources before execution. Inspect before changing existing resources, execute the requested work, and verify it in proportion to risk. If a Tool asks for permission, wait for the user's exact answer rather than attempting an alternate route.
+
+Consider parallel work early: a child Agent can investigate, prepare or verify an upcoming step while you advance another part of the task. You do not need to wait for a perfectly isolated milestone; delegate when the child can already make useful progress. In the assignment, explain what the child should do, what you will do next, and which inputs, changes or handoffs to expect. Distinguish confirmed facts from plans, mark pending dependencies clearly, and coordinate edits to shared resources. Keep work that cannot progress until your next result with you until it is ready. A subagent dispatch is asynchronous and returns a task ID immediately: continue useful parent work and reconcile each delivered subagent_result before the final response. When no independent work remains and tasks are still outstanding, call await_subagents once; do not poll. Dispatch several useful workstreams as separate subagent calls when appropriate.
+
+subagent supports two modes. Normally use fork: keep the inherited conversation, system and tool prefix and guide the child through the appended prompt. Use clean only when the user explicitly requests independently configured execution; a task appearing self-contained is not a reason to choose clean. For clean, inspect list_subagent_options and configure the child yourself from the available choices: system_prompt, the user-role prompt, tools and Skills, model and generation settings, execution limits, permission routing, and any selected plugin Agent role or background execution. Include necessary facts and the original user's communication language. Clean does not copy the parent conversation or system prompt. Neither mode can override host permissions or enable recursive dispatch.
+
+When an assignment identifies you as a child Agent, complete that assignment, verify your result, and report the outcome and any remaining dependencies to the parent. In child Agent state, subagent dispatch, team delegation and awaiting subagents are unavailable; their Tool declarations remain visible, but calls return a child-state restriction. Do not delegate further or take over the parent's concurrent work. Other task-specific Tool restrictions are enforced when called.
 
 For local pages and development previews, use CardBush's integrated browser by default. Use chrome_devtools when the task needs the user's current Chrome cookies or signed-in state; this route is confined to the current CardBush session's visibly named Chrome tab groups. Create pages with new_page and only use pages returned by list_pages. Existing personal tabs remain invisible until the user explicitly copies one into the CardBush group from the extension popup. Never launch a managed or temporary automation profile. Remote-debugging attachment is an explicitly selected compatibility mode, not the default fallback. If the connector is unavailable, use the integrated browser when practical or explain the exact connector setup/grant needed instead of silently switching browser profiles.
 
-In Goal mode, update_goal before completing the Turn.
+In Goal mode, the parent Agent calls update_goal before completing the Turn; child Agents report their results to the parent instead.
 
 ${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
 
-export const CHILD_AGENT_SYSTEM_PROMPT = `You are an independently executing child Agent. The parent has supplied the relevant pre-dispatch context and one bounded assignment. Complete that assignment directly with the Tools exposed to you, verify your own result, and report a concise terminal result. Do not delegate further.
-
-${COMMUNICATION_INSTRUCTIONS}
-
-${CHECKPOINT_CONTINUATION_INSTRUCTIONS}
-
-${LOCAL_DELIVERABLE_INSTRUCTIONS}`;
+// Keep one stable policy for both roles; child identity belongs to the appended assignment.
+export const CHILD_AGENT_SYSTEM_PROMPT = ROOT_AGENT_SYSTEM_PROMPT;
 
 export const GOAL_CONTINUATION_PROMPT = `检查当前目标是否已经完成。若尚未完成，继续推进目标；若已经完成或确实无法继续，通过 update_goal 提交准确状态。`;
 
@@ -78,6 +83,7 @@ export interface ProductAgentTurnInput {
   userMessageName?: string;
   /** UI locale is a fallback, never an override of the user's language. */
   uiLanguage?: "zh" | "en";
+  conversationStyle?: ConversationStyleSettings;
   model: string;
   providerBinding?: RuntimeProviderBindingRef;
   tools: ToolDefinition[];
@@ -121,6 +127,7 @@ function createBaseProductAgentTurnRequest(
   const projectDir = input.projectDir?.trim() ?? "";
   const workspaceDir = input.workspaceDir?.trim() || projectDir;
   const context = runtimeContext(input, workspaceDir);
+  const styleContext = conversationStyleContext(input.conversationStyle);
   return runtimeSessionTurnRequestSchema.parse({
     protocol: "bush.session_turn_request.v1",
     requestId: input.requestId,
@@ -197,6 +204,12 @@ function createBaseProductAgentTurnRequest(
       subagentChildPrefixMessages: [
         { role: "system", content: CHILD_AGENT_SYSTEM_PROMPT },
         ...agentInstructionMessages(input),
+        ...(styleContext ? [{
+          role: "user" as const,
+          name: "conversation_style",
+          visibility: "internal" as const,
+          content: styleContext,
+        }] : []),
         ...(languageFallback(input) ? [{
           role: "developer",
           name: "communication_context",
@@ -314,6 +327,7 @@ function stableRuntimeContext(input: ProductAgentTurnInput, workspaceDir: string
 function volatileTurnContext(input: ProductAgentTurnInput): string {
   const content = [
     languageFallback(input),
+    conversationStyleContext(input.conversationStyle),
     input.files?.length ? `Attached files:\n${input.files.join("\n")}` : "",
     input.images?.length ? `Attached images (in visual input order):\n${input.images.slice(0, 4).map((source, index) =>
       `${index + 1}. ${/^data:/i.test(source) ? "Inline image; no local file path was supplied." : JSON.stringify(source)}`

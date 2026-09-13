@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  DEFAULT_CHILD_AGENT_DISABLED_TOOLS,
   type SessionSnapshot,
 } from "@cardbush/bush-protocol";
 
@@ -13,6 +14,8 @@ import {
 } from "./childTurn.js";
 import type { SubagentTaskStore } from "./subagentTaskStore.js";
 import type { ToolRegistry } from "./toolRegistry.js";
+import { assertParentAgent, childAgentToolDenial } from './childAgentPolicy.js';
+import { CLEAN_AGENT_SETTINGS_SCHEMA, decodeCleanAgentSettings, decodeToolOrSkillNames, type CleanAgentSettings, type SubagentModelCatalog } from './cleanAgentSettings.js';
 import { pluginAgentTools, validateAgentSkills, type PluginAgent } from './pluginExtensions.js';
 
 export const SUBAGENT_TOOL = "subagent" as const;
@@ -20,7 +23,10 @@ export const AWAIT_SUBAGENTS_TOOL = "await_subagents" as const;
 
 interface SubagentInput {
   prompt: string;
-  inheritContext: boolean;
+  mode: 'fork' | 'clean';
+  systemPrompt?: string;
+  allowedTools?: string[];
+  settings?: CleanAgentSettings;
   agentType?: string;
   runInBackground?: boolean;
 }
@@ -61,6 +67,7 @@ export function registerSubagentTool(
     }) => void;
     awaitAsyncResults?: AwaitAsyncSubagentResults;
     permissionPolicy?: SubagentPermissionPolicy;
+    models?: SubagentModelCatalog;
     loadPluginAgents?: () => Promise<PluginAgent[]>;
     runBackground?: <T>(session: string, turn: string, taskId: string, run: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   } = {},
@@ -72,6 +79,44 @@ export function registerSubagentTool(
     execute: async () => (await options.loadPluginAgents!()).map(({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers }) => ({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode, mcpServers: mcpServers?.flatMap(server => typeof server === 'string' ? [server] : Object.keys(server)), model: 'inherit' })),
   });
   if (registry.resolve(SUBAGENT_TOOL)) return;
+  if (!registry.resolve('list_subagent_options')) registry.register({
+    definition: { name: 'list_subagent_options', description: 'Inspect available settings before a user-requested clean subagent: configured models, generation settings, permission ceiling, tool/Skill scope and plugin Agent roles. Normal delegation uses fork and does not need this setup step.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    manifest: { effect_kind: 'observation', operation: 'agent.options', risk: 'low', owner: 'runtime_subagent', dispatch_scope: 'parent_session', mutating: false },
+    parallelSafe: true, decodeInput: () => ({}),
+    execute: async context => {
+      if (!context.turn) throw new Error('Subagent options require the current Turn context.');
+      const request = context.turn.request;
+      const policy = request.metadata.childAgentPolicy as Record<string, unknown> | undefined;
+      const configured = options.permissionPolicy;
+      const route = request.metadata.subagentPermissionRouting ?? policy?.permissionRouting ?? configured?.permissionRouting ?? 'user';
+      const disabledTools = policy?.disabledTools ?? configured?.disabledTools ?? [...DEFAULT_CHILD_AGENT_DISABLED_TOOLS];
+      const modelPolicy = policy?.model && typeof policy.model === 'object' ? policy.model as Record<string, unknown> : {};
+      const childRequest = { ...request, metadata: { ...request.metadata, agentRole: 'child', disabledTools } };
+      const result = {
+        default_mode: 'fork', clean_usage: 'Use clean only when the user explicitly requests independent configuration; choose all applicable settings yourself.',
+        models: (await options.models?.list(context.signal) ?? []).map(({ id, model, maxContextTokens, maxOutputTokens }) => ({ id, model, maxContextTokens, maxOutputTokens })),
+        defaults: {
+          model: modelPolicy.mode === 'fixed' ? { mode: 'fixed', id: modelPolicy.modelId, model: modelPolicy.model } : { mode: 'inherit' }, parent_model: request.model,
+          reasoning_effort: request.reasoningEffort, max_output_tokens: modelPolicy.maxOutputTokens ?? request.maxOutputTokens,
+          max_context_tokens: modelPolicy.maxContextTokens ?? request.metadata.contextWindowTokens, temperature: request.temperature, top_p: request.topP,
+          permission_routing: route,
+          permission_ceiling: request.permissionMode === 'all_free' || route === 'user' ? request.permissionMode : policy?.childPermissionMode ?? configured?.childPermissionMode ?? 'task_free',
+          disabled_tools: disabledTools,
+          allowed_skills: request.metadata.allowedSkills, disabled_skills: request.metadata.disabledSkills ?? [],
+        },
+        tools: request.tools.map(tool => {
+          const registration = registry.resolve(tool.name);
+          const restriction = registration ? childAgentToolDenial(childRequest, registration) : { message: 'Tool is no longer registered.' };
+          return { name: tool.name, child_available: !restriction, ...(restriction ? { restriction: restriction.message } : {}) };
+        }),
+        skill_discovery: 'Use search_skills to find installed Skills; select exact values from defaults.allowed_skills when that scope is present.',
+        settings: CLEAN_AGENT_SETTINGS_SCHEMA,
+        agent_roles: (await options.loadPluginAgents?.() ?? []).map(({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode }) => ({ id, description, tools, disallowedTools, maxTurns, background, memory, isolation, permissionMode })),
+      };
+      // Omit unavailable optional defaults; native tool results must be JSON values.
+      return JSON.parse(JSON.stringify(result));
+    },
+  });
   const createTaskId = options.createTaskId ?? (() => `subagent_task_${randomUUID()}`);
   const createRequestId = options.createRequestId ?? (() => `subagent_request_${randomUUID()}`);
   const createSessionId = options.createSessionId ?? (() => `subagent_session_${randomUUID()}`);
@@ -82,14 +127,17 @@ export function registerSubagentTool(
     definition: {
       name: SUBAGENT_TOOL,
       description:
-        "Asynchronously dispatch one substantial, bounded independent workstream to a child Agent. The call returns a task ID: continue useful parent work. Normally child results join before the parent Turn finishes. With run_in_background or a background plugin Agent, work may outlive this Turn; manage_plugin_agents lists, waits for or stops these tasks, and results enter the next parent Turn. Keep small or tightly coupled work with the parent. The child inherits pre-dispatch context by default and cannot delegate again.",
+        "Asynchronously dispatch useful parallel work. Normally use fork (default): inherit the complete pre-dispatch conversation and shared system/tool prefix, then guide the child with prompt as a new user message. Use clean only when the user explicitly requests independent configuration; do not choose clean merely because a task looks self-contained. For clean, inspect list_subagent_options and configure the child yourself: write system_prompt and the user-role prompt, select applicable settings, allowed_tools, optional agent_type and background execution. No parent conversation or inherited system prompt is copied. Include the user's communication language, necessary facts and expected output. In either mode explain the child's work, your concurrent next steps and pending handoffs. The call returns a task ID: continue useful parent work and reconcile the result. Background work may outlive this Turn; manage_plugin_agents lists, waits for or stops it. Host permissions and child-state restrictions remain enforced; children cannot dispatch again.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
         required: ["prompt"],
         properties: {
-          prompt: { type: "string", minLength: 1 },
-          inherit_context: { type: "boolean", default: true },
+          prompt: { type: "string", minLength: 1, description: "Describe the child's assignment, your concurrent next steps, expected dependencies and how the results will be reconciled. Distinguish pending inputs from established facts." },
+          mode: { type: 'string', enum: ['fork', 'clean'], default: 'fork', description: 'Normally use fork and append prompt to the inherited conversation. Use clean only at the user’s explicit request for independent configuration, then choose its settings yourself.' },
+          system_prompt: { type: 'string', minLength: 1, description: 'Required in clean mode; unavailable in fork mode. Sets the actual system message for the child. Define its role, behavior, communication language and output requirements. Host permissions cannot be overridden.' },
+          allowed_tools: { type: 'array', uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Clean mode only. Exact tool names from your exposed catalog; omitted keeps the parent catalog, [] permits no tools. Intersects with any plugin Agent role and host restrictions. Enforced at execution, not just a prompt suggestion.' },
+          settings: CLEAN_AGENT_SETTINGS_SCHEMA,
           ...(options.runBackground ? { run_in_background: { type: 'boolean', default: false } } : {}),
           ...(options.loadPluginAgents ? { agent_type: { type: 'string', description: 'Optional exact plugin Agent id from list_plugin_agents. Its role and tool restrictions apply to the child.' } } : {}),
         },
@@ -108,14 +156,18 @@ export function registerSubagentTool(
     decodeInput: decodeInput,
     execute: async (context) => {
       if (!context.turn) throw new Error("Subagent dispatch requires the parent Turn context.");
+      assertParentAgent(context.turn.request);
       const taskId = createTaskId();
       const childSessionId = createSessionId();
       const childTurnId = createTurnId();
-      const inherited = inheritedChildMessages(context, context.input.inheritContext);
+      const inheritContext = context.input.mode === 'fork';
+      const inherited = inheritedChildMessages(context, inheritContext);
       const profile = context.input.agentType ? (await options.loadPluginAgents?.())?.find(agent => agent.id === context.input.agentType) : undefined;
       const background = context.input.runInBackground === true || profile?.background === true;
       if (background && !options.runBackground) throw new Error('Background Agent execution is unavailable in this host.');
       if (context.input.agentType && !profile) throw new Error('The requested plugin Agent is not installed and enabled.');
+      if (context.input.settings?.model_id && !options.models) throw new Error('This host cannot select a configured clean Agent model.');
+      const selectedModel = context.input.settings?.model_id ? await options.models!.resolve(context.input.settings.model_id, context.signal) : undefined;
 
       const childRequest = buildChildTurnRequest({
         context,
@@ -127,8 +179,12 @@ export function registerSubagentTool(
           messageId: createMessageId(),
         },
         prompt: context.input.prompt,
+        cleanSystemPrompt: context.input.systemPrompt,
+        toolAllowlist: context.input.allowedTools,
+        cleanSettings: context.input.settings,
+        cleanModel: selectedModel,
         inherited,
-        metadata: { subagentTaskId: taskId, pluginBackground: background, ...(profile ? { pluginAgentId: profile.id, pluginAgentMaxTurns: profile.maxTurns } : {}) },
+        metadata: { subagentTaskId: taskId, subagentMode: context.input.mode, pluginBackground: background, ...(profile ? { pluginAgentId: profile.id, pluginAgentMaxTurns: profile.maxTurns } : {}) },
         ...(profile ? {
           additionalPrefixMessages: [{ role: 'developer' as const, name: 'plugin_agent_role', content: `Plugin Agent: ${profile.id}\nPlugin directory: ${profile.root}\n${profile.prompt}\n${(profile.skills ?? []).map(skill => `\nPreloaded Skill ${skill.name} (${skill.path}):\n${skill.prompt}`).join('\n')}\n\nUse CardBush tool names; CardBush's configured child model and permission policies apply.` }],
           allowedToolNames: pluginAgentTools(profile, context.turn.request.tools.map(tool => tool.name).filter(name => registry.childDefinitions().some(tool => tool.name === name))),
@@ -139,7 +195,7 @@ export function registerSubagentTool(
       if (!profile?.mcpServers?.some(server => typeof server !== 'string')) validateAgentSkills(profile, childRequest, registry);
 
       tasks.start({ taskId, parentSessionId: context.sessionId, parentTurnId: context.turnId,
-        childSessionId, childTurnId, background, agentProfileId: profile?.id, prompt: context.input.prompt, inheritContext: context.input.inheritContext, inheritedMessageCount: inherited.length });
+        childSessionId, childTurnId, background, agentProfileId: profile?.id, prompt: context.input.prompt, inheritContext, inheritedMessageCount: inherited.length });
 
       const run = (signal = context.signal) => finishTask({
         runChild,
@@ -204,6 +260,7 @@ function registerAwaitSubagentsTool(
     decodeInput: decodeAwaitInput,
     execute: async (context) => {
       if (!context.turn) throw new Error("Subagent join requires the parent Turn context.");
+      assertParentAgent(context.turn.request);
       const joined = await awaitAsyncResults({
         parentSessionId: context.sessionId,
         parentTurnId: context.turnId,
@@ -270,6 +327,7 @@ function submittedResult(task: ReturnType<SubagentTaskStore["start"]>): Record<s
     status: task.status,
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
+    mode: task.inheritContext ? 'fork' : 'clean',
     inheritedMessageCount: task.inheritedMessageCount,
   };
 }
@@ -280,6 +338,7 @@ function taskResult(task: ReturnType<SubagentTaskStore["finish"]>): Record<strin
     status: task.status,
     childSessionId: task.childSessionId,
     childTurnId: task.childTurnId,
+    mode: task.inheritContext ? 'fork' : 'clean',
     inheritedMessageCount: task.inheritedMessageCount,
     finalResponse: task.finalResponse,
     errorMessage: task.errorMessage,
@@ -293,7 +352,7 @@ function decodeInput(input: unknown): SubagentInput {
   }
   const object = input as Record<string, unknown>;
   const unexpected = Object.keys(object).filter(
-    (key) => key !== "prompt" && key !== "inherit_context" && key !== 'agent_type' && key !== 'run_in_background',
+    (key) => !['prompt', 'mode', 'system_prompt', 'allowed_tools', 'settings', 'inherit_context', 'agent_type', 'run_in_background'].includes(key),
   );
   if (unexpected.length > 0) throw new Error(`unsupported subagent arguments: ${unexpected.join(", ")}`);
   const prompt = typeof object.prompt === "string" ? object.prompt.trim() : "";
@@ -301,9 +360,17 @@ function decodeInput(input: unknown): SubagentInput {
   if (object.inherit_context !== undefined && typeof object.inherit_context !== "boolean") {
     throw new Error("inherit_context must be a boolean.");
   }
+  if (object.mode !== undefined && object.mode !== 'fork' && object.mode !== 'clean') throw new Error('mode must be fork or clean.');
+  if (object.mode !== undefined && object.inherit_context !== undefined) throw new Error('Use mode instead of combining mode and legacy inherit_context.');
+  // Decode already-issued calls from older tool snapshots, without advertising a second mode switch.
+  const mode = object.mode ?? (object.inherit_context === false ? 'clean' : 'fork');
+  if (mode === 'fork' && (object.system_prompt !== undefined || object.allowed_tools !== undefined || object.settings !== undefined)) throw new Error('system_prompt, allowed_tools and settings require clean mode; fork preserves the parent prefix.');
+  if ((object.mode === 'clean' || object.system_prompt !== undefined) && (typeof object.system_prompt !== 'string' || !object.system_prompt.trim())) throw new Error('clean mode requires a non-empty system_prompt.');
+  const allowedTools = object.allowed_tools === undefined ? undefined : decodeToolOrSkillNames(object.allowed_tools, 'allowed_tools');
+  const settings = object.settings === undefined ? undefined : decodeCleanAgentSettings(object.settings);
   if (object.agent_type !== undefined && (typeof object.agent_type !== 'string' || !object.agent_type.trim())) throw new Error('agent_type must be a non-empty string.');
   if (object.run_in_background !== undefined && typeof object.run_in_background !== 'boolean') throw new Error('run_in_background must be a boolean.');
-  return { prompt, inheritContext: object.inherit_context !== false, agentType: object.agent_type as string | undefined, runInBackground: object.run_in_background as boolean | undefined };
+  return { prompt, mode, systemPrompt: object.system_prompt as string | undefined, allowedTools, settings, agentType: object.agent_type as string | undefined, runInBackground: object.run_in_background as boolean | undefined };
 }
 
 function decodeAwaitInput(input: unknown): AwaitSubagentsInput {

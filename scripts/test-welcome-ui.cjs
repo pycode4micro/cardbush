@@ -13,22 +13,45 @@ async function bundle() {
   const { default: react } = await import('@vitejs/plugin-react');
   const appSource = ts.createSourceFile('App.tsx', fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const statements = appSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'CardbushApp').body.statements;
-  const modeCallbacks = ['activateConversationScope', 'changeOnlyTalkMode'].map(name => statements.find(node =>
+  const navigationCallbacks = ['createConversation', 'openConversationPrompt', 'openPluginPrompt', 'createAutomationConversation', 'openConversation', 'changeWelcomeProject', 'handleSidebarCreateConversation'].map(name => statements.find(node =>
     ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(appSource) === name).getText(appSource));
-  const modeRecovery = statements.find(node => ts.isExpressionStatement(node) && node.getText(appSource).includes('const activeMatchesMode = onlyTalkMode')).getText(appSource);
-  const modeFixture = `import { useCallback, useEffect } from 'react';
-    import { firstConversationInScope, conversationMatchesScope } from ${JSON.stringify(path.join(root, 'src/features/conversationScope.ts'))};
-    import { isOnlyTalkConversation } from ${JSON.stringify(path.join(root, 'src/features/conversationWorkspace.ts'))};
-    export function useModeSwitchFixture({ chat, onlyTalkMode, section, setSection, setOnlyTalkMode, fallbackProjectId, fallbackProjectDir }: any) {
-      const onlyTalkModeStorageKey = 'fixture-only-talk';
-      ${modeCallbacks.join('\n')}
-      ${modeRecovery}
-      return changeOnlyTalkMode;
+  const hookSource = ts.createSourceFile('useCardbushChat.ts', fs.readFileSync(path.join(root, 'src/hooks/useCardbushChat.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+  const hookStatements = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'useCardbushChat').body.statements;
+  const draftCallbacks = ['prepareConversation', 'setConversationProject'].map(name => hookStatements.find(node =>
+    ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText(hookSource) === name).getText(hookSource));
+  const localConversation = hookSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'localConversation').getText(hookSource);
+  const navigationFixture = `import { useCallback, useRef, useState } from 'react';
+    import { conversationMatchesScope } from ${JSON.stringify(path.join(root, 'src/features/conversationScope.ts'))};
+    import { conversationProjectDir } from ${JSON.stringify(path.join(root, 'src/features/conversationWorkspace.ts'))};
+    import { samePath } from ${JSON.stringify(path.join(root, 'src/shared/localPaths.ts'))};
+    import { automationSetupPrompt } from ${JSON.stringify(path.join(root, 'src/features/automations/automationPrompts.ts'))};
+    ${localConversation}
+    function useDraftFixture({ activeId, setActiveId, conversations, setConversations }: any) {
+      const [preparedConversationsById, setPreparedConversationsById] = useState({});
+      const preparedConversationsRef = useRef(preparedConversationsById);
+      const conversationsRef = useRef(conversations); conversationsRef.current = conversations;
+      const [, setMessagesByConversation] = useState({}); const [, setError] = useState(null);
+      const setMessageHistoryLoading = useCallback(() => {}, []), setActiveConversationId = setActiveId;
+      const updateConversation = async () => { throw Error('Unexpected persisted mutation'); }, errorMessage = String;
+      ${draftCallbacks.join('\n')}
+      const prepared = Object.values(preparedConversationsById);
+      return { prepareConversation, setConversationProject, conversations, preparedConversations: prepared,
+        activeConversationId: activeId, activeConversation: [...conversations, ...prepared].find(item => item.id === activeId),
+        openConversation: setActiveId };
+    }
+    export function useNavigationFixture({ activeId, setActiveId, conversations, setConversations, projectItems, setDraftsByConversation, setSection }: any) {
+      const chat = useDraftFixture({ activeId, setActiveId, conversations, setConversations });
+      const activeConversationProjectDir = conversationProjectDir(chat.activeConversation), language = 'zh';
+      const [, setSettingsOpen] = useState(false), [, setConversationPromptFocus] = useState(0);
+      ${navigationCallbacks.join('\n')}
+      return { chat, createConversation, openConversation, changeWelcomeProject, createAutomationConversation, openPluginPrompt, newChat: handleSidebarCreateConversation,
+        projectDir: conversationProjectDir(chat.activeConversation) };
     }`;
   const result = await build({ configFile: false, logLevel: 'error', plugins: [react(), {
     name: 'welcome-fixture', enforce: 'pre',
     resolveId: id => id.endsWith('__welcome__.ts') ? '\0welcome-entry.ts' : id.endsWith('/backend/welcomeHistory') ? '\0welcome-history' : undefined,
-    load: id => id === '\0welcome-entry.ts' ? `export * from ${JSON.stringify(path.join(root, 'src/features/chat/WelcomeComposer.tsx'))};\n${modeFixture}`
+    load: id => id === '\0welcome-entry.ts' ? `export * from ${JSON.stringify(path.join(root, 'src/features/chat/WelcomeComposer.tsx'))};
+      export * from ${JSON.stringify(path.join(root, 'src/features/sidebar/ChatSidebar.tsx'))};\n${navigationFixture}`
       : id === '\0welcome-history' ? `export async function fetchWelcomeHistory(signal) { window.historyRequests++; const rows = await window.historyGate; return rows; }` : undefined,
   }], build: { write: false, minify: false, lib: { entry: path.join(root, '__welcome__.ts'), formats: ['cjs'] },
     rolldownOptions: { external: /^react(?:-dom)?(?:\/|$)/, output: { codeSplitting: false } } } });
@@ -50,13 +73,14 @@ app.whenReady().then(async () => {
   const run = code => win.webContents.executeJavaScript(code);
   const until = async (condition, label) => {
     for (let index = 0; index < 100; index++) { if (await run(condition)) return; await pause(30); }
-    throw Error('Timed out: ' + label);
+    throw Error('Timed out: ' + label + '\n' + await run('JSON.stringify({failures, active:routing?.chat.activeConversation, draft:draftValue, text:document.body.innerText})'));
   };
   try {
     await win.loadURL('data:text/html,<html><body><div id="root"></div></body></html>');
     await win.webContents.insertCSS(['theme.css', 'app.css', 'windowMaterial.css'].map(file => fs.readFileSync(path.join(root, 'src/styles', file), 'utf8')).join('\n'));
     await run(`
       window.failures = []; window.historyRequests = 0; window.sent = 0;
+      if (!crypto.randomUUID) crypto.randomUUID = () => require('node:crypto').randomUUID();
       addEventListener('error', event => failures.push(event.message));
       addEventListener('unhandledrejection', event => failures.push(String(event.reason)));
       for (const name of ['localStorage', 'sessionStorage']) {
@@ -86,36 +110,36 @@ app.whenReady().then(async () => {
       const { createRoot } = require(${JSON.stringify(require.resolve('react-dom/client'))});
       const module = { exports: {} };
       new Function('require','module','exports', ${JSON.stringify(code)})(require('node:module').createRequire(${JSON.stringify(path.join(root, 'package.json'))}), module, module.exports);
-      const { WelcomeComposer, useModeSwitchFixture } = module.exports, h = React.createElement, noop = () => {};
-      window.modeRenders = []; window.modeClears = 0; window.modePrepares = 0;
-      const project = { id:'draft-project', title:'Project', preview:'', updatedAt:'', projectId:'project', projectDir:'D:/fixture', metadata:{workspace_mode:'project'} };
-      const task = { id:'draft-task', title:'Task', preview:'', updatedAt:'', metadata:{workspace_mode:'task'} };
+      const { WelcomeComposer, ChatSidebar, useNavigationFixture } = module.exports, h = React.createElement, noop = () => {};
+      localStorage.setItem('cardbush_only_talk_mode', 'false');
+      localStorage.setItem('cardbush_recent_project_dir', 'D:/fixture');
+      window.navigationRenders = [];
+      const project = { id:'saved-project-chat', title:'项目里的会话', preview:'', updatedAt:'', projectId:'project', projectDir:'D:/fixture', metadata:{workspace_mode:'project'} };
+      const task = { id:'saved-task-chat', title:'独立会话', preview:'', updatedAt:'', metadata:{workspace_mode:'task'} };
+      const projects = [{ id:'project', title:'Fixture', rootPath:'D:/fixture' }];
       function Fixture() {
         const [drafts, setDrafts] = React.useState({}), [theme, setTheme] = React.useState('dark'), [shown, setShown] = React.useState(true);
-        const [activeId, setActiveId] = React.useState(task.id), [prepared, setPrepared] = React.useState([project, task]);
-        const [onlyTalkMode, setOnlyTalkMode] = React.useState(true), [section, setSection] = React.useState('chat');
-        const draft = drafts[activeId] || '', setDraft = text => setDrafts(current => ({ ...current, [activeId]:text }));
-        const chat = { preparedConversations:prepared, conversations:[], activeConversationId:activeId,
-          activeConversation:prepared.find(item => item.id === activeId), loading:false,
-          openConversation:id => setActiveId(id), clearConversationSelection:() => { window.modeClears++; setActiveId(''); },
-          prepareConversation:dir => { window.modePrepares++; const target = dir ? project : task;
-            setPrepared(current => current.some(item => item.id === target.id) ? current : [...current, target]); setActiveId(target.id); },
-        };
-        window.changeMode = useModeSwitchFixture({ chat, onlyTalkMode, section, setSection, setOnlyTalkMode, fallbackProjectId:'project', fallbackProjectDir:'D:/fixture' });
-        window.dropTaskDraft = () => setPrepared(current => current.filter(item => item.id !== task.id));
-        React.useLayoutEffect(() => { modeRenders.push({ id:activeId, onlyTalkMode }); });
+        const [activeId, setActiveId] = React.useState(''), [conversations, setConversations] = React.useState([project, task]);
+        const [section, setSection] = React.useState('chat');
+        const draftKey = activeId || '__new__', draft = drafts[draftKey] || '', setDraft = text => setDrafts(current => ({ ...current, [draftKey]:text }));
+        const routing = useNavigationFixture({ activeId, setActiveId, conversations, setConversations, projectItems:projects, setDraftsByConversation:setDrafts, setSection });
+        window.routing = routing;
+        React.useLayoutEffect(() => { navigationRenders.push({ id:activeId, projectDir:routing.projectDir }); });
         window.changeDraft = setDraft; window.changeTheme = setTheme; window.showWelcome = setShown; window.draftValue = draft;
         return h('div', { className: 'app theme-' + theme },
           h('header', { className: 'window-frame' }, 'cardbush'),
           h('main', { className: 'desktop-shell' },
-            h('aside', { className: 'sidebar', style: { width: 220, minWidth: 220, padding: 20 } }, h('p', null, '新会话'), h('p', null, '搜索'), h('p', null, '定时与自动化')),
+            h(ChatSidebar, { language:'zh', section, activeConversationId:activeId, projects, conversations, changeReportsByConversation:{},
+              onSectionChange:setSection, onConversationChange:routing.openConversation, onCreateConversation:routing.newChat,
+              onAddProject:noop, onProjectAction:(action, project)=>{ if(action==='newChat') routing.createConversation(project.rootPath); },
+              onDeleteConversation:noop, onRenameConversation:async()=>true, onOpenConversationChanges:noop, onOpenSettings:noop }),
             h('section', { className: 'main-stage' }, h('div', { className: 'chat-panel' },
               h('header', { className: 'topbar' }, h('strong', null, '新会话')),
               h('div', { className: 'chat-body' }, h('div', { className: 'chat-content-frame' }, shown && h(WelcomeComposer, {
-                key: activeId || 'new-session', language: 'zh', onlyTalkMode, draft, onDraftChange: setDraft, sending: false, stopping: false, guidanceDeliveryMode: 'immediate', cancelEnabled: false,
+                key: activeId || 'new-session', language: 'zh', draft, onDraftChange: setDraft, sending: false, stopping: false, guidanceDeliveryMode: 'immediate', cancelEnabled: false,
                 queuedMessageCount: 0, queuedMessagePreview: '', queuedMessages: [], selectedModel: 'fixture', availableModels: [], goalAvailable: false, referencePlanAvailable: false,
                 referencePlanMode: 'off', permissionMode: 'full-access', subagentPermissionRouting: 'inherit', reasoningLevelAvailable: false, reasoningLevel: 'medium', reasoningLevels: [],
-                selectedProjectDir: '', availableProjects: [], onProjectChange: async()=>{}, skills: [], disabledSkillNames: new Set(), onToggleSkill: noop, onModelChange: noop,
+                selectedProjectDir:routing.projectDir, availableProjects:projects, onProjectChange:routing.changeWelcomeProject, skills: [], disabledSkillNames: new Set(), onToggleSkill: noop, onModelChange: noop,
                 onReferencePlanModeChange: noop, onPermissionModeChange: noop, onSubagentPermissionRoutingChange: noop, onReasoningLevelChange: noop, onConfigureModels: noop,
                 onEditQueuedMessage: noop, onGuideQueuedMessage: async()=>{}, onRemoveQueuedMessage: noop, onSend: async()=>{window.sent++}, onCancel: async()=>{},
               })))))));
@@ -126,23 +150,55 @@ app.whenReady().then(async () => {
     await until("document.querySelectorAll('.welcome-suggestion').length === 3 && draws > 3", 'welcome cards and animation');
     assert.equal(await run("document.querySelector('.welcome-star-wordmark').getAttribute('aria-label')"), 'cardbush');
     assert.ok(await run('points.length > 100'), 'word must contain visible stars');
-    for (let index = 0; index < 6; index++) {
-      const onlyTalk = index % 2 === 1;
-      await run(`modeRenders.length = 0; changeMode(${onlyTalk})`);
-      await until(`modeRenders.at(-1)?.id === ${JSON.stringify(onlyTalk ? 'draft-task' : 'draft-project')}`, 'mode destination');
-      await pause(45);
-      assert.ok(await run(`modeRenders.every(item => item.id === ${JSON.stringify(onlyTalk ? 'draft-task' : 'draft-project')} && item.onlyTalkMode === ${onlyTalk})`), 'no empty intermediate welcome frame');
+    assert.equal(await run("document.querySelector('.welcome-project-trigger').textContent.trim()"), '关联项目', 'saved global preferences cannot select a project');
+    assert.equal(await run("document.querySelector('.only-talk-toggle')"), null);
+    await run("changeDraft('保留我的输入草稿')"); await pause(30);
+    await run("document.querySelector('.welcome-project-trigger').click()");
+    await until("!!document.querySelector('.welcome-project-menu')", 'open project selector');
+    await run("[...document.querySelectorAll('.welcome-project-menu [role=menuitemradio]')].find(item=>item.textContent.includes('Fixture')).click()");
+    await until("routing.projectDir === 'D:/fixture' && draftValue === '保留我的输入草稿'", 'attach project and transfer anonymous draft');
+    const draftId = await run('routing.chat.activeConversationId');
+    for (let index = 0; index < 4; index++) {
+      await run("document.querySelector('.welcome-project-trigger').click()");
+      await until("!!document.querySelector('.welcome-project-menu')", 'project menu');
+      const label = index % 2 === 0 ? '不关联项目' : 'Fixture';
+      await run(`[...document.querySelectorAll('.welcome-project-menu [role=menuitemradio]')].find(item=>item.textContent.includes(${JSON.stringify(label)})).click()`);
+      await until(`routing.projectDir === ${JSON.stringify(index % 2 === 0 ? '' : 'D:/fixture')}`, 'project association updated');
+      assert.equal(await run('routing.chat.activeConversationId'), draftId, 'project association retains the same draft');
+      assert.equal(await run('draftValue'), '保留我的输入草稿');
     }
-    assert.equal(await run('modeClears'), 0);
-    await run("changeDraft('仅会话草稿')"); await pause(30);
-    await run('changeMode(false)'); await until('draftValue === ""', 'separate project draft');
-    await run("changeDraft('项目草稿')"); await pause(30);
-    await run('changeMode(true)'); await until('draftValue === "仅会话草稿"', 'task draft retained');
-    await run('changeMode(false)'); await until('draftValue === "项目草稿"', 'project draft retained');
-    await run('dropTaskDraft()'); await pause(30);
-    await run('modeRenders.length = 0; changeMode(true)'); await until('modeRenders.at(-1)?.id === "draft-task"', 'prepare first task draft');
-    assert.equal(await run('modePrepares'), 1, 'first empty scope prepares exactly once');
-    assert.equal(await run('modeClears'), 0, 'first empty scope also skips transient blank selection');
+    await run("routing.openConversation('saved-project-chat')");
+    await until("routing.chat.activeConversationId === 'saved-project-chat'", 'open project history');
+    await until("document.querySelectorAll('.conversation-row').length === 2", 'project and independent history shown together');
+    await run("routing.openConversation('saved-task-chat')");
+    await until("routing.chat.activeConversationId === 'saved-task-chat' && routing.projectDir === ''", 'independent history restores its own context');
+    assert.equal(await run("document.querySelectorAll('.conversation-row').length"), 2, 'history stays visible across selection');
+    await run("routing.openConversation('saved-project-chat')"); await pause(30);
+    await run("document.querySelector('.sidebar-nav .nav-row').click()");
+    await until("routing.chat.activeConversationId !== 'saved-project-chat' && routing.projectDir === ''", 'general new chat starts independently');
+    await run("changeDraft('独立工作草稿')"); await pause(30);
+    const independentDraftId = await run('routing.chat.activeConversationId');
+    await run("routing.createConversation('D:/fixture')");
+    await until("draftValue === '保留我的输入草稿'", 'explicit project chat restores its draft');
+    await run('routing.changeWelcomeProject(null)');
+    await until("routing.projectDir === ''", 'detach while another independent draft exists');
+    assert.equal(await run('routing.chat.preparedConversations.length'), 2, 'changing association must not overwrite another draft');
+    assert.equal(await run('draftValue'), '保留我的输入草稿');
+    await run("routing.changeWelcomeProject('D:/fixture')");
+    await until("routing.projectDir === 'D:/fixture'", 'reattach the current draft');
+    await run('routing.newChat()');
+    await until("draftValue === '独立工作草稿'", 'independent draft is retained');
+    assert.equal(await run('routing.chat.activeConversationId'), independentDraftId);
+    assert.equal(await run('routing.chat.conversations.length'), 2, 'drafts are not persisted by navigation');
+    await run("routing.openConversation('saved-project-chat')"); await pause(30);
+    await run('routing.createAutomationConversation()');
+    await until("routing.projectDir === '' && draftValue.includes('我想创建一个定时任务')", 'automation opens the same independent conversation entry');
+    assert.ok(await run("draftValue.startsWith('独立工作草稿')"), 'automation keeps the existing independent draft');
+    await run("routing.openConversation('saved-project-chat')"); await pause(30);
+    await run("routing.openPluginPrompt('使用插件检查依赖')");
+    await until("routing.projectDir === 'D:/fixture' && draftValue.includes('使用插件检查依赖')", 'plugin prompts retain the explicitly selected project');
+    assert.ok(await run("draftValue.startsWith('保留我的输入草稿')"), 'plugin prompts keep the project draft');
+    await run('routing.newChat()'); await pause(30);
     await run("changeDraft('')"); await pause(30);
     const history = [
       ['帮我优化缓存命中率，排查动态上下文的变化。', 'a'], ['检查缓存命中率与上下文拼接，保留稳定前缀。', 'b'],
@@ -191,6 +247,6 @@ app.whenReady().then(async () => {
     before = await run('draws'); await pause(180);
     assert.equal(await run('draws'), before, 'no orphan animation after leaving welcome');
     assert.deepEqual(await run('failures'), []); assert.deepEqual(errors, []);
-    console.log('Welcome UI passed: atomic only-talk switching, scoped drafts, history, draft/focus, dark/light/narrow layout, pointer regroup, reduced motion, visibility and unmount.');
+    console.log('Welcome UI passed: unified sidebar, independent new chat, project association, preserved drafts, history, draft/focus, dark/light/narrow layout, pointer regroup, reduced motion, visibility and unmount.');
   } finally { win.destroy(); }
 }).then(() => app.exit(0)).catch(error => { console.error(error); app.exit(1); });

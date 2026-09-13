@@ -15,7 +15,7 @@ module.exports = async ({ run, until, pause, window }) => {
         presence.mounted && h(views.ChatSidebar, {
           language: 'zh', section: 'chat', activeConversationId: null,
           runningConversationIds: new Set(), attentionByConversation: {}, projects: [], conversations: [],
-          changeReportsByConversation: {}, onlyTalkMode: false, onOnlyTalkModeChange: noop,
+          changeReportsByConversation: {},
           onSectionChange: noop, onConversationChange: noop, onCreateConversation: noop,
           onAddProject: noop, onProjectAction: noop, onDeleteConversation: noop, onRenameConversation: noop,
           onOpenConversationChanges: noop, onOpenSettings: noop, softVisible: presence.visible,

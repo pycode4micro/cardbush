@@ -155,7 +155,6 @@ export function ChatPanel({
   language,
   theme,
   title,
-  onlyTalkMode,
   sidebarCollapsed,
   windowMaximized,
   inspectorOpen,
@@ -239,7 +238,6 @@ export function ChatPanel({
   language: AppLanguage;
   theme: ThemeMode;
   title: string;
-  onlyTalkMode: boolean;
   sidebarCollapsed: boolean;
   windowMaximized: boolean;
   inspectorOpen: boolean;
@@ -2558,8 +2556,8 @@ export function ChatPanel({
         ) : showWelcome ? (
           <WelcomeComposer
             key={activeConversationId || 'new-session'}
+            fileDropTarget={chatBodyRef}
             language={language}
-            onlyTalkMode={onlyTalkMode}
             draft={draft}
             onDraftChange={onDraftChange}
             sending={sending}
@@ -2752,6 +2750,7 @@ export function ChatPanel({
             )}
             <Composer
               key={activeConversationId || 'active-session'}
+              fileDropTarget={chatBodyRef}
               compact
               language={language}
               draft={draft}

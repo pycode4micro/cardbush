@@ -100,7 +100,7 @@ import { reorderScopedQueue } from '../features/composer/queueOrdering';
 import {
   conversationProjectId,
   conversationProjectPathAliases,
-  conversationScopeKey,
+  conversationMatchesScope,
   remapProjectPath,
   type ConversationScope,
 } from '../features/conversationScope';
@@ -201,8 +201,6 @@ export function useCardbushChat(
     defaultReasoningLevel?: ReasoningLevel;
     contextWindowUsageAvailable?: boolean;
     workspaceChangesAvailable?: boolean;
-    defaultProjectId?: string;
-    defaultProjectDir?: string;
   } = {},
 ) {
   const languageRef = useRef<AppLanguage>(requestContext.language ?? 'zh');
@@ -212,7 +210,7 @@ export function useCardbushChat(
     [],
   );
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [preparedConversationsByScope, setPreparedConversationsByScope] = useState<
+  const [preparedConversationsById, setPreparedConversationsById] = useState<
     Record<string, ConversationSummary>
   >({});
   const [activeConversationId, setActiveConversationId] = useState('');
@@ -296,14 +294,14 @@ export function useCardbushChat(
   const historyLoadingRequestsRef = useRef(new Map<string, Set<symbol>>());
   const activeConversationIdRef = useRef(activeConversationId);
   const conversationsRef = useRef(conversations);
-  const preparedConversationsRef = useRef(preparedConversationsByScope);
+  const preparedConversationsRef = useRef(preparedConversationsById);
   const conversationCreationPromisesRef = useRef<
     Map<string, Promise<ConversationSummary>>
   >(new Map());
   const attentionByConversationRef = useRef(attentionByConversation);
   activeConversationIdRef.current = activeConversationId;
   conversationsRef.current = conversations;
-  preparedConversationsRef.current = preparedConversationsByScope;
+  preparedConversationsRef.current = preparedConversationsById;
   attentionByConversationRef.current = attentionByConversation;
   const sendingSessionsRef = useRef<Set<string>>(new Set());
   const queuedMessagesRef = useRef<QueuedChatMessage[]>([]);
@@ -865,10 +863,10 @@ export function useCardbushChat(
   const activeConversation = useMemo(
     () =>
       conversations.find((item) => item.id === activeConversationId) ??
-      Object.values(preparedConversationsByScope).find(
+      Object.values(preparedConversationsById).find(
         (item) => item.id === activeConversationId,
       ),
-    [activeConversationId, conversations, preparedConversationsByScope],
+    [activeConversationId, conversations, preparedConversationsById],
   );
 
   const activeMessages = activeConversationId
@@ -1683,8 +1681,9 @@ export function useCardbushChat(
           projectDir: normalizedProjectDir,
         }
       : { mode: 'task' };
-    const scopeKey = conversationScopeKey(scope);
-    const existing = preparedConversationsRef.current[scopeKey];
+    const existing = Object.values(preparedConversationsRef.current).find(
+      (conversation) => conversationMatchesScope(conversation, scope),
+    );
     const draft = existing ?? localConversation(
       normalizedProjectDir,
       initialTitle,
@@ -1693,10 +1692,10 @@ export function useCardbushChat(
     if (!existing) {
       const next = {
         ...preparedConversationsRef.current,
-        [scopeKey]: draft,
+        [draft.id]: draft,
       };
       preparedConversationsRef.current = next;
-      setPreparedConversationsByScope(next);
+      setPreparedConversationsById(next);
     }
     setMessagesByConversation((current) => ({
       ...current,
@@ -1756,7 +1755,7 @@ export function useCardbushChat(
           .filter(([, item]) => item.id !== prepared.id),
       );
       preparedConversationsRef.current = nextPrepared;
-      setPreparedConversationsByScope(nextPrepared);
+      setPreparedConversationsById(nextPrepared);
       return synced;
     })();
     conversationCreationPromisesRef.current.set(prepared.id, creation);
@@ -1893,10 +1892,8 @@ export function useCardbushChat(
     const normalizedProjectId = projectId === undefined
       ? undefined
       : projectId?.trim() || null;
-    const preparedEntry = Object.entries(preparedConversationsRef.current)
-      .find(([, item]) => item.id === sessionId);
-    if (preparedEntry) {
-      const [previousScopeKey, draft] = preparedEntry;
+    const draft = preparedConversationsRef.current[sessionId];
+    if (draft) {
       const updatedDraft: ConversationSummary = {
         ...draft,
         projectId: normalizedProjectId || undefined,
@@ -1908,18 +1905,9 @@ export function useCardbushChat(
           project_id: normalizedProjectId,
         },
       };
-      const nextScopeKey = conversationScopeKey(normalizedProjectDir
-        ? {
-            mode: 'project',
-            projectId: normalizedProjectId || undefined,
-            projectDir: normalizedProjectDir,
-          }
-        : { mode: 'task' });
-      const nextPrepared = { ...preparedConversationsRef.current };
-      delete nextPrepared[previousScopeKey];
-      nextPrepared[nextScopeKey] = updatedDraft;
+      const nextPrepared = { ...preparedConversationsRef.current, [sessionId]: updatedDraft };
       preparedConversationsRef.current = nextPrepared;
-      setPreparedConversationsByScope(nextPrepared);
+      setPreparedConversationsById(nextPrepared);
       setError(null);
       return;
     }
@@ -2035,14 +2023,14 @@ export function useCardbushChat(
     }
 
     const nextPrepared = Object.fromEntries(
-      Object.entries(preparedConversationsRef.current).map(([scopeKey, draft]) => {
+      Object.entries(preparedConversationsRef.current).map(([sessionId, draft]) => {
         const draftProjectId = conversationProjectId(draft);
         const draftProjectDir = conversationProjectDir(draft);
         if (
           draftProjectId !== normalizedProjectId &&
           !(draftProjectDir && samePath(draftProjectDir, previousRoot))
         ) {
-          return [scopeKey, draft];
+          return [sessionId, draft];
         }
         const updated: ConversationSummary = {
           ...draft,
@@ -2053,16 +2041,11 @@ export function useCardbushChat(
             project_id: normalizedProjectId,
           },
         };
-        const nextScopeKey = conversationScopeKey({
-          mode: 'project',
-          projectId: normalizedProjectId,
-          projectDir: nextRoot,
-        });
-        return [nextScopeKey, updated];
+        return [sessionId, updated];
       }),
     );
     preparedConversationsRef.current = nextPrepared;
-    setPreparedConversationsByScope(nextPrepared);
+    setPreparedConversationsById(nextPrepared);
     return targets.length;
   }, []);
 
@@ -2172,9 +2155,8 @@ export function useCardbushChat(
         queuedConversation ??
         activeConversation ??
         prepareConversation(
-          requestContext.defaultProjectDir?.trim() || undefined,
+          undefined,
           conversationTitleFromUserText(visibleUserInput),
-          requestContext.defaultProjectId?.trim() || undefined,
         );
       const sessionId = candidate.id;
       const turnTeamId = (queuedTeamId ?? requestContext.selectedTeamId)?.trim() || undefined;
@@ -2635,8 +2617,6 @@ export function useCardbushChat(
       requestContext.disabledSkillNames,
       requestContext.disabledToolNames,
       requestContext.browserPrivacyMode,
-      requestContext.defaultProjectDir,
-      requestContext.defaultProjectId,
       requestContext.interactiveRequestsAvailable,
       requestContext.reasoningTraceVisible,
       requestContext.teamModeEnabled,
@@ -3996,7 +3976,7 @@ export function useCardbushChat(
 
   return {
     conversations,
-    preparedConversations: Object.values(preparedConversationsByScope),
+    preparedConversations: Object.values(preparedConversationsById),
     activeConversation,
     activeConversationId,
     activeMessages,

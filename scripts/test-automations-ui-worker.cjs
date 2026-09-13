@@ -11,12 +11,20 @@ app.whenReady().then(async () => {
   const until = async script => { const end = Date.now() + 5000; while (!await read(script)) { if (Date.now() > end) throw Error('Timed out: '+script+'; '+await read('document.body.innerText')); await new Promise(r=>setTimeout(r,25)); } };
   const click = label => read(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()===${JSON.stringify(label)}&&b.checkVisibility()).click()`);
   const field = (label, value) => read(`(()=>{const input=Array.from(document.querySelectorAll('label')).find(e=>e.textContent.startsWith(${JSON.stringify(label)})).querySelector('input,textarea,select');Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input),'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event(input.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
-  const capture = async name => { await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); writeFileSync(resolve('tmp',name),(await win.webContents.capturePage()).toPNG()); };
+  const capture = async name => { await read('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))'); writeFileSync(resolve('tmp',name),(await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG()); };
   try {
     await win.loadFile(join(directory,'index.html')); await until('document.body.innerText.includes("还没有自动化")');
-    await click('新建自动化'); await field('名称','每日项目检查'); await field('执行提示词','检查项目构建和导出结果，将需要处理的问题整理到此会话。');
+    await click('新建自动化');
+    assert.equal(await read('setupRequests'),1,'new automation opens conversational setup');
+    assert.equal(await read('!!document.querySelector(".automation-form")'),false,'creation does not open a manual form');
+    assert.equal(await read('calls.some(command=>command.action==="create")'),false,'the UI does not create a schedule before the agent has the details');
+    await read('state.available=false;notify()'); await until('state.available===false');
+    await click('新建自动化'); assert.equal(await read('setupRequests'),2,'chat setup remains reachable when scheduling is unavailable');
+    await read(`state.available=true;state.jobs.push({id:'agent-job',revision:1,name:'每日项目检查',prompt:'检查项目构建和导出结果，将需要处理的问题整理到此会话。',sessionId:'session',trigger:{kind:'once',at:new Date(Date.now()+3600000).toISOString()},timeZone:'Asia/Shanghai',state:'active',createdAt:new Date().toISOString(),runs:[]});notify()`);
+    await until('document.querySelectorAll(".automation-card").length===1');
+    await click('编辑');
     await field('触发方式','interval'); await field('每隔多少分钟','1440');
-    await capture('automations-form.png'); await click('保存自动化'); await until('document.querySelectorAll(".automation-card").length===1');
+    await capture('automations-edit.png'); await click('保存自动化'); await until('!document.querySelector(".automation-form")');
     assert.equal(await read('state.jobs[0].trigger.seconds'),86400); assert.match(await read('state.jobs[0].trigger.at'),/Z$/);
     await click('暂停'); await until('document.querySelector(".automation-state").textContent==="已暂停"');
     await click('立即执行'); await until('document.querySelector(".automation-state").textContent==="执行中"');
@@ -28,12 +36,12 @@ app.whenReady().then(async () => {
     assert.ok(await read('!!document.querySelector(".automation-form")'),'failed save retains the draft');
     await read('failSave=false'); await click('保存自动化'); await until('!document.querySelector(".automation-form")');
     assert.equal(await read('state.jobs[0].trigger.event'),'PostToolUseFailure');
-    assert.equal(await read('calls.filter(c=>c.action==="update").at(-1).expectedRevision'),1);
+    assert.equal(await read('calls.filter(c=>c.action==="update").at(-1).expectedRevision'),2);
     await read('state.jobs[0].runs.at(-1).status="completed";notify()'); await until('document.querySelector("summary").textContent.includes("已完成")');
-    await capture('automations-list.png'); win.setSize(420,820); await capture('automations-narrow.png');
+    await capture('automations-list.png'); win.setSize(420,820); await until('window.innerWidth<450'); await capture('automations-narrow.png');
     assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'no horizontal overflow');
     await click('删除'); await until('document.querySelectorAll(".automation-card").length===0');
-    console.log('Automation UI passed: create, time zone, pause/run/stop, conversation, conflict retention, event editing, notifications and narrow layout.');
+    console.log('Automation UI passed: conversational creation, scheduler notifications, time zone editing, pause/run/stop, conversation, conflict retention, event editing and narrow layout.');
   } finally { clearTimeout(deadline); win.destroy(); }
   app.exit(0);
 }).catch(error=>{console.error(error);app.exit(1)});

@@ -14,7 +14,7 @@ import {
 } from "@cardbush/bush-runtime";
 import { TeamSnapshotStore, registerTeamTool } from '../dist/index.js';
 
-test("adversarial: inherited context cannot smuggle parent system or developer authority", () => {
+test("inherited context retains the trusted parent policy and its original message order", () => {
   const context = turnContext({
     contextMessages: [
       { role: "system", content: "root secret" },
@@ -26,12 +26,12 @@ test("adversarial: inherited context cannot smuggle parent system or developer a
 
   assert.deepEqual(
     inheritedChildMessages(context, true).map((message) => message.content),
-    ["shared objective", "shared evidence"],
+    ["root secret", "root policy", "shared objective", "shared evidence"],
   );
   assert.deepEqual(inheritedChildMessages(context, false), []);
 });
 
-test("adversarial: child tool exposure is the strict intersection of registry, parent and policy", () => {
+test("adversarial: child declarations stay stable while explicit role tools cannot widen parent authority", () => {
   const registry = new ToolRegistry();
   registerFixtureTool(registry, "shared", true);
   registerFixtureTool(registry, "root_only", false);
@@ -51,7 +51,8 @@ test("adversarial: child tool exposure is the strict intersection of registry, p
     inherited: [],
     metadata: {},
   });
-  assert.deepEqual(request.tools, []);
+  assert.deepEqual(request.tools, context.turn.request.tools);
+  assert.deepEqual(request.metadata.disabledTools, ["shared"]);
 
   assert.throws(
     () => buildChildTurnRequest({

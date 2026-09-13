@@ -147,6 +147,7 @@ const desktopApi = {
     return () => ipcRenderer.removeListener('chrome-connector:status', listener);
   },
   readGlobalInstructions: () => ipcRenderer.invoke('instructions:read-global') as Promise<import('./globalInstructions').GlobalInstructionsSnapshot>,
+  usageStatistics: () => ipcRenderer.invoke('usage:statistics') as Promise<import('./usageLedger').UsageStatistics>,
   readAgentInstructions: (projectDir?: string, workspaceDir?: string) =>
     ipcRenderer.invoke('instructions:read-applicable', projectDir, workspaceDir) as Promise<AgentInstructionDocument[]>,
   saveGlobalInstructions: (content: string, revision: string) =>

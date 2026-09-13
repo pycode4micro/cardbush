@@ -10,7 +10,7 @@ import {
   registerSubagentTool,
 } from "../dist/index.js";
 
-test("forks the pre-dispatch context, hides root-only tools and returns the native child result", async () => {
+test("forks the exact pre-dispatch context and tool declarations and returns the native child result", async () => {
   let childRequest;
   const registry = new ToolRegistry();
   registerCoordinationTools(registry, new (await import("../dist/index.js")).CoordinationStore());
@@ -77,14 +77,14 @@ test("forks the pre-dispatch context, hides root-only tools and returns the nati
 
   assert.equal(outcome.kind, "returned", JSON.stringify(outcome.result));
   assert.deepEqual(childRequest.prefixMessages.map((message) => message.content), [
-    "child-only system",
+    "root delegation instructions",
     "original objective",
     "evidence",
   ]);
   assert.deepEqual(childRequest.inputMessages.map((item) => item.message.content), [
-    "bounded assignment",
+    "你当前处于子agent状态\n\nbounded assignment",
   ]);
-  assert.deepEqual(childRequest.tools.map((tool) => tool.name), ["update_task_plan"]);
+  assert.deepEqual(childRequest.tools, parentRequest.tools);
   assert.equal(childRequest.model, "reviewer-model");
   assert.equal(childRequest.providerBinding.bindingId, "binding_reviewer");
   assert.equal(childRequest.metadata.childAgentModelId, "reviewer");
@@ -371,7 +371,7 @@ test("keeps the parent non-blocking while sibling Subagents run and joins before
           ...base,
           sequence: 1,
           kind: "text_delta",
-          delta: request.messages.at(-1).content.replace("task", "result"),
+          delta: request.messages.at(-1).content.replace(/^你当前处于子agent状态\n\n/, '').replace("task", "result"),
         };
         yield { ...base, sequence: 2, kind: "response_completed", finishReason: "stop" };
         return;

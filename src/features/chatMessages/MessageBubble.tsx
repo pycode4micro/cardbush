@@ -117,7 +117,6 @@ import {
 } from '../tools/toolExecutionDisclosure';
 import { formatCompactDuration } from './assistantTurnTiming';
 import { turnActivityExecutions } from './assistantRunActivity';
-import { AssistantActivityDetails } from './AssistantActivityDetails';
 import { mcpActivations } from './mcpActivation';
 import { McpActivationStatus } from './McpActivationStatus';
 import { coalesceAssistantTranscript } from './assistantTranscriptPresentation';
@@ -156,15 +155,14 @@ function guidanceDeliveryState(message: ChatMessage): GuidanceDeliveryState | nu
 }
 
 function guidanceDeliveryLabel(
-  state: GuidanceDeliveryState,
+  state: Exclude<GuidanceDeliveryState, 'pending'>,
   language: AppLanguage,
 ): string {
   const labels = {
-    pending: language === 'zh' ? '发送中' : 'Sending',
     queued: language === 'zh' ? '已排队' : 'Queued',
     failed: language === 'zh' ? '发送失败' : 'Failed to send',
     sent: language === 'zh' ? '已作为引导发送' : 'Sent as guidance',
-  } satisfies Record<GuidanceDeliveryState, string>;
+  } satisfies Record<Exclude<GuidanceDeliveryState, 'pending'>, string>;
   return labels[state];
 }
 
@@ -902,13 +900,12 @@ function MessageBubbleView({
           {(goalCommand?.content ?? text) && (
             <MarkdownContent content={goalCommand?.content ?? text} language={language} />
           )}
-          {guidanceDelivery && (
+          {guidanceDelivery && guidanceDelivery !== 'pending' && (
             <div
               className={`guidance-delivery-status ${guidanceDelivery}`}
               role="status"
               aria-live="polite"
             >
-              {guidanceDelivery === 'pending' && <LoaderCircle size={12} />}
               {guidanceDelivery === 'queued' && <Clock3 size={12} />}
               {guidanceDelivery === 'failed' && <X size={12} />}
               {guidanceDelivery === 'sent' && <Check size={12} />}
@@ -925,32 +922,22 @@ function MessageBubbleView({
               )}
             </div>
           )}
-          {messageDelivery && (
+          {messageDelivery === 'failed' && (
             <div
-              className={`message-delivery-status ${messageDelivery}`}
+              className="message-delivery-status failed"
               role="status"
               aria-live="polite"
             >
-              {messageDelivery === 'pending' ? (
-                <LoaderCircle size={12} />
-              ) : (
-                <X size={12} />
-              )}
-              <span>
-                {messageDelivery === 'pending'
-                  ? language === 'zh' ? '发送中' : 'Sending'
-                  : language === 'zh' ? '发送失败' : 'Failed to send'}
-              </span>
-              {messageDelivery === 'failed' && (
-                <button
-                  type="button"
-                  className="message-retry-button"
-                  onClick={() => void onRetryMessage(message)}
-                >
-                  <RefreshCw size={11} />
-                  {language === 'zh' ? '重试' : 'Retry'}
-                </button>
-              )}
+              <X size={12} />
+              <span>{language === 'zh' ? '发送失败' : 'Failed to send'}</span>
+              <button
+                type="button"
+                className="message-retry-button"
+                onClick={() => void onRetryMessage(message)}
+              >
+                <RefreshCw size={11} />
+                {language === 'zh' ? '重试' : 'Retry'}
+              </button>
             </div>
           )}
         </div>
@@ -1944,7 +1931,6 @@ const AssistantRunHeader = memo(function AssistantRunHeader({
     <div className={`assistant-run-header ${isActive ? 'running' : ''}`}>
       <span className="assistant-run-label">{label}</span>
       <div className="assistant-run-divider" />
-      {isActive && <AssistantActivityDetails executions={executions} language={language} />}
     </div>
   );
 });

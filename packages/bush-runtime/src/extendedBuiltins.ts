@@ -206,7 +206,7 @@ function registerArchivedToolResult(
 
 function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
   registry.register<Record<string, unknown>>({
-    definition: { name: "inject_image_input", description: "Queue a validated local image path, http(s) URL, or data image as standard image input for the next model round.", inputSchema: objectSchema(["url"], { url: { type: "string" }, label: { type: "string" }, caption: { type: "string" }, detail: { enum: ["auto", "low", "high"] } }) },
+    definition: { name: "inject_image_input", description: "Queue a validated local image path, http(s) URL, or base64 data image for the next model round. Local and data images are compressed once to an immutable observation (up to 4 megapixels, 4096px edge and 1 MB); original files and UI previews are preserved. Crop important details when needed. Set original: true only when inspecting full-resolution pixels; original inputs still have a 9 MB limit. Remote URLs are passed to the provider. detail controls model vision detail, not file compression.", inputSchema: objectSchema(["url"], { url: { type: "string" }, label: { type: "string" }, caption: { type: "string" }, detail: { enum: ["auto", "low", "high"] }, original: { type: "boolean", default: false } }) },
     manifest: manifest("image.inject", false, "session"), parallelSafe: false,
     decodeInput: object,
     authorize: async (context) => {
@@ -216,8 +216,8 @@ function registerImageInput(registry: ToolRegistry, images: ModelImageStore) {
     execute: async (context) => {
       const url = requiredText(context.input.url, "url");
       if (!isAbsolute(url) && !/^https?:\/\//i.test(url) && !/^data:image\//i.test(url)) throw new Error("url must be an absolute path, http(s) URL, or data image.");
-      const modelInputUrl = await images.snapshot(url, context.signal);
-      return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, ...(isAbsolute(url) ? { model_input_url: modelInputUrl } : {}), detail: text(context.input.detail) || "auto" } }]);
+      const modelInputUrl = await images.snapshot(url, context.signal, { original: context.input.original === true });
+      return success(context, { queued: true }, isAbsolute(url) ? [url] : [], ["image_input"], [{ artifact_id: `image_${randomUUID()}`, type: "image", ...(isAbsolute(url) ? { path: url } : { uri: url }), display: "inline", metadata: { model_input: true, model_input_url: modelInputUrl, detail: text(context.input.detail) || "auto" } }]);
     },
   });
 }

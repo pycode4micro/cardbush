@@ -1,6 +1,7 @@
 export const CARDBUSH_SUBAGENT_CONFIG_PROTOCOL =
   "cardbush.subagent_configuration.v1" as const;
 
+/** Execution restrictions. Keep the declarations visible to preserve the parent prompt prefix. */
 export const DEFAULT_CHILD_AGENT_DISABLED_TOOLS = [
   "subagent",
   "await_subagents",

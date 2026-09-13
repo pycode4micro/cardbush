@@ -11,6 +11,8 @@ import {
 } from "@cardbush/bush-protocol";
 
 import type { ToolHandlerContext, ToolRegistry } from "./toolRegistry.js";
+import { assertParentAgent, CHILD_AGENT_ASSIGNMENT_PREFIX } from './childAgentPolicy.js';
+import { decodeCleanAgentSettings, type CleanAgentSettings, type SubagentModelSelection } from './cleanAgentSettings.js';
 
 export interface ChildTurnResult {
   terminal: RuntimeEvent;
@@ -50,9 +52,8 @@ export function inheritedChildMessages(
   inheritContext: boolean,
 ): ModelMessage[] {
   if (!context.turn || !inheritContext) return [];
-  return context.turn.contextMessages.filter(
-    (message) => message.role !== "system" && message.role !== "developer",
-  );
+  // Preserve the exact pre-dispatch prefix, including system and developer messages.
+  return structuredClone(context.turn.contextMessages);
 }
 
 export function buildChildTurnRequest(input: {
@@ -60,14 +61,27 @@ export function buildChildTurnRequest(input: {
   registry: ToolRegistry;
   ids: ChildTurnIds;
   prompt: string;
+  /** Explicit clean-mode system message. Never combine with inherited history. */
+  cleanSystemPrompt?: string;
+  cleanSettings?: CleanAgentSettings;
+  cleanModel?: SubagentModelSelection;
   inherited: ModelMessage[];
   metadata: Record<string, unknown>;
   additionalPrefixMessages?: ModelMessage[];
   allowedToolNames?: string[];
+  /** Parent-selected clean-mode constraint, also enforced after plugin setup. */
+  toolAllowlist?: string[];
   permissionPolicy?: SubagentPermissionPolicy;
 }): RuntimeSessionTurnRequest {
   if (!input.context.turn) throw new Error("Child dispatch requires the parent Turn context.");
   const parentRequest = input.context.turn.request;
+  assertParentAgent(parentRequest);
+  const settings = input.cleanSettings === undefined ? {} : decodeCleanAgentSettings(input.cleanSettings);
+  if ((input.cleanSettings || input.cleanModel) && input.inherited.length) throw new Error('Clean settings cannot be combined with inherited conversation history.');
+  if (settings.model_id && input.cleanModel?.id !== settings.model_id) throw new Error('The requested clean model has not been resolved by the host.');
+  if (input.cleanSystemPrompt !== undefined && (!input.cleanSystemPrompt.trim() || input.inherited.length > 0)) {
+    throw new Error('A clean system prompt must be non-empty and cannot be combined with inherited conversation history.');
+  }
   const parentVisibleNames = new Set(parentRequest.tools.map((tool) => tool.name));
   const childVisible = new Map(
     input.registry.childDefinitions().map((definition) => [definition.name, definition]),
@@ -79,36 +93,53 @@ export function buildChildTurnRequest(input: {
       configuredPolicy.disabledTools ??
       DEFAULT_SUBAGENT_DISABLED_TOOLS,
   );
+  for (const name of settings.disabled_tools ?? []) disabledTools.add(name);
   const unfilteredRequestedNames = input.allowedToolNames
     ? [...new Set(input.allowedToolNames)]
-    : [...childVisible.keys()].filter((name) => parentVisibleNames.has(name));
-  const unavailable = input.allowedToolNames
-    ? unfilteredRequestedNames.filter(
-        (name) => !disabledTools.has(name) &&
-          (!parentVisibleNames.has(name) || !childVisible.has(name)),
-      )
-    : [];
+    : parentRequest.tools.map((tool) => tool.name);
+  const unavailable = [...(input.allowedToolNames ?? []), ...(input.toolAllowlist ?? [])].filter(
+        (name) => !parentVisibleNames.has(name) || !childVisible.has(name),
+      );
   if (unavailable.length > 0) {
     throw new Error(`Child Tools are not exposed by the parent Turn: ${unavailable.join(", ")}.`);
   }
-  const requestedNames = unfilteredRequestedNames.filter((name) => !disabledTools.has(name));
-  const childTools = requestedNames.map((name) => childVisible.get(name)!);
+  const requestedNames = new Set(unfilteredRequestedNames);
+  // Reuse the parent's frozen definitions and order. Explicit role allowlists may
+  // narrow the catalog; default child restrictions are enforced at execution.
+  const toolAllowlist = input.toolAllowlist === undefined ? undefined : new Set(input.toolAllowlist);
+  const childTools = structuredClone(parentRequest.tools.filter((tool) => requestedNames.has(tool.name) && (!toolAllowlist || toolAllowlist.has(tool.name))));
   const requestedPermissionRouting = parentRequest.metadata.subagentPermissionRouting;
-  const permissionRouting = requestedPermissionRouting === "user" || requestedPermissionRouting === "parent"
+  const defaultPermissionRouting = requestedPermissionRouting === "user" || requestedPermissionRouting === "parent"
     ? requestedPermissionRouting
     : turnPolicy.permissionRouting ?? configuredPolicy.permissionRouting;
-  const permissionMode = parentRequest.permissionMode === "all_free"
+  const permissionCeiling = parentRequest.permissionMode === "all_free"
     ? "all_free"
-    : permissionRouting === "user"
+    : defaultPermissionRouting === "user"
       ? parentRequest.permissionMode
       : turnPolicy.childPermissionMode ?? configuredPolicy.childPermissionMode;
+  const permissionRouting = settings.permission_routing ?? defaultPermissionRouting;
+  const permissionMode = settings.permission_mode ?? permissionCeiling;
+  const levels = ['task_free', 'user_free', 'all_free'];
+  if (levels.indexOf(permissionMode) > levels.indexOf(permissionCeiling)) throw new Error('Clean permission_mode exceeds the configured child permission ceiling.');
   const permissionScopeSessionId = permissionRouting === "user"
     ? input.context.sessionId
     : input.ids.sessionId;
   const subagentTaskId = String(
     input.metadata.subagentTaskId ?? input.metadata.teamTaskId ?? "",
   ).trim();
-  const modelPolicy = resolvedChildModel(turnPolicy.model);
+  const modelPolicy = resolvedChildModel(input.cleanModel ? {
+    ...input.cleanModel, mode: 'fixed', modelId: input.cleanModel.id,
+  } : turnPolicy.model);
+  const outputLimit = modelPolicy?.maxOutputTokens ?? parentRequest.maxOutputTokens;
+  const contextLimit = modelPolicy?.maxContextTokens ?? parentRequest.metadata.contextWindowTokens;
+  if (settings.max_output_tokens !== undefined && typeof outputLimit === 'number' && settings.max_output_tokens > outputLimit) throw new Error('max_output_tokens exceeds the selected model configuration.');
+  if (settings.max_context_tokens !== undefined && typeof contextLimit === 'number' && settings.max_context_tokens > contextLimit) throw new Error('max_context_tokens exceeds the selected model configuration.');
+  const maxOutputTokens = settings.max_output_tokens ?? outputLimit;
+  const maxContextTokens = settings.max_context_tokens ?? contextLimit;
+  if ((settings.max_context_tokens !== undefined || settings.max_output_tokens !== undefined) && typeof maxContextTokens === 'number' && maxOutputTokens !== undefined && maxOutputTokens >= maxContextTokens) throw new Error('max_output_tokens must be smaller than max_context_tokens.');
+  const inheritedSkills = Array.isArray(parentRequest.metadata.allowedSkills) ? parentRequest.metadata.allowedSkills : undefined;
+  const maxTurns = settings.max_turns === undefined ? undefined : Math.min(settings.max_turns,
+    typeof input.metadata.pluginAgentMaxTurns === 'number' ? input.metadata.pluginAgentMaxTurns : Infinity);
   return {
     protocol: BUSH_SESSION_TURN_REQUEST_PROTOCOL,
     requestId: input.ids.requestId,
@@ -117,13 +148,14 @@ export function buildChildTurnRequest(input: {
     model: modelPolicy?.model ?? parentRequest.model,
     providerBinding: modelPolicy?.providerBinding ?? parentRequest.providerBinding,
     prefixMessages: [
-      ...childPrefixMessages(parentRequest.metadata),
+      ...(input.cleanSystemPrompt !== undefined
+        ? [{ role: 'system' as const, content: input.cleanSystemPrompt }]
+        : input.inherited.length ? structuredClone(input.inherited) : childPrefixMessages(parentRequest.metadata)),
       ...(input.additionalPrefixMessages ?? []),
-      ...input.inherited,
     ],
     inputMessages: [{
       messageId: input.ids.messageId,
-      message: { role: "user", content: input.prompt },
+      message: { role: "user", content: `${CHILD_AGENT_ASSIGNMENT_PREFIX}\n\n${input.prompt}` },
     }],
     sessionMetadata: {
       parentSessionId: input.context.sessionId,
@@ -131,10 +163,10 @@ export function buildChildTurnRequest(input: {
       agentRole: "child",
     },
     tools: childTools,
-    maxOutputTokens: modelPolicy?.maxOutputTokens ?? parentRequest.maxOutputTokens,
-    temperature: parentRequest.temperature,
-    topP: parentRequest.topP,
-    reasoningEffort: parentRequest.reasoningEffort,
+    maxOutputTokens,
+    temperature: settings.temperature ?? parentRequest.temperature,
+    topP: settings.top_p ?? parentRequest.topP,
+    reasoningEffort: settings.reasoning_effort ?? parentRequest.reasoningEffort,
     requestCapabilities: {
       vision: parentRequest.requestCapabilities?.vision ?? false,
       interactiveRequests: false,
@@ -150,9 +182,12 @@ export function buildChildTurnRequest(input: {
       permissionRouting,
       childAgentModelMode: modelPolicy ? "fixed" : "inherit",
       childAgentModelId: modelPolicy?.modelId ?? "",
-      contextWindowTokens:
-        modelPolicy?.maxContextTokens ?? parentRequest.metadata.contextWindowTokens,
+      contextWindowTokens: maxContextTokens,
       disabledTools: [...disabledTools],
+      ...(toolAllowlist ? { childToolAllowlist: childTools.map(tool => tool.name) } : {}),
+      ...(settings.allowed_skills !== undefined ? { allowedSkills: settings.allowed_skills.filter(name => !inheritedSkills || inheritedSkills.includes(name)) } : {}),
+      ...(settings.disabled_skills !== undefined ? { disabledSkills: [...new Set([...(Array.isArray(parentRequest.metadata.disabledSkills) ? parentRequest.metadata.disabledSkills : []), ...settings.disabled_skills])] } : {}),
+      ...(maxTurns !== undefined ? { pluginAgentMaxTurns: maxTurns } : {}),
       permissionScopeSessionId,
       permissionEventRequestId: parentRequest.requestId,
       permissionEventSessionId: input.context.sessionId,
@@ -200,10 +235,7 @@ export function resolveChildTurn(
 function childPrefixMessages(metadata: Record<string, unknown>): ModelMessage[] {
   const candidate = metadata.subagentChildPrefixMessages;
   if (!Array.isArray(candidate)) return [];
-  return modelMessageSchema
-    .array()
-    .parse(candidate)
-    .filter((message) => message.role === "system" || message.role === "developer");
+  return modelMessageSchema.array().parse(candidate);
 }
 
 interface MetadataChildAgentPolicy {

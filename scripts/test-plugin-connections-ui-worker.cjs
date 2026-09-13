@@ -56,8 +56,16 @@ app.whenReady().then(async()=>{
   await click('返回插件');await until('document.querySelectorAll(".plugin-added-card").length===4');
   await read('localNotifications=[]');
   console.log('Plugin uninstall UI passed: detail and list actions, failed save, duplicate prevention, pending removal, reinstall and retained independent MCP configuration.');
-  const setProxyMode=mode=>read(`(()=>{const select=document.querySelector('.plugin-proxy-settings select');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-  const savedGlobal=mode=>until(`fixtureApps.proxy?.mode===${JSON.stringify(mode)}&&!document.querySelector('.plugin-proxy-settings select').disabled&&!document.querySelector('#plugin-proxy-global > button')`);
+  const chooseDropdown=async(selector,value)=>{
+   await read(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'nearest'}); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+   await until(`!!document.querySelector(${JSON.stringify(selector)})&&!document.querySelector(${JSON.stringify(selector)}).disabled`);
+   const id=await read(`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-controls')`);
+   await read(`document.querySelector(${JSON.stringify(selector)}).click()`);
+   await until(`document.getElementById(${JSON.stringify(id)}).matches(':popover-open')`);
+   await read(`Array.from(document.getElementById(${JSON.stringify(id)}).querySelectorAll('[role=option]')).find(option=>option.value===${JSON.stringify(value)}).click()`);
+  };
+  const setProxyMode=mode=>chooseDropdown('.plugin-proxy-settings .settings-dropdown-trigger',mode);
+  const savedGlobal=mode=>until(`fixtureApps.proxy?.mode===${JSON.stringify(mode)}&&!document.querySelector('.plugin-proxy-settings .settings-dropdown-trigger').disabled&&!document.querySelector('#plugin-proxy-global > button')`);
   const proxyInput=(index,value)=>read(`(()=>{const input=document.querySelectorAll('.plugin-proxy-fields input')[${index}];Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await click('设置');await until('!!document.querySelector(".plugin-search-settings")');
   const setSearchLimit=value=>read(`(()=>{const input=document.querySelector('.plugin-search-settings input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -88,12 +96,15 @@ app.whenReady().then(async()=>{
   win.setSize(1000,820);await read('remountPlugins()');await until('!!document.querySelector(".plugin-add-button")&&!document.querySelector(".plugin-add-button").disabled');
   await click('设置');await until('document.querySelector(".plugin-search-settings input")?.value==="13"');
   console.log('Plugin search settings UI passed: default 8, integer validation, failed save and retry, draft/focus retention, pending save, persistence and narrow layout.');
-  assert.equal(await read('document.querySelector(".plugin-proxy-settings select").value'),'model');
-  assert.deepEqual(await read('Array.from(document.querySelector(".plugin-proxy-settings select").options).map(item=>item.value)'),['model','none','system','manual']);
+  assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'model');
+  assert.deepEqual(await read('Array.from(document.querySelector(".plugin-proxy-settings").querySelectorAll(".settings-dropdown-option")).map(item=>item.value)'),['model','none','system','manual']);
   // Selecting a discrete global mode must persist without a second Save click.
   await setProxyMode('system');await savedGlobal('system');
   await click('返回插件');await click('设置');
-  assert.equal(await read('document.querySelector(".plugin-proxy-settings select").value'),'system','reopening retains an automatically saved choice');
+  assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'system','reopening retains an automatically saved choice');
+  const unchangedProxyRevision=await read('fixtureApps.revision');
+  await setProxyMode('system');
+  assert.equal(await read('fixtureApps.revision'),unchangedProxyRevision,'selecting the current mode does not restart or save plugin connections again');
   await read('marketSaveFails=true');await setProxyMode('none');await until('document.body.innerText.includes("保存未完成")');
   assert.equal(await read('fixtureApps.proxy.mode'),'system','failed automatic save does not persist the draft');
   await read('marketSaveFails=false');await click('保存代理设置');await savedGlobal('none');
@@ -103,7 +114,7 @@ app.whenReady().then(async()=>{
   await read('proxySyncFails=false');await click('保存代理设置');await savedGlobal('system');
   assert.ok(await read('fixtureApps.revision')>failedRefreshRevision,'retry requests application again even if disk already has the chosen proxy');
   await click('返回插件');await click('设置');
-  assert.equal(await read('document.querySelector(".plugin-proxy-settings select").value'),'system','activation failure does not restore a stale default');
+  assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'system','activation failure does not restore a stale default');
   await setProxyMode('manual');await until('document.querySelectorAll(".plugin-proxy-fields input").length===3');
   await click('保存代理设置');await until('document.body.innerText.includes("请至少填写一个代理地址")');
   await proxyInput(0,'http://proxy:99999');await click('保存代理设置');await until('document.body.innerText.includes("请输入有效的代理地址")');
@@ -116,20 +127,20 @@ app.whenReady().then(async()=>{
   assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'),'proxy fields fit narrow layout');
   win.setSize(1000,820);await click('保存代理设置');await until('fixtureApps.proxy?.mode==="manual"');
   assert.equal(await read('fixtureApps.plugins.every(plugin=>plugin.config.proxy===undefined)&&fixtureOverview.servers.every(server=>server.proxy===undefined)'),true,'saving the global proxy never materializes per-item overrides');
-  assert.equal(await read('Array.from(document.querySelectorAll(".plugin-proxy-row select")).every(select=>select.value==="inherit"&&select.selectedOptions[0].textContent==="使用默认（手动代理）")'),true,'inherited rows show the current global proxy without individual saves');
+  assert.equal(await read('Array.from(document.querySelectorAll(".plugin-proxy-row .settings-dropdown-trigger")).every(select=>select.value==="inherit"&&select.textContent==="使用默认（手动代理）")'),true,'inherited rows show the current global proxy without individual saves');
   await click('返回插件');await until('!!document.querySelector(".plugin-added-card")');
   await read('Array.from(document.querySelectorAll(".plugin-added-card")).find(b=>b.textContent.includes("Personal Tools")).click()');
   await until('!!document.querySelector(".plugin-proxy-section")');
   await read('document.querySelector(".plugin-proxy-section summary").click()');
-  assert.equal(await read('document.querySelector(".plugin-proxy-settings select").value'),'inherit');
+  assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'inherit');
   assert.match(await read('document.querySelector(".plugin-proxy-help").textContent'),/手动代理/);
   for(const mode of ['none','system','model']) {await setProxyMode(mode);await click('保存代理设置');await until(`fixtureApps.plugins.find(p=>p.id==='personal.tools').config.proxy?.mode===${JSON.stringify(mode)}`);assert.equal(await read('fixtureApps.proxy.mode'),'manual');}
   await capture('plugin-proxy-individual.png');
   await setProxyMode('inherit');await click('保存代理设置');await until('fixtureApps.plugins.find(p=>p.id==="personal.tools").config.proxy===undefined');
   await click('返回插件');await click('设置');await setProxyMode('model');await savedGlobal('model');
   assert.deepEqual(await read('Array.from(document.querySelectorAll("[data-proxy-scope]")).map(item=>item.dataset.proxyScope)'),['plugin:computer-use','plugin:chrome','plugin:personal.tools','mcp:blender']);
-  const rowMode=(scope,mode)=>read(`(()=>{const row=document.querySelector('[data-proxy-scope="${scope}"]');const select=row.querySelector('select');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-  const rowSave=scope=>read(`document.querySelector('[data-proxy-scope="${scope}"] button').click()`);
+  const rowMode=(scope,mode)=>chooseDropdown(`[data-proxy-scope="${scope}"] .settings-dropdown-trigger`,mode);
+  const rowSave=scope=>read(`document.querySelector('[data-proxy-scope="${scope}"] .plugin-install-button').click()`);
   const rowInput=(scope,index,value)=>read(`(()=>{const input=document.querySelector('[data-proxy-scope="${scope}"]').querySelectorAll('input')[${index}];Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
   await rowMode('mcp:blender','system');await rowSave('mcp:blender');await until('fixtureOverview.servers[0].proxy?.mode==="system"');
   await rowMode('plugin:personal.tools','none');await rowSave('plugin:personal.tools');await until('fixtureApps.plugins[2].config.proxy?.mode==="none"');
@@ -154,10 +165,10 @@ app.whenReady().then(async()=>{
   assert.equal(await read('proxyNode.isConnected&&document.activeElement===proxyNode&&proxyNode.value==="http://127.0.0.1:9191"&&proxyNode.selectionStart===5&&proxyNode.selectionEnd===9'),true,'refresh preserves input, focus and selection');
   assert.ok(await read('Math.abs(document.querySelector(".plugin-proxy-list").getBoundingClientRect().top-proxyListY)<1'),'background refresh does not shift the list');
   await read('flashObserver.disconnect();fixtureReadDelay=0');
-  await rowInput('mcp:blender',0,'http://127.0.0.1:9090');await rowSave('mcp:blender');await until('!document.querySelector(".plugin-proxy-row button")');
+  await rowInput('mcp:blender',0,'http://127.0.0.1:9090');await rowSave('mcp:blender');await until('!document.querySelector(".plugin-proxy-row > .plugin-install-button")');
   win.setSize(460,1100);await capture('plugin-proxy-list.png');assert.ok(await read('document.documentElement.scrollWidth<=innerWidth'));
   win.setSize(1000,820);
-  for(const scope of ['mcp:blender','plugin:personal.tools']) {await rowMode(scope,'inherit');await rowSave(scope);await until('!Array.from(document.querySelectorAll(".plugin-proxy-row button")).some(button=>button.disabled)');}
+  for(const scope of ['mcp:blender','plugin:personal.tools']) {await rowMode(scope,'inherit');await rowSave(scope);await until('!Array.from(document.querySelectorAll(".plugin-proxy-row > .plugin-install-button")).some(button=>button.disabled)');}
   await until('fixtureOverview.servers[0].proxy===undefined&&fixtureApps.plugins[2].config.proxy===undefined');
   await rowMode('plugin:computer-use','model');await rowSave('plugin:computer-use');await until('fixtureApps.plugins[0].config.proxy?.mode==="model"');
   await rowMode('mcp:blender','none');await rowSave('mcp:blender');await until('fixtureOverview.servers[0].proxy?.mode==="none"');
@@ -165,13 +176,13 @@ app.whenReady().then(async()=>{
   await read('deferNextAppsRead=true;refreshFixture()');await until('typeof releaseAppsRead==="function"');
   await setProxyMode('system');await savedGlobal('system');
   await read('releaseAppsRead();releaseAppsRead=undefined');await new Promise(resolve=>setTimeout(resolve,100));
-  assert.equal(await read('document.querySelector(".plugin-proxy-settings select").value'),'system','late catalog reads cannot undo a saved default');
-  assert.equal(await read(`document.querySelector('[data-proxy-scope="plugin:chrome"] select').selectedOptions[0].textContent`),'使用默认（跟随系统）');
-  assert.equal(await read(`document.querySelector('[data-proxy-scope="plugin:computer-use"] select').value`),'model','explicit overrides remain exceptions to the default');
+  assert.equal(await read('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger").value'),'system','late catalog reads cannot undo a saved default');
+  assert.equal(await read(`document.querySelector('[data-proxy-scope="plugin:chrome"] .settings-dropdown-trigger').textContent`),'使用默认（跟随系统）');
+  assert.equal(await read(`document.querySelector('[data-proxy-scope="plugin:computer-use"] .settings-dropdown-trigger').value`),'model','explicit overrides remain exceptions to the default');
   await rowMode('plugin:chrome','manual');await rowInput('plugin:chrome',0,'unsaved proxy');
   await read('proxySaveFails=true');await click('一键应用');await until('document.body.innerText.includes("fixture proxy save failed")');
   assert.equal(await read('fixtureOverview.servers[0].proxy.mode'),'none','a failed batch reset does not claim the MCP override was removed');
-  await read('proxySaveFails=false');await click('一键应用');await until('Array.from(document.querySelectorAll(".plugin-proxy-row select")).every(select=>select.value==="inherit")&&!document.querySelector(".plugin-proxy-row button")');
+  await read('proxySaveFails=false');await click('一键应用');await until('Array.from(document.querySelectorAll(".plugin-proxy-row .settings-dropdown-trigger")).every(select=>select.value==="inherit")&&!document.querySelector(".plugin-proxy-row > .plugin-install-button")');
   assert.equal(await read('fixtureApps.proxy.mode'),'system','apply uses the selected global proxy');
   assert.equal(await read('fixtureApps.plugins.every(plugin=>plugin.config.proxy===undefined)&&fixtureOverview.servers.every(server=>server.proxy===undefined)'),true,'all rows inherit with one action');
   // Apply validates the CURRENT manual draft, then covers filtered-out rows too.
@@ -186,15 +197,27 @@ app.whenReady().then(async()=>{
   assert.equal(await read('fixtureApps.proxy.httpProxy'),'http://127.0.0.1:8777','apply persists the unsaved current draft');
   assert.equal(await read('fixtureApps.plugins.every(plugin=>plugin.config.proxy===undefined)&&fixtureOverview.servers.every(server=>server.proxy===undefined)'),true,'search never restricts batch scope');
   await read('remountPlugins()');await until('!!document.querySelector(".plugin-add-button")&&!document.querySelector(".plugin-add-button").disabled');
-  await click('设置');await until('document.querySelector(".plugin-proxy-settings select")?.value==="manual"');
+  await click('设置');await until('document.querySelector(".plugin-proxy-settings .settings-dropdown-trigger")?.value==="manual"');
   assert.deepEqual(await read('Array.from(document.querySelectorAll("#plugin-proxy-global input")).map(input=>input.value)'),['http://127.0.0.1:8777','socks5://127.0.0.1:8778','localhost,.fixture'],'full component remount restores every saved proxy field');
-  assert.equal(await read('Array.from(document.querySelectorAll(".plugin-proxy-row select")).every(select=>select.value==="inherit")'),true);
+  assert.equal(await read('Array.from(document.querySelectorAll(".plugin-proxy-row .settings-dropdown-trigger")).every(select=>select.value==="inherit")'),true);
   win.setSize(700,1050);await capture('plugin-proxy-inheritance.png');
   win.setSize(1000,820);await setProxyMode('model');await savedGlobal('model');
   console.log('Proxy inheritance and refresh passed: automatic global saves, failure/readback/retry, current-draft apply, filtered rows, remount persistence, stale-read fencing and retained editors.');
   console.log('Proxy list passed: plugin and MCP rows, independent saves, search with retained drafts, failure/retry, manual expansion and reset.');
   await click('返回插件');await until('!document.querySelector(".plugin-add-button").disabled');
   console.log('Plugin proxy UI passed: default, four choices, scoped override, inheritance reset, validation, persistence and narrow layout.');
+  await read('setUnifiedNetwork(true)');await click('设置');await until('!!document.querySelector(".settings-link-row")');
+  assert.equal(await read('!!document.querySelector(".plugin-proxy-settings")'),false,'catalog settings link to the shared proxy owner');
+  await read('document.querySelector(".settings-link-row").click()');await until('!!document.querySelector("#plugin-proxy-global")');
+  assert.equal(await read('opened.at(-1)'),'proxy');
+  assert.equal(await read('!!document.querySelector(".plugin-back, .plugin-search-settings")'),false,'embedded network presentation does not duplicate catalog navigation');
+  await setProxyMode('system');await savedGlobal('system');
+  await read('showNetworkCatalog()');await until('!!document.querySelector(".plugin-add-button")&&!document.querySelector(".plugin-add-button").disabled');
+  await click('设置');await until('!!document.querySelector(".settings-link-row")');await read('document.querySelector(".settings-link-row").click()');
+  await until('document.querySelector("#plugin-proxy-global .settings-dropdown-trigger")?.value==="system"');
+  await setProxyMode('model');await savedGlobal('model');
+  await read('showNetworkCatalog();setUnifiedNetwork(false)');await until('!!document.querySelector(".plugin-add-button")&&!document.querySelector(".plugin-add-button").disabled');
+  console.log('Shared network settings passed: catalog shortcut, embedded presentation, existing persistence and reopening.');
   await read('localNotifications=[]');
   await click('添加');
   assert.deepEqual(await read('Array.from(document.querySelectorAll(".plugin-add-menu strong")).map(item=>item.textContent)'),['从市场安装插件','从 ZIP 安装插件','从文件夹安装插件','添加 MCP 服务','查看技能']);
@@ -568,7 +591,7 @@ app.whenReady().then(async()=>{
   assert.equal(await read('document.querySelector(".plugin-market-add input").value'),'fixture/plugins','retry preserves source input');
   assert.equal(await read('document.querySelector(".plugin-market-error details").open'),false,'technical errors are collapsed');
   await click('代理设置');await until('document.querySelector(".plugin-proxy-dialog")?.open');
-  assert.equal(await read('document.querySelector(".plugin-proxy-dialog select").value'),'model');
+  assert.equal(await read('document.querySelector(".plugin-proxy-dialog .settings-dropdown-trigger").value'),'model');
   await click('关闭代理设置');await until('!document.querySelector(".plugin-proxy-dialog")');
   assert.equal(await read('document.querySelector(".plugin-market-add input").value'),'fixture/plugins','proxy settings preserve the pending marketplace source');
   await new Promise(r=>setTimeout(r,150));
@@ -706,11 +729,12 @@ app.whenReady().then(async()=>{
   await until(`document.querySelector('[data-command-id="/chrome:debug"] .composer-command-icon img')?.naturalWidth>0`);
   assert.ok(await read(`document.querySelector('[data-command-id="/chrome:debug"] .composer-command-icon').getBoundingClientRect().width>=18`),'long text does not squeeze the logo');
   await capture('composer-slash-categories.png');
-  win.setSize(400,820);await until('window.innerWidth===400');
+  // Windows offscreen bounds can round the content viewport by one pixel.
+  win.setContentSize(400,820);await until('Math.abs(window.innerWidth-400)<=2');
   assert.ok(await read(`document.querySelector('[data-command-id="/chrome:debug"] .composer-command-icon').getBoundingClientRect().width>=18`));
   assert.ok(await read('document.querySelector(".composer-command-palette").getBoundingClientRect().right<=window.innerWidth'));
   await capture('composer-slash-narrow.png');
-  win.setSize(1000,820);await until('window.innerWidth===1000');
+  win.setContentSize(1000,820);await until('Math.abs(window.innerWidth-1000)<=2');
   await draft('/Chrome');await until('document.querySelectorAll(".composer-command-category").length===3');
   await draft('@');await until('document.body.innerText.includes("当前对话 · 用户指令")');
   assert.equal(await read('document.querySelectorAll(".composer-command-row").length'),3);

@@ -190,20 +190,20 @@ assert.match(
 );
 
 const appSource = readAppViewSources();
-assert.match(
+assert.doesNotMatch(
   appSource,
-  /const activeMatchesMode = onlyTalkMode[\s\S]*?Boolean\(chat\.activeConversation && !isOnlyTalkConversation\(chat\.activeConversation\)\)/,
-  'project navigation must retain an explicitly selected project session instead of snapping back to the fallback project',
+  /activeMatchesMode|onlyTalkMode|fallbackProjectDir/,
+  'navigation must keep the selected conversation without a global mode redirect',
 );
 assert.match(
   appSource,
-  /if \(scope\.projectDir\) \{[\s\S]*?chat\.prepareConversation\(scope\.projectDir, undefined, scope\.projectId\)/,
-  'an empty project must create only an in-memory draft for its own scope',
+  /const resolvedProjectDir = projectDir\?\.trim\(\) \|\| undefined;[\s\S]*?chat\.prepareConversation\(resolvedProjectDir, undefined, resolvedProjectId\)/,
+  'new chats must use an in-memory draft and only an explicitly chosen project',
 );
 assert.match(
   appSource,
-  /const changeWelcomeProject[\s\S]*?if \(!normalized\) \{[\s\S]*?changeOnlyTalkMode\(true\)/,
-  'leaving a project from the welcome switcher must use the explicit task route',
+  /const changeWelcomeProject[\s\S]*?const normalized = projectDir\?\.trim\(\) \|\| null;[\s\S]*?chat\.setConversationProject\(chat\.activeConversationId, normalized, projectId\)/,
+  'associating or detaching a project must keep the current draft identity',
 );
 assert.match(
   appSource,

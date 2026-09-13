@@ -1,23 +1,30 @@
-import { GlobalInstructionsPanel } from './settings/GlobalInstructionsPanel';
+import { SettingsPersonalizationPanel } from './settings/SettingsPersonalizationPanel';
+import { SettingsDropdown } from './settings/SettingsDropdown';
+import { SettingsAppearancePanel } from './settings/SettingsAppearancePanel';
+import { UsageStatisticsPanel } from './settings/UsageStatisticsPanel';
+import { SettingsCard, SettingsDivider, SettingsRadio, SettingsSwitch, SettingsInput, InfoRow } from './settings/SettingsControls';
+import { settingsLabels, settingsDescriptions, settingsNavigationGroups, settingsSectionMatchesQuery, visibleSettingsSection, type VisibleSettingsSection } from './settings/settingsNavigation';
 import type { WindowMaterialPreference } from './appearance/windowAppearance';
 import { useCapabilityCatalogRefresh } from '../hooks/useCapabilityCatalogRefresh';
+import type { SoftPanelPresence } from '../hooks/useSoftPanelPresence';
 import { DEFAULT_MAX_CONTEXT_TOKENS as defaultMaxContextTokens } from '@cardbush/bush-product-agent';
 import {
   AlertCircle,
   Archive,
+  BarChart3,
   ArrowLeft,
   Check,
   CheckCircle2,
   ChevronUp,
-  Circle,
   Clipboard,
   Cpu,
   Eye,
   EyeOff,
-  FileText,
   LoaderCircle,
   Monitor,
   PackageOpen,
+  Search,
+  SlidersHorizontal,
   Palette,
   Plus,
   RefreshCw,
@@ -26,10 +33,10 @@ import {
   Terminal,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import type * as React from 'react';
 import {
-  type CSSProperties,
   type FormEvent,
   useCallback,
   useEffect,
@@ -73,10 +80,6 @@ import {
   ChromeConnectionSettings,
   PluginManagementPanel,
 } from './plugins/PluginManagementPanel';
-import {
-  loadCumulativeUsageStatistics,
-  type CumulativeUsageStatistics,
-} from './settings/usageActivity';
 import type {
   AppLanguage,
   AppLanguageMode,
@@ -114,85 +117,11 @@ const defaultFontSettings = {
   displayName: '',
   filePath: '',
 };
-type VisibleSettingsSection = Exclude<SettingsSection, 'companion' | 'subagents'>;
-type SettingsIconComponent = React.ComponentType<{ size?: number; className?: string }>;
-
-const visibleSettingsSections: VisibleSettingsSection[] = [
-  'profile',
-  'instructions',
-  'runtime',
-  'proxy',
-  'mcp',
-  'cache',
-  'models',
-  'diagnostics',
-  'about',
-];
-
-const settingsLabels: Record<VisibleSettingsSection, { zh: string; en: string }> = {
-  profile: { zh: '个性化', en: 'Personalization' },
-  instructions: { zh: '全局约束', en: 'Global instructions' },
-  runtime: { zh: '运行环境', en: 'Runtime' },
-  proxy: { zh: '代理设置', en: 'Proxy' },
-  mcp: { zh: '插件', en: 'Plugins' },
-  cache: { zh: '缓存', en: 'Cache' },
-  models: { zh: '模型管理', en: 'Models' },
-  diagnostics: { zh: '运行诊断', en: 'Runtime diagnostics' },
-  about: { zh: '关于', en: 'About' },
+const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
+  profile: SlidersHorizontal, appearance: Palette, usage: BarChart3,
+  models: Cpu, mcp: McpLogoIcon,
+  runtime: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
-
-const settingsDescriptions: Record<VisibleSettingsSection, { zh: string; en: string }> = {
-  instructions: { zh: '通过一份 AGENTS.md 统一所有会话的偏好与约束。', en: 'Share preferences and instructions across conversations through one AGENTS.md file.' },
-  profile: { zh: '查看累计使用量，并统一管理主题、语言、字体与引导方式。', en: 'Review cumulative usage and manage themes, language, typography, and guidance.' },
-  runtime: { zh: '选择工具与终端命令使用的默认运行环境。', en: 'Choose the default runtime for tools and terminal commands.' },
-  proxy: { zh: '统一管理网络代理与浏览隐私选项。', en: 'Manage network proxy and browser privacy options.' },
-  mcp: { zh: '管理由 Skill、MCP 与应用组成的 CardBush 插件。', en: 'Manage CardBush plugins composed of Skills, MCP servers, and apps.' },
-  cache: { zh: '清理本地历史和诊断缓存。', en: 'Clear local history and diagnostic caches.' },
-  models: { zh: '添加模型服务并设置默认模型。', en: 'Add model providers and choose the default model.' },
-  diagnostics: { zh: '检查内嵌 Runtime、Product Host 与模型配置。', en: 'Inspect the embedded Runtime, Product Host, and model configuration.' },
-  about: { zh: '查看版本与本地运行架构。', en: 'View version and local runtime architecture.' },
-};
-
-const settingsNavigationGroups: Array<{
-  label: { zh: string; en: string };
-  sections: VisibleSettingsSection[];
-}> = [
-  {
-    label: { zh: '常规', en: 'General' },
-    sections: ['profile', 'instructions', 'runtime'],
-  },
-  {
-    label: { zh: '智能与扩展', en: 'AI & extensions' },
-    sections: ['models', 'mcp'],
-  },
-  {
-    label: { zh: '连接', en: 'Connections' },
-    sections: ['proxy'],
-  },
-  {
-    label: { zh: '系统', en: 'System' },
-    sections: ['cache', 'diagnostics', 'about'],
-  },
-];
-
-const settingsIcons: Record<VisibleSettingsSection, SettingsIconComponent> = {
-  profile: Palette,
-  instructions: FileText,
-  runtime: Terminal,
-  proxy: Monitor,
-  mcp: McpLogoIcon,
-  cache: Archive,
-  models: Cpu,
-  diagnostics: Clipboard,
-  about: Circle,
-};
-
-function visibleSettingsSection(value: SettingsSection): VisibleSettingsSection {
-  return visibleSettingsSections.includes(value as VisibleSettingsSection)
-    ? (value as VisibleSettingsSection)
-    : 'profile';
-}
-
 function McpLogoIcon({
   size = 18,
   className,
@@ -231,7 +160,6 @@ export function SettingsView({
   availableModels,
   backendCapabilities,
   runtimeBusy,
-  conversations,
   skills,
   disabledSkillNames,
   initialSection,
@@ -241,6 +169,10 @@ export function SettingsView({
   onLanguageModeChange,
   onSettingsChange,
   onUseModel,
+  sidebarCollapsed,
+  sidebarPresence,
+  sidebarWidth,
+  onSidebarCollapse,
   onSidebarWidthChange,
   onConversationHistoryCleared,
   onRuntimeAssetsReloaded,
@@ -275,6 +207,10 @@ export function SettingsView({
   onLanguageModeChange: (value: AppLanguageMode) => void;
   onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
   onUseModel: (model: string) => void;
+  sidebarCollapsed: boolean;
+  sidebarPresence: SoftPanelPresence;
+  sidebarWidth: number;
+  onSidebarCollapse: () => void;
   onSidebarWidthChange: (value: number) => void;
   onConversationHistoryCleared?: () => void | Promise<void>;
   onRuntimeAssetsReloaded?: (categories: RuntimeAssetCategory[]) => Promise<void>;
@@ -289,6 +225,13 @@ export function SettingsView({
   const [section, setSection] = useState<VisibleSettingsSection>(
     visibleSettingsSection(initialSection),
   );
+  const [settingsQuery, setSettingsQuery] = useState('');
+  const [networkTab, setNetworkTab] = useState<'models' | 'plugins'>('models');
+  const settingsContentRef = useRef<HTMLElement>(null);
+  const sectionScrollPositions = useRef<Partial<Record<VisibleSettingsSection, number>>>({});
+  const filteredNavigation = settingsNavigationGroups.map(group => ({
+    ...group, sections: group.sections.filter(id => settingsSectionMatchesQuery(id, settingsQuery)),
+  })).filter(group => group.sections.length > 0);
   const [providerSelection, setProviderSelection] = useState(
     settings.managedModelConfigs[0]?.provider || suggestedProviders[0],
   );
@@ -315,7 +258,12 @@ export function SettingsView({
   useEffect(() => {
     setSection(visibleSettingsSection(initialSection));
     setPluginMcpTarget(null);
+    setSettingsQuery('');
   }, [initialSection]);
+
+  useLayoutEffect(() => {
+    if (settingsContentRef.current) settingsContentRef.current.scrollTop = sectionScrollPositions.current[section] ?? 0;
+  }, [section]);
 
   useEffect(() => {
     if (!providerOptions.includes(providerSelection)) {
@@ -614,38 +562,23 @@ export function SettingsView({
   }, [updateSettings]);
 
   const content = (() => {
-    if (section === 'profile') {
-      return (
-        <SettingsProfilePanel
-          themePreference={themePreference}
-          windowMaterial={windowMaterial}
-          onWindowMaterialChange={onWindowMaterialChange}
-          language={language}
-          languageMode={languageMode}
-          systemLanguage={systemLanguage}
-          settings={settings}
-          reasoningStreamAvailable={backendCapabilities.reasoningStream}
-          conversations={conversations}
-          onThemePreferenceChange={onThemePreferenceChange}
-          onLanguageModeChange={onLanguageModeChange}
-          onSettingsChange={updateSettings}
-          onImportFont={importFont}
-          onResetFont={resetFont}
-          onImportThemeStyle={importThemeStyle}
-          onResetImportedThemeStyle={resetImportedThemeStyle}
-        />
-      );
-    }
-    if (section === 'instructions') return <GlobalInstructionsPanel language={language} />;
+    if (section === 'profile') return <SettingsPersonalizationPanel language={language} settings={settings}
+      reasoningStreamAvailable={backendCapabilities.reasoningStream} onSettingsChange={updateSettings} />;
+    if (section === 'usage') return <UsageStatisticsPanel language={language} active={active} />;
+    if (section === 'appearance') return <SettingsAppearancePanel
+      themePreference={themePreference} windowMaterial={windowMaterial} onWindowMaterialChange={onWindowMaterialChange}
+      language={language} languageMode={languageMode} systemLanguage={systemLanguage} settings={settings}
+      onThemePreferenceChange={onThemePreferenceChange} onLanguageModeChange={onLanguageModeChange}
+      onImportFont={importFont} onResetFont={resetFont} onImportThemeStyle={importThemeStyle} onResetImportedThemeStyle={resetImportedThemeStyle} />;
     if (section === 'runtime') {
       return (
         <div className="settings-stack">
           <SettingsCard
-            title={language === 'zh' ? '运行环境' : 'Runtime environment'}
+            title={language === 'zh' ? '默认终端' : 'Default terminal'}
             subtitle={
               language === 'zh'
-                ? '选择终端命令默认在哪个环境中执行。这个设置会影响内置终端，也会随对话请求传给内嵌 Runtime。'
-                : 'Choose where terminal commands run by default. This affects the embedded terminal and is sent to the embedded Runtime with chat requests.'
+                ? '用于工具执行和内置终端。'
+                : 'Used by tools and the embedded terminal.'
             }
           >
             <SettingsRadio
@@ -740,12 +673,32 @@ export function SettingsView({
     }
     if (section === 'proxy') {
       return (
+        <div className="settings-stack network-settings-stack">
+        <div className="settings-page-tabs" role="tablist" aria-label={language === 'zh' ? '网络代理类别' : 'Proxy category'}>
+          {(['models', 'plugins'] as const).map(tab => <button key={tab} id={`proxy-tab-${tab}`} role="tab" type="button"
+            tabIndex={networkTab === tab ? 0 : -1}
+            onKeyDown={event => {
+              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+              event.preventDefault();
+              const next = event.key === 'Home' ? 'models' : event.key === 'End' ? 'plugins' : tab === 'models' ? 'plugins' : 'models';
+              setNetworkTab(next);
+              document.getElementById(`proxy-tab-${next}`)?.focus();
+            }}
+            aria-selected={networkTab === tab} aria-controls={`proxy-panel-${tab}`} onClick={() => setNetworkTab(tab)}>
+            {tab === 'models' ? language === 'zh' ? '模型请求' : 'Model requests' : language === 'zh' ? '插件与 MCP' : 'Plugins & MCP'}
+          </button>)}
+        </div>
+        <div role="tabpanel" id={`proxy-panel-${networkTab}`} aria-labelledby={`proxy-tab-${networkTab}`}>
+        {networkTab === 'plugins' ? <PluginManagementPanel key="network" presentation="network" language={language}
+          initialTab="plugins" skills={skills} disabledSkillNames={disabledSkillNames}
+          onToggleSkill={onToggleSkill} onReloadSkills={onReloadSkills} onLoadSkillDetail={onLoadSkillDetail}
+          onOpenMcp={serverId => { setSection('mcp'); setPluginMcpTarget({ serverId }); }} onNotify={notify} /> :
         <SettingsCard
           title={language === 'zh' ? '模型代理' : 'Model proxy'}
           subtitle={
             language === 'zh'
-              ? '配置模型请求的代理。插件默认跟随此设置，也可在插件页独立配置。'
-              : 'Configure the model proxy. Plugins follow this by default and can be configured separately on the Plugins page.'
+              ? '插件选择“跟随模型代理”时，也会使用这里的设置。'
+              : 'Plugins use this configuration when set to follow the model proxy.'
           }
         >
           <SettingsRadio
@@ -784,6 +737,7 @@ export function SettingsView({
             checked={settings.proxy.mode === 'system'}
             onChange={() => updateProxy({ mode: 'system' })}
           />
+          {settings.proxy.mode === 'manual' && <>
           <SettingsDivider />
           <SettingsInput
             label="HTTP_PROXY"
@@ -814,31 +768,11 @@ export function SettingsView({
             placeholder="127.0.0.1,localhost,::1,.internal"
             onChange={(value) => updateProxy({ noProxy: value })}
           />
-          <SettingsDivider />
-          <SettingsSwitch
-            title={language === 'zh' ? '隐私浏览 / 不保存 Cookie' : 'Private browsing'}
-            subtitle={
-              backendCapabilities.browserPrivacyMode
-                ? language === 'zh'
-                  ? '开启后浏览器工具不会读取或保存 cookie/localStorage；默认关闭以保持登录态。'
-                  : 'When enabled, browser tools do not read or save cookie/localStorage. Off keeps signed-in state.'
-                : language === 'zh'
-                  ? '当前内嵌 Runtime 未声明 browser_privacy_mode，前端不会发送该模式。'
-                  : 'The embedded Runtime does not advertise browser_privacy_mode, so this mode is not sent.'
-            }
-            checked={settings.browser.privacyMode}
-            disabled={!backendCapabilities.browserPrivacyMode}
-            onChange={(checked) =>
-              updateSettings((current) => ({
-                ...current,
-                browser: {
-                  ...current.browser,
-                  privacyMode: checked,
-                },
-              }))
-            }
-          />
-        </SettingsCard>
+          </>}
+
+        </SettingsCard>}
+        </div>
+        </div>
       );
     }
     if (section === 'models') {
@@ -892,6 +826,8 @@ export function SettingsView({
         </div>
       ) : (
         <PluginManagementPanel
+          key="catalog"
+          onOpenNetwork={() => { setNetworkTab('plugins'); setSection('proxy'); }}
           onOpenPrompt={onOpenPluginPrompt}
           language={language}
           initialTab={initialPluginTab}
@@ -919,11 +855,14 @@ export function SettingsView({
     }
     if (section === 'diagnostics') {
       return (
+        <div className="settings-stack">
         <DiagnosticsPanel
           language={language}
           settings={settings}
           selectedModel={selectedModel}
         />
+        <AboutSettingsPanel language={language} settings={settings} selectedModel={selectedModel} />
+        </div>
       );
     }
     return (
@@ -934,22 +873,32 @@ export function SettingsView({
       />
     );
   })();
-  const SectionIcon = settingsIcons[section];
 
   return (
     <>
     <main
-      className={`settings-shell${active ? '' : ' settings-inactive'}`}
+      className={`settings-shell${sidebarCollapsed ? ' sidebar-is-collapsed' : ''}${active ? '' : ' settings-inactive'}`}
       aria-hidden={!active}
       inert={active ? undefined : true}
     >
-      <aside className="settings-sidebar">
+      {sidebarPresence.mounted && <>
+      <aside className={`sidebar settings-sidebar soft-panel-motion ${sidebarPresence.visible ? 'soft-panel-visible' : 'soft-panel-hidden'}`}
+        aria-hidden={!sidebarPresence.visible} inert={sidebarPresence.visible ? undefined : true}>
+        <div className="sidebar-panel-content">
         <button className="back-button" type="button" onClick={onBack}>
           <ArrowLeft size={18} />
           {language === 'zh' ? '返回应用' : 'Back to app'}
         </button>
+        <label className="settings-search">
+          <Search size={15} aria-hidden="true" />
+          <input value={settingsQuery} onChange={event => setSettingsQuery(event.target.value)}
+            aria-label={language === 'zh' ? '搜索设置' : 'Search settings'}
+            placeholder={language === 'zh' ? '搜索设置…' : 'Search settings…'}
+            onKeyDown={event => { if (event.key === 'Escape') setSettingsQuery(''); }} />
+          {settingsQuery && <button type="button" aria-label={language === 'zh' ? '清除搜索' : 'Clear search'} onClick={() => setSettingsQuery('')}><X size={14} /></button>}
+        </label>
         <nav className="settings-navigation" aria-label={language === 'zh' ? '设置分类' : 'Settings sections'}>
-          {settingsNavigationGroups.map((group) => (
+          {filteredNavigation.map((group) => (
             <div className="settings-nav-group" key={group.label.en}>
               <span className="settings-nav-group-label">{group.label[language]}</span>
               {group.sections.map((id) => {
@@ -960,7 +909,8 @@ export function SettingsView({
                     className={`settings-nav ${section === id ? 'active' : ''}`}
                     type="button"
                     aria-current={section === id ? 'page' : undefined}
-                    onClick={() => setSection(id)}
+                    data-settings-section={id}
+                    onClick={() => { setSection(id); setSettingsQuery(''); }}
                   >
                     <Icon size={18} />
                     <span>{settingsLabels[id][language]}</span>
@@ -969,13 +919,17 @@ export function SettingsView({
               })}
             </div>
           ))}
+          {filteredNavigation.length === 0 && <p className="settings-search-empty" role="status">{language === 'zh' ? '没有匹配的设置' : 'No matching settings'}</p>}
         </nav>
+        </div>
       </aside>
-      <SidebarResizer language={language} onWidthChange={onSidebarWidthChange} />
-      <section className="settings-content">
+      <SidebarResizer language={language} width={sidebarWidth} onWidthChange={onSidebarWidthChange}
+        onCollapse={onSidebarCollapse} softVisible={active && sidebarPresence.visible} />
+      </>}
+      <section className="settings-content" ref={settingsContentRef}
+        onScroll={event => { sectionScrollPositions.current[section] = event.currentTarget.scrollTop; }}>
         <div className={`settings-track${section === 'mcp' ? ' plugin-settings-track' : ''}`}>
           {section !== 'mcp' && <header className="settings-page-header">
-            <span className="settings-page-icon"><SectionIcon size={20} /></span>
             <div>
               <h2>{settingsLabels[section][language]}</h2>
               <p>{settingsDescriptions[section][language]}</p>
@@ -987,466 +941,6 @@ export function SettingsView({
     </main>
     {active && toast && <div className="settings-toast">{toast}</div>}
     </>
-  );
-}
-
-function SettingsProfilePanel({
-  themePreference,
-  windowMaterial,
-  onWindowMaterialChange,
-  language,
-  languageMode,
-  systemLanguage,
-  settings,
-  reasoningStreamAvailable,
-  conversations,
-  onThemePreferenceChange,
-  onLanguageModeChange,
-  onSettingsChange,
-  onImportFont,
-  onResetFont,
-  onImportThemeStyle,
-  onResetImportedThemeStyle,
-}: {
-  themePreference: ThemePreference;
-  windowMaterial: WindowMaterialPreference;
-  onWindowMaterialChange?: (value: WindowMaterialPreference) => void;
-  language: AppLanguage;
-  languageMode: AppLanguageMode;
-  systemLanguage: AppLanguage;
-  settings: AppSettingsState;
-  reasoningStreamAvailable: boolean;
-  conversations: ConversationSummary[];
-  onThemePreferenceChange: (value: ThemePreference) => void;
-  onLanguageModeChange: (value: AppLanguageMode) => void;
-  onSettingsChange: (updater: (current: AppSettingsState) => AppSettingsState) => void;
-  onImportFont: () => void;
-  onResetFont: () => void;
-  onImportThemeStyle: () => void;
-  onResetImportedThemeStyle: () => void;
-}) {
-  const fontIsCustom = Boolean(settings.font.family && settings.font.filePath);
-  const importedThemeStyle = settings.importedThemeStyle;
-
-  return (
-    <div className="settings-stack personalization-settings-stack">
-      <UsageStatisticsPanel language={language} conversations={conversations} />
-      <SettingsCard
-        title={language === 'zh' ? '外观' : 'Appearance'}
-        subtitle={
-          language === 'zh'
-            ? '配置基础模式、特色主题、语言和全局字体。'
-            : 'Configure base modes, additional themes, language, and global font.'
-        }
-      >
-      <SettingsGroupTitle>
-        {language === 'zh' ? '基础主题' : 'Base themes'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '跟随系统' : 'Follow system'}
-        value="system"
-        checked={themePreference === 'system'}
-        onChange={() => onThemePreferenceChange('system')}
-      />
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '浅色模式' : 'Light mode'}
-        subtitle={
-          language === 'zh'
-            ? '使用简洁、明亮的系统风格界面。'
-            : 'Use a clean, bright system-style interface.'
-        }
-        value="light"
-        checked={themePreference === 'light'}
-        onChange={() => onThemePreferenceChange('light')}
-      />
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '深色主题' : 'Dark theme'}
-        value="dark"
-        checked={themePreference === 'dark'}
-        onChange={() => onThemePreferenceChange('dark')}
-      />
-      {onWindowMaterialChange && (
-        <SettingsSwitch
-          title={language === 'zh' ? '窗口玻璃效果' : 'Window glass effect'}
-          subtitle={language === 'zh'
-            ? '让顶栏和侧栏随桌面背景自然透色。适用于浅色、深色主题；系统不支持时使用纯色。'
-            : 'Blend the title bar and sidebar with your desktop in light and dark themes. Use a solid surface when unavailable.'}
-          checked={windowMaterial === 'auto'}
-          onChange={(enabled) => onWindowMaterialChange(enabled ? 'auto' : 'solid')}
-        />
-      )}
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '其他主题' : 'Additional themes'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="theme-mode"
-        title={language === 'zh' ? '羊皮纸' : 'Parchment'}
-        subtitle={
-          language === 'zh'
-            ? '温暖的纸感配色，作为独立主题使用。'
-            : 'A warm paper-inspired palette available as its own theme.'
-        }
-        value="parchment"
-        checked={themePreference === 'parchment'}
-        onChange={() => onThemePreferenceChange('parchment')}
-      />
-      <SettingsRadio
-        className="cyberpunk-theme-option"
-        name="theme-mode"
-        title={language === 'zh' ? '赛博朋克' : 'Cyberpunk'}
-        subtitle={
-          language === 'zh'
-            ? '霓虹黄与电光青、工业切角、静态网格；为流畅度避免持续特效。'
-            : 'Neon yellow and electric cyan, industrial cuts, and a static performance-first grid.'
-        }
-        value="cyberpunk"
-        checked={themePreference === 'cyberpunk'}
-        onChange={() => onThemePreferenceChange('cyberpunk')}
-      />
-      {importedThemeStyle && (
-        <SettingsRadio
-          className="imported-theme-option"
-          name="theme-mode"
-          title={importedThemeStyle.name}
-          subtitle={
-            language === 'zh'
-              ? `导入配置 · 基于${importedThemeStyle.base === 'dark' ? '深色' : importedThemeStyle.base === 'light' ? '浅色' : '羊皮纸'}`
-              : `Imported configuration · ${importedThemeStyle.base} base`
-          }
-          value="custom"
-          checked={themePreference === 'custom'}
-          onChange={() => onThemePreferenceChange('custom')}
-        />
-      )}
-      <div className="imported-theme-config">
-        <span>
-          <strong>
-            {importedThemeStyle
-              ? basename(importedThemeStyle.sourcePath) || importedThemeStyle.name
-              : language === 'zh'
-                ? '未导入主题配置'
-                : 'No imported theme configuration'}
-          </strong>
-          <small>
-            {importedThemeStyle?.sourcePath || (
-              language === 'zh'
-                ? `${IMPORTED_THEME_STYLE_PROTOCOL} · 仅载入受控主题颜色`
-                : `${IMPORTED_THEME_STYLE_PROTOCOL} · controlled theme colors only`
-            )}
-          </small>
-        </span>
-      </div>
-      <div className="settings-actions">
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={onImportThemeStyle}
-        >
-          <Upload size={14} />
-          {language === 'zh' ? '导入主题配置' : 'Import theme config'}
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={!importedThemeStyle}
-          onClick={onResetImportedThemeStyle}
-        >
-          <RotateCcw size={14} />
-          {language === 'zh' ? '移除导入主题' : 'Remove imported theme'}
-        </button>
-      </div>
-      {reasoningStreamAvailable && (
-        <>
-          <SettingsDivider />
-          <SettingsGroupTitle>
-            {language === 'zh' ? '思考过程' : 'Thinking'}
-          </SettingsGroupTitle>
-          <SettingsSwitch
-            title={language === 'zh' ? '显示思考过程' : 'Show thinking'}
-            subtitle={
-              language === 'zh'
-                ? '仅在运行中的输入框上沿显示，不写入主对话。'
-                : 'Show it only above the composer during a loop, never in the conversation.'
-            }
-            checked={settings.thinking.visible}
-            onChange={(visible) => {
-              onSettingsChange((current) => ({
-                ...current,
-                thinking: { ...current.thinking, visible },
-              }));
-            }}
-          />
-        </>
-      )}
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '应用语言' : 'App language'}
-      </SettingsGroupTitle>
-      <SettingsRadio
-        name="language-mode"
-        title={language === 'zh' ? '跟随系统' : 'Follow system'}
-        subtitle={
-          language === 'zh'
-            ? `当前检测：${systemLanguage === 'zh' ? '中文' : 'English'}`
-            : `Detected: ${systemLanguage === 'zh' ? 'Chinese' : 'English'}`
-        }
-        value="system"
-        checked={languageMode === 'system'}
-        onChange={() => onLanguageModeChange('system')}
-      />
-      <SettingsRadio
-        name="language-mode"
-        title="中文"
-        subtitle={language === 'zh' ? '固定使用中文界面' : 'Use Chinese UI'}
-        value="zh"
-        checked={languageMode === 'zh'}
-        onChange={() => onLanguageModeChange('zh')}
-      />
-      <SettingsRadio
-        name="language-mode"
-        title="English"
-        subtitle={
-          language === 'zh' ? '固定使用英文界面' : 'Use English UI'
-        }
-        value="en"
-        checked={languageMode === 'en'}
-        onChange={() => onLanguageModeChange('en')}
-      />
-      <SettingsDivider />
-      <SettingsGroupTitle>
-        {language === 'zh' ? '全局字体' : 'Global font'}
-      </SettingsGroupTitle>
-      <div className="font-preview">
-        <strong>
-          {fontIsCustom
-            ? settings.font.displayName
-            : language === 'zh'
-              ? '系统默认字体'
-              : 'System default font'}
-        </strong>
-        <span>
-          {fontIsCustom
-            ? settings.font.filePath
-            : language === 'zh'
-              ? 'Windows 使用 Microsoft YaHei UI，macOS 使用 PingFang SC。'
-              : 'Uses Microsoft YaHei UI on Windows and PingFang SC on macOS.'}
-        </span>
-        <p>
-          {language === 'zh'
-            ? '你好，cardbush  Aa 123  轻快地处理项目、对话和代码。'
-            : 'Hello, cardbush  Aa 123  Handling projects, chats, and code with ease.'}
-        </p>
-      </div>
-      <div className="settings-actions">
-        <button className="secondary-button" type="button" onClick={onImportFont}>
-          <Upload size={14} />
-          {language === 'zh' ? '导入字体配置' : 'Import font'}
-        </button>
-        <button
-          className="secondary-button"
-          type="button"
-          disabled={!fontIsCustom}
-          onClick={onResetFont}
-        >
-          <RotateCcw size={14} />
-          {language === 'zh' ? '恢复默认字体' : 'Reset default font'}
-        </button>
-      </div>
-      </SettingsCard>
-      <SettingsCard
-        title={language === 'zh' ? '引导方式' : 'Guidance delivery'}
-        subtitle={
-          language === 'zh'
-            ? '设置任务运行中再次发送内容时，是等待下一轮还是立即交给当前轮次。'
-            : 'Choose whether messages sent during a running task wait for the next turn or enter the active turn immediately.'
-        }
-      >
-        <SettingsRadio
-          name="guidance-delivery-mode"
-          value="queue"
-          title={language === 'zh' ? '加入队列' : 'Add to queue'}
-          subtitle={
-            language === 'zh'
-              ? '等待当前回复完成，再作为下一条消息自动发送。'
-              : 'Wait for the current response, then send it automatically as the next message.'
-          }
-          checked={settings.guidance.deliveryMode === 'queue'}
-          onChange={() =>
-            onSettingsChange((current) => ({
-              ...current,
-              guidance: { deliveryMode: 'queue' },
-            }))
-          }
-        />
-        <SettingsRadio
-          name="guidance-delivery-mode"
-          value="immediate"
-          title={language === 'zh' ? '马上发送' : 'Send immediately'}
-          subtitle={
-            language === 'zh'
-              ? '立即提交到当前运行轮次，在下一次可用的执行边界生效。'
-              : 'Submit to the active turn now and apply it at the next available execution boundary.'
-          }
-          checked={settings.guidance.deliveryMode === 'immediate'}
-          onChange={() =>
-            onSettingsChange((current) => ({
-              ...current,
-              guidance: { deliveryMode: 'immediate' },
-            }))
-          }
-        />
-      </SettingsCard>
-    </div>
-  );
-}
-
-function UsageStatisticsPanel({
-  language,
-  conversations,
-}: {
-  language: AppLanguage;
-  conversations: ConversationSummary[];
-}) {
-  const [statistics, setStatistics] = useState<CumulativeUsageStatistics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [activityRange, setActivityRange] = useState<UsageHeatmapRange>('year');
-  const refreshKey = conversations
-    .map((conversation) => `${conversation.id}:${conversation.updatedAt}`)
-    .join('|');
-
-  useEffect(() => {
-    let active = true;
-    setLoading(true);
-    void loadCumulativeUsageStatistics(conversations)
-      .then((result) => {
-        if (active) setStatistics(result);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [refreshKey]);
-
-  const heatmap = useMemo(
-    () => usageHeatmap(statistics?.activity ?? [], language, activityRange),
-    [activityRange, language, statistics?.activity],
-  );
-  const stats = statistics ?? emptyCumulativeUsageStatistics;
-  const numberLocale = language === 'zh' ? 'zh-CN' : 'en-US';
-  const statItems = [
-    {
-      label: language === 'zh' ? '累计 Token' : 'Total tokens',
-      value: formatUsageNumber(stats.totalTokens, numberLocale),
-      exact: stats.totalTokens,
-    },
-    {
-      label: language === 'zh' ? '输入 Token' : 'Input tokens',
-      value: formatUsageNumber(stats.promptTokens, numberLocale),
-      exact: stats.promptTokens,
-    },
-    {
-      label: language === 'zh' ? '输出 Token' : 'Output tokens',
-      value: formatUsageNumber(stats.completionTokens, numberLocale),
-      exact: stats.completionTokens,
-    },
-    {
-      label: language === 'zh' ? '活跃天数' : 'Active days',
-      value: new Intl.NumberFormat(numberLocale).format(stats.activeDays),
-      exact: stats.activeDays,
-    },
-  ];
-
-  return (
-    <SettingsCard
-      title={language === 'zh' ? '累计使用量' : 'Cumulative usage'}
-      subtitle={
-        language === 'zh'
-          ? '汇总全部本地会话的真实 Token 用量，并按年、月或周查看对话活跃度。'
-          : 'Summarizes real token usage across local conversations with yearly, monthly, or weekly activity views.'
-      }
-    >
-      <div className="usage-stat-grid" aria-busy={loading}>
-        {statItems.map((item) => (
-          <div className="usage-stat" key={item.label} title={new Intl.NumberFormat(numberLocale).format(item.exact)}>
-            <span>{item.label}</span>
-            <strong>{loading ? '—' : item.value}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="usage-activity-header">
-        <div>
-          <strong>{language === 'zh' ? '使用活跃度' : 'Usage activity'}</strong>
-          <span>
-            {language === 'zh'
-              ? `${stats.conversationCount} 个会话 · 最长连续 ${stats.longestStreak} 天`
-              : `${stats.conversationCount} conversations · ${stats.longestStreak}-day longest streak`}
-          </span>
-        </div>
-        <div className="usage-activity-actions">
-          <div
-            className="usage-range-switcher"
-            role="group"
-            aria-label={language === 'zh' ? '活跃度日期跨度' : 'Activity date range'}
-          >
-            {(['year', 'month', 'week'] as const).map((range) => (
-              <button
-                className={activityRange === range ? 'active' : ''}
-                type="button"
-                aria-pressed={activityRange === range}
-                key={range}
-                onClick={() => setActivityRange(range)}
-              >
-                {language === 'zh'
-                  ? { year: '年', month: '月', week: '周' }[range]
-                  : { year: 'Year', month: 'Month', week: 'Week' }[range]}
-              </button>
-            ))}
-          </div>
-          {loading && <LoaderCircle className="spin" size={15} aria-hidden="true" />}
-        </div>
-      </div>
-      <div
-        className="usage-heatmap-scroll"
-        aria-label={language === 'zh' ? `最近${activityRange === 'year' ? '一年' : activityRange === 'month' ? '一月' : '一周'}使用活跃度` : `Usage activity for the current ${activityRange}`}
-      >
-        <div
-          className={`usage-heatmap-frame range-${activityRange}`}
-          style={{ '--usage-heatmap-columns': heatmap.weekCount } as CSSProperties}
-        >
-          <div className="usage-month-labels" aria-hidden="true">
-            {heatmap.monthLabels.map((label, index) => <span key={`${label}-${index}`}>{label}</span>)}
-          </div>
-          <div className="usage-weekday-labels" aria-hidden="true">
-            <span>{language === 'zh' ? '一' : 'M'}</span>
-            <span>{language === 'zh' ? '三' : 'W'}</span>
-            <span>{language === 'zh' ? '五' : 'F'}</span>
-          </div>
-          <div className="usage-heatmap-grid">
-            {heatmap.days.map((day) => (
-              <span
-                className={`usage-heatmap-cell level-${day.level}${day.future ? ' future' : ''}`}
-                key={day.date}
-                title={day.future ? '' : usageDayTitle(day.date, day.interactions, language)}
-                aria-hidden="true"
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-      {!loading && stats.failedSessionCount > 0 && (
-        <p className="usage-partial-note">
-          {language === 'zh'
-            ? `${stats.failedSessionCount} 个会话暂时无法读取，当前统计为可用数据。`
-            : `${stats.failedSessionCount} conversations could not be read; available data is shown.`}
-        </p>
-      )}
-    </SettingsCard>
   );
 }
 
@@ -1651,20 +1145,9 @@ function ModelsSettingsPanel({
           <div className="model-form-grid">
             <label>
               <span>{language === 'zh' ? '模型商' : 'Provider'}</span>
-              <select
-                value={providerSelection}
-                onChange={(event) => onProviderSelectionChange(event.currentTarget.value)}
-              >
-                {providerOptions.map((provider) => (
-                  <option key={provider} value={provider}>
-                    {provider === customProviderValue
-                      ? language === 'zh'
-                        ? '模型商名称...'
-                        : 'Provider name...'
-                      : provider}
-                  </option>
-                ))}
-              </select>
+              <SettingsDropdown label={language === 'zh' ? '模型商' : 'Provider'} value={providerSelection}
+                onChange={onProviderSelectionChange} options={providerOptions.map(provider => ({ value: provider,
+                  label: provider === customProviderValue ? language === 'zh' ? '模型商名称...' : 'Provider name...' : provider }))} />
             </label>
             <SettingsInput
               label="base_url"
@@ -1926,7 +1409,7 @@ function CacheMaintenancePanel({
   return (
     <div className="settings-stack">
       <SettingsCard
-        title={language === 'zh' ? '缓存维护' : 'Cache maintenance'}
+        title={language === 'zh' ? '本地数据' : 'Local data'}
         subtitle={
           language === 'zh'
             ? '这些操作只清理 CardBush Runtime 本地数据库中的历史和诊断缓存，不会删除项目文件、任务工作目录或 provider 侧缓存。'
@@ -1942,8 +1425,8 @@ function CacheMaintenancePanel({
               </strong>
               <small>
                 {language === 'zh'
-                  ? '清理 chat_messages、turns、turn_summaries、session_token_usage 和 chat_sessions。'
-                  : 'Clears chat messages, turns, summaries, token usage, and sessions.'}
+                  ? '删除会话、消息和摘要，保留项目文件与累计用量统计。'
+                  : 'Delete conversations, messages and summaries. Keep project files and cumulative usage statistics.'}
               </small>
             </span>
             <button
@@ -1973,8 +1456,8 @@ function CacheMaintenancePanel({
               <strong>{language === 'zh' ? '清空日志缓存' : 'Clear logs cache'}</strong>
               <small>
                 {language === 'zh'
-                  ? '清理 chain_logs 和 tool_failure_logs，保留对话与 token usage。'
-                  : 'Clears chain logs and tool failure logs while keeping conversations and token usage.'}
+                  ? '清理运行与工具错误日志，保留会话和使用记录。'
+                  : 'Clear runtime and tool error logs. Keep conversations and usage records.'}
               </small>
             </span>
             <button
@@ -2024,13 +1507,16 @@ function CacheMaintenancePanel({
           </div>
         )}
       </SettingsCard>
-      <RuntimeAssetResetCard
+      <details className="settings-disclosure" open={Boolean(readPendingRuntimeAssetReset()) || undefined}>
+      <summary>{language === 'zh' ? '恢复内置配置' : 'Restore bundled configuration'}</summary>
+      <div className="settings-disclosure-body"><RuntimeAssetResetCard
         language={language}
         capabilities={capabilities}
         runtimeBusy={runtimeBusy}
         onNotify={onNotify}
         onRuntimeAssetsReloaded={onRuntimeAssetsReloaded}
-      />
+      /></div>
+      </details>
     </div>
   );
 }
@@ -2983,15 +2469,9 @@ function McpServersPanel({
             />
             <label className="settings-field">
               <span>{language === 'zh' ? '连接方式' : 'Connection'}</span>
-              <select
-                value={draft.transport}
-                onChange={(event) => updateDraft({ transport: event.currentTarget.value as McpTransport })}
-              >
-                <option value="stdio">stdio</option>
-                <option value="sse">SSE</option>
-                <option value="streamable_http">HTTP stream</option>
-                <option value="http">HTTP</option>
-              </select>
+              <SettingsDropdown label={language === 'zh' ? '连接方式' : 'Connection'} value={draft.transport}
+                onChange={transport => updateDraft({ transport: transport as McpTransport })}
+                options={[{ value: 'stdio', label: 'stdio' }, { value: 'sse', label: 'SSE' }, { value: 'streamable_http', label: 'HTTP stream' }, { value: 'http', label: 'HTTP' }]} />
             </label>
             {draft.transport === 'stdio' ? (
               <SettingsInput
@@ -3522,242 +3002,6 @@ function mcpErrorText(caught: unknown, language: AppLanguage) {
       : `Invalid MCP transport config: ${message}`;
   }
   return message;
-}
-
-const emptyCumulativeUsageStatistics: CumulativeUsageStatistics = {
-  promptTokens: 0,
-  completionTokens: 0,
-  totalTokens: 0,
-  promptCacheHitTokens: 0,
-  promptCacheMissTokens: 0,
-  conversationCount: 0,
-  activeDays: 0,
-  longestStreak: 0,
-  activity: [],
-  failedSessionCount: 0,
-};
-
-function formatUsageNumber(value: number, locale: string) {
-  return new Intl.NumberFormat(locale, {
-    notation: value >= 10_000 ? 'compact' : 'standard',
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
-type UsageHeatmapRange = 'year' | 'month' | 'week';
-
-function usageHeatmap(
-  activity: Array<{ date: string; interactions: number }>,
-  language: AppLanguage,
-  range: UsageHeatmapRange,
-) {
-  const activityByDate = new Map(activity.map((day) => [day.date, day.interactions]));
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  let start = new Date(today);
-  let end = new Date(today);
-  let selectedMonth = today.getMonth();
-
-  if (range === 'year') {
-    start.setDate(start.getDate() - start.getDay() - (52 * 7));
-    end = new Date(start);
-    end.setDate(start.getDate() + (53 * 7) - 1);
-  } else if (range === 'month') {
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    selectedMonth = monthStart.getMonth();
-    start = new Date(monthStart);
-    start.setDate(monthStart.getDate() - monthStart.getDay());
-    end = new Date(monthEnd);
-    end.setDate(monthEnd.getDate() + (6 - monthEnd.getDay()));
-  } else {
-    start.setDate(start.getDate() - start.getDay());
-    end = new Date(start);
-    end.setDate(start.getDate() + 6);
-  }
-
-  const weekCount = Math.floor((end.getTime() - start.getTime()) / 86_400_000 / 7) + 1;
-  const visibleCounts = activity
-    .filter((day) => day.date >= localDayKey(start) && day.date <= localDayKey(end))
-    .map((day) => day.interactions);
-  const maximum = Math.max(1, ...visibleCounts);
-  const days = Array.from({ length: weekCount * 7 }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    const dateKey = localDayKey(date);
-    const interactions = activityByDate.get(dateKey) ?? 0;
-    return {
-      date: dateKey,
-      interactions,
-      future: date > today,
-      level: interactions === 0 ? 0 : Math.max(1, Math.ceil((interactions / maximum) * 4)),
-    };
-  });
-  const formatter = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    month: 'short',
-  });
-  const monthLabels = Array.from({ length: weekCount }, (_, weekIndex) => {
-    const weekStart = new Date(start);
-    weekStart.setDate(start.getDate() + weekIndex * 7);
-    const previousWeek = new Date(weekStart);
-    previousWeek.setDate(weekStart.getDate() - 7);
-    if (range === 'month') {
-      return weekIndex === 0 ? formatter.format(new Date(today.getFullYear(), selectedMonth, 1)) : '';
-    }
-    return weekIndex === 0 || weekStart.getMonth() !== previousWeek.getMonth()
-      ? formatter.format(weekStart)
-      : '';
-  });
-  return { days, monthLabels, weekCount };
-}
-
-function localDayKey(date: Date) {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-');
-}
-
-function usageDayTitle(date: string, interactions: number, language: AppLanguage) {
-  const formatted = new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  }).format(new Date(`${date}T00:00:00`));
-  return language === 'zh'
-    ? `${formatted} · ${interactions} 次对话`
-    : `${formatted} · ${interactions} chat interactions`;
-}
-
-function SettingsCard({
-  title,
-  subtitle,
-  headerAction,
-  bodyHidden = false,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  headerAction?: React.ReactNode;
-  bodyHidden?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="settings-card">
-      <div className={`settings-card-header${headerAction ? ' has-action' : ''}`}>
-        <div className="settings-card-heading">
-          <h3>{title}</h3>
-          {subtitle && <p>{subtitle}</p>}
-        </div>
-        {headerAction && <div className="settings-card-header-action">{headerAction}</div>}
-      </div>
-      {!bodyHidden && <div className="settings-card-body">{children}</div>}
-    </section>
-  );
-}
-
-function SettingsDivider() {
-  return <div className="settings-divider" />;
-}
-
-function SettingsGroupTitle({ children }: { children: React.ReactNode }) {
-  return <div className="settings-group-title">{children}</div>;
-}
-
-function SettingsRadio({
-  className,
-  name,
-  title,
-  subtitle,
-  value,
-  checked,
-  onChange,
-}: {
-  className?: string;
-  name: string;
-  title: string;
-  subtitle?: string;
-  value: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className={`settings-radio${className ? ` ${className}` : ''}`}>
-      <input name={name} type="radio" value={value} checked={checked} onChange={onChange} />
-      <span>
-        <strong>{title}</strong>
-        {subtitle && <small>{subtitle}</small>}
-      </span>
-    </label>
-  );
-}
-
-function SettingsSwitch({
-  title,
-  subtitle,
-  checked,
-  disabled,
-  onChange,
-}: {
-  title: string;
-  subtitle?: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <label className={`settings-switch${disabled ? ' disabled' : ''}`}>
-      <span>
-        <strong>{title}</strong>
-        {subtitle && <small>{subtitle}</small>}
-      </span>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-      />
-    </label>
-  );
-}
-
-function SettingsInput({
-  label,
-  type = 'text',
-  value,
-  placeholder,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  type?: string;
-  value: string;
-  placeholder?: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="settings-field">
-      <span>{label}</span>
-      <input
-        type={type}
-        value={value}
-        disabled={disabled}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-    </label>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="info-row">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }
 
 function ModelConfigRow({

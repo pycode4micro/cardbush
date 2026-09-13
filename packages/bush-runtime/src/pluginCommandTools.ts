@@ -3,6 +3,7 @@ import type { ModelRequest } from '@cardbush/bush-protocol';
 import { CLAUDE_TOOL_NAMES, type PluginCommand } from './pluginExtensions.js';
 import { bashExecutable, executePluginProcess } from './pluginHookRunner.js';
 import type { ToolRegistry, ToolAdmissionDecision, ToolHandlerContext } from './toolRegistry.js';
+import { childAgentDispatchDenial, childAgentToolDenial } from './childAgentPolicy.js';
 
 interface CommandInput { command: string; arguments: string; prepared?: CommandPlan }
 interface CommandPlan { command: PluginCommand; arguments: string; tokens: string[]; cwd: string; pieces: Array<{ text?: string; script?: string; admissionScript?: string }> }
@@ -39,6 +40,8 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
     authorize: async context => {
       const command = (await load()).find(item => item.id === context.input.command);
       if (!command) return deny('plugin_command_unavailable', '命令不存在或所属插件已停用。');
+      const childDenial = command.context === 'fork' ? childAgentDispatchDenial(context.turn?.request) : undefined;
+      if (childDenial) return deny(childDenial.code, childDenial.message);
       const userInvoked = context.turn?.request.metadata.pluginCommandUserCallId === context.toolCall.id && context.turn.request.metadata.pluginCommandUserId === command.id;
       if (userInvoked ? !command.userInvocable : command.disableModelInvocation) return deny('plugin_command_invocation_disabled', userInvoked ? '此命令不允许通过用户输入直接调用。' : '此命令只能由用户通过 /命令名 调用。');
       const disabled = stringArray(context.turn?.request.metadata.disabledSkills), allowed = context.turn?.request.metadata.allowedSkills;
@@ -53,6 +56,8 @@ export function registerPluginCommandTools(registry: ToolRegistry, load: () => P
         if (deniesShell(command.disallowedTools) || deniesShell(context.turn?.request.metadata.pluginCommandDisallowedTools)) return deny('plugin_command_tool_disallowed', 'Command disallowed-tools prevents dynamic shell context.');
         const terminal = registry.resolve('terminal_exec');
         if (!terminal?.authorize || !context.turn?.request.tools.some(tool => tool.name === 'terminal_exec')) return deny('plugin_command_shell_unavailable', 'Dynamic command context requires the exposed terminal_exec tool.');
+        const terminalDenial = childAgentToolDenial(context.turn.request, terminal);
+        if (terminalDenial) return deny(terminalDenial.code, terminalDenial.message);
         const admission = await terminal.authorize({ ...context,
           toolCall: { ...context.toolCall, name: 'terminal_exec', argumentsText: JSON.stringify({ command: piece.admissionScript, cwd: plan.cwd }) },
           input: { command: piece.admissionScript, cwd: plan.cwd, yieldTimeMs: 1000, shell: command.shell === 'bash' ? 'posix' : 'powershell' },

@@ -148,6 +148,16 @@ export class ElectronProductHostController {
     return this.#resolveModel(modelId);
   }
 
+  async subagentModels() {
+    const config = await this.#models.read();
+    return config.models.map(({ id, model, maxContextTokens, maxOutputTokens }) => ({ id, model, maxContextTokens, maxOutputTokens }));
+  }
+
+  async resolveSubagentModel(modelId: string) {
+    await this.#ensureLegacyModelCredentials();
+    return this.#resolveModel(modelId, 'The selected clean Agent model is not configured. Refresh list_subagent_options and select an available model.');
+  }
+
   async refreshMcp(): Promise<unknown> {
     const config = await this.#mcp.read();
     const snapshot = mcpSnapshotSchema.parse({
@@ -404,11 +414,11 @@ export class ElectronProductHostController {
     };
   }
 
-  async #resolveModel(modelId: string): Promise<Record<string, unknown>> {
+  async #resolveModel(modelId: string, missingModelMessage?: string): Promise<Record<string, unknown>> {
     const snapshot = await this.#models.read();
-    const selected = snapshot.models.find((item) => item.id === modelId)
-      ?? snapshot.models.find((item) => item.id === snapshot.defaultModelId)
-      ?? snapshot.models[0];
+    const exact = snapshot.models.find((item) => item.id === modelId);
+    if (!exact && missingModelMessage) throw new ProductHostProtocolError('product_model_not_configured', missingModelMessage);
+    const selected = exact ?? snapshot.models.find((item) => item.id === snapshot.defaultModelId) ?? snapshot.models[0];
     if (!selected) {
       throw new ProductHostProtocolError(
         'product_model_not_configured',

@@ -252,12 +252,19 @@ Runtime does not discover them by parsing prompt text.
 ## Subagent fork checkpoint
 
 `subagent` is now a Runtime-registered root-only delegation Tool. It forks the
-parent's model-visible conversation immediately before the dispatch call, removes
-root System/Developer instructions, adds only explicitly supplied child prefix
-messages, and appends the assignment as a new User message. Child-visible Tools
-are the intersection of the parent's selected catalog and registrations that
-explicitly declare child visibility. A fabricated call to a hidden Tool is
-mechanically rejected even if a provider emits its name.
+parent's model-visible conversation immediately before the dispatch call,
+preserves its System/Developer instructions and frozen Tool declarations, then
+appends role instructions and a new User assignment beginning with
+`你当前处于子agent状态`. Default `mode: fork` keeps the same system policy. Only
+when the user explicitly requests independent configuration should the parent use
+`mode: clean`: inspect `list_subagent_options`, provide the actual `system_prompt`
+and user `prompt`, and select tools, Skills, configured model, generation settings,
+execution limits and permission routing. Clean does not inherit conversation or
+system messages. See `SUBAGENT_PERMISSIONS.md` for the full configuration contract.
+Child restrictions
+are enforced at Tool admission without removing default declarations; explicit
+Profile allowlists may still narrow the catalog. Recursive dispatch is rejected
+in child state regardless of the configured deny list.
 
 Registrations declare `parallelSafe` directly. A same-round batch runs concurrently
 only when every registration in that batch makes that declaration; Runtime does

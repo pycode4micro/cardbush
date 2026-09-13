@@ -67,6 +67,47 @@ app.whenReady().then(async () => {
       await run('flushSync(()=>controls.setOpen(false))');
     }
     await sampleOpening('image',1600,900);
+    const geometry = () => run(`(() => {
+      const stage=document.querySelector('.image-preview-stage'), canvas=document.querySelector('.image-preview-canvas');
+      const s=stage.getBoundingClientRect(),r=canvas.querySelector('img').getBoundingClientRect();
+      const x=s.left+stage.clientWidth*.58,y=s.top+stage.clientHeight*.57;
+      return {stageWidth:stage.clientWidth,stageHeight:stage.clientHeight,baseWidth:canvas.offsetWidth,baseHeight:canvas.offsetHeight,
+        left:r.left,top:r.top,width:r.width,height:r.height,x,y,u:(x-r.left)/r.width,v:(y-r.top)/r.height};
+    })()`);
+    const fitted = await geometry();
+    for(let step=0;step<7;step++) {
+      await run('flushSync(()=>document.querySelector("[aria-label=放大图片]").click())');
+      const current = await geometry();
+      assert.equal(current.baseWidth,fitted.baseWidth,'zoom does not resize or repaint the image plane');
+      assert.equal(current.baseHeight,fitted.baseHeight);
+      assert.equal(current.stageWidth,fitted.stageWidth,'zoom cannot introduce scrollbars and change fit dimensions');
+      assert.equal(current.stageHeight,fitted.stageHeight);
+      assert.ok(Math.abs(current.width-fitted.width*(1+(step+1)*.25))<.02,'scale updates in the same commit');
+    }
+    const focalBefore = await geometry();
+    const prevented = await run(`(() => {
+      const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-100,clientX:${focalBefore.x},clientY:${focalBefore.y}});
+      flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(event));
+      return event.defaultPrevented;
+    })()`);
+    assert.equal(prevented,true,'Ctrl+wheel is cancelled instead of zooming the whole application');
+    const focalAfter = await geometry();
+    assert.ok(Math.abs(focalBefore.u-focalAfter.u)<.0001 && Math.abs(focalBefore.v-focalAfter.v)<.0001,'the point under the cursor stays fixed during zoom');
+    const at = {x:Math.round(focalAfter.x),y:Math.round(focalAfter.y)};
+    window.webContents.sendInputEvent({type:'mouseDown',...at,button:'left',clickCount:1});
+    window.webContents.sendInputEvent({type:'mouseMove',x:at.x+65,y:at.y+40,button:'left'});
+    window.webContents.sendInputEvent({type:'mouseUp',x:at.x+65,y:at.y+40,button:'left',clickCount:1});
+    await pause();
+    const dragged = await geometry();
+    assert.ok(Math.abs(dragged.left-focalAfter.left-65)<1 && Math.abs(dragged.top-focalAfter.top-40)<1,'native dragging pans the enlarged image without changing its scale');
+    assert.equal(dragged.width,focalAfter.width);
+    await run(`flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:50})))`);
+    const wheeled = await geometry();
+    assert.ok(Math.abs(wheeled.top-dragged.top+50)<1,'ordinary wheel scroll pans the enlarged image');
+    await run('flushSync(()=>document.querySelector(".image-preview-zoom-value").click())');
+    const reset = await geometry();
+    assert.ok(Math.abs(reset.left-fitted.left)<1 && Math.abs(reset.top-fitted.top)<1,'fit reset also clears panning');
+    assert.equal(await run('document.querySelectorAll(".image-preview-canvas img").length'),1,'the preview uses one image layer');
     await run('document.querySelector("[aria-label=放大图片]").click()');await pause();
     const portrait = {src:'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="2400"><rect width="900" height="2400" fill="#a88037"/></svg>'),name:'portrait.svg'};
     const coldFrames=await sampleOpening(JSON.stringify(portrait),900,2400);
@@ -118,6 +159,12 @@ app.whenReady().then(async () => {
     await run('controls.setOpen(true)'); await pause();
     await run('document.querySelector(".image-preview-backdrop").dispatchEvent(new MouseEvent("mousedown",{bubbles:true}))'); await pause();
     assert.equal(await run('Boolean(document.querySelector(".image-preview-dialog"))'),false,'backdrop closes');
-    console.log('Image preview passed: fitted first paint, warm-cache reopens, cold source/zoom reset, error state, four themes, long names, narrow windows, containment escape, 500% zoom, native close, Escape and backdrop.');
+    if (process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE) {
+      const sample = {src:'data:image/png;base64,'+fs.readFileSync(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE).toString('base64'),name:path.basename(process.env.CARDBUSH_IMAGE_PREVIEW_SAMPLE)};
+      await run(`controls.setTheme('theme-dark'); controls.setImage(${JSON.stringify(sample)}); controls.setOpen(true)`); await pause(200);
+      await run(`flushSync(()=>{for(let i=0;i<3;i++)document.querySelector('[aria-label="放大图片"]').click()})`); await pause(100);
+      fs.writeFileSync(path.join(root,'tmp/image-preview-real-175.png'),(await window.webContents.capturePage()).toPNG());
+    }
+    console.log('Image preview passed: atomic zoom/pan, stable viewport, cursor anchor, native drag/wheel, fitted first paint, warm/cold sources, error state, four themes, narrow windows, 500% zoom, close/Escape/backdrop.');
   } finally { window.destroy(); }
 }).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1);});
