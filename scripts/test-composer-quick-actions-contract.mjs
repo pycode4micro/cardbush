@@ -14,6 +14,7 @@ const composerPath = path.join(
   'Composer.tsx',
 );
 const source = fs.readFileSync(composerPath, 'utf8');
+const fileDropSource = fs.readFileSync(path.join(path.dirname(composerPath), 'useFileDropZone.ts'), 'utf8');
 const mainSource = fs.readFileSync(
   path.join(process.cwd(), 'electron', 'main.ts'),
   'utf8',
@@ -42,7 +43,7 @@ const slashBlock = source.match(
 assert.ok(slashBlock, 'slash quick-action block is missing');
 assert.deepEqual(
   [...slashBlock.matchAll(/id:\s*'([^']+)'/g)].map((match) => match[1]),
-  ['/model', '/goal', '/skill', '/new'],
+  ['/model', '/goal', '/skill', '/collect', '/new'],
 );
 assert.match(slashBlock, /id: delegationCommand/);
 assert.match(slashBlock, /模型切换/);
@@ -93,7 +94,7 @@ assert.match(source, /value=\{composerInputValue\}/);
 assert.match(source, /onDraftChange\(`\/goal\$\{next \? ` \$\{next\}` : ' '\}`\)/);
 assert.match(
   chatHookSource,
-  /\^\\\/\(\?:model\|goal\|skill\|new\)\(\?:\\s\|\$\)/,
+  /\^\\\/\(\?:model\|goal\|skill\|collect\|new\)\(\?:\\s\|\$\)/,
   'slash commands must not be parsed as POSIX file attachments',
 );
 assert.doesNotMatch(slashBlock.split('commands.push')[0], /title:\s*['"`]\//, 'built-in quick actions retain their descriptive labels');
@@ -131,8 +132,10 @@ assert.match(preloadSource, /getPathForFile:\s*\(file:\s*File\)\s*=>\s*webUtils\
 assert.match(source, /function addTransferredFiles\(files:\s*File\[\]\)/);
 assert.match(source, /getPathForFile\?\.\(file\)/);
 assert.match(source, /event\.clipboardData\.files/);
-assert.match(source, /event\.dataTransfer\.files/);
-assert.match(source, /dataTransfer\.types\.includes\('Files'\)/);
+assert.match(source, /useFileDropZone\(dropTargetRef, transfer =>/);
+assert.match(source, /const files = \[\.\.\.transfer\.files\];[\s\S]*?addTransferredFiles\(files\)/);
+assert.match(fileDropSource, /handlerRef\.current\(event\.dataTransfer!\)/);
+assert.match(fileDropSource, /transfer\.types\.includes\('Files'\)/);
 assert.match(source, /className=\{`composer-surface\$\{fileDragActive/);
 assert.match(source, /composer-file-drop-overlay/);
 assert.match(stylesSource, /\.composer-surface\.is-file-dragging\s*\{/);
@@ -192,12 +195,12 @@ assert.match(source, /aria-activedescendant=/);
 assert.match(source, /role="listbox"/);
 assert.match(stylesSource, /\.composer-team-picker \.popover-row\.keyboard-active/);
 assert.match(source, /停止生成/);
-assert.match(source, /<Square size=\{11\} fill="currentColor"/);
+assert.match(source, /<Square size=\{10\} fill="currentColor"/);
 assert.doesNotMatch(source, /<Pause\b/);
 assert.match(source, /aria-label=\{sendButtonLabel\}/);
 assert.match(
   stylesSource,
-  /\.composer-actions \.send-button\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?border-radius:\s*50%/,
+  /\.composer-actions \.send-button\s*\{[\s\S]*?width:\s*28px;[\s\S]*?height:\s*28px;[\s\S]*?border-radius:\s*50%/,
   'The compact send control must remain a true circle',
 );
 assert.match(messageBubbleSource, /message-delivery-status/);

@@ -1,6 +1,6 @@
 import { basename, fileUrl, isAbsoluteLocalPath, stripWrappingQuotes } from '../../shared/localPaths';
 import { resolveFilePreview } from './filePreviewRegistry';
-import type { InspectorOpenDetail } from './inspectorEvents';
+import type { InspectorMediaType, InspectorOpenDetail } from './inspectorEvents';
 
 export function inspectorTargetIdentity(target: string) {
   const value = stripWrappingQuotes(target.trim());
@@ -17,7 +17,8 @@ export function inspectorTargetIdentity(target: string) {
   return value;
 }
 
-export function isInspectorBrowserTarget(target: string) {
+export function isInspectorBrowserTarget(target: string, mediaType?: InspectorMediaType) {
+  if (mediaType && inspectorMediaTarget(target, mediaType)) return false;
   const value = stripWrappingQuotes(target.trim());
   return /^https?:\/\//i.test(value) || /^about:blank(?:[?#]|$)/i.test(value);
 }
@@ -104,10 +105,14 @@ export function isMarkdownInspectorTarget(target: string) {
   return !isInspectorBrowserTarget(target) && resolveFilePreview(inspectorFilePath(target))?.renderer === 'markdown';
 }
 
-export function inspectorMediaTarget(target: string): { kind: 'image' | 'video' | 'audio'; path: string; source: string } | null {
+export function inspectorMediaTarget(target: string, mediaType?: InspectorMediaType): { kind: InspectorMediaType; path: string; source: string } | null {
   const path = inspectorFilePath(target);
+  const explicitType = mediaType === 'image' || mediaType === 'video' || mediaType === 'audio' ? mediaType : undefined;
+  if (explicitType && (/^https?:\/\//i.test(path) || path.toLowerCase().startsWith(`data:${explicitType}/`))) {
+    return { kind: explicitType, path, source: path };
+  }
   if (!isAbsoluteLocalPath(path)) return null;
-  const kind = resolveFilePreview(path)?.renderer;
+  const kind = explicitType ?? resolveFilePreview(path)?.renderer;
   return kind === 'image' || kind === 'video' || kind === 'audio'
     ? { kind, path, source: fileUrl(path) } : null;
 }

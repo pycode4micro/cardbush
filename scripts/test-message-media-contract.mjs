@@ -50,13 +50,13 @@ assert.match(imagePreviewDialog, /event\.ctrlKey[\s\S]*?event\.metaKey/);
 assert.match(imagePreviewDialog, /NumpadAdd/);
 assert.match(imagePreviewDialog, /NumpadSubtract/);
 assert.match(imagePreviewDialog, /Numpad0/);
-assert.match(imagePreviewDialog, /onWheel=\{handleWheel\}/);
+assert.match(imagePreviewDialog, /addEventListener\('wheel', handleWheel, \{ passive: false \}\)/);
 assert.match(imagePreviewDialog, /onPointerDown=\{handlePointerDown\}/);
 assert.match(imagePreviewDialog, /setPointerCapture\(event\.pointerId\)/);
-assert.match(imagePreviewDialog, /scrollLeft = drag\.scrollLeft -/);
-assert.match(imagePreviewDialog, /scrollTop = drag\.scrollTop -/);
+assert.match(imagePreviewDialog, /x: drag\.x \+ event\.clientX - drag\.startX/);
+assert.match(imagePreviewDialog, /y: drag\.y \+ event\.clientY - drag\.startY/);
 assert.match(imagePreviewDialog, /image-preview-zoom-controls/);
-assert.match(imagePreviewDialog, /zoomRef\.current === 1 \? 2 : 1/);
+assert.match(imagePreviewDialog, /viewRef\.current\.zoom === 1 \? 2 : 1/);
 assert.match(imagePreviewDialog, /import \{ createPortal \} from 'react-dom'/);
 assert.match(
   imagePreviewDialog,

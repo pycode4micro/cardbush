@@ -18,6 +18,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  RotateCw,
   Search,
   Settings,
   Trash2,
@@ -49,6 +50,7 @@ import type {
   SessionAttentionState,
 } from '../../types';
 import { sectionLabels } from '../appSections';
+import { useAutomationUnreadCount } from '../automations/useAutomationUnreadCount';
 import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
 import { conversationProjectDir } from '../conversationWorkspace';
 import { conversationMatchesScope } from '../conversationScope';
@@ -223,6 +225,7 @@ export const ChatSidebar = memo(function ChatSidebar({
     });
   });
   const t = (id: AppSection) => sectionLabels[id][language];
+  const unreadAutomations = useAutomationUnreadCount();
   const [archivedConversationIds, setArchivedConversationIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -749,7 +752,7 @@ export const ChatSidebar = memo(function ChatSidebar({
             ])
           }
         />
-        <NavRow active={section === 'automations'} icon={<CalendarClock size={14}/>} label={t('automations')} onClick={() => onSectionChange('automations')} />
+        <NavRow active={section === 'automations'} icon={<CalendarClock size={14}/>} label={t('automations')} trailing={unreadAutomations > 0 ? <span className="automation-nav-count" aria-label={language === 'zh' ? `${unreadAutomations} 条未读结果` : `${unreadAutomations} unread results`}>{unreadAutomations > 99 ? '99+' : unreadAutomations}</span> : undefined} onClick={() => onSectionChange('automations')} />
       </nav>
 
       <div className="sidebar-scroll">
@@ -868,12 +871,14 @@ function NavRow({
   label,
   onClick,
   onContextMenu,
+  trailing,
 }: {
   active?: boolean;
   icon: React.ReactNode;
   label: string;
   onClick: () => void;
   onContextMenu?: (event: ReactMouseEvent) => void;
+  trailing?: React.ReactNode;
 }) {
   return (
     <button
@@ -886,6 +891,7 @@ function NavRow({
         {icon}
       </span>
       <span>{label}</span>
+      {trailing}
     </button>
   );
 }
@@ -1654,7 +1660,7 @@ export function ConversationChangeDialog({
   const resolvedReports = useMemo(
     () => reports.map((report) => {
       const hydrated = hydratedReports.get(reviewDetailKey(conversation.id, report.id));
-      return hydrated ? { ...report, ...hydrated } : report;
+      return hydrated ? { ...report, ...hydrated, reverted: report.reverted } : report;
     }),
     [conversation.id, hydratedReports, reports],
   );
@@ -1877,13 +1883,13 @@ export function ConversationChangeDialog({
             <button
               className="danger-soft-button"
               type="button"
-              disabled={Boolean(revertingChangeId) || allReverted}
+              disabled={Boolean(revertingChangeId)}
               onClick={() => void onRevertAll()}
             >
-              {allBusy ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
+              {allBusy ? <LoaderCircle size={14} /> : allReverted ? <RotateCw size={14} /> : <RotateCcw size={14} />}
               <span>
                 {allReverted
-                  ? (language === 'zh' ? '已全部撤回' : 'All reverted')
+                  ? (language === 'zh' ? '取消全部撤回' : 'Undo all reverts')
                   : (language === 'zh' ? '撤回全部修改' : 'Revert all')}
               </span>
             </button>
@@ -1912,18 +1918,15 @@ export function ConversationChangeDialog({
                     <button
                       className="secondary-button"
                       type="button"
-                      disabled={
-                        Boolean(revertingChangeId) ||
-                        revertedChangeIds.has(selectedItem.report.id)
-                      }
+                      disabled={Boolean(revertingChangeId)}
                       onClick={() => void onRevert(selectedItem.report)}
                     >
                       {revertingChangeId === selectedItem.report.id
                         ? <LoaderCircle size={14} />
-                        : <RotateCcw size={14} />}
+                        : revertedChangeIds.has(selectedItem.report.id) ? <RotateCw size={14} /> : <RotateCcw size={14} />}
                       <span>
                         {revertedChangeIds.has(selectedItem.report.id)
-                          ? (language === 'zh' ? '已撤回' : 'Reverted')
+                          ? (language === 'zh' ? '取消撤回' : 'Undo revert')
                           : (language === 'zh' ? '撤回这组' : 'Revert set')}
                       </span>
                     </button>

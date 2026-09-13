@@ -9,7 +9,7 @@ const { resolveWindowAppearance, WindowAppearanceController } = require('../dist
 const root = path.resolve(__dirname, '..');
 const preview = process.argv.includes('--preview');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
-const backgrounds = { dark: '#1a1a1a', bright: '#f5f3ef', parchment: '#e1d4ba', cyberpunk: '#050607' };
+const backgrounds = { dark: '#1a1a1a', bright: '#f5f3ef', cyberpunk: '#050607' };
 
 async function bundleViews() {
   const { build } = await import('vite');
@@ -205,9 +205,10 @@ app.whenReady().then(async () => {
     await run(`changeAppearance(${JSON.stringify(theme)}); openFixtureSettings(false)`);
     await until("!!document.querySelector('.main-stage')", 'home surface');
     await until(`document.documentElement.dataset.startTheme === ${JSON.stringify(theme)} && document.documentElement.dataset.windowMaterial === ${JSON.stringify(nativeState.material)}`, 'surface material acknowledgement');
-    const homeSurface = await run("({radius:getComputedStyle(document.querySelector('.main-stage')).borderRadius, shadow:getComputedStyle(document.querySelector('.main-stage')).boxShadow, background:getComputedStyle(document.querySelector('.main-stage')).backgroundColor})");
+    const homeSurface = await run("({radius:getComputedStyle(document.querySelector('.main-stage')).borderRadius, background:getComputedStyle(document.querySelector('.main-stage')).backgroundColor})");
     await run('openFixtureSettings(true)'); await until("!!document.querySelector('.settings-content')", 'settings surface');
-    const settingsSurface = await run("({radius:getComputedStyle(document.querySelector('.settings-content')).borderRadius, shadow:getComputedStyle(document.querySelector('.settings-content')).boxShadow, background:getComputedStyle(document.querySelector('.settings-content')).backgroundColor})");
+    // Share the palette and corners; the conversation's right divider belongs to the inspector.
+    const settingsSurface = await run("({radius:getComputedStyle(document.querySelector('.settings-content')).borderRadius, background:getComputedStyle(document.querySelector('.settings-content')).backgroundColor})");
     assert.deepEqual(settingsSurface, homeSurface, 'settings uses the same rounded surface as home');
     assert.equal(settingsSurface.radius, '14px 0px 0px 14px');
   }

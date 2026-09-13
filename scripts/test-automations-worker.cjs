@@ -72,12 +72,33 @@ async function run() {
     assert.equal(requests.length, 2); assert.equal(modelReads, 1); assert.ok(notices >= 4);
     assert.ok(JSON.stringify(requests[1]).includes('检查最新结果。'));
     assert.ok(JSON.stringify(requests[1]).includes('使用中文，按用户请求执行。'));
-    const history = await command('runtime.get_session', { sessionId: 'session' }); assert.equal(history.turns.length, 2);
+    const history = await command('runtime.get_session', { sessionId: 'session' }); assert.equal(history.turns.length, 1, 'isolated runs do not append to the source');
+    const executed = (await automate({ action: 'list' })).jobs[0].runs.at(-1);
+    assert.notEqual(executed.sessionId, 'session');
+    const executionHistory = await command('runtime.get_session', { sessionId: executed.sessionId });
+    assert.equal(executionHistory.turns.length, 1); assert.equal(executionHistory.turns[0].turnId, executed.turnId);
+    assert.equal(executionHistory.metadata.automationRunId, executed.id);
+    assert.equal((await automate({ action: 'reminder' })).total, 1);
+    const conversation = await automate({ action: 'conversation', id: job.id, runIds: [executed.id] });
+    assert.equal(conversation.model, 'fixture-config'); assert.equal(conversation.run.result, '已检查。');
+    assert.equal((await automate({ action: 'reminder' })).total, 1, 'reading a result is not acknowledgment');
+    // Binding refreshed by the restarted worker; retrieve its current reference.
+    const currentBinding = (await bind()).binding;
+    const followup = id => command('runtime.run_session_turn', { protocol: 'bush.session_turn_request.v1', requestId: id, sessionId: executed.sessionId, turnId: id, model: 'fixture', providerBinding: currentBinding,
+      tools: [], prefixMessages: [{ role: 'system', content: '使用中文，按用户请求执行。' }], inputMessages: [{ messageId: id, message: { role: 'user', content: '继续解释结果。' } }], metadata: {}, permissionMode: 'task_free' });
+    await followup('follow-up');
+    assert.match(JSON.stringify(requests[2]), /automation_unread_reminder/);
+    const followed = await command('runtime.get_session', { sessionId: executed.sessionId });
+    assert.equal(followed.turns.length, 2); assert.equal(followed.turns[1].messages[0].message.content, '继续解释结果。');
+    assert.equal(followed.turns[1].messages[0].metadata.automationReminder.total, 1);
+    assert.ok(!followed.turns.flatMap(turn => turn.messages).some(message => message.message.name === 'automation_unread_reminder'), 'reminders do not become stale history');
+    await automate({ action: 'mark_read', runIds: [executed.id] });
+    await followup('after-read'); assert.doesNotMatch(JSON.stringify(requests[3]), /automation_unread_reminder/);
     const stored = readFileSync(join(root, 'runtime', 'scheduler', 'automations.json'), 'utf8'); assert.doesNotMatch(stored, /FIXTURE_ONLY/);
     assert.doesNotMatch(JSON.stringify(await automate({ action: 'list' })), /prefixMessages|FIXTURE_ONLY/);
     removed = true; await automate({ action: 'run', id: job.id });
     await until(async () => (await automate({ action: 'list' })).jobs[0].runs.at(-1)?.status === 'failed');
-    assert.equal(requests.length, 2); assert.equal((await automate({ action: 'list' })).jobs[0].state, 'paused');
+    assert.equal(requests.length, 4); assert.equal((await automate({ action: 'list' })).jobs[0].state, 'paused');
     console.log('Automation Electron integration passed: real provider stream, durable conversation, worker restart, private binding refresh, notifications and removed-model failure.');
   } finally { controller.stop(); await new Promise(resolve=>server.close(resolve)); clearTimeout(deadline); }
 }

@@ -21,6 +21,7 @@ app.whenReady().then(async () => {
     await read('state.available=false;notify()'); await until('state.available===false');
     await click('新建自动化'); assert.equal(await read('setupRequests'),2,'chat setup remains reachable when scheduling is unavailable');
     await read(`state.available=true;state.jobs.push({id:'agent-job',revision:1,name:'每日项目检查',prompt:'检查项目构建和导出结果，将需要处理的问题整理到此会话。',sessionId:'session',trigger:{kind:'once',at:new Date(Date.now()+3600000).toISOString()},timeZone:'Asia/Shanghai',state:'active',createdAt:new Date().toISOString(),runs:[]});notify()`);
+    await click('计划管理');
     await until('document.querySelectorAll(".automation-card").length===1');
     await click('编辑');
     await field('触发方式','interval'); await field('每隔多少分钟','1440');
@@ -40,6 +41,16 @@ app.whenReady().then(async () => {
     await read('state.jobs[0].runs.at(-1).status="completed";notify()'); await until('document.querySelector("summary").textContent.includes("已完成")');
     await capture('automations-list.png'); win.setSize(420,820); await until('window.innerWidth<450'); await capture('automations-narrow.png');
     assert.ok(await read('document.documentElement.scrollWidth<=window.innerWidth'),'no horizontal overflow');
+    await click('未读1'); await until('document.querySelectorAll(".automation-result").length===1');
+    await read('document.querySelector(".automation-result-open").click()');
+    assert.equal(await read('openedRuns[0].runId'),'run'); assert.equal(await read('state.jobs[0].runs[0].readAt'),undefined,'opening never marks read');
+    await read('document.querySelector(".automation-read-toggle").click()'); await until('document.querySelectorAll(".automation-result").length===0');
+    await click('全部结果'); await until('document.querySelectorAll(".automation-result").length===1');
+    await read('document.querySelector(".automation-read-toggle").click()'); await until('!state.jobs[0].runs[0].readAt');
+    await click('标记这 1 条已读'); await until('!!state.jobs[0].runs[0].readAt');
+    assert.equal(await read('state.jobs[0].runs[0].status'),'completed','acknowledgment preserves execution status');
+    await capture('automations-inbox-narrow.png');
+    await click('计划管理');
     await click('删除'); await until('document.querySelectorAll(".automation-card").length===0');
     console.log('Automation UI passed: conversational creation, scheduler notifications, time zone editing, pause/run/stop, conversation, conflict retention, event editing and narrow layout.');
   } finally { clearTimeout(deadline); win.destroy(); }

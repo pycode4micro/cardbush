@@ -13,12 +13,14 @@ const source = `
 import React from 'react'; import {createRoot} from 'react-dom/client';
 import {AutomationPanel} from '${local('src/features/automations/AutomationPanel.tsx')}';
 import '${local('src/styles/app.css')}'; import '${local('src/styles/themes/cyberpunk.css')}';
-window.listeners=new Set(); window.calls=[]; window.opened=[]; window.setupRequests=0; window.failSave=false;
+window.listeners=new Set(); window.calls=[]; window.opened=[]; window.openedRuns=[]; window.setupRequests=0; window.failSave=false;
+window.addEventListener('cardbush:open-automation-run',event=>openedRuns.push(event.detail));
 window.state={available:true,jobs:[],sessions:[{id:'session',title:'构建与导出检查',model:'Fixture'}]};
 window.notify=()=>{for(const listener of listeners)listener()};
 window.cardbushDesktop={onAutomationChanged:fn=>{listeners.add(fn);return()=>listeners.delete(fn)},automationCommand:async command=>{
  calls.push(command); if(command.action==='list')return structuredClone(state);
  if(failSave)throw Error('Automation changed. Refresh before saving.');
+ if(command.action==='mark_read'||command.action==='mark_unread'){for(const job of state.jobs)for(const run of job.runs)if(command.runIds.includes(run.id)){if(command.action==='mark_read')run.readAt=new Date().toISOString();else delete run.readAt;}notify();return{};}
  let job=state.jobs.find(job=>job.id===command.id);
  if(command.action==='create'){job={...command.definition,id:'job-'+state.jobs.length,revision:1,state:'active',createdAt:new Date().toISOString(),runs:[]};state.jobs.push(job);}
  else if(command.action==='update')Object.assign(job,command.definition,{revision:job.revision+1});

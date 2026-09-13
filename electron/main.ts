@@ -291,7 +291,7 @@ type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark' | 'cyberpunk';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -318,7 +318,6 @@ const mainWindowThemeBackgrounds: Record<AppThemeMode, string> = {
   // unavailable, disabled, or the active theme owns its complete background.
   dark: '#1a1a1a',
   bright: '#f5f3ef',
-  parchment: '#e1d4ba',
   cyberpunk: '#050607',
 };
 
@@ -650,7 +649,7 @@ function sanitizeShadowWindowPayload(value: unknown): Omit<ShadowWindowPayload, 
     const number = Number(candidate);
     return Number.isFinite(number) && number > 0 ? Math.floor(number) : undefined;
   };
-  const theme = input.theme === 'bright' || input.theme === 'parchment' ||
+  const theme = input.theme === 'bright' ||
       input.theme === 'cyberpunk'
     ? input.theme
     : 'dark';
@@ -1246,7 +1245,6 @@ function sanitizeCardlingState(payload: CardlingDesktopState): CardlingDesktopSt
     language: payload.language === 'en' ? 'en' : 'zh',
     theme:
       payload.theme === 'bright' ||
-      payload.theme === 'parchment' ||
       payload.theme === 'dark' ||
       payload.theme === 'cyberpunk'
         ? payload.theme
@@ -2114,7 +2112,7 @@ ipcMain.handle('appearance:set-window-theme', (event, theme: AppThemeMode, optio
     return;
   }
   const normalizedTheme: AppThemeMode =
-    theme === 'bright' || theme === 'parchment' || theme === 'dark' ||
+    theme === 'bright' || theme === 'dark' ||
       theme === 'cyberpunk'
       ? theme
       : 'dark';
@@ -2664,6 +2662,12 @@ ipcMain.handle(
 
 ipcMain.handle('terminal:create', (event, cwd?: string, runtime?: TerminalRuntime) => {
   return createTerminalSession(event.sender.id, cwd, runtime);
+});
+
+ipcMain.handle('project:restore-file-changes', (_, rootPath: string,
+  files: Array<{ path: string; diff?: string; lines?: string[] }>) => {
+  const result = applyFileChanges(rootPath, files, false);
+  return { restoredFiles: result.fileCount, output: result.output };
 });
 
 ipcMain.on('terminal:write', (event, sessionId: string, data: string) => {
@@ -5006,6 +5010,15 @@ function revertFileChanges(
   rootPath: string,
   files: Array<{ path: string; diff?: string; lines?: string[] }>,
 ) {
+  const result = applyFileChanges(rootPath, files, true);
+  return { revertedFiles: result.fileCount, output: result.output };
+}
+
+function applyFileChanges(
+  rootPath: string,
+  files: Array<{ path: string; diff?: string; lines?: string[] }>,
+  reverse: boolean,
+) {
   const root = requireProjectDirectory(rootPath);
   const patch = buildReversePatchInput(root, files);
   if (!patch.trim()) {
@@ -5013,17 +5026,17 @@ function revertFileChanges(
   }
   runGitWithInput(
     root,
-    ['apply', '--no-index', '--reverse', '--check', '--whitespace=nowarn'],
+    ['apply', '--no-index', ...(reverse ? ['--reverse'] : []), '--check', '--whitespace=nowarn'],
     patch,
   );
   const output = runGitWithInput(
     root,
-    ['apply', '--no-index', '--reverse', '--whitespace=nowarn'],
+    ['apply', '--no-index', ...(reverse ? ['--reverse'] : []), '--whitespace=nowarn'],
     patch,
   );
   return {
-    revertedFiles: files.filter((file) => String(file.path ?? '').trim()).length,
-    output: output.trim() || 'Reverted file changes.',
+    fileCount: files.filter((file) => String(file.path ?? '').trim()).length,
+    output: output.trim() || (reverse ? 'Reverted file changes.' : 'Restored file changes.'),
   };
 }
 

@@ -323,16 +323,6 @@ export class ElectronProductHostController {
           source_path: this.#bundledSkillRoot,
           target_path: this.#userSkillRoot,
         },
-        agent_profiles: {
-          authority: 'product_configuration',
-          reset_mode: 'bundled_defaults',
-          target_path: 'product-host/agent-profiles',
-        },
-        teams: {
-          authority: 'product_configuration',
-          reset_mode: 'bundled_defaults',
-          target_path: 'product-host/teams',
-        },
       },
       requires_confirmation: true,
       requires_idle_runtime: true,
@@ -367,15 +357,6 @@ export class ElectronProductHostController {
           changed: skillChanged,
           files: after.files,
           bytes: after.bytes,
-        };
-      } else if (category === 'agent_profiles' || category === 'teams') {
-        // These categories are applied atomically by the renderer configuration adapter
-        // after this authoritative, confirmed maintenance command succeeds.
-        changed = true;
-        categoryResults[category] = {
-          changed: true,
-          reset_mode: 'bundled_defaults',
-          renderer_apply_required: true,
         };
       } else {
         // Prompt defaults are compiled into the Agent package.

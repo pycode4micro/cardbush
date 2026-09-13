@@ -22,15 +22,14 @@ export type SettingsSection =
   | 'models'
   | 'diagnostics'
   | 'about';
-export type ThemeMode = 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+export type ThemeMode = 'bright' | 'dark' | 'cyberpunk';
 export type ThemePreference =
   | 'system'
   | 'light'
   | 'dark'
-  | 'parchment'
   | 'cyberpunk'
   | 'custom';
-export type ImportedThemeBase = 'light' | 'dark' | 'parchment';
+export type ImportedThemeBase = 'light' | 'dark';
 export type ImportedThemeColorKey =
   | 'background'
   | 'surface'
@@ -61,7 +60,7 @@ export type PermissionMode = 'task_free' | 'user_free' | 'all_free';
 export type SubagentPermissionRouting = 'user' | 'parent';
 export type ReasoningLevel = ReasoningEffort;
 export type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
-export type RuntimeAssetCategory = 'prompts' | 'skills' | 'agent_profiles' | 'teams';
+export type RuntimeAssetCategory = 'prompts' | 'skills';
 export type McpTransport = 'stdio' | 'sse' | 'streamable_http' | 'http';
 type ChatRole = 'user' | 'assistant' | 'system' | 'guidance' | 'tool';
 export type CompanionSize = 'compact' | 'normal' | 'large';
@@ -486,6 +485,7 @@ export type ChatToolExecutionState =
   | 'queued'
   | 'running'
   | 'awaiting_permission'
+  | 'awaiting_solution'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -587,6 +587,7 @@ export interface StreamStart {
   sessionId: string;
   turnId: string;
   userMessageId?: string;
+  userMessageMetadata?: Record<string, unknown>;
   messageId?: string;
   assistantSegmentIndex?: number;
   createdAt?: string;
@@ -619,6 +620,7 @@ export interface TurnTerminalSnapshot {
 
 export interface StreamExecutionUpdate extends AssistantStreamChunk {
   kind: string;
+  userMessageMetadata?: Record<string, unknown>;
   reason?: string;
   guidanceMessageId?: string;
   previousAssistantMessageId?: string;
@@ -737,6 +739,7 @@ export interface InteractionQuestion {
 export interface InteractionReplyAnswer {
   questionId: string;
   selectedOptionId?: string;
+  text?: string;
 }
 
 export interface SkillSummary {

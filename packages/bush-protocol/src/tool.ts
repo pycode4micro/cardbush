@@ -16,6 +16,8 @@ export const GET_RUNTIME_TOOL_CATALOG_DETAILS_COMMAND =
   "runtime.get_tool_catalog_details" as const;
 export const REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND =
   "runtime.revert_workspace_changes" as const;
+export const RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND =
+  "runtime.restore_workspace_changes" as const;
 export const RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY =
   "revertedWorkspaceChangeIds" as const;
 export const RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND =
@@ -57,6 +59,16 @@ export const revertRuntimeWorkspaceChangesResultSchema = z.object({
 export type RevertRuntimeWorkspaceChangesResult = z.infer<
   typeof revertRuntimeWorkspaceChangesResultSchema
 >;
+
+export const restoreRuntimeWorkspaceChangesSchema = revertRuntimeWorkspaceChangesSchema;
+export const restoreRuntimeWorkspaceChangesResultSchema = z.object({
+  sessionId: z.string().min(1),
+  turnIds: z.array(z.string().min(1)).min(1),
+  restoredFiles: z.number().int().nonnegative(),
+  restoredChangeIds: z.array(z.string().min(1)),
+  restoredAt: z.string().min(1),
+});
+export type RestoreRuntimeWorkspaceChangesResult = z.infer<typeof restoreRuntimeWorkspaceChangesResultSchema>;
 
 export const toolDefinitionSchema = z.object({
   name: z.string().min(1),

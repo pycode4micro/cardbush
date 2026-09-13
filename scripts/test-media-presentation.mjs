@@ -3,8 +3,8 @@ import test from 'node:test';
 import { resolve } from 'node:path';
 import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
-const { mediaPresentationKey: key, toolOutputPresentation: present } = await loadChatTranscript({
-  source: `export { mediaPresentationKey, toolOutputPresentation } from ${JSON.stringify(resolve('src/features/chatMessages/mediaPresentation.tsx'))};`,
+const { mediaPresentationKey: key, toolOutputPresentation: present, createToolOutputProjector } = await loadChatTranscript({
+  source: `export { mediaPresentationKey, toolOutputPresentation, createToolOutputProjector } from ${JSON.stringify(resolve('src/features/chatMessages/mediaPresentation.tsx'))};`,
   globals: { TextEncoder, TextDecoder, process: { env: { NODE_ENV: 'production' } } },
 });
 const image = (path, extra = {}) => ({ id: path, name: 'apple.png', path, type: 'image', display: 'inline', ...extra });
@@ -14,7 +14,8 @@ const execution = artifacts => ({ id: 'present', name: 'present_artifact', state
 test('local path spellings share an identity without merging distinct remote or POSIX resources', () => {
   const local = 'C:\\Users\\EDY\\Pictures\\apple photo.png';
   for (const path of [local, local.replaceAll('\\', '\\\\'), 'c:/users/edy/pictures/apple photo.png',
-    'file:///C:/Users/EDY/Pictures/apple%20photo.png', 'cardbush-file:///C:/Users/EDY/Pictures/apple%20photo.png']) {
+    'file:///C:/Users/EDY/Pictures/apple%20photo.png', 'cardbush-file:///C:/Users/EDY/Pictures/apple%20photo.png',
+    'cardbush-file://c/Users/EDY/Pictures/apple%20photo.png']) {
     assert.equal(key(path), key(local), path);
   }
   assert.equal(key('\\\\server\\share\\apple.png'), key('file://server/share/apple.png'));
@@ -71,4 +72,30 @@ test('loop media stays with its first producing call while later observations en
   assert.deepEqual(Array.from(result.mediaByExecution.get('inspect'), item => item.type), ['video', 'audio']);
   assert.equal(result.mediaByExecution.get('generate')[0], result.inlineMedia.get(key(first.path)));
   assert.equal(JSON.stringify(input), original, 'anchoring is a projection, never an edit to runtime history');
+});
+
+test('tool lifecycle and unrelated output retain media context; new/enriched/removed artifacts still update', () => {
+  const project = createToolOutputProjector();
+  const first = image('C:/workspace/preview.png');
+  const initial = project([execution([first])]);
+  for (const state of ['queued', 'running', 'completed', 'failed']) {
+    const unchanged = project([
+      execution([{ ...first }]),
+      { id: 'next', name: 'terminal_exec', state, output: `output ${state}`, metadata: { revision: state } },
+    ]);
+    assert.equal(unchanged, initial, 'status-only updates do not invalidate all media consumers');
+  }
+  const video = { id: 'video', path: 'C:/workspace/clip.mp4', name: 'clip.mp4', type: 'video' };
+  const added = project([execution([{ ...first }]), { ...execution([video]), id: 'video-tool' }]);
+  assert.equal(added.artifacts.length, 2);
+  assert.equal(added.artifacts[0], initial.artifacts[0], 'new outputs retain unchanged preview props');
+  assert.equal(added.mediaByExecution.get('present'), initial.mediaByExecution.get('present'));
+  const enriched = project([execution([{ ...first, size: 120 }])]);
+  assert.equal(enriched.artifacts.length, 1);
+  assert.equal(enriched.artifacts[0].size, 120);
+  assert.equal(enriched.inlineMedia.get(key(first.path)), enriched.artifacts[0]);
+  const remapped = project([execution([{ ...first, size: 120 }])], [{ from: 'C:/workspace', to: 'D:/moved' }]);
+  assert.equal(remapped.artifacts[0].path, 'D:/moved/preview.png');
+  assert.equal(project([]).inlineMedia.size, 0, 'removal cannot leave a stale suppression map');
+  assert.equal(createToolOutputProjector()([]).artifacts.length, 0, 'another transcript has its own cache');
 });

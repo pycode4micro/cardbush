@@ -19,42 +19,35 @@
         const colors = {
           dark: '#1a1a1a',
           bright: '#f5f3ef',
-          parchment: '#e1d4ba',
           cyberpunk: '#050607',
         };
         let theme = 'dark';
         try {
           const preference = localStorage.getItem('cardbush_theme_mode');
-          const legacy = localStorage.getItem('cardbush.theme');
+          const legacy = preference ? null : localStorage.getItem('cardbush.theme');
           let importedBase = '';
           if (preference === 'custom') {
             try {
               const imported = JSON.parse(
                 localStorage.getItem('cardbush_imported_theme_style') || 'null',
               );
-              importedBase = ['light', 'dark', 'parchment'].includes(imported?.base)
+              importedBase = ['light', 'dark'].includes(imported?.base)
                 ? imported.base
-                : '';
+                : imported?.base === 'parchment' ? 'light' : '';
             } catch {
               importedBase = '';
             }
           }
           if (preference === 'cyberpunk') {
             theme = 'cyberpunk';
-          } else if (preference === 'parchment') {
-            theme = 'parchment';
           } else if (preference === 'custom' && importedBase) {
             theme = importedBase === 'light' ? 'bright' : importedBase;
           } else if (preference === 'dark') {
             theme = 'dark';
           } else if (preference === 'light') {
-            theme = localStorage.getItem('cardbush_light_theme_style') === 'parchment'
-              ? 'parchment'
-              : 'bright';
+            theme = 'bright';
           } else if (legacy === 'dark') {
             theme = 'dark';
-          } else if (legacy === 'parchment') {
-            theme = 'parchment';
           } else if (legacy === 'bright') {
             theme = 'bright';
           } else {
@@ -86,12 +79,6 @@
       html[data-start-theme='bright'] body,
       html[data-start-theme='bright'] #root {
         --cardbush-window-bg: #f5f3ef;
-      }
-
-      html[data-start-theme='parchment'],
-      html[data-start-theme='parchment'] body,
-      html[data-start-theme='parchment'] #root {
-        --cardbush-window-bg: #e1d4ba;
       }
 
       html[data-start-theme='cyberpunk'],

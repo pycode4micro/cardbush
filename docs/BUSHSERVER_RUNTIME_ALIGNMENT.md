@@ -96,8 +96,8 @@ request_permission
 ```
 
 Built-ins are code-owned and cannot be installed, removed, enabled, disabled or
-reset from Settings. Runtime asset reset covers Prompts, Skills, Agent Profiles
-and Teams only (Team configuration reset is contributed by the installed plugin). External executable extensions use MCP or the versioned CardBush native plugin API.
+reset from Settings. Runtime asset reset covers bundled Prompts and Skills only;
+plugin configuration is outside this maintenance operation. External executable extensions use MCP or the versioned CardBush native plugin API.
 
 ## Authority and remaining validation boundary
 

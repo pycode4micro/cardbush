@@ -161,6 +161,7 @@ export function projectRuntimeSessionMessage(
     metadata.name = message.message.name;
   }
   const attachments = runtimeMessageAttachments(message.metadata);
+  if (role === 'user' && message.metadata?.automationReminder) metadata.automationReminder = message.metadata.automationReminder;
   return {
     id: message.messageId,
     messageId: message.messageId,

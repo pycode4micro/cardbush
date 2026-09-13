@@ -2,6 +2,7 @@ import type {
   RuntimePermissionAnswer,
   RuntimePermissionRequest,
   RuntimeStopReceipt,
+  RuntimeSolutionSelection,
 } from '@cardbush/bush-protocol';
 
 import type { PendingInteraction } from '../types';
@@ -13,6 +14,46 @@ interface RuntimePermissionEntry {
 }
 
 const permissions = new Map<string, RuntimePermissionEntry>();
+const solutions = new Map<string, PendingInteraction>();
+const listeners = new Set<(sessionId: string) => void>();
+const revisions = new Map<string, number>();
+export const runtimeInteractionsRevision = (sessionId: string) => revisions.get(sessionId) ?? 0;
+const changed = (sessionId: string) => {
+  revisions.set(sessionId, runtimeInteractionsRevision(sessionId) + 1);
+  for (const listener of listeners) listener(sessionId);
+};
+
+export function onRuntimeInteractionsChanged(listener: (sessionId: string) => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+export function registerRuntimeSolution(request: RuntimeSolutionSelection, notify = true): PendingInteraction {
+  const interaction: PendingInteraction = {
+    id: request.selectionId, type: 'solution_selection', sessionId: request.sessionId, turnId: request.turnId,
+    title: 'Solution Selection', toolName: 'solution_selection',
+    questions: [{ id: 'solution', label: 'Solution Selection', question: request.prompt,
+      options: request.options.map((label, index) => ({ id: String(index), label })) }], raw: { ...request },
+  };
+  solutions.set(request.selectionId, interaction);
+  if (notify) changed(request.sessionId);
+  return structuredClone(interaction);
+}
+
+export function syncRuntimeSolutions(sessionId: string, requests: RuntimeSolutionSelection[]) {
+  for (const [id, entry] of solutions) if (entry.sessionId === sessionId) solutions.delete(id);
+  for (const request of requests) if (request.sessionId === sessionId) registerRuntimeSolution(request, false);
+}
+
+export function runtimeSolution(interactionId: string): PendingInteraction | undefined {
+  const entry = solutions.get(interactionId);
+  return entry && structuredClone(entry);
+}
+
+export function removeRuntimeSolution(id: string) {
+  const entry = solutions.get(id);
+  if (entry) { solutions.delete(id); changed(entry.sessionId!); }
+}
 const activeTurns = new Map<string, {
   stop: () => Promise<RuntimeStopReceipt>;
 }>();
@@ -68,6 +109,7 @@ export function registerRuntimePermission(input: {
     requestedCapabilityIds: [...input.request.requestedCapabilityIds],
     answer: input.answer,
   });
+  changed(input.sessionId);
   return interaction;
 }
 
@@ -75,7 +117,8 @@ export function pendingRuntimeInteraction(sessionId: string): PendingInteraction
   const entry = [...permissions.values()].find(
     ({ interaction }) => interaction.sessionId === sessionId,
   );
-  return entry ? structuredClone(entry.interaction) : null;
+  const solution = [...solutions.values()].find(entry => entry.sessionId === sessionId);
+  return entry ? structuredClone(entry.interaction) : solution ? structuredClone(solution) : null;
 }
 
 export function hasRuntimeInteraction(interactionId: string): boolean {
@@ -114,6 +157,7 @@ export function removeRuntimePermission(permissionId: string): void {
 }
 
 export function removeRuntimePermissionsForTurn(turnId: string): void {
+  for (const [id, entry] of solutions) if (entry.turnId === turnId) removeRuntimeSolution(id);
   for (const [permissionId, entry] of permissions) {
     if (entry.interaction.turnId === turnId) permissions.delete(permissionId);
   }

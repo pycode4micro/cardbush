@@ -28,14 +28,14 @@ export const settingsDescriptions: Record<VisibleSettingsSection, LocalizedText>
 };
 
 export const settingsNavigationGroups: Array<{ label: LocalizedText; sections: VisibleSettingsSection[] }> = [
-  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'appearance', 'usage'] },
-  { label: { zh: '能力', en: 'Capabilities' }, sections: ['models', 'mcp'] },
+  { label: { zh: '能力', en: 'Capabilities' }, sections: ['mcp', 'models'] },
+  { label: { zh: '偏好', en: 'Preferences' }, sections: ['profile', 'usage', 'appearance'] },
   { label: { zh: '系统', en: 'System' }, sections: ['runtime', 'proxy', 'cache', 'diagnostics'] },
 ];
 
 const keywords: Record<VisibleSettingsSection, string> = {
   profile: '对话 风格 自然 专业 简短 自定义 语气 全局约束 AGENTS.md 提示词 引导 排队 队列 思考 instructions tone style guidance queue thinking',
-  appearance: '主题 深色 浅色 羊皮纸 赛博朋克 窗口 玻璃 导入 字体 中文 English theme font language glass',
+  appearance: '主题 深色 浅色 赛博朋克 窗口 玻璃 导入 字体 中文 English theme font language glass',
   usage: '统计 Token 用量 活跃 热力图 会话次数 usage activity',
   models: '模型 API key 密钥 服务商 上下文 输出 视觉 图片 provider context vision',
   mcp: '插件 市场 技能 账号 授权 浏览器 Chrome MCP skills marketplace accounts OAuth search browser',

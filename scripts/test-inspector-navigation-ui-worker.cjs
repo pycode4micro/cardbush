@@ -45,7 +45,7 @@ app.whenReady().then(async () => {
     await until('document.querySelectorAll(".work-summary-inspector-turn").length===9');
     assert.equal(await read('document.querySelectorAll("[role=tab]").length'),1,'history participates in the tab strip');
     await read('document.getElementById("conversation-scroll").scrollTop=300; void 0');
-    for (const theme of ['dark','bright','parchment']) {
+    for (const theme of ['dark','bright']) {
       await read('document.querySelector(".app").className='+JSON.stringify('app theme-'+theme)+'; void 0');
       await click('.work-summary-turn-selector > button');
       await until('Boolean(document.querySelector(".work-summary-turn-selector-menu"))');

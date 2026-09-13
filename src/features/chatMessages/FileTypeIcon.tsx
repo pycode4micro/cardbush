@@ -3,16 +3,18 @@ import {
   CodeXml,
   Database,
   FileArchive,
+  FileAudio,
   FileCode2,
   FileImage,
   FileSpreadsheet,
   FileText,
+  FileVideo,
   Hash,
   Presentation,
   SquareTerminal,
 } from 'lucide-react';
 
-import { basename } from '../../shared/localPaths';
+import { resourceBasename } from '../../shared/localPaths';
 
 type FileTypeDescriptor =
   | { kind: 'badge'; label: string; tone: string }
@@ -34,8 +36,8 @@ const badgeTypes: Record<string, { label: string; tone: string }> = {
   svelte: { label: 'S', tone: 'svelte' },
 };
 
-export function fileTypeDescriptor(path: string): FileTypeDescriptor {
-  const extension = basename(path).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '';
+export function fileTypeDescriptor(path: string, mediaType?: 'image' | 'video' | 'audio'): FileTypeDescriptor {
+  const extension = resourceBasename(path).match(/\.([^.]+)$/)?.[1]?.toLowerCase() ?? '';
   if (extension === 'tsx' || extension === 'jsx') {
     return { kind: 'react', tone: extension === 'tsx' ? 'typescript-react' : 'javascript-react' };
   }
@@ -46,16 +48,22 @@ export function fileTypeDescriptor(path: string): FileTypeDescriptor {
   if (/^(?:css|scss|sass|less)$/.test(extension)) return { kind: 'icon', icon: Hash, tone: 'styles' };
   if (/^(?:sh|bash|zsh|fish|ps1|bat|cmd)$/.test(extension)) return { kind: 'icon', icon: SquareTerminal, tone: 'terminal' };
   if (/^(?:sql|db|sqlite|sqlite3)$/.test(extension)) return { kind: 'icon', icon: Database, tone: 'database' };
-  if (/^(?:png|jpe?g|gif|webp|svg|bmp|ico)$/.test(extension)) return { kind: 'icon', icon: FileImage, tone: 'image' };
+  if (/^(?:png|apng|avif|jpe?g|gif|webp|svg|bmp|ico)$/.test(extension)) return { kind: 'icon', icon: FileImage, tone: 'image' };
+  if (/^(?:mp4|m4v|mov|webm|ogv|mkv|avi|mpeg|mpg)$/.test(extension)) return { kind: 'icon', icon: FileVideo, tone: 'video' };
+  if (/^(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|aiff?|wma)$/.test(extension)) return { kind: 'icon', icon: FileAudio, tone: 'audio' };
   if (/^(?:xls|xlsx|xlsm|csv|tsv|ods)$/.test(extension)) return { kind: 'icon', icon: FileSpreadsheet, tone: 'sheet' };
   if (/^(?:ppt|pptx|pps|ppsx|odp|key)$/.test(extension)) return { kind: 'icon', icon: Presentation, tone: 'slides' };
   if (/^(?:zip|rar|7z|tar|gz|bz2|xz)$/.test(extension)) return { kind: 'icon', icon: FileArchive, tone: 'archive' };
   if (/^(?:md|markdown|mdx|txt|rtf|pdf|doc|docx|odt)$/.test(extension)) return { kind: 'icon', icon: FileText, tone: 'document' };
+  if (mediaType === 'image') return { kind: 'icon', icon: FileImage, tone: 'image' };
+  if (mediaType === 'video') return { kind: 'icon', icon: FileVideo, tone: 'video' };
+  if (mediaType === 'audio') return { kind: 'icon', icon: FileAudio, tone: 'audio' };
   return { kind: 'icon', icon: FileCode2, tone: 'generic' };
 }
 
-export function FileTypeIcon({ path }: { path: string }) {
-  const descriptor = fileTypeDescriptor(path);
+export function FileTypeIcon({ path, mediaType, fileName }: { path: string; mediaType?: 'image' | 'video' | 'audio'; fileName?: string }) {
+  const pathDescriptor = fileTypeDescriptor(path, mediaType);
+  const descriptor = pathDescriptor.tone === 'generic' && fileName ? fileTypeDescriptor(fileName, mediaType) : pathDescriptor;
   if (descriptor.kind === 'badge') {
     return (
       <span

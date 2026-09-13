@@ -87,11 +87,13 @@ try {
   assert.equal(broker.status().extensionVersion, '1.0.0');
 
   const directScope = { scopeId: 'direct-contract', scopeTitle: 'Direct contract' };
-  const pending = requestChromeConnector('tabs.list', directScope, { configPath: broker.configPath });
+  let timings;
+  const pending = requestChromeConnector('tabs.list', directScope, { configPath: broker.configPath, onDiagnostics: value => { timings = value; } });
   const request = await messages.next();
   assert.equal(request.value.type, 'request');
   assert.equal(request.value.method, 'tabs.list');
   assert.deepEqual(request.value.params, directScope);
+  extension.write(`${JSON.stringify({ type: 'progress', clientId: request.value.clientId, id: request.value.id, stage: 'extension_received' })}\n`);
   extension.write(`${JSON.stringify({
     type: 'response',
     clientId: request.value.clientId,
@@ -101,6 +103,20 @@ try {
   assert.deepEqual(await pending, [
     { id: 42, title: 'CardBush test', url: 'https://example.test/', active: true },
   ]);
+  assert.equal(timings.stage, 'response_received');
+  assert.ok(timings.stages.some(item => item.stage === 'broker_forwarded'));
+  assert.ok(timings.stages.some(item => item.stage === 'extension_received'));
+  assert.ok(!JSON.stringify(timings).includes(config.token));
+
+  const stalled = requestChromeConnector('debugger.command', { ...directScope, tabId: 42, command: 'Page.captureScreenshot' },
+    { configPath: broker.configPath, timeoutMs: 250 }).then(() => assert.fail('Expected a timeout'), error => error);
+  const stalledRequest = (await messages.next()).value;
+  extension.write(`${JSON.stringify({ type: 'progress', clientId: stalledRequest.clientId, id: stalledRequest.id, stage: 'command_pending' })}\n`);
+  const timeout = await stalled;
+  assert.equal(timeout.code, 'chrome_connector_timeout');
+  assert.equal(timeout.details.diagnostics.stage, 'command_pending');
+  assert.equal(timeout.details.diagnostics.command, 'Page.captureScreenshot');
+  assert.ok(timeout.details.diagnostics.elapsedMs >= 200);
 
   const registry = new ToolRegistry();
   manager = new McpClientManager({ registry });

@@ -4,7 +4,7 @@ import { loadChatTranscript } from './helpers/load-chat-transcript.mjs';
 
 const modules = ['src/backend/workspaceReview.ts', 'src/backend/historyToolAssociation.ts',
   'src/features/tools/toolChangeReports.ts', 'src/features/chatMessages/transcript/toolExecutionMerge.ts'];
-const { workspaceCheckpointExecutions, coverWorkspaceToolExecution, attachHistoryToolExecutions,
+const { workspaceCheckpointExecutions, coverWorkspaceToolExecution, markRevertedWorkspaceToolExecution, attachHistoryToolExecutions,
   changeReportsFromMessages, mergeToolExecutionUpdate } = await loadChatTranscript({
   source: modules.map(file => `export * from ${JSON.stringify(path.resolve(file))};`).join('\n'),
 });
@@ -35,7 +35,19 @@ assert.equal(reports.length, 1, 'one workspace report replaces duplicate per-Too
 assert.equal(reports[0].fileCount, 2, 'shell-only modifications are included');
 assert.equal(reports[0].detailsDeferred, false, 'checkpoint review never hydrates from a fabricated native Tool');
 review.checkpoints[0].status = 'reverted';
-assert.equal(changeReportsFromMessages(attachHistoryToolExecutions(projected, workspaceCheckpointExecutions(review))).length, 0);
+const revertedReports = changeReportsFromMessages(attachHistoryToolExecutions(projected, workspaceCheckpointExecutions(review)));
+const revertedMessages = attachHistoryToolExecutions(projected, workspaceCheckpointExecutions(review));
+assert.equal(revertedReports.length, 1, 'keep the record available for undo revert');
+assert.equal(revertedReports[0].reverted, true);
+assert.equal(revertedReports[0].id, reports[0].id, 'a revert never shifts review identities');
+review.checkpoints[0].status = 'complete';
+assert.equal(changeReportsFromMessages(attachHistoryToolExecutions(revertedMessages, workspaceCheckpointExecutions(review)))[0].reverted, undefined,
+  'restoring must clear stale revert metadata when refreshed details merge into the transcript');
+const revertedNative = markRevertedWorkspaceToolExecution(native, { revertedWorkspaceChangeIds: ['file.txt'] });
+assert.equal(revertedNative.metadata.revert_status, 'reverted');
+const restoredNative = markRevertedWorkspaceToolExecution(native, { revertedWorkspaceChangeIds: [] });
+assert.equal(mergeToolExecutionUpdate(revertedNative, restoredNative).metadata.revert_status, 'active');
+assert.equal(JSON.stringify(native), before, 'revert projection must not rewrite tool facts');
 review.checkpoints[0].status = 'failed';
 assert.equal(workspaceCheckpointExecutions(review).length, 0, 'incomplete checkpoints cannot claim reversible changes');
 assert.equal(coverWorkspaceToolExecution(native, review), native);

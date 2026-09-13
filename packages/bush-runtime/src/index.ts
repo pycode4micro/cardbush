@@ -19,6 +19,7 @@ export * from "./fileToolExecutionPersistence.js";
 export * from "./extendedBuiltins.js";
 export * from "./modelProvider.js";
 export * from "./modelImageStore.js";
+export * from "./toolImageContent.js";
 export * from "./modelRound.js";
 export * from "./modelReplay.js";
 export * from "./runtimeEventLog.js";

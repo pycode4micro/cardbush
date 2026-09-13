@@ -38,7 +38,7 @@ export function registerCoordinationTools(
       definition: {
         name: UPDATE_TASK_PLAN_TOOL,
         description:
-          "Create or update the current task plan with explicit nodes and statuses. Preserve returned node IDs on later updates; give a scopeChangeReason when removing a node. Use waiting with a concrete waitingFor when a step needs user action or an external dependency; keep dependent verification steps as waiting too. Waiting is unfinished, not completed. active remains true while any step is unfinished. When every unfinished step is waiting, the Turn may end with a handoff; pending or in_progress steps still require continuation. Resume waiting steps explicitly when their dependency is resolved.",
+          "Create or update the current task plan with explicit nodes and statuses. At most one node may be in_progress: it tracks the parent Agent's current work. For work delegated to a running subagent, use waiting with waitingFor naming that task and the result needed, while the parent work remains in_progress. Preserve returned node IDs on later updates; give a scopeChangeReason when removing a node. Use waiting with a concrete waitingFor when a step needs user action or an external dependency; keep dependent verification steps as waiting too. Waiting is unfinished, not completed. active remains true while any step is unfinished. When every unfinished step is waiting, the Turn may end with a handoff; pending or in_progress steps still require continuation. Resume waiting steps explicitly when their dependency is resolved.",
         inputSchema: {
           type: "object",
           additionalProperties: false,

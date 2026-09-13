@@ -82,24 +82,24 @@ button {
 .app,
 .cardling-desktop {
   --app-font-family: "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", Arial, sans-serif;
-  --bg: #e1d4ba;
-  --surface: #f1e6cf;
-  --surface-strong: #f4ead5;
-  --surface-raised: #f8efdd;
-  --border: #c5b392;
-  --accent: #637b61;
-  --accent-soft: #d4dbc7;
-  --text: #2a2116;
-  --text-mid: #675c49;
-  --text-soft: #94866d;
+  --bg: #f5f3ef;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --surface-raised: #ffffff;
+  --border: #e5e0d8;
+  --accent: #7b9e87;
+  --accent-soft: #ebf2ed;
+  --text: #1e1c1a;
+  --text-mid: #6b6560;
+  --text-soft: #a09890;
   --model-logo-filter: brightness(0);
-  --shadow: rgba(83, 61, 34, 0.14);
-  --user-bubble: #ede2cb;
+  --shadow: rgba(0, 0, 0, 0.06);
+  --user-bubble: #edebe7;
   --terminal-bg: #15130f;
   --danger: #b3261e;
   --sidebar-width: 232px;
-  --wallpaper-accent-rgb: 99 123 97;
-  --wallpaper-accent-hex: #637b61;
+  --wallpaper-accent-rgb: 123 158 135;
+  --wallpaper-accent-hex: #7b9e87;
 }
 
 .app {

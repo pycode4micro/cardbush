@@ -190,7 +190,7 @@ export function ChatPanel({
   queuedMessageCount,
   queuedMessagePreview,
   queuedMessages,
-  pendingInteraction,
+  pendingInteraction: suppliedPendingInteraction,
   error,
   notice,
   selectedModel,
@@ -327,6 +327,8 @@ export function ChatPanel({
   draft: string;
   onDraftChange: (value: string) => void;
 }) {
+  const pendingInteraction = suppliedPendingInteraction?.sessionId === activeConversationId
+    ? suppliedPendingInteraction : null;
   const chatPanelRenderStartedAt = performance.now();
   useLayoutEffect(() => {
     recordUiPerformanceMetric('chat_panel_commit_ms', {
@@ -2537,6 +2539,8 @@ export function ChatPanel({
             messages={renderMessages}
             changeReports={changeReports}
             onOpenChangeReview={openChangeReview}
+            workspaceRoot={activeProjectDir}
+            pathAliases={projectPathAliases}
             subagentObservabilityAvailable={subagentObservabilityAvailable}
             softVisible={workSummaryPresence.visible}
           />
@@ -2696,10 +2700,11 @@ export function ChatPanel({
         )}
         {!showWelcome && pendingInteraction && (
           <div
-            className="composer-dock interaction-only permission-only"
+            className={`composer-dock interaction-only ${pendingInteraction.type === 'solution_selection' ? 'solution-only' : 'permission-only'}`}
             ref={composerDockRef}
           >
             <InteractionCard
+              key={pendingInteraction.id}
               language={language}
               interaction={pendingInteraction}
               onReply={onReplyInteraction}

@@ -1,6 +1,6 @@
 export const PRODUCT_HOST_IPC_PROTOCOL = "cardbush.product_host_ipc.v1" as const;
 
-export type RuntimeAssetCategory = "prompts" | "skills" | "agent_profiles" | "teams";
+export type RuntimeAssetCategory = "prompts" | "skills";
 
 export type ProductHostCommand =
   | { protocol: typeof PRODUCT_HOST_IPC_PROTOCOL; kind: "models.get" }
@@ -240,8 +240,6 @@ export function decodeProductHostCommand(input: unknown): ProductHostCommand {
       const known = new Set<RuntimeAssetCategory>([
         "prompts",
         "skills",
-        "agent_profiles",
-        "teams",
       ]);
       if (categories.some((item) => !known.has(item as RuntimeAssetCategory))) {
         throw new ProductHostProtocolError("invalid_product_host_command", "Unknown runtime asset category");

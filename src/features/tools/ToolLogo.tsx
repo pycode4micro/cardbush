@@ -21,7 +21,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-import mcpLogoUrl from '../../assets/integration-logos/mcp.svg';
+import { McpLogoIcon } from '../../components/McpLogoIcon';
 
 type ToolLogoDefinition = {
   icon: LucideIcon;
@@ -47,6 +47,7 @@ const toolLogos: Record<string, ToolLogoDefinition> = {
   update_task_plan: { icon: ListChecks, tone: 'planning' },
   update_goal: { icon: Target, tone: 'planning' },
   request_permission: { icon: ShieldCheck, tone: 'permission' },
+  solution_selection: { icon: Lightbulb, tone: 'planning' },
   runtime_context_compaction: { icon: Minimize2, tone: 'reasoning' },
 };
 
@@ -62,14 +63,9 @@ export function ToolLogo({
   const normalized = name.trim().toLowerCase();
   if (normalized.startsWith('mcp__')) {
     return (
-      <img
+      <McpLogoIcon
         className={`tool-logo tool-logo-mcp ${className}`.trim()}
-        src={mcpLogoUrl}
-        width={size}
-        height={size}
-        alt=""
-        aria-hidden="true"
-        draggable={false}
+        size={size}
       />
     );
   }

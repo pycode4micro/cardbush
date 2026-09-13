@@ -11,7 +11,10 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // Open windows may still import chunks from the previous build. Keep their
+    // content-addressed assets until those windows have gone away; replacing
+    // index.html must not invalidate a running conversation's lazy imports.
+    emptyOutDir: false,
     rolldownOptions: {
       input: {
         main: path.resolve(rootDir, 'index.html'),

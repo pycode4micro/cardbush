@@ -263,6 +263,16 @@ export class TaskWorkspaceManager {
   }
 
   async revert(sessionId: string, turnIds: string[]) {
+    const result = await this.#setCheckpointReverted(sessionId, turnIds, true);
+    return { sessionId, turnIds, revertedFiles: result.files, revertedChangeIds: result.ids, revertedAt: result.at };
+  }
+
+  async restore(sessionId: string, turnIds: string[]) {
+    const result = await this.#setCheckpointReverted(sessionId, turnIds, false);
+    return { sessionId, turnIds, restoredFiles: result.files, restoredChangeIds: result.ids, restoredAt: result.at };
+  }
+
+  async #setCheckpointReverted(sessionId: string, turnIds: string[], reverted: boolean) {
     return this.#exclusive(sessionId, async () => {
       const state = await this.#required(sessionId);
       await this.#recover(state);
@@ -274,23 +284,24 @@ export class TaskWorkspaceManager {
       for (const turnId of [...new Set(turnIds)]) {
         const checkpoint = state.checkpoints.find(item => item.turnId === turnId);
         if (!checkpoint) throw problem("workspace_checkpoint_missing", `No workspace checkpoint exists for Turn ${turnId}.`);
-        if (checkpoint.status === "reverted") continue;
-        if (checkpoint.status !== "complete" || !checkpoint.after) throw problem("workspace_checkpoint_pending", "An incomplete checkpoint cannot be reverted.");
+        if (checkpoint.status === (reverted ? "reverted" : "complete")) continue;
+        if (checkpoint.status !== (reverted ? "complete" : "reverted") || !checkpoint.after) throw problem("workspace_checkpoint_pending", "An incomplete checkpoint cannot be reverted or restored.");
         const before = await this.#snapshot(state, checkpoint.before), after = await this.#snapshot(state, checkpoint.after);
+        const expected = reverted ? after : before, target = reverted ? before : after;
         current = Object.assign(Object.create(null), current);
         for (const path of changed(before, after)) {
-          if (!equal(current[path], after[path])) throw problem("workspace_revision_conflict", `Cannot revert ${path}; it changed after this Turn.`);
-          if (before[path]) current[path] = before[path]; else delete current[path];
+          if (!equal(current[path], expected[path])) throw problem("workspace_revision_conflict", `Cannot ${reverted ? 'revert' : 'restore'} ${path}; it changed after this ${reverted ? 'Turn' : 'revert'}.`);
+          if (target[path]) current[path] = target[path]; else delete current[path];
           ids.push(this.#changeId(state, turnId, path));
         }
         selected.push(checkpoint);
       }
       await this.#transaction(state, state.workspaceDir, initial, current);
-      selected.forEach(checkpoint => { checkpoint.status = "reverted"; });
+      selected.forEach(checkpoint => { checkpoint.status = reverted ? "reverted" : "complete"; });
       state.latestId = await this.#saveSnapshot(state, current);
       state.revision++;
       await this.#commitTransaction(state);
-      return { sessionId, turnIds, revertedFiles: changed(initial, current).length, revertedChangeIds: ids, revertedAt: new Date().toISOString() };
+      return { files: changed(initial, current).length, ids, at: new Date().toISOString() };
     });
   }
 

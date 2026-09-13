@@ -8,7 +8,7 @@ import test from 'node:test';
 import { TaskWorkspaceManager, InMemoryRuntimeHost } from '../dist/index.js';
 import { CREATE_RUNTIME_SESSION_COMMAND, GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
   GET_RUNTIME_SESSION_COMMAND, UPDATE_RUNTIME_SESSION_METADATA_COMMAND, DELETE_RUNTIME_SESSION_COMMAND,
-  GET_RUNTIME_TOOL_EXECUTION_COMMAND, REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND } from '@cardbush/bush-protocol';
+  GET_RUNTIME_TOOL_EXECUTION_COMMAND, REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND, RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND } from '@cardbush/bush-protocol';
 
 function git(root, ...args) { return execFileSync('git', ['-C', root, ...args], { windowsHide: true, encoding: 'utf8' }); }
 async function fixture(t) {
@@ -75,6 +75,17 @@ test('checkpoints capture arbitrary processes, deletions, new files and binary b
   await assert.rejects(readFile(join(workspace.workspaceDir, 'constructor')), { code: 'ENOENT' });
   assert.equal(await readFile(join(workspace.workspaceDir, '__proto__'), 'utf8'), 'literal filename');
   assert.equal((await reopened.revert('task', ['turn-1'])).revertedFiles, 0);
+  const restored = new TaskWorkspaceManager(storage);
+  assert.equal((await restored.restore('task', ['turn-1'])).restoredFiles, 6);
+  assert.deepEqual(await readFile(join(workspace.workspaceDir, 'new.bin')), Buffer.from([0, 255, 10]));
+  await assert.rejects(readFile(join(workspace.workspaceDir, 'binary.bin')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(workspace.workspaceDir, 'empty.txt'), 'utf8'), 'no longer empty');
+  assert.equal(await readFile(join(workspace.workspaceDir, 'file.txt'), 'utf8'), 'shell change');
+  assert.equal(await readFile(join(workspace.workspaceDir, '__proto__'), 'utf8'), 'literal edit');
+  assert.equal(await readFile(join(workspace.workspaceDir, 'constructor'), 'utf8'), 'literal new file');
+  assert.equal((await restored.review('task', 'history')).checkpoints[0].status, 'complete');
+  assert.equal((await restored.restore('task', ['turn-1'])).restoredFiles, 0);
+  assert.equal((await restored.revert('task', ['turn-1'])).revertedFiles, 6);
 });
 
 test('older Turn conflicts are rejected before any restore and reverse-order rollback is supported', async t => {
@@ -89,6 +100,29 @@ test('older Turn conflicts are rejected before any restore and reverse-order rol
   assert.equal(await readFile(join(workspaceDir, 'file.txt'), 'utf8'), 'C');
   await manager.revert('task', ['two', 'one']);
   assert.equal(await readFile(join(workspaceDir, 'file.txt'), 'utf8'), 'committed\r\n');
+  await assert.rejects(manager.restore('task', ['two', 'one']), { code: 'workspace_revision_conflict' });
+  assert.equal(await readFile(join(workspaceDir, 'file.txt'), 'utf8'), 'committed\r\n');
+  await manager.restore('task', ['one', 'two']);
+  assert.equal(await readFile(join(workspaceDir, 'file.txt'), 'utf8'), 'C');
+});
+
+test('Runtime undo revert rejects later user edits without restoring any of the selected files', async t => {
+  const { source, storage } = await fixture(t);
+  const manager = new TaskWorkspaceManager(join(storage, 'workspaces'));
+  const { workspaceDir } = await manager.create('task', source, 'worktree');
+  await manager.beginTurn('task', 'one');
+  await writeFile(join(workspaceDir, 'file.txt'), 'agent edit');
+  await writeFile(join(workspaceDir, 'new.txt'), 'agent addition');
+  await manager.finishTurn('task', 'one');
+  await manager.revert('task', ['one']);
+  await writeFile(join(workspaceDir, 'file.txt'), 'later user edit');
+  const host = new InMemoryRuntimeHost({ dataRoot: storage });
+  await host.sendCommand({ kind: CREATE_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'task' } });
+  await assert.rejects(host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+    payload: { sessionId: 'task', turnIds: ['one'] } }), { code: 'workspace_revision_conflict' });
+  assert.equal(await readFile(join(workspaceDir, 'file.txt'), 'utf8'), 'later user edit');
+  await assert.rejects(readFile(join(workspaceDir, 'new.txt')), { code: 'ENOENT' });
+  assert.equal((await manager.review('task', 'history')).checkpoints[0].status, 'reverted');
 });
 
 test('applying binds to reviewed bytes, preserves source dirty baseline and rejects destination conflicts', async t => {
@@ -659,6 +693,8 @@ test('workspace actions cannot race the asynchronous admission of a new Turn', a
     await assert.rejects(host.sendCommand({ kind: UPDATE_RUNTIME_WORKSPACE_COMMAND, payload: {
       sessionId: 'task', action: 'discard', expectedRevision: review.workspace.revision, expectedSnapshotId: review.snapshotId,
     } }), /active Turns/);
+    await assert.rejects(host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+      payload: { sessionId: 'task', turnIds: ['one'] } }), /active Turns/);
   } finally { release(); await running; }
   assert.equal((await lstat(review.workspace.workspaceDir)).isDirectory(), true);
 });

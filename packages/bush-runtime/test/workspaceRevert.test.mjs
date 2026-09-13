@@ -8,6 +8,7 @@ import {
   CREATE_RUNTIME_SESSION_COMMAND,
   GET_RUNTIME_SESSION_COMMAND,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+  RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
   RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY,
   UPDATE_RUNTIME_SESSION_METADATA_COMMAND,
 } from "@cardbush/bush-protocol";
@@ -17,6 +18,9 @@ import {
   ToolExecutionStore,
   ToolRegistry,
   WorkspaceObservationStore,
+  SessionStore,
+  FileSessionEventPersistence,
+  FileToolExecutionPersistence,
   registerWorkspaceTools,
 } from "../dist/index.js";
 
@@ -44,6 +48,14 @@ test("reverts one Turn and persists reverted Workspace Change identities", async
     result.revertedChangeIds,
   );
   assert.equal((await setup.revert(["turn-1"])).revertedFiles, 0);
+  const restored = await setup.restore(["turn-1"]);
+  assert.equal(restored.restoredFiles, 1);
+  assert.equal(readFileSync(path, "utf8"), "after");
+  assert.deepEqual(restored.restoredChangeIds, result.revertedChangeIds);
+  assert.equal((await setup.restore(["turn-1"])).restoredFiles, 0);
+  assert.deepEqual((await setup.host.sendCommand({ kind: GET_RUNTIME_SESSION_COMMAND,
+    payload: { sessionId: setup.sessionId } })).metadata[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY], []);
+  assert.equal((await setup.revert(["turn-1"])).revertedFiles, 1, 'a restored edit can be reverted again');
 });
 
 test("uses caller Turn order before reversing executions inside each Turn", async (t) => {
@@ -149,20 +161,73 @@ test("replays a historical workspace change after its project folder is renamed"
   assert.equal(readFileSync(join(nextRoot, "file.txt"), "utf8"), "before");
 });
 
-async function environment(t, sessionId) {
+test('restores chained edits across Turns in forward order and rejects partial conflicting restores', async t => {
+  const setup = await environment(t, 'redo-ordered');
+  const file = join(setup.root, 'file.txt'), other = join(setup.root, 'other.txt');
+  writeFileSync(file, 'A');
+  await setup.execute('one', 1, 'read_file', { path: file });
+  await setup.execute('one', 2, 'write_file', { path: file, content: 'B' });
+  await setup.execute('one', 3, 'write_file', { path: file, content: 'C' });
+  await setup.execute('two', 1, 'write_file', { path: file, content: 'D' });
+  await setup.execute('two', 2, 'write_file', { path: other, content: 'new file' });
+  await setup.revert(['two', 'one']);
+  writeFileSync(other, 'user created this');
+  await assert.rejects(setup.restore(['one', 'two']), /revision no longer matches/);
+  assert.equal(readFileSync(file, 'utf8'), 'A', 'every change is checked before any write');
+  assert.equal(readFileSync(other, 'utf8'), 'user created this');
+  rmSync(other);
+  await assert.rejects(setup.restore(['two', 'one']), /revision no longer matches/);
+  await setup.restore(['one', 'two']);
+  assert.equal(readFileSync(file, 'utf8'), 'D');
+  assert.equal(readFileSync(other, 'utf8'), 'new file');
+});
+
+test('retains redo bytes across host restart and rejects missing or corrupted bytes without changing files', async t => {
+  const setup = await environment(t, 'redo-restart', true);
+  const file = join(setup.root, 'empty.txt');
+  writeFileSync(file, '');
+  await setup.execute('one', 1, 'read_file', { path: file });
+  const outcome = await setup.execute('one', 2, 'write_file', { path: file, content: 'after\r\n中文' });
+  await setup.revert(['one']);
+  const hash = outcome.workspaceChanges[0].after_hash;
+  const savedPath = join(setup.dataRoot, 'workspace-redo', hash);
+  const after = readFileSync(savedPath);
+  const reopened = setup.reopen();
+  const restore = () => reopened.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+    payload: { sessionId: setup.sessionId, turnIds: ['one'] } });
+  writeFileSync(savedPath, 'corrupted');
+  await assert.rejects(restore(), /does not match/);
+  assert.equal(readFileSync(file).length, 0);
+  rmSync(savedPath);
+  await assert.rejects(restore(), /unavailable/);
+  assert.equal(readFileSync(file).length, 0);
+  writeFileSync(savedPath, after);
+  assert.equal((await restore()).restoredFiles, 1);
+  assert.deepEqual(readFileSync(file), after);
+});
+
+async function environment(t, sessionId, persistent = false) {
   const root = mkdtempSync(join(tmpdir(), "cardbush-workspace-revert-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const registry = new ToolRegistry();
   registerWorkspaceTools(registry, new WorkspaceObservationStore());
-  const store = new ToolExecutionStore();
+  const toolPersistence = persistent ? new FileToolExecutionPersistence({ root: join(root, 'tool-journal') }) : undefined;
+  const sessionPersistence = persistent ? new FileSessionEventPersistence({ root: join(root, 'session-journal') }) : undefined;
+  if (persistent) t.after(() => { toolPersistence.close(); sessionPersistence.close(); });
+  const store = new ToolExecutionStore({ persistence: toolPersistence });
   const coordinator = new ToolExecutionCoordinator({
     registry,
     permissions: { request: async () => { throw new Error("unexpected permission"); } },
   });
-  const host = new InMemoryRuntimeHost({
-    toolExecutionStore: store,
+  const sessionStore = new SessionStore({ persistence: sessionPersistence });
+  const dataRoot = persistent ? join(root, 'runtime') : undefined;
+  const reopen = () => new InMemoryRuntimeHost({
+    toolExecutionStore: persistent ? new ToolExecutionStore({ persistence: toolPersistence }) : store,
+    sessionStore: persistent ? new SessionStore({ persistence: sessionPersistence }) : sessionStore,
+    dataRoot,
     registerDefaultWorkspaceTools: false,
   });
+  const host = reopen();
   await host.sendCommand({
     kind: CREATE_RUNTIME_SESSION_COMMAND,
     payload: { sessionId, metadata: { projectDir: root } },
@@ -172,6 +237,7 @@ async function environment(t, sessionId) {
     root,
     sessionId,
     host,
+    reopen, dataRoot,
     async execute(turnId, round, name, input) {
       const toolCall = {
         protocol: "bush.tool_call.v1",
@@ -207,6 +273,9 @@ async function environment(t, sessionId) {
       assert.equal(outcome.kind, "returned");
       store.record(toolCall, identity, outcome);
       return outcome;
+    },
+    restore(turnIds) {
+      return host.sendCommand({ kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND, payload: { sessionId, turnIds } });
     },
     revert(turnIds) {
       return host.sendCommand({

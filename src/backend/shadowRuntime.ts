@@ -188,12 +188,20 @@ export async function streamRuntimeShadowConversationMessage(
     });
     streamLease = { controller, settled, resolveSettled };
     activeStreams.set(request.conversationId, streamLease);
-    const [source, shadowSession, resolved, catalog] = await Promise.all([
+    const [source, shadowSession, resolved, catalog, capabilities] = await Promise.all([
       runtime.client.getSession(state.sessionId, controller.signal),
       runtime.client.getSession(state.runtimeSessionId, controller.signal),
       resolveProductModel(request.modelConfig.id),
       runtime.client.getToolCatalogDetails(controller.signal),
+      runtime.client.getCapabilities(controller.signal),
     ]);
+    // A newly opened window can load newer assets while the host is still old.
+    // Never expose unrestricted Shadow tools against a host missing admission.
+    if (!capabilities.features.includes('shadow_execution_policy')) {
+      throw Object.assign(new Error('Restart CardBush to use the updated Shadow execution policy.'), {
+        code: 'shadow_runtime_update_required',
+      });
+    }
     if (!source) throw new Error('The source conversation is no longer available.');
     const frozenTurnSequence = Number(state.raw.sourceThroughTurnSequence);
     const sourceTurns = Number.isSafeInteger(frozenTurnSequence) && frozenTurnSequence >= 0
@@ -220,11 +228,9 @@ export async function streamRuntimeShadowConversationMessage(
     const readOnly = state.mode === 'readonly';
     const workspaceDir = request.projectDir?.trim() || state.workspaceDir ||
       String(source.metadata?.projectDir ?? '');
-    const tools = catalog
-      .filter((entry) => entry.definition.name === 'checkpoint_context' || (readOnly
-        ? entry.manifest.mutating === false
-        : entry.visibleToChild && (Boolean(workspaceDir) || entry.manifest.dispatch_scope !== 'resource')))
-      .map((entry) => entry.definition);
+    // Like subagent Forks, preserve declarations. Child/Shadow restrictions are
+    // enforced by the Runtime on every invocation, including indirect MCP calls.
+    const tools = catalog.map((entry) => entry.definition);
     const base = createProductAgentTurnRequest({
       requestId: `request_${crypto.randomUUID()}`,
       sessionId: state.runtimeSessionId,
@@ -258,15 +264,23 @@ export async function streamRuntimeShadowConversationMessage(
       ...base,
       prefixMessages: [
         { role: 'system' as const, content: CHILD_AGENT_SYSTEM_PROMPT },
-        {
-          role: 'developer' as const,
-          name: 'shadow_mode',
-          content: readOnly
-            ? 'This is a human-opened read-only Shadow of a frozen parent conversation. Analyze and answer from the frozen history. Do not modify resources, delegate, request permission, or imply that changes were made.'
-            : 'This is a human-opened Fork of a frozen parent conversation. You may modify the current workspace using only the child-safe Tools exposed to this Turn. Do not delegate, request permission, or act outside the configured workspace roots. Re-read before edits and fail closed on revision conflicts.',
-        },
         ...base.prefixMessages.filter((message) => message.role !== 'system'),
         ...sourceMessages,
+      ],
+      inputMessages: [
+        {
+          messageId: `shadow_state_${turnId}`,
+          createdAt: base.inputMessages[0]!.createdAt,
+          message: {
+            role: 'user' as const,
+            name: 'shadow_mode',
+            visibility: 'internal' as const,
+            content: 'You are currently a child Agent in a human-opened Shadow. Tool declarations remain available; the Runtime checks child-state restrictions at execution. Do not delegate or request permission. ' + (readOnly
+              ? 'Current mode: read-only. Analyze the frozen history without modifying resources or implying that changes were made.'
+              : 'Current mode: Fork. You may modify the attached workspace within its configured roots. Re-read before edits and fail closed on revision conflicts.'),
+          },
+        },
+        ...base.inputMessages,
       ],
       requestCapabilities: {
         vision: false,
@@ -279,6 +293,7 @@ export async function streamRuntimeShadowConversationMessage(
         inheritedObservationSessionId: state.sessionId,
         shadowReadOnly: readOnly,
         shadowMode: state.mode,
+        shadowWorkspaceDir: workspaceDir,
         sourceSessionId: state.sessionId,
         projectDir: workspaceDir,
       },

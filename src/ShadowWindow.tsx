@@ -362,7 +362,9 @@ export function ShadowWindow({
       });
     } catch (reason) {
       if (!controller.signal.aborted) {
-        setError(reason instanceof Error ? reason.message : String(reason));
+        setError(context.language === 'zh' && (reason as { code?: string })?.code === 'shadow_runtime_update_required'
+          ? 'Shadow 的执行规则已更新，请重启 CardBush 后继续。'
+          : reason instanceof Error ? reason.message : String(reason));
       }
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
@@ -421,7 +423,7 @@ export function ShadowWindow({
             className={mode === 'fork' ? 'active' : ''}
             disabled={busy || initializing || modeSwitching}
             onClick={() => void switchMode('fork')}
-            title={language === 'zh' ? '复用子 Agent 安全边界；有项目时可修改工作区' : 'Child-Agent safety boundary; can change an attached project workspace'}
+            title={language === 'zh' ? '在 Shadow 会话中继续修改当前工作区' : 'Continue working on the attached workspace in this Shadow'}
           >
             <GitFork size={13} />
             Fork
@@ -445,7 +447,7 @@ export function ShadowWindow({
       <section className="shadow-window-context-bar">
         <span>{mode === 'readonly'
           ? (language === 'zh' ? '冻结历史 · 只读分析' : 'Frozen history · analysis only')
-          : (language === 'zh' ? '冻结历史 · 子 Agent 修改边界 · 无 Subagent 能力' : 'Frozen history · child mutation boundary · no Subagent')}</span>
+          : (language === 'zh' ? '冻结历史 · 可修改当前工作区' : 'Frozen history · attached workspace changes allowed')}</span>
       </section>
 
       <div className="shadow-window-transcript-frame">

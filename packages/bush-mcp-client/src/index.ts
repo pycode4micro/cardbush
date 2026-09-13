@@ -423,22 +423,26 @@ export class McpClientManager {
   }
 
   async #connect(config: McpServerSnapshot, signal?: AbortSignal): Promise<ConnectedServer> {
-    const transport = await abortable(Promise.resolve(this.#createTransport(config, signal)), signal);
+    const transport = await withConnectionDeadline(config, 'transport setup', signal,
+      stepSignal => Promise.resolve(this.#createTransport(config, stepSignal)));
     signal?.throwIfAborted();
     const client = this.#createClient(config);
     this.#interactive.prepare(client);
     drainTransportStderr(transport, config.id, this.#onServerStderr);
     let closedDuringStartup = false;
     try {
-      const connecting = client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000, signal });
-      void connecting.then(() => {
-        // Defensive cleanup for transports that finish starting after cancellation and close.
-        if (signal?.aborted && closedDuringStartup) this.#trackCleanup(closeConnection(client, transport, this.#closeTimeoutMs));
-      }, () => undefined);
-      await abortable(connecting, signal);
+      await withConnectionDeadline(config, 'handshake', signal, stepSignal => {
+        const connecting = client.connect(transport, { timeout: config.startupTimeoutMs ?? 15_000, signal: stepSignal });
+        void connecting.then(() => {
+          // A client can finish after ignoring cancellation or its own timeout.
+          if (stepSignal.aborted && closedDuringStartup) this.#trackCleanup(closeConnection(client, transport, this.#closeTimeoutMs));
+        }, () => undefined);
+        return connecting;
+      });
       if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai') attachOpenAiCatalogAdapter(transport, config.transport.openaiAppId!);
       attachMcpResultFallback(client, transport);
-      const listed = await abortable(listToolCatalog(client, config.startupTimeoutMs, signal), signal);
+      const listed = await withConnectionDeadline(config, 'tool discovery', signal,
+        stepSignal => listToolCatalog(client, config.startupTimeoutMs, stepSignal));
       signal?.throwIfAborted();
       if (config.transport.kind !== 'stdio' && config.transport.auth === 'openai' && !listed.tools.length) throw new McpOAuthConfigurationRequired('This application is not available in the signed-in OpenAI account. Connect it in ChatGPT Apps, then reconnect.');
       const exposed = config.exposeTools ? new Set(config.exposeTools) : undefined;
@@ -470,8 +474,8 @@ export class McpClientManager {
       this.#watchClientLifecycle(connection, client);
       return connection;
     } catch (error) {
-      await closeConnection(client, transport, this.#closeTimeoutMs);
       closedDuringStartup = true;
+      await closeConnection(client, transport, this.#closeTimeoutMs);
       signal?.throwIfAborted();
       const authentication = authenticationFailure(error);
       // Keep sign-in/configuration failures visible and recoverable even for required services.
@@ -722,15 +726,24 @@ export class McpClientManager {
       connection.recoveryAbort = recovery;
       let transport: Transport | undefined;
       try {
-        transport = await abortable(Promise.resolve(this.#createTransport(connection.config, recovery.signal)), recovery.signal);
+        transport = await withConnectionDeadline(connection.config, 'transport setup', recovery.signal,
+          stepSignal => Promise.resolve(this.#createTransport(connection.config, stepSignal)));
         if (connection.retired) { await closeConnection(client, transport, this.#closeTimeoutMs); return; }
         drainTransportStderr(transport, connection.config.id, this.#onServerStderr);
         connection.pendingClient = client;
         connection.pendingTransport = transport;
-        await client.connect(transport, { timeout: connection.config.startupTimeoutMs ?? 15_000 });
+        const pendingTransport = transport;
+        await withConnectionDeadline(connection.config, 'handshake', recovery.signal, stepSignal => {
+          const connecting = client.connect(pendingTransport, { timeout: connection.config.startupTimeoutMs ?? 15_000, signal: stepSignal });
+          void connecting.then(() => {
+            if (stepSignal.aborted) this.#trackCleanup(closeConnection(client, pendingTransport, this.#closeTimeoutMs));
+          }, () => undefined);
+          return connecting;
+        });
         if (connection.config.transport.kind !== 'stdio' && connection.config.transport.auth === 'openai') attachOpenAiCatalogAdapter(transport, connection.config.transport.openaiAppId!);
         attachMcpResultFallback(client, transport);
-        const listed = await listToolCatalog(client, connection.config.startupTimeoutMs);
+        const listed = await withConnectionDeadline(connection.config, 'tool discovery', recovery.signal,
+          stepSignal => listToolCatalog(client, connection.config.startupTimeoutMs, stepSignal));
         const byName = new Map(listed.tools.map((remote) => [remote.name, remote]));
         const missing = connection.tools.filter((tool) => !byName.has(tool.remote.name));
         if (missing.length > 0) {
@@ -1054,6 +1067,30 @@ async function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> 
       if (signal.aborted) onAbort(); else signal.addEventListener('abort', onAbort, { once: true });
     })]);
   } finally { signal.removeEventListener('abort', onAbort); }
+}
+
+/** SDK request timers do not cover every transport/probe/handshake teardown path. */
+async function withConnectionDeadline<T>(
+  config: McpServerSnapshot,
+  phase: 'transport setup' | 'handshake' | 'tool discovery',
+  parent: AbortSignal | undefined,
+  work: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort(parent?.reason);
+  if (parent?.aborted) cancel(); else parent?.addEventListener('abort', cancel, { once: true });
+  const timeoutMs = config.startupTimeoutMs ?? (phase === 'tool discovery' ? 60_000 : 15_000);
+  const timer = setTimeout(() => controller.abort(new Error(
+    `MCP service ${config.id}: ${phase} timed out after ${timeoutMs}ms. Check the server startup command and retry the connection.`,
+  )), timeoutMs);
+  timer.unref?.();
+  try {
+    controller.signal.throwIfAborted();
+    return await abortable(work(controller.signal), controller.signal);
+  } finally {
+    clearTimeout(timer);
+    parent?.removeEventListener('abort', cancel);
+  }
 }
 
 async function listToolCatalog(client: Client, timeoutMs = 60_000, signal?: AbortSignal): Promise<{ tools: McpTool[] }> {

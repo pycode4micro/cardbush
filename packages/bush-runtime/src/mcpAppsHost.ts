@@ -86,7 +86,9 @@ export class McpAppsHost {
       if (!scope.names.includes(source) || !registration?.mcpApp || !registration.mcpHook || registration.sessionScope && registration.sessionScope !== sessionId) return [];
       const active = [...this.instances.values()].filter(instance => instance.sessionId === sessionId && instance.turnId === turnId && instance.toolCallId === record.toolCall.id && sameConnection(instance, registration) && Date.now() - instance.touched <= 30 * 60_000);
       const resultError = declaredResultError(record.toolCall.name === 'mcp_call' ? object(record.result).result : record.result);
-      return [{ sessionId, turnId, toolCallId: record.toolCall.id, source, resourceUri: registration.mcpApp.resourceUri, title: registration.mcpApp.title, serverTitle: registration.mcpApp.serverTitle,
+      return [{ sessionId, turnId, toolCallId: record.toolCall.id, source, resourceUri: registration.mcpApp.resourceUri,
+        ...(registration.mcpApp.title === undefined ? {} : { title: registration.mcpApp.title }),
+        ...(registration.mcpApp.serverTitle === undefined ? {} : { serverTitle: registration.mcpApp.serverTitle }),
         ...(resultError ? { resultError } : {}),
         activeViews: active.map(instance => ({ viewId: instance.viewId, frameLoaded: !!instance.frameLoaded, initialized: !!instance.initialized })) }];
     });
@@ -271,7 +273,7 @@ export function registerMcpAppStatusTool(registry: ToolRegistry, host: McpAppsHo
       const turnId = context.input.turnId ?? context.turnId;
       const observations = await host.observations.since(context.sessionId);
       return { interfaces: await host.describe(context.sessionId, turnId, context.input.toolCallId ? [context.input.toolCallId] : undefined),
-        pluginContext: await host.context(context.sessionId),
+        pluginContext: (await host.context(context.sessionId)) ?? null,
         observations: { ...observations, events: observations.events.filter(event => event.turnId === turnId && (!context.input.toolCallId || event.toolCallId === context.input.toolCallId)) } };
     },
   });

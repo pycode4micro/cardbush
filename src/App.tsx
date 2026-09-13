@@ -30,7 +30,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
   Suspense,
-  lazy,
   useCallback,
   useEffect,
   useMemo,
@@ -45,6 +44,7 @@ import {
   fetchSkills,
   isRuntimeWorkspaceSnapshotUnavailableError,
   revertSessionWorkspaceChanges,
+  restoreSessionWorkspaceChanges,
   saveModelConfigs,
 } from './backend/api';
 import { useCardbushChat } from './hooks/useCardbushChat';
@@ -67,6 +67,8 @@ import { InspectorActions } from './features/inspector/InspectorActions';
 import { InspectorTabPages } from './features/inspector/InspectorTabPages';
 import { sectionLabels } from './features/appSections';
 import { automationSetupPrompt } from './features/automations/automationPrompts';
+import { AutomationRunPanel } from './features/automations/AutomationRunPanel';
+import { OPEN_AUTOMATION_RUN_EVENT, type AutomationRunOpenDetail } from './features/automations/automationEvents';
 import { WorkSummaryInspector } from './features/chat/WorkSummaryInspector';
 import {
   changeRootForConversation,
@@ -103,6 +105,7 @@ import {
   type ConversationChangeReport,
 } from './features/tools';
 import { ShadowCloneIcon } from './components/ShadowCloneIcon';
+import { WorkspaceChangeStateContext, readLegacyRevertKeys, saveLegacyRevertKeys, workspaceChangeKey, workspaceChangeReverted } from './features/tools/WorkspaceChangeStateContext';
 import { ShadowWindow, type ShadowConversationContext } from './ShadowWindow';
 import {
   OPEN_INSPECTOR_EVENT,
@@ -155,22 +158,45 @@ import {
   InspectorWebview,
 } from './features/inspector/InspectorWebview';
 
+import { DeferredModuleNotice, recoverableLazy } from './shared/recoverableLazy';
+
 let settingsViewModulePromise: Promise<typeof import('./features/SettingsView')> | null = null;
 
 function loadSettingsViewModule() {
-  settingsViewModulePromise ??= import('./features/SettingsView');
+  settingsViewModulePromise ??= import('./features/SettingsView').catch(error => {
+    settingsViewModulePromise = null;
+    throw error;
+  });
   return settingsViewModulePromise;
 }
 
-const LazySettingsView = lazy(async () => {
+const LazySettingsView = recoverableLazy('settings', async () => {
   const module = await loadSettingsViewModule();
   return { default: module.SettingsView };
-});
+}, (props, retry) => <SettingsModuleFallback {...props} retry={retry} />);
 
-const LazyFeatureContentPanel = lazy(async () => {
+const LazyFeatureContentPanel = recoverableLazy('feature-panel', async () => {
   const module = await import('./features/panels');
   return { default: module.FeatureContentPanel };
-});
+}, (props, retry) => <DeferredModuleNotice language={props.language} retry={retry} />);
+
+function SettingsModuleFallback({ active, onReady, onBack, language, retry }: {
+  active: boolean;
+  onReady: () => void;
+  onBack: () => void;
+  language: AppLanguage;
+  retry: () => void;
+}) {
+  useEffect(onReady, [onReady]);
+  return <main className={`settings-shell${active ? '' : ' settings-inactive'}`} aria-hidden={!active} inert={!active}>
+    <section className="settings-content">
+      <button type="button" className="settings-module-back" onClick={onBack}>
+        {language === 'zh' ? '返回应用' : 'Back to app'}
+      </button>
+      <DeferredModuleNotice language={language} retry={retry} />
+    </section>
+  </main>;
+}
 
 type AppErrorBoundaryState = {
   message: string;
@@ -582,9 +608,6 @@ function CardbushApp() {
       setDisabledSkillNames(next);
       persistDisabledSkillNames(next);
     }
-    if (categories.includes('agent_profiles') || categories.includes('teams')) {
-      await refreshRuntimeRendererPlugins();
-    }
   }, [language]);
   useEffect(() => {
     const defaultSelection = backendDefaultModelName.trim();
@@ -670,9 +693,14 @@ function CardbushApp() {
   );
   const [revertingChangeId, setRevertingChangeId] = useState('');
   const [changeReviewNotice, setChangeReviewNotice] = useState('');
-  const [revertedChangeKeys, setRevertedChangeKeys] = useState<Set<string>>(
-    () => new Set(),
+  const [initialLegacyRevertKeys] = useState(readLegacyRevertKeys);
+  const legacyRevertKeysRef = useRef(initialLegacyRevertKeys);
+  const workspaceChangeBusyRef = useRef(false);
+  const [revertedChangeStates, setRevertedChangeStates] = useState<Map<string, boolean>>(
+    () => new Map([...legacyRevertKeysRef.current].map(key => [key, true])),
   );
+  const workspaceChangeState = useMemo(() => ({ states: revertedChangeStates, busy: Boolean(revertingChangeId) }),
+    [revertedChangeStates, revertingChangeId]);
   const {
     tabs: inspectorTabs, activeTab: activeInspectorTab,
     openTab: openInspectorTab, activateTab: selectInspectorTab, closeTabs: removeInspectorTabs,
@@ -727,6 +755,7 @@ function CardbushApp() {
     const normalizedDetail: InspectorOpenDetail = {
       target,
       ...(detail.title?.trim() ? { title: detail.title.trim() } : {}),
+      ...(detail.mediaType ? { mediaType: detail.mediaType } : {}),
     };
     const identity = `resource:${inspectorTargetIdentity(target)}`;
     const nextTab: InspectorResourceTab = {
@@ -770,6 +799,16 @@ function CardbushApp() {
     setInspectorTabsMenuOpen(false);
     setInspectorTabContextMenu(null);
   }, [language, openInspectorTab]);
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent<AutomationRunOpenDetail>).detail;
+      if (!detail?.jobId || !detail.runId) return;
+      openInspectorTab({ id: `automation:${detail.runId}`, kind: 'automation', ...detail });
+      setInspectorOpen(true); setInspectorAddMenuOpen(false); setInspectorTabsMenuOpen(false); setInspectorTabContextMenu(null);
+    };
+    window.addEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
+    return () => window.removeEventListener(OPEN_AUTOMATION_RUN_EVENT, open);
+  }, [openInspectorTab]);
   const changeReportsByConversation = useMemo(
     () =>
       Object.fromEntries(
@@ -778,11 +817,11 @@ function CardbushApp() {
             conversationId,
             changeReportsFromMessages(
               normalizeChatMessagesForDisplay(messages),
-            ),
+            ).map(report => ({ ...report, reverted: workspaceChangeReverted(revertedChangeStates, conversationId, report) })),
           ] as const)
           .filter(([, reports]) => reports.length > 0),
       ) as Record<string, ConversationChangeReport[]>,
-    [chat.messagesByConversation],
+    [chat.messagesByConversation, revertedChangeStates],
   );
   const [sidebarChangeReportsByConversation, setSidebarChangeReportsByConversation] =
     useState<Record<string, ConversationChangeReport[]>>({});
@@ -968,7 +1007,9 @@ function CardbushApp() {
     ? inspectorNavigationByTarget[activeInspectorTabIdentity]
     : undefined;
   const activeInspectorAddress = displayedInspectorTarget
-    ? isInspectorBrowserTarget(displayedInspectorTarget.target)
+    ? displayedInspectorTarget.mediaType && displayedInspectorTarget.target.startsWith('data:')
+      ? displayedInspectorTarget.title || displayedInspectorTarget.mediaType
+      : isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType)
       ? activeInspectorNavigation?.url || displayedInspectorTarget.target
       : displayedInspectorTarget.target
     : '';
@@ -1806,270 +1847,140 @@ function CardbushApp() {
     }
   }, []);
 
-  const revertChangeReport = useCallback(
-    async (conversationId: string, report: ConversationChangeReport) => {
+  const setChangeReportsReverted = useCallback(
+    async (conversationId: string, reports: ConversationChangeReport[], reverted: boolean, busyId: string) => {
+      if (workspaceChangeBusyRef.current || reports.length === 0) return;
       if (chat.processingConversationIds.has(conversationId)) {
-        setChangeReviewNotice(
-          language === 'zh'
-            ? '当前回合仍在运行，完成或停止后才能撤回修改。'
-            : 'This turn is still running. Changes can be reverted after it completes or stops.',
-        );
+        setChangeReviewNotice(language === 'zh'
+          ? '当前回合仍在运行，完成或停止后才能撤回或恢复修改。'
+          : 'Wait for this turn to complete or stop before reverting or restoring changes.');
         return;
       }
-      const conversation =
-        chat.conversations.find((item) => item.id === conversationId) ??
-        chat.activeConversation;
-      const root =
-        changeRootForConversation(conversation) ||
-        activeProjectDir?.trim() ||
-        '';
-      const turnId = report.turnId?.trim() ?? '';
-      const usesRecoverySnapshot = Boolean(turnId);
-      if (!usesRecoverySnapshot && !root) {
-        const message =
-          language === 'zh'
-            ? '没有可用于撤回的项目路径。'
-            : 'No project path is available for revert.';
-        setChangeReviewNotice(message);
-        window.alert(message);
-        return;
-      }
-      if (!usesRecoverySnapshot && !window.cardbushDesktop?.revertFileChanges) {
-        const message =
-          language === 'zh'
-            ? '当前环境缺少撤回文件修改的桌面接口。'
-            : 'The desktop revert API is not available.';
-        setChangeReviewNotice(message);
-        window.alert(message);
-        return;
-      }
-      const files = serializeToolChangeReport(report);
-      if (!usesRecoverySnapshot && files.length === 0) {
-        const message =
-          language === 'zh'
-            ? '这组修改没有可撤回的 diff。'
-            : 'This change set has no reversible diff.';
-        setChangeReviewNotice(message);
-        window.alert(message);
-        return;
-      }
-      const confirmed = window.confirm(
-        language === 'zh'
-          ? `确定撤回这组修改吗？恢复前会校验文件是否又被改动。`
-          : 'Revert this change set? Files will be checked for later edits first.',
-      );
-      if (!confirmed) {
-        return;
-      }
-      setRevertingChangeId(report.id);
+      const conversation = chat.conversations.find(item => item.id === conversationId);
+      const root = changeRootForConversation(conversation) || '';
+      const action = language === 'zh' ? (reverted ? '撤回' : '取消撤回') : (reverted ? 'Revert' : 'Undo revert');
+      if (reverted && !window.confirm(language === 'zh'
+        ? '确定撤回这些修改吗？会先校验文件版本，撤回后可以取消撤回。'
+        : 'Revert these changes? File versions will be checked first. You can undo this revert.')) return;
+      workspaceChangeBusyRef.current = true;
+      setRevertingChangeId(busyId);
       setChangeReviewNotice('');
-      try {
-        let result: { revertedFiles: number; revertedChangeIds?: string[] };
-        if (usesRecoverySnapshot) {
-          try {
-            result = await revertSessionWorkspaceChanges(conversationId, [turnId]);
-          } catch (caught) {
-            if (
-              !snapshotRevertFallbackAllowed(caught) ||
-              !root ||
-              files.length === 0 ||
-              !window.cardbushDesktop?.revertFileChanges
-            ) {
-              throw caught;
-            }
-            result = await window.cardbushDesktop.revertFileChanges(root, files);
-          }
-        } else {
-          result = await window.cardbushDesktop!.revertFileChanges(root, files);
+      // Changes to the same file must be undone newest first and restored oldest first.
+      const ordered = reverted ? [...reports].reverse() : reports;
+      const markCompleted = (completed: ConversationChangeReport[], legacy: boolean) => {
+        const keys = completed.map(report => workspaceChangeKey(conversationId, report));
+        for (const key of keys) {
+          if (legacy && reverted) legacyRevertKeysRef.current.add(key);
+          else legacyRevertKeysRef.current.delete(key);
         }
-        const message =
-          language === 'zh'
-            ? `已安全恢复 ${result.revertedFiles} 个文件。`
-            : `Safely restored ${result.revertedFiles} file(s).`;
-        setChangeReviewNotice(message);
-        setRevertedChangeKeys((current) => {
-          const next = new Set(current);
-          const turnReports = turnId
-            ? (changeReportsByConversation[conversationId] ?? []).filter(
-                (candidate) => candidate.turnId?.trim() === turnId,
-              )
-            : [report];
-          for (const candidate of turnReports.length > 0 ? turnReports : [report]) {
-            next.add(`${conversationId}:${candidate.id}`);
-          }
+        saveLegacyRevertKeys(legacyRevertKeysRef.current);
+        setRevertedChangeStates(current => {
+          const next = new Map(current);
+          for (const key of keys) next.set(key, reverted);
           return next;
         });
-        if (root) {
-          await refreshProjectGitStatus(root);
+      };
+      const applyLegacy = async (group: ConversationChangeReport[]) => {
+        const desktop = window.cardbushDesktop;
+        const changes = group.map(report => ({ report, files: serializeToolChangeReport(report) }));
+        if (!root || changes.some(item => !item.files.length) || !desktop?.revertFileChanges || !desktop.restoreFileChanges) {
+          throw new Error(language === 'zh' ? '缺少可用的文件快照或桌面恢复接口。' : 'No usable file snapshot or desktop restore API is available.');
         }
-      } catch (caught) {
-        const message =
-          language === 'zh'
-            ? `撤回失败：${workspaceRevertErrorMessage(caught, 'zh')}`
-            : `Revert failed: ${workspaceRevertErrorMessage(caught, 'en')}`;
-        setChangeReviewNotice(message);
-        window.alert(message);
-      } finally {
-        setRevertingChangeId('');
-      }
-    },
-    [
-      activeProjectDir,
-      chat.activeConversation,
-      chat.conversations,
-      chat.processingConversationIds,
-      changeReportsByConversation,
-      language,
-      refreshProjectGitStatus,
-    ],
-  );
-  const revertActiveConversationChangeReport = useCallback((
-    report: ConversationChangeReport,
-    message: ChatMessage,
-  ) => revertChangeReport(
-    message.conversationId?.trim() || chat.activeConversationId,
-    report,
-  ), [chat.activeConversationId, revertChangeReport]);
-  const openActiveConversationChangeReview = useCallback((filePath?: string) => {
-    if (!chat.activeConversationId) return;
-    openChangeReviewInspector(
-      chat.activeConversationId,
-      typeof filePath === 'string' ? filePath.trim() : '',
-    );
-  }, [chat.activeConversationId, openChangeReviewInspector]);
-
-  const revertConversationReports = useCallback(
-    async (conversationId: string, reports: ConversationChangeReport[]) => {
-      if (chat.processingConversationIds.has(conversationId)) {
-        setChangeReviewNotice(
-          language === 'zh'
-            ? '当前回合仍在运行，完成或停止后才能撤回修改。'
-            : 'This turn is still running. Changes can be reverted after it completes or stops.',
-        );
-        return;
-      }
-      const conversation =
-        chat.conversations.find((item) => item.id === conversationId) ??
-        chat.activeConversation;
-      const root =
-        changeRootForConversation(conversation) ||
-        activeProjectDir?.trim() ||
-        '';
-      const reversibleReports = reports
-        .map((report) => ({ report, files: serializeToolChangeReport(report) }))
-        .filter((item) => item.files.length > 0);
-      const reportsWithSnapshot = reports.filter((report) => report.turnId?.trim());
-      const snapshotTurnIds = Array.from(new Set(
-        reportsWithSnapshot.map((report) => report.turnId!.trim()),
-      ));
-      const usesRecoverySnapshots =
-        reports.length > 0 && reportsWithSnapshot.length === reports.length;
-      if (
-        (!usesRecoverySnapshots && !root) ||
-        (!usesRecoverySnapshots && reversibleReports.length === 0)
-      ) {
-        const message =
-          language === 'zh'
-            ? '没有可撤回的会话修改。'
-            : 'No reversible changes were found for this chat.';
-        setChangeReviewNotice(message);
-        window.alert(message);
-        return;
-      }
-      if (!usesRecoverySnapshots && !window.cardbushDesktop?.revertFileChanges) {
-        const message =
-          language === 'zh'
-            ? '当前环境缺少撤回文件修改的桌面接口。'
-            : 'The desktop revert API is not available.';
-        setChangeReviewNotice(message);
-        window.alert(message);
-        return;
-      }
-      const fileCount = usesRecoverySnapshots
-        ? reports.reduce((sum, report) => sum + report.fileCount, 0)
-        : reversibleReports.reduce((sum, item) => sum + item.files.length, 0);
-      const confirmed = window.confirm(
-        language === 'zh'
-          ? `确定撤回这个会话里的全部修改吗？将按时间倒序校验并恢复 ${fileCount} 个文件。`
-          : `Revert all changes in this chat? ${fileCount} file(s) will be checked and restored in reverse order.`,
-      );
-      if (!confirmed) {
-        return;
-      }
-      setRevertingChangeId(`conversation:${conversationId}`);
-      setChangeReviewNotice('');
-      try {
-        let revertedFiles = 0;
-        const outputs: string[] = [];
-        if (usesRecoverySnapshots) {
-          try {
-            const result = await revertSessionWorkspaceChanges(
-              conversationId,
-              [...snapshotTurnIds].reverse(),
-            );
-            revertedFiles = result.revertedFiles;
-          } catch (caught) {
-            if (
-              !snapshotRevertFallbackAllowed(caught) ||
-              !root ||
-              reversibleReports.length !== reports.length ||
-              !window.cardbushDesktop?.revertFileChanges
-            ) {
-              throw caught;
+        const write = async (item: typeof changes[number], reverse: boolean) => reverse
+          ? (await desktop.revertFileChanges(root, item.files)).revertedFiles
+          : (await desktop.restoreFileChanges(root, item.files)).restoredFiles;
+        const applied: typeof changes = [];
+        let count = 0;
+        try {
+          for (const item of changes) {
+            count += await write(item, reverted);
+            applied.push(item);
+          }
+        } catch (caught) {
+          const failures: string[] = [];
+          for (const item of applied.reverse()) {
+            try { await write(item, !reverted); }
+            catch (rollbackError) {
+              markCompleted([item.report], true);
+              failures.push(errorMessage(rollbackError));
             }
-            for (const item of [...reversibleReports].reverse()) {
-              const result = await window.cardbushDesktop.revertFileChanges(root, item.files);
-              revertedFiles += result.revertedFiles;
-              if (result.output.trim()) {
-                outputs.push(result.output.trim());
+          }
+          if (failures.length) throw new Error(errorMessage(caught) + '\n' + (language === 'zh'
+            ? '部分文件无法回滚，请审查当前内容：' : 'Some files could not be rolled back; review their current contents: ') + failures.join('\n'));
+          throw caught;
+        }
+        markCompleted(group, true);
+        return count;
+      };
+      const applySnapshots = async (turnIds: string[]) => reverted
+        ? (await revertSessionWorkspaceChanges(conversationId, turnIds)).revertedFiles
+        : (await restoreSessionWorkspaceChanges(conversationId, turnIds)).restoredFiles;
+      try {
+        let changedFiles = 0;
+        const allSnapshots = ordered.every(report => report.turnId?.trim()
+          && !legacyRevertKeysRef.current.has(workspaceChangeKey(conversationId, report)));
+        if (allSnapshots) {
+          try {
+            changedFiles = await applySnapshots([...new Set(ordered.map(report => report.turnId!.trim()))]);
+            markCompleted(ordered, false);
+          } catch (caught) {
+            // A conflict or missing redo image must never turn into an unchecked diff fallback.
+            if (!reverted || !snapshotRevertFallbackAllowed(caught)) throw caught;
+            changedFiles += await applyLegacy(ordered);
+          }
+        } else {
+          const completedKeys = new Set<string>();
+          const legacyKeys = new Set(legacyRevertKeysRef.current);
+          for (const report of ordered) {
+            const key = workspaceChangeKey(conversationId, report);
+            if (completedKeys.has(key)) continue;
+            const group = ordered.filter(item => workspaceChangeKey(conversationId, item) === key);
+            const turnId = report.turnId?.trim();
+            if (!turnId || legacyKeys.has(key)) {
+              changedFiles += await applyLegacy(group);
+            } else {
+              try {
+                changedFiles += await applySnapshots([turnId]);
+                markCompleted(group, false);
+              } catch (caught) {
+                if (!reverted || !snapshotRevertFallbackAllowed(caught)) throw caught;
+                changedFiles += await applyLegacy(group);
               }
             }
-          }
-        } else {
-          for (const item of [...reversibleReports].reverse()) {
-            const result = await window.cardbushDesktop!.revertFileChanges(root, item.files);
-            revertedFiles += result.revertedFiles;
-            if (result.output.trim()) {
-              outputs.push(result.output.trim());
-            }
+            completedKeys.add(key);
           }
         }
-        setChangeReviewNotice(
-          outputs.join('\n') ||
-            (language === 'zh'
-              ? `已撤回 ${revertedFiles} 个文件的修改。`
-              : `Reverted ${revertedFiles} file(s).`),
-        );
-        setRevertedChangeKeys((current) => {
-          const next = new Set(current);
-          for (const report of reports) {
-            next.add(`${conversationId}:${report.id}`);
-          }
-          return next;
-        });
-        if (root) {
-          await refreshProjectGitStatus(root);
-        }
+        setChangeReviewNotice(language === 'zh'
+          ? (reverted ? '已撤回 ' : '已取消撤回，恢复 ') + changedFiles + ' 个文件的修改。'
+          : action + ' completed for ' + changedFiles + ' file(s).');
+        if (root) await refreshProjectGitStatus(root);
       } catch (caught) {
-        const message =
-          language === 'zh'
-            ? `撤回失败：${workspaceRevertErrorMessage(caught, 'zh')}`
-            : `Revert failed: ${workspaceRevertErrorMessage(caught, 'en')}`;
+        const message = action + (language === 'zh' ? '失败：' : ' failed: ') + workspaceRevertErrorMessage(caught, language);
         setChangeReviewNotice(message);
         window.alert(message);
       } finally {
+        workspaceChangeBusyRef.current = false;
         setRevertingChangeId('');
       }
-    },
-    [
-      activeProjectDir,
-      chat.activeConversation,
-      chat.conversations,
-      chat.processingConversationIds,
-      language,
-      refreshProjectGitStatus,
-    ],
+    }, [chat.conversations, chat.processingConversationIds, language, refreshProjectGitStatus],
   );
+  const revertChangeReport = useCallback((conversationId: string, report: ConversationChangeReport) =>
+    setChangeReportsReverted(conversationId, [report],
+      !workspaceChangeReverted(revertedChangeStates, conversationId, report), report.id),
+    [revertedChangeStates, setChangeReportsReverted]);
+  const revertActiveConversationChangeReport = useCallback((report: ConversationChangeReport, message: ChatMessage) =>
+    revertChangeReport(message.conversationId?.trim() || chat.activeConversationId, report),
+    [chat.activeConversationId, revertChangeReport]);
+  const openActiveConversationChangeReview = useCallback((filePath?: string) => {
+    if (!chat.activeConversationId) return;
+    openChangeReviewInspector(chat.activeConversationId, typeof filePath === 'string' ? filePath.trim() : '');
+  }, [chat.activeConversationId, openChangeReviewInspector]);
+  const revertConversationReports = useCallback((conversationId: string, reports: ConversationChangeReport[]) => {
+    const allReverted = reports.every(report => workspaceChangeReverted(revertedChangeStates, conversationId, report));
+    return setChangeReportsReverted(conversationId,
+      allReverted ? reports : reports.filter(report => !workspaceChangeReverted(revertedChangeStates, conversationId, report)),
+      !allReverted, 'conversation:' + conversationId);
+  }, [revertedChangeStates, setChangeReportsReverted]);
 
   const openSettings = useCallback((
     targetSection: SettingsSection = 'profile',
@@ -2085,7 +1996,7 @@ function CardbushApp() {
 
   useEffect(() => {
     const preloadTimer = window.setTimeout(() => {
-      void loadSettingsViewModule();
+      void loadSettingsViewModule().catch(() => undefined);
     }, 0);
     return () => window.clearTimeout(preloadTimer);
   }, []);
@@ -2142,6 +2053,7 @@ function CardbushApp() {
   }, [openSettings]);
 
   return (
+    <WorkspaceChangeStateContext.Provider value={workspaceChangeState}>
     <div
       className={`app ${themeClassNames(theme)}`}
       lang={language}
@@ -2424,7 +2336,7 @@ function CardbushApp() {
                             ? tab.detail.target
                             : tab.kind === 'review'
                               ? `${label} · ${tab.conversationId}`
-                              : tab.kind === 'shadow'
+                              : tab.kind === 'automation' ? `${label} · ${tab.runId}` : tab.kind === 'shadow'
                                 ? tab.context.title
                                 : `${label} · ${tab.detail.sessionId}`;
                           return (
@@ -2446,12 +2358,12 @@ function CardbushApp() {
                                 onClick={() => activateInspectorTab(tab)}
                               >
                                 {tab.kind === 'resource'
-                                  ? isInspectorBrowserTarget(tab.detail.target)
+                                  ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
                                     ? <Globe2 size={13} aria-hidden="true" />
                                     : <FileText size={13} aria-hidden="true" />
                                   : tab.kind === 'review'
                                     ? <Clipboard size={13} aria-hidden="true" />
-                                    : tab.kind === 'history'
+                                    : tab.kind === 'history' || tab.kind === 'automation'
                                       ? <Clock3 size={13} aria-hidden="true" />
                                       : tab.kind === 'subagent'
                                         ? <Bot size={13} aria-hidden="true" />
@@ -2530,12 +2442,12 @@ function CardbushApp() {
                                     onClick={() => activateInspectorTab(tab)}
                                   >
                                     {tab.kind === 'resource'
-                                      ? isInspectorBrowserTarget(tab.detail.target)
+                                      ? isInspectorBrowserTarget(tab.detail.target, tab.detail.mediaType)
                                         ? <Globe2 size={13} aria-hidden="true" />
                                         : <FileText size={13} aria-hidden="true" />
                                       : tab.kind === 'review'
                                         ? <Clipboard size={13} aria-hidden="true" />
-                                        : tab.kind === 'history'
+                                        : tab.kind === 'history' || tab.kind === 'automation'
                                           ? <Clock3 size={13} aria-hidden="true" />
                                           : tab.kind === 'subagent'
                                             ? <Bot size={13} aria-hidden="true" />
@@ -2685,7 +2597,7 @@ function CardbushApp() {
                       aria-hidden="true"
                     />
                   </button>
-                  {isInspectorBrowserTarget(displayedInspectorTarget.target) ? (
+                  {isInspectorBrowserTarget(displayedInspectorTarget.target, displayedInspectorTarget.mediaType) ? (
                     <form
                       className="right-inspector-address editable"
                       title={activeInspectorAddress}
@@ -2740,12 +2652,16 @@ function CardbushApp() {
                               identity={tab.id}
                               target={tab.detail.target}
                               source={inspectorSource(tab.detail.target)}
+                              mediaType={tab.detail.mediaType}
+                              title={tab.detail.title}
                               language={language}
                               onNavigationStateChange={updateInspectorNavigation}
                               onOpenTarget={openInspectorTarget}
                             />
                           ) : tab.kind === 'shadow' ? (
                             <ShadowWindow embedded context={tab.context} />
+                          ) : tab.kind === 'automation' ? (
+                            <AutomationRunPanel jobId={tab.jobId} runId={tab.runId} language={language} active={active && inspectorPresence.visible} onOpenConversation={id => { chat.openConversation(id); setSection('chat'); }}/>
                           ) : tab.kind === 'history' || tab.kind === 'subagent' ? (
                             <WorkSummaryInspector
                               detail={tab.detail}
@@ -2775,9 +2691,7 @@ function CardbushApp() {
                               revertingChangeId={revertingChangeId}
                               revertedChangeIds={new Set(
                                 displayedReviewReports
-                                  .filter((report) => revertedChangeKeys.has(
-                                    `${displayedReviewConversation.id}:${report.id}`,
-                                  ))
+                                  .filter((report) => workspaceChangeReverted(revertedChangeStates, displayedReviewConversation.id, report))
                                   .map((report) => report.id),
                               )}
                               onClose={() => closeInspectorTab(tab.id)}
@@ -2787,11 +2701,7 @@ function CardbushApp() {
                               )}
                               onRevertAll={() => revertConversationReports(
                                 displayedReviewConversation.id,
-                                displayedReviewReports.filter(
-                                  (report) => !revertedChangeKeys.has(
-                                    `${displayedReviewConversation.id}:${report.id}`,
-                                  ),
-                                ),
+                                displayedReviewReports,
                               )}
                               revertAvailable={!chat.processingConversationIds.has(
                                 displayedReviewConversation.id,
@@ -2827,6 +2737,7 @@ function CardbushApp() {
       <CopyToastHost language={language} />
       <McpUserRequests language={language} />
     </div>
+    </WorkspaceChangeStateContext.Provider>
   );
 }
 
@@ -3017,10 +2928,11 @@ function CopyToastHost({ language }: { language: AppLanguage }) {
 
 function readInitialThemePreference(): ThemePreference {
   const stored = window.localStorage.getItem('cardbush_theme_mode');
+  window.localStorage.removeItem('cardbush_light_theme_style');
   if (
     stored === 'system' ||
+    stored === 'light' ||
     stored === 'dark' ||
-    stored === 'parchment' ||
     stored === 'cyberpunk'
   ) {
     return stored;
@@ -3028,21 +2940,11 @@ function readInitialThemePreference(): ThemePreference {
   if (stored === 'custom' && readImportedThemeStyle()) {
     return 'custom';
   }
-  if (stored === 'light') {
-    if (window.localStorage.getItem('cardbush_light_theme_style') === 'parchment') {
-      window.localStorage.setItem('cardbush_theme_mode', 'parchment');
-      window.localStorage.removeItem('cardbush_light_theme_style');
-      return 'parchment';
-    }
-    window.localStorage.removeItem('cardbush_light_theme_style');
-    return 'light';
-  }
+  // Retired or invalid selections fall back without reviving a stale legacy value.
+  if (stored) return 'system';
   const legacy = window.localStorage.getItem('cardbush.theme');
   if (legacy === 'dark') {
     return 'dark';
-  }
-  if (legacy === 'parchment') {
-    return 'parchment';
   }
   if (legacy === 'bright') {
     return 'light';
@@ -3221,9 +3123,6 @@ function resolveTheme(
   }
   if (preference === 'cyberpunk') {
     return 'cyberpunk';
-  }
-  if (preference === 'parchment') {
-    return 'parchment';
   }
   if (preference === 'dark') {
     return 'dark';
@@ -3859,6 +3758,10 @@ function errorMessage(error: unknown) {
 }
 
 function workspaceRevertErrorMessage(error: unknown, language: AppLanguage) {
+  const detail = errorMessage(error);
+  if (/current revision no longer matches|changed after this (?:Turn|revert)/i.test(detail)) {
+    return language === 'zh' ? '文件有后续修改，已保留当前内容。请先审查差异后再试。' : 'Files have later edits. Your current content was preserved; review the differences before retrying.';
+  }
   if (isRuntimeWorkspaceSnapshotUnavailableError(error)) {
     return language === 'zh'
       ? 'Runtime 尚无完整恢复快照，已尝试使用桌面 diff 安全撤回。'

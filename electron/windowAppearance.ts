@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 
-export type WindowTheme = 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+export type WindowTheme = 'bright' | 'dark' | 'cyberpunk';
 export type WindowMaterialPreference = 'auto' | 'solid';
 export type WindowAppearanceOptions = {
   material?: WindowMaterialPreference;

@@ -46,6 +46,12 @@ CardBush 支持 OpenAI 公开插件包与自定义市场，并直接解析 Claud
 | MCP 按需发现 | 原生客户端 `tool_search` 与通用 `mcp_search` / `mcp_call` 共用发现和执行系统 | 按实际服务能力协商；不把完整 MCP schema 目录注入模型；搜索只覆盖当前任务范围，不授予执行权限 |
 | LSP | 安装时明确标记跳过，其余兼容组件可以安装 | 不启动语言服务；市场拒绝没有兼容组件的包；显式依赖 LSP 工具的 Agent 不冒充可执行 |
 
+## MCP 连接启动与超时
+
+连接状态由实际握手和工具目录发现决定。运行时在 SDK 请求超时之外分别限制传输准备、握手和目录发现的等待时间，默认前两步各 15 秒、目录发现 60 秒；服务声明的 `startupTimeoutMs` 可覆盖这些默认值。超时后关闭该次连接，释放连接队列中的位置，并保留具体阶段的错误。自动重连也使用相同边界；取消、停用和退出会中止等待，迟到的旧连接不能覆盖后续连接或发布工具。目录发布仍遵循活动任务的边界。
+
+Windows 的 stdio 启动器需要维持被宿主跟踪的进程及标准输入输出。2026-09-13 在千川插件中复现：`python -c` 通过 `os.execv` 跳转到虚拟环境 Python 时，宿主观察到连接提前关闭，但 SDK 的连接 Promise 未结束。可直接使用后端解释器启动模块，或在 Windows 启动器中等待子进程、继承标准输入输出并传递退出码；POSIX 可继续使用 `execv`。修正千川启动器后，真实 CardBush MCP 客户端约 2.7 秒完成握手并注册 128 个工具。
+
 ## Skills 与 Agents
 
 - OpenAI `interface` 的显示名、图标、建议提示词用于技能页面；模型发现使用 SKILL.md 的描述。`policy.allow_implicit_invocation: false` 与 Claude `disable-model-invocation: true` 均阻止模型自动调用，但仍允许用户按声明手动调用。`user-invocable: false` 隐藏手动入口，模型入口另按策略判断。

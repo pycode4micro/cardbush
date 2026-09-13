@@ -197,7 +197,7 @@ app.whenReady().then(async () => {
     await until("!!document.querySelector('[name=theme-mode]')");
     assert.equal(await run("document.querySelector('[name=language-mode]') !== null"), true);
     assert.equal(await run("document.querySelector('.settings-disclosure').open"), false, 'infrequent theme import stays collapsed');
-    for (const theme of ['parchment', 'cyberpunk', 'dark']) {
+    for (const theme of ['light', 'cyberpunk', 'dark']) {
       await choose('[name=theme-mode] + [role=combobox]', theme);
       await until(`settingsProps.themePreference === ${JSON.stringify(theme)}`);
     }
@@ -265,6 +265,7 @@ app.whenReady().then(async () => {
       if (width === 1200) fs.writeFileSync(path.join(root, 'tmp/settings-model-limits.png'), (await win.webContents.capturePage()).toPNG());
     }
     win.setContentSize(1100, 800);
+    await require('./helpers/settings-maintenance.cjs')({ run, until, window: win, root, click });
     await run('renderComposer()');
     await until("!!document.querySelector('.composer-surface')");
     await run("Array.from(document.querySelectorAll('button')).find(button => button.getAttribute('aria-label') === '添加' || button.title === '添加').click()");

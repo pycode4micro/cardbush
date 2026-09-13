@@ -14,7 +14,7 @@ test('native backdrop requires OS, compositor, theme and accessibility support',
   for (const patch of [
     { platform: 'linux' }, { platform: 'darwin' }, { release: '10.0.22000' },
     { release: 'unknown' }, { preference: 'solid' }, { customTheme: true },
-    { theme: 'cyberpunk' }, { theme: 'parchment' }, { reducedTransparency: true },
+    { theme: 'cyberpunk' }, { reducedTransparency: true },
     { highContrast: true }, { gpuCompositing: 'disabled_software' },
   ]) assert.equal(resolveWindowAppearance({ ...input, ...patch }).material, 'none', JSON.stringify(patch));
 });

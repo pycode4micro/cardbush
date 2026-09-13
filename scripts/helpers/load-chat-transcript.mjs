@@ -15,7 +15,7 @@ export const transcriptModules = [
 // Load the actual modules, including their real relative dependencies. Unlike
 // extracting functions from a Hook or stubbing require(), this checks exports,
 // module initialization and dependency resolution as well as function behavior.
-export async function loadChatTranscript({ globals = {}, source } = {}) {
+export async function loadChatTranscript({ globals = {}, source, conditions } = {}) {
   const id = '\0cardbush-transcript-test.ts';
   const entrySource = source ?? transcriptModules.map(name =>
     `export * from ${JSON.stringify(path.join(transcriptDirectory, name + '.ts'))};`,
@@ -23,6 +23,7 @@ export async function loadChatTranscript({ globals = {}, source } = {}) {
   const result = await build({
     configFile: false,
     logLevel: 'silent',
+    ...(conditions ? { resolve: { conditions } } : {}),
     plugins: [{
       name: 'chat-transcript-test-entry',
       resolveId: value => value.endsWith('__transcript_test_entry__.ts') ? id : undefined,

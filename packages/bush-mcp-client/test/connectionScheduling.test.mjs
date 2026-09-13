@@ -274,3 +274,106 @@ test('shutdown stops queued launches and retires every already-started transport
   assert.equal(clients.length, 2); assert.deepEqual(clients.map(c => c.closeCalls), [1, 1]);
   assert.equal(registry.definitions().length, 0); assert.equal(manager.snapshot(), undefined);
 });
+
+test('a handshake that ignores SDK timeout releases its slot and cannot publish after a retry', async t => {
+  const gate = deferred(), registry = new ToolRegistry(), clients = [];
+  let stalledSignal;
+  const manager = new McpClientManager({ registry, maxConcurrentConnections: 1,
+    createTransport: () => ({ async send() {} }), createClient: s => {
+      const first = s.id === 'stalled' && clients.length === 0;
+      const c = client(async (_transport, options) => {
+        if (first) { stalledSignal = options.signal; await gate.promise; }
+      });
+      clients.push(c); return c;
+    } });
+  t.after(async () => { gate.resolve(); await manager.close(); });
+  const config = snapshot([server('stalled', { startupTimeoutMs: 25 }), server('healthy')]);
+  manager.submit(config);
+  await until(() => manager.snapshot().applicationState === 'applied');
+  const failed = manager.snapshot().servers[0];
+  assert.equal(failed.health, 'unavailable');
+  assert.match(failed.lastError, /stalled: handshake timed out after 25ms/);
+  assert.equal(stalledSignal.aborted, true);
+  assert.equal(registry.resolve('mcp__stalled__echo'), undefined);
+  assert.ok(registry.resolve('mcp__healthy__echo'));
+  assert.equal(clients[0].closeCalls, 1);
+  await manager.refresh('stalled', { ...config, revision: 2 });
+  const recovered = registry.resolve('mcp__stalled__echo');
+  assert.ok(recovered);
+  gate.resolve(); await delay(5);
+  assert.equal(registry.resolve('mcp__stalled__echo'), recovered, 'a late stale client never replaces the retry');
+  assert.ok(clients[0].closeCalls >= 2, 'a client finishing after timeout is closed again');
+});
+
+test('network setup is bounded even when the provider ignores cancellation', async t => {
+  const gate = deferred(); let setupSignal, clients = 0;
+  const manager = new McpClientManager({ registry: new ToolRegistry(),
+    network: async (_server, signal) => { setupSignal = signal; await gate.promise; return { fetch, env: {} }; },
+    createClient: () => { clients++; return client(); } });
+  t.after(async () => { gate.resolve(); await manager.close(); });
+  manager.submit(snapshot([server('network', { startupTimeoutMs: 25 })]));
+  await until(() => manager.snapshot().applicationState === 'applied');
+  assert.match(manager.snapshot().servers[0].lastError, /transport setup timed out/);
+  assert.equal(setupSignal.aborted, true);
+  gate.resolve(); await delay(5);
+  assert.equal(clients, 0, 'late network setup cannot create a transport or launch a process');
+});
+
+test('a stalled tools/list is bounded and never publishes a partial catalog', async t => {
+  const gate = deferred(), c = client(); let discoverySignal;
+  c.listTools = async (_input, options) => { discoverySignal = options.signal; return gate.promise; };
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, createTransport: () => ({ async send() {} }), createClient: () => c });
+  t.after(async () => { gate.resolve({ tools: [] }); await manager.close(); });
+  manager.submit(snapshot([server('catalog', { startupTimeoutMs: 25 })]));
+  await until(() => manager.snapshot().applicationState === 'applied');
+  assert.match(manager.snapshot().servers[0].lastError, /tool discovery timed out/);
+  assert.equal(discoverySignal.aborted, true);
+  assert.equal(c.closeCalls, 1); assert.equal(registry.definitions().length, 0);
+});
+
+test('a required handshake timeout preserves the previously published tools', async t => {
+  const registry = new ToolRegistry();
+  const manager = new McpClientManager({ registry, createTransport: () => ({ async send() {} }),
+    createClient: s => client(() => s.id === 'required' ? new Promise(() => {}) : Promise.resolve()) });
+  t.after(() => manager.close());
+  await manager.apply(snapshot([server('healthy')]));
+  manager.submit(snapshot([server('healthy'), server('required', { required: true, startupTimeoutMs: 25 })], 2));
+  await until(() => manager.snapshot().applicationState === 'failed');
+  assert.match(manager.snapshot().applicationError, /required: handshake timed out/);
+  assert.deepEqual(registry.definitions().map(tool => tool.name), ['mcp__healthy__echo']);
+});
+
+test('automatic recovery times out an unresponsive handshake and can reach the next attempt', async t => {
+  const states = [], clients = [];
+  const manager = new McpClientManager({ registry: new ToolRegistry(), wait: async () => {},
+    onServiceStateChange: state => states.push(state), createTransport: () => ({ async send() {} }), createClient: () => {
+      const attempt = clients.length;
+      const c = client(() => attempt === 1 ? new Promise(() => {}) : Promise.resolve());
+      clients.push(c); return c;
+    } });
+  t.after(() => manager.close());
+  await manager.apply(snapshot([server('recover', { startupTimeoutMs: 25 })]));
+  clients[0].onclose();
+  await until(() => clients.length === 3 && manager.snapshot().servers[0].health === 'ready');
+  assert.ok(states.some(state => state.health === 'unavailable' && /handshake timed out/.test(state.error)));
+  assert.equal(clients[1].closeCalls, 1);
+});
+
+test('shutdown cancels an in-flight automatic recovery without waiting for its handshake', async t => {
+  const clients = []; let recoverySignal;
+  const manager = new McpClientManager({ registry: new ToolRegistry(), wait: async () => {},
+    createTransport: () => ({ async send() {} }), createClient: () => {
+      const attempt = clients.length;
+      const c = client(async (_transport, options) => {
+        if (attempt === 1) { recoverySignal = options.signal; await new Promise(() => {}); }
+      });
+      clients.push(c); return c;
+    } });
+  t.after(() => manager.close());
+  await manager.apply(snapshot([server('recover')]));
+  clients[0].onclose(); await until(() => Boolean(recoverySignal));
+  await manager.close();
+  assert.equal(recoverySignal.aborted, true); assert.ok(clients[1].closeCalls >= 1);
+  assert.equal(manager.snapshot(), undefined);
+});

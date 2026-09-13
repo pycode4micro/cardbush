@@ -22,6 +22,7 @@ import {
 import type { ToolRegistry, PermissionResolver } from "./toolRegistry.js";
 import type { ToolExecutionStore } from "./toolExecutionStore.js";
 import { ModelImageInputError, ModelImageStore } from "./modelImageStore.js";
+import { snapshotMcpImages, omitToolImageData, omitToolImageDataFromText, type ToolImageObservation } from './toolImageContent.js';
 
 export interface RuntimeToolLoopOptions {
   externalPermissions?: PermissionResolver;
@@ -219,6 +220,12 @@ export class RuntimeToolLoop {
           : [];
         renderedResults[ordinal] = outcome.kind === "returned"
           ? outcome.hookFeedback ?? this.#registry.renderModelResult(toolCall.name, outcome.result) : undefined;
+        if (renderedResults[ordinal] !== undefined) renderedResults[ordinal] = omitToolImageDataFromText(renderedResults[ordinal]!);
+        const receipts = imageObservations[ordinal]!.flatMap(observation => observation.receipt ? [observation.receipt] : []);
+        if (receipts.length && outcome.kind === 'returned') {
+          renderedResults[ordinal] = (renderedResults[ordinal] ?? JSON.stringify(omitToolImageData(outcome.result))) +
+            '\n\n' + JSON.stringify({ runtime_image_files: receipts });
+        }
         // Assistant messages retain the requested call; execution facts retain the
         // arguments actually admitted and run after trusted PreToolUse rewrites.
         const executedCall = this.#activeToolControllers.get(toolCall.id)?.executedCall ?? toolCall;
@@ -265,15 +272,13 @@ export class RuntimeToolLoop {
         toolCalls[ordinal]!.id,
         0,
       ).length, 0);
-    const imageCandidateCount = nativeResults.flatMap(nativeImageArtifacts)
-      .filter(isModelInputImageArtifact)
-      .slice(0, 4)
-      .length;
+    const imageCandidateCount = Math.min(4, new Set(imageObservations.flat().flatMap(item => 'image' in item ? [item.image.url] : [])).size);
     const structuralTokenReserve = toolCalls.length * TOOL_MESSAGE_OVERHEAD_TOKENS;
     const availablePayloadTokens = ingressBudget === undefined
       ? undefined
       : Math.max(0, ingressBudget - structuralTokenReserve);
-    const maxModelImages = availablePayloadTokens === undefined
+    const visionEnabled = input.request?.requestCapabilities?.vision !== false;
+    const maxModelImages = !visionEnabled ? 0 : availablePayloadTokens === undefined
       ? 4
       : Math.min(
           imageCandidateCount,
@@ -303,7 +308,7 @@ export class RuntimeToolLoop {
         content: projectedResult,
       });
     }
-    const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages);
+    const imageFollowup = toolImageFollowup(imageObservations.flat(), maxModelImages, visionEnabled);
     const hookMessages: ModelMessage[] = outcomes.flatMap(outcome => (outcome.hookMessages ?? []).map(content => ({
       role: 'developer' as const, name: 'plugin_hook_feedback', content,
     })));
@@ -508,10 +513,10 @@ export function modelFacingNativeToolResult(result: unknown, toolName: string): 
   if (details?.resultValidationFailed === true && details.rawResult && typeof details.rawResult === 'object' && !Array.isArray(details.rawResult)) {
     const { _meta, ...rawResult } = details.rawResult as Record<string, unknown>;
     // Retain the original error/result in the journal; UI-only metadata stays out of model context.
-    return { ...failure, runtimeError: { ...failure?.runtimeError, details: { ...details, rawResult } } };
+    return omitToolImageData({ ...failure, runtimeError: { ...failure?.runtimeError, details: { ...details, rawResult } } });
   }
   if (toolName !== "inject_image_input" || !result || typeof result !== "object" || Array.isArray(result)) {
-    return result;
+    return omitToolImageData(result);
   }
   // In particular, do not replace a failed injection's recoverable runtimeError with an empty receipt.
   if ((result as Record<string, unknown>).queued !== true) return result;
@@ -522,19 +527,13 @@ export function modelFacingNativeToolResult(result: unknown, toolName: string): 
   };
 }
 
-type ToolImageObservation = {
-  image: { url: string; detail?: "low" | "high" };
-} | {
-  error: { toolCallId: string; code: string; message: string };
-};
-
 async function snapshotToolImages(
   result: unknown,
   toolCallId: string,
   store: ModelImageStore,
   signal: AbortSignal,
 ): Promise<ToolImageObservation[]> {
-  const observations: ToolImageObservation[] = [];
+  const observations = await snapshotMcpImages(result, toolCallId, store, signal);
   for (const artifact of nativeImageArtifacts(result).filter(isModelInputImageArtifact).slice(0, 4)) {
     try {
       const url = await store.snapshot(artifact.modelInputUrl ?? artifact.path ?? artifact.uri!, signal);
@@ -551,16 +550,21 @@ async function snapshotToolImages(
   return observations;
 }
 
-function toolImageFollowup(observations: ToolImageObservation[], maxImages = 4): ModelMessage | undefined {
-  const selected = observations.slice(0, Math.max(0, maxImages));
-  const images = selected.flatMap((item) => "image" in item ? [item.image] : []);
-  const errors = selected.flatMap((item) => "error" in item ? [item.error] : []);
-  if (!images.length && !errors.length) return undefined;
+function toolImageFollowup(observations: ToolImageObservation[], maxImages = 4, visionEnabled = true): ModelMessage | undefined {
+  const unique = new Map(observations.flatMap(item => 'image' in item ? [[item.image.url, item.image] as const] : []));
+  const images = [...unique.values()].slice(0, Math.max(0, maxImages));
+  const attached = new Set(images.map(image => image.url));
+  const errors = observations.flatMap(item => 'error' in item ? [item.error] : []);
+  const receipts = observations.flatMap(item => item.receipt ? [{ ...item.receipt,
+    status: 'error' in item ? 'failed' : attached.has(item.image.url) ? 'attached' : !visionEnabled ? 'vision_disabled' : 'attachment_budget',
+  }] : []);
+  if (!images.length && !errors.length && !receipts.length) return undefined;
   return {
     role: "user",
     name: "tool_image_observation",
     visibility: "internal",
-    content: JSON.stringify({ source: "tool_output", attachedImages: images.length, ...(errors.length ? { imageInputErrors: errors } : {}) }),
+    content: JSON.stringify({ source: "tool_output", attachedImages: images.length, ...(errors.length ? { imageInputErrors: errors } : {}),
+      ...(receipts.length ? { imageReceipts: receipts } : {}) }),
     ...(images.length ? { images } : {}),
   };
 }

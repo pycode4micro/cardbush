@@ -19,6 +19,8 @@ import '${local('src/styles/theme.css')}';
 import '${local('src/styles/app.css')}';
 const root = createRoot(document.getElementById('root'));
 window.taskReads = 0;
+window.turnReads = 0;
+window.sessionScans = 0;
 let scenario = 0;
 window.renderScenario = async (status, language = 'zh') => {
   const id = ++scenario;
@@ -27,7 +29,7 @@ window.renderScenario = async (status, language = 'zh') => {
     parentSessionId:'parent',parentTurnId:'first-turn',childSessionId:'child',childTurnId:'child-turn',
     prompt:'实现接收端网页',finalResponse:status==='completed'?'接收端文件已生成，联调仍需父任务继续。':'',
     status, revision:status==='running'?1:2,inheritContext:true,inheritedMessageCount:95,
-    errorMessage:status==='failed'?'连接失败':'',usage:{},
+    errorMessage:status==='failed'?'连接失败':status==='stopped'?'turn_stop_requested':'',usage:{},
     createdAt:'2026-09-11T14:28:52.580Z',updatedAt:'2026-09-11T14:34:36.092Z',
     ...(status==='running'?{}:{completedAt:'2026-09-11T14:34:36.092Z'})
   };
@@ -35,13 +37,21 @@ window.renderScenario = async (status, language = 'zh') => {
   // fields: exercise the real API projection as well as both mounted views.
   window.fixtureClient = {
     listSubagentTasks:async () => [structuredClone(window.runtimeTask)],
-    getSubagentTask:async () => { window.taskReads++; return structuredClone(window.runtimeTask); },
-    listSessions:async () => [
-      {sessionId:'parent',turns:[{turnId:'first-turn',status:'completed'},{turnId:'later-turn',status:'completed'}]},
-      {sessionId:'child',turns:[{turnId:'child-turn',status:window.runtimeTask.status}]}
-    ]
+    getSubagentTask:async ({parentSessionId}) => {
+      if(parentSessionId!=='parent') throw Error('Wrong parent scope');
+      window.taskReads++; return structuredClone(window.runtimeTask);
+    },
+    getSession:async (sessionId) => {
+      if(sessionId!=='child') throw Error('Wrong child scope');
+      window.turnReads++;
+      if(window.failTurnRead) throw Error('Transcript transport unavailable');
+      // Actual SessionStore snapshots do not include an active Turn.
+      return {sessionId,turns:window.runtimeTask.status==='running'||window.missingTurn?[]:
+        [{turnId:'child-turn',status:window.runtimeTask.status,transcript:'committed-child-transcript'}]};
+    },
+    listSessions:async () => { window.sessionScans++; throw Error('Unexpected global session scan'); }
   };
-  const task = await fetchSubagentTask(window.runtimeTask.taskId);
+  const task = await fetchSubagentTask(window.runtimeTask.taskId, undefined, 'parent');
   root.render(<React.StrictMode><div className="app theme-dark" style={{display:'flex',width:'100%',height:'100vh',padding:24,gap:24}}>
     <div className="chat-panel work-summary-requested" style={{position:'relative',flex:'0 0 370px',minWidth:0}}><ConversationWorkSummary key={'summary-'+id} language={language} sessionId="parent"
       messages={[{id:'later-reply',role:'assistant',content:'其他任务已完成',status:'completed',turnId:'later-turn'}]}

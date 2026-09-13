@@ -33,5 +33,24 @@ export function childAgentToolDenial(request: ModelRequest | undefined, registra
       message: `You are currently a child Agent. Tool ${name} is unavailable under this child task's policy. Continue with the permitted tools and report any remaining dependency to the parent Agent.`,
     };
   }
+  // Shadow keeps the same declarations in both modes. Enforce its former
+  // catalog restrictions here, before hooks, authorization or tool side effects.
+  if (name !== 'checkpoint_context') {
+    if ((request.metadata.shadowReadOnly === true || request.metadata.shadowMode === 'readonly') &&
+      registration.manifest.mutating !== false) {
+      return {
+        code: 'shadow_read_only',
+        message: `You are currently a child Agent in read-only Shadow mode. Tool ${name} can modify resources and cannot execute in this mode. Analyze with read-only tools; the user can switch this Shadow to Fork to make changes.`,
+      };
+    }
+    const workspace = request.metadata.shadowWorkspaceDir ?? request.metadata.projectDir;
+    if (request.metadata.shadowMode === 'fork' && registration.manifest.dispatch_scope === 'resource' &&
+      !(typeof workspace === 'string' && workspace.trim())) {
+      return {
+        code: 'shadow_workspace_required',
+        message: `You are currently a child Agent in Shadow Fork mode without an attached workspace. Tool ${name} requires a workspace and cannot execute here. Explain the missing workspace to the user.`,
+      };
+    }
+  }
   return undefined;
 }

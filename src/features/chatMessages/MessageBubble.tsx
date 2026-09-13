@@ -1,3 +1,4 @@
+import { AutomationReminderCard } from '../automations/AutomationReminderCard';
 import {
   ArrowUp,
   Check,
@@ -21,6 +22,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Undo2,
+  Redo2,
   UsersRound,
   WrapText,
   X,
@@ -29,7 +31,6 @@ import {
   type HTMLAttributes,
   type ReactNode,
   createContext,
-  lazy,
   memo,
   Suspense,
   useCallback,
@@ -41,6 +42,7 @@ import {
   useState,
 } from 'react';
 import type { Components, Options as MarkdownOptions } from 'react-markdown';
+import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
 
 import {
   basename,
@@ -60,6 +62,7 @@ import type {
 } from '../../types';
 import type { CardlingScene } from '../cardling/scene';
 import { openInspector } from '../inspector/inspectorEvents';
+import { WorkspaceChangeStateContext, workspaceChangeReverted } from '../tools/WorkspaceChangeStateContext';
 import { modelLogoFor } from '../composer/modelLogos';
 import {
   normalizeExecutionNarrationForDisplay,
@@ -87,7 +90,8 @@ import { PromptReferenceFallback, PromptReferenceLink } from '../composer/Prompt
 import { parsePromptReference } from '../../shared/promptReferences';
 import { pluginReferenceFromLink } from '../plugins/pluginPrompts';
 import { FileMemoReference } from './FileMemoReference';
-import { mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext, toolOutputPresentation } from './mediaPresentation';
+import { createToolOutputProjector, mediaPresentationKey, PresentedMediaContext, PresentedMediaReference, ToolMediaContext } from './mediaPresentation';
+import { activeToolStatusLabel } from '../tools/toolExecutionState';
 import { parseFileMemoReference } from '@cardbush/bush-protocol';
 import {
   copyText,
@@ -318,7 +322,7 @@ const RichFileReferencesContext = createContext(true);
 const noPresentedMedia: ReadonlyMap<string, ChatToolArtifact> = new Map();
 const noFilePathAliases: ProjectPathAlias[] = [];
 
-const LazyMarkdownContent = lazy(async () => {
+const LazyMarkdownContent = recoverableLazy('markdown', async () => {
   const [{ default: ReactMarkdown, defaultUrlTransform }, { default: remarkGfm }] = await Promise.all([
     import('react-markdown'),
     import('remark-gfm'),
@@ -495,7 +499,10 @@ const LazyMarkdownContent = lazy(async () => {
   }
 
   return { default: MarkdownRenderer };
-});
+}, (props) => <>
+  <p className="markdown-fallback"><PromptReferenceFallback content={props.content} /></p>
+  <DeferredModuleNotice language={props.language} basicPreview />
+</>);
 
 const FileReferenceWorkspaceContext = createContext('');
 const FileReferencePathAliasesContext = createContext<ProjectPathAlias[]>(noFilePathAliases);
@@ -600,6 +607,7 @@ function MessageBubbleView({
   activeTurnId,
   activeAssistantMessageId,
   selectedModel = '',
+  readOnlyActions = false,
   goalObjective = '',
   onRegenerate,
   onEditUserMessage,
@@ -616,6 +624,7 @@ function MessageBubbleView({
   activeTurnId: string;
   activeAssistantMessageId: string;
   selectedModel?: string;
+  readOnlyActions?: boolean;
   goalObjective?: string;
   onRegenerate: (message: ChatMessage) => Promise<void>;
   onEditUserMessage: (message: ChatMessage, content: string) => Promise<void>;
@@ -633,6 +642,7 @@ function MessageBubbleView({
   ) => void | Promise<unknown>;
 }) {
   const pathAliases = useContext(FileReferencePathAliasesContext);
+  const [presentToolOutputs] = useState(createToolOutputProjector);
   const contentParts = splitMessageMedia(message.content);
   const userContentParts =
     message.role === 'user'
@@ -900,6 +910,7 @@ function MessageBubbleView({
           {(goalCommand?.content ?? text) && (
             <MarkdownContent content={goalCommand?.content ?? text} language={language} />
           )}
+          <AutomationReminderCard value={message.metadata?.automationReminder} language={language}/>
           {guidanceDelivery && guidanceDelivery !== 'pending' && (
             <div
               className={`guidance-delivery-status ${guidanceDelivery}`}
@@ -914,6 +925,7 @@ function MessageBubbleView({
                 <button
                   type="button"
                   className="guidance-retry-button"
+                  hidden={readOnlyActions}
                   onClick={() => void onRetryGuidance(message)}
                 >
                   <RefreshCw size={11} />
@@ -933,6 +945,7 @@ function MessageBubbleView({
               <button
                 type="button"
                 className="message-retry-button"
+                hidden={readOnlyActions}
                 onClick={() => void onRetryMessage(message)}
               >
                 <RefreshCw size={11} />
@@ -952,6 +965,7 @@ function MessageBubbleView({
           <button
             type="button"
             title={language === 'zh' ? '编辑并重跑' : 'Edit and rerun'}
+            hidden={readOnlyActions}
             disabled={sending}
             onClick={() => setEditing(true)}
           >
@@ -999,7 +1013,7 @@ function MessageBubbleView({
         )
       : allToolExecutions;
   const assistantProgressExecutions = turnActivityExecutions(message);
-  const outputPresentation = toolOutputPresentation(assistantProgressExecutions, pathAliases);
+  const outputPresentation = presentToolOutputs(assistantProgressExecutions, pathAliases);
   const activations = mcpActivations(assistantProgressExecutions);
   const showAssistantProgress =
     message.role === 'assistant' &&
@@ -1218,10 +1232,11 @@ function MessageBubbleView({
           )}
           {completedChangeReport && (
             <AssistantChangedFilesSummary
+              message={message}
               report={completedChangeReport}
               language={language}
               onOpenReview={onOpenChangeReview}
-              onRevert={() => onRevertChangeReport(
+              onRevert={readOnlyActions ? undefined : () => onRevertChangeReport(
                 {
                   ...completedChangeReport,
                   id: `${message.id}:completed-change-summary`,
@@ -1270,6 +1285,7 @@ function MessageBubbleView({
               <button
                 type="button"
                 title={language === 'zh' ? '重新生成' : 'Retry'}
+                hidden={readOnlyActions}
                 disabled={sending}
                 onClick={() => void onRegenerate(message)}
               >
@@ -1318,11 +1334,13 @@ function completedAssistantChangeReport(message: ChatMessage) {
 }
 
 function AssistantChangedFilesSummary({
+  message,
   report,
   language,
   onOpenReview,
   onRevert,
 }: {
+  message: ChatMessage;
   report: ToolChangeReport;
   language: AppLanguage;
   onOpenReview?: (filePath?: string) => void;
@@ -1332,6 +1350,10 @@ function AssistantChangedFilesSummary({
   const pathAliases = useContext(FileReferencePathAliasesContext);
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const changeState = useContext(WorkspaceChangeStateContext);
+  const reverted = workspaceChangeReverted(changeState.states, message.conversationId ?? '', {
+    messageId: message.id, turnId: message.turnId, reverted: report.reverted,
+  });
   const sectionRef = useRef<HTMLElement | null>(null);
   const listId = useId();
   const collapsedCount = 3;
@@ -1348,11 +1370,10 @@ function AssistantChangedFilesSummary({
     <section ref={sectionRef} className="assistant-changed-files-summary">
       <header>
         <span className="assistant-changed-files-title">
-          <FileCode2 size={15} />
           <strong>
             {language === 'zh'
-              ? `已编辑 ${report.files.length} 个文件`
-              : `Edited ${report.files.length} file${report.files.length === 1 ? '' : 's'}`}
+              ? `${reverted ? '已撤回' : '已编辑'} ${report.files.length} 个文件`
+              : `${reverted ? 'Reverted' : 'Edited'} ${report.files.length} file${report.files.length === 1 ? '' : 's'}`}
           </strong>
         </span>
         <span className="assistant-changed-files-actions">
@@ -1364,7 +1385,7 @@ function AssistantChangedFilesSummary({
             <button
               className="assistant-changed-files-revert"
               type="button"
-              disabled={reverting}
+              disabled={reverting || changeState.busy}
               onClick={async () => {
                 setReverting(true);
                 try {
@@ -1374,8 +1395,8 @@ function AssistantChangedFilesSummary({
                 }
               }}
             >
-              {reverting ? <LoaderCircle size={12} /> : <Undo2 size={12} />}
-              {language === 'zh' ? '撤回' : 'Revert'}
+              {reverting ? <LoaderCircle size={12} /> : reverted ? <Redo2 size={12} /> : <Undo2 size={12} />}
+              {reverted ? (language === 'zh' ? '取消撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert')}
             </button>
           )}
           {onOpenReview && (
@@ -1413,7 +1434,6 @@ function AssistantChangedFilesSummary({
             }}
           >
             <span className="assistant-changed-file-name">
-              <FileCode2 size={13} aria-hidden="true" />
               <span>{basename(file.path)}</span>
             </span>
             <small>
@@ -1541,18 +1561,12 @@ function AssistantActiveTranscript({
   onOpenScene: (scene: CardlingScene) => void;
 }) {
   const visibleMessages = messages.filter(hasVisibleLoopHistoryMessage);
-  const hasRunningTool = visibleMessages.some((message) =>
-    (message.toolExecutions ?? []).some((execution) => isToolRunningInContext(execution, active)),
-  );
-  const showThinkingPlaceholder = active && !hasRunningTool;
+  const runningExecution = visibleMessages.flatMap(message => message.toolExecutions ?? [])
+    .find(execution => isToolRunningInContext(execution, active));
   return (
     <div className="assistant-active-transcript">
-      {visibleMessages.length === 0 && active && (
-        <AssistantThinkingProcessLine language={language} model={selectedModel} />
-      )}
-      {visibleMessages.map((segment, index) => {
+      {visibleMessages.map((segment) => {
         const executions = segment.toolExecutions ?? [];
-        const isLastSegment = index === visibleMessages.length - 1;
         return (
           <section
             key={segment.id}
@@ -1568,13 +1582,16 @@ function AssistantActiveTranscript({
               active={active}
               historyLabel={false}
               selectedModel={selectedModel}
-              showThinkingPlaceholder={showThinkingPlaceholder && isLastSegment}
               onRevertChangeReport={onRevertChangeReport}
               onOpenScene={onOpenScene}
             />
           </section>
         );
       })}
+      {/* One stable tail slot: queued/running/thinking changes its text, never
+          removes a row of height or reparents the preceding media. */}
+      {active && <AssistantThinkingProcessLine key="activity" language={language}
+        model={selectedModel} execution={runningExecution} />}
     </div>
   );
 }
@@ -1664,15 +1681,13 @@ function AssistantMessageContent({
       <MessageInlineMediaContent key={`text-${cursor}`} content={tail.trim()} language={language} />,
     );
   }
-  if (
-    showThinkingPlaceholder &&
-    !sortedExecutions.some((execution) => isToolRunningInContext(execution, active))
-  ) {
+  if (showThinkingPlaceholder) {
     blocks.push(
       <AssistantThinkingProcessLine
         key="thinking-placeholder"
         language={language}
         model={selectedModel}
+        execution={sortedExecutions.find(execution => isToolRunningInContext(execution, active))}
       />,
     );
   }
@@ -1696,9 +1711,11 @@ function assistantTextWithoutToolNarration(
 function AssistantThinkingProcessLine({
   language,
   model,
+  execution,
 }: {
   language: AppLanguage;
   model: string;
+  execution?: ChatToolExecution;
 }) {
   const logo = modelLogoFor(model);
   return (
@@ -1716,7 +1733,7 @@ function AssistantThinkingProcessLine({
           <LoaderCircle size={11} />
         </span>
       )}
-      <span>{language === 'zh' ? '正在思考' : 'Thinking'}</span>
+      <span>{execution ? activeToolStatusLabel(execution, language) : language === 'zh' ? '正在思考' : 'Thinking'}</span>
     </div>
   );
 }
@@ -2346,7 +2363,8 @@ export function AssistantLoopHistoryBlock({
 }) {
   const visibleHistory = coalesceAssistantTranscript(history).filter(hasVisibleLoopHistoryMessage);
   const pathAliases = useContext(FileReferencePathAliasesContext);
-  const outputPresentation = toolOutputPresentation(turnActivityExecutions({ loopHistory: history }), pathAliases);
+  const [presentToolOutputs] = useState(createToolOutputProjector);
+  const outputPresentation = presentToolOutputs(turnActivityExecutions({ loopHistory: history }), pathAliases);
   const summary =
     language === 'zh'
       ? '历史执行记录'
@@ -2891,7 +2909,7 @@ function MessageImageStrip({
   );
 }
 
-function MessageInlineMediaContent({
+const MessageInlineMediaContent = memo(function MessageInlineMediaContent({
   content,
   language,
 }: {
@@ -2922,7 +2940,7 @@ function MessageInlineMediaContent({
       })}
     </div>
   );
-}
+});
 
 function MessageImagePreviewButton({
   pathValue,
@@ -3031,6 +3049,7 @@ function sameMessageBubbleProps(
     previous.language !== next.language ||
     previous.sending !== next.sending ||
     previous.selectedModel !== next.selectedModel ||
+    previous.readOnlyActions !== next.readOnlyActions ||
     previous.goalObjective !== next.goalObjective ||
     previous.onRegenerate !== next.onRegenerate ||
     previous.onEditUserMessage !== next.onEditUserMessage ||

@@ -1,8 +1,7 @@
 .automation-panel { max-width: 1100px; margin: 0 auto; padding: 28px; width: 100%; min-width: 0; box-sizing: border-box; overflow-y: auto; color: var(--text); font-family: var(--app-font-family, inherit); }
 .automation-heading, .automation-card header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .automation-heading h1 { display: flex; align-items: center; gap: 10px; font-size: 25px; margin: 0 0 10px; }
-.automation-heading p, .automation-runtime-note, .automation-hint { color: var(--text-mid); font-size: 13px; line-height: 1.7; }
-.automation-runtime-note { padding: 12px 14px; border: 1px solid var(--border); border-radius: 9px; margin: 20px 0; }
+.automation-heading p, .automation-hint { color: var(--text-mid); font-size: 13px; line-height: 1.7; }
 .automation-panel input, .automation-panel textarea, .automation-panel select { box-sizing: border-box; min-width: 0; width: 100%; color: inherit; font: inherit; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 9px 12px; }
 .automation-panel textarea { resize: vertical; }
 .automation-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
@@ -25,4 +24,46 @@
 .automation-card li { display: grid; gap: 5px; padding: 10px 0; border-top: 1px solid var(--border); }
 .automation-card li span { color: var(--text-mid); }
 .automation-error { color: var(--danger, #f06b79); overflow-wrap: anywhere; }
+.automation-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 12px; }
+.automation-nav-count { margin-left: auto; padding: 2px 7px; border-radius: 12px; background: var(--surface-hover, var(--border)); font-size: 10px; color: var(--text); line-height: 1.4; }
+.automation-tabs button { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 20px; padding: 9px 14px; background: transparent; color: var(--text-mid); font: inherit; font-size: 13px; cursor: pointer; }
+.automation-tabs button[aria-pressed=true] { background: var(--surface-hover, var(--border)); color: var(--text); }
+.automation-tabs button span { font-size: 11px; opacity: .7; }
+.automation-inbox-heading { margin: 6px 0 20px; }
+.automation-day { margin: 22px 0; }
+.automation-day h2 { font-size: 12px; color: var(--text-mid); font-weight: 500; margin: 0 0 10px 5px; }
+.automation-result { display: flex; align-items: center; gap: 6px; margin: 8px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 4px 10px 4px 2px; }
+.automation-result-open { display: flex; flex: 1; min-width: 0; align-items: center; gap: 12px; padding: 14px 10px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.automation-result-content { display: grid; gap: 5px; flex: 1; min-width: 0; }
+.automation-result-content strong { font-size: 14px; overflow-wrap: anywhere; }
+.automation-result-summary { font-size: 13px; color: var(--text-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-result-dot { width: 6px; height: 6px; border-radius: 50%; background: transparent; flex: none; }
+.automation-result[data-unread=true] .automation-result-dot { background: var(--accent); }
+.automation-read-toggle { display: flex; padding: 10px; background: transparent; border: 0; border-radius: 9px; color: var(--text-mid); cursor: pointer; }
+.automation-read-toggle:hover, .automation-result-open:hover { color: var(--text); background: var(--surface-hover, color-mix(in srgb, var(--text) 4%, transparent)); border-radius: 10px; }
+.automation-history-open { display: flex; align-items: center; gap: 7px; border: 0; color: inherit; background: transparent; padding: 4px 0; text-align: left; cursor: pointer; font: inherit; }
+.automation-empty > button { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 20px; padding: 8px 14px; cursor: pointer; }
+.automation-reminder { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-mid); font-size: 12px; max-width: 100%; }
+.automation-reminder summary { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.automation-reminder p { font-size: 11px; margin: 8px 0; }
+.automation-reminder button { display: grid; gap: 4px; text-align: left; width: 100%; border: 0; border-radius: 6px; background: transparent; color: var(--text); padding: 7px 4px; cursor: pointer; font: inherit; overflow-wrap: anywhere; }
+.automation-reminder button:hover { background: var(--surface-hover, var(--border)); }
+.automation-reminder button span { font-size: 10px; color: var(--text-mid); }
+.automation-run-panel { height: 100%; display: flex; flex-direction: column; min-width: 0; overflow: hidden; color: var(--text); background: var(--chat-bg, var(--surface)); }
+.automation-run-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.automation-run-heading > div:first-child { display: grid; gap: 5px; min-width: 0; }
+.automation-run-heading strong { font-size: 14px; overflow-wrap: anywhere; }
+.automation-run-heading span { font-size: 11px; color: var(--text-mid); }
+.automation-run-heading .automation-actions { gap: 5px; }
+.automation-run-heading .automation-actions button { font-size: 11px; padding: 6px 8px; }
+.automation-run-transcript.message-list { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 16px; scrollbar-gutter: stable; }
+.automation-run-transcript .message-list-content { width: 100%; max-width: 100%; }
+.automation-run-transcript .message-list-item { margin-bottom: 18px; }
+.automation-run-panel [hidden] { display: none !important; }
+.automation-run-composer.composer-surface { flex: none; width: auto; min-width: 0; max-width: none; align-self: stretch; box-sizing: border-box; margin: 10px 12px 14px; padding: 12px; border: 1px solid var(--border); border-radius: 18px; }
+.automation-run-composer textarea { display: block; width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; font: inherit; font-size: 13px; resize: none; box-sizing: border-box; }
+.automation-run-composer > div { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
+.automation-run-composer span { color: var(--text-mid); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.automation-run-composer button { display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; width: 30px; height: 30px; flex: none; cursor: pointer; background: var(--text); color: var(--surface); }
+.automation-run-composer button:disabled { opacity: .35; cursor: default; }
 @media (max-width: 640px) { .automation-panel { padding: 18px; } .automation-fields { grid-template-columns: minmax(0, 1fr); } .automation-form, .automation-card { padding: 16px; } .automation-actions { justify-content: flex-start; } }

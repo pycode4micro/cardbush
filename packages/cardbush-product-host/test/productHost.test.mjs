@@ -79,7 +79,7 @@ test("reads and updates CardBush Apps through the independent apps host", async 
   assert.deepEqual(updates, [{ serviceEnabled: false, plugins: [] }]);
 });
 
-test("accepts Teams and Agent Profiles as reset categories", async () => {
+test("restores only bundled assets and rejects retired categories before performing maintenance", async () => {
   const resetCalls = [];
   const host = new ProductHost(undefined, {
     async clearConversations() { return {}; },
@@ -91,11 +91,18 @@ test("accepts Teams and Agent Profiles as reset categories", async () => {
   const result = await host.execute({
     protocol: PRODUCT_HOST_IPC_PROTOCOL,
     kind: "maintenance.runtime_assets.reset",
-    categories: ["agent_profiles", "teams"],
+    categories: ["prompts", "skills", "prompts"],
     confirm: true,
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(resetCalls, [["agent_profiles", "teams"]]);
+  assert.deepEqual(resetCalls, [["prompts", "skills"]]);
+  for (const categories of [["teams"], ["agent_profiles"], ["skills", "teams"], ["agent_profiles", "teams"]]) {
+    const rejected = await host.execute({ protocol: PRODUCT_HOST_IPC_PROTOCOL,
+      kind: "maintenance.runtime_assets.reset", categories, confirm: true });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "invalid_product_host_command");
+  }
+  assert.equal(resetCalls.length, 1, 'Invalid batches must not reset even their supported categories.');
 });
 
 test("reads the shared Subagent and Team-child baseline through the Product Host", async () => {

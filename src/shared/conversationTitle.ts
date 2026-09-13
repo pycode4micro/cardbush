@@ -33,7 +33,7 @@ export function conversationDisplayTitle(value: string): string {
 export function conversationTitleFromUserText(value: string): string {
   const readable = value.split(/\r?\n/).map(line => line.trim()).filter(line => {
     if (!line) return false;
-    if (/^\/(?:model|goal|skill|new)(?:\s|$)/i.test(line)) return true;
+    if (/^\/(?:model|goal|skill|collect|new)(?:\s|$)/i.test(line)) return true;
     const path = stripWrappingQuotes(line.startsWith('@') ? line.slice(1).trim() : line);
     return !isAbsoluteLocalPath(path);
   }).join(' ');

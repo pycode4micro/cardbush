@@ -75,11 +75,11 @@ assert.match(profilePanel, /<ConversationStyleSettings/);
 assert.match(profilePanel, /<GlobalInstructionsPanel/);
 assert.doesNotMatch(profilePanel, /UsageStatisticsPanel|theme-mode|language-mode/);
 assert.match(appearancePanel, /name="theme-mode"/);
-assert.match(appearancePanel, /value="parchment"/);
+assert.doesNotMatch(appearancePanel, /parchment|羊皮纸|Parchment/);
 assert.match(appearancePanel, /onThemePreferenceChange\(value as ThemePreference\)/);
-assert.match(types, /ThemePreference[\s\S]*?'parchment'[\s\S]*?'custom'/);
+assert.match(types, /ThemePreference[\s\S]*?'light'[\s\S]*?'custom'/);
 assert.match(app, /preference === 'light'[\s\S]*?return 'bright'/);
-assert.match(app, /preference === 'parchment'[\s\S]*?return 'parchment'/);
+assert.doesNotMatch(app, /return 'parchment'/);
 assert.doesNotMatch(appearancePanel, /name="light-style"|浅色外观|Light appearance/);
 assert.doesNotMatch(
   settings,

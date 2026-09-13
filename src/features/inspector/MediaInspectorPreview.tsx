@@ -3,10 +3,11 @@ import { basename } from '../../shared/localPaths';
 import { openFileContextMenu } from '../../shared/fileContextMenu';
 import type { AppLanguage } from '../../types';
 
-export function MediaInspectorPreview({ kind, source, path, language, onLoadingChange }: {
+export function MediaInspectorPreview({ kind, source, path, name: displayName, language, onLoadingChange }: {
   kind: 'image' | 'video' | 'audio';
   source: string;
   path: string;
+  name?: string;
   language: AppLanguage;
   onLoadingChange: (loading: boolean) => void;
 }) {
@@ -51,9 +52,9 @@ export function MediaInspectorPreview({ kind, source, path, language, onLoadingC
       media.removeEventListener('error', fail);
       if (media instanceof HTMLMediaElement) media.pause();
     };
-  }, [source, revision, onLoadingChange]);
+  }, [source, kind, revision, onLoadingChange]);
 
-  const name = basename(path);
+  const name = displayName || basename(path);
   return (
     <div className="inspector-media-preview" ref={containerRef}
       onContextMenu={event => openFileContextMenu(event, path, { image: kind === 'image', language })}>

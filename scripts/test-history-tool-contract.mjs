@@ -1377,8 +1377,8 @@ assert.equal(
 );
 assert.equal(
   (appSource.match(/if \(chat\.processingConversationIds\.has\(conversationId\)\) \{/g) ?? []).length,
-  2,
-  'Both revert mutation paths must reject stale UI actions while that conversation is running',
+  1,
+  'Single-set and all-changes mutations share one active-Turn guard for revert and restore',
 );
 assert.match(
   appSource,

@@ -27,6 +27,6 @@ CardBush can import a small, declarative JSON palette from **Settings → Person
 }
 ```
 
-`base` accepts `light`, `dark`, or `parchment`. Every color field is optional, but at least one must be present. Supported values are hex, `rgb()`/`rgba()`, or `hsl()`/`hsla()` colors. Unknown keys and executable CSS constructs are rejected.
+`base` accepts `light` or `dark`. Every color field is optional, but at least one must be present. Supported values are hex, `rgb()`/`rgba()`, or `hsl()`/`hsla()` colors. Unknown keys and executable CSS constructs are rejected.
 
 The parsed palette is copied into local settings, so the original JSON file does not need to remain in place. Importing another file replaces the previous imported theme.

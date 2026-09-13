@@ -2,13 +2,14 @@ import { mkdir, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { automationCommandSchema, automationDefinitionSchema, runtimeSessionTurnRequestSchema, type AutomationJob, type AutomationRun, type AutomationOverview, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
+import { automationCommandSchema, automationDefinitionSchema, runtimeSessionTurnRequestSchema, isAutomationResult, type AutomationJob, type AutomationRun, type AutomationOverview, type AutomationReminder, type AutomationConversation, type RuntimeSessionTurnRequest } from '@cardbush/bush-protocol';
 
 type Context = Pick<RuntimeSessionTurnRequest, 'model' | 'providerBinding' | 'prefixMessages' | 'tools' | 'permissionMode' | 'requestCapabilities' | 'metadata' | 'maxOutputTokens' | 'reasoningEffort'> & { title: string };
 type State = { version: 1; jobs: AutomationJob[]; contexts: Record<string, Context> };
 const contextSchema = runtimeSessionTurnRequestSchema.pick({ model: true, providerBinding: true, prefixMessages: true, tools: true, permissionMode: true, requestCapabilities: true, metadata: true, maxOutputTokens: true, reasoningEffort: true }).extend({ title: z.string() });
 const runSchema = z.object({ id: z.string(), turnId: z.string(), queuedAt: z.string(), startedAt: z.string().optional(), finishedAt: z.string().optional(),
-  status: z.enum(['queued', 'running', 'completed', 'failed', 'stopped', 'interrupted', 'awaiting_user_action']), reason: z.string(), error: z.string().optional() });
+  status: z.enum(['queued', 'running', 'completed', 'failed', 'stopped', 'interrupted', 'awaiting_user_action']), reason: z.string(), error: z.string().optional(),
+  sessionId: z.string().optional(), readAt: z.string().optional(), summary: z.string().optional(), result: z.string().optional() });
 const jobSchema = automationDefinitionSchema.extend({ id: z.string(), revision: z.number().int().positive(), state: z.enum(['active', 'paused', 'completed']), createdAt: z.string(),
   nextRunAt: z.string().optional(), lastEventAt: z.string().optional(), lastEventIds: z.array(z.string()), runs: z.array(runSchema),
   plugin: z.object({ id: z.string(), hookId: z.string(), definitionHash: z.string() }).optional() });
@@ -32,7 +33,7 @@ export class AutomationScheduler {
   private readonly executions = new Set<Promise<void>>();
   constructor(private readonly options: {
     path: string; now?: () => number; canRun: (sessionId: string) => boolean;
-    run: (job: AutomationJob, run: AutomationRun, context: Context, signal: AbortSignal) => Promise<{ status: 'completed' | 'failed' | 'stopped' | 'awaiting_user_action'; reason: string }>;
+    run: (job: AutomationJob, run: AutomationRun, context: Context, signal: AbortSignal) => Promise<{ status: 'completed' | 'failed' | 'stopped' | 'awaiting_user_action'; reason: string; result?: string }>;
     changed?: () => void; onError?: (error: unknown) => void;
   }) { this.ready = this.load(); void this.ready.catch(error => this.options.onError?.(error)); }
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -43,6 +44,11 @@ export class AutomationScheduler {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
     if (raw.version !== 1 || !raw.contexts || typeof raw.contexts !== 'object' || Array.isArray(raw.contexts)) throw new Error('Invalid automation store.');
     this.state = { version: 1, jobs: z.array(jobSchema).parse(raw.jobs), contexts: z.record(z.string(), contextSchema).parse(raw.contexts) };
+    // Existing plans retain their original conversation; new plans choose a mode at creation.
+    for (const job of this.state.jobs) {
+      job.executionMode ??= 'conversation';
+      for (const run of job.runs) run.sessionId ??= job.sessionId;
+    }
     let interrupted = false;
     for (const job of this.state.jobs) for (const run of job.runs) if (run.status === 'running') {
       run.status = 'interrupted'; run.finishedAt = new Date(this.now()).toISOString();
@@ -74,22 +80,62 @@ export class AutomationScheduler {
   }
   async list(sessionId?: string): Promise<AutomationOverview> {
     await this.ready; await this.queue;
-    return structuredClone({ jobs: this.state.jobs.filter(job => !sessionId || job.sessionId === sessionId),
-      sessions: Object.entries(this.state.contexts).filter(([id]) => !sessionId || id === sessionId).map(([id, context]) => ({ id, title: context.title, model: context.model })), available: !this.closed });
+    return structuredClone({ jobs: this.state.jobs.filter(job => !sessionId || job.sessionId === sessionId).map(job => ({ ...job, runs: job.runs.map(({ result: _result, ...run }) => run) })),
+      sessions: Object.entries(this.state.contexts).filter(([id, context]) => (!sessionId || id === sessionId) && !context.metadata.automationRunId).map(([id, context]) => ({ id, title: context.title, model: context.model })), available: !this.closed });
+  }
+  async reminder(): Promise<AutomationReminder> {
+    await this.ready; await this.queue;
+    const unread = this.state.jobs.flatMap(job => job.runs.filter(run => isAutomationResult(run) && !run.readAt).map(run => ({
+      jobId: job.id, runId: run.id, sessionId: run.sessionId ?? job.sessionId, title: job.name, status: run.status, finishedAt: run.finishedAt,
+    }))).sort((a, b) => (b.finishedAt ?? '').localeCompare(a.finishedAt ?? ''));
+    return { asOf: new Date(this.now()).toISOString(), total: unread.length, items: unread.slice(0, 8) };
   }
   async manage(input: unknown, ownerSessionId?: string) {
     const command = automationCommandSchema.parse(input);
     if (command.action === 'list') return this.list(ownerSessionId);
+    if (command.action === 'reminder') return this.reminder();
+    if (command.action === 'results' || command.action === 'conversation') {
+      await this.ready; await this.queue;
+      const entries = this.state.jobs.filter(job => !ownerSessionId || job.sessionId === ownerSessionId).flatMap(job => job.runs.map(run => ({ job, run })))
+        .filter(({ job, run }) => (!command.id || job.id === command.id) && (!command.runIds || command.runIds.includes(run.id)))
+        .sort((a, b) => b.run.queuedAt.localeCompare(a.run.queuedAt));
+      if (command.action === 'results') return structuredClone({ total: entries.length, results: entries.slice(command.offset ?? 0, (command.offset ?? 0) + 20).map(({ job, run }) => ({ jobId: job.id, title: job.name, ...run })) });
+      const entry = entries[0];
+      if (!entry || command.runIds?.length !== 1) throw new Error('Automation result not found.');
+      const { job, run } = entry, sessionId = run.sessionId ?? job.sessionId;
+      const context = this.state.contexts[sessionId] ?? this.state.contexts[job.sessionId];
+      if (!context) throw new Error('No conversation execution context is available.');
+      return structuredClone({ job: { ...job, runs: [run] }, run, sessionId, model: context.providerBinding?.bindingId ?? context.model, modelName: context.model,
+        projectDir: typeof context.metadata.projectDir === 'string' ? context.metadata.projectDir : undefined,
+        workspaceDir: typeof context.metadata.workspaceDir === 'string' ? context.metadata.workspaceDir : undefined,
+        permissionMode: context.permissionMode, reasoningEffort: context.reasoningEffort,
+        allowedTools: context.tools.map(tool => tool.name),
+        allowedSkills: Array.isArray(context.metadata.allowedSkills) ? context.metadata.allowedSkills.filter((item): item is string => typeof item === 'string') : undefined,
+        disabledSkills: Array.isArray(context.metadata.disabledSkills) ? context.metadata.disabledSkills.filter((item): item is string => typeof item === 'string') : undefined,
+        interactiveRequests: context.requestCapabilities.interactiveRequests, vision: context.requestCapabilities.vision } satisfies AutomationConversation);
+    }
     if (this.closed) throw new Error('Automation scheduler is stopped.');
     let stopRunId: string | undefined;
     const result = await this.mutate(() => {
+      if (command.action === 'mark_read' || command.action === 'mark_unread') {
+        if (!command.runIds?.length) throw new Error('Select execution results to update.');
+        const runs = this.state.jobs.filter(job => (!ownerSessionId || job.sessionId === ownerSessionId) && (!command.id || job.id === command.id))
+          .flatMap(job => job.runs).filter(run => command.runIds!.includes(run.id));
+        if (new Set(runs.map(run => run.id)).size !== new Set(command.runIds).size) throw new Error('Automation result not found.');
+        if (runs.some(run => !isAutomationResult(run))) throw new Error('Wait for execution to finish before marking it read.');
+        for (const run of runs) {
+          if (command.action === 'mark_read') run.readAt ??= new Date(this.now()).toISOString();
+          else delete run.readAt;
+        }
+        return { updated: runs.length };
+      }
       const definition = command.definition;
       if (definition && ownerSessionId && definition.sessionId !== ownerSessionId) throw new Error('This tool can only manage automations in its own conversation.');
       if (definition && !Object.hasOwn(this.state.contexts, definition.sessionId)) throw new Error('Send a message in the target conversation before scheduling it.');
       if (command.action === 'create') {
         if (!definition) throw new Error('An automation definition is required.');
         if (this.state.jobs.length >= 500) throw new Error('Remove an automation before creating more (limit: 500).');
-        const job: AutomationJob = { ...definition, id: `automation_${randomUUID()}`, revision: 1, state: 'active', createdAt: new Date(this.now()).toISOString(),
+        const job: AutomationJob = { ...definition, executionMode: definition.executionMode ?? (definition.trigger.kind === 'event' ? 'conversation' : 'isolated'), id: `automation_${randomUUID()}`, revision: 1, state: 'active', createdAt: new Date(this.now()).toISOString(),
           ...(definition.trigger.kind !== 'event' ? { nextRunAt: definition.trigger.at } : {}), lastEventIds: [], runs: [] };
         this.state.jobs.push(job); return job;
       }
@@ -129,8 +175,11 @@ export class AutomationScheduler {
   }
   private enqueue(job: AutomationJob, reason: string) {
     const id = `run_${randomUUID()}`;
-    job.runs.push({ id, turnId: `automation_turn_${randomUUID()}`, queuedAt: new Date(this.now()).toISOString(), status: 'queued', reason });
-    job.runs = job.runs.slice(-50);
+    job.runs.push({ id, sessionId: job.executionMode === 'isolated' ? `automation_session_${randomUUID()}` : job.sessionId,
+      turnId: `automation_turn_${randomUUID()}`, queuedAt: new Date(this.now()).toISOString(), status: 'queued', reason });
+    // Only acknowledged history can expire. Never lose unacknowledged results.
+    const retained = new Set(job.runs.filter(run => run.readAt).slice(-50).map(run => run.id));
+    job.runs = job.runs.filter(run => !run.readAt || retained.has(run.id));
   }
   async emit(event: { id: string; sessionId: string; event: string; tool?: string }) {
     if (this.closed) return;
@@ -183,14 +232,19 @@ export class AutomationScheduler {
       for (const job of this.state.jobs) {
         const run = activeRun(job);
         if (this.closed || this.running.size >= 3) break;
-        if (!run || run.status !== 'queued' || !this.options.canRun(job.sessionId) ||
-            this.state.jobs.some(other => other.sessionId === job.sessionId && other.runs.some(item => this.running.has(item.id)))) continue;
+        if (!run || run.status !== 'queued' || !this.options.canRun(job.sessionId) || !this.options.canRun(run.sessionId ?? job.sessionId) ||
+            this.state.jobs.some(other => other.runs.some(item => (other.sessionId === job.sessionId || (item.sessionId ?? other.sessionId) === (run.sessionId ?? job.sessionId)) && this.running.has(item.id)))) continue;
         const controller = new AbortController(); this.running.set(run.id, controller);
         let claimed;
         try { claimed = await this.mutate(() => {
           const current = this.state.jobs.find(item => item.id === job.id), pending = current?.runs.find(item => item.id === run.id);
           if (!current || pending?.status !== 'queued') return;
           pending.status = 'running'; pending.startedAt = new Date(this.now()).toISOString(); current.revision++;
+          if (pending.sessionId && pending.sessionId !== current.sessionId) {
+            const source = this.state.contexts[current.sessionId];
+            this.state.contexts[pending.sessionId] ??= { ...structuredClone(source), title: current.name,
+              metadata: { ...source.metadata, automationRunId: pending.id, automationId: current.id } };
+          }
           return { job: current, run: pending, context: this.state.contexts[current.sessionId] };
         }); } catch (error) { this.running.delete(run.id); throw error; }
         if (!claimed) { this.running.delete(run.id); continue; }
@@ -200,12 +254,12 @@ export class AutomationScheduler {
     } finally { this.ticking = false; }
   }
   private async execute(input: { job: AutomationJob; run: AutomationRun; context: Context }, controller: AbortController) {
-    let status: AutomationRun['status'] = 'failed', error: string | undefined;
-    try { const result = await this.options.run(input.job, input.run, input.context, controller.signal); status = result.status; if (status === 'failed') error = result.reason; }
+    let status: AutomationRun['status'] = 'failed', error: string | undefined, resultText: string | undefined;
+    try { const result = await this.options.run(input.job, input.run, input.context, controller.signal); status = result.status; resultText = result.result?.slice(0, 12000); if (status === 'failed') error = result.reason; }
     catch (caught) {
       // Admission lost a race to a foreground turn; no model or tools ran.
       status = controller.signal.aborted ? 'stopped' : (caught as { code?: string })?.code === 'runtime_session_busy' ? 'queued' : 'failed';
-      if (status !== 'queued') error = caught instanceof Error ? caught.message : String(caught);
+      if (status === 'failed') error = caught instanceof Error ? caught.message : String(caught);
     }
     try { await this.mutate(() => {
       const job = this.state.jobs.find(item => item.id === input.job.id), run = job?.runs.find(item => item.id === input.run.id);
@@ -213,7 +267,7 @@ export class AutomationScheduler {
       if (status === 'queued') {
         run.status = 'queued'; delete run.startedAt; job.revision++; return;
       }
-      Object.assign(run, { status, error, finishedAt: new Date(this.now()).toISOString() }); job.revision++;
+      Object.assign(run, { status, error: error?.slice(0, 2400), result: resultText, summary: (resultText || error || '').replace(/\s+/g, ' ').slice(0, 240), finishedAt: new Date(this.now()).toISOString() }); job.revision++;
       if (status === 'failed' || status === 'awaiting_user_action' || status === 'stopped') job.state = 'paused';
       else if (job.trigger.kind === 'once' && job.state === 'active') { job.state = 'completed'; delete job.nextRunAt; }
       if (job.trigger.kind === 'interval' && job.nextRunAt && Date.parse(job.nextRunAt) <= this.now()) job.nextRunAt = nextInterval(job, this.now());

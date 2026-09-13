@@ -22,7 +22,7 @@ export function referenceableUserMessages(messages: ChatMessage[], sessionId: st
 
 export function inspectorBrowserReferences(tabs: InspectorTab[], navigation: Record<string, InspectorNavigationState>): BrowserPromptReference[] {
   return tabs.flatMap(tab => {
-    if (tab.kind !== 'resource' || !isBrowserReferenceUrl(tab.detail.target)) return [];
+    if (tab.kind !== 'resource' || tab.detail.mediaType || !isBrowserReferenceUrl(tab.detail.target)) return [];
     const current = navigation[tab.id];
     const url = current?.url || tab.detail.target;
     if (!isBrowserReferenceUrl(url)) return [];

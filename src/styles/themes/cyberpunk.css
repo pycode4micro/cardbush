@@ -241,11 +241,14 @@
   border-color: rgba(0, 231, 240, 0.32);
 }
 
-/* Browser/file/review tabs use the same high-contrast tab grammar. */
+/* Browser/file/review pills keep the theme's high-contrast colors. */
 .app.theme-cyberpunk .right-inspector {
   background: #07090a;
   border-left-color: rgba(247, 240, 0, 0.3);
-  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.55);
+}
+
+.app.theme-cyberpunk .right-inspector-toolbar {
+  min-height: 50px;
 }
 
 .app.theme-cyberpunk .right-inspector-toolbar,
@@ -257,7 +260,6 @@
 .app.theme-cyberpunk .right-inspector-tab {
   color: var(--text-soft);
   background: #080b0d;
-  border-radius: 0;
 }
 
 .app.theme-cyberpunk .right-inspector-tab.active {
@@ -265,11 +267,6 @@
   color: #050607;
   background: var(--cyber-yellow);
   border-color: var(--cyber-yellow);
-  box-shadow: inset 3px 0 0 var(--cyber-cyan);
-}
-
-.app.theme-cyberpunk .right-inspector-tab.active::after {
-  background: var(--cyber-cyan);
 }
 
 .app.theme-cyberpunk .right-inspector-address {

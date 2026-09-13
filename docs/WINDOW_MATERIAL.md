@@ -35,7 +35,7 @@ replies are ignored; focus, visibility and page restoration preserve that state.
 - Other operating systems, reduced transparency, high contrast, or native API
   failure use the normal opaque theme. Windows also controls its own inactive
   window and power-saving fallback.
-- Parchment, Cyberpunk, and imported custom themes retain their own backgrounds.
+- Cyberpunk and imported custom themes retain their own backgrounds.
 - Repeated focus/restore notifications do not reapply unchanged native material.
 - When material is disabled, both the HWND and native content View receive the
   opaque theme color after material removal, preserving the existing protection

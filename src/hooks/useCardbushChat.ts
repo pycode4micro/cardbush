@@ -66,6 +66,7 @@ import type {
   TurnTerminalSnapshot,
 } from '../types';
 import { keepFirstPendingInteraction } from '../features/interactions/pendingInteractionQueue';
+import { onRuntimeInteractionsChanged } from '../runtime-client/RuntimeInteractionBridge';
 import { emitSubagentDispatch } from '../features/subagents/subagentObservabilityEvents';
 import {
   assistantTurnTimingFingerprint,
@@ -1494,9 +1495,10 @@ export function useCardbushChat(
         let refreshHistory = false;
         for (const job of state.jobs) {
           const run = job.runs.at(-1);
-          if (run?.status === 'running') subscribeGoalTurn(job.sessionId, run.turnId);
-          if (!run || run.status === 'running' || run.status === 'queued' || job.sessionId !== activeConversationId ||
-              controllersRef.current[job.sessionId] || goalTurnControllersRef.current[job.sessionId]) continue;
+          const sessionId = run?.sessionId ?? job.sessionId;
+          if (run?.status === 'running') subscribeGoalTurn(sessionId, run.turnId);
+          if (!run || run.status === 'running' || run.status === 'queued' || sessionId !== activeConversationId ||
+              controllersRef.current[sessionId] || goalTurnControllersRef.current[sessionId]) continue;
           const key = `${run.id}:${run.status}`;
           if (automationHistoryRef.current.get(job.id) !== key) refreshHistory = true;
         }
@@ -1504,7 +1506,7 @@ export function useCardbushChat(
           await refreshActiveSession({ silent: true });
           if (!disposed) for (const job of state.jobs) {
             const run = job.runs.at(-1);
-            if (job.sessionId === activeConversationId && run && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
+            if (run && (run.sessionId ?? job.sessionId) === activeConversationId && run.status !== 'running' && run.status !== 'queued') automationHistoryRef.current.set(job.id, `${run.id}:${run.status}`);
           }
         } else await reloadConversations();
       } catch { /* Startup and reconnect are retried on the next notification or focus. */ }
@@ -1526,15 +1528,22 @@ export function useCardbushChat(
       current?.sessionId === sessionId ? current : null,
     );
     let cancelled = false;
-    fetchPendingInteraction(sessionId)
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void fetchPendingInteraction(sessionId)
       .then((interaction) => {
-        if (!cancelled) {
+        if (!cancelled && current === revision) {
           setPendingInteraction(interaction);
         }
       })
       .catch(() => undefined);
+    };
+    const unsubscribe = onRuntimeInteractionsChanged(changedSession => { if (changedSession === sessionId) refresh(); });
+    refresh();
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, [activeConversationId]);
 
@@ -2290,7 +2299,7 @@ export function useCardbushChat(
                   assistantSegmentIndex: start.assistantSegmentIndex,
                   turnId: start.turnId,
                   createdAt: start.createdAt,
-                }, start.userMessageId),
+                }, start.userMessageId, start.userMessageMetadata),
                 sessionId,
                 userMessage.id,
               ),
@@ -2794,7 +2803,8 @@ export function useCardbushChat(
                   ? markLocalMessageTurnStarted(
                       applyAssistantStreamRoute(
                         { ...item, turnId: start.turnId, conversationId: sessionId,
-                          ...(item.role === 'user' && start.userMessageId ? { messageId: start.userMessageId } : {}) },
+                          ...(item.role === 'user' && start.userMessageId ? { messageId: start.userMessageId } : {}),
+                          ...(item.role === 'user' && start.userMessageMetadata ? { metadata: { ...item.metadata, ...start.userMessageMetadata } } : {}) },
                         item.role === 'assistant'
                           ? {
                               messageId: start.messageId ?? '',
@@ -3779,6 +3789,7 @@ export function useCardbushChat(
           return;
         }
         setError(errorMessage(caught));
+        if (interaction.type === 'solution_selection') throw caught;
       }
     },
     [activeConversationId, clearSessionAttention, pendingInteraction],
@@ -3817,6 +3828,7 @@ export function useCardbushChat(
         return;
       }
       setError(errorMessage(caught));
+      if (interaction.type === 'solution_selection') throw caught;
     }
   }, [activeConversationId, clearSessionAttention, pendingInteraction]);
 
@@ -4418,7 +4430,7 @@ function streamAttachmentsFromChatAttachments(
 
 function attachmentPathFromLine(value: string) {
   const trimmed = value.trim();
-  if (/^\/(?:model|goal|skill|new)(?:\s|$)/i.test(trimmed)) {
+  if (/^\/(?:model|goal|skill|collect|new)(?:\s|$)/i.test(trimmed)) {
     return '';
   }
   const pathValue = stripWrappingQuotes(
@@ -4579,7 +4591,7 @@ function isNotFoundLikeError(error: unknown) {
 
 function isInteractionGoneError(error: unknown) {
   const code = runtimeErrorCode(error);
-  return code === 'permission_not_pending' || code === 'interaction_not_pending';
+  return code === 'permission_not_pending' || code === 'interaction_not_pending' || code === 'solution_not_pending';
 }
 
 function waitForRecoveryDelay(delayMs: number) {

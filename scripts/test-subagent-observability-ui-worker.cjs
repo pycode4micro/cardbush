@@ -53,14 +53,33 @@ app.whenReady().then(async () => {
           'a completed parent Turn must not complete a genuinely running child');
         assert.doesNotMatch(await read('document.body.innerText'), /待父级审查|父级已接受|Awaiting parent review|Accepted by parent/);
         if (status === 'failed') assert.match(await read('document.body.innerText'), /连接失败/);
+        if (status === 'stopped') {
+          assert.equal(await read("document.querySelectorAll('.subagent-inspector-section.failed').length"), 0);
+          assert.match(await read("document.querySelector('.subagent-inspector-section:last-of-type').textContent"), /停止请求|stop request/);
+        }
+        assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0);
       }
     }
     await read(`window.renderScenario('running'); void 0`);
     await until(labelsMatch('运行中'));
+    const turnReads = await read('window.turnReads');
+    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
+    await read("document.querySelector('.subagent-task-inspector header button').click()");
+    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
+    assert.equal(await read('window.turnReads'), turnReads, 'active status comes from the task, not a nonexistent committed Turn');
     await read('window.finishTask(); void 0');
     await until(labelsMatch('已完成'));
     assert.match(await read('document.body.innerText'), /实时任务已完成/,
       'normal active-task refresh must settle both mounted views without reopening');
+    await until("document.querySelector('.subagent-inspector-raw pre').textContent.includes('committed-child-transcript')");
+    await read("window.failTurnRead = true; document.querySelector('.subagent-task-inspector header button').click()");
+    await until("document.querySelector('.subagent-inspector-raw').textContent.includes('Transcript transport unavailable')");
+    assert.equal(await read(labelsMatch('已完成')), true, 'detail read failure must not replace task execution status');
+    assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0);
+    await read("window.failTurnRead = false; window.missingTurn = true; document.querySelector('.subagent-task-inspector header button').click()");
+    await until("!document.querySelector('.subagent-task-inspector header button').disabled");
+    assert.equal(await read("document.querySelectorAll('.subagent-inspector-error').length"), 0, 'late transcript commits are not task failures');
+    assert.equal(await read('window.sessionScans'), 0, 'polling must remain scoped to this task');
     await read('window.unmountFixture(); void 0');
     assert.deepEqual(errors, []);
     console.log('Subagent observability UI passed: persisted and live Runtime facts, later parent Turns, four states, both views and languages.');

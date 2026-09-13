@@ -858,6 +858,18 @@ export function Composer({
           searchText: '/skill 技能 skill skills',
         },
         {
+          id: '/collect',
+          title: language === 'zh' ? '总结为技能' : 'Collect as a skill',
+          subtitle: language === 'zh'
+            ? '将当前会话流程总结为 Skill 并安装'
+            : 'Summarize this conversation’s workflow as a skill and install it',
+          icon: <Puzzle size={16} />,
+          value: language === 'zh'
+            ? '根据我们的当前已有的会话信息，帮我总结成 skill 进行安装。'
+            : 'Based on our current conversation, summarize the workflow into a skill and install it.',
+          searchText: '/collect 收集 总结 流程 技能 安装 collect workflow skill install',
+        },
+        {
           id: '/new',
           title: language === 'zh' ? '新会话' : 'New conversation',
           subtitle:
@@ -1398,14 +1410,14 @@ export function Composer({
             >
               {!runtimeReady ? (
                 runtimeStartupFailed
-                  ? <RefreshCw size={15} />
-                  : <LoaderCircle size={15} className="spin" />
+                  ? <RefreshCw size={14} />
+                  : <LoaderCircle size={14} className="spin" />
               ) : sending && !hasContent ? (
                 cancelReady && !stopping
-                  ? <Square size={11} fill="currentColor" />
-                  : <LoaderCircle size={15} className="spin" />
+                  ? <Square size={10} fill="currentColor" />
+                  : <LoaderCircle size={14} className="spin" />
               ) : (
-                <ArrowUp size={16} />
+                <ArrowUp size={15} />
               )}
             </button>
           </div>

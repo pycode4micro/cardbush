@@ -1,6 +1,8 @@
 const NATIVE_HOST = 'com.cardbush.browser_connector';
 const DEBUGGER_PROTOCOL_VERSION = '1.3';
 const CONTROL_IDLE_TIMEOUT_MS = 60_000;
+// Finish before the bridge's 30 s deadline, so the caller receives a specific cause.
+const SCREENSHOT_TIMEOUT_MS = 25_000;
 const RECONNECT_ALARM = 'cardbush-native-reconnect';
 const RECONNECT_DELAY_MINUTES = 0.5;
 const MANAGED_SCOPES_STORAGE_KEY = 'cardbushManagedScopes';
@@ -16,6 +18,7 @@ let nativePort = null;
 let lastError = '';
 let activeScope = null;
 const attachedTabs = new Map();
+const pendingScreenshots = new Map();
 const sessionGrants = new Map();
 const scopeLeases = new Map();
 const pendingAuthorizations = new Map();
@@ -39,6 +42,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  interruptScreenshot(tabId);
   attachedTabs.delete(tabId);
   void managedScopesReady.then(async () => {
     const grantChanged = sessionGrants.delete(tabId);
@@ -49,6 +53,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.debugger.onDetach.addListener((source) => {
+  if (source.tabId != null) interruptScreenshot(source.tabId);
   if (source.tabId != null) attachedTabs.delete(source.tabId);
   void publishStatus();
 });
@@ -103,24 +108,30 @@ function scheduleReconnect() {
 }
 
 async function handleNativeRequest(message) {
+  const port = nativePort;
+  const progress = (stage) => {
+    try { port?.postMessage({ type: 'progress', id: message.id, clientId: message.clientId, stage }); } catch { /* Disconnected. */ }
+  };
   const response = {
     type: 'response',
     id: message.id,
     clientId: message.clientId,
   };
   try {
-    response.result = await dispatch(String(message.method || ''), message.params || {});
+    progress('extension_received');
+    response.result = await dispatch(String(message.method || ''), message.params || {}, progress);
   } catch (error) {
     response.error = normalizedError(error);
   }
-  nativePort?.postMessage(response);
+  try { port?.postMessage(response); } catch { /* Do not send a previous connection's response to a new peer. */ }
   await publishStatus();
 }
 
-async function dispatch(method, params) {
+async function dispatch(method, params, progress = () => {}) {
   await managedScopesReady;
   const scope = requiredScope(params);
   await activateScope(scope);
+  progress('scope_ready');
 
   if (method === 'connector.status') return await connectorState(scope);
   if (method === 'tabs.list') return await listScopeTabs(scope);
@@ -176,16 +187,25 @@ async function dispatch(method, params) {
   }
   if (method === 'debugger.command') {
     const tabId = requiredTabId(params.tabId);
+    progress('checking_access');
     await requireTabAccess(scope, tabId);
+    progress('attaching_debugger');
     await ensureAttached(scope, tabId);
+    progress('debugger_ready');
     touchControlTimer(scope.id);
-    return await chrome.debugger.sendCommand(
+    const command = String(params.command || '');
+    progress('command_pending');
+    const run = () => chrome.debugger.sendCommand(
       { tabId },
-      String(params.command || ''),
+      command,
       params.commandParams && typeof params.commandParams === 'object'
         ? params.commandParams
         : {},
-    ) || {};
+    );
+    const result = command === 'Page.captureScreenshot' ? await captureScreenshot(tabId, run) : await run();
+    progress('command_finished');
+    if (attachedTabs.get(tabId) === scope.id) touchControlTimer(scope.id);
+    return result || {};
   }
   if (method === 'debugger.detach') {
     const tabId = requiredTabId(params.tabId);
@@ -349,6 +369,7 @@ async function ensureAttached(scope, tabId) {
 }
 
 async function detachTab(tabId) {
+  interruptScreenshot(tabId);
   if (!attachedTabs.has(tabId)) return;
   try {
     await chrome.debugger.detach({ tabId });
@@ -356,6 +377,34 @@ async function detachTab(tabId) {
     // Chrome may already have detached the tab during navigation or close.
   }
   attachedTabs.delete(tabId);
+}
+
+async function captureScreenshot(tabId, run) {
+  const previous = pendingScreenshots.get(tabId);
+  if (previous) throw connectorError('screenshot_in_progress',
+    'The previous screenshot is still pending in Chrome. Repeating it will not start another capture. Release the browser before reconnecting, or use another preview route.',
+    { tabId, pendingMs: Date.now() - previous.startedAt });
+  let cancel;
+  let timer;
+  const interrupted = new Promise((_, reject) => { cancel = () => reject(connectorError('screenshot_interrupted', 'Chrome detached before the screenshot completed.', { tabId })); });
+  const pending = { startedAt: Date.now(), cancel };
+  pendingScreenshots.set(tabId, pending);
+  const completion = Promise.resolve().then(run).finally(() => {
+    // A timed-out command can finish after a later debugger attachment.
+    if (pendingScreenshots.get(tabId) === pending) pendingScreenshots.delete(tabId);
+  });
+  try {
+    return await Promise.race([completion, interrupted, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(connectorError('screenshot_timeout',
+        'Chrome did not finish the screenshot within 25 seconds. The capture may still be pending; release the browser before reconnecting, or use another preview route.',
+        { tabId, timeoutMs: SCREENSHOT_TIMEOUT_MS })), SCREENSHOT_TIMEOUT_MS);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+function interruptScreenshot(tabId) {
+  pendingScreenshots.get(tabId)?.cancel();
+  pendingScreenshots.delete(tabId);
 }
 
 async function suspendScope(scopeId) {

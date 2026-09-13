@@ -128,7 +128,7 @@ declare global {
         hex: string;
         source: 'wallpaper' | 'fallback';
       }>;
-      setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
+      setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('../../electron/windowAppearance').WindowAppearanceOptions) => Promise<import('../../electron/windowAppearance').WindowAppearanceState | undefined>;
       onWindowAppearanceChanged: (callback: (state: import('../../electron/windowAppearance').WindowAppearanceState) => void) => () => void;
       productHostCommand: (command: unknown) => Promise<unknown>;
       mcpRequests: () => Promise<import('../../electron/mcpDesktopHost').McpUserRequest[]>;
@@ -274,6 +274,13 @@ declare global {
         files: Array<{ path: string; diff?: string; lines?: string[] }>,
       ) => Promise<{
         revertedFiles: number;
+        output: string;
+      }>;
+      restoreFileChanges: (
+        rootPath: string,
+        files: Array<{ path: string; diff?: string; lines?: string[] }>,
+      ) => Promise<{
+        restoredFiles: number;
         output: string;
       }>;
       terminalCreate: (

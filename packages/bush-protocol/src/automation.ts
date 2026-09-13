@@ -11,13 +11,16 @@ export const automationDefinitionSchema = z.object({
   sessionId: z.string().min(1),
   prompt: z.string().trim().min(1).max(32000),
   trigger: automationTriggerSchema,
+  executionMode: z.enum(['isolated', 'conversation']).optional(),
   timeZone: z.string().max(100).default('UTC').refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }, 'Invalid time zone'),
 }).strict();
 export const automationCommandSchema = z.object({
-  action: z.enum(['list', 'create', 'update', 'pause', 'resume', 'delete', 'run', 'stop']),
+  action: z.enum(['list', 'create', 'update', 'pause', 'resume', 'delete', 'run', 'stop', 'mark_read', 'mark_unread', 'conversation', 'reminder', 'results']),
   id: z.string().min(1).optional(),
   expectedRevision: z.number().int().positive().optional(),
   definition: automationDefinitionSchema.optional(),
+  runIds: z.array(z.string().min(1)).min(1).max(500).optional(),
+  offset: z.number().int().min(0).optional(),
 }).strict();
 export type AutomationDefinition = z.infer<typeof automationDefinitionSchema>;
 export type AutomationCommand = z.infer<typeof automationCommandSchema>;
@@ -25,6 +28,7 @@ export type AutomationRun = {
   id: string; turnId: string; queuedAt: string; startedAt?: string; finishedAt?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'stopped' | 'interrupted' | 'awaiting_user_action';
   reason: string; error?: string;
+  sessionId?: string; readAt?: string; summary?: string; result?: string;
 };
 export type AutomationJob = AutomationDefinition & {
   id: string; revision: number; state: 'active' | 'paused' | 'completed'; createdAt: string;
@@ -36,3 +40,16 @@ export type AutomationOverview = {
   sessions: Array<{ id: string; title: string; model: string }>;
   available: boolean;
 };
+
+export type AutomationReminder = {
+  asOf: string; total: number;
+  items: Array<{ jobId: string; runId: string; sessionId: string; title: string; status: AutomationRun['status']; finishedAt?: string }>;
+};
+export type AutomationConversation = {
+  job: AutomationJob; run: AutomationRun; sessionId: string; model: string; modelName?: string;
+  projectDir?: string; workspaceDir?: string; permissionMode: string; reasoningEffort?: string;
+  allowedTools: string[]; allowedSkills?: string[]; disabledSkills?: string[];
+  interactiveRequests: boolean; vision: boolean;
+};
+
+export const isAutomationResult = (run: AutomationRun) => run.status !== 'queued' && run.status !== 'running';

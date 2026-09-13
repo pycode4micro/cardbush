@@ -42,6 +42,17 @@ export function basename(value: string) {
   return normalized.split('/').pop() || value;
 }
 
+/** URL query strings are not filename suffixes; local '#' and '%' stay literal. */
+export function resourceBasename(value: string) {
+  const source = stripWrappingQuotes(value);
+  if (/^data:/i.test(source)) return '';
+  if (/^(?:https?|file|cardbush-file):\/\//i.test(source)) {
+    try { return decodeURIComponent(basename(new URL(source).pathname)); }
+    catch { return ''; }
+  }
+  return basename(source);
+}
+
 export function samePath(left: string, right: string) {
   return (
     left.replaceAll('\\', '/').toLowerCase() ===

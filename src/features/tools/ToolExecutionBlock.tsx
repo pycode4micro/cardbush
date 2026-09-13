@@ -109,6 +109,7 @@ export function ToolExecutionBlock({
       const detail = hydratedExecutions.get(execution.id);
       return detail ? { ...execution, ...detail, metadata: { ...detail.metadata,
         workspaceCheckpointCovered: execution.metadata.workspaceCheckpointCovered ?? detail.metadata.workspaceCheckpointCovered,
+        revert_status: execution.metadata.revert_status ?? detail.metadata.revert_status,
       } } : execution;
     }),
     [executions, hydratedExecutions],
@@ -252,6 +253,7 @@ export function ToolExecutionBlock({
 
   const changes = messageChangeReport ? (
     <ToolChangeBlock
+      identity={{ sessionId: message.conversationId ?? '', messageId: message.id, turnId: message.turnId }}
       report={messageChangeReport}
       running={running}
       tone={tone}
@@ -272,7 +274,8 @@ export function ToolExecutionBlock({
   const awaitingPermission = running && renderedExecutions.some(
     execution => execution.state === 'awaiting_permission',
   );
-  const runSummary = awaitingPermission
+  const awaitingSolution = running && renderedExecutions.some(execution => execution.state === 'awaiting_solution');
+  const runSummary = awaitingSolution ? language === 'zh' ? '等待方案选择' : 'Awaiting solution selection' : awaitingPermission
     ? language === 'zh' ? '等待授权' : 'Awaiting permission'
     : running
       ? language === 'zh'
@@ -766,7 +769,7 @@ function ToolExecutionRow({
   const detailId = useId();
   const failed = isToolFailedInContext(execution, active);
   const interrupted = !active && isToolRunning(execution);
-  const waiting = active && execution.state === 'awaiting_permission';
+  const waiting = active && (execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution');
   const status = active && activeToolStatusLabel(execution, language) ||
     (isToolCancelled(execution) || interrupted
       ? language === 'zh' ? '已中止' : 'Stopped'

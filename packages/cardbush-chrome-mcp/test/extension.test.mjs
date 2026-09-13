@@ -7,7 +7,7 @@ import vm from 'node:vm';
 const SCOPE_A = { scopeId: 'session-a', scopeTitle: 'Login check' };
 const SCOPE_B = { scopeId: 'session-b', scopeTitle: 'Billing check' };
 
-test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', async () => {
+test('MV3 worker isolates sessions and recovers screenshot timeouts without overlapping captures', async (t) => {
   const workerPath = path.resolve(
     import.meta.dirname,
     '../../../assets/plugins/chrome/extension/background.js',
@@ -21,6 +21,7 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   const stored = {};
   const sessionStored = {};
   const attached = new Set();
+  const screenshotTimers = new Set();
   const groups = new Map();
   const tabs = [
     tab(11, 1, false, 'Other window', 'https://other.example/'),
@@ -134,11 +135,17 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   vm.runInNewContext(source, {
     chrome,
     URL,
-    setTimeout,
-    clearTimeout,
+    setTimeout: (callback, ms) => {
+      if (ms !== 25_000) return setTimeout(callback, ms);
+      const timer = { callback };
+      screenshotTimers.add(timer);
+      return timer;
+    },
+    clearTimeout: timer => { if (!screenshotTimers.delete(timer)) clearTimeout(timer); },
     structuredClone,
     console,
   }, { filename: workerPath });
+  t.after(() => { nativeMessages.emit({ type: 'control', method: 'debugger.detachAll' }); });
   await flush();
 
   const missingScope = await nativeRequest(nativeMessages, posted, 'tabs.list', {});
@@ -165,6 +172,48 @@ test('MV3 worker hard-isolates CardBush sessions in named Chrome tab groups', as
   const groupA = requiredGroup(groups, tabA.groupId);
   assert.equal(groupA.color, 'cyan');
   assert.match(groupA.title, /^CardBush · Login check · sion-a$/);
+
+  const originalCommand = chrome.debugger.sendCommand;
+  let captures = 0;
+  let completeCapture;
+  chrome.debugger.sendCommand = (_target, command) => {
+    assert.equal(command, 'Page.captureScreenshot');
+    captures++;
+    return new Promise(resolve => { completeCapture = resolve; });
+  };
+  const screenshotParams = { ...SCOPE_A, tabId: tabA.id, command: 'Page.captureScreenshot' };
+  const firstCapture = nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams);
+  await eventually(() => captures === 1);
+  const overlapping = await nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams);
+  assert.equal(overlapping.error.code, 'screenshot_in_progress');
+  assert.equal(captures, 1);
+  assert.equal(screenshotTimers.size, 1);
+  [...screenshotTimers][0].callback();
+  const timedOut = await firstCapture;
+  assert.equal(timedOut.error.code, 'screenshot_timeout');
+  assert.equal(screenshotTimers.size, 0);
+  assert.deepEqual(posted.filter(message => message.id === timedOut.id && message.type === 'progress').map(message => message.stage),
+    ['extension_received', 'scope_ready', 'checking_access', 'attaching_debugger', 'debugger_ready', 'command_pending']);
+  assert.equal((await nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams)).error.code, 'screenshot_in_progress');
+  assert.equal(captures, 1);
+  completeCapture({ data: 'late-image' });
+  await flush();
+
+  const interrupted = nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams);
+  await eventually(() => captures === 2);
+  const oldCapture = completeCapture;
+  await nativeRequest(nativeMessages, posted, 'debugger.detach', { ...SCOPE_A, tabId: tabA.id });
+  assert.equal((await interrupted).error.code, 'screenshot_interrupted');
+  const replacement = nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams);
+  await eventually(() => captures === 3);
+  oldCapture({ data: 'old-generation-image' });
+  await flush();
+  assert.equal((await nativeRequest(nativeMessages, posted, 'debugger.command', screenshotParams)).error.code, 'screenshot_in_progress');
+  assert.equal(captures, 3);
+  completeCapture({ data: 'replacement-image' });
+  assert.equal((await replacement).result.data, 'replacement-image');
+  assert.equal(screenshotTimers.size, 0);
+  chrome.debugger.sendCommand = originalCommand;
 
   nativeMessages.emit({ type: 'control', method: 'debugger.suspendAll' });
   await eventually(() => groupA.collapsed);
@@ -441,8 +490,8 @@ async function debug(eventTarget, posted, scope, tabId) {
 async function nativeRequest(eventTarget, posted, method, params) {
   const id = `request-${posted.length}-${method}`;
   eventTarget.emit({ type: 'request', id, clientId: 'runtime-test', method, params });
-  await eventually(() => posted.some((message) => message.id === id));
-  return posted.find((message) => message.id === id);
+  await eventually(() => posted.some((message) => message.id === id && message.type === 'response'));
+  return posted.find((message) => message.id === id && message.type === 'response');
 }
 
 async function popupRequest(eventTarget, action) {

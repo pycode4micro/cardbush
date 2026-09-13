@@ -3,6 +3,7 @@ import { z } from "zod";
 import { cacheChainObservationPayloadSchema, providerInputObservationSchema } from "./cacheChain.js";
 import { toolErrorKindSchema } from "./tool.js";
 import { modelEventSchema, modelFailureDiagnosticsSchema } from "./model.js";
+import { runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema } from './solutionSelection.js';
 
 export const BUSH_RUNTIME_EVENT_PROTOCOL = "bush.runtime_event.v1" as const;
 export const BUSH_RUNTIME_CAPABILITIES_PROTOCOL =
@@ -59,6 +60,9 @@ export const runtimeEventKindSchema = z.enum([
   "permission_rejected",
   "permission_expired",
   "permission_cancelled",
+  "solution_selection_requested",
+  "solution_selection_answered",
+  "solution_selection_cancelled",
   "cache_chain_observed",
   "provider_input_observed",
   "model_request_usage",
@@ -191,6 +195,18 @@ const permissionRequestedPayloadSchema = z.union([
 ]);
 
 export const runtimeEventSchema = z.discriminatedUnion("kind", [
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('solution_selection_requested'),
+    payload: runtimeSolutionSelectionSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('solution_selection_answered'),
+    payload: runtimeSolutionAnswerSchema,
+  }),
+  runtimeEventEnvelopeSchema.extend({
+    kind: z.literal('solution_selection_cancelled'),
+    payload: z.object({ selectionId: z.string().min(1), reason: z.string().min(1) }),
+  }),
   runtimeEventEnvelopeSchema.extend({
     kind: z.literal("turn_accepted"),
     payload: z.object({ status: z.literal("accepted") }),

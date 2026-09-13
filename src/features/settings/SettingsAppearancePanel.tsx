@@ -1,4 +1,4 @@
-import { Monitor, Moon, Palette, RotateCcw, Scroll, Sun, Upload, Zap } from 'lucide-react';
+import { Monitor, Moon, Palette, RotateCcw, Sun, Upload, Zap } from 'lucide-react';
 import type { AppLanguage, AppLanguageMode, AppSettingsState, ThemePreference } from '../../types';
 import type { WindowMaterialPreference } from '../appearance/windowAppearance';
 import { basename } from '../../shared/localPaths';
@@ -21,12 +21,11 @@ export function SettingsAppearancePanel({ themePreference, windowMaterial, onWin
     <SettingsCard title={zh ? '界面' : 'Interface'}>
       <SettingsSelect name="theme-mode" title={zh ? '主题' : 'Theme'} value={themePreference}
         icons={{ system: <Monitor size={15} />, light: <Sun size={15} />, dark: <Moon size={15} />,
-          parchment: <Scroll size={15} />, cyberpunk: <Zap size={15} />, custom: <Palette size={15} /> }}
+          cyberpunk: <Zap size={15} />, custom: <Palette size={15} /> }}
         onChange={value => onThemePreferenceChange(value as ThemePreference)}>
         <option value="system">{zh ? '跟随系统' : 'Follow system'}</option>
         <option value="light">{zh ? '浅色' : 'Light'}</option>
         <option value="dark">{zh ? '深色' : 'Dark'}</option>
-        <option value="parchment">{zh ? '羊皮纸' : 'Parchment'}</option>
         <option value="cyberpunk">{zh ? '赛博朋克' : 'Cyberpunk'}</option>
         {importedThemeStyle && <option value="custom">{importedThemeStyle.name}</option>}
       </SettingsSelect>

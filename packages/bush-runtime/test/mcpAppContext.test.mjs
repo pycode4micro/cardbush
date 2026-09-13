@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, RuntimeToolLoop, InMemoryRuntimeEventLog, modelFacingNativeToolResult } from '../dist/index.js';
+import { InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, RuntimeToolLoop, InMemoryRuntimeEventLog, modelFacingNativeToolResult, McpAppsHost, registerMcpAppStatusTool } from '../dist/index.js';
 
 const manifest = { effect_kind: 'observation', operation: 'fixture', risk: 'low', owner: 'runtime', dispatch_scope: 'parent_session', mutating: false };
 test('UI observations append once at round boundaries without changing earlier context or tools', async t => {
@@ -34,6 +34,8 @@ test('UI observations append once at round boundaries without changing earlier c
     messages: [{ role: 'system', content: 'Stable prefix' }, { role: 'user', content: 'Open the fixture' }],
     tools: registry.definitions().filter(tool => !['mcp_search', 'mcp_call'].includes(tool.name)) });
   assert.equal(terminal.payload.status, 'completed'); assert.equal(requests.length, 4); assert.equal(calls, 1); assert.equal(reads, 1);
+  const statusMessage = requests[2].messages.find(message => message.role === 'tool' && message.toolCallId === 'c1');
+  assert.equal(JSON.parse(statusMessage.content).interfaces.length, 1, 'status must be a successful JSON result, not an undefined-field execution error');
   const observations = requests[2].messages.filter(message => message.name === 'mcp_app_observations');
   assert.equal(observations.length, 1); assert.equal(observations[0].visibility, 'internal');
   assert.deepEqual(JSON.parse(observations[0].content).events.map(event => event.event), ['resource_loading', 'resource_loaded', 'frame_loaded', 'initialized']);
@@ -47,6 +49,32 @@ test('UI observations append once at round boundaries without changing earlier c
   }
   await host.sendCommand({ kind: 'runtime.mcp_app', payload: { action: 'close', token } });
   assert.equal(requests.length, 4, 'UI lifecycle events never force another model turn');
+});
+
+test('mcp_app_status returns valid tool results before plugin context exists, including interfaces without optional titles', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cardbush-ui-status-'));
+  t.after(async () => { assert.ok(resolve(root).startsWith(resolve(tmpdir()) + sep + 'cardbush-ui-status-')); await rm(root, { recursive: true, force: true }); });
+  const registry = new ToolRegistry(), executions = new ToolExecutionStore();
+  registry.register({ definition: { name: 'fixture_view', description: 'View', inputSchema: { type: 'object' } },
+    manifest, decodeInput: value => value, execute: () => ({}),
+    mcpHook: { server: 'fixture', tool: 'view', call: async () => ({}) },
+    mcpApp: { resourceUri: 'ui://fixture', readResource: async () => ({ contents: [] }) },
+  });
+  const host = new McpAppsHost(root, registry, executions);
+  registerMcpAppStatusTool(registry, host);
+  const request = { protocol: 'bush.model_request.v1', sessionId: 's', turnId: 't', requestId: 'r', model: 'fixture', messages: [], metadata: {}, tools: registry.definitions() };
+  await host.remember(request);
+  const loop = new RuntimeToolLoop({ registry, executionStore: executions, eventLog: new InMemoryRuntimeEventLog(), identity: { sessionId: 's', turnId: 't', requestId: 'r' } });
+  for (const count of [0, 1]) {
+    if (count) executions.record({ protocol: 'bush.tool_call.v1', id: 'view', name: 'fixture_view', argumentsText: '{}' }, { ...request, round: 1, ordinal: 0 }, { kind: 'returned', workspaceChanges: [], result: { content: [] } });
+    const callId = `status-${count}`;
+    await loop.execute([{ protocol: 'bush.tool_call.v1', id: callId, name: 'mcp_app_status', argumentsText: '{}' }], { round: count + 2, assistantMessageId: `a-${count}` });
+    const record = executions.get('s', 't', callId);
+    assert.equal(record.outcome, 'returned');
+    assert.equal(record.result.interfaces.length, count);
+    assert.equal(record.result.pluginContext, null);
+    assert.deepEqual(record.result, JSON.parse(JSON.stringify(record.result)), 'optional fields must not leave undefined values in a tool result');
+  }
 });
 
 test('failed client validation keeps native raw data while projecting UI metadata out of model errors', async () => {

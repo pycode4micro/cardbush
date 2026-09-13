@@ -1,12 +1,21 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { MarkdownContent, MessageFileReferenceScope } from '../chatMessages';
 import { shouldUsePlainTextPreview, textPreviewErrorCode, textPreviewErrorMessage } from '../../shared/textPreview';
 import { showUiError } from '../../shared/showUiError';
 import type { AppLanguage } from '../../types';
 import { parentDirectory } from './inspectorTargets';
 import { FilePreviewFallback } from './FilePreviewFallback';
+import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
+import { PlainSourceLines } from '../tools/PlainSourceLines';
 
-const SourceSyntaxLines = lazy(() => import('../tools/SourceSyntaxLines'));
+const SourceSyntaxLines = recoverableLazy(
+  'source-syntax',
+  () => import('../tools/SourceSyntaxLines'),
+  (props) => <>
+    <DeferredModuleNotice language={props.language ?? 'en'} basicPreview />
+    <PlainSourceLines content={props.content} />
+  </>,
+);
 
 export function MarkdownInspectorPreview({
   path,
@@ -74,7 +83,7 @@ export function MarkdownInspectorPreview({
                 {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
               </div>
             )}
-            {shouldUsePlainTextPreview(content) ? <Suspense fallback={null}>
+            {shouldUsePlainTextPreview(content) ? <Suspense fallback={<PlainSourceLines content={content} />}>
               <SourceSyntaxLines content={content} path={path} language={language} />
             </Suspense> : <MessageFileReferenceScope workspaceRoot={parentDirectory(path)}>
               <MarkdownContent content={content} language={language} />
@@ -151,7 +160,7 @@ export function SourceInspectorPreview({
                 {language === 'zh' ? '文件较大，仅显示前 2 MiB' : 'Large file · showing the first 2 MiB'}
               </div>
             )}
-            <Suspense fallback={null}>
+            <Suspense fallback={<PlainSourceLines content={content} />}>
               <SourceSyntaxLines content={content} path={path} language={language} />
             </Suspense>
           </>

@@ -11,7 +11,7 @@ import { imageFixture, png } from "../../bush-runtime/test/helpers/modelImages.m
 
 const NOW = "2026-09-05T08:00:00.000Z";
 
-for (const compressed of [false, true]) test(`real Tool loop and journal retain ${compressed ? 'compressed' : 'small original'} image bytes across restart`, async (context) => {
+for (const mcp of [false, true]) for (const compressed of [false, true]) test(`real ${mcp ? 'MCP' : 'injection'} loop and journal retain ${compressed ? 'compressed' : 'small original'} image bytes across restart`, async (context) => {
   const { root, source } = await imageFixture(context);
   const original = compressed ? await sharp({ create: { width: 1600, height: 1000, channels: 3,
     noise: { type: 'gaussian', mean: 128, sigma: 30 } } }).png().toBuffer() : png;
@@ -21,6 +21,13 @@ for (const compressed of [false, true]) test(`real Tool loop and journal retain 
   const journalRoot = join(root, "sessions");
   const firstJournal = new FileSessionEventPersistence({ root: journalRoot });
   const registry = new ToolRegistry();
+  registry.register({
+    definition: { name: 'mcp_capture', description: 'fixture', inputSchema: { type: 'object' } },
+    manifest: { effect_kind: 'observation', operation: 'mcp.call', risk: 'low', owner: 'test', dispatch_scope: 'process', mutating: false },
+    decodeInput: input => input,
+    execute: async () => ({ content: [{ type: 'image', mimeType: 'image/png', data: (await readFile(source)).toString('base64') }] }),
+    renderModelResult: result => JSON.stringify(result),
+  });
   registry.register({
     definition: { name: "delete_source", description: "fixture", inputSchema: { type: "object" } },
     manifest: { effect_kind: "local_state", operation: "file.delete", risk: "low", owner: "test", dispatch_scope: "process", mutating: true },
@@ -40,8 +47,8 @@ for (const compressed of [false, true]) test(`real Tool loop and journal retain 
         if (projected.length <= 2) {
           yield event(request, 1, "tool_call_delta", {
             index: 0, toolCallId: "call_" + projected.length,
-            nameDelta: projected.length === 1 ? "inject_image_input" : "delete_source",
-            argumentsDelta: JSON.stringify(projected.length === 1 ? { url: source, detail: "high" } : {}),
+            nameDelta: projected.length === 1 ? mcp ? 'mcp_capture' : "inject_image_input" : "delete_source",
+            argumentsDelta: JSON.stringify(projected.length === 1 && !mcp ? { url: source, detail: "high" } : {}),
           });
           yield event(request, 2, "response_completed", { finishReason: "tool_calls" });
         } else {
@@ -60,6 +67,7 @@ for (const compressed of [false, true]) test(`real Tool loop and journal retain 
     const afterDelete = imageMessage(projected[2].messages);
     assert.deepEqual(beforeDelete, afterDelete);
     assert.equal(beforeDelete.images[0].url.split(',')[1], expected.toString("base64"));
+    if (mcp) assert.ok(projected[1].messages.every(message => !message.content.includes(original.toString('base64'))));
     const snapshot = await host.sendCommand({ kind: "runtime.get_session", payload: { sessionId: "session_images" } });
     saved = imageMessage(snapshot.turns[0].messages.map((item) => item.message));
     assert.notEqual(saved.images[0].url, source);
@@ -154,7 +162,8 @@ function sessionRequest(root, index, registry) {
     sessionId: "session_images", turnId: "turn_" + index, model: "fixture",
     prefixMessages: [{ role: "system", content: "fixed prefix" }],
     inputMessages: [{ messageId: "user_" + index, createdAt: NOW, message: { role: "user", content: "continue" } }],
-    tools: registry ? registry.catalog().filter((entry) => ["inject_image_input", "delete_source"].includes(entry.definition.name)).map((entry) => entry.definition) : [],
+    tools: registry ? registry.catalog().filter((entry) => ["inject_image_input", "delete_source", "mcp_capture"].includes(entry.definition.name)).map((entry) => entry.definition) : [],
+    requestCapabilities: { vision: true },
     metadata: { workspaceDir: root },
   };
 }

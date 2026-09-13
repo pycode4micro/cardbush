@@ -8,6 +8,7 @@ import { z } from 'zod';
 import {
   ChromeConnectorError,
   requestChromeConnector,
+  type ChromeConnectorDiagnostics,
 } from './bridgeClient.js';
 
 type BrowserPage = {
@@ -29,7 +30,7 @@ type BrowserScope = {
   title: string;
 };
 
-export function createCardbushChromeServer(): McpServer {
+export function createCardbushChromeServer(options: { connector?: typeof requestChromeConnector } = {}): McpServer {
   const server = new McpServer({
     name: 'cardbush_chrome',
     version: '0.1.0',
@@ -42,22 +43,32 @@ export function createCardbushChromeServer(): McpServer {
     ].join(' '),
   });
   const selectedPageIds = new Map<string, number>();
+  const screenshotFailures = new Map<string, { attempts: number; elapsedMs: number; firstFailureAt: number }>();
+  const clearScreenshotFailures = (scopeId: string, tabId?: unknown) => {
+    for (const key of screenshotFailures.keys()) {
+      if (tabId !== undefined ? key === JSON.stringify([scopeId, tabId]) : key.startsWith(`[${JSON.stringify(scopeId)},`)) screenshotFailures.delete(key);
+    }
+  };
 
-  const request = (
+  const request = async (
     method: string,
     params: Record<string, unknown>,
     context: ToolContext,
     timeoutMs?: number,
+    onDiagnostics?: (diagnostics: ChromeConnectorDiagnostics) => void,
   ) => {
     const scope = scopeFromContext(context);
-    return requestChromeConnector(method, {
+    const result = await (options.connector ?? requestChromeConnector)(method, {
       ...params,
       scopeId: scope.id,
       scopeTitle: scope.title,
     }, {
       signal: context.mcpReq.signal,
       ...(timeoutMs ? { timeoutMs } : {}),
+      ...(onDiagnostics ? { onDiagnostics } : {}),
     });
+    if (['tabs.navigate', 'tabs.close', 'debugger.detachScope'].includes(method)) clearScreenshotFailures(scope.id, params.tabId);
+    return result;
   };
 
   const pages = async (context: ToolContext): Promise<BrowserPage[]> => {
@@ -330,24 +341,53 @@ export function createCardbushChromeServer(): McpServer {
     z.object({ format: z.enum(['png', 'jpeg']).default('png'), quality: z.number().int().min(1).max(100).optional(), fullPage: z.boolean().optional() }),
     true,
   ), async (input, context) => withToolResult(async () => {
-    const target = await pageId(context);
-    const result = record(await request('debugger.command', {
-      tabId: target,
-      command: 'Page.captureScreenshot',
-      commandParams: {
-        format: input.format,
-        captureBeyondViewport: input.fullPage === true,
-        fromSurface: true,
-        ...(input.format === 'jpeg' && input.quality ? { quality: input.quality } : {}),
-      },
-    }, context));
-    const data = string(result.data);
-    if (!data) throw new ChromeConnectorError('screenshot_empty', 'Chrome returned an empty screenshot.');
-    return {
-      text: `Captured Chrome tab ${target}.`,
-      structured: { pageId: target, format: input.format, bytes: Math.floor(data.length * 0.75) },
-      image: { data, mimeType: input.format === 'jpeg' ? 'image/jpeg' : 'image/png' },
-    };
+    const scope = scopeFromContext(context);
+    const startedAt = Date.now();
+    let target: number | undefined;
+    let pageSelectionMs: number | undefined;
+    let connector: ChromeConnectorDiagnostics | undefined;
+    try {
+      target = await pageId(context);
+      pageSelectionMs = Date.now() - startedAt;
+      const result = record(await request('debugger.command', {
+        tabId: target,
+        command: 'Page.captureScreenshot',
+        commandParams: {
+          format: input.format,
+          captureBeyondViewport: input.fullPage === true,
+          fromSurface: true,
+          ...(input.format === 'jpeg' && input.quality ? { quality: input.quality } : {}),
+        },
+      }, context, undefined, value => { connector = value; }));
+      const data = string(result.data);
+      if (!data) throw new ChromeConnectorError('screenshot_empty', 'Chrome returned an empty screenshot.');
+      clearScreenshotFailures(scope.id, target);
+      screenshotFailures.delete(JSON.stringify([scope.id, 'page_selection']));
+      return {
+        text: `Captured Chrome tab ${target}.`,
+        structured: { pageId: target, format: input.format, bytes: Buffer.byteLength(data, 'base64'),
+          timings: { elapsedMs: Date.now() - startedAt, pageSelectionMs, connector } },
+        image: { data, mimeType: input.format === 'jpeg' ? 'image/jpeg' : 'image/png' },
+      };
+    } catch (error) {
+      if (context.mcpReq.signal.aborted || error instanceof Error && error.name === 'AbortError') throw error;
+      const key = JSON.stringify([scope.id, target ?? 'page_selection']);
+      const previous = screenshotFailures.get(key);
+      const failure = { attempts: (previous?.attempts ?? 0) + 1,
+        elapsedMs: (previous?.elapsedMs ?? 0) + Date.now() - startedAt,
+        firstFailureAt: previous?.firstFailureAt ?? startedAt };
+      screenshotFailures.set(key, failure);
+      // Bound diagnostic history, never the number of permitted tool calls.
+      if (screenshotFailures.size > 256) screenshotFailures.delete(screenshotFailures.keys().next().value!);
+      throw new ChromeConnectorError(error instanceof ChromeConnectorError ? error.code : 'chrome_connector_failed',
+        errorMessage(error), {
+          ...(error instanceof ChromeConnectorError ? error.details : {}),
+          pageId: target, consecutiveFailures: failure.attempts, cumulativeAttemptMs: failure.elapsedMs,
+          failureWindowMs: Date.now() - failure.firstFailureAt,
+          timings: { elapsedMs: Date.now() - startedAt, pageSelectionMs, connector },
+          ...(failure.attempts >= 2 ? { recovery: 'Repeated screenshot failures on this page. Changing PNG/JPEG quality alone does not recover a pending command. Check the reported stage; release/reconnect if the debugger is stuck, or use a different preview route. Preserve the existing artifact; do not reconstruct image Base64 in tool arguments.' } : {}),
+        });
+    }
   }));
 
   server.registerTool('evaluate_script', toolDefinition(

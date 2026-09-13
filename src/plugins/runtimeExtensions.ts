@@ -93,12 +93,3 @@ export async function prepareRuntimePluginTurn(request: unknown, tools: unknown[
   await refreshRuntimeRendererPlugins();
   for (const { extension } of entries.values()) await extension?.prepareTurn?.(request, tools);
 }
-export async function resetRuntimePluginAssets(categories: string[]) {
-  await refreshRuntimeRendererPlugins();
-  const reset: string[] = [];
-  for (const { extension } of entries.values()) {
-    const result = await extension?.invoke?.('reset-assets', categories);
-    if (Array.isArray(result)) reset.push(...result.filter(item => typeof item === 'string'));
-  }
-  return reset;
-}

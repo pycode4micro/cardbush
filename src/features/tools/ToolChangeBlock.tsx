@@ -1,17 +1,27 @@
-import { ChevronDown, LoaderCircle, RefreshCw, RotateCcw } from 'lucide-react';
-import { lazy, Suspense, useCallback, useRef, useState } from 'react';
+import { ChevronDown, LoaderCircle, RefreshCw, RotateCcw, RotateCw } from 'lucide-react';
+import { Suspense, useCallback, useContext, useRef, useState } from 'react';
 
 import type { AppLanguage } from '../../types';
 import type { DiffLine, ToolChangeReport, ToolFileChange } from './toolChangeReports';
 import { preserveScrollPositionForToggle } from '../preserveScrollPosition';
 import { ToolLogo } from './ToolLogo';
 import { diffLineNumbers, diffLinePrefix, diffLineSource } from './diffSyntax';
+import { DeferredModuleNotice, recoverableLazy } from '../../shared/recoverableLazy';
+import { WorkspaceChangeStateContext, workspaceChangeReverted } from './WorkspaceChangeStateContext';
 
-const DiffSyntaxLines = lazy(() => import('./DiffSyntaxLines'));
+const DiffSyntaxLines = recoverableLazy<{ lines: DiffLine[]; path: string; language: AppLanguage }>(
+  'diff-syntax',
+  () => import('./DiffSyntaxLines'),
+  (props) => <>
+    <DeferredModuleNotice language={props.language} basicPreview />
+    <PlainDiffLines lines={props.lines} />
+  </>,
+);
 
 type ToolExecutionTone = 'neutral' | 'warning' | 'danger';
 
 export function ToolChangeBlock({
+  identity,
   report,
   running,
   tone,
@@ -23,6 +33,7 @@ export function ToolChangeBlock({
   onRequestDetails,
   onRetryDetails,
 }: {
+  identity?: { sessionId: string; messageId: string; turnId?: string };
   report: ToolChangeReport;
   running: boolean;
   tone: ToolExecutionTone;
@@ -36,6 +47,9 @@ export function ToolChangeBlock({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [reverting, setReverting] = useState(false);
+  const changeState = useContext(WorkspaceChangeStateContext);
+  const reverted = identity ? workspaceChangeReverted(changeState.states, identity.sessionId, { ...identity, reverted: report.reverted }) : report.reverted;
+  const actionLabel = reverted ? (language === 'zh' ? '取消撤回' : 'Undo revert') : (language === 'zh' ? '撤回' : 'Revert');
   const blockRef = useRef<HTMLDivElement>(null);
   const hasDetails = report.files.some((file) => file.lines.length > 0);
   const canExpand = hasDetails || detailsDeferred;
@@ -74,12 +88,12 @@ export function ToolChangeBlock({
           <span>
             <strong>{title}</strong>
             {report.additions > 0 && (
-              <b className={`diff-count add ${running ? 'running' : ''}`}>
+              <b className="diff-count add">
                 +{report.additions}
               </b>
             )}
             {report.deletions > 0 && (
-              <b className={`diff-count del ${running ? 'running' : ''}`}>
+              <b className="diff-count del">
                 -{report.deletions}
               </b>
             )}
@@ -91,8 +105,8 @@ export function ToolChangeBlock({
           <button
             className="tool-change-revert"
             type="button"
-            disabled={reverting}
-            title={language === 'zh' ? '撤回这组修改' : 'Revert this change set'}
+            disabled={reverting || changeState.busy}
+            title={actionLabel}
             onClick={async () => {
               setReverting(true);
               try {
@@ -102,8 +116,8 @@ export function ToolChangeBlock({
               }
             }}
           >
-            {reverting ? <LoaderCircle size={14} /> : <RotateCcw size={14} />}
-            <span>{language === 'zh' ? '撤回' : 'Revert'}</span>
+            {reverting ? <LoaderCircle size={14} /> : reverted ? <RotateCw size={14} /> : <RotateCcw size={14} />}
+            <span>{actionLabel}</span>
           </button>
         )}
       </div>
@@ -202,7 +216,7 @@ export function ToolFileChangeView({
         <p>{language === 'zh' ? '没有可展开的 diff 内容' : 'No diff details available'}</p>
       ) : (
         <Suspense fallback={<PlainDiffLines lines={file.lines} />}>
-          <DiffSyntaxLines lines={file.lines} path={file.path} />
+          <DiffSyntaxLines lines={file.lines} path={file.path} language={language} />
         </Suspense>
       )}
     </section>

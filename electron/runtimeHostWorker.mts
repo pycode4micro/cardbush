@@ -679,6 +679,16 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
     signal.throwIfAborted();
     const session = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: job.sessionId } }, signal);
     if (!session) throw new Error('The target conversation was removed.');
+    const sessionId = run.sessionId ?? job.sessionId;
+    if (sessionId !== job.sessionId) {
+      const workspaceDir = String(context.metadata.workspaceDir || context.metadata.projectDir || '');
+      await host.sendCommand({ kind: 'runtime.create_session', payload: { sessionId,
+        metadata: { title: `${job.name} · ${new Date(run.queuedAt).toLocaleString('zh-CN', { timeZone: job.timeZone })}`,
+          automationId: job.id, automationRunId: run.id, automationSourceSessionId: job.sessionId,
+          ...(context.metadata.projectDir ? { projectDir: context.metadata.projectDir } : {}) },
+        ...(workspaceDir ? { workspace: { mode: 'direct', sourceDir: workspaceDir } } : {}),
+      } }, signal);
+    }
     if (job.plugin) {
       const extensions = await loadEnabledProductPluginExtensions(pluginRoots, process.env.CARDBUSH_APPS_CONFIG_PATH?.trim() ?? '');
       if (!extensions.hooks.some(hook => hook.id === job.plugin!.hookId && hook.definitionHash === job.plugin!.definitionHash && hook.trusted === true)) throw new Error('The originating plugin hook is disabled, changed, or no longer trusted.');
@@ -687,7 +697,7 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
     signal.throwIfAborted();
     const allowed = new Set(context.tools.map(tool => tool.name));
     const request = runtimeSessionTurnRequestSchema.parse({ ...context,
-      protocol: 'bush.session_turn_request.v1', sessionId: job.sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
+      protocol: 'bush.session_turn_request.v1', sessionId, turnId: run.turnId, requestId: `request_${run.id}`,
       model: selected.model, providerBinding: selected.binding,
       maxOutputTokens: selected.maxOutputTokens ?? context.maxOutputTokens,
       tools: toolRegistry.definitions().filter(tool => allowed.has(tool.name)),
@@ -700,7 +710,9 @@ const automation = runtimeStateRoot ? new AutomationScheduler({
     });
     const result = await host.runSessionTurn(request, { signal });
     if (result.kind !== 'turn_terminal') throw new Error('Automation did not produce a terminal result.');
-    return { status: result.payload.status, reason: result.payload.reason };
+    const snapshot = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId } }) as { turns?: Array<{ turnId: string; messages: Array<{ message: { role: string; content: string } }> }> } | null;
+    const finalText = [...(snapshot?.turns?.find(turn => turn.turnId === run.turnId)?.messages ?? [])].reverse().find(item => item.message.role === 'assistant' && item.message.content)?.message.content;
+    return { status: result.payload.status, reason: result.payload.reason, result: finalText };
   },
 }) : undefined;
 if (skillRoots.length > 0 || pluginRoots.length > 0) {

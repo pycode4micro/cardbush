@@ -6,7 +6,7 @@ import type { readTextPreviewResult } from './textPreview';
 type CardlingDesktopState = {
   enabled: boolean;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark' | 'cyberpunk';
   settings: {
     size: 'compact' | 'normal' | 'large';
     opacity: number;
@@ -77,7 +77,7 @@ type ShadowWindowPayload = {
   sourceTurnId: string;
   title: string;
   language: 'zh' | 'en';
-  theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk';
+  theme: 'bright' | 'dark' | 'cyberpunk';
   accentColor: string;
   themeVariables?: Record<string, string>;
   modelConfig: Record<string, unknown>;
@@ -208,7 +208,7 @@ const desktopApi = {
       hex: string;
       source: 'wallpaper' | 'fallback';
     }>,
-  setWindowTheme: (theme: 'parchment' | 'bright' | 'dark' | 'cyberpunk', options?: import('./windowAppearance').WindowAppearanceOptions) =>
+  setWindowTheme: (theme: 'bright' | 'dark' | 'cyberpunk', options?: import('./windowAppearance').WindowAppearanceOptions) =>
     ipcRenderer.invoke('appearance:set-window-theme', theme, options) as Promise<import('./windowAppearance').WindowAppearanceState | undefined>,
   onWindowAppearanceChanged: (callback: (state: import('./windowAppearance').WindowAppearanceState) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, state: import('./windowAppearance').WindowAppearanceState) => callback(state);
@@ -337,6 +337,14 @@ const desktopApi = {
   ) =>
     ipcRenderer.invoke('project:revert-file-changes', rootPath, files) as Promise<{
       revertedFiles: number;
+      output: string;
+    }>,
+  restoreFileChanges: (
+    rootPath: string,
+    files: Array<{ path: string; diff?: string; lines?: string[] }>,
+  ) =>
+    ipcRenderer.invoke('project:restore-file-changes', rootPath, files) as Promise<{
+      restoredFiles: number;
       output: string;
     }>,
   terminalCreate: (

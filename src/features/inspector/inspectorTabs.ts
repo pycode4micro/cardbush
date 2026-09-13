@@ -17,8 +17,9 @@ export type InspectorHistoryTab = {
 export type InspectorSubagentTab = {
   id: string; kind: 'subagent'; detail: Extract<WorkSummaryInspectorDetail, { kind: 'subagent-task' }>; title: string;
 };
+export type InspectorAutomationTab = { id: string; kind: 'automation'; jobId: string; runId: string; title: string };
 export type InspectorTab = InspectorResourceTab | InspectorReviewTab | InspectorShadowTab
-  | InspectorHistoryTab | InspectorSubagentTab;
+  | InspectorHistoryTab | InspectorSubagentTab | InspectorAutomationTab;
 
 export function workSummaryInspectorTab(detail: WorkSummaryInspectorDetail, language: AppLanguage): InspectorHistoryTab | InspectorSubagentTab {
   if (detail.kind === 'turn-history') {

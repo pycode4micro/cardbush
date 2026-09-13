@@ -57,7 +57,6 @@ import type {
   RuntimeContextCompactionEvent,
   RuntimeSessionTurnRequest,
 } from '@cardbush/bush-protocol';
-import { RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY } from '@cardbush/bush-protocol';
 
 import { standardImageInputToolDefaultName } from './toolVisibility';
 import { attachHistoryToolExecutions } from './historyToolAssociation';
@@ -65,7 +64,7 @@ import { isInternalRuntimeMessage } from './runtimeMessageVisibility';
 import { contextWindowMetrics } from './contextWindowUsage';
 import { toolArtifactsFromPayload } from './toolArtifacts';
 import { contextCompactionPresentationExecutions } from './contextCompactionPresentation';
-import { coverWorkspaceToolExecution, workspaceCheckpointExecutions } from './workspaceReview';
+import { coverWorkspaceToolExecution, markRevertedWorkspaceToolExecution, workspaceCheckpointExecutions } from './workspaceReview';
 import {
   markRuntimeSupersededMessages,
   projectRuntimeSessionMessage,
@@ -81,9 +80,12 @@ import {
   validateProductMcpServer,
 } from './productMcp';
 import { mcpConnectionState, type McpConnectionOverview } from './mcpConnectionOverview';
-import { resetRuntimePluginAssets } from '../plugins/runtimeExtensions';
 import {
   answerRuntimeInteraction,
+  runtimeSolution,
+  removeRuntimeSolution,
+  syncRuntimeSolutions,
+  runtimeInteractionsRevision,
   hasRuntimeInteraction,
   pendingRuntimeInteraction,
   stopActiveRuntimeTurn,
@@ -165,6 +167,7 @@ export interface ChatStreamRequest {
   files?: string[];
   attachments?: ChatAttachment[];
   disabledTools?: string[];
+  allowedTools?: string[];
   signal?: AbortSignal;
   onStart?: (start: StreamStart) => void;
   onDelta?: (delta: string, chunk: AssistantStreamChunk) => void;
@@ -556,7 +559,7 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       maintenanceLogsCacheClear: true,
       maintenanceRuntimeAssetsReset: true,
       runtimeAssetResetProtocol: RUNTIME_ASSET_RESET_PROTOCOL,
-      runtimeAssetResetCategories: features.has('product_team_snapshot') ? ['prompts', 'skills', 'agent_profiles', 'teams'] : ['prompts', 'skills'],
+      runtimeAssetResetCategories: ['prompts', 'skills'],
       shadowConversationActivation: true,
       standardImageInputTool: features.has('native_image_inputs'),
       projects: true,
@@ -1288,7 +1291,7 @@ export async function fetchSessionMessages(
     const compactionEvents: RuntimeContextCompactionEvent[] =
       compactionEventGroups.flat();
     const toolExecutions = [
-      ...records.map(record => coverWorkspaceToolExecution(runtimeHistoryToolExecution(record), workspaceReview)),
+      ...records.map(record => coverWorkspaceToolExecution(markRevertedWorkspaceToolExecution(runtimeHistoryToolExecution(record), snapshot.metadata), workspaceReview)),
       ...workspaceCheckpointExecutions(workspaceReview),
       ...contextCompactionPresentationExecutions(compactionEvents),
     ];
@@ -1842,13 +1845,12 @@ export async function resetRuntimeAssets(
   categories: RuntimeAssetCategory[],
 ): Promise<RuntimeAssetResetResult> {
   const selected = [...new Set(categories)];
-  const resetsTeams = selected.includes('teams') || selected.includes('agent_profiles');
-  if (resetsTeams && !(selected.includes('teams') && selected.includes('agent_profiles'))) {
+  if (selected.some(category => category !== 'prompts' && category !== 'skills')) {
     throw new ProductHostCommandError(
-      'team_configuration_reset_pair_required',
+      'invalid_runtime_asset_category',
       localizedClientMessage(
-        'Teams 与 Agent Profiles 存在引用关系，必须一起恢复。',
-        'Teams and Agent Profiles reference each other and must be restored together.',
+        '这里只支持恢复内置 Prompts 和 Skills。',
+        'Only bundled Prompts and Skills can be restored here.',
       ),
     );
   }
@@ -1859,11 +1861,6 @@ export async function resetRuntimeAssets(
       confirm: true,
     }),
   );
-  const reset = await resetRuntimePluginAssets(selected);
-  for (const category of reset) if (category === 'teams' || category === 'agent_profiles') {
-    result.categories[category] = { changed: true, sourcePath: 'plugin-defaults', targetPath: 'plugin-configuration', seedFileCount: 1, restoredFileCount: 1, removedRuntimeFileCount: 0 };
-    result.changed = true;
-  }
   assertRuntimeAssetResetProtocol(result.protocol);
   return result;
 }
@@ -2130,25 +2127,13 @@ export async function fetchSessionWorkspaceChanges(
     if (managed?.versioning === 'git' || managed?.mode === 'worktree') {
       const review = await runtime.client.getWorkspace(normalized, signal, 'history');
       return [
-        ...records.map(record => coverWorkspaceToolExecution(runtimeHistoryToolExecution(record), review)),
+        ...records.map(record => coverWorkspaceToolExecution(markRevertedWorkspaceToolExecution(runtimeHistoryToolExecution(record), snapshot.metadata), review)),
         ...workspaceCheckpointExecutions(review),
       ];
     }
-    const revertedChangeIds = new Set(
-      Array.isArray(snapshot.metadata?.[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY])
-        ? snapshot.metadata[RUNTIME_REVERTED_WORKSPACE_CHANGE_IDS_METADATA_KEY]
-            .filter((value): value is string => typeof value === 'string')
-        : [],
-    );
     return records
-      .map((record) => ({
-        ...record,
-        workspaceChanges: record.workspaceChanges.filter(
-          (change) => !revertedChangeIds.has(change.change_id),
-        ),
-      }))
       .filter((record) => record.workspaceChanges.length > 0)
-      .map(runtimeHistoryToolExecution);
+      .map(record => markRevertedWorkspaceToolExecution(runtimeHistoryToolExecution(record), snapshot.metadata));
   } finally {
     runtime.dispose();
   }
@@ -2161,6 +2146,18 @@ interface SendGuidanceResponse {
     clientMessageId: string;
     mode: 'append_context' | 'interrupt_and_continue';
   };
+}
+
+export async function restoreSessionWorkspaceChanges(sessionId: string, turnIds: string[]) {
+  const runtime = createDesktopRuntimeSession();
+  try {
+    return await runtime.client.restoreWorkspaceChanges({
+      sessionId: sessionId.trim(),
+      turnIds: [...new Set(turnIds.map(value => value.trim()).filter(Boolean))],
+    });
+  } finally {
+    runtime.dispose();
+  }
 }
 
 export async function revertSessionWorkspaceChanges(
@@ -2293,6 +2290,7 @@ export async function fetchSubagentTasks(
 export async function fetchSubagentTask(
   taskId: string,
   signal?: AbortSignal,
+  parentSessionId?: string,
 ): Promise<SubagentTaskSnapshot> {
   const normalizedTaskId = taskId.trim();
   if (!normalizedTaskId) {
@@ -2302,7 +2300,11 @@ export async function fetchSubagentTask(
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    const sessions = await runtime.client.listSessions(signal);
+    // Inspectors already know the parent. Do not re-project every conversation
+    // (including large completed Turns) on each active-task poll.
+    const sessions = parentSessionId?.trim()
+      ? [{ sessionId: parentSessionId.trim() }]
+      : await runtime.client.listSessions(signal);
     for (const session of sessions) {
       const task = await runtime.client.getSubagentTask(
         {
@@ -2323,29 +2325,19 @@ export async function fetchSubagentTask(
 
 export async function fetchTurnSnapshot(
   turnId: string,
-  signal?: AbortSignal,
-): Promise<Record<string, unknown>> {
+  options: { sessionId: string; signal?: AbortSignal },
+): Promise<Record<string, unknown> | null> {
   const normalizedTurnId = turnId.trim();
   if (!normalizedTurnId) {
     throw new Error(localizedClientMessage('Turn ID 为空', 'Turn ID is empty'));
   }
   const runtime = createDesktopRuntimeSession();
   try {
-    const sessions = await runtime.client.listSessions(signal);
-    for (const session of sessions) {
-      const turn = session.turns.find(
-        (item) => item.turnId === normalizedTurnId,
-      );
-      if (turn)
-        return {
-          ...turn,
-          sessionId: session.sessionId,
-          source: 'electron_runtime',
-        };
-    }
-    throw new Error(
-      localizedClientMessage('Turn 不存在', 'Turn does not exist'),
-    );
+    const session = await runtime.client.getSession(options.sessionId.trim(), options.signal);
+    const turn = session?.turns.find((item) => item.turnId === normalizedTurnId);
+    // Session snapshots contain committed Turns only. An active child can have
+    // a valid task/Turn identity without a committed transcript yet.
+    return turn ? { ...turn, sessionId: options.sessionId, source: 'electron_runtime' } : null;
   } finally {
     runtime.dispose();
   }
@@ -2403,6 +2395,15 @@ export async function fetchPendingInteraction(
   if (!normalized) {
     return null;
   }
+  let runtime: ReturnType<typeof createDesktopRuntimeSession> | undefined;
+  const revision = runtimeInteractionsRevision(normalized);
+  try {
+    runtime = createDesktopRuntimeSession();
+    const pending = await runtime.client.listSolutionSelections(normalized);
+    if (revision === runtimeInteractionsRevision(normalized)) syncRuntimeSolutions(normalized, pending);
+  }
+  catch { /* Keep a live request during a transient disconnect or older host handshake. */ }
+  finally { runtime?.dispose(); }
   return pendingRuntimeInteraction(normalized);
 }
 
@@ -2418,6 +2419,24 @@ export async function replyInteraction({
     throw new Error(
       localizedClientMessage('交互 ID 为空', 'Interaction ID is empty'),
     );
+  }
+  const solution = runtimeSolution(normalized);
+  if (solution) {
+    const answer = answers[0];
+    if (answers.length !== 1 || answer?.questionId !== 'solution' ||
+      (answer.selectedOptionId !== undefined) === Boolean(answer.text?.trim())) {
+      throw new Error(localizedClientMessage('请选择一个方案，或填写自己的方案', 'Choose one solution or write your own.'));
+    }
+    const runtime = createDesktopRuntimeSession();
+    try {
+      const identity = { selectionId: normalized, sessionId: solution.sessionId!, turnId: solution.turnId! };
+      if (answer.selectedOptionId !== undefined) {
+        if (!/^[0-2]$/.test(answer.selectedOptionId)) throw new Error('Invalid solution option.');
+        await runtime.client.answerSolutionSelection({ ...identity, kind: 'option', optionIndex: Number(answer.selectedOptionId) });
+      } else await runtime.client.answerSolutionSelection({ ...identity, kind: 'text', text: answer.text!.trim() });
+      removeRuntimeSolution(normalized);
+    } finally { runtime.dispose(); }
+    return;
   }
   const normalizedAnswers = answers
     .map((answer) => ({
@@ -2466,6 +2485,15 @@ export async function replyInteraction({
 export async function cancelInteraction(interactionId: string) {
   const normalized = interactionId.trim();
   if (!normalized) {
+    return;
+  }
+  const solution = runtimeSolution(normalized);
+  if (solution) {
+    const runtime = createDesktopRuntimeSession();
+    try {
+      await runtime.client.answerSolutionSelection({ selectionId: normalized, sessionId: solution.sessionId!, turnId: solution.turnId!, kind: 'cancel' });
+      removeRuntimeSolution(normalized);
+    } finally { runtime.dispose(); }
     return;
   }
   if (hasRuntimeInteraction(normalized)) {
@@ -2760,7 +2788,7 @@ function runtimeAssetCategories(value: unknown): RuntimeAssetCategory[] {
   return items
     .map((item) => String(item ?? '').trim().toLowerCase())
     .filter((item): item is RuntimeAssetCategory => (
-      item === 'prompts' || item === 'skills' || item === 'agent_profiles' || item === 'teams'
+      item === 'prompts' || item === 'skills'
     ));
 }
 

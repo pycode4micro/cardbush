@@ -57,7 +57,7 @@ const renderer = fs.readFileSync(
   path.join(process.cwd(), 'src', 'features', 'tools', 'ToolChangeBlock.tsx'),
   'utf8',
 );
-assert.match(renderer, /lazy\(\(\) => import\('\.\/DiffSyntaxLines'\)\)/);
+assert.match(renderer, /\(\) => import\('\.\/DiffSyntaxLines'\)/);
 assert.match(renderer, /<Suspense fallback=\{<PlainDiffLines/);
 
 const highlightedDiff = fs.readFileSync(

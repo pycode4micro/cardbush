@@ -173,6 +173,7 @@ export function applyAssistantSegmentBoundary(
           metadata: {
             ...(message.metadata ?? {}),
             guidance_delivery: 'sent',
+            ...update.userMessageMetadata,
           },
         };
       }
@@ -590,6 +591,7 @@ export function assignTurnToLocalMessages(
   messageIds: string[],
   route?: AssistantStreamRoute,
   userMessageId?: string,
+  userMessageMetadata?: Record<string, unknown>,
 ) {
   const ids = new Set(messageIds);
   const messages = current[sessionId] ?? [];
@@ -604,7 +606,8 @@ export function assignTurnToLocalMessages(
         ? markLocalMessageTurnStarted(
             applyAssistantStreamRoute(
               { ...message, turnId: message.role === 'user' && message.messageId && !userMessageId ? message.turnId : turnId, conversationId: sessionId,
-                ...(message.role === 'user' && userMessageId ? { messageId: userMessageId } : {}) },
+                ...(message.role === 'user' && userMessageId ? { messageId: userMessageId } : {}),
+                ...(message.role === 'user' && userMessageMetadata ? { metadata: { ...message.metadata, ...userMessageMetadata } } : {}) },
               message.role === 'assistant' ? route : undefined,
             ),
             startedAt,

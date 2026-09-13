@@ -1,4 +1,6 @@
 import {
+  ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND, LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
+  runtimeSolutionSelectionSchema, runtimeSolutionAnswerSchema, type RuntimeSolutionAnswer,
   GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_RUNTIME_WORKSPACE_COMMAND,
   workspaceReviewSchema, workspaceDescriptorSchema, workspaceUpdateSchema,
   type WorkspaceReview, type WorkspaceDescriptor,
@@ -93,9 +95,13 @@ import {
   type ToolCatalogEntry,
   type SubagentTask,
   REVERT_RUNTIME_WORKSPACE_CHANGES_COMMAND,
+  RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND,
   RECORD_RUNTIME_LOGIC_FEEDBACK_COMMAND,
   revertRuntimeWorkspaceChangesSchema,
   revertRuntimeWorkspaceChangesResultSchema,
+  restoreRuntimeWorkspaceChangesSchema,
+  restoreRuntimeWorkspaceChangesResultSchema,
+  type RestoreRuntimeWorkspaceChangesResult,
   runtimeLogicFeedbackRequestSchema,
   runtimeLogicFeedbackResultSchema,
   type RevertRuntimeWorkspaceChangesResult,
@@ -108,6 +114,16 @@ import {
 } from './RuntimeClient';
 
 export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
+  listSolutionSelections(sessionId: string, signal?: AbortSignal) {
+    return this.command({ kind: LIST_RUNTIME_SOLUTION_SELECTIONS_COMMAND,
+      payload: runtimeSessionIdentitySchema.parse({ sessionId }) }, input => runtimeSolutionSelectionSchema.array().parse(input), signal);
+  }
+
+  answerSolutionSelection(answer: RuntimeSolutionAnswer, signal?: AbortSignal) {
+    return this.command({ kind: ANSWER_RUNTIME_SOLUTION_SELECTION_COMMAND,
+      payload: runtimeSolutionAnswerSchema.parse(answer) }, input => runtimeSolutionAnswerSchema.parse(input), signal);
+  }
+
   constructor(transport: RuntimeTransport) {
     super({ transport, decodeEvent: decodeRuntimeEvent });
   }
@@ -470,6 +486,18 @@ export class ProtocolRuntimeClient extends RuntimeClient<RuntimeEvent> {
   updateWorkspace(input: unknown, signal?: AbortSignal): Promise<WorkspaceDescriptor> {
     return this.command({ kind: UPDATE_RUNTIME_WORKSPACE_COMMAND, payload: workspaceUpdateSchema.parse(input) },
       value => workspaceDescriptorSchema.parse(value), signal);
+  }
+
+  restoreWorkspaceChanges(
+    input: { sessionId: string; turnIds: string[] },
+    signal?: AbortSignal,
+  ): Promise<RestoreRuntimeWorkspaceChangesResult> {
+    const payload = restoreRuntimeWorkspaceChangesSchema.parse(input);
+    return this.command(
+      { kind: RESTORE_RUNTIME_WORKSPACE_CHANGES_COMMAND, payload },
+      (value) => restoreRuntimeWorkspaceChangesResultSchema.parse(value),
+      signal,
+    );
   }
 
   revertWorkspaceChanges(

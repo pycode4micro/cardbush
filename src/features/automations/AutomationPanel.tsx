@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare } from 'lucide-react';
+import { CalendarClock, Plus, RefreshCw, Play, Pause, Square, Pencil, Trash2, MessageSquare, Check, Mail, ChevronRight } from 'lucide-react';
+import { isAutomationResult } from '@cardbush/bush-protocol';
+import { openAutomationRun } from './automationEvents';
 import type { AutomationCommand, AutomationDefinition, AutomationJob, AutomationOverview, AutomationRun } from '@cardbush/bush-protocol';
 import './automations.css';
 
@@ -29,7 +31,8 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
-  const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
+  const [view, setView] = useState<'unread' | 'today' | 'all' | 'plans'>('unread');
+  const [form, setForm] = useState<{ id: string; revision: number; name: string; prompt: string; sessionId: string; executionMode: 'isolated' | 'conversation'; kind: 'once' | 'interval' | 'event'; at: string; minutes: number; event: 'Stop' | 'PostToolUse' | 'PostToolUseFailure'; tool: string; cooldown: number; timeZone: string }>();
   const generation = useRef(0), mutation = useRef(false);
   const refresh = useCallback(async () => {
     const revision = ++generation.current;
@@ -60,6 +63,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const edit = (job: AutomationJob) => {
     setError('');
     setForm({ id: job.id, revision: job.revision, name: job.name, prompt: job.prompt, sessionId: job.sessionId,
+      executionMode: job.executionMode ?? 'conversation',
       kind: job.trigger.kind, at: localInput(job.trigger.kind !== 'event' ? job.trigger.at : new Date(Date.now() + 3600000).toISOString()),
       minutes: job.trigger.kind === 'interval' ? job.trigger.seconds / 60 : 60,
       event: job.trigger.kind === 'event' ? job.trigger.event : 'Stop', tool: job.trigger.kind === 'event' ? job.trigger.tool : '',
@@ -71,7 +75,7 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
       const trigger: AutomationDefinition['trigger'] = form.kind === 'event' ? { kind: 'event', event: form.event, tool: form.tool.trim(), cooldownSeconds: form.cooldown }
         : form.kind === 'interval' ? { kind: 'interval', at: new Date(form.at).toISOString(), seconds: form.minutes * 60 } : { kind: 'once', at: new Date(form.at).toISOString() };
       void operate({ action: 'update', id: form.id, expectedRevision: form.revision,
-        definition: { name: form.name, sessionId: form.sessionId, prompt: form.prompt, trigger, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } }, 'form');
+        definition: { name: form.name, sessionId: form.sessionId, prompt: form.prompt, trigger, executionMode: form.executionMode, timeZone: form.timeZone } }, 'form');
     } catch { setError(zh ? '请输入有效的执行时间。' : 'Enter a valid execution time.'); }
   };
   const runLabels: Record<AutomationRun['status'], string> = zh ? { queued: '排队中', running: '执行中', completed: '已完成', failed: '失败', stopped: '已停止', interrupted: '执行中断', awaiting_user_action: '等待处理' }
@@ -79,12 +83,26 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
   const eventLabel = (event: string) => zh ? ({ Stop: '任务完成', PostToolUse: '工具执行成功', PostToolUseFailure: '工具执行失败' }[event] ?? event) : event;
   const time = (value?: string) => value ? new Date(value).toLocaleString(zh ? 'zh-CN' : 'en-US') : '—';
   const jobs = overview?.jobs.filter(job => `${job.name} ${job.prompt}`.toLowerCase().includes(filter.toLowerCase())) ?? [];
+  const unreadCount = overview?.jobs.reduce((count, job) => count + job.runs.filter(run => isAutomationResult(run) && !run.readAt).length, 0) ?? 0;
+  const entries = jobs.flatMap(job => job.runs.map(run => ({ job, run })))
+    .filter(({ run }) => view === 'all' || (view === 'unread' && !run.readAt) || (view === 'today' && new Date(run.finishedAt ?? run.queuedAt).toDateString() === new Date().toDateString()))
+    .sort((a, b) => (b.run.finishedAt ?? b.run.queuedAt).localeCompare(a.run.finishedAt ?? a.run.queuedAt));
+  const unreadIds = entries.filter(({ run }) => isAutomationResult(run) && !run.readAt).map(({ run }) => run.id).slice(0, 500);
+  const groups = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const date = new Date(entry.run.finishedAt ?? entry.run.queuedAt).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'long', day: 'numeric', weekday: 'short', year: 'numeric' });
+    groups.set(date, [...(groups.get(date) ?? []), entry]);
+  }
   return <div className="feature-content automation-panel">
-    <header className="automation-heading"><div><h1><CalendarClock size={25} />{zh ? '定时与自动化' : 'Automations'}</h1><p>{zh ? '告诉 agent 你想做什么、何时执行，通过对话完成设置。' : 'Tell the agent what to do and when, and set up the task through conversation.'}</p></div>
+    <header className="automation-heading"><div><h1><CalendarClock size={25} />{zh ? '定时与自动化' : 'Automations'}</h1><p>{zh ? '每天查看结果，处理后标记已读；需要时继续对话。' : 'Review daily results, mark them read, and continue the conversation.'}</p></div>
       <div className="automation-actions"><button type="button" aria-label={zh ? '刷新自动化' : 'Refresh automations'} onClick={() => void refresh()}><RefreshCw size={16}/></button>
         <button type="button" className="primary-button" disabled={Boolean(busy)} onClick={onCreateAutomation} title={zh ? '在新会话中设置定时任务' : 'Set up a scheduled task in a new conversation'}><Plus size={16}/>{zh ? '新建自动化' : 'New automation'}</button></div></header>
-    <p className="automation-runtime-note">{zh ? 'CardBush 运行时执行；关闭或休眠期间错过的时间，恢复后合并执行一次。会话忙碌时先排队。' : 'Runs while CardBush is open. Missed times coalesce into one run after reopening or waking. Busy conversations wait.'}</p>
     {error && <p className="automation-error" role="alert">{error}</p>}
+    <nav className="automation-tabs" aria-label={zh ? '定时视图' : 'Automation views'}>
+      {(['unread', 'today', 'all', 'plans'] as const).map(tab => <button type="button" key={tab} aria-pressed={view === tab} onClick={() => { setView(tab); setForm(undefined); }}>
+        {{ unread: zh ? '未读' : 'Unread', today: zh ? '今天' : 'Today', all: zh ? '全部结果' : 'All results', plans: zh ? '计划管理' : 'Plans' }[tab]}{tab === 'unread' && <span>{unreadCount}</span>}
+      </button>)}
+    </nav>
     {form && <form className="automation-form" onSubmit={event => { event.preventDefault(); save(); }}>
       <h2>{zh ? '编辑自动化' : 'Edit automation'}</h2>
       <fieldset disabled={Boolean(busy)}>
@@ -102,12 +120,26 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
             <label>{zh ? '触发冷却时间（秒）' : 'Cooldown in seconds'}<input required type="number" min={60} max={86400} value={form.cooldown} onChange={event => setForm({ ...form, cooldown: Number(event.target.value) })}/></label></>}
         </div>
         <p className="automation-hint">{zh ? '沿用该会话最近使用的模型、工作区和权限。自动执行产生的事件不会再次触发自动化。' : 'Uses the conversation’s latest model, workspace and permissions. Automated runs do not trigger further automations.'}</p>
+        <label>{zh ? '执行会话' : 'Execution conversation'}<select value={form.executionMode} onChange={event => setForm({ ...form, executionMode: event.target.value as typeof form.executionMode })}>
+          <option value="isolated">{zh ? '每次新建会话' : 'New conversation for each run'}</option><option value="conversation">{zh ? '继续原会话' : 'Continue the original conversation'}</option>
+        </select></label>
         <div className="automation-actions"><button type="button" onClick={() => setForm(undefined)}>{zh ? '取消' : 'Cancel'}</button><button type="submit" className="primary-button">{busy === 'form' ? (zh ? '保存中…' : 'Saving…') : (zh ? '保存自动化' : 'Save automation')}</button></div>
       </fieldset></form>}
     <input className="automation-search" aria-label={zh ? '搜索自动化' : 'Search automations'} placeholder={zh ? '搜索自动化' : 'Search automations'} value={filter} onChange={event => setFilter(event.target.value)}/>
     {!overview && !error && <p role="status">{zh ? '正在读取自动化…' : 'Loading automations…'}</p>}
     {overview && !jobs.length && <div className="automation-empty"><CalendarClock size={32}/><p>{filter ? (zh ? '没有匹配的自动化。' : 'No matching automations.') : (zh ? '还没有自动化。点击“新建自动化”，在对话中告诉 agent 你的安排。' : 'No automations yet. Click New automation and tell the agent what you have in mind.')}</p></div>}
-    <div className="automation-list">{jobs.map(job => {
+    {view !== 'plans' && <section className="automation-inbox">
+      {unreadIds.length > 0 && <div className="automation-inbox-heading automation-actions"><button disabled={Boolean(busy)} type="button" onClick={() => void operate({ action: 'mark_read', runIds: unreadIds }, 'read-batch')}><Check size={14}/>{zh ? `标记这 ${unreadIds.length} 条已读` : `Mark these ${unreadIds.length} read`}</button></div>}
+      {overview && jobs.length > 0 && !entries.length && <div className="automation-empty"><Check size={28}/><p>{view === 'unread' ? (zh ? '未读结果已清空。下一次执行结束后会出现在这里。' : 'No unread results. New results will appear here after execution.') : (zh ? '暂时没有执行结果。' : 'No execution results yet.')}</p><button type="button" onClick={() => setView('plans')}>{zh ? '查看计划' : 'View plans'}</button></div>}
+      {[...groups].map(([date, items]) => <section className="automation-day" key={date}><h2>{date}</h2>{items.map(({ job, run }) => <article key={run.id} className="automation-result" data-unread={!run.readAt && isAutomationResult(run)}>
+        <button className="automation-result-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}>
+          <span className="automation-result-dot"/><span className="automation-result-content"><strong>{job.name}</strong><span className="automation-result-summary">{run.summary || run.error || (zh ? '查看本次执行对话' : 'View this execution conversation')}</span><span className="automation-hint">{time(run.finishedAt ?? run.startedAt ?? run.queuedAt)} · {runLabels[run.status]}</span></span><ChevronRight size={16}/>
+        </button>
+        {isAutomationResult(run) && <button className="automation-read-toggle" type="button" disabled={Boolean(busy)} title={run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')} aria-label={run.readAt ? (zh ? '标记未读' : 'Mark unread') : (zh ? '标记已读' : 'Mark read')}
+          onClick={() => void operate({ action: run.readAt ? 'mark_unread' : 'mark_read', id: job.id, runIds: [run.id] }, run.id)}>{run.readAt ? <Mail size={16}/> : <Check size={16}/>}</button>}
+      </article>)}</section>)}
+    </section>}
+    {view === 'plans' && <div className="automation-list">{jobs.map(job => {
       const latest = job.runs.at(-1), active = latest?.status === 'running' || latest?.status === 'queued';
       const label = active ? runLabels[latest.status] : job.state === 'active' ? (zh ? '已启用' : 'Active') : job.state === 'paused' ? (zh ? '已暂停' : 'Paused') : (zh ? '已完成' : 'Completed');
       const action = (action: AutomationCommand['action']) => void operate({ action, id: job.id, expectedRevision: job.revision }, job.id);
@@ -124,9 +156,9 @@ export function AutomationPanel({ language, onOpenConversation, onCreateAutomati
             : <button type="button" disabled={Boolean(busy)} onClick={() => action(job.state === 'active' ? 'pause' : 'resume')}><Pause size={14}/>{job.state === 'active' ? (zh ? '暂停' : 'Pause') : (zh ? '启用' : 'Enable')}</button>}
           <button type="button" disabled={Boolean(busy) || latest?.status === 'running'} onClick={() => action('delete')}><Trash2 size={14}/>{zh ? '删除' : 'Delete'}</button></div>
         {job.runs.length > 0 && <details><summary>{zh ? `执行记录 · ${runLabels[latest!.status]}` : `History · ${runLabels[latest!.status]}`}</summary><ol>{[...job.runs].reverse().map(run => <li key={run.id}>
-          <strong>{runLabels[run.status]}</strong><span>{time(run.startedAt ?? run.queuedAt)} · {zh ? ({ manual: '手动执行', schedule: '定时触发', Stop: '任务完成' }[run.reason] ?? run.reason) : run.reason}</span>{run.error && <p className="automation-error">{errorText(run.error, zh)}</p>}
+          <button className="automation-history-open" type="button" onClick={() => openAutomationRun(job.id, run.id, job.name)}><strong>{runLabels[run.status]}</strong> · {time(run.startedAt ?? run.queuedAt)}{!run.readAt && isAutomationResult(run) && ` · ${zh ? '未读' : 'Unread'}`}<ChevronRight size={14}/></button>{run.error && <p className="automation-error">{errorText(run.error, zh)}</p>}
         </li>)}</ol></details>}
       </article>;
-    })}</div>
+    })}</div>}
   </div>;
 }

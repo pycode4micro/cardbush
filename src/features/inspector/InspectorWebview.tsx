@@ -8,15 +8,17 @@ import {
   useRef,
   useState,
 } from 'react';
-import { basename } from '../../shared/localPaths';
+import { basename, resourceBasename } from '../../shared/localPaths';
 import type { InspectorOpenDetail } from './inspectorEvents';
 import type { AppLanguage } from '../../types';
 import { InspectorErrorBoundary } from './InspectorErrorBoundary';
+import { MediaInspectorPreview } from './MediaInspectorPreview';
 import { resolveFilePreview } from './filePreviewRegistry';
 import { inspectorFilePreviewRenderers } from './inspectorFilePreviewRenderers';
 import {
   normalizeInspectorBrowserAddress,
   inspectorFilePath,
+  inspectorMediaTarget,
   isInspectorBrowserTarget,
 } from './inspectorTargets';
 
@@ -86,6 +88,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   identity: string;
   target: string;
   source: string;
+  mediaType?: InspectorOpenDetail['mediaType'];
+  title?: string;
   language: AppLanguage;
   onNavigationStateChange: (
     identity: string,
@@ -96,6 +100,8 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   identity,
   target,
   source,
+  mediaType,
+  title,
   language,
   onNavigationStateChange,
   onOpenTarget,
@@ -106,10 +112,12 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
   const browserFitTimerRef = useRef(0);
   const requestedUrlRef = useRef(source);
   const filePath = inspectorFilePath(target);
+  const media = mediaType ? inspectorMediaTarget(target, mediaType) : null;
+  const fileTitle = title?.trim() || resourceBasename(filePath) || media?.kind || basename(filePath);
   const adapter = isInspectorBrowserTarget(target) ? null : resolveFilePreview(filePath);
   const FilePreview = isInspectorBrowserTarget(target) || adapter?.renderer === 'webview'
     ? null : inspectorFilePreviewRenderers[adapter?.renderer ?? 'fallback'];
-  const rendererPreview = FilePreview !== null;
+  const rendererPreview = Boolean(media) || FilePreview !== null;
   const [filePreviewRevision, setFilePreviewRevision] = useState(0);
   const loadingRef = useRef(true);
   const [loading, setLoading] = useState(true);
@@ -225,7 +233,7 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         setFilePreviewRevision((value) => value + 1);
         onNavigationStateChange(identity, {
           url: target,
-          title: basename(filePath),
+          title: fileTitle,
           canGoBack: false,
           canGoForward: false,
           loading: true,
@@ -274,19 +282,19 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
         publishNavigation();
       }
     },
-  }), [identity, filePath, onNavigationStateChange, publishNavigation, rendererPreview, target]);
+  }), [identity, fileTitle, onNavigationStateChange, publishNavigation, rendererPreview, target]);
 
   const publishFileNavigation = useCallback((isLoading: boolean) => {
     loadingRef.current = isLoading;
     setLoading(isLoading);
     onNavigationStateChange(identity, {
       url: target,
-      title: basename(filePath),
+      title: fileTitle,
       canGoBack: false,
       canGoForward: false,
       loading: isLoading,
     });
-  }, [identity, filePath, onNavigationStateChange, target]);
+  }, [identity, fileTitle, onNavigationStateChange, target]);
 
   useLayoutEffect(() => {
     if (rendererPreview) return undefined;
@@ -452,7 +460,17 @@ export const InspectorWebview = forwardRef<InspectorWebviewHandle, {
           ? setFilePreviewRevision(value => value + 1)
           : setWebviewRevision(value => value + 1)}
       >
-      {FilePreview ? (
+      {media ? (
+        <MediaInspectorPreview
+          key={`${target}:${media.kind}:${filePreviewRevision}`}
+          kind={media.kind}
+          path={media.path}
+          source={media.source}
+          name={fileTitle}
+          language={language}
+          onLoadingChange={publishFileNavigation}
+        />
+      ) : FilePreview ? (
         <FilePreview
           key={`${filePath}:${filePreviewRevision}`}
           path={filePath}

@@ -89,10 +89,10 @@ assert.match(app, /setInspectorWidth\(inspectorWidthRef\.current \+ widthDelta\)
 assert.match(app, /window\.addEventListener\('resize', resizeInspectorFromWindowRightEdge\)/);
 assert.match(app, /document\.body\.classList\.add\('window-right-edge-resizing'\)/);
 assert.match(css, /body\.window-right-edge-resizing \.right-inspector,[\s\S]*?transition:\s*none/);
-assert.match(css, /--chat-inline-gutter:\s*clamp\(12px,\s*3vw,\s*36px\)/);
+assert.match(css, /--chat-inline-gutter:\s*clamp\(18px,\s*calc\(3vw \+ 10px\),\s*46px\)/);
 assert.match(
   css,
-  /--chat-track-width:\s*800px/,
+  /--chat-track-width:\s*780px/,
   'Messages, composer, runtime cards, and welcome content must share a slightly narrower reading track',
 );
 assert.doesNotMatch(css, /--chat-track-width:\s*(787|672)px/);

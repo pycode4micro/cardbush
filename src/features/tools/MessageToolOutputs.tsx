@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { CircleAlert, PanelsTopLeft } from 'lucide-react';
 import type { AppLanguage, ChatToolArtifact, ChatToolExecution } from '../../types';
 import { fileUrl, isAbsoluteLocalPath } from '../../shared/localPaths';
@@ -67,7 +67,7 @@ export function MessageToolOutputs({ sessionId, turnId, executions, artifacts, l
   </section>;
 }
 
-export function MessageToolArtifact({ artifact, language }: { artifact: ChatToolArtifact; language: AppLanguage }) {
+export const MessageToolArtifact = memo(function MessageToolArtifact({ artifact, language }: { artifact: ChatToolArtifact; language: AppLanguage }) {
   const [src, setSrc] = useState(() => sourceUrl(artifact.path)), [failed, setFailed] = useState(false);
   const [preview, setPreview] = useState<ImagePreviewSource | null>(null);
   const local = isAbsoluteLocalPath(artifact.path) || /^file:/i.test(artifact.path);
@@ -93,6 +93,6 @@ export function MessageToolArtifact({ artifact, language }: { artifact: ChatTool
     {!hasMediaPreview && <figcaption>{link}{artifact.size !== undefined && <small>{formatSize(artifact.size)}</small>}</figcaption>}
     {preview && <ImagePreviewDialog image={preview} language={language} onClose={() => setPreview(null)} />}
   </figure>;
-}
+});
 
 function formatSize(bytes: number) { return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }

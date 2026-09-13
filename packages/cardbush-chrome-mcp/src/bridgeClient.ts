@@ -4,6 +4,20 @@ import { randomUUID } from 'node:crypto';
 
 export const chromeConnectorProtocol = 'cardbush.chrome_connector.v1' as const;
 const maximumBridgeResponseCharacters = 64 * 1024 * 1024;
+const extensionStages = new Set([
+  'broker_forwarded', 'extension_received', 'scope_ready', 'checking_access',
+  'attaching_debugger', 'debugger_ready', 'command_pending', 'command_finished',
+]);
+
+export type ChromeConnectorDiagnostics = {
+  requestId: string;
+  method: string;
+  command?: string;
+  tabId?: number;
+  elapsedMs: number;
+  stage: string;
+  stages: Array<{ stage: string; elapsedMs: number }>;
+};
 
 type BridgeConfig = {
   protocol: typeof chromeConnectorProtocol;
@@ -30,12 +44,25 @@ export async function requestChromeConnector(
     configPath?: string;
     signal?: AbortSignal;
     timeoutMs?: number;
+    onDiagnostics?: (diagnostics: ChromeConnectorDiagnostics) => void;
   } = {},
 ): Promise<unknown> {
   const config = readBridgeConfig(options.configPath);
   const requestId = randomUUID();
   const clientId = `mcp-${process.pid}-${randomUUID()}`;
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const startedAt = Date.now();
+  const stages = [{ stage: 'connecting', elapsedMs: 0 }];
+  const mark = (stage: string) => {
+    if (!stages.some(item => item.stage === stage)) stages.push({ stage, elapsedMs: Date.now() - startedAt });
+  };
+  const diagnostics = (): ChromeConnectorDiagnostics => ({
+    requestId, method,
+    ...(typeof params.command === 'string' ? { command: params.command } : {}),
+    ...(typeof params.tabId === 'number' ? { tabId: params.tabId } : {}),
+    elapsedMs: Date.now() - startedAt, stage: stages.at(-1)!.stage,
+    stages: stages.map(item => ({ ...item })),
+  });
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(config.endpoint);
     socket.setEncoding('utf8');
@@ -49,7 +76,13 @@ export async function requestChromeConnector(
       clearTimeout(timer);
       options.signal?.removeEventListener('abort', onAbort);
       socket.destroy();
-      if (error) reject(error);
+      const timing = diagnostics();
+      // Diagnostics contain no URLs, command arguments, credentials or image bytes.
+      try { options.onDiagnostics?.(timing); } catch { /* Observability must not change the outcome. */ }
+      if (error instanceof ChromeConnectorError) reject(new ChromeConnectorError(
+        error.code, error.message, { ...error.details, diagnostics: timing },
+      ));
+      else if (error) reject(error);
       else resolve(result);
     };
     const onAbort = () => finish(options.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
@@ -63,6 +96,7 @@ export async function requestChromeConnector(
       return;
     }
     socket.on('connect', () => {
+      mark('handshaking');
       socket.write(`${JSON.stringify({
         type: 'hello',
         protocol: chromeConnectorProtocol,
@@ -95,7 +129,12 @@ export async function requestChromeConnector(
         }
         if (message.type === 'hello_ack' && !requestSent) {
           requestSent = true;
+          mark('awaiting_extension');
           socket.write(`${JSON.stringify({ type: 'request', id: requestId, method, params })}\n`);
+          continue;
+        }
+        if (message.type === 'progress' && message.id === requestId && extensionStages.has(string(message.stage))) {
+          mark(string(message.stage));
           continue;
         }
         if (message.type !== 'response' || message.id !== requestId) continue;
@@ -107,6 +146,7 @@ export async function requestChromeConnector(
             record(error.details),
           ));
         } else {
+          mark('response_received');
           finish(undefined, message.result);
         }
         return;

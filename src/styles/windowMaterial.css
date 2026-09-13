@@ -45,7 +45,11 @@ html[data-window-material="mica"] .app .sidebar {
   --sidebar-text-muted: color-mix(in srgb, var(--text) 46%, transparent);
 }
 
-html[data-window-material="mica"] .app .main-stage,
+html[data-window-material="mica"] .app .main-stage {
+  /* Match the base frame: the inspector owns the shared right divider. */
+  box-shadow: inset 1px 0 0 var(--window-chrome-border);
+}
+
 html[data-window-material="mica"] .app .settings-content {
   box-shadow: inset 0 0 0 1px var(--window-chrome-border);
 }

@@ -17,6 +17,7 @@ export type ToolFileChange = {
 };
 
 export type ToolChangeReport = {
+  reverted?: boolean;
   files: ToolFileChange[];
   additions: number;
   deletions: number;
@@ -98,15 +99,13 @@ function buildToolChangeReport(
       String(execution.metadata.kind ?? '').trim() === 'file_change' ||
       runtimeWorkspaceChanges(execution.metadata).length > 0,
   );
-  if (
+  const reverted = (
     authoritativeChanges.length > 0 &&
     authoritativeChanges.every((execution) =>
       String(execution.metadata.revert_status ?? execution.metadata.revertStatus ?? '')
         .trim()
         .toLowerCase() === 'reverted')
-  ) {
-    return null;
-  }
+  );
   const allFiles: ToolFileChange[] = [];
   let fallbackAdditions = 0;
   let fallbackDeletions = 0;
@@ -127,6 +126,7 @@ function buildToolChangeReport(
   }
   return {
     files,
+    ...(reverted ? { reverted: true } : {}),
     additions: parsedAdditions > 0 ? parsedAdditions : fallbackAdditions,
     deletions: parsedDeletions > 0 ? parsedDeletions : fallbackDeletions,
     fileCount: files.length === 0 ? 1 : files.length,
@@ -264,6 +264,7 @@ export function groupChangeReportsByTurn(
 export function summarizeChangeReports(
   reports: ConversationChangeReport[],
 ): ConversationChangeSummary | null {
+  reports = reports.filter(report => !report.reverted);
   if (reports.length === 0) {
     return null;
   }

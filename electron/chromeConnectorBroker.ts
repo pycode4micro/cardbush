@@ -270,9 +270,10 @@ export class ChromeConnectorBroker {
         return;
       }
       writeLine(this.#extension.socket, request);
+      writeLine(peer.socket, { type: 'progress', id: message.id, stage: 'broker_forwarded' });
       return;
     }
-    if (message.type === 'response') {
+    if (message.type === 'response' || message.type === 'progress') {
       const clientId = string(message.clientId);
       const target = this.#peers.get(clientId);
       if (target?.role === 'mcp') writeLine(target.socket, message);

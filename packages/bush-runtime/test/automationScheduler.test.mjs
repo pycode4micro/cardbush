@@ -111,6 +111,49 @@ test('invalid stores fail visibly without erasure; unsafe timestamps and unknown
   const broken = new AutomationScheduler({ ...f.options, path });
   await assert.rejects(broken.list()); assert.equal(await readFile(path, 'utf8'), 'broken');
 });
+
+test('read state belongs to a result, persists independently and cannot acknowledge pending work', async t => {
+  const f = await fixture(t, { run: async () => ({ status: 'completed', reason: 'done', result: 'Daily report: one pending item.' }) });
+  const job = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'interval', at: '2026-09-09T00:00:00Z', seconds: 60 }) });
+  await f.scheduler.tick();
+  let current = (await f.scheduler.list()).jobs[0];
+  await assert.rejects(f.scheduler.manage({ action: 'mark_read', runIds: [current.runs[0].id] }), /Wait for execution/);
+  f.setIdle(true); await f.scheduler.tick();
+  await until(async () => (await f.scheduler.reminder()).total === 1);
+  current = (await f.scheduler.list()).jobs[0]; const run = current.runs[0];
+  assert.equal(current.executionMode, 'isolated'); assert.notEqual(run.sessionId, job.sessionId);
+  const detail = await f.scheduler.manage({ action: 'conversation', id: job.id, runIds: [run.id] });
+  assert.equal(detail.sessionId, run.sessionId); assert.equal(detail.run.result, 'Daily report: one pending item.');
+  assert.equal((await f.scheduler.reminder()).total, 1, 'opening a conversation is a read-only operation');
+  await f.scheduler.manage({ action: 'mark_read', expectedRevision: 1, runIds: [run.id] });
+  current = (await f.scheduler.list()).jobs[0];
+  assert.equal(current.revision, detail.job.revision, 'acknowledgment does not invalidate an open plan editor');
+  assert.equal(current.state, 'active'); assert.equal(current.runs[0].status, 'completed');
+  assert.equal((await f.scheduler.reminder()).total, 0);
+  f.advance(60000); await f.scheduler.tick(); await until(async () => (await f.scheduler.reminder()).total === 1);
+  const second = (await f.scheduler.list()).jobs[0].runs[1]; assert.notEqual(second.sessionId, run.sessionId); assert.equal(second.readAt, undefined);
+  await f.scheduler.close(); const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
+  assert.equal((await reloaded.reminder()).total, 1);
+  await reloaded.manage({ action: 'mark_unread', runIds: [run.id] }); assert.equal((await reloaded.reminder()).total, 2);
+  await assert.rejects(reloaded.manage({ action: 'mark_read', runIds: [run.id, 'missing'] }), /not found/);
+  assert.equal((await reloaded.reminder()).total, 2, 'batch acknowledgments are atomic');
+});
+
+test('unread results survive retention, and older plans keep their existing conversation', async t => {
+  const f = await fixture(t);
+  await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  await f.scheduler.tick(); await f.scheduler.close();
+  const stored = JSON.parse(await readFile(f.options.path, 'utf8'));
+  const job = stored.jobs[0]; delete job.executionMode; job.state = 'paused'; delete job.nextRunAt;
+  job.runs = Array.from({ length: 65 }, (_, i) => ({ id: `old-${i}`, turnId: `old-turn-${i}`, queuedAt: '2026-09-08T00:00:00Z', finishedAt: '2026-09-08T00:00:01Z', status: 'completed', reason: 'schedule' }));
+  await writeFile(f.options.path, JSON.stringify(stored));
+  const reloaded = new AutomationScheduler(f.options); t.after(() => reloaded.close());
+  assert.equal((await reloaded.list()).jobs[0].executionMode, 'conversation');
+  const reminder = await reloaded.reminder(); assert.equal(reminder.total, 65); assert.equal(reminder.items.length, 8);
+  await reloaded.manage({ action: 'run', id: job.id });
+  const queued = (await reloaded.list()).jobs[0]; assert.equal(queued.runs.length, 66); assert.equal(queued.runs.at(-1).sessionId, 'session');
+  const results = await reloaded.manage({ action: 'results', offset: 20 }); assert.equal(results.results.length, 20); assert.equal(results.total, 66);
+});
 test('real runtime turns and schedule_task share context, events and permission scope without self-trigger loops', async t => {
   let host; const seen = [];
   const registry = new ToolRegistry();
@@ -142,4 +185,38 @@ test('only executed trusted hooks can request a queued agent activation through 
   await runner.run([{ ...hook, trusted: false }], 'PostToolUse', { request: context(), toolName: 'read_file' }); assert.equal(calls.length, 0);
   await runner.run([hook], 'PostToolUse', { request: context(), toolName: 'read_file' });
   assert.deepEqual(activations, [{ id: 'fixture-hook', prompt: 'Inspect the completed export.' }]); await runner.close();
+});
+
+test('live user guidance refreshes reminders without changing authored text or persisting stale app context', async t => {
+  const f = await fixture(t);
+  const job = await f.scheduler.manage({ action: 'create', definition: definition({ kind: 'once', at: '2026-09-09T00:00:00Z' }) });
+  f.setIdle(true); await f.scheduler.tick(); await until(async () => (await f.scheduler.reminder()).total === 1);
+  const run = (await f.scheduler.list()).jobs[0].runs[0];
+  const registry = new ToolRegistry(), requests = []; let host;
+  host = new InMemoryRuntimeHost({ automation: f.scheduler, toolRegistry: registry, registerDefaultWorkspaceTools: false,
+    provider: { async *stream(request) {
+      requests.push(structuredClone(request));
+      const event = (kind, rest = {}) => ({ protocol: 'bush.model_event.v1', kind, requestId: request.requestId, sequence: kind === 'response_completed' ? 2 : 1, createdAt: new Date().toISOString(), ...rest });
+      if (requests.length === 1) {
+        await f.scheduler.manage({ action: 'mark_read', id: job.id, runIds: [run.id] });
+        await host.sendCommand({ kind: 'runtime.enqueue_guidance', payload: { protocol: 'bush.runtime_guidance.v1', sessionId: 'session', turnId: 'human-turn', messageId: 'live-guidance', content: '按新的范围继续。', createdAt: new Date().toISOString() } });
+        yield event('tool_call_delta', { index: 0, toolCallId: 'read-inbox', nameDelta: 'scheduled_results', argumentsDelta: '{}' });
+        yield event('response_completed', { finishReason: 'tool_calls' }); return;
+      }
+      yield event('text_delta', { delta: 'Done' }); yield event('response_completed', { finishReason: 'stop' });
+    } } });
+  const request = context(); request.tools = registry.definitions().filter(tool => tool.name === 'scheduled_results');
+  await host.runSessionTurn(request);
+  assert.equal(requests[0].messages.at(-1).name, 'automation_unread_reminder');
+  assert.ok(requests[1].messages.some(message => message.content === '按新的范围继续。'));
+  assert.ok(!requests[1].messages.some(message => message.name === 'automation_unread_reminder'), 'read changes replace the active turn reminder');
+  const history = await host.sendCommand({ kind: 'runtime.get_session', payload: { sessionId: 'session' } });
+  const guidance = history.turns[0].messages.find(message => message.messageId === 'live-guidance');
+  assert.equal(guidance.message.content, '按新的范围继续。'); assert.equal(guidance.metadata.automationReminder.total, 0);
+  assert.ok(!history.turns[0].messages.some(message => message.message.name === 'automation_unread_reminder'));
+  await f.scheduler.manage({ action: 'mark_unread', runIds: [run.id] });
+  for (const [name, metadata] of [['goal_continuation', {}], ['automation_prompt', { automationRunId: run.id }]]) {
+    await host.runSessionTurn({ ...context(), requestId: name, turnId: name, metadata, inputMessages: [{ messageId: name, message: { role: 'user', name, content: 'Continue' } }] });
+    assert.ok(!requests.at(-1).messages.some(message => message.name === 'automation_unread_reminder'), 'automatic inputs do not receive inbox reminders');
+  }
 });

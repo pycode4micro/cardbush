@@ -27,7 +27,7 @@ import type {
   SubagentDispatchEvent,
   SubagentTaskSnapshot,
 } from '../../types';
-import { AssistantLoopHistoryBlock } from '../chatMessages';
+import { AssistantLoopHistoryBlock, MarkdownContent } from '../chatMessages';
 import {
   SUBAGENT_DISPATCH_UI_EVENT,
   type WorkSummaryInspectorDetail,
@@ -213,32 +213,46 @@ function SubagentTaskInspector({
   const [childTurn, setChildTurn] = useState<Record<string, unknown> | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
+  const [turnDetailError, setTurnDetailError] = useState('');
+  const refreshSequence = useRef(0);
 
-  useEffect(() => setTask(detail.task), [detail.task]);
+  useEffect(() => setTask(current => current.taskId === detail.task.taskId
+    ? mergeTask(current, detail.task) : detail.task), [detail.task]);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const taskId = task.taskId?.trim();
     if (!taskId) return;
+    const sequence = ++refreshSequence.current;
+    const isCurrent = () => !signal?.aborted && sequence === refreshSequence.current;
     setRefreshing(true);
     try {
-      const next = await fetchSubagentTask(taskId, signal);
-      if (!signal?.aborted) {
-        setTask((current) => mergeTask(current, next));
-        const childTurnId = next.childTurnId?.trim() || task.childTurnId?.trim();
-        if (childTurnId) {
-          const snapshot = await fetchTurnSnapshot(childTurnId, signal);
-          if (!signal?.aborted) setChildTurn(snapshot);
+      const next = await fetchSubagentTask(taskId, signal, detail.sessionId);
+      if (!isCurrent()) return;
+      let snapshot: Record<string, unknown> | null = null;
+      let detailError = '';
+      if (next.childTurnId && next.childSessionId && next.terminal) {
+        try {
+          snapshot = await fetchTurnSnapshot(next.childTurnId, { sessionId: next.childSessionId, signal });
+        } catch (caught) {
+          detailError = caught instanceof Error ? caught.message : String(caught);
         }
+      }
+      if (isCurrent()) {
+        // Publish together so settling the polling effect cannot abort its own
+        // final transcript read. A detail read failure never changes task status.
+        setTask((current) => mergeTask(current, next));
+        setChildTurn(snapshot);
+        setTurnDetailError(detailError);
         setRefreshError('');
       }
     } catch (caught) {
-      if (!signal?.aborted) {
+      if (isCurrent()) {
         setRefreshError(caught instanceof Error ? caught.message : String(caught));
       }
     } finally {
-      if (!signal?.aborted) setRefreshing(false);
+      if (isCurrent()) setRefreshing(false);
     }
-  }, [task.childTurnId, task.taskId]);
+  }, [detail.sessionId, task.taskId]);
 
   useEffect(() => {
     if (!active) return;
@@ -254,9 +268,7 @@ function SubagentTaskInspector({
       );
       if (!matches) return;
       setTask((current) => mergeTask(current, taskFromDispatch(event)));
-      if (event.taskId) void fetchSubagentTask(event.taskId, controller.signal)
-        .then((next) => setTask((current) => mergeTask(current, next)))
-        .catch(() => undefined);
+      if (event.taskId) void refresh(controller.signal);
     };
     window.addEventListener(SUBAGENT_DISPATCH_UI_EVENT, receiveDispatch);
     return () => {
@@ -328,12 +340,12 @@ function SubagentTaskInspector({
 
       {task.requestPrompt && (
         <InspectorSection title={language === 'zh' ? '派发任务' : 'Dispatch prompt'}>
-          <p>{task.requestPrompt}</p>
+          <MarkdownContent content={task.requestPrompt} language={language} />
         </InspectorSection>
       )}
       {task.responsePrompt && (
         <InspectorSection title={language === 'zh' ? '子级结果' : 'Child result'}>
-          <p>{task.responsePrompt}</p>
+          <MarkdownContent content={task.responsePrompt} language={language} />
         </InspectorSection>
       )}
       {permissionRequirements.length > 0 && (
@@ -343,13 +355,24 @@ function SubagentTaskInspector({
         </InspectorSection>
       )}
       {task.errorMessage && (
-        <InspectorSection title={language === 'zh' ? '错误' : 'Error'} tone="failed">
-          <p>{task.errorMessage}</p>
+        <InspectorSection
+          title={task.status === 'stopped'
+            ? language === 'zh' ? '停止原因' : 'Stop reason'
+            : language === 'zh' ? '错误' : 'Error'}
+          tone={task.status === 'stopped' ? undefined : 'failed'}
+        >
+          <p>{task.status === 'stopped' && task.errorMessage === 'turn_stop_requested'
+            ? language === 'zh' ? '任务已按停止请求结束。' : 'The task ended following a stop request.'
+            : task.errorMessage}</p>
         </InspectorSection>
       )}
 
       <details className="subagent-inspector-raw">
         <summary>{language === 'zh' ? '完整原始信息' : 'Complete raw details'}</summary>
+        {!childTurn && <p>{running
+          ? language === 'zh' ? '回合记录将在任务结束后提供。' : 'The turn transcript will be available when the task ends.'
+          : language === 'zh' ? '暂未取得回合详情，可刷新重试。' : 'Turn details are not available yet. Refresh to retry.'}</p>}
+        {turnDetailError && <p>{turnDetailError}</p>}
         <pre>{JSON.stringify({ task: task.raw, child_turn: childTurn }, null, 2)}</pre>
       </details>
     </section>
@@ -373,6 +396,8 @@ function InspectorSection({
 }
 
 function mergeTask(current: SubagentTaskSnapshot, next: SubagentTaskSnapshot) {
+  if (current.terminal && !next.terminal) return current;
+  if (Date.parse(next.updatedAt || '') < Date.parse(current.updatedAt || '')) return current;
   return {
     ...current,
     ...next,
@@ -380,7 +405,7 @@ function mergeTask(current: SubagentTaskSnapshot, next: SubagentTaskSnapshot) {
     toolCallId: next.toolCallId || current.toolCallId,
     requestPrompt: next.requestPrompt || current.requestPrompt,
     responsePrompt: next.responsePrompt || current.responsePrompt,
-    errorMessage: next.errorMessage || current.errorMessage,
+    errorMessage: next.errorMessage,
     raw: { ...current.raw, ...next.raw },
   };
 }

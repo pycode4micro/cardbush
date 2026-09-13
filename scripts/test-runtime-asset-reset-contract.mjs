@@ -11,7 +11,7 @@ const styles = read('src', 'styles', 'app.css');
 
 assert.match(api, /maintenanceRuntimeAssetsReset:\s*true/);
 assert.match(api, /runtimeAssetResetProtocol:\s*RUNTIME_ASSET_RESET_PROTOCOL/);
-assert.match(api, /runtimeAssetResetCategories:\s*\['prompts', 'skills', 'agent_profiles', 'teams'\]/);
+assert.match(api, /runtimeAssetResetCategories:\s*\['prompts', 'skills'\]/);
 assert.match(api, /productHostValue\(\{ kind: 'maintenance\.runtime_assets\.plan' \}\)/);
 assert.match(api, /kind: 'maintenance\.runtime_assets\.reset'/);
 assert.match(api, /categories:\s*selected,[\s\S]*?confirm: true/);
@@ -19,8 +19,9 @@ assert.match(api, /restartRequired: payload\.restart_required === true/);
 assert.match(api, /productHostValue\(\{ kind: 'maintenance\.diagnostics' \}\)/);
 
 assert.match(settings, /runtimeAssetCategoryOrder[\s\S]*?'prompts'[\s\S]*?'skills'/);
-assert.match(settings, /runtimeAssetCategoryOrder[\s\S]*?'agent_profiles'[\s\S]*?'teams'/);
-assert.match(api, /resetProductTeamConfiguration/);
+assert.doesNotMatch(settings, /agent_profiles|Agent Profiles|Teams|联动恢复/);
+assert.doesNotMatch(api, /resetRuntimePluginAssets|team_configuration_reset_pair_required/);
+assert.doesNotMatch(read('electron', 'productHostController.mts'), /agent_profiles|renderer_apply_required|product-host\/teams/);
 assert.doesNotMatch(settings, /tools:\s*\{ zh: 'Tools'/);
 assert.match(settings, /type="checkbox"/);
 assert.match(settings, /window\.confirm/);

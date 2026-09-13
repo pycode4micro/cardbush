@@ -16,3 +16,16 @@ test('model projection preserves native nulls, extension fields and server field
   const native = { content: [], structuredContent: null, facts: { server: true }, result: 'native', extension: [1, 2], _meta: { private: true } };
   assert.deepEqual(JSON.parse(projectMcpResult(native)), { content: [], structuredContent: null, facts: { server: true }, result: 'native', extension: [1, 2] });
 });
+
+test('MCP model projection removes image bytes, including nested resources, without touching native content', () => {
+  const raw = { content: [{ type: 'image', mimeType: 'image/png', data: 'native-image-bytes' },
+    { type: 'resource', resource: { mimeType: 'image/jpeg', blob: 'native-resource-bytes', uri: 'image://test' } }],
+    isError: true, _meta: { private: true } };
+  const before = structuredClone(raw);
+  const text = projectMcpResult(raw);
+  assert.ok(!text.includes('native-image-bytes'));
+  assert.ok(!text.includes('native-resource-bytes'));
+  assert.ok(!text.includes('private'));
+  assert.equal(JSON.parse(text).isError, true);
+  assert.deepEqual(raw, before);
+});

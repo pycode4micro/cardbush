@@ -25,7 +25,7 @@ import {
   PackageOpen,
   Search,
   SlidersHorizontal,
-  Palette,
+  Sun,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -69,7 +69,7 @@ import {
   type McpServerConfigInput,
 } from '../backend/api';
 import packageMetadata from '../../package.json';
-import mcpLogoUrl from '../assets/integration-logos/mcp.svg';
+import { McpLogoIcon } from '../components/McpLogoIcon';
 import { SidebarResizer } from '../components/SidebarResizer';
 import { basename } from '../shared/localPaths';
 import {
@@ -118,34 +118,10 @@ const defaultFontSettings = {
   filePath: '',
 };
 const settingsIcons: Record<VisibleSettingsSection, React.ComponentType<{ size?: number; className?: string }>> = {
-  profile: SlidersHorizontal, appearance: Palette, usage: BarChart3,
+  profile: SlidersHorizontal, appearance: Sun, usage: BarChart3,
   models: Cpu, mcp: McpLogoIcon,
   runtime: Terminal, proxy: Monitor, cache: Archive, diagnostics: Clipboard,
 };
-function McpLogoIcon({
-  size = 18,
-  className,
-}: {
-  size?: number;
-  className?: string;
-}) {
-  return (
-    <img
-      className={`mcp-logo-mark ${className ?? ''}`.trim()}
-      src={mcpLogoUrl}
-      width={size}
-      height={size}
-      style={{
-        width: size,
-        height: size,
-      }}
-      alt=""
-      aria-hidden="true"
-      draggable={false}
-    />
-  );
-}
-
 export function SettingsView({
   active,
   onReady,
@@ -1524,8 +1500,6 @@ function CacheMaintenancePanel({
 const runtimeAssetCategoryOrder: RuntimeAssetCategory[] = [
   'prompts',
   'skills',
-  'agent_profiles',
-  'teams',
 ];
 
 function RuntimeAssetResetCard({
@@ -1543,9 +1517,8 @@ function RuntimeAssetResetCard({
 }) {
   const available = capabilities.maintenanceRuntimeAssetsReset &&
     capabilities.runtimeAssetResetProtocol === RUNTIME_ASSET_RESET_PROTOCOL;
-  const supportedCategories = capabilities.runtimeAssetResetCategories.length > 0
-    ? capabilities.runtimeAssetResetCategories
-    : runtimeAssetCategoryOrder;
+  const supportedCategories = runtimeAssetCategoryOrder.filter(category =>
+    capabilities.runtimeAssetResetCategories.includes(category));
   const [selected, setSelected] = useState<Set<RuntimeAssetCategory>>(
     () => new Set(runtimeAssetCategoryOrder),
   );
@@ -1588,10 +1561,11 @@ function RuntimeAssetResetCard({
   }, [refreshInspection]);
 
   useEffect(() => {
+    if (!available) return;
     setSelected((current) => new Set(
       [...current].filter((category) => supportedCategories.includes(category)),
     ));
-  }, [supportedCategories.join('|')]);
+  }, [available, supportedCategories.join('|')]);
 
   const selectedCategories = runtimeAssetCategoryOrder.filter(
     (category) => selected.has(category) && supportedCategories.includes(category),
@@ -1603,15 +1577,8 @@ function RuntimeAssetResetCard({
     if (busy || requiresRestart) return;
     setSelected((current) => {
       const next = new Set(current);
-      const teamConfigurationCategory = category === 'agent_profiles' || category === 'teams';
-      const affected = teamConfigurationCategory
-        ? (['agent_profiles', 'teams'] as RuntimeAssetCategory[])
-        : [category];
-      const remove = next.has(category);
-      for (const item of affected) {
-        if (remove) next.delete(item);
-        else if (supportedCategories.includes(item)) next.add(item);
-      }
+      if (next.has(category)) next.delete(category);
+      else if (supportedCategories.includes(category)) next.add(category);
       return next;
     });
   };
@@ -1643,8 +1610,8 @@ function RuntimeAssetResetCard({
     try {
       const next = await resetRuntimeAssets(selectedCategories);
       setResult(next);
-      if (selectedCategories.includes('agent_profiles') || selectedCategories.includes('teams')) {
-        await onRuntimeAssetsReloaded?.(selectedCategories);
+      if (!next.restartRequired) {
+        await onRuntimeAssetsReloaded?.(next.selectedCategories);
       }
       setRestartVerified(false);
       persistPendingRuntimeAssetReset(next.restartRequired ? next : null);
@@ -1716,19 +1683,18 @@ function RuntimeAssetResetCard({
     <SettingsCard
       title={language === 'zh' ? '恢复内置配置包' : 'Restore bundled runtime assets'}
       subtitle={language === 'zh'
-        ? '将 Prompts、Skills、Agent Profiles 或 Teams 精确恢复为当前 CardBush 随附的内置版本。这是破坏性维护操作。'
-        : 'Restore Prompts, Skills, Agent Profiles, or Teams exactly to the versions bundled with the current CardBush build. This is destructive maintenance.'}
+        ? '将 Prompts 和 Skills 恢复为当前 CardBush 随附的内置版本。'
+        : 'Restore Prompts and Skills to the versions bundled with the current CardBush build.'}
     >
       <div className="runtime-asset-reset-panel">
         <div className="runtime-asset-category-grid">
-          {runtimeAssetCategoryOrder.map((category) => {
-            const supported = supportedCategories.includes(category);
+          {supportedCategories.map((category) => {
             return (
-              <label key={category} className={!supported ? 'disabled' : ''}>
+              <label key={category}>
                 <input
                   type="checkbox"
-                  checked={supported && selected.has(category)}
-                  disabled={!available || !supported || Boolean(busy) || requiresRestart}
+                  checked={selected.has(category)}
+                  disabled={!available || Boolean(busy) || requiresRestart}
                   onChange={() => toggleCategory(category)}
                 />
                 <span>
@@ -1825,7 +1791,7 @@ function RuntimeAssetResetCard({
         {plan && (
           <details className="runtime-asset-paths">
             <summary>{language === 'zh' ? '查看内置来源与运行时路径' : 'View bundled source and runtime paths'}</summary>
-            {runtimeAssetCategoryOrder.map((category) => {
+            {supportedCategories.map((category) => {
               const location = plan.categories[category];
               if (!location) return null;
               return (
@@ -1879,8 +1845,6 @@ function runtimeAssetCategoryLabel(category: RuntimeAssetCategory, language: App
   const labels = {
     prompts: { zh: 'Prompts', en: 'Prompts' },
     skills: { zh: 'Skills', en: 'Skills' },
-    agent_profiles: { zh: 'Agent Profiles', en: 'Agent Profiles' },
-    teams: { zh: 'Teams', en: 'Teams' },
   } as const;
   return labels[category][language];
 }
@@ -1889,8 +1853,6 @@ function runtimeAssetCategoryDescription(category: RuntimeAssetCategory, languag
   const descriptions = {
     prompts: { zh: '系统提示词与内置模板', en: 'System prompts and bundled templates' },
     skills: { zh: '内置技能包及其文件', en: 'Bundled skill packages and files' },
-    agent_profiles: { zh: '内置 Agent 配置（与 Teams 联动恢复）', en: 'Bundled Agent profiles (restored with Teams)' },
-    teams: { zh: '内置 Team 配置（与 Profiles 联动恢复）', en: 'Bundled Team definitions (restored with Profiles)' },
   } as const;
   return descriptions[category][language];
 }
@@ -1900,9 +1862,12 @@ function readPendingRuntimeAssetReset(): RuntimeAssetResetResult | null {
     const raw = window.localStorage.getItem(pendingRuntimeAssetResetStorageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as RuntimeAssetResetResult;
-    return parsed?.restartRequired === true && Array.isArray(parsed.selectedCategories)
-      ? parsed
-      : null;
+    if (parsed?.restartRequired !== true || !Array.isArray(parsed.selectedCategories)) return null;
+    const selectedCategories = runtimeAssetCategoryOrder.filter(category => parsed.selectedCategories.includes(category));
+    if (!selectedCategories.length) return null;
+    return { ...parsed, selectedCategories, categories: Object.fromEntries(
+      selectedCategories.flatMap(category => parsed.categories?.[category] ? [[category, parsed.categories[category]]] : []),
+    ) };
   } catch {
     return null;
   }

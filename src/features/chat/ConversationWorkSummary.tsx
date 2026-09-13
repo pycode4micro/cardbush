@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
-  FileCode2,
   FileOutput,
   LoaderCircle,
   CircleStop,
@@ -37,6 +36,10 @@ import {
   SUBAGENT_DISPATCH_UI_EVENT,
 } from '../subagents/subagentObservabilityEvents';
 import { subagentTaskPresentation } from '../subagents/subagentTaskPresentation';
+import { FileTypeIcon } from '../chatMessages/FileTypeIcon';
+import { openInspector, openMediaInspector } from '../inspector/inspectorEvents';
+import type { ProjectPathAlias } from '../conversationScope';
+import { workSummaryOutputs } from './workSummaryOutputs';
 import {
   groupWorkSummaryHistoryByTurn,
   historyTurnLabel,
@@ -45,6 +48,8 @@ import {
 
 const historyTurnPageSize = 3;
 const subagentTaskPageSize = 3;
+const outputPageSize = 5;
+const noPathAliases: ProjectPathAlias[] = [];
 
 export function ConversationWorkSummary({
   language,
@@ -52,6 +57,8 @@ export function ConversationWorkSummary({
   messages,
   changeReports,
   onOpenChangeReview,
+  workspaceRoot = '',
+  pathAliases = noPathAliases,
   subagentObservabilityAvailable = false,
   softVisible = true,
 }: {
@@ -60,11 +67,14 @@ export function ConversationWorkSummary({
   messages: ChatMessage[];
   changeReports: ConversationChangeReport[];
   onOpenChangeReview: (filePath?: string) => void;
+  workspaceRoot?: string;
+  pathAliases?: ProjectPathAlias[];
   subagentObservabilityAvailable?: boolean;
   softVisible?: boolean;
 }) {
   const [visibleHistoryTurnCount, setVisibleHistoryTurnCount] = useState(historyTurnPageSize);
   const [visibleSubagentTaskCount, setVisibleSubagentTaskCount] = useState(subagentTaskPageSize);
+  const [outputsExpanded, setOutputsExpanded] = useState(false);
   const subagentTasks = useSubagentTaskFeed(sessionId, subagentObservabilityAvailable);
   const executions = useMemo(
     () => messages
@@ -97,23 +107,16 @@ export function ConversationWorkSummary({
     () => summarizeChangeReports(changeReports),
     [changeReports],
   );
-  const recentFiles = useMemo(() => {
-    const seen = new Set<string>();
-    return [...changeReports]
-      .reverse()
-      .flatMap((report) => [...report.files].reverse())
-      .filter((file) => {
-        const key = file.path.trim().replaceAll('\\', '/').toLowerCase();
-        if (!key || seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .slice(0, 5);
-  }, [changeReports]);
+  const outputs = useMemo(
+    () => workSummaryOutputs(messages, changeReports, workspaceRoot, pathAliases),
+    [messages, changeReports, workspaceRoot, pathAliases],
+  );
+  const recentOutputs = outputsExpanded ? outputs : outputs.slice(0, outputPageSize);
 
   useEffect(() => {
     setVisibleHistoryTurnCount(historyTurnPageSize);
     setVisibleSubagentTaskCount(subagentTaskPageSize);
+    setOutputsExpanded(false);
   }, [sessionId]);
 
   return (
@@ -131,7 +134,7 @@ export function ConversationWorkSummary({
                 <h2>{language === 'zh' ? '工作摘要' : 'Work summary'}</h2>
               </div>
               <div className="work-summary-metrics">
-                <span>{changeSummary?.fileCount ?? 0} {language === 'zh' ? '文件' : 'files'}</span>
+                <span>{outputs.length} {language === 'zh' ? '产物' : 'outputs'}</span>
                 <span>{executions.length} {language === 'zh' ? '工具' : 'tools'}</span>
               </div>
             </header>
@@ -140,31 +143,52 @@ export function ConversationWorkSummary({
               <div className="work-summary-section-title">
                 <FileOutput size={14} />
                 <strong>{language === 'zh' ? '最近产出' : 'Recent outputs'}</strong>
-                {changeSummary && (
-                  <button type="button" onClick={() => onOpenChangeReview()}>
-                    {changeSummary.fileCount}
-                  </button>
-                )}
+                <span>{outputs.length}</span>
               </div>
-              {recentFiles.length > 0 ? (
+              {recentOutputs.length > 0 ? (
                 <div className="work-summary-file-list">
-                  {recentFiles.map((file) => (
+                  {recentOutputs.map((output) => (
                     <button
                       type="button"
-                      key={file.path}
-                      onClick={() => onOpenChangeReview(file.path)}
+                      key={output.key}
+                      title={output.path.startsWith('data:') ? output.name : output.path}
+                      onClick={() => {
+                        if (output.type !== 'document') openMediaInspector(output.path, output.type, output.name);
+                        else if (output.change) onOpenChangeReview(output.change.path);
+                        else openInspector(output.path, output.name);
+                      }}
                     >
-                      <FileCode2 size={14} />
-                      <span title={file.path}>{file.path.replaceAll('\\', '/').split('/').pop()}</span>
-                      <small>
-                        <b>+{file.additions}</b>
-                        <i>-{file.deletions}</i>
-                      </small>
+                      <FileTypeIcon path={output.path} fileName={output.name} mediaType={output.type === 'document' ? undefined : output.type} />
+                      <span className="work-summary-file-name">{output.name}</span>
+                      {output.change && output.type === 'document' ? (
+                        <small><b>+{output.change.additions}</b><i>-{output.change.deletions}</i></small>
+                      ) : (
+                        <small>{language === 'zh'
+                          ? { document: '文件', image: '图片', video: '视频', audio: '音频' }[output.type]
+                          : output.type === 'document' ? 'File' : output.type[0].toUpperCase() + output.type.slice(1)}</small>
+                      )}
                     </button>
                   ))}
                 </div>
               ) : (
                 <p className="work-summary-empty">{language === 'zh' ? '尚无文件产出' : 'No outputs yet'}</p>
+              )}
+              {(outputs.length > outputPageSize || changeSummary) && (
+                <div className="work-summary-output-actions">
+                  {outputs.length > outputPageSize && (
+                    <button type="button" aria-expanded={outputsExpanded} onClick={() => setOutputsExpanded(value => !value)}>
+                      {outputsExpanded
+                        ? language === 'zh' ? '收起' : 'Show less'
+                        : language === 'zh' ? `展开其余 ${outputs.length - outputPageSize} 项` : `Show ${outputs.length - outputPageSize} more`}
+                      <ChevronDown size={12} />
+                    </button>
+                  )}
+                  {changeSummary && (
+                    <button type="button" onClick={() => onOpenChangeReview()}>
+                      {language === 'zh' ? '查看全部更改' : 'Review all changes'}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -356,7 +380,7 @@ function useSubagentTaskFeed(sessionId: string, available: boolean) {
       const provisional = subagentTaskFromDispatchEvent(event);
       mergeTasks([provisional]);
       if (event.taskId) {
-        void fetchSubagentTask(event.taskId, controller.signal)
+        void fetchSubagentTask(event.taskId, controller.signal, sessionId)
           .then((task) => mergeTasks([task]))
           .catch(() => undefined);
       }

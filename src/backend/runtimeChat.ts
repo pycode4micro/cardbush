@@ -30,6 +30,8 @@ import type {
 import {
   registerActiveRuntimeTurn,
   registerRuntimePermission,
+  registerRuntimeSolution,
+  removeRuntimeSolution,
   removeRuntimePermission,
   removeRuntimePermissionsForTurn,
 } from '../runtime-client/RuntimeInteractionBridge';
@@ -114,8 +116,10 @@ export async function streamRuntimeChat(
     const vision = request.standardImageInputEnabled === true;
     const goalAvailable = Boolean(goalCommand || activeGoal?.status === 'active');
     const tools = catalog.filter((entry) =>
+      (!request.allowedTools || request.allowedTools.includes(entry.definition.name)) &&
       (!disabled.has(entry.definition.name) || entry.definition.name === 'checkpoint_context') &&
       (entry.definition.name !== 'request_permission' || (interactiveRequests && permissionMode !== 'all_free')) &&
+      (entry.definition.name !== 'solution_selection' || interactiveRequests) &&
       (entry.definition.name !== 'inject_image_input' || vision) &&
       (entry.definition.name !== 'update_goal' || goalAvailable) &&
       (request.referencePlanMode !== 'off' || entry.manifest.operation !== 'plan.update') &&
@@ -459,14 +463,18 @@ async function consumeRuntimeEvents(
       });
     }
     switch (event.kind) {
-      case 'turn_accepted':
+      case 'turn_accepted': {
+        const userMessageId = runtimeRequest.inputMessages?.find(item => item.message.role === 'user' && item.message.visibility !== 'internal')?.messageId;
+        const storedUser = userMessageId ? await runtime.client.getUserMessage(event.sessionId, event.turnId, userMessageId, signal).catch(() => null) : null;
         request.onStart?.({
           sessionId: event.sessionId,
           turnId: event.turnId,
-          userMessageId: runtimeRequest.inputMessages?.find(item => item.message.role === 'user' && item.message.visibility !== 'internal')?.messageId,
+          userMessageId,
+          ...(storedUser?.metadata?.automationReminder ? { userMessageMetadata: { automationReminder: storedUser.metadata.automationReminder } } : {}),
           createdAt: event.createdAt,
         });
         break;
+      }
       case 'reasoning_segment_started':
         request.onThinking?.(thinking(event, 'start', ''));
         break;
@@ -487,7 +495,8 @@ async function consumeRuntimeEvents(
           assistantStreamChunk(event),
         );
         break;
-      case 'guidance_applied':
+      case 'guidance_applied': {
+        const storedUser = await runtime.client.getUserMessage(event.sessionId, event.turnId, event.payload.messageId, signal).catch(() => null);
         request.onExecution?.({
           ...streamChunk(event, ''),
           kind: 'loop_transition',
@@ -496,8 +505,10 @@ async function consumeRuntimeEvents(
           previousAssistantMessageId: event.payload.previousAssistantMessageId,
           pendingGuidanceCount: event.payload.queueDepth,
           guidanceRoundIndex: event.payload.afterRound,
+          ...(storedUser?.metadata?.automationReminder ? { userMessageMetadata: { automationReminder: storedUser.metadata.automationReminder } } : {}),
         });
         break;
+      }
       case 'model_request_usage': {
         const contextMetrics = contextWindowMetrics({
           lastRequestInputTokens: event.payload.inputTokens,
@@ -615,6 +626,26 @@ async function consumeRuntimeEvents(
         request.onInteractiveRequest?.(interaction);
         break;
       }
+      case 'solution_selection_requested': {
+        // Replayed events may already have a reply. Only restore live Runtime waits.
+        const pending = await runtime.client.listSolutionSelections(event.sessionId);
+        const current = pending.find(item => item.selectionId === event.payload.selectionId);
+        if (current) {
+          const execution = liveToolExecutions.get(current.toolCallId);
+          if (execution) {
+            const waiting: ChatToolExecution = { ...execution, state: 'awaiting_solution',
+              createdAt: event.createdAt, sequence: event.sequence };
+            liveToolExecutions.set(current.toolCallId, waiting);
+            request.onToolExecution?.(waiting);
+          }
+          request.onInteractiveRequest?.(registerRuntimeSolution(current));
+        }
+        break;
+      }
+      case 'solution_selection_answered':
+      case 'solution_selection_cancelled':
+        removeRuntimeSolution(event.payload.selectionId);
+        break;
       case 'permission_answered':
       case 'permission_rejected':
       case 'permission_cancelled':

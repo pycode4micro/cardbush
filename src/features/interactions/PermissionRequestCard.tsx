@@ -24,12 +24,14 @@ export function PermissionRequestCard({
   language,
   interaction,
   busy,
+  error,
   onChoose,
   onCancel,
 }: {
   language: AppLanguage;
   interaction: PendingInteraction;
   busy: boolean;
+  error?: string;
   onChoose: (optionId: string) => void;
   onCancel: () => void;
 }) {
@@ -63,6 +65,7 @@ export function PermissionRequestCard({
       </header>
 
       <div className="permission-request-body">
+        {error && <p className="permission-request-error" role="alert">{error}</p>}
         <div className="permission-target">
           <span className="permission-target-icon">
             {details.resourceKind === 'process' ? <Terminal size={17} /> : <Folder size={17} />}

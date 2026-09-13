@@ -7,6 +7,7 @@ export const DEFAULT_CHILD_AGENT_DISABLED_TOOLS = [
   "await_subagents",
   "team_delegate",
   "request_permission",
+  "solution_selection",
   "update_goal",
   "schedule_task",
 ] as const;

@@ -60,7 +60,8 @@ export function normalizeImportedThemeStyle(
     if (strict) throw new Error('invalid_name');
     return null;
   }
-  const base = normalizeImportedThemeBase(value.base);
+  // Preserve saved custom colors while retiring the former built-in base.
+  const base = normalizeImportedThemeBase(!strict && value.base === 'parchment' ? 'light' : value.base);
   if (!base) {
     if (strict) throw new Error('invalid_base');
     return null;
@@ -114,7 +115,7 @@ export function importedThemeBaseMode(base: ImportedThemeBase): ThemeMode {
 }
 
 function normalizeImportedThemeBase(value: unknown): ImportedThemeBase | null {
-  return value === 'light' || value === 'dark' || value === 'parchment'
+  return value === 'light' || value === 'dark'
     ? value
     : null;
 }

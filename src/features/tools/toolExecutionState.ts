@@ -2,7 +2,7 @@ import type { AppLanguage, ChatToolExecution } from '../../types';
 
 export function decodeToolExecutionState(value: unknown): ChatToolExecution['state'] {
   if (
-    value === 'queued' || value === 'running' || value === 'awaiting_permission' ||
+    value === 'queued' || value === 'running' || value === 'awaiting_permission' || value === 'awaiting_solution' ||
     value === 'completed' || value === 'failed' || value === 'cancelled'
   ) return value;
   throw new Error(`Invalid tool execution state: ${String(value)}`);
@@ -11,7 +11,7 @@ export function decodeToolExecutionState(value: unknown): ChatToolExecution['sta
 export function isToolRunning(execution: ChatToolExecution) {
   return execution.state === 'running' ||
     execution.state === 'queued' ||
-    execution.state === 'awaiting_permission';
+    execution.state === 'awaiting_permission' || execution.state === 'awaiting_solution';
 }
 
 export function isToolRunningInContext(
@@ -30,6 +30,7 @@ export function runningToolLabel(
   const summary = running?.summary.trim();
   const toolNameText = displayToolName(running?.name ?? '');
   const state = running?.state;
+  if (state === 'awaiting_solution') return language === 'zh' ? '等待方案选择' : 'Awaiting solution selection';
   if (state === 'awaiting_permission') {
     return language === 'zh'
       ? `${toolNameText} 等待授权`
@@ -53,6 +54,7 @@ export function activeToolStatusLabel(
   language: AppLanguage,
 ) {
   const state = execution.state;
+  if (state === 'awaiting_solution') return language === 'zh' ? '等待方案选择' : 'Awaiting solution selection';
   if (state === 'awaiting_permission') {
     return language === 'zh' ? '等待授权' : 'Awaiting permission';
   }
@@ -75,6 +77,7 @@ export function displayToolName(value: string) {
     return 'Tool';
   }
   const lowered = text.toLowerCase();
+  if (lowered === 'solution_selection') return 'Solution Selection';
   if (lowered === 'runtime_context_compaction') return 'Context compaction';
   if (lowered === 'workspace_checkpoint') return 'Workspace changes';
   if (lowered === 'consult_logic') return 'LEM Consult';
