@@ -56,6 +56,33 @@ test('task copy preserves working bytes and dirty/untracked baseline without tou
   assert.equal((await manager.review('task')).changes.length, 0);
 });
 
+test('large artifact capture and review avoid materializing blobs, and oversized restore fails before changes', async t => {
+  const { source, manager } = await fixture(t);
+  await manager.create('task', source, 'direct');
+  await manager.beginTurn('task', 'large-turn');
+  const artifact = join(source, 'large.xlsx');
+  const { open, stat } = await import('node:fs/promises');
+  const file = await open(artifact, 'w');
+  await file.truncate(80 * 1024 * 1024);
+  await file.close();
+  const baseline = process.memoryUsage().external;
+  let peak = baseline;
+  const sample = () => { peak = Math.max(peak, process.memoryUsage().external); };
+  const timer = setInterval(sample, 5);
+  try {
+    await manager.finishTurn('task', 'large-turn');
+    const review = await manager.review('task');
+    const change = review.changes.find(change => change.path === artifact);
+    assert.equal(change.metadata.diffOmitted, true);
+    assert.match(change.metadata.diff, /83886080 bytes/);
+    assert.match(change.metadata.afterObjectId, /^[a-f0-9]{40,64}$/);
+    await assert.rejects(manager.revert('task', ['large-turn']), { code: 'workspace_resource_limit' });
+    assert.equal((await stat(artifact)).size, 80 * 1024 * 1024);
+    sample();
+    assert.ok(peak - baseline < 48 * 1024 * 1024, `Runtime materialized the large blob: ${peak - baseline} external bytes`);
+  } finally { clearInterval(timer); }
+});
+
 test('checkpoints capture arbitrary processes, deletions, new files and binary bytes and survive restart', async t => {
   const { source, storage, manager } = await fixture(t);
   const workspace = await manager.create('task', source, 'worktree');

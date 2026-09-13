@@ -27,6 +27,11 @@ files:
   - '!node_modules/.cache/**/*'
   - '!**/*.map'
 extraResources:
+  - from: dist-native/process-guard
+    to: process-guard
+    filter:
+      - 'CardBushProcessHost-*.exe'
+      - 'current.json'
   - from: dist-native/chrome-connector
     to: chrome-native-host
     filter:

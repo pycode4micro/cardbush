@@ -10,6 +10,7 @@ const exec = promisify(execFile);
 export type GitFileEntry = { hash: string; mode: number; kind: "file" | "symlink" };
 export type GitFileTree = Record<string, GitFileEntry>;
 const corrupt = (message: string) => Object.assign(new Error(message), { code: "workspace_journal_corrupt" });
+const MAX_RESTORE_BUFFER_BYTES = 64 * 1024 * 1024;
 
 /** Git objects are the only version store. The private index never stages user files. */
 export class GitWorkspaceStore {
@@ -50,11 +51,11 @@ export class GitWorkspaceStore {
     return createHash(await this.format()).update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
   }
 
-  async hashFiles(root: string, paths: string[]): Promise<string[]> {
+  async hashFiles(root: string, paths: string[], writeObjects = false): Promise<string[]> {
     if (!paths.length) return [];
     // --no-filters preserves bytes even with autocrlf, clean filters or working-tree-encoding.
     const input = Buffer.from(paths.map(path => quoteGitPath(resolve(root, path).replaceAll("\\", "/"))).join("\n") + "\n");
-    const ids = (await this.git(["hash-object", "--no-filters", "--stdin-paths"], input)).toString("utf8").trim().split("\n");
+    const ids = (await this.git(["-c", "core.bigFileThreshold=8m", "hash-object", ...(writeObjects ? ["-w"] : []), "--no-filters", "--stdin-paths"], input)).toString("utf8").trim().split("\n");
     if (ids.length !== paths.length || ids.some(id => !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(id))) throw corrupt("Git returned an invalid file object list.");
     return ids;
   }
@@ -112,21 +113,30 @@ export class GitWorkspaceStore {
     return tree;
   }
 
-  async blobs(ids: string[]): Promise<Map<string, Buffer>> {
+  async blobSizes(ids: string[]): Promise<Map<string, number>> {
     const unique = [...new Set(ids)];
     unique.forEach(assertOid);
-    const found = new Map<string, Buffer>();
-    if (!unique.length) return found;
-    let sizes: number[];
+    if (!unique.length) return new Map();
     try {
       const rows = (await this.git(["cat-file", "--batch-check"], Buffer.from(unique.join("\n") + "\n"))).toString("utf8").trim().split("\n");
-      sizes = rows.map((row, index) => {
+      const sizes = rows.map((row, index) => {
         const [id, type, count] = row.split(" "), size = Number(count);
         if (id !== unique[index] || type !== "blob" || !Number.isSafeInteger(size) || size < 0) throw corrupt("Git workspace content is missing or invalid.");
         return size;
       });
       if (sizes.length !== unique.length) throw corrupt("Incomplete Git object size response.");
+      return new Map(unique.map((id, index) => [id, sizes[index]!]));
     } catch (error) { throw corrupt(`Git workspace content could not be read: ${(error as Error).message}`); }
+  }
+
+  async blobs(ids: string[]): Promise<Map<string, Buffer>> {
+    const unique = [...new Set(ids)];
+    const found = new Map<string, Buffer>();
+    const sizesById = await this.blobSizes(unique);
+    const sizes = unique.map(id => sizesById.get(id)!);
+    if (sizes.reduce((sum, bytes) => sum + bytes, 0) > MAX_RESTORE_BUFFER_BYTES) {
+      throw Object.assign(new Error("These workspace versions exceed the 64 MiB in-memory restore budget. No files were restored. Large versions remain stored in Git and require a streaming restore."), { code: "workspace_resource_limit" });
+    }
     // Bound batches; no persistent byte cache can hide object corruption during restore.
     for (let start = 0; start < unique.length; start += 128) {
       const batch = unique.slice(start, start + 128);
@@ -158,8 +168,13 @@ export class GitWorkspaceStore {
 
   async importLegacy(tree: GitFileTree, read: (hash: string) => Promise<Buffer>): Promise<string> {
     const converted: GitFileTree = Object.create(null), blobs = new Map<string, () => Promise<Buffer>>();
+    let retainedBytes = 0;
     for (const [path, entry] of Object.entries(tree)) {
       const content = await read(entry.hash), id = await this.blobId(content);
+      if (!blobs.has(id)) retainedBytes += content.length;
+      if (retainedBytes > MAX_RESTORE_BUFFER_BYTES) {
+        throw Object.assign(new Error("Legacy workspace migration exceeds the in-memory version budget; existing versions were preserved."), { code: "workspace_resource_limit" });
+      }
       converted[path] = { ...entry, hash: id };
       blobs.set(id, async () => content);
     }

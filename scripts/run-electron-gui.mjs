@@ -80,9 +80,21 @@ function guiBuildState() {
   ];
   const newestSource = newestMtime(sources);
   const oldestOutput = oldestMtime(outputs);
+  const nativeDirectory = path.join(projectRoot, 'dist-native', 'process-guard');
+  const nativeOutput = path.join(nativeDirectory, 'current.json');
+  let nativeExecutablePresent = process.platform !== 'win32';
+  try {
+    const { fileName } = JSON.parse(fs.readFileSync(nativeOutput, 'utf8'));
+    nativeExecutablePresent = /^CardBushProcessHost-[a-f0-9]{16}\.exe$/.test(fileName) && fs.existsSync(path.join(nativeDirectory, fileName));
+  } catch { /* A missing/invalid asset requires a build. */ }
+  const nativeCurrent = process.platform !== 'win32' || oldestMtime([nativeOutput]) >= newestMtime([
+    path.join(projectRoot, 'native', 'process-guard', 'CardBushProcessHost.cs'),
+    path.join(projectRoot, 'scripts', 'build-process-resource-host.mjs'),
+  ]);
   return {
-    current: oldestOutput >= newestSource && oldestOutput > 0,
-    missingOutput: outputs.find((file) => !fs.existsSync(file)),
+    current: oldestOutput >= newestSource && oldestOutput > 0 && nativeCurrent && nativeExecutablePresent,
+    missingOutput: outputs.find((file) => !fs.existsSync(file))
+      ?? (process.platform === 'win32' && !fs.existsSync(nativeOutput) ? nativeOutput : undefined),
     newestSource,
     oldestOutput,
   };

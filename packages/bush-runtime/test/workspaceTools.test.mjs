@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  appendFileSync,
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -96,6 +97,45 @@ test("ranged reads bound the default page and retain stale-write protection", as
   const rejected = await setup.execute("reader", "edit_file", { path, old_text: "updated", new_text: "overwrite" });
   assert.equal(rejected.kind, "failed");
   assert.match(readFileSync(path, "utf8"), /external change/);
+});
+
+test("large files and oversized ranges stay outside the Runtime heap while bounded text reads still work", async (t) => {
+  const root = temporaryRoot(t);
+  const path = join(root, "large.csv");
+  writeFileSync(path, "header\n");
+  const chunk = "row\n".repeat(16384);
+  for (let i = 0; i < 129; i++) appendFileSync(path, chunk);
+  const setup = tools(root);
+  const rejected = await setup.execute("reader", "read_file", { path });
+  assert.equal(rejected.kind, "failed");
+  assert.equal(rejected.error.code, "file_resource_limit");
+  const bounded = await setup.execute("reader", "read_file", { path, start_line: 1, line_count: 1 });
+  assert.equal(bounded.kind, "returned");
+  assert.equal(bounded.result.content, "header\n");
+  assert.equal(bounded.result.total_lines, 1 + 129 * 16384);
+
+  const longLine = join(root, "long-line.txt");
+  writeFileSync(longLine, "a".repeat(2 * 1024 * 1024 + 1));
+  const oversizedRange = await setup.execute("reader", "read_file", { path: longLine, start_line: 1, line_count: 1 });
+  assert.equal(oversizedRange.kind, "failed");
+  assert.equal(oversizedRange.error.code, "file_resource_limit");
+});
+
+test("oversized writes and replacement expansion fail before changing files", async (t) => {
+  const root = temporaryRoot(t);
+  const path = join(root, "source.txt");
+  const source = "a".repeat(1024 * 1024);
+  writeFileSync(path, source);
+  const setup = tools(root);
+  await setup.execute("editor", "read_file", { path });
+  const edit = await setup.execute("editor", "edit_file", { path, old_text: "a", new_text: "b".repeat(1024), replace_all: true });
+  assert.equal(edit.kind, "failed");
+  assert.equal(edit.error.code, "file_resource_limit");
+  assert.equal(readFileSync(path, "utf8"), source);
+  const write = await setup.execute("editor", "write_file", { path, content: "c".repeat(8 * 1024 * 1024 + 1) });
+  assert.equal(write.kind, "failed");
+  assert.equal(write.error.code, "file_resource_limit");
+  assert.equal(readFileSync(path, "utf8"), source);
 });
 
 test("invalid line ranges and binary line encodings fail without granting read evidence", async (t) => {
@@ -426,6 +466,18 @@ test("PowerShell reports the last command status inside its scope, including tra
     assert.equal(result.kind, "returned");
     assert.equal(result.result.exitCode, expectedExitCode, command);
   }
+});
+
+test("large search results are bounded and explicitly incomplete", async (t) => {
+  const root = temporaryRoot(t);
+  writeFileSync(join(root, "many.csv"), ("needle," + "v".repeat(90) + "\n").repeat(40000));
+  const setup = tools(root);
+  const outcome = await setup.execute("session", "search_file_content", { path: root, query: "needle" });
+  assert.equal(outcome.kind, "returned");
+  assert.equal(outcome.result.complete, false);
+  assert.equal(outcome.result.matched, true);
+  assert.ok(Buffer.byteLength(outcome.result.output) <= 2 * 1024 * 1024);
+  assert.match(outcome.result.warnings, /incomplete|truncated/i);
 });
 
 test("searches with the Node fallback when ripgrep is unavailable in a packaged environment", async (t) => {

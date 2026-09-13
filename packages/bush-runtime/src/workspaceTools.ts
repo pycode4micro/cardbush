@@ -4,7 +4,6 @@ import {
   lstat,
   mkdir,
   readdir,
-  readFile,
   realpath,
   writeFile,
 } from "node:fs/promises";
@@ -19,7 +18,8 @@ import type {
   ToolRegistry,
 } from "./toolRegistry.js";
 import { protectedTerminalDeletion } from "./terminalCommandSafety.js";
-import { readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
+import { spawnResourceManagedProcess, type ProcessResourceGovernor, type GuardedProcess } from "./processResourceGuard.js";
+import { assertInProcessFileSize, readFileBounded, readFileLineRange, type FileLineRange } from "./workspaceFileRead.js";
 import { renderTextFields } from "./toolResultText.js";
 
 interface PathInput { path: string }
@@ -182,7 +182,7 @@ export function registerWorkspaceTools(
         observations.record(context.sessionId, path, result.sha256, workspaceRoot(context));
         return { path, ...result };
       }
-      const bytes = await readFile(path);
+      const bytes = await readFileBounded(path, context.signal);
       const sha256 = digest(bytes);
       observations.record(context.sessionId, path, sha256, workspaceRoot(context));
       return {
@@ -250,12 +250,13 @@ export function registerWorkspaceTools(
       const path = await resolveToolPath(context, context.input.path, true);
       const release = observations.acquireMutation(path);
       try {
+        assertInProcessFileSize(Buffer.byteLength(context.input.content, context.input.encoding));
         const before = await optionalBytes(path);
         assertObservedIfExisting(context, observations, path, before);
         const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, context.input.content, { encoding: context.input.encoding });
-        const after = await readFile(path);
+        const after = await readFileBounded(path, context.signal);
         const afterHash = digest(after);
         observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
@@ -293,7 +294,7 @@ export function registerWorkspaceTools(
       const path = await resolveToolPath(context, context.input.path);
       const release = observations.acquireMutation(path);
       try {
-        const before = await readFile(path);
+        const before = await readFileBounded(path, context.signal);
         assertObservedIfExisting(context, observations, path, before);
         const versioned = await options.ownsFileVersion?.(context.sessionId, path) ?? false;
         const source = before.toString(context.input.encoding);
@@ -310,11 +311,16 @@ export function registerWorkspaceTools(
             `old_text matched ${count} times; set replace_all or provide a unique value.`,
           );
         }
+        const replacements = context.input.replaceAll ? count : 1;
+        assertInProcessFileSize(before.length + replacements * (
+          Buffer.byteLength(context.input.newText, context.input.encoding) - Buffer.byteLength(context.input.oldText, context.input.encoding)
+        ));
         const next = context.input.replaceAll
-          ? source.split(context.input.oldText).join(context.input.newText)
+          ? source.replaceAll(context.input.oldText, () => context.input.newText)
           : source.replace(context.input.oldText, () => context.input.newText);
+        assertInProcessFileSize(Buffer.byteLength(next, context.input.encoding));
         await writeFile(path, next, { encoding: context.input.encoding });
-        const after = await readFile(path);
+        const after = await readFileBounded(path, context.signal);
         const afterHash = digest(after);
         observations.record(context.sessionId, path, afterHash, workspaceRoot(context));
         return changeResult(
@@ -916,7 +922,7 @@ function objectSchema(properties: Record<string, unknown>, required: string[]) {
 }
 
 async function optionalBytes(path: string): Promise<Buffer | undefined> {
-  try { return await readFile(path); } catch (error) {
+  try { return await readFileBounded(path); } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
@@ -971,11 +977,13 @@ interface ManagedTerminalSession {
   shell: TerminalShell;
   shellExecutable: string;
   child: ReturnType<typeof spawn>;
+  guarded: GuardedProcess;
   pid: number | null;
   state: TerminalSessionState;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   error: string;
+  errorCode?: string;
   startedAt: number;
   revision: number;
   stopRequested: boolean;
@@ -991,6 +999,11 @@ interface ManagedTerminalSession {
 
 export class TerminalSessionManager {
   readonly #sessions = new Map<string, ManagedTerminalSession>();
+  readonly #resourceGovernor?: ProcessResourceGovernor;
+
+  constructor(options: { resourceGovernor?: ProcessResourceGovernor } = {}) {
+    this.#resourceGovernor = options.resourceGovernor;
+  }
 
   hasRunningWithin(root: string): boolean {
     return [...this.#sessions.values()].some(terminal => terminal.state === "running" && isWithin(root, terminal.cwd));
@@ -1012,12 +1025,15 @@ export class TerminalSessionManager {
     signal?: AbortSignal;
     shell: TerminalShell;
   }): Promise<Record<string, unknown>> {
+    if (input.signal?.aborted) throw abortReason(input.signal);
     const invocation = terminalShellInvocation(input.shell, input.command);
-    const child = spawn(invocation.executable, invocation.args, {
+    const guarded = await spawnResourceManagedProcess({
+      executable: invocation.executable,
+      args: invocation.args,
       cwd: input.cwd,
-      detached: process.platform !== "win32",
-      windowsHide: true,
+      governor: this.#resourceGovernor,
     });
+    const child = guarded.child;
     const terminal: ManagedTerminalSession = {
       sessionId: `terminal_${randomUUID()}`,
       ownerSessionId: input.ownerSessionId,
@@ -1026,6 +1042,7 @@ export class TerminalSessionManager {
       shell: input.shell,
       shellExecutable: invocation.executable,
       child,
+      guarded,
       pid: child.pid ?? null,
       state: "running",
       exitCode: null,
@@ -1057,8 +1074,13 @@ export class TerminalSessionManager {
       terminal.error = error.message;
       this.#notify(terminal);
     });
-    child.on("exit", (exitCode, signal) => {
-      terminal.state = terminal.stopRequested ? "stopped" : "exited";
+    child.on("exit", async (exitCode, signal) => {
+      const report = await guarded.complete();
+      if (report?.code && !terminal.stopRequested) {
+        terminal.error = report.message;
+        terminal.errorCode = report.code;
+      }
+      terminal.state = terminal.stopRequested ? "stopped" : terminal.errorCode ? "failed" : "exited";
       terminal.exitCode = exitCode;
       terminal.signal = signal;
       this.#notify(terminal);
@@ -1070,7 +1092,9 @@ export class TerminalSessionManager {
     });
     child.on("close", () => {
       terminal.closed = true;
-      this.#notify(terminal);
+      // The exit receipt may still be loading. Do not wake a poll with an empty
+      // "running" result between native close and the final terminal state.
+      if (terminal.state !== "running") this.#notify(terminal);
     });
 
     await this.#waitForExit(terminal, input.yieldTimeMs, input.signal);
@@ -1192,6 +1216,7 @@ export class TerminalSessionManager {
       stdoutTruncated,
       stderrTruncated,
       ...(terminal.error ? { error: terminal.error } : {}),
+      ...(terminal.errorCode ? { errorCode: terminal.errorCode } : {}),
     };
   }
 
@@ -1213,8 +1238,8 @@ export class TerminalSessionManager {
     terminal: ManagedTerminalSession,
     yieldTimeMs: number,
   ): Promise<void> {
-    if (terminal.closed) return Promise.resolve();
-    return this.#wait(terminal, yieldTimeMs, undefined, () => terminal.closed);
+    if (terminal.closed && terminal.state !== "running") return Promise.resolve();
+    return this.#wait(terminal, yieldTimeMs, undefined, () => terminal.closed && terminal.state !== "running");
   }
 
   #waitForRevision(
@@ -1299,6 +1324,12 @@ async function terminateProcessTree(terminal: ManagedTerminalSession): Promise<v
     return;
   }
   if (process.platform === "win32") {
+    if (terminal.guarded.protected) {
+      // Closing the native supervisor's job handle kills the whole task tree,
+      // including descendants whose original parent has already exited.
+      terminal.child.kill();
+      return;
+    }
     await new Promise<void>((resolvePromise) => {
       const killer = spawn("taskkill.exe", ["/pid", String(pid), "/t", "/f"], {
         windowsHide: true,
@@ -1424,9 +1455,9 @@ async function searchFileContentWithNode(
     if (negativeGlobs.some((glob) => glob.expression.test(relativePath))) continue;
     let bytes;
     try {
-      bytes = await readFile(file);
+      bytes = await readFileBounded(file, signal);
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
+      if (["EACCES", "ENOENT", "EPERM", "file_resource_limit"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
       throw error;
     }
     // Match ripgrep's Unicode BOM behavior: UTF-16 padding is not binary content.
@@ -1513,7 +1544,7 @@ function terminalToolDescription(): string {
   return [
     "Execute one command in the selected working directory.",
     `Every execution requires yield_time_ms no greater than ${MAX_TERMINAL_YIELD_MS} ms. If the command is still active then, return state=running and a terminalSessionId instead of waiting for process exit.`,
-    "Running terminal sessions persist across Agent turns and are stopped only through terminal_stop or natural process exit.",
+    "Running sessions persist across Agent turns until terminal_stop, natural exit, or a host resource limit. On Windows the whole task tree shares host memory/CPU budgets; detached descendants end with the session. After a resource-limit failure, reduce the workload instead of bypassing the guard or repeating the same command.",
     `The shell is explicit (${shells}); the default is ${defaultTerminalShell()}.`,
     "Use syntax for the selected shell. Runtime records the shell and never rewrites commands between shell syntaxes.",
   ].join(" ");
@@ -1549,41 +1580,63 @@ function terminalShellInvocation(
   return { executable: "/bin/sh", args: ["-c", command] };
 }
 
-function runProcess(
+async function runProcess(
   file: string,
   args: string[],
   options: {
     cwd: string;
     timeoutMs?: number;
     signal?: AbortSignal;
-    shell?: boolean;
   },
 ): Promise<ProcessResult> {
+  throwIfAborted(options.signal);
+  const guarded = await spawnResourceManagedProcess({ executable: file, args, cwd: options.cwd });
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(file, args, {
-      cwd: options.cwd,
-      shell: options.shell ?? false,
-      windowsHide: true,
-      signal: options.signal,
-    });
+    const child = guarded.child;
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let timedOut = false;
-    const timeout = options.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          child.kill();
-        }, options.timeoutMs)
-      : undefined;
-    child.stdout.on("data", (chunk: Buffer) => { stdoutChunks.push(chunk); });
-    child.stderr.on("data", (chunk: Buffer) => { stderrChunks.push(chunk); });
-    child.on("error", reject);
-    child.on("close", (exitCode) => {
-      if (timeout) clearTimeout(timeout);
+    let outputLimited = false;
+    let stdoutBytes = 0, stderrBytes = 0;
+    const maximumOutputBytes = 2 * 1024 * 1024;
+    const onAbort = () => { child.kill(); };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    if (options.signal?.aborted) onAbort();
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, options.timeoutMs ?? 30_000);
+    const append = (chunks: Buffer[], chunk: Buffer, used: number) => {
+      const remaining = Math.max(0, maximumOutputBytes - used);
+      if (remaining) chunks.push(Buffer.from(chunk.subarray(0, remaining)));
+      if (chunk.length > remaining && !outputLimited) { outputLimited = true; child.kill(); }
+      return used + Math.min(chunk.length, remaining);
+    };
+    child.stdout.on("data", (chunk: Buffer) => { stdoutBytes = append(stdoutChunks, chunk, stdoutBytes); });
+    child.stderr.on("data", (chunk: Buffer) => { stderrBytes = append(stderrChunks, chunk, stderrBytes); });
+    child.on("error", error => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", onAbort);
+      reject(error);
+    });
+    child.on("close", async (exitCode) => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", onAbort);
+      const report = await guarded.complete();
+      if (options.signal?.aborted) { reject(abortReason(options.signal)); return; }
+      if (report?.code === "resource_spawn_failed") {
+        const code = ({ 2: "ENOENT", 3: "ENOENT", 5: "EACCES", 193: "ENOEXEC" } as Record<number, string>)[report.nativeErrorCode ?? 0];
+        if (code) { reject(codedError(code, report.message)); return; }
+      }
+      const warnings = [decodeProcessOutput(Buffer.concat(stderrChunks)),
+        outputLimited ? "Search output exceeded 2 MiB and was stopped. Narrow the path or query; these results are incomplete." : "",
+        timedOut ? "Search exceeded its 30-second execution budget; these results are incomplete." : "",
+        report?.code && !outputLimited && !timedOut ? report.message : "",
+      ].filter(Boolean).join("\n");
       resolvePromise({
-        exitCode,
+        exitCode: outputLimited || timedOut || report?.code ? 2 : exitCode,
         stdout: decodeProcessOutput(Buffer.concat(stdoutChunks)),
-        stderr: decodeProcessOutput(Buffer.concat(stderrChunks)),
+        stderr: warnings,
         timedOut,
       });
     });

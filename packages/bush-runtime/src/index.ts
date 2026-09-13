@@ -44,6 +44,7 @@ export * from './pluginCommandTools.js';
 export * from './pluginSkills.js';
 export * from './mcpToolDiscovery.js';
 export * from "./workspaceTools.js";
+export * from "./processResourceGuard.js";
 export * from "./taskWorkspace.js";
 export * from './automationScheduler.js';
 export { McpAppsHost, MCP_APPS_COMMAND, registerMcpAppStatusTool } from './mcpAppsHost.js';

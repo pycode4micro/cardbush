@@ -5,6 +5,7 @@ import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rm
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
 import { GitWorkspaceStore, decodeGitPaths, mapFiles, type GitFileEntry, type GitFileTree } from "./gitWorkspaceStore.js";
+import { MAX_IN_PROCESS_FILE_BYTES, readFileBounded } from "./workspaceFileRead.js";
 
 const exec = promisify(execFile);
 type Entry = GitFileEntry;
@@ -451,7 +452,7 @@ export class TaskWorkspaceManager {
       catch (error) { if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined; throw error; }
       if (stat.isDirectory()) return undefined;
       if (!stat.isFile() && !stat.isSymbolicLink()) throw problem("workspace_file_type_unsupported", `Cannot version non-file entry ${path}.`);
-      return { path, absolute, kind: stat.isSymbolicLink() ? "symlink" as const : "file" as const,
+      return { path, absolute, large: stat.size > MAX_IN_PROCESS_FILE_BYTES, kind: stat.isSymbolicLink() ? "symlink" as const : "file" as const,
         mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644 };
     });
     const entries = await describe();
@@ -459,13 +460,23 @@ export class TaskWorkspaceManager {
     const ids = await store.hashFiles(root, files.map(entry => entry!.path));
     const snapshot: Snapshot = Object.create(null), blobs = new Map<string, () => Promise<Buffer>>();
     const knownObjects = new Set(Object.values(known).map(entry => entry.hash));
+    const largeFiles: string[] = [], largeIds: string[] = [];
     let index = 0;
     for (const entry of entries) {
       if (!entry) continue;
-      const read = () => entry.kind === "symlink" ? readlink(entry.absolute, { encoding: "buffer" }) : readFile(entry.absolute);
+      const read = () => entry.kind === "symlink" ? readlink(entry.absolute, { encoding: "buffer" }) : readFileBounded(entry.absolute);
       const id = entry.kind === "file" ? ids[index++]! : await store.blobId(await read());
       snapshot[entry.path] = { hash: id, kind: entry.kind, mode: entry.mode };
-      if (!knownObjects.has(id)) blobs.set(id, read);
+      if (!knownObjects.has(id)) {
+        if (entry.kind === "file" && entry.large) { largeFiles.push(entry.path); largeIds.push(id); }
+        else blobs.set(id, read);
+      }
+    }
+    // Git streams large files into its object store; never send their full bytes
+    // through Runtime merely to checkpoint an XLSX/media artifact.
+    const writtenIds = await store.hashFiles(root, largeFiles, true);
+    if (writtenIds.some((id, index) => id !== largeIds[index])) {
+      throw problem("workspace_changed_during_checkpoint", "A large file changed while capturing its Git version.");
     }
     await store.storeBlobs(blobs);
     // Hash bytes in Git in bulk; timestamps never prove that content is unchanged.
@@ -486,8 +497,11 @@ export class TaskWorkspaceManager {
     try { stat = await lstat(absolute); } catch (error) { if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return undefined; throw error; }
     if (stat.isDirectory()) return undefined;
     if (!stat.isFile() && !stat.isSymbolicLink()) throw problem("workspace_file_type_unsupported", `Cannot checkpoint non-file entry ${path}.`);
-    const content = stat.isSymbolicLink() ? await readlink(absolute, { encoding: "buffer" }) : await readFile(absolute);
-    return { hash: await this.#store(state).blobId(content), mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644,
+    const store = this.#store(state);
+    const id = stat.isFile() && stat.size > MAX_IN_PROCESS_FILE_BYTES
+      ? (await store.hashFiles(root, [path]))[0]!
+      : await store.blobId(stat.isSymbolicLink() ? await readlink(absolute, { encoding: "buffer" }) : await readFileBounded(absolute));
+    return { hash: id, mode: process.platform === "win32" ? 0o666 : stat.isSymbolicLink() ? 0o777 : stat.mode & 0o111 ? 0o755 : 0o644,
       kind: stat.isSymbolicLink() ? "symlink" : "file" };
   }
 
@@ -552,8 +566,26 @@ export class TaskWorkspaceManager {
     const before = await this.#snapshot(state, beforeId), after = await this.#snapshot(state, afterId);
     const paths = changed(before, after);
     const store = this.#store(state);
-    const contents = await store.blobs(paths.flatMap(path => [before[path]?.hash, after[path]?.hash].filter((id): id is string => Boolean(id))));
-    const changes = await mapFiles(paths, async path => {
+    const objectIds = (path: string) => [before[path]?.hash, after[path]?.hash].filter((id): id is string => Boolean(id));
+    const sizes = await store.blobSizes(paths.flatMap(objectIds));
+    const length = (entry?: Entry) => entry ? sizes.get(entry.hash)! : 0;
+    const largeFile = (path: string) => length(before[path]) + length(after[path]) > 128 * 1024;
+    const changes: WorkspaceChange[] = [];
+    // Bound both object materialization and diff work for reviews with many files.
+    for (let offset = 0; offset < paths.length; offset += 128) {
+      const batch = paths.slice(offset, offset + 128);
+      const contents = await store.blobs(batch.filter(path => !largeFile(path)).flatMap(objectIds));
+      const batchChanges = await mapFiles(batch, async path => {
+      if (largeFile(path)) {
+        return {
+          change_id: this.#changeId(state, turnId, path), path: join(state.workspaceDir, path),
+          status: !before[path] ? "added" : !after[path] ? "deleted" : "modified",
+          metadata: { diff: `Large file changed (${length(before[path])} → ${length(after[path])} bytes); byte-exact checkpoint available.`,
+            diffOmitted: true, workspaceCheckpoint: true,
+            beforeObjectId: before[path]?.hash, afterObjectId: after[path]?.hash,
+            beforeMode: before[path]?.mode, afterMode: after[path]?.mode, beforeKind: before[path]?.kind, afterKind: after[path]?.kind },
+        } satisfies WorkspaceChange;
+      }
       const left = before[path] ? contents.get(before[path].hash)! : Buffer.alloc(0);
       const right = after[path] ? contents.get(after[path].hash)! : Buffer.alloc(0);
       const binary = left.includes(0) || right.includes(0) || !Buffer.from(left.toString("utf8")).equals(left) || !Buffer.from(right.toString("utf8")).equals(right);
@@ -580,7 +612,9 @@ export class TaskWorkspaceManager {
           beforeObjectId: before[path]?.hash, afterObjectId: after[path]?.hash,
           beforeMode: before[path]?.mode, afterMode: after[path]?.mode, beforeKind: before[path]?.kind, afterKind: after[path]?.kind },
       };
-    });
+      });
+      changes.push(...batchChanges as WorkspaceChange[]);
+    }
     if (this.#changeViews.size >= 128) this.#changeViews.delete(this.#changeViews.keys().next().value!);
     this.#changeViews.set(key, changes as WorkspaceChange[]);
     return project(changes as WorkspaceChange[]);
@@ -656,7 +690,7 @@ export class TaskWorkspaceManager {
     const store = this.#store(state), migrated = new Map<string, string>();
     const read = async (id: string) => {
       if (!/^[a-f0-9]{64}$/.test(id)) throw problem("workspace_journal_corrupt", "Invalid legacy blob identity.");
-      const bytes = await readFile(join(this.#root, "blobs", id));
+      const bytes = await readFileBounded(join(this.#root, "blobs", id));
       if (hash(bytes) !== id) throw problem("workspace_journal_corrupt", "Legacy workspace content checksum mismatch.");
       return bytes;
     };

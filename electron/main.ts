@@ -3463,6 +3463,9 @@ async function initializeRuntimeHostWithinDeadline() {
         ...process.env,
         CARDBUSH_MCP_MANAGEMENT_URL: productMcpManagement!.url,
         CARDBUSH_MCP_DESKTOP_BRIDGE: '1',
+        CARDBUSH_PROCESS_HOST_DIRECTORY: cardbushRuntimeIsPackaged
+          ? path.join(process.resourcesPath, 'process-guard')
+          : path.join(app.getAppPath(), 'dist-native', 'process-guard'),
         CARDBUSH_MCP_MANAGEMENT_TOKEN: productMcpManagement!.token,
         CARDBUSH_RUNTIME_STATE_ROOT: path.join(
           app.getPath('userData'),

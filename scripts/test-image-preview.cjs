@@ -86,12 +86,17 @@ app.whenReady().then(async () => {
     }
     const focalBefore = await geometry();
     const prevented = await run(`(() => {
-      const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-100,clientX:${focalBefore.x},clientY:${focalBefore.y}});
+      window.previewWheelBubbled=0;
+      window.countPreviewWheel=()=>window.previewWheelBubbled++;
+      document.addEventListener('wheel',window.countPreviewWheel);
+      const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-100,clientX:${focalBefore.x},clientY:${focalBefore.y}});
       flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(event));
       return event.defaultPrevented;
     })()`);
-    assert.equal(prevented,true,'Ctrl+wheel is cancelled instead of zooming the whole application');
+    assert.equal(prevented,true,'ordinary wheel zoom consumes the browser scroll');
     const focalAfter = await geometry();
+    assert.ok(Math.abs(focalAfter.width-focalBefore.width-fitted.width*.25)<.02,'ordinary wheel zooms without a modifier');
+    assert.equal(await run('window.previewWheelBubbled'),0,'wheel does not reach the conversation');
     assert.ok(Math.abs(focalBefore.u-focalAfter.u)<.0001 && Math.abs(focalBefore.v-focalAfter.v)<.0001,'the point under the cursor stays fixed during zoom');
     const at = {x:Math.round(focalAfter.x),y:Math.round(focalAfter.y)};
     window.webContents.sendInputEvent({type:'mouseDown',...at,button:'left',clickCount:1});
@@ -101,9 +106,33 @@ app.whenReady().then(async () => {
     const dragged = await geometry();
     assert.ok(Math.abs(dragged.left-focalAfter.left-65)<1 && Math.abs(dragged.top-focalAfter.top-40)<1,'native dragging pans the enlarged image without changing its scale');
     assert.equal(dragged.width,focalAfter.width);
-    await run(`flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:50})))`);
+    await run(`flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:50,clientX:${dragged.x},clientY:${dragged.y}})))`);
     const wheeled = await geometry();
-    assert.ok(Math.abs(wheeled.top-dragged.top+50)<1,'ordinary wheel scroll pans the enlarged image');
+    assert.ok(Math.abs(wheeled.width-dragged.width+fitted.width*.25)<.02,'scrolling down zooms out');
+    assert.ok(Math.abs(wheeled.u-dragged.u)<.0001&&Math.abs(wheeled.v-dragged.v)<.0001,'zooming out keeps the cursor anchor');
+    for(const modifier of ['ctrlKey','metaKey']) {
+      assert.equal(await run(`(()=>{const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,${modifier}:true,deltaY:-100,clientX:${wheeled.x},clientY:${wheeled.y}});flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(e));return e.defaultPrevented;})()`),true,'modified wheel cannot zoom the app');
+    }
+    assert.equal(await run('document.querySelector(".image-preview-zoom-value").textContent'),'325%','Ctrl and Meta wheel remain supported');
+    const beforePan=await geometry();
+    await run(`flushSync(()=>document.querySelector('.image-preview-stage').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,shiftKey:true,deltaY:40})))`);
+    const afterPan=await geometry();
+    assert.equal(afterPan.width,beforePan.width);
+    assert.ok(Math.abs(afterPan.left-beforePan.left+40)<1,'Shift+wheel retains horizontal panning');
+    const appZoom=window.webContents.getZoomFactor();
+    window.webContents.sendInputEvent({type:'mouseWheel',x:Math.round(afterPan.x),y:Math.round(afterPan.y),deltaY:120,deltaX:0});
+    await pause();
+    const nativeWheel=await geometry();
+    assert.notEqual(nativeWheel.width,afterPan.width,'a native mouse wheel changes the image scale');
+    assert.equal(window.webContents.getZoomFactor(),appZoom,'native wheel leaves app zoom unchanged');
+    assert.equal(nativeWheel.stageWidth,afterPan.stageWidth);
+    assert.equal(nativeWheel.stageHeight,afterPan.stageHeight);
+    for(const [deltaY,expected] of [[-100,'500%'],[100,'25%']]) {
+      await run(`flushSync(()=>{for(let i=0;i<30;i++)document.querySelector('.image-preview-stage').dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:${deltaY}}))})`);
+      assert.equal(await run('document.querySelector(".image-preview-zoom-value").textContent'),expected,'wheel obeys zoom limits');
+    }
+    assert.equal(await run('window.previewWheelBubbled'),0);
+    await run('document.removeEventListener("wheel",window.countPreviewWheel)');
     await run('flushSync(()=>document.querySelector(".image-preview-zoom-value").click())');
     const reset = await geometry();
     assert.ok(Math.abs(reset.left-fitted.left)<1 && Math.abs(reset.top-fitted.top)<1,'fit reset also clears panning');
@@ -165,6 +194,6 @@ app.whenReady().then(async () => {
       await run(`flushSync(()=>{for(let i=0;i<3;i++)document.querySelector('[aria-label="放大图片"]').click()})`); await pause(100);
       fs.writeFileSync(path.join(root,'tmp/image-preview-real-175.png'),(await window.webContents.capturePage()).toPNG());
     }
-    console.log('Image preview passed: atomic zoom/pan, stable viewport, cursor anchor, native drag/wheel, fitted first paint, warm/cold sources, error state, four themes, narrow windows, 500% zoom, close/Escape/backdrop.');
+    console.log('Image preview passed: plain and modified wheel zoom, 25%-500% bounds, atomic zoom/pan, stable viewport, cursor anchor, native drag/wheel, fitted first paint, warm/cold sources, error state, four themes, narrow windows, close/Escape/backdrop.');
   } finally { window.destroy(); }
 }).then(()=>app.exit(0)).catch(error=>{console.error(error);app.exit(1);});

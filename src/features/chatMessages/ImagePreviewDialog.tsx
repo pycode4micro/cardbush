@@ -142,19 +142,19 @@ export function ImagePreviewDialog({
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
       event.stopPropagation();
-      if (event.ctrlKey || event.metaKey) {
-        if (!event.deltaY) return;
+      if (event.deltaY && (!event.shiftKey || event.ctrlKey || event.metaKey)) {
         const bounds = stage.getBoundingClientRect();
         applyZoom(viewRef.current.zoom + (event.deltaY < 0 ? zoomStep : -zoomStep),
           { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
       } else {
+        // Keep horizontal gestures and Shift+wheel available for panning.
         const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1;
         const dx = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX;
         const dy = event.shiftKey && !event.deltaX ? 0 : event.deltaY;
         updateView({ ...viewRef.current, x: viewRef.current.x - dx * unit, y: viewRef.current.y - dy * unit });
       }
     };
-    // React's delegated wheel listener is passive; use a cancellable listener so Ctrl+wheel cannot zoom the app.
+    // Consume the wheel here so image zoom cannot scroll the conversation or zoom the app.
     stage.addEventListener('wheel', handleWheel, { passive: false });
     return () => stage.removeEventListener('wheel', handleWheel);
   }, [applyZoom, updateView]);
@@ -263,6 +263,7 @@ export function ImagePreviewDialog({
         <div
           ref={stageRef}
           className={`image-preview-stage${dragging ? ' is-dragging' : ''}`}
+          title={language === 'zh' ? '滚轮缩放 · 拖动查看' : 'Scroll to zoom · Drag to pan'}
           aria-busy={!ready && !failed}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
