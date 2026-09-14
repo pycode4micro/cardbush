@@ -36,13 +36,22 @@ test('search retains accessible matches when another file is locked', { timeout:
   try {
     const [chunk] = await once(locker.stdout, 'data', { signal: AbortSignal.timeout(10_000) });
     assert.match(String(chunk), /ready/);
-    const result = await tools(root).execute('session', 'search_file_content', { path: root, query: 'needle' });
-    assert.equal(result.kind, 'returned');
-    assert.equal(result.result.complete, false);
-    assert.equal(result.result.exitCode, 2);
-    assert.equal(result.result.matched, true);
-    assert.match(result.result.output, /visible.txt.*needle visible/);
-    assert.match(result.result.warnings, /locked.txt/);
+    for (const fallback of [false, true]) {
+      const oldPath = process.env.PATH, oldRg = process.env.CARDBUSH_RG_PATH;
+      try {
+        if (fallback) { process.env.PATH = ''; delete process.env.CARDBUSH_RG_PATH; }
+        const result = await tools(root).execute('session', 'search_file_content', { path: root, query: 'needle' });
+        assert.equal(result.kind, 'returned', JSON.stringify({ fallback, result }));
+        assert.equal(result.result.complete, false);
+        assert.equal(result.result.exitCode, 2);
+        assert.equal(result.result.matched, true);
+        assert.match(result.result.output, /visible.txt.*needle visible/);
+        assert.match(result.result.warnings, /locked.txt/);
+      } finally {
+        if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+        if (oldRg === undefined) delete process.env.CARDBUSH_RG_PATH; else process.env.CARDBUSH_RG_PATH = oldRg;
+      }
+    }
   } finally { locker.stdin.end('\n'); await closed; }
 });
 
@@ -370,7 +379,7 @@ test("write and edit return compact receipts while Runtime retains full change e
     content: original,
   });
   assert.equal(written.kind, "returned");
-  assert.equal(written.result.path, path);
+  assert.equal(written.result.path, realpathSync.native(path));
   assert.equal(written.result.status, "added");
   assert.equal(typeof written.result.sha256, "string");
   assert.equal(typeof written.result.change_id, "string");
@@ -384,7 +393,7 @@ test("write and edit return compact receipts while Runtime retains full change e
     new_text: "unique-edited-payload",
   });
   assert.equal(edited.kind, "returned");
-  assert.equal(edited.result.path, path);
+  assert.equal(edited.result.path, realpathSync.native(path));
   assert.equal(edited.result.status, "modified");
   assert.equal("change" in edited.result, false);
   assert.ok(JSON.stringify(edited.result).length < 512);
@@ -797,7 +806,7 @@ test("uses absolute filesystem paths safely when a Turn has no workspace", async
   );
   assert.equal(written.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "hello world");
-  assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: realpathSync(path) }]);
+  assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: realpathSync.native(path) }]);
   assert.deepEqual(permissionRequests[0].scope, { mode: "task_free", roots: [] });
 
   const relative = await coordinator.execute(
@@ -858,7 +867,7 @@ test("canonicalizes a linked workspace root and rejects a linked escape", async 
   );
   assert.equal(escapeOutcome.kind, "returned");
   assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: realpathSync(outside) }]);
+  assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: realpathSync.native(outside) }]);
   assert.equal(requests[0].scope.mode, "task_free");
   assert.equal(requests[0].scope.roots.length, 1);
 });
@@ -893,7 +902,7 @@ test("binds external path approval to the exact requested capability", async (t)
     turn(registry, workspace, {}),
   );
   assert.equal(outcome.kind, "returned");
-  assert.deepEqual(permissionRequest.targets, [{ kind: "filesystem_path", value: realpathSync(path) }]);
+  assert.deepEqual(permissionRequest.targets, [{ kind: "filesystem_path", value: realpathSync.native(path) }]);
   assert.equal(permissionRequest.capabilityIds.length, 1);
 });
 

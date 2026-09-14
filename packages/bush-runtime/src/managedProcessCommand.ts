@@ -1,4 +1,5 @@
 import { spawnResourceManagedProcess, type ManagedProcessOptions, type ManagedProcessScope } from './processResourceGuard.js';
+import { decodeCommandOutput } from '@cardbush/platform';
 
 /** A shared byte budget for both streams. Eviction happens before retaining a chunk. */
 export class BoundedProcessOutput {
@@ -26,7 +27,7 @@ export class BoundedProcessOutput {
     this.#size += data.length;
   }
   text(channel: 'stdout' | 'stderr'): string {
-    return Buffer.concat(this.#chunks.filter(chunk => chunk.channel === channel).map(chunk => chunk.data)).toString('utf8');
+    return decodeCommandOutput(Buffer.concat(this.#chunks.filter(chunk => chunk.channel === channel).map(chunk => chunk.data)));
   }
 }
 

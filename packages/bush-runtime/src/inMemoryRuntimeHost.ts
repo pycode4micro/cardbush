@@ -1,4 +1,5 @@
 import { registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from "./fileMemo.js";
+import { canonicalStoragePath } from '@cardbush/platform';
 import { WorkspaceRedoStore } from './workspaceRedoStore.js';
 import { RESOLVE_FILE_MEMO_COMMAND } from "@cardbush/bush-protocol";
 import {
@@ -3292,7 +3293,7 @@ interface ProjectPathAlias {
 
 function projectPathAliasesMetadata(value: unknown, currentRootValue: unknown): ProjectPathAlias[] {
   const currentRoot = typeof currentRootValue === "string" && isAbsolute(currentRootValue)
-    ? resolve(currentRootValue)
+    ? canonicalStoragePath(currentRootValue)
     : "";
   if (!Array.isArray(value) || !currentRoot) return [];
   const parsed = value.flatMap((candidate) => {
@@ -3301,7 +3302,7 @@ function projectPathAliasesMetadata(value: unknown, currentRootValue: unknown): 
     const from = typeof record.from === "string" ? record.from.trim() : "";
     const to = typeof record.to === "string" ? record.to.trim() : "";
     if (!from || !to || !isAbsolute(from) || !isAbsolute(to)) return [];
-    return [{ from: resolve(from), to: resolve(to) }];
+    return [{ from: canonicalStoragePath(from), to: canonicalStoragePath(to) }];
   });
   return parsed
     .filter((alias) => aliasReachesCurrentRoot(alias, parsed, currentRoot))
@@ -3328,7 +3329,7 @@ function aliasReachesCurrentRoot(
 }
 
 function resolveProjectPathAlias(value: string, aliases: ProjectPathAlias[]): string {
-  let current = resolve(value);
+  let current = canonicalStoragePath(value);
   const visited = new Set<string>();
   for (let step = 0; step <= aliases.length; step += 1) {
     const identity = filesystemPathIdentity(current);

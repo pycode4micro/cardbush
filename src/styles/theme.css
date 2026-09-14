@@ -2,7 +2,7 @@
   --cardbush-window-bg: #1a1a1a;
   color-scheme: light;
   font-family:
-    "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC",
+    "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC",
     Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -81,7 +81,7 @@ button {
 
 .app,
 .cardling-desktop {
-  --app-font-family: "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", Arial, sans-serif;
+  --app-font-family: "Microsoft YaHei UI", Inter, "Segoe UI", "PingFang SC", "Noto Sans SC", "Noto Sans CJK SC", Arial, sans-serif;
   --bg: #f5f3ef;
   --surface: #ffffff;
   --surface-strong: #ffffff;

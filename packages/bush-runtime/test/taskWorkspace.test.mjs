@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, writeFile, rm, rename, lstat, utimes, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, rename, lstat, utimes, chmod, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, isAbsolute } from 'node:path';
 import test from 'node:test';
@@ -12,9 +12,9 @@ import { CREATE_RUNTIME_SESSION_COMMAND, GET_RUNTIME_WORKSPACE_COMMAND, UPDATE_R
 
 function git(root, ...args) { return execFileSync('git', ['-C', root, ...args], { windowsHide: true, encoding: 'utf8' }); }
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), 'cardbush-worktrees-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'cardbush-worktrees-')));
   t.after(async () => {
-    const delta = relative(tmpdir(), root);
+    const delta = relative(await realpath(tmpdir()), root);
     assert.ok(delta && !delta.startsWith('..') && !isAbsolute(delta));
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
@@ -51,6 +51,11 @@ test('Windows short storage paths bind to a stable canonical workspace', { skip:
   await manager.finishTurn('short-path', 'turn');
   assert.ok((await manager.review('short-path')).changes.some(change => change.path.endsWith('file.txt')));
   assert.equal((await manager.descriptor('short-path')).workspaceDir, workspace.workspaceDir);
+  await manager.create('short-direct', join(alias, 'source'), 'direct');
+  await manager.beginTurn('short-direct', 'turn');
+  assert.equal(await manager.ownsFileVersion('short-direct', join(alias, 'source', 'file.txt')), true);
+  assert.equal(await manager.ownsFileVersion('short-direct', join(alias, 'source', 'new-file.txt')), true);
+  assert.equal(await manager.ownsFileVersion('short-direct', join(alias, 'outside.txt')), false);
 });
 
 test('task copy preserves working bytes and dirty/untracked baseline without touching source index', async t => {
@@ -531,14 +536,15 @@ test('Git capture and review preserve model facts and Cache Chain continuity acr
   assert.equal(await readFile(join(source, 'file.txt'), 'utf8'), 'committed\r\n');
 });
 
-test('Git SHA-256 repositories retain binary versions without depending on SHA-1 object names', async t => {
+test('Git SHA-256 repositories retain binary versions under long project paths', async t => {
   const { root, manager } = await fixture(t);
-  const source = join(root, 'sha256');
-  await mkdir(source);
+  const source = join(root, 'long project directory '.repeat(3).trim(), 'sha256');
+  await mkdir(source, { recursive: true });
   git(source, 'init', '-q', '--object-format=sha256');
   const bytes = Buffer.from([0,255,1,13,10]);
   await writeFile(join(source, 'image.png'), bytes);
   const descriptor = await manager.create('task', source, 'direct');
+  assert.equal(descriptor.versioning, 'git', JSON.stringify(descriptor));
   assert.equal(descriptor.baselineId.length, 64);
   await manager.beginTurn('task', 'one');
   await writeFile(join(source, 'image.png'), Buffer.from([0,128]));
@@ -681,6 +687,7 @@ test('a crash after copy removal acknowledges the completed disposal on restart'
 
 test('background terminals do not decide model completion or prevent dialogue, but file actions require a confirmed stop', async t => {
   const { source, storage } = await fixture(t);
+  let workspaceDir;
   let calls = 0;
   const host = new InMemoryRuntimeHost({ dataRoot: storage, provider: { async *stream(request) {
     const base = { protocol: 'bush.model_event.v1', requestId: request.requestId, createdAt: new Date().toISOString() };
@@ -690,10 +697,18 @@ test('background terminals do not decide model completion or prevent dialogue, b
       yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'tool_calls' };
       return;
     }
+    // A time-based terminal yield is not a readiness signal. Wait for this
+    // fixture's first write before testing the stable background checkpoint.
+    const deadline = Date.now() + 10_000;
+    while (await readFile(join(workspaceDir, 'file.txt'), 'utf8') !== 'server started') {
+      assert.ok(Date.now() < deadline, 'Background fixture did not become ready.');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
     yield { ...base, sequence: 0, kind: 'text_delta', delta: 'Server is running.' };
     yield { ...base, sequence: 1, kind: 'response_completed', finishReason: 'stop' };
   } } });
   await host.sendCommand({ kind: CREATE_RUNTIME_SESSION_COMMAND, payload: { sessionId: 'task', workspace: { sourceDir: source, mode: 'worktree' }, metadata: {} } });
+  workspaceDir = (await host.sendCommand({ kind: GET_RUNTIME_WORKSPACE_COMMAND, payload: { sessionId: 'task' } })).workspace.workspaceDir;
   const catalog = await host.sendCommand({ kind: 'runtime.get_tool_catalog', payload: {} });
   const request = turnId => ({ protocol: 'bush.session_turn_request.v1', requestId: `request-${turnId}`, sessionId: 'task', turnId, model: 'fixture', tools: catalog.filter(tool => tool.name === 'terminal_exec'), inputMessages: [{ messageId: `user-${turnId}`, message: { role: 'user', content: 'continue' } }] });
   const update = async action => {

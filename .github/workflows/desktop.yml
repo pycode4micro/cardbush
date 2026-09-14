@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - name: Linux desktop libraries
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0 libnss3 libasound2 libgbm1 libfuse2 xvfb
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0 libnss3 libasound2 libgbm1 libfuse2 fonts-noto-cjk xvfb
       - run: npm ci
       - run: npm run runtime-tools:install
       - run: npm run build
@@ -76,3 +76,34 @@ jobs:
             release/CardBush-*.AppImage
             release/SHA256SUMS-*.txt
             release/smoke-*.json
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: CardBush-*-x64
+          merge-multiple: true
+          path: release-assets
+      - name: Validate version and both installers
+        run: |
+          node -e 'const p=require("./package.json"); if(process.env.RELEASE_TAG!=="v"+p.version) throw Error("Tag and package version differ");'
+          test -s "release-assets/CardBush-${RELEASE_TAG#v}-windows-x64.exe"
+          test -s "release-assets/CardBush-${RELEASE_TAG#v}-linux-x64.AppImage"
+          (cd release-assets && sha256sum --check SHA256SUMS-win32-x64.txt SHA256SUMS-linux-x64.txt)
+      - name: Publish validated beta
+        run: |
+          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            test "$draft" = true || { echo 'This release is already public; refusing to replace its files.'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease --title "CardBush $RELEASE_TAG" --notes-file docs/releases/1.0.0-beta.1.md
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

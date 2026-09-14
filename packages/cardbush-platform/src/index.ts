@@ -119,10 +119,35 @@ export function commandInvocation(shell: CommandShell, command: string, context 
   }
   if (shell === 'cmd') {
     if (context.platform !== 'win32') throw new Error('cmd is unavailable on this host.');
-    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/s','/c','chcp 65001>nul & ' + command]};
+    // A hidden, console-less process cannot change its code page with chcp.
+    // /u keeps cmd built-ins lossless even on an English Windows installation.
+    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/u','/s','/c',command]};
   }
   if (context.platform === 'win32') throw new Error('POSIX shell is unavailable in the native Windows runtime.');
   return {executable:'/bin/sh',args:['-c',command]};
+}
+
+/** Shell built-ins may use UTF-16; native child programs still emit their own encoding. */
+export function decodeCommandOutput(bytes: Buffer, platform: string = process.platform): string {
+  if (!bytes.length) return '';
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString('utf16le');
+  if (platform === 'win32' && bytes.length % 2 === 0) {
+    let evenNulls = 0, oddNulls = 0;
+    for (let index = 0; index < bytes.length; index += 2) {
+      if (bytes[index] === 0) evenNulls++;
+      if (bytes[index + 1] === 0) oddNulls++;
+    }
+    if (oddNulls > evenNulls && oddNulls * 4 >= bytes.length) return bytes.toString('utf16le');
+    // A Chinese-only cmd line can have no ASCII except its final CR/LF.
+    if (bytes.length >= 4 && bytes.subarray(-4).equals(Buffer.from([13, 0, 10, 0]))) return bytes.toString('utf16le');
+  }
+  try { return new TextDecoder('utf-8', {fatal:true}).decode(bytes); }
+  catch {
+    if (platform === 'win32') {
+      try { return new TextDecoder('gbk', {fatal:true}).decode(bytes); } catch { /* Keep undecodable output visible. */ }
+    }
+    return bytes.toString('utf8');
+  }
 }
 export function bundledToolPath(root: string, tool: 'ripgrep', platform = process.platform, arch: string = process.arch): string | undefined {
   if (arch !== 'x64' || !['win32','linux'].includes(platform)) return undefined;

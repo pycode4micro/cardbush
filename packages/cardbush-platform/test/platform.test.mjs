@@ -3,7 +3,17 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
-import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath } from '../dist/index.js';
+import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath, decodeCommandOutput } from '../dist/index.js';
+
+test('Windows output decoding preserves Unicode cmd built-ins and native UTF-8/legacy output', () => {
+  for (const text of ['中文目录.txt\r\n', '中文\r\n', 'plain\r\n']) {
+    assert.equal(decodeCommandOutput(Buffer.from(text, 'utf16le'), 'win32'), text);
+    assert.equal(decodeCommandOutput(Buffer.from(text, 'utf8'), 'win32'), text);
+  }
+  assert.equal(decodeCommandOutput(Buffer.from([0xd6, 0xd0, 0xce, 0xc4]), 'win32'), '中文');
+  assert.equal(decodeCommandOutput(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('中文', 'utf16le')]), 'win32'), '中文');
+  assert.equal(decodeCommandOutput(Buffer.from('plain\n'), 'linux'), 'plain\n');
+});
 
 test('file URLs retain native separators, Unicode, escaped punctuation and UNC shares', () => {
   assert.equal(localPath('file:///home/user/a%20b/%E4%B8%AD%E6%96%87%23.txt', 'linux'), '/home/user/a b/中文#.txt');

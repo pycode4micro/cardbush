@@ -1,4 +1,4 @@
-import { commandInvocation } from "@cardbush/platform";
+import { commandInvocation, decodeCommandOutput as decodeProcessOutput } from "@cardbush/platform";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
@@ -1374,7 +1374,7 @@ async function searchFileContentWithNode(
     try {
       info = await lstat(candidate);
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
+      if (["EACCES", "ENOENT", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
       throw error;
     }
     if (info.isSymbolicLink()) return;
@@ -1390,7 +1390,7 @@ async function searchFileContentWithNode(
     try {
       entries = await readdir(candidate, { withFileTypes: true });
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
+      if (["EACCES", "ENOENT", "EPERM", "EBUSY"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); return; }
       throw error;
     }
     for (const entry of entries) {
@@ -1423,7 +1423,7 @@ async function searchFileContentWithNode(
     try {
       bytes = await readFileBounded(file, signal);
     } catch (error) {
-      if (["EACCES", "ENOENT", "EPERM", "file_resource_limit"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
+      if (["EACCES", "ENOENT", "EPERM", "EBUSY", "file_resource_limit"].includes(String((error as NodeJS.ErrnoException).code))) { warn(error); continue; }
       throw error;
     }
     // Match ripgrep's Unicode BOM behavior: UTF-16 padding is not binary content.
@@ -1581,21 +1581,4 @@ async function runProcess(
       });
     });
   });
-}
-
-function decodeProcessOutput(bytes: Buffer): string {
-  if (bytes.length === 0) return "";
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    if (process.platform === "win32") {
-      try {
-        return new TextDecoder("gbk", { fatal: true }).decode(bytes);
-      } catch {
-        // Preserve output even when it is neither valid UTF-8 nor the Windows
-        // Simplified Chinese code page used by the local shell.
-      }
-    }
-    return bytes.toString("utf8");
-  }
 }

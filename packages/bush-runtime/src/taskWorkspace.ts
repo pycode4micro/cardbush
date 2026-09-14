@@ -178,10 +178,11 @@ export class TaskWorkspaceManager {
   async ownsFileVersion(sessionId: string, path: string): Promise<boolean> {
     return this.#exclusive(sessionId, async () => {
       const state = await this.#load(sessionId);
-      if (!state || state.versioning !== "git" || !inside(state.workspaceDir, path)) return false;
+      const canonicalPath = canonicalStoragePath(path);
+      if (!state || state.versioning !== "git" || !inside(state.workspaceDir, canonicalPath)) return false;
       const checkpoint = state.checkpoints.at(-1);
       if (!checkpoint || checkpoint.status !== "pending" || this.#active.get(sessionId) !== checkpoint.turnId) return false;
-      const local = relative(state.workspaceDir, path).split(sep).join("/");
+      const local = relative(state.workspaceDir, canonicalPath).split(sep).join("/");
       if ((await this.#snapshot(state, checkpoint.before))[local]) return true;
       if (checkpoint.paths?.includes(local)) return true;
       try { await this.#git(state.workspaceDir, ["check-ignore", "--quiet", "--", local]); return false; }
@@ -733,7 +734,9 @@ export class TaskWorkspaceManager {
     const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" };
     for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS", "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"]) delete env[key];
     // check-ignore consumes literal filenames and rejects Git's pathspec-magic flag.
-    const result = await exec("git", [...(args[0] === "check-ignore" ? [] : ["--literal-pathspecs"]), "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${hooks}`, "-C", root, ...args], {
+    const result = await exec("git", [...(args[0] === "check-ignore" ? [] : ["--literal-pathspecs"]),
+      // Private snapshot refs can exceed MAX_PATH inside deep project directories.
+      "-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${hooks}`, "-C", root, ...args], {
       encoding: "buffer", windowsHide: true, maxBuffer: 32 * 1024 * 1024, timeout: 30_000, env,
     });
     return result.stdout;

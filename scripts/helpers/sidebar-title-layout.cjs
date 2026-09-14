@@ -11,7 +11,7 @@ module.exports = async function testSidebarTitleLayout({ run, until, pause, wind
     const sidebarNoop = () => {};
     window.sidebarSelections = [];
     window.sidebarTitles = [
-      '这项目的服务现在还运行着么', '正在执行很长的项目验证与截图任务标题',
+      '这项目的服务现在还运行着么，需要确认后台服务是否仍在执行', '正在执行很长的项目验证与截图任务标题',
       '等待确认这项操作的执行结果和下一步处理', '短标题',
       'very-long-unbroken-conversation-title-for-layout-regression',
     ];
