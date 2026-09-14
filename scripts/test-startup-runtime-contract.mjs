@@ -65,12 +65,15 @@ assert.match(main, /process\.resourcesPath/);
 assert.equal(packageJson.scripts['package:win'].startsWith('npm run runtime-tools:verify'), true);
 assert.equal(
   packageJson.scripts['smoke:packaged'].startsWith(
-    'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke && node scripts/run-packaged-smoke.mjs',
+    'npm run runtime-tools:verify && npm run build && electron-builder --dir --config.directories.output=release-smoke',
   ),
   true,
 );
-assert.match(packageJson.scripts['smoke:packaged'], /test-chrome-native-host\.mjs/);
-assert.match(packageJson.scripts['smoke:packaged'], /test-chrome-connector-contract\.mjs/);
+assert.match(packageJson.scripts['smoke:packaged'], /verify-packaged-platform\.mjs/);
+const platformSmoke = read('scripts', 'verify-packaged-platform.mjs');
+assert.match(platformSmoke, /test-chrome-native-host\.mjs/);
+assert.match(platformSmoke, /test-chrome-connector-contract\.mjs/);
+assert.match(platformSmoke, /process.platform === 'win32'/);
 assert.equal(fs.existsSync(path.join(root, 'scripts', 'run-packaged-smoke.mjs')), true);
 for (const workspaceDependency of [
   '@cardbush/bush-protocol',

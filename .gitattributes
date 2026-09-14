@@ -1,0 +1,4 @@
+assets/runtime-tools/ripgrep/**/rg -text
+assets/runtime-tools/ripgrep/**/rg.exe -text
+*.sh text eol=lf
+.github/workflows/*.yml text eol=lf

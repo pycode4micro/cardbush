@@ -39,5 +39,6 @@
     "lucide-react": "^1.16.0",
     "jszip": "^3.10.1",
     "rolldown": "1.2.3"
-  }
+  },
+  "license": "Apache-2.0"
 }

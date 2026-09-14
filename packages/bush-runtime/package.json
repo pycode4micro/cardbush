@@ -24,6 +24,8 @@
   "dependencies": {
     "@cardbush/bush-protocol": "^0.1.0",
     "js-yaml": "4.3.2",
-    "sharp": "0.35.4"
-  }
+    "sharp": "0.35.4",
+    "@cardbush/platform": "0.1.0"
+  },
+  "license": "Apache-2.0"
 }

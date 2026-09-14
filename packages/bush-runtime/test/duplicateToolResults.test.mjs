@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { png } from "./helpers/modelImages.mjs";
 
 import {
   LogicMemoryStore,
@@ -73,7 +74,7 @@ test("inject_image_input keeps duplicate call metadata out of its receipt", asyn
   registerExtendedBuiltins(registry, { dataRoot: root });
   const tool = registry.resolve("inject_image_input");
   const input = tool.decodeInput({
-    url: "data:image/png;base64,AAAA",
+    url: "data:image/png;base64," + png.toString("base64"),
     label: "already in arguments",
     caption: "already in arguments too",
     detail: "low",

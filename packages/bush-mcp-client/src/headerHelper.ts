@@ -1,3 +1,4 @@
+import { commandInvocation } from '@cardbush/platform';
 import { spawn } from 'node:child_process';
 
 export function mcpHeaderFetch(serverUrl: string, helper: { command: string; cwd?: string; env: Record<string, string> }, baseFetch: typeof fetch = fetch): typeof fetch {
@@ -28,7 +29,8 @@ export function mcpHeaderFetch(serverUrl: string, helper: { command: string; cwd
 async function readHeaders(helper: { command: string; cwd?: string; env: Record<string, string> }): Promise<Record<string, string>> {
   return new Promise((resolve, reject) => {
     const windows = process.platform === 'win32';
-    const child = spawn(windows ? 'powershell.exe' : '/bin/sh', windows ? ['-NoProfile', '-NonInteractive', '-Command', helper.command] : ['-c', helper.command],
+    const invocation = commandInvocation(windows ? 'powershell' : 'posix', helper.command);
+    const child = spawn(invocation.executable, invocation.args,
       { cwd: helper.cwd, env: { ...process.env, ...helper.env }, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks: Buffer[] = []; let bytes = 0;
     const timer = setTimeout(() => { child.kill(); reject(new Error('MCP HTTP header helper timed out.')); }, 10_000);

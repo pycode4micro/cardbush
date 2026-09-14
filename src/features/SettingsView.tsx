@@ -556,18 +556,18 @@ export function SettingsView({
             title={language === 'zh' ? '默认终端' : 'Default terminal'}
             subtitle={
               language === 'zh'
-                ? '用于工具执行和内置终端。'
-                : 'Used by tools and the embedded terminal.'
+                ? '选择应用内终端使用的 Shell。Agent 工具仍按命令指定的 Shell 执行。'
+                : 'Choose the embedded terminal Shell. Agent tools use the Shell specified by each command.'
             }
           >
-            <SettingsRadio
+            {backendCapabilities.terminalRuntimes.includes('powershell') && <SettingsRadio
               name="terminal-runtime"
               value="powershell"
               title="PowerShell"
               subtitle={
                 language === 'zh'
-                  ? '默认 Windows 终端环境，适合 npm、Electron、PowerShell 脚本和本机路径。'
-                  : 'Default Windows terminal runtime for npm, Electron, PowerShell scripts, and local Windows paths.'
+                  ? '使用已安装的 PowerShell，支持本机路径和 PowerShell 脚本。'
+                  : 'Use installed PowerShell for local paths and PowerShell scripts.'
               }
               checked={settings.terminal.runtime === 'powershell'}
               onChange={() =>
@@ -579,7 +579,7 @@ export function SettingsView({
                   },
                 }))
               }
-            />
+            />}
             {backendCapabilities.terminalRuntimes.includes('wsl') && (
               <SettingsRadio
                 name="terminal-runtime"

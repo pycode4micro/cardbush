@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const executable = packagedExecutable(root);
+const executable = process.argv[2] ? path.resolve(process.argv[2]) : packagedExecutable(root);
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'cardbush-packaged-smoke-'));
 const resultPath = path.join(temporaryRoot, 'result.json');
 const userDataPath = path.join(temporaryRoot, 'user-data');
@@ -28,7 +28,10 @@ try {
   assert.equal(report.runtimeCapabilitiesReady, true);
   assert.equal(report.productHostReady, true);
   assert.equal(report.shutdownClean, true);
+  assert.equal(report.terminalReady, true);
+  assert.equal(report.searchReady, true);
   assert.equal(Object.values(report.assets).every(Boolean), true);
+  if (process.env.CARDBUSH_SMOKE_REPORT) await copyFile(resultPath, process.env.CARDBUSH_SMOKE_REPORT);
   console.log('packaged application smoke passed', JSON.stringify({
     executable,
     elapsedMs: report.elapsedMs,

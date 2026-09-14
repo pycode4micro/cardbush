@@ -1,0 +1,78 @@
+name: Desktop builds
+on:
+  push:
+    branches: [main, 'codex/cross-platform-release']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: windows
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Linux desktop libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-0 libnss3 libasound2 libgbm1 libfuse2 xvfb
+      - run: npm ci
+      - run: npm run runtime-tools:install
+      - run: npm run build
+      - run: npx tsc --noEmit -p tsconfig.json
+      - name: Windows regression and adversarial tests
+        if: runner.os == 'Windows'
+        run: npm run test:release
+      - name: Linux regression and adversarial tests
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:release
+      - name: Windows installer
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Linux AppImage
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux AppImage --x64 --publish never
+      - name: Windows packaged application
+        if: runner.os == 'Windows'
+        env:
+          CARDBUSH_SMOKE_REPORT: release/smoke-windows.json
+        run: node scripts/verify-packaged-platform.mjs release/win-unpacked
+      - name: Windows install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/verify-windows-installer.ps1
+      - name: Linux AppImage startup
+        if: runner.os == 'Linux'
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          CARDBUSH_SMOKE_REPORT: release/smoke-linux.json
+        run: |
+          chmod +x release/*.AppImage
+          xvfb-run -a node scripts/run-packaged-smoke.mjs "$(find release -maxdepth 1 -name '*.AppImage' -print -quit)"
+      - run: node scripts/release-checksums.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CardBush-${{ matrix.platform }}-x64
+          if-no-files-found: error
+          path: |
+            release/CardBush-*.exe
+            release/CardBush-*.AppImage
+            release/SHA256SUMS-*.txt
+            release/smoke-*.json

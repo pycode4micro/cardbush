@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ReasoningEffort } from '@cardbush/bush-protocol' with { 'resolution-mode': 'import' };
 import type { AgentInstructionDocument } from '@cardbush/bush-product-agent' with { 'resolution-mode': 'import' };
 import type { readTextPreviewResult } from './textPreview';
+import type { TerminalRuntime } from '@cardbush/platform' with { 'resolution-mode': 'import' };
 
 type CardlingDesktopState = {
   enabled: boolean;
@@ -87,6 +88,8 @@ type ShadowWindowPayload = {
 };
 
 const desktopApi = {
+  platform: process.platform,
+  hostCapabilities: () => ipcRenderer.invoke('app:host-capabilities'),
   mcpRequests: () => ipcRenderer.invoke('mcp:requests'),
   answerMcpRequest: (id: string, answer: unknown) => ipcRenderer.invoke('mcp:answer', id, answer),
   openMcpRequestUrl: (id: string) => ipcRenderer.invoke('mcp:open-request-url', id),
@@ -349,7 +352,7 @@ const desktopApi = {
     }>,
   terminalCreate: (
     cwd?: string,
-    runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+    runtime?: TerminalRuntime,
   ) =>
     ipcRenderer.invoke('terminal:create', cwd, runtime) as Promise<{
       id: string;
@@ -382,7 +385,7 @@ const desktopApi = {
   terminalRun: (
     command: string,
     cwd?: string,
-    runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+    runtime?: TerminalRuntime,
   ) =>
     ipcRenderer.invoke('terminal:run', command, cwd, runtime) as Promise<{
       command: string;

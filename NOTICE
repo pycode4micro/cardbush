@@ -1,0 +1,9 @@
+CardBush
+Copyright 2026 CardBush contributors
+
+CardBush original source is licensed under the Apache License, Version 2.0.
+Bundled third-party components retain their own licenses and notices.
+Electron and Chromium notices accompany the application binaries.
+Dependency licenses are retained within node_modules; ripgrep notices are in
+runtime-tools/ripgrep; bundled skill and browser-tool notices remain alongside
+their respective assets. Installing an external plugin does not change its license.

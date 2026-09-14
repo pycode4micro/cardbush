@@ -15,33 +15,23 @@ files:
   - '!packages/bush-runtime/dist/teamTool.*'
   - '!packages/bush-runtime/dist/teamSnapshotStore.*'
   - packages/*/dist/**/*
+  - packages/*/dist-cjs/**/*
   - packages/*/package.json
   - assets/**/*
   - '!assets/plugins/chrome/extension/**/*'
   - '!assets/skills/**/*'
   - '!assets/runtime-tools/**/*'
   - package.json
+  - LICENSE
+  - NOTICE
   - node_modules/**/*
   - '!packages/cardbush-team-plugin/**/*'
   - '!node_modules/@cardbush/team-plugin/**/*'
   - '!node_modules/.cache/**/*'
   - '!**/*.map'
 extraResources:
-  - from: dist-native/process-guard
-    to: process-guard
-    filter:
-      - 'CardBushProcessHost-*.exe'
-      - 'current.json'
-  - from: dist-native/chrome-connector
-    to: chrome-native-host
-    filter:
-      - 'CardBushBrowserHost.exe'
   - from: assets/plugins/chrome/extension
     to: chrome-extension
-    filter:
-      - '**/*'
-  - from: assets/runtime-tools
-    to: runtime-tools
     filter:
       - '**/*'
   - from: assets/skills
@@ -52,6 +42,16 @@ extraResources:
       - '!**/*.pyc'
 win:
   icon: assets/cardbush.ico
+  artifactName: CardBush-${version}-windows-${arch}.${ext}
+  extraResources:
+    - from: dist-native/process-guard
+      to: process-guard
+      filter: ['CardBushProcessHost-*.exe', current.json]
+    - from: dist-native/chrome-connector
+      to: chrome-native-host
+      filter: [CardBushBrowserHost.exe]
+    - from: assets/runtime-tools/ripgrep/win32-x64
+      to: runtime-tools/ripgrep/win32-x64
   target:
     - target: nsis
       arch:
@@ -62,4 +62,17 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: CardBush
-artifactName: CardBush-${version}-${arch}.${ext}
+  deleteAppDataOnUninstall: false
+  license: LICENSE
+linux:
+  executableName: cardbush
+  icon: public/cardbush-logo.png
+  category: Development
+  artifactName: CardBush-${version}-linux-${arch}.${ext}
+  target:
+    - target: AppImage
+      arch: [x64]
+  extraResources:
+    - from: assets/runtime-tools/ripgrep/linux-x64
+      to: runtime-tools/ripgrep/linux-x64
+publish: null

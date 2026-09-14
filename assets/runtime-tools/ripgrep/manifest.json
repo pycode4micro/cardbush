@@ -10,6 +10,13 @@
       "archiveSha256": "71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5",
       "executable": "win32-x64/rg.exe",
       "executableSha256": "14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680"
+    },
+    "linux-x64": {
+      "archive": "ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+      "archiveUrl": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+      "archiveSha256": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c",
+      "executable": "linux-x64/rg",
+      "executableSha256": "e62198eb19b136b88c330af83647b5a962cb99b6b1f066758568f12de1974849"
     }
   }
 }

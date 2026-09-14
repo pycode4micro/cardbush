@@ -1,100 +1,107 @@
-# CardBush Desktop
+# CardBush
 
-[简体中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md)
 
-CardBush is an Electron desktop Agent application with its production Agent
-Runtime embedded in TypeScript. Normal chat, sessions, model access, tools,
-permissions, Goal, Plan, Subagent and persistence run inside CardBush over
-typed Electron IPC; no BushServer HTTP process or localhost port is required.
+A desktop AI workspace for conversations, files, coding and MCP plugins. CardBush runs its Agent Runtime inside the application: no separate local server or Python installation is needed for core chat and terminal tools.
 
-Team is distributed as an independently installable ZIP plugin; it is not part of the desktop build. See [Team extraction and file configuration](docs/TEAM_PLUGIN_EXTRACTION.md) for its boundaries and current status.
+## Download
 
-## Status
+Current release: **1.0.0-beta.1**. Choose the package for your operating system.
 
-The current development baseline is `1.0.0-dev`. Product functionality is under
-integrated validation; installer and release-freeze decisions are still pending.
+| System | Download | Suitable computers |
+| --- | --- | --- |
+| Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64.exe) | Intel / AMD 64-bit |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
 
-## Development
+[All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
-Requirements: Windows, Node.js `>=22.12.0`, and npm `>=10`.
+Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU edition. ARM64, 32-bit Windows, Windows 7/8 and macOS packages are not part of this release. These beta packages are unsigned.
 
-```powershell
-npm install
+### Install and start
+
+**Windows:** open the installer, choose an installation directory and launch CardBush. Uninstalling the application retains your local conversations and settings.
+
+**Linux:** download the AppImage, allow it to execute, then run it:
+
+```sh
+chmod +x CardBush-1.0.0-beta.1-linux-x64.AppImage
+./CardBush-1.0.0-beta.1-linux-x64.AppImage
+```
+
+AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.
+
+On first launch, open **Settings → Models** and configure a supported provider, model and API key. Model usage is billed by your provider. Plugins may require their own dependencies or credentials; follow each plugin's installation instructions.
+
+## What is included?
+
+- Streaming conversations, projects, file attachments and previews.
+- File search and editing, terminal commands, tool permissions and execution history.
+- Task queues, guidance, subagents, persistent sessions and automations while the application is running.
+- MCP plugins, skills and an integrated browser.
+- Personalization, keyboard shortcuts and persistent usage statistics.
+
+Team workflows are a separate installable plugin, not part of the desktop bundle. See [Team plugin architecture](docs/TEAM_PLUGIN_EXTRACTION.md).
+
+### Platform support
+
+| Capability | Windows x64 | Linux x64 |
+| --- | --- | --- |
+| Chat, files, previews, MCP and integrated browser | Yes | Yes |
+| Terminal commands | PowerShell / cmd | POSIX Shell |
+| Embedded terminal selection | PowerShell; installed Git Bash / WSL | Native Shell; installed PowerShell |
+| Bundled search | Native ripgrep | Native ripgrep |
+| Windows computer-use plugin | Yes | Unavailable |
+| Chrome native connector | Yes | Unavailable; integrated browser remains available |
+| Native process CPU / memory enforcement | Windows Job Objects | Not yet implemented |
+| Managed process admission and owned-process cleanup | Yes | Yes |
+
+Linux does not claim the same resource isolation as Windows. External plugins remain separate programs with their own platform requirements. The terminal setting does not rewrite Agent commands into another Shell language.
+
+## Develop
+
+Node.js **>=22.12** and npm **>=10** are required; CI uses Node.js 24. Build installers on their target operating system.
+
+```sh
+npm ci
+npm run runtime-tools:install
 npm run dev
 ```
 
-Build and open the desktop application:
-
-```powershell
-npm run gui
-```
-
-Repair a missing Electron binary if necessary:
-
-```powershell
-npm run fix:electron
-```
-
-## Runtime architecture
-
-- `@cardbush/bush-runtime` owns the provider-independent Agent loop.
-- `@cardbush/bush-protocol` owns typed commands, events and IPC contracts.
-- `@cardbush/bush-provider-openai` owns OpenAI-compatible provider transport.
-- the Electron Utility Process owns Runtime execution and durable state;
-- the Electron main process owns native desktop capabilities and Product Host
-  configuration;
-- React consumes typed Runtime events and never infers terminal state from prose.
-
-The separate BushServer repository is a reference implementation and migration
-oracle. It is not a production dependency of CardBush.
-
-## Optional MCP integrations
-
-External integrations are installed through the generic MCP configuration. Each
-tool must declare a complete `cardbush/action_manifest` so Runtime can apply normal
-permission, receipt and execution-fact handling.
-
-CardBush bundles one independent stdio MCP server, `cardbush_apps`. It hosts the
-shipped app plugins such as `computer_use`; those plugins are not Built-in Runtime
-Tools and do not execute through a private Product Host bridge. See
-[`docs/host/CARDBUSH_APPS_MCP.md`](docs/host/CARDBUSH_APPS_MCP.md).
-
-Bot products are deliberately independent. CardBush does not own Bot accounts,
-credentials, login, configuration, lifecycle, logs, or management UI. A Bot
-project may expose one MCP `deliver` tool and its own management HTML; CardBush
-does not special-case its server ID or store its secrets. See
-[`docs/host/CARDBUSH_APP_HOST.md`](docs/host/CARDBUSH_APP_HOST.md).
-
-## Validation
-
-```powershell
-npm run test:all
-```
-
-Faster checks:
-
-```powershell
-npm run typecheck
+```sh
 npm run build
-npm run test:runtime
+npm run typecheck
+npm run test:release
+npm run package:win     # Windows: NSIS installer
+npm run package:linux   # Linux: AppImage
+npm run smoke:packaged
 ```
+
+On headless Linux, run desktop tests with `xvfb-run -a npm run test:release`. Outputs are in `release/`. `npm run test:release` requires a preceding build; it runs package tests, adversarial cases, platform contracts and Electron UI checks without repeatedly rebuilding each package. `npm run test:all` also runs the wider feature-specific checks. Provider tests use local mock HTTP servers; no live API key is needed.
+
+Electron downloads use the official source by default. An optional `ELECTRON_MIRROR` can be configured for your network. Repair an incomplete download with `npm run fix:electron`.
+
+## Architecture and maintenance
+
+| Directory | Responsibility |
+| --- | --- |
+| `packages/cardbush-platform` | Host capabilities, Shell resolution, executable discovery and native resource paths |
+| `packages/bush-runtime` | Provider-independent Agent loop, tools, permissions and state |
+| `packages/bush-protocol` | Typed commands, events and IPC contracts |
+| `packages/bush-provider-openai` | OpenAI-compatible provider transport |
+| `electron` | Desktop lifecycle, isolated Utility Runtime host and native adapters |
+| `src` | React UI and typed Runtime client |
+| `scripts` | Development, regression tests, packaging and smoke checks |
+
+Platform selection is centralized in `@cardbush/platform`; its browser-safe contracts and Node adapters are separate exports. OS-specific clipboard, computer-use and native process code stays in explicit adapters. Adding a host does not require changing the Agent loop. This release supports the application's terminal; it does not introduce a standalone CLI Agent.
+
+See [cross-platform maintenance and release guide](docs/CROSS_PLATFORM_RELEASE.md), [app host](docs/host/CARDBUSH_APP_HOST.md) and [bundled apps MCP](docs/host/CARDBUSH_APPS_MCP.md).
 
 ## Data and security
 
-Runtime state, logs and large caches belong under Electron's local `userData`
-directory. Small user settings are stored by the desktop product layer. Provider
-credentials cross only the typed provider-binding command and are not persisted
-in model requests, event journals, checkpoints or renderer-visible payloads.
+The application stores conversations, usage records and settings locally under Electron's user-data directory. Clearing transient caches does not reset recorded usage. The renderer uses context isolation and no Node.js integration. Model providers and external plugins receive the data needed for their requested operations.
 
-The renderer uses context isolation and no Node.js integration. Do not attach
-credentials, `.env` files, raw logs or user conversation data to bug reports.
+Do not attach credentials, raw conversation stores or unredacted logs to public issues.
 
-## Repository layout
+## License
 
-```text
-electron/   Electron main process, Utility Runtime host and native capabilities
-packages/   Runtime, protocol, provider, MCP client and Product Host packages
-src/        React UI and typed Runtime client integration
-scripts/    Development helpers and contract/release checks
-docs/       Runtime, product and integration contracts
-```
+Original CardBush code is licensed under [Apache License 2.0](LICENSE). See [NOTICE](NOTICE). Bundled dependencies, skills and external plugins retain their respective licenses.

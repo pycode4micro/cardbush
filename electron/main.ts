@@ -1,3 +1,4 @@
+import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
@@ -292,7 +293,7 @@ const terminalSessions = new Map<
   }
 >();
 
-type TerminalRuntime = 'powershell' | 'wsl' | 'git_bash' | 'bash';
+
 
 type CardlingDesktopState = {
   enabled: boolean;
@@ -2666,6 +2667,11 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle('app:host-capabilities', () => ({
+  platform: process.platform, arch: process.arch, terminalRuntimes: terminalRuntimes(),
+  defaultTerminalRuntime: defaultTerminalRuntime(process.platform), ...platformFeatures(process.platform, process.arch),
+}));
+
 ipcMain.handle('terminal:create', (event, cwd?: string, runtime?: TerminalRuntime) => {
   return createTerminalSession(event.sender.id, cwd, runtime, processOwnerSignal(event.sender));
 });
@@ -3013,6 +3019,24 @@ async function runPackagedApplicationSmoke(): Promise<void> {
       'Packaged Product Host query timed out.',
     );
     const bundledRipgrep = resolveBundledRipgrepPath();
+    const smokeDirectory = path.join(app.getPath('userData'), 'smoke space 中文');
+    fs.mkdirSync(smokeDirectory, { recursive: true });
+    fs.writeFileSync(path.join(smokeDirectory, '示例.txt'), 'cardbush-search-中文\n', 'utf8');
+    const terminal = await runTerminalCommand(process.platform === 'win32'
+      ? "[Console]::WriteLine('cardbush-terminal-中文')"
+      : "printf '%s\\n' 'cardbush-terminal-中文'", smokeDirectory);
+    if (terminal.exitCode !== 0 || !terminal.stdout.includes('cardbush-terminal-中文')) {
+      throw new Error(`Packaged terminal failed: ${terminal.stderr}`);
+    }
+    if (!bundledRipgrep) throw new Error('Packaged search executable is missing.');
+    const search = await runHostCommand({ executable: bundledRipgrep,
+      args: ['--fixed-strings', '--', 'cardbush-search-中文', smokeDirectory],
+      cwd: smokeDirectory, env: process.env, maxOutputBytes: 4096, outputLimit: 'truncate' });
+    if (search.exitCode !== 0 || !search.stdout.includes('cardbush-search-中文')) {
+      throw new Error('Packaged ripgrep did not find the Unicode fixture.');
+    }
+    Object.assign(report, { terminalReady: true, searchReady: true,
+      hostCapabilities: platformFeatures(process.platform, process.arch) });
     const assets = {
       runtimeWorker: fs.existsSync(path.join(__dirname, 'runtimeHostWorker.mjs')),
       productHostController: fs.existsSync(path.join(__dirname, 'productHostController.mjs')),
@@ -3035,7 +3059,7 @@ async function runPackagedApplicationSmoke(): Promise<void> {
         'chrome-extension',
         'manifest.json',
       )),
-      chromeNativeHost: fs.existsSync(path.join(
+      chromeNativeHost: !platformFeatures(process.platform, process.arch).chromeNativeConnector || fs.existsSync(path.join(
         process.resourcesPath,
         'chrome-native-host',
         'CardBushBrowserHost.exe',
@@ -3052,7 +3076,7 @@ async function runPackagedApplicationSmoke(): Promise<void> {
         'bin',
         'chrome-devtools-mcp.js',
       )),
-      runtimeSearch: process.platform !== 'win32' || Boolean(
+      runtimeSearch: Boolean(
         bundledRipgrep && fs.existsSync(bundledRipgrep),
       ),
     };
@@ -3488,20 +3512,20 @@ async function initializeRuntimeHostWithinDeadline() {
         CARDBUSH_RUNTIME_PLUGIN_ROOTS: JSON.stringify(productPluginRoots()),
         CARDBUSH_RUNTIME_PLUGIN_DATA_ROOT: path.join(app.getPath('userData'), 'plugin-data'),
         ...(bundledRipgrep ? { CARDBUSH_RG_PATH: bundledRipgrep } : {}),
-        CARDBUSH_APPS_MCP_ENTRY: path.join(
+        CARDBUSH_APPS_MCP_ENTRY: platformFeatures(process.platform, process.arch).computerUse ? path.join(
           app.getAppPath(),
           'packages',
           'cardbush-apps-mcp',
           'dist',
           'index.js',
-        ),
-        CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: path.join(
+        ) : '',
+        CARDBUSH_CHROME_CONNECTOR_MCP_ENTRY: platformFeatures(process.platform, process.arch).chromeNativeConnector ? path.join(
           app.getAppPath(),
           'packages',
           'cardbush-chrome-mcp',
           'dist',
           'index.js',
-        ),
+        ) : '',
         CARDBUSH_CHROME_CONNECTOR_CONFIG:
           chromeConnectorBroker?.configPath ?? path.join(
             app.getPath('userData'),
@@ -3710,11 +3734,7 @@ function bundledProductSkillRoot(): string {
 }
 
 function resolveBundledRipgrepPath(): string | undefined {
-  if (process.platform !== 'win32' || process.arch !== 'x64') return undefined;
-  const relativePath = path.join('runtime-tools', 'ripgrep', 'win32-x64', 'rg.exe');
-  return cardbushRuntimeIsPackaged
-    ? path.join(process.resourcesPath, relativePath)
-    : path.join(app.getAppPath(), 'assets', relativePath);
+  return bundledToolPath(cardbushRuntimeIsPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'assets'), 'ripgrep');
 }
 
 function productPluginRoots(): PluginRoot[] {
@@ -3733,6 +3753,7 @@ function isChromeRuntimeTool(toolName: string): boolean {
 }
 
 async function startChromeConnectorBroker(): Promise<void> {
+  if (!platformFeatures(process.platform, process.arch).chromeNativeConnector) return;
   if (chromeConnectorBroker) return;
   const broker = new ChromeConnectorBroker(app.getPath('userData'));
   chromeConnectorBroker = broker;
@@ -5259,71 +5280,7 @@ function sendToOwner(ownerId: number, channel: string, payload: unknown) {
 }
 
 function terminalShell(runtime?: TerminalRuntime, cwd?: string) {
-  const normalizedRuntime = normalizeTerminalRuntime(runtime);
-  const override = process.env.CARDBUSH_TERMINAL_SHELL?.trim();
-  if (override && normalizedRuntime === 'powershell') {
-    return { command: override, args: [] };
-  }
-  if (process.platform === 'win32') {
-    if (normalizedRuntime === 'wsl') {
-      return cwd?.trim()
-        ? { command: 'wsl.exe', args: ['--cd', cwd] }
-        : { command: 'wsl.exe', args: [] };
-    }
-    if (normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash') {
-      return {
-        command: findGitBashExecutable() || 'bash.exe',
-        args: ['--login', '-i'],
-      };
-    }
-    const pwsh = findExecutable('pwsh.exe');
-    if (pwsh) {
-      return { command: pwsh, args: [] };
-    }
-    return { command: 'powershell.exe', args: ['-NoExit'] };
-  }
-  if (normalizedRuntime === 'powershell') {
-    return { command: findExecutable('pwsh') || 'pwsh', args: ['-NoExit'] };
-  }
-  const shellCommand = process.env.SHELL?.trim() || 'bash';
-  return { command: shellCommand, args: [] };
-}
-
-function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
-  if (value === 'wsl' || value === 'git_bash' || value === 'bash') {
-    return value;
-  }
-  return 'powershell';
-}
-
-function findGitBashExecutable() {
-  const candidates = [
-    process.env.ProgramFiles
-      ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe')
-      : '',
-    process.env['ProgramFiles(x86)']
-      ? path.join(process.env['ProgramFiles(x86)'], 'Git', 'bin', 'bash.exe')
-      : '',
-    process.env.LOCALAPPDATA
-      ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'bin', 'bash.exe')
-      : '',
-  ];
-  return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || '';
-}
-
-function findExecutable(command: string) {
-  try {
-    return execFileSync('where.exe', [command], {
-      encoding: 'utf8',
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean);
-  } catch {
-    return '';
-  }
+  return terminalInvocation(runtime, cwd);
 }
 
 async function runTerminalCommand(command: string, cwd?: string, runtime?: TerminalRuntime, signal?: AbortSignal) {
@@ -5338,26 +5295,8 @@ async function runTerminalCommand(command: string, cwd?: string, runtime?: Termi
     };
   }
   const workingDirectory = resolveCwd(cwd);
-  const normalizedRuntime = normalizeTerminalRuntime(runtime);
-  const shellCommand = process.platform === 'win32'
-    ? normalizedRuntime === 'wsl'
-      ? 'wsl.exe'
-      : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
-        ? findGitBashExecutable() || 'bash.exe'
-        : 'powershell.exe'
-    : normalizedRuntime === 'powershell'
-      ? findExecutable('pwsh') || 'pwsh'
-      : process.env.SHELL?.trim() || 'bash';
-  const args = process.platform === 'win32'
-    ? normalizedRuntime === 'wsl'
-      ? ['--cd', workingDirectory, '--', 'bash', '-lc', trimmed]
-      : normalizedRuntime === 'git_bash' || normalizedRuntime === 'bash'
-        ? ['-lc', trimmed]
-        : ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', trimmed]
-    : normalizedRuntime === 'powershell'
-      ? ['-NoLogo', '-NoProfile', '-Command', trimmed]
-      : ['-lc', trimmed];
   try {
+    const { command: shellCommand, args } = terminalInvocation(runtime, workingDirectory, trimmed);
     const result = await runHostCommand({ executable: shellCommand, args,
       cwd: workingDirectory,
       env: process.env,

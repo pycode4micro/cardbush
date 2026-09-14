@@ -1,3 +1,4 @@
+import { commandInvocation } from "@cardbush/platform";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
@@ -1515,34 +1516,8 @@ function terminalToolDescription(): string {
   ].join(" ");
 }
 
-function terminalShellInvocation(
-  shell: TerminalShell,
-  command: string,
-): { executable: string; args: string[] } {
-  if (shell === "powershell") {
-    // Sample $? in the command's own scope. Invoking a script block resets the
-    // caller's status even when its last cmdlet reported a non-terminating error.
-    const harness = [
-      "& {",
-      command,
-      "$cardbushCommandSucceeded = $?",
-      "$cardbushNativeExitCode = $LASTEXITCODE",
-      "if ($null -ne $cardbushNativeExitCode -and $cardbushNativeExitCode -ne 0) { exit $cardbushNativeExitCode }",
-      "if (-not $cardbushCommandSucceeded) { exit 1 }",
-      "}",
-    ].join("\n");
-    return {
-      executable: "powershell.exe",
-      args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", harness],
-    };
-  }
-  if (shell === "cmd") {
-    return {
-      executable: process.env.ComSpec?.trim() || "cmd.exe",
-      args: ["/d", "/s", "/c", command],
-    };
-  }
-  return { executable: "/bin/sh", args: ["-c", command] };
+function terminalShellInvocation(shell: TerminalShell, command: string) {
+  return commandInvocation(shell, command);
 }
 
 async function runProcess(

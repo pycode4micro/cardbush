@@ -14,3 +14,5 @@ __pycache__/
 *.egg-info/
 .codex-video-frames-*/
 .codex-video-sheet-*.png
+
+dist-cjs/

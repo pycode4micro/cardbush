@@ -23,5 +23,6 @@
   },
   "dependencies": {
     "zod": "^4.4.3"
-  }
+  },
+  "license": "Apache-2.0"
 }

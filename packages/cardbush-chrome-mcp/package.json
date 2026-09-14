@@ -16,5 +16,6 @@
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "zod": "^4.1.12"
-  }
+  },
+  "license": "Apache-2.0"
 }

@@ -37,6 +37,8 @@ declare global {
     __cardbushScrollDebug?: Array<Record<string, unknown>>;
     __cardbushUiPerformance?: Array<Record<string, unknown>>;
     cardbushDesktop?: {
+      platform: string;
+      hostCapabilities: () => Promise<{ platform: string; arch: string; terminalRuntimes: import('../types').TerminalRuntime[]; defaultTerminalRuntime: import('../types').TerminalRuntime; computerUse: boolean; chromeNativeConnector: boolean; nativeProcessLimits: boolean }>;
       runtime: {
         command: (message: unknown) => Promise<unknown>;
         startStream: (message: unknown) => Promise<void>;
@@ -285,7 +287,7 @@ declare global {
       }>;
       terminalCreate: (
         cwd?: string,
-        runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+        runtime?: import('../types').TerminalRuntime,
       ) => Promise<{
         id: string;
         cwd: string;
@@ -303,7 +305,7 @@ declare global {
       terminalRun: (
         command: string,
         cwd?: string,
-        runtime?: 'powershell' | 'wsl' | 'git_bash' | 'bash',
+        runtime?: import('../types').TerminalRuntime,
       ) => Promise<{
         command: string;
         cwd: string;

@@ -21,5 +21,6 @@
     "@cardbush/bush-protocol": "^0.1.0",
     "@cardbush/bush-runtime": "^0.1.0",
     "openai": "^7.8.0"
-  }
+  },
+  "license": "Apache-2.0"
 }

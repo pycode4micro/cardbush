@@ -1,3 +1,4 @@
+import { defaultHostTerminalRuntime, normalizeHostTerminalRuntime } from './backend/hostPlatform';
 import { McpUserRequests } from './features/plugins/McpUserRequests';
 import { DEFAULT_MAX_CONTEXT_TOKENS, normalizeConversationStyle } from '@cardbush/bush-product-agent';
 import { readConversationStyle, saveConversationStyle } from './features/settings/conversationStyle';
@@ -280,7 +281,7 @@ const defaultAppSettings: AppSettingsState = {
     deliveryMode: 'queue',
   },
   terminal: {
-    runtime: 'powershell',
+    runtime: defaultHostTerminalRuntime(),
   },
   managedModelConfigs: [],
   importedThemeStyle: null,
@@ -3325,10 +3326,7 @@ function terminalRuntimeFromStorage(value: string | null): TerminalRuntime {
 }
 
 function normalizeTerminalRuntime(value?: TerminalRuntime): TerminalRuntime {
-  if (value === 'wsl' || value === 'git_bash' || value === 'bash') {
-    return value;
-  }
-  return 'powershell';
+  return normalizeHostTerminalRuntime(value);
 }
 
 function persistAppSettings(settings: AppSettingsState) {

@@ -1,3 +1,4 @@
+import { defaultHostTerminalRuntime } from './hostPlatform';
 import { configuredMcpServerId } from './mcpConfigurationFact';
 import { authoredPromptContent, promptReferenceParts } from '../shared/promptReferences';
 import { conversationDisplayTitle, conversationTitleFromUserText } from '../shared/conversationTitle';
@@ -446,8 +447,8 @@ export const defaultBackendCapabilities: BackendCapabilities = {
   reasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
   defaultReasoningLevel: 'high',
   terminalRuntimeSelection: false,
-  terminalRuntimes: ['powershell', 'wsl'],
-  defaultTerminalRuntime: 'powershell',
+  terminalRuntimes: [defaultHostTerminalRuntime()],
+  defaultTerminalRuntime: defaultHostTerminalRuntime(),
 };
 
 export interface McpServerConfigInput {
@@ -539,7 +540,7 @@ export interface SessionLatestTurn {
 export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
   const runtime = createDesktopRuntimeSession();
   try {
-    const capabilities = await runtime.client.getCapabilities();
+    const [capabilities, host] = await Promise.all([runtime.client.getCapabilities(), window.cardbushDesktop?.hostCapabilities?.()]);
     const features = new Set(capabilities.features);
     const commands = new Set(capabilities.supportedCommands);
     return {
@@ -565,6 +566,8 @@ export async function fetchBackendCapabilities(): Promise<BackendCapabilities> {
       projects: true,
       git: true,
       terminal: true,
+      terminalRuntimeSelection: Boolean(host),
+      ...(host ? { terminalRuntimes: host.terminalRuntimes, defaultTerminalRuntime: host.defaultTerminalRuntime } : {}),
       mcpServers: features.has('product_mcp_snapshot'),
       subagents: features.has('subagent_context_fork'),
       subagentObservability: features.has('subagent_context_fork'),
