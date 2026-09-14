@@ -210,7 +210,7 @@ const stylesSource = fs.readFileSync(
 const localFileStyle = stylesSource.match(/\.local-file-reference\s*\{([^}]*)\}/)?.[1] ?? '';
 assert.ok(!/border-bottom|text-decoration:\s*(?:underline|dotted|dashed)/.test(localFileStyle));
 const inlineCodeStyle = stylesSource.match(
-  /\.assistant-bubble :not\(pre\) > code,\s*\.user-bubble :not\(pre\) > code\s*\{([^}]*)\}/,
+  /\.assistant-bubble :not\(pre\) > code,[^{]*\.user-bubble :not\(pre\) > code\s*\{([^}]*)\}/,
 )?.[1] ?? '';
 assert.match(inlineCodeStyle, /background:\s*transparent/);
 assert.match(inlineCodeStyle, /padding:\s*0/);

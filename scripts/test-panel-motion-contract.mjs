@@ -175,7 +175,7 @@ assert.match(
   /new ResizeObserver\([\s\S]*?scheduleBrowserViewportFit\(120\)[\s\S]*?resizeObserver\.observe\(webview\)/,
   'Inspector browser fitting must follow live panel and window resizing',
 );
-assert.match(app, /handleInspectorShortcut[\s\S]*?key === 't'[\s\S]*?key === 'p'[\s\S]*?key === 's'/);
+assert.match(app, /handleInspectorShortcut[\s\S]*?matches\('openBrowser'[\s\S]*?matches\('openFiles'[\s\S]*?matches\('openShadow'/);
 assert.match(shadowWindow, /export function ShadowWindow\(\{/);
 assert.match(shadowWindow, /shadow-inspector-shell/);
 assert.match(css, /\.right-inspector-add-menu\s*\{/);
