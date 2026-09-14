@@ -49,7 +49,9 @@ app.whenReady().then(async () => {
       }
       createRoot(document.getElementById('root')).render(h(React.StrictMode,null,h(Harness)));
     `);
-    await pause();
+    // Wait for the offscreen host's first layout and fonts instead of assuming
+    // that an arbitrary delay is sufficient on a fresh Windows runner.
+    await run('document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))');
     await run('new Promise((resolve,reject)=>{const thumbnail=new Image();thumbnail.onload=()=>thumbnail.decode().then(resolve,reject);thumbnail.onerror=reject;thumbnail.src=image.src})');
     const sampleOpening = (source, width, height) => run(`new Promise(resolve=>{
       flushSync(()=>{controls.setImage(${source});controls.setOpen(true)});
@@ -58,6 +60,7 @@ app.whenReady().then(async () => {
         const stage=document.querySelector('.image-preview-stage'),canvas=document.querySelector('.image-preview-canvas'),img=canvas.querySelector('img');
         const rect=img.getBoundingClientRect(),fit=Math.min(1,(stage.clientWidth-32)/${width},(stage.clientHeight-32)/${height});
         frames.push({visible:getComputedStyle(canvas).visibility==='visible',width:rect.width,height:rect.height,
+          stageWidth:stage.clientWidth,stageHeight:stage.clientHeight,viewport:[innerWidth,innerHeight],complete:img.complete,natural:[img.naturalWidth,img.naturalHeight],
           expectedWidth:Math.round(${width}*fit),expectedHeight:Math.round(${height}*fit),busy:stage.getAttribute('aria-busy'),zoom:document.querySelector('.image-preview-zoom-value').textContent});
         if(frames.length<8)requestAnimationFrame(sample);else resolve(frames);
       };sample();
@@ -71,7 +74,7 @@ app.whenReady().then(async () => {
     };
     for(let reopen=0;reopen<3;reopen++){
       const frames=await sampleOpening('image',1600,900);
-      assertStableFit(frames);assert.equal(frames[0].visible,true,'a decoded thumbnail opens fitted before the first paint');
+      assertStableFit(frames);assert.equal(frames[0].visible,true,'a decoded thumbnail opens fitted before the first paint: '+JSON.stringify(frames));
       await run('flushSync(()=>controls.setOpen(false))');
     }
     await sampleOpening('image',1600,900);
