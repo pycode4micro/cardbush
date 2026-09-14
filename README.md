@@ -11,7 +11,7 @@ Current release: **1.0.0-beta.1**. Choose the package for your operating system.
 | System | Download | Suitable computers |
 | --- | --- | --- |
 | Windows 10 / 11 | [Windows x64 installer (.exe)](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64.exe) | Intel / AMD 64-bit |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x86_64.AppImage) | x86-64 desktop Linux; Ubuntu 22.04 or newer recommended |
 
 [All releases and SHA-256 checksums](https://github.com/pycode4micro/cardbush/releases) · [Build and validation workflow](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
@@ -24,8 +24,8 @@ Windows 10 and 11 use the same installer; there is no separate Intel/AMD or GPU 
 **Linux:** download the AppImage, allow it to execute, then run it:
 
 ```sh
-chmod +x CardBush-1.0.0-beta.1-linux-x64.AppImage
-./CardBush-1.0.0-beta.1-linux-x64.AppImage
+chmod +x CardBush-1.0.0-beta.1-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.1-linux-x86_64.AppImage
 ```
 
 AppImage needs FUSE 2 (on Ubuntu 22.04: `sudo apt install libfuse2`). If FUSE is unavailable, run with `APPIMAGE_EXTRACT_AND_RUN=1`. Chromium also requires a working sandbox; do not disable it as an installation workaround.

@@ -1,6 +1,9 @@
 // Actual extracted views in isolated Chromium: no product profile, real files,
 // network requests, model calls or Runtime subscriptions.
 const { app, BrowserWindow } = require('electron');
+// CI Windows Server disables system animations. Motion regressions need an
+// explicit baseline; reduced-motion cases below still use media emulation.
+app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');

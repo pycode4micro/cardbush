@@ -11,7 +11,7 @@
 | 系统 | 下载 | 适用电脑 |
 | --- | --- | --- |
 | Windows 10 / 11 | [Windows x64 安装程序（.exe）](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-windows-x64.exe) | Intel / AMD 64 位 |
-| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x64.AppImage) | x86-64 桌面 Linux，建议 Ubuntu 22.04 或更新版本 |
+| Linux | [Linux x64 AppImage](https://github.com/pycode4micro/cardbush/releases/download/v1.0.0-beta.1/CardBush-1.0.0-beta.1-linux-x86_64.AppImage) | x86-64 桌面 Linux，建议 Ubuntu 22.04 或更新版本 |
 
 [全部版本与 SHA-256 校验文件](https://github.com/pycode4micro/cardbush/releases) · [构建与验证流程](https://github.com/pycode4micro/cardbush/actions/workflows/desktop.yml)
 
@@ -24,8 +24,8 @@ Windows 10 和 11 使用同一个安装包，无需按 Intel、AMD 或显卡型�
 **Linux：** 下载后赋予执行权限并启动：
 
 ```sh
-chmod +x CardBush-1.0.0-beta.1-linux-x64.AppImage
-./CardBush-1.0.0-beta.1-linux-x64.AppImage
+chmod +x CardBush-1.0.0-beta.1-linux-x86_64.AppImage
+./CardBush-1.0.0-beta.1-linux-x86_64.AppImage
 ```
 
 AppImage 需要 FUSE 2（Ubuntu 22.04 可运行 `sudo apt install libfuse2`）。没有 FUSE 时可使用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。Chromium 需要正常的沙箱环境，不建议通过关闭沙箱解决安装问题。

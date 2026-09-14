@@ -96,7 +96,7 @@ jobs:
         run: |
           node -e 'const p=require("./package.json"); if(process.env.RELEASE_TAG!=="v"+p.version) throw Error("Tag and package version differ");'
           test -s "release-assets/CardBush-${RELEASE_TAG#v}-windows-x64.exe"
-          test -s "release-assets/CardBush-${RELEASE_TAG#v}-linux-x64.AppImage"
+          test -s "release-assets/CardBush-${RELEASE_TAG#v}-linux-x86_64.AppImage"
           (cd release-assets && sha256sum --check SHA256SUMS-win32-x64.txt SHA256SUMS-linux-x64.txt)
       - name: Publish validated beta
         run: |
