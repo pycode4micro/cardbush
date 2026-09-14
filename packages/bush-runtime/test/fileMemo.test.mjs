@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, writeFile, readFile, appendFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, appendFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { FileToolExecutionPersistence, InMemoryRuntimeHost, ToolRegistry, ToolExecutionStore, ToolExecutionCoordinator, registerFileMemoTools, resolveFileMemo, validateFileMemoLinks } from '../dist/index.js';
@@ -86,7 +86,7 @@ test('a delivered memo resolves through the public runtime command after host re
   const reference = fileMemoReference({ sessionId: 's', turnId: 't', toolCallId: 'memo' });
   const restarted = new InMemoryRuntimeHost({ dataRoot: join(root, 'runtime'), toolExecutionStore: persistedStore(), provider: { async *stream() { throw Error('No model call on reference lookup'); } } });
   const resolution = await restarted.sendCommand({ kind: RESOLVE_FILE_MEMO_COMMAND, payload: { reference } });
-  assert.equal(resolution.status, 'available'); assert.equal(resolution.memo.file.path, path);
+  assert.equal(resolution.status, 'available'); assert.equal(resolution.memo.file.path, await realpath(path));
   assert.equal(resolution.memo.note.purpose, '交付文件');
   assert.equal((await restarted.sendCommand({ kind: RESOLVE_FILE_MEMO_COMMAND, payload: { reference: 'cardbush-memo:1', sessionId: 's' } })).status, 'available');
 });

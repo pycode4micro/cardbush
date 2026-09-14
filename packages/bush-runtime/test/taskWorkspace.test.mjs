@@ -38,6 +38,21 @@ async function action(manager, action, sessionId = 'task') {
   return manager.update(sessionId, review.workspace.revision, action, review.snapshotId);
 }
 
+test('Windows short storage paths bind to a stable canonical workspace', { skip: process.platform !== 'win32' }, async t => {
+  const { root, source } = await fixture(t);
+  const alias = execFileSync('cmd.exe', ['/d', '/c', 'for %I in (.) do @echo %~sI'], {
+    cwd: root, windowsHide: true, encoding: 'utf8',
+  }).trim();
+  if (alias.toLowerCase() === root.toLowerCase()) { t.skip('Volume has no 8.3 path aliases.'); return; }
+  const manager = new TaskWorkspaceManager(join(alias, 'runtime'));
+  const workspace = await manager.create('short-path', source, 'worktree');
+  await manager.beginTurn('short-path', 'turn');
+  await writeFile(join(workspace.workspaceDir, 'file.txt'), 'short path edit');
+  await manager.finishTurn('short-path', 'turn');
+  assert.ok((await manager.review('short-path')).changes.some(change => change.path.endsWith('file.txt')));
+  assert.equal((await manager.descriptor('short-path')).workspaceDir, workspace.workspaceDir);
+});
+
 test('task copy preserves working bytes and dirty/untracked baseline without touching source index', async t => {
   const { source, manager } = await fixture(t);
   await writeFile(join(source, 'file.txt'), 'staged');

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { canonicalStoragePath } from "@cardbush/platform";
 import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceChange, WorkspaceCheckpoint, WorkspaceDescriptor, WorkspaceReview } from "@cardbush/bush-protocol";
@@ -46,7 +47,7 @@ export class TaskWorkspaceManager {
   readonly #changeViews = new Map<string, WorkspaceChange[]>();
   readonly #treeIds = new WeakMap<Snapshot, string>();
 
-  constructor(root: string) { this.#root = resolve(root); }
+  constructor(root: string) { this.#root = canonicalStoragePath(root); }
 
   async descriptor(sessionId: string): Promise<WorkspaceDescriptor | undefined> {
     return this.#exclusive(sessionId, async () => {

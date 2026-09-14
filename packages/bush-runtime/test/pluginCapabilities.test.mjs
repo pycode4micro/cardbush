@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -74,7 +74,7 @@ test('Agent memory is persistent, revision protected and confined including syml
   const req = request(registry, { prefixMessages: [], metadata: { projectDir: copy, pluginAgentSourceDir: project } });
   await memory.prepare({ ...agent, memory: 'project' }, req, registry);
   const read = await call(runner, req, 'agent_memory_read', {}); assert.equal(read.result.revision, null);
-  const write = await call(runner, req, 'agent_memory_write', { content: 'Stable notes', expected_revision: null }); assert.equal(write.kind, 'returned'); assert.ok(write.result.path.startsWith(project));
+  const write = await call(runner, req, 'agent_memory_write', { content: 'Stable notes', expected_revision: null }); assert.equal(write.kind, 'returned'); assert.ok(write.result.path.startsWith(await realpath(project)));
   assert.equal((await call(runner, req, 'agent_memory_write', { content: 'Lost update', expected_revision: null })).kind, 'failed');
   assert.equal((await call(runner, req, 'agent_memory_read', { path: '../escape' })).kind, 'failed');
   memory.release('s'); assert.equal((await call(runner, req, 'agent_memory_read', {})).kind, 'failed');

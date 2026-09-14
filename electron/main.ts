@@ -1,4 +1,4 @@
-import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, type TerminalRuntime } from '@cardbush/platform';
+import { terminalInvocation, terminalRuntimes, defaultTerminalRuntime, bundledToolPath, platformFeatures, localPath, type TerminalRuntime } from '@cardbush/platform';
 import { registerRuntimePluginUiIpc } from './runtimePluginUi';
 import { resolveWindowAppearance, WindowAppearanceController, type WindowAppearanceOptions, type WindowAppearanceState, type WindowMaterialPreference } from './windowAppearance';
 import { GlobalInstructionsStore, readAgentInstructionDocuments } from './globalInstructions';
@@ -4190,23 +4190,7 @@ function modelIdsFromUnknown(value: unknown): string[] {
 }
 
 function normalizeShellPath(value: string) {
-  const trimmed = String(value ?? '').trim();
-  if (!trimmed) {
-    return '';
-  }
-  if (/^file:/i.test(trimmed)) {
-    try {
-      const fileUrl = new URL(trimmed);
-      const decodedPath = decodeURIComponent(fileUrl.pathname);
-      if (fileUrl.hostname) {
-        return `\\\\${fileUrl.hostname}${decodedPath.replace(/\//g, '\\')}`;
-      }
-      return decodedPath.replace(/^\/([a-zA-Z]:)/, '$1').replace(/\//g, '\\');
-    } catch {
-      return trimmed;
-    }
-  }
-  return trimmed;
+  return localPath(value);
 }
 
 function localPathFromProtocolUrl(value: string) {

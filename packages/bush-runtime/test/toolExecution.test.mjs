@@ -1229,12 +1229,13 @@ function createHost(provider, registry, options = {}) {
 }
 
 async function waitForEvent(host, kind) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
     const found = host
       .events("session_tools", "turn_tools")
       .find((event) => event.kind === kind);
     if (found) return found;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Timed out waiting for ${kind}.`);
 }

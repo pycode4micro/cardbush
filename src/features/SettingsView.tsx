@@ -628,11 +628,11 @@ export function SettingsView({
               <SettingsRadio
                 name="terminal-runtime"
                 value="bash"
-                title="Bash"
+                title={language === 'zh' ? '系统 Shell' : 'Native Shell'}
                 subtitle={
                   language === 'zh'
-                    ? '使用系统原生 Bash。'
-                    : 'Use the system-native Bash runtime.'
+                    ? '使用系统默认 Shell，未配置时使用 Bash 或 sh。'
+                    : 'Use the system Shell, falling back to Bash or sh when unconfigured.'
                 }
                 checked={settings.terminal.runtime === 'bash'}
                 onChange={() =>

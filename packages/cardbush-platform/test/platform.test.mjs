@@ -3,7 +3,15 @@ import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
-import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes } from '../dist/index.js';
+import { createPlatformContext, findExecutable, terminalInvocation, commandInvocation, defaultTerminalRuntime, normalizeTerminalRuntime, platformFeatures, bundledToolPath, terminalRuntimes, localPath } from '../dist/index.js';
+
+test('file URLs retain native separators, Unicode, escaped punctuation and UNC shares', () => {
+  assert.equal(localPath('file:///home/user/a%20b/%E4%B8%AD%E6%96%87%23.txt', 'linux'), '/home/user/a b/中文#.txt');
+  assert.equal(localPath('file:///C:/a%20b/%E4%B8%AD%E6%96%87.txt', 'win32'), 'C:\\a b\\中文.txt');
+  assert.equal(localPath('file://server/share/a%20b.txt', 'win32'), '\\\\server\\share\\a b.txt');
+  assert.equal(localPath('/home/user/a b.txt', 'linux'), '/home/user/a b.txt');
+  assert.equal(localPath('file:///invalid%ZZ', 'linux'), 'file:///invalid%ZZ');
+});
 
 function context(platform, files = [], env = {}) {
   const pathApi = platform === 'win32' ? path.win32 : path.posix;

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -796,7 +797,7 @@ test("uses absolute filesystem paths safely when a Turn has no workspace", async
   );
   assert.equal(written.kind, "returned");
   assert.equal(readFileSync(path, "utf8"), "hello world");
-  assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: path }]);
+  assert.deepEqual(permissionRequests[0].targets, [{ kind: "filesystem_path", value: realpathSync(path) }]);
   assert.deepEqual(permissionRequests[0].scope, { mode: "task_free", roots: [] });
 
   const relative = await coordinator.execute(
@@ -857,7 +858,7 @@ test("canonicalizes a linked workspace root and rejects a linked escape", async 
   );
   assert.equal(escapeOutcome.kind, "returned");
   assert.equal(requests.length, 1);
-  assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: outside }]);
+  assert.deepEqual(requests[0].targets, [{ kind: "filesystem_path", value: realpathSync(outside) }]);
   assert.equal(requests[0].scope.mode, "task_free");
   assert.equal(requests[0].scope.roots.length, 1);
 });
@@ -892,7 +893,7 @@ test("binds external path approval to the exact requested capability", async (t)
     turn(registry, workspace, {}),
   );
   assert.equal(outcome.kind, "returned");
-  assert.deepEqual(permissionRequest.targets, [{ kind: "filesystem_path", value: path }]);
+  assert.deepEqual(permissionRequest.targets, [{ kind: "filesystem_path", value: realpathSync(path) }]);
   assert.equal(permissionRequest.capabilityIds.length, 1);
 });
 

@@ -1,7 +1,32 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defaultTerminalRuntime, normalizeTerminalRuntime, type TerminalRuntime, type CommandShell } from './contracts.js';
 export * from './contracts.js';
+
+/** Decode file URLs using the target host's path rules, preserving plain paths. */
+export function localPath(value: string, platform: string = process.platform): string {
+  const trimmed = String(value ?? '').trim();
+  if (!/^file:/i.test(trimmed)) return trimmed;
+  try { return fileURLToPath(trimmed, { windows: platform === 'win32' }); }
+  catch { return trimmed; }
+}
+
+/** Bind a storage path once, including non-existent children of an existing parent. */
+export function canonicalStoragePath(value: string): string {
+  const pending: string[] = [];
+  let parent = path.resolve(value);
+  while (true) {
+    try { return path.join(fs.realpathSync.native(parent), ...pending); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const next = path.dirname(parent);
+      if (next === parent) throw error;
+      pending.unshift(path.basename(parent));
+      parent = next;
+    }
+  }
+}
 
 export interface PlatformContext {
   platform: NodeJS.Platform; arch: string; env: NodeJS.ProcessEnv;
@@ -94,7 +119,7 @@ export function commandInvocation(shell: CommandShell, command: string, context 
   }
   if (shell === 'cmd') {
     if (context.platform !== 'win32') throw new Error('cmd is unavailable on this host.');
-    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/s','/c',command]};
+    return {executable:environment(context,'ComSpec')?.trim() || 'cmd.exe',args:['/d','/s','/c','chcp 65001>nul & ' + command]};
   }
   if (context.platform === 'win32') throw new Error('POSIX shell is unavailable in the native Windows runtime.');
   return {executable:'/bin/sh',args:['-c',command]};
